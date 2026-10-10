@@ -32,7 +32,7 @@ _UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|m
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "3428f9b5adec3295f501d31dee9130ff3a74aed4f4d8ae89846129f8fcbf6131"
+GOLDEN_CATALOGUE_SHA256 = "5b6f553084c4ba19737b95deefef4cf5b4fc8b66cfecbcfec80d44e355d39306"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -53,9 +53,16 @@ def test_catalogue_names_are_unique_and_documented() -> None:
         assert s.help and s.alert and s.unit
 
 
+#: Count-valued gateway series whose names are fixed by the E17 tickets / 23-ws-protocol.md
+#: (#377): the unit is the noun itself. Exactly these names; nothing else is exempt.
+_UNIT_SUFFIX_EXEMPT = frozenset(
+    {"cv_ws_clients", "cv_ws_topics_per_client", "cv_ws_upstream_refcount", "cv_ws_stale_topics"}
+)
+
+
 def test_catalogue_live_names_are_unit_suffixed() -> None:
     for s in live_specs():
-        assert _UNIT_SUFFIX.search(s.name), s.name
+        assert _UNIT_SUFFIX.search(s.name) or s.name in _UNIT_SUFFIX_EXEMPT, s.name
 
 
 def test_catalogue_every_planned_entry_has_owning_epic() -> None:
@@ -173,9 +180,12 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
+    from candleviewer.ws.metrics import CV_WS_NAMES
     from candleviewer.ws.metrics import EXPORTED_NAMES as CVWB_NAMES
 
-    exported = {s.name for s in live_specs() if s.exported} - CVWB_NAMES - RECORDER_NAMES
+    exported = (
+        {s.name for s in live_specs() if s.exported} - CVWB_NAMES - RECORDER_NAMES - CV_WS_NAMES
+    )
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
     register_r0(m)

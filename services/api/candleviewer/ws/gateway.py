@@ -59,6 +59,13 @@ from candleviewer.ws.lifecycle import (
 )
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import AUTH_TIMEOUT_S, MAX_INBOUND_FRAME_BYTES
+from candleviewer.ws.metrics import (
+    cv_ws_auth_failures_total,
+    cv_ws_clients,
+    cv_ws_clock_skew_ms,
+    cv_ws_closes_total,
+    cv_ws_handshake_seconds,
+)
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
@@ -113,15 +120,24 @@ class GatewayHub:
     def __init__(self, *, max_per_user: int = MAX_CONNECTIONS_PER_USER) -> None:
         self.max_per_user = max_per_user
         self._live: set[_Connection] = set()
+        self._empty = asyncio.Event()
+        self._empty.set()
 
     def __len__(self) -> int:
         return len(self._live)
 
     def add(self, conn: _Connection) -> None:
         self._live.add(conn)
+        self._empty.clear()
 
     def discard(self, conn: _Connection) -> None:
         self._live.discard(conn)
+        if not self._live:
+            self._empty.set()
+
+    async def wait_empty(self) -> None:
+        """Return once every connection handler has finished (callers bound it)."""
+        await self._empty.wait()
 
     def of_user(self, user_id: uuid.UUID) -> list[_Connection]:
         return [c for c in self._live if c.user_id == user_id]
@@ -134,6 +150,13 @@ class GatewayHub:
         others.sort(key=lambda c: c.watchdog.last_inbound)
         while len(others) + 1 > self.max_per_user:
             others.pop(0).close_with("too_many_connections")
+
+    def broadcast_system(self, body: dict[str, Any]) -> int:
+        """Push one `system` frame (e.g. §12.5 `kill_switch`) to every authenticated socket."""
+        conns = [c for c in self._live if c.lifecycle.authenticated]
+        for conn in conns:
+            conn.push_system(body)
+        return len(conns)
 
     async def shutdown(
         self,
@@ -199,6 +222,7 @@ class _Connection:
         self.rate_strikes = 0
         self.closing = False
         self.close_code: int | None = None
+        self.opened_at = now
 
     # -- outbound -----------------------------------------------------------
 
@@ -238,6 +262,8 @@ class _Connection:
         self.closing = True
         frame = bye or lifecycle_bye(reason, now_ms=self.wall_ms(), retry_after_ms=retry_after_ms)
         code = int(frame["p"]["code"])
+        bye_reason = str(frame["p"].get("reason", reason))
+        cv_ws_closes_total.labels(code=str(code), reason=bye_reason[:40]).inc()
         if self.lifecycle.can(ConnEvent.CLOSE):
             self.lifecycle.fire(ConnEvent.CLOSE)
         for item in (frame, _CLOSE, code):
@@ -359,15 +385,19 @@ def make_ws_router(
         reauth = conn.lifecycle.authenticated
         if reauth:
             conn.lifecycle.fire(ConnEvent.REAUTH)
+        failure = "rejected"
         try:
             if not isinstance(token, str) or not token:
+                failure = "missing_token"
                 raise ValueError("missing access_token")
             result = await authenticate(token)
             session_id, user_id = result[0], result[1]
             if reauth and user_id != conn.user_id:
+                failure = "user_mismatch"
                 raise PermissionError("re-auth must keep the same user")
             principal = await registry.resolve(user_id)
         except Exception:
+            cv_ws_auth_failures_total.labels(reason=failure).inc()
             conn.auth_failures += 1
             if reauth:
                 conn.lifecycle.fire(ConnEvent.REAUTH_FAILED)
@@ -430,6 +460,7 @@ def make_ws_router(
             reauth=reauth,
         )
         if not reauth:
+            cv_ws_handshake_seconds.observe(max(0.0, conn.clock() - conn.opened_at))
             gateway_hub.enforce_cap(conn)
 
     def pong(conn: _Connection, frame: dict[str, Any]) -> None:
@@ -465,6 +496,8 @@ def make_ws_router(
             body = frame.get("p")
             clock_ms = body.get("clock_ms") if isinstance(body, dict) else None
             now_ms = conn.wall_ms()
+            if isinstance(clock_ms, int) and not isinstance(clock_ms, bool):
+                cv_ws_clock_skew_ms.observe(abs(now_ms - clock_ms))
             welcome = welcome_payload(
                 encoding=conn.encoding.removeprefix("cv.v1."),
                 server_version=server_version,
@@ -561,6 +594,7 @@ def make_ws_router(
         )
         conn.lifecycle.fire(ConnEvent.OPEN_NEGOTIATED)
         gateway_hub.add(conn)
+        cv_ws_clients.inc()
         structlog.contextvars.bind_contextvars(connection_id=conn.connection_id)
         # TG5: exactly one reader (this handler task) and one writer task,
         # owned here and always cancelled + awaited before returning (C-2.18).
@@ -604,6 +638,7 @@ def make_ws_router(
                     await ws.send_text(json.dumps(bye))
                     await ws.close(code=int(CLOSE_REASONS["internal_error"][0]))
             gateway_hub.discard(conn)
+            cv_ws_clients.dec()
             if conn.authz is not None:
                 if registry.services.sequencing is not None:
                     registry.services.sequencing.unregister(conn.authz)
