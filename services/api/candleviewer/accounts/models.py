@@ -30,6 +30,10 @@ OptUtcDatetime = Annotated[datetime | None, AfterValidator(_require_utc)]
 _FROZEN = ConfigDict(frozen=True, extra="forbid")
 
 
+#: Design-system colour name (21-database-schema.md §3.2.1 default); not a credential.
+_DEFAULT_COLOUR = "accent.neutral"
+
+
 class AccountKind(StrEnum):
     MAIN = "main"
     SUB = "sub"
@@ -61,7 +65,7 @@ class ExchangeAccount(BaseModel):
     exchange_uid: Annotated[str, Field(pattern=r"^[0-9]{1,20}$")]
     parent_account_id: UUID | None = None
     label: Annotated[str, Field(min_length=1)]
-    colour_token: str = "accent.neutral"  # noqa: S105 -- design token name, not a credential
+    colour_token: str = _DEFAULT_COLOUR
     is_enabled: bool = True
     trading_enabled: bool = False
     position_mode: Literal["one_way", "hedge"] = "one_way"
