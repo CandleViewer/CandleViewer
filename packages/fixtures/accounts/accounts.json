@@ -1,0 +1,119 @@
+{
+  "_note": "synthetic; no key material",
+  "accounts": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "env": "live",
+      "kind": "main",
+      "exchange_uid": "1000001",
+      "parent_account_id": null,
+      "label": "fx-main-live",
+      "created_at": "2026-09-14T09:00:00Z",
+      "updated_at": "2026-09-14T09:00:00Z",
+      "permission_snapshot": {
+        "fetched_at": "2026-09-14T09:00:00Z",
+        "uid": "1000001",
+        "note": "fixture",
+        "readOnly": 0,
+        "permissions": {
+          "ContractTrade": [
+            "Order",
+            "Position"
+          ],
+          "Spot": [],
+          "Wallet": [
+            "AccountTransfer"
+          ],
+          "Options": [],
+          "Derivatives": [
+            "DerivativesTrade"
+          ],
+          "Exchange": [],
+          "NFT": [],
+          "Withdraw": []
+        },
+        "ips": [
+          "100.64.0.7/32"
+        ],
+        "type": 1,
+        "expiredAt": null
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "env": "live",
+      "kind": "sub",
+      "exchange_uid": "1000002",
+      "parent_account_id": "00000000-0000-4000-8000-000000000001",
+      "label": "fx-sub-live",
+      "created_at": "2026-09-14T09:00:00Z",
+      "updated_at": "2026-09-14T09:00:00Z",
+      "permission_snapshot": {
+        "fetched_at": "2026-09-14T09:00:00Z",
+        "uid": "1000002",
+        "note": "fixture",
+        "readOnly": 0,
+        "permissions": {
+          "ContractTrade": [
+            "Order",
+            "Position"
+          ],
+          "Spot": [],
+          "Wallet": [
+            "AccountTransfer"
+          ],
+          "Options": [],
+          "Derivatives": [
+            "DerivativesTrade"
+          ],
+          "Exchange": [],
+          "NFT": [],
+          "Withdraw": []
+        },
+        "ips": [
+          "100.64.0.7/32"
+        ],
+        "type": 1,
+        "expiredAt": null
+      }
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000003",
+      "env": "demo",
+      "kind": "main",
+      "exchange_uid": "1000003",
+      "parent_account_id": null,
+      "label": "fx-demo",
+      "created_at": "2026-09-14T09:00:00Z",
+      "updated_at": "2026-09-14T09:00:00Z",
+      "permission_snapshot": {
+        "fetched_at": "2026-09-14T09:00:00Z",
+        "uid": "1000003",
+        "note": "fixture",
+        "readOnly": 0,
+        "permissions": {
+          "ContractTrade": [
+            "Order",
+            "Position"
+          ],
+          "Spot": [],
+          "Wallet": [
+            "AccountTransfer"
+          ],
+          "Options": [],
+          "Derivatives": [
+            "DerivativesTrade"
+          ],
+          "Exchange": [],
+          "NFT": [],
+          "Withdraw": []
+        },
+        "ips": [
+          "100.64.0.7/32"
+        ],
+        "type": 1,
+        "expiredAt": null
+      }
+    }
+  ]
+}

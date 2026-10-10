@@ -672,6 +672,11 @@ CREATE INDEX ix_ea_parent        ON exchange_accounts (parent_account_id);
 CREATE INDEX ix_ea_tradeable     ON exchange_accounts (env) WHERE is_enabled AND trading_enabled AND deleted_at IS NULL;
 ```
 
+> **Landed:** migration `0017_exchange_accounts_api_keys` (E27-T01). It also adds the deferred FK
+> `fk_user_account_access_exchange_account_id_exchange_accounts` and `COMMENT ON COLUMN` SECRET markers on
+> `api_keys.secret_enc` / `key_id_enc`. C-5.9 classes are in §12 (`key_id_enc`, `secret_enc`, `enc_nonce`,
+> `dek_ref` = S: envelope-encrypted blobs/handles only; no plaintext key column exists).
+
 Additional invariant, enforced by trigger `trg_ea_env_parent`: a sub-account's `env` must equal its parent's `env`. Cross-env parenting is a data-integrity bug that would let a demo key fan out into a live group.
 
 #### 3.2.2 `api_keys`

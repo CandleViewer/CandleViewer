@@ -81,6 +81,11 @@
       "path": "services/api/candleviewer/migrations/versions/0016_audit_read_grants.py",
       "sha256": "4d89286c624bcb14ff585bfd73763cb1586331104518ba27e38e24cd1f4f759e",
       "down_revision": "0015_rules_arm_live_permission"
+    },
+    "0017_exchange_accounts_api_keys": {
+      "path": "services/api/candleviewer/migrations/versions/0017_exchange_accounts_api_keys.py",
+      "sha256": "bfd361f197078d104e5c3cc7b120cd3536b43067605f5838cde65db063d220f0",
+      "down_revision": "0016_audit_read_grants"
     }
   }
 }
