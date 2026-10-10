@@ -14,17 +14,23 @@ from typing import Any
 
 import uvicorn
 
+from candleviewer.settings import Settings, get_settings
 from candleviewer.ws import limits
 from candleviewer.ws.lifecycle import HEARTBEAT_INTERVAL_S, HEARTBEAT_TIMEOUT_S
 
 APP = "candleviewer.main:app"
 
 
-def uvicorn_kwargs(*, host: str = "0.0.0.0", port: int = 8000) -> dict[str, Any]:  # noqa: S104
-    """Keyword arguments for `uvicorn.run`/`uvicorn.Config` (single source: ws/limits)."""
+def uvicorn_kwargs(settings: Settings | None = None) -> dict[str, Any]:
+    """Keyword arguments for `uvicorn.run`/`uvicorn.Config`.
+
+    Host/port come from `Settings` (`CV_BIND_HOST` is validated against the wildcard
+    address, C-12.9); WS limits from `ws/limits.py` (single source).
+    """
+    cfg = settings if settings is not None else get_settings()
     return {
-        "host": host,
-        "port": port,
+        "host": cfg.bind_host,
+        "port": cfg.bind_port,
         "ws_max_size": limits.SERVER_WS_MAX_SIZE,
         "ws_per_message_deflate": limits.SERVER_WS_PER_MESSAGE_DEFLATE,
         "ws_max_queue": limits.SERVER_WS_MAX_QUEUE,
