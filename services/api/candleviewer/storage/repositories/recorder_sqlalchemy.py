@@ -116,15 +116,11 @@ _RECORD_LIVE_GAP = sa.text(
     " AS s RETURNING id"
 )
 # --- E16-T04 sessions / gaps / coverage ------------------------------------------------------
-_SESS_COLS = (
-    "id::text AS id, symbol::text AS symbol, state::text AS state, streams::text[] AS streams, "
-    "started_at, ended_at, first_event_ts, last_event_ts, end_reason"
-)
 _LIVE_SESSIONS = sa.text(
-    (
-        "SELECT @S@ FROM recording_sessions "
-        "WHERE state IN ('starting','recording','degraded','stopping') ORDER BY started_at"
-    ).replace("@S@", _SESS_COLS)
+    "SELECT id::text AS id, symbol::text AS symbol, state::text AS state, "
+    "streams::text[] AS streams, started_at, ended_at, first_event_ts, last_event_ts, "
+    "end_reason FROM recording_sessions "
+    "WHERE state IN ('starting','recording','degraded','stopping') ORDER BY started_at"
 )
 _CLOSE_SESSION_AT = sa.text(
     "UPDATE recording_sessions SET ended_at = GREATEST(started_at, :ended), "
@@ -141,10 +137,10 @@ _TOUCH_EVENTS = sa.text(
     "WHERE id = CAST(:id AS uuid) RETURNING 1"
 )
 _SESSIONS_IN = sa.text(
-    (
-        "SELECT @S@ FROM recording_sessions WHERE symbol = :symbol "
-        "AND started_at < :hi AND (ended_at IS NULL OR ended_at > :lo) ORDER BY started_at"
-    ).replace("@S@", _SESS_COLS)
+    "SELECT id::text AS id, symbol::text AS symbol, state::text AS state, "
+    "streams::text[] AS streams, started_at, ended_at, first_event_ts, last_event_ts, "
+    "end_reason FROM recording_sessions WHERE symbol = :symbol "
+    "AND started_at < :hi AND (ended_at IS NULL OR ended_at > :lo) ORDER BY started_at"
 )
 _GAPS_IN = sa.text(
     "SELECT id, stream::text AS stream, gap_start, gap_end, cause, backfilled, backfill_source "
