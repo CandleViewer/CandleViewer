@@ -10,12 +10,9 @@ services:
     build:
       target: builder
     entrypoint:
-      - uvicorn
-      - candleviewer.main:app
-      - --host
-      - "0.0.0.0"
-      - --port
-      - "8000"
+      - python
+      - -m
+      - candleviewer.server
       - --reload
     environment:
       CV_FEED: synthetic

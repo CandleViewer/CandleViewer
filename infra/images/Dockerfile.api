@@ -75,4 +75,6 @@ EXPOSE 8000
 # even from the docker-proxy). The loopback-only control lives one layer
 # out, in docker-compose.yml's explicit `127.0.0.1:<port>:<port>` publish —
 # that is what stops the socket being reachable from the LAN/WSL portproxy.
-ENTRYPOINT ["uvicorn", "candleviewer.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Launched via candleviewer.server so WS size/queue/compression/concurrency
+# limits come from candleviewer.ws.limits (single source, protocol §16.2).
+ENTRYPOINT ["python", "-m", "candleviewer.server"]

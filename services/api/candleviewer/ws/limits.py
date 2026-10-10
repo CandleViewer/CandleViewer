@@ -28,3 +28,16 @@ FANOUT_SEND_TIMEOUT_S = 2.0
 
 CLOSE_TOO_BIG = 1009
 CLOSE_SLOW_CONSUMER = 4429
+
+# --- Server-layer (uvicorn) limits: consumed by `candleviewer.server` --------
+#: Headroom over the gateway frame cap so the gateway, not the transport, is
+#: what answers an over-cap frame with its own close code on borderline sizes.
+SERVER_WS_HEADROOM_BYTES = 4 * 1024
+#: Transport-level max message size (applies to the decompressed message).
+SERVER_WS_MAX_SIZE = MAX_INBOUND_FRAME_BYTES + SERVER_WS_HEADROOM_BYTES
+#: `cv.v1.json` negotiates permessage-deflate (§5); the size cap above bounds it.
+SERVER_WS_PER_MESSAGE_DEFLATE = True
+#: Small per-connection inbound queue; clients are limited to 30 frames/s (§16.2).
+SERVER_WS_MAX_QUEUE = 4
+#: Whole-process concurrent connection/task bound (8 per user x a few users).
+SERVER_LIMIT_CONCURRENCY = 256
