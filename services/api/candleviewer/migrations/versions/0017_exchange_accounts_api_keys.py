@@ -55,7 +55,7 @@ CREATE TYPE key_status AS ENUM ('pending','active','rotating','revoked','expired
 
 CREATE TABLE exchange_accounts (
   id                    uuid PRIMARY KEY,
-  exchange              exchange_code NOT NULL DEFAULT 'bybit', -- nosemgrep: cv-adapter-isolation
+  exchange              exchange_code NOT NULL,
   env                   exchange_env NOT NULL,
   kind                  account_kind NOT NULL,
   exchange_uid          text NOT NULL,

@@ -53,8 +53,9 @@ def _acct(
     n: int, uid: str, label: str, env: str = "live", kind: str = "main", parent: str = "NULL"
 ) -> str:
     return (
-        "INSERT INTO exchange_accounts (id, env, kind, exchange_uid, label, parent_account_id) "  # noqa: S608 -- test-only literal SQL, no external input
-        f"VALUES ({_A.format(n=n)}, '{env}', '{kind}', '{uid}', '{label}', {parent})"
+        "INSERT INTO exchange_accounts "  # noqa: S608 -- test-only literal SQL, no external input
+        "(id, exchange, env, kind, exchange_uid, label, parent_account_id) "
+        f"VALUES ({_A.format(n=n)}, 'bybit', '{env}', '{kind}', '{uid}', '{label}', {parent})"
     )
 
 

@@ -84,7 +84,7 @@
     },
     "0017_exchange_accounts_api_keys": {
       "path": "services/api/candleviewer/migrations/versions/0017_exchange_accounts_api_keys.py",
-      "sha256": "bfd361f197078d104e5c3cc7b120cd3536b43067605f5838cde65db063d220f0",
+      "sha256": "8cf6869ddbadec4e02e49e129ba710909d15eaa1144c23cf474e9ad74cda963d",
       "down_revision": "0016_audit_read_grants"
     }
   }
