@@ -35,7 +35,7 @@ from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _GITLEAKS = Path(__file__).resolve().parents[5] / ".gitleaks.toml"
 _SHAPE_IDS = ("cv-session-token", "cv-refresh-token", "cv-totp-secret")
-_PASSWORD = "Correct-Horse-Battery-Staple-9"  # noqa: S105 - test-only literal
+_PASSWORD = "pw-canary-7"  # noqa: S105 - test-only literal
 _ORIGIN = "https://app.example.test"
 _T0 = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
 
@@ -237,12 +237,12 @@ def test_login_mfa_refresh_stepup_never_log_a_credential(
             headers={"Authorization": f"Bearer {access4}"},
             json={
                 "code": "000000",
-                "password": "Wrong-Password-Attempt-1",
+                "password": "pw-wrong-7",
                 "action_class": "users",
             },
         )
         assert r.status_code in (401, 429)
-        literals["wrong_password"] = "Wrong-Password-Attempt-1"  # noqa: S105
+        literals["wrong_password"] = "pw-wrong-7"  # noqa: S105
         # 5. recovery-code login path
         clock.now += timedelta(seconds=60)
         r = client.post("/auth/login", json={"identifier": "basiltt", "password": _PASSWORD})
@@ -255,8 +255,8 @@ def test_login_mfa_refresh_stepup_never_log_a_credential(
         )
         assert r.status_code == 200, r.text
         # wrong password / wrong code failure paths
-        client.post("/auth/login", json={"identifier": "basiltt", "password": "Nope-Nope-Nope-1"})
-        literals["bad_login_password"] = "Nope-Nope-Nope-1"  # noqa: S105
+        client.post("/auth/login", json={"identifier": "basiltt", "password": "pw-bad-7"})
+        literals["bad_login_password"] = "pw-bad-7"  # noqa: S105
 
     root.removeHandler(sink)
     root.setLevel(root_level)
