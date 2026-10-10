@@ -33,15 +33,17 @@ Tier = Literal["questdb", "parquet"]
 CACHE_DAYS: Final = 90
 _DAY_US: Final = 86_400_000_000
 _CACHE_MAX: Final = 4096
-#: DB `recording_gaps.cause` -> 22-api `DataCoverage.gaps[].reason` (closed enum there).
-#: `seq_jump`/`backpressure_drop` are losses on a live socket; the closest contract value is
-#: `ws_disconnect` (contract has no finer slug yet — PR Deviations).
+#: Cache entries span `[now - CACHE_DAYS, +inf)`; open sessions end at `now` at read time, and
+#: every session/gap write invalidates, so the far-future upper bound never goes stale.
+_FAR_FUTURE_US: Final = 253_402_300_799_000_000  # 9999-12-31T23:59:59Z
+#: DB `recording_gaps.cause` -> 22-api `DataCoverage.gaps[].reason` (a closed enum). A cause
+#: with no honest contract value (`seq_jump`, `backpressure_drop`) is NOT mapped: the route
+#: omits `reason` (optional in the schema) rather than mislabel it.
+# TODO(#2216): add the recorder-loss slugs to the contract enum and map them here.
 GAP_REASON: Final[dict[str, str]] = {
     "ws_disconnect": "ws_disconnect",
     "process_restart": "backend_restart",
     "exchange_outage": "exchange_outage",
-    "seq_jump": "ws_disconnect",
-    "backpressure_drop": "ws_disconnect",
 }
 
 
@@ -136,14 +138,13 @@ class CoverageService:
         return None if first is None else to_us(first)
 
     async def _rows(
-        self, symbol: str, lo: int, hi: int
+        self, symbol: str, lo: int, hi: int, now: int
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        now = self._now_us()
         horizon = now - CACHE_DAYS * _DAY_US
         if lo >= horizon:
             hit = self._cache.get(symbol)
-            if hit is None or hi > hit[1]:
-                c_hi = max(hi, now)
+            if hit is None or lo < hit[0]:
+                c_hi = _FAR_FUTURE_US
                 async with asyncio.timeout(self._timeout_s):
                     sess = await self._store.sessions_in(symbol, to_dt(horizon), to_dt(c_hi))
                     gaps = await self._store.gaps_in(symbol, to_dt(horizon), to_dt(c_hi))
@@ -165,13 +166,22 @@ class CoverageService:
             mark = await self._marks.get(symbol, kind)
         return int(mark.archived_through_us)
 
+    async def coverage_recent(
+        self, symbol: str, streams: Sequence[str]
+    ) -> tuple[int, int, list[StreamCoverage]]:
+        """The `/market/data-coverage` window: the last `CACHE_DAYS` up to now, always served
+        from the per-symbol cache (one clock read, so `lo` is exactly the cache horizon)."""
+        now = self._now_us()
+        lo = now - CACHE_DAYS * _DAY_US
+        return lo, now, await self.coverage(symbol, streams, lo, now, _now=now)
+
     async def coverage(
-        self, symbol: str, streams: Sequence[str], lo: int, hi: int
+        self, symbol: str, streams: Sequence[str], lo: int, hi: int, *, _now: int | None = None
     ) -> list[StreamCoverage]:
         if hi <= lo:
             raise ValueError("coverage window must have from < to")
-        sessions, gaps = await self._rows(symbol, lo, hi)
-        now = self._now_us()
+        now = self._now_us() if _now is None else _now
+        sessions, gaps = await self._rows(symbol, lo, hi, now)
         out: list[StreamCoverage] = []
         for stream in streams:
             windows: list[Span] = []

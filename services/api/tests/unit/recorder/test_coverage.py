@@ -11,6 +11,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from candleviewer.exchange.bybit.public_ws import stream_for_topic
 from candleviewer.recorder.coverage import CoverageService, attribute_tiers
 from candleviewer.recorder.integrity import mark_kline_backfill
 from candleviewer.recorder.intervals import (
@@ -27,8 +28,8 @@ from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
 S = 1_000_000
 
 
-def _us(*a: int) -> int:
-    return to_us(datetime(*a, tzinfo=UTC))  # type: ignore[misc]
+def _us(y: int, m: int, d: int, hh: int = 0, mm: int = 0, ss: int = 0) -> int:
+    return to_us(datetime(y, m, d, hh, mm, ss, tzinfo=UTC))
 
 
 # -- algebra ----------------------------------------------------------------------------------
@@ -82,7 +83,7 @@ _ev = st.lists(
 async def test_property_coverage_plus_gaps_equals_sessions(events: list[tuple[str, int]]) -> None:
     store, clock = MemRecorderStore(), UsClock(_us(2026, 9, 1))
     t_start = clock.t
-    mgr = SessionManager(store, now_us=clock)
+    mgr = SessionManager(store, now_us=clock, topics=stream_for_topic)
     from tests.unit.recorder.test_sessions import _added
 
     await mgr.on_set_changed(_added())
@@ -93,7 +94,7 @@ async def test_property_coverage_plus_gaps_equals_sessions(events: list[tuple[st
         elif kind == "up":
             await mgr.on_feed_health("publicTrade.BTCUSDT", "healthy")
         elif kind == "crash":
-            mgr = SessionManager(store, now_us=clock)
+            mgr = SessionManager(store, now_us=clock, topics=stream_for_topic)
             await mgr.recover_on_startup(clock.t)
             await mgr.on_set_changed(_added())
     clock.advance_s(1)

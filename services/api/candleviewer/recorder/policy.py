@@ -597,7 +597,9 @@ class RecordingPolicy:
             try:
                 await self._state_observer(symbol, name, context)
             except Exception as exc:  # the mirror never fails the chart's audited I/O
-                logger().error("recorder_session_mirror_failed", symbol=symbol, error=str(exc))
+                logger().error(
+                    "recorder_session_mirror_failed", symbol=symbol, error=type(exc).__name__
+                )
         if name == "error":
             recorder_b11_error_total.labels(env=self._env).inc()
             logger().error(

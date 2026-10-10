@@ -107,6 +107,15 @@ class MarketDataPort(Protocol):
     async def server_time_us(self) -> TsUs: ...
 
 
+class StreamForTopic(Protocol):
+    """E16-T04: normalise a venue feed topic (as carried by `FeedHealthEvent.topic`) to
+    `(symbol | None, stream_kind names)`. `symbol=None` means "every symbol" (a socket-wide
+    event, topic `*`); an unknown topic maps to no streams. Implemented by each adapter
+    so venue vocabulary never leaves the adapter (C-2.2)."""
+
+    def __call__(self, topic: str) -> tuple[str | None, tuple[str, ...]]: ...
+
+
 @runtime_checkable
 class TradingPort(Protocol):
     """§14.1. Account-scoped order entry and reads. **Declared only** in

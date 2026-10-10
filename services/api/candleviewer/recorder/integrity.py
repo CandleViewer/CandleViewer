@@ -38,7 +38,7 @@ KLINE_SOURCE: Final = "kline"
 
 
 def logger() -> structlog.stdlib.BoundLogger:
-    return structlog.get_logger("candleviewer.recorder.integrity")  # type: ignore[no-any-return]
+    return structlog.get_logger("candleviewer.recorder.integrity")  # type: ignore[no-any-return]  # structlog: Any
 
 
 class IntegrityStore(Protocol):
@@ -221,7 +221,7 @@ class IntegrityJob:
             async with asyncio.timeout(self._timeout_s):
                 await self._events.write(event)
         except Exception as exc:
-            logger().error("recorder_event_write_failed", symbol=symbol, error=str(exc))
+            logger().error("recorder_event_write_failed", symbol=symbol, error=type(exc).__name__)
 
 
 async def mark_kline_backfill(

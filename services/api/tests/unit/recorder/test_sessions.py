@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Literal
 
 import pytest
 
+from candleviewer.exchange.bybit.public_ws import stream_for_topic
 from candleviewer.recorder.models import RecorderSetChanged
 from candleviewer.recorder.sessions import (
     DEFAULT_STREAMS,
@@ -24,16 +26,19 @@ from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
 T0 = to_us(datetime(2026, 9, 14, 10, 0, tzinfo=UTC))
 
 
-def _added(symbol: str = "BTCUSDT", change: str = "added") -> RecorderSetChanged:
+def _added(
+    symbol: str = "BTCUSDT", change: Literal["added", "removed", "reason_changed"] = "added"
+) -> RecorderSetChanged:
     return RecorderSetChanged(
-        symbol=symbol, change=change, reason="manual", reasons=("manual",),  # type: ignore[arg-type]
+        symbol=symbol, change=change, reason="manual", reasons=("manual",),
         priority=300, auto_evictable=False, ts_event=T0,
     )  # fmt: skip
 
 
 async def _mgr() -> tuple[SessionManager, MemRecorderStore, UsClock, list[str]]:
     store, clock, inval = MemRecorderStore(), UsClock(T0), []
-    mgr = SessionManager(store, now_us=clock, config=SessionConfig(), invalidate=inval.append)
+    mgr = SessionManager(store, now_us=clock, config=SessionConfig(), invalidate=inval.append,
+                         topics=stream_for_topic)  # fmt: skip
     await mgr.on_set_changed(_added())
     return mgr, store, clock, inval
 
@@ -63,7 +68,8 @@ async def test_ws_drop_12_min_closes_session_one_gap_exact_new_session() -> None
     up_at = clock.t
     await mgr.on_feed_health("publicTrade.BTCUSDT", "healthy")
     assert store.gap_windows() == [("trades", down_at, up_at, "ws_disconnect")]
-    old = store.sessions[first]  # type: ignore[index]
+    assert first is not None
+    old = store.sessions[first]
     assert old["end_reason"] == "ws_disconnect" and to_us(old["ended_at"]) == up_at
     new = mgr.live_session("BTCUSDT")
     assert new is not None and new != first
@@ -239,3 +245,82 @@ async def test_writer_buffered_gaps_flush_once_session_opens(tmp_path: Path) -> 
     assert store.gap_windows() == [("trades", T0, T0 + 1_000, "backpressure_drop")]
     assert store.gaps[0]["session_id"] == mgr.live_session("BTCUSDT")
     assert not w.pending_gaps()
+
+
+def test_adapter_stream_for_topic_normalises_venue_topics() -> None:
+    assert stream_for_topic("publicTrade.BTCUSDT") == ("BTCUSDT", ("trades",))
+    assert stream_for_topic("orderbook.200.ETHUSDT") == (
+        "ETHUSDT", ("orderbook_delta", "orderbook_snapshot")
+    )  # fmt: skip
+    assert stream_for_topic("*") == (None, DEFAULT_STREAMS)
+    assert stream_for_topic("kline.1.BTCUSDT") == ("BTCUSDT", ())
+
+
+async def test_without_resolver_every_health_event_is_socket_wide() -> None:
+    store, clock = MemRecorderStore(), UsClock(T0)
+    mgr = SessionManager(store, now_us=clock)
+    await mgr.on_set_changed(_added())
+    await mgr.on_feed_health("anything", "degraded")
+    clock.advance_s(2)
+    await mgr.on_feed_health("anything", "healthy")
+    assert {w[0] for w in store.gap_windows()} == set(DEFAULT_STREAMS)
+
+
+async def test_stale_topic_writes_its_silent_window_and_keeps_session() -> None:
+    """Review LOW #4: a per-topic stale resubscribe recovers with no `healthy` event, so the
+    observed silent window (age_s) is written as a `ws_disconnect` gap immediately."""
+    mgr, store, clock, _ = await _mgr()
+    sid = mgr.live_session("BTCUSDT")
+    clock.advance_s(120)
+    await mgr.on_feed_health("publicTrade.BTCUSDT", "stale", 30.0)
+    assert store.gap_windows() == [("trades", clock.t - 30_000_000, clock.t, "ws_disconnect")]
+    assert mgr.live_session("BTCUSDT") == sid
+    await mgr.on_feed_health("publicTrade.BTCUSDT", "stale", 0.0)  # no age: nothing to write
+    assert len(store.gaps) == 1
+
+
+class _Audit:
+    def __init__(self, log: list[str], fail: bool = False) -> None:
+        self.log, self.fail = log, fail
+        self.records: list[tuple[str, dict[str, Any]]] = []
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        if self.fail:
+            raise OSError("audit down")
+        self.log.append("audit")
+        self.records.append((action, kw))
+
+
+class _LoggingStore(MemRecorderStore):
+    def __init__(self, log: list[str]) -> None:
+        super().__init__()
+        self.log = log
+
+    async def record_gap(self, **kw: Any) -> int:
+        self.log.append("gap")
+        return await super().record_gap(**kw)
+
+
+async def test_crash_recovery_is_audited_write_ahead_as_system_recorder() -> None:
+    """Security MEDIUM: one `recorder.stop reason=process_restart` per closed session, actor
+    `system:recorder`, written BEFORE the gap rows."""
+    log: list[str] = []
+    store = _LoggingStore(log)
+    await SessionManager(store, now_us=UsClock(T0)).on_set_changed(_added())
+    audit = _Audit(log)
+    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=audit)
+    assert await fresh.recover_on_startup(T0 + 9) == 1
+    assert log[0] == "audit" and log.count("audit") == 1 and "gap" in log[1:]
+    ((action, kw),) = audit.records
+    assert action == "recorder.stop" and kw["reason"] == "process_restart"
+    assert kw["actor_label"] == "system:recorder" and kw["actor_user_id"] is None
+    assert kw["object_id"] == "BTCUSDT" and kw["after_state"]["reason"] == "process_restart"
+
+
+async def test_crash_recovery_audit_failure_leaves_session_open() -> None:
+    store = MemRecorderStore()
+    await SessionManager(store, now_us=UsClock(T0)).on_set_changed(_added())
+    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=_Audit([], fail=True))
+    with pytest.raises(OSError):
+        await fresh.recover_on_startup(T0 + 9)
+    assert store.gaps == [] and len(await store.list_live_sessions()) == 1

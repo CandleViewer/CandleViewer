@@ -7,7 +7,8 @@ module only MIRRORS it into Postgres from the state-entry hooks the chart alread
 event (C-2.20) and owns no state machine of its own (ADR-0016).
 
 Gap sources (cause, `recording_gaps.cause`):
-- `ws_disconnect`: E08 `FeedHealthEvent` windows (`degraded`/`resubscribing` -> `healthy`).
+- `ws_disconnect`: E08 `FeedHealthEvent` windows (`stale`/`degraded`/`resubscribing` ->
+  `healthy`); topics are normalised by the adapter-provided `TopicResolver`.
   On recovery the session is closed (`end_reason='ws_disconnect'`), one gap per affected
   stream covering exactly the outage is written on it, and a new session is opened.
 - `seq_jump`: the StreamWriter's `seq_jump_windows` signal (E16-T03) — not re-detected here.
@@ -52,14 +53,6 @@ DEFAULT_STREAMS: Final[tuple[str, ...]] = (
     "tickers",
     "liquidations",
 )
-#: Bybit public topic prefix -> `stream_kind` (E08 `FeedHealthEvent.topic`).
-_TOPIC_STREAM: Final[dict[str, tuple[str, ...]]] = {
-    "publicTrade": ("trades",),
-    "orderbook": ("orderbook_delta", "orderbook_snapshot"),
-    "tickers": ("tickers",),
-    "allLiquidation": ("liquidations",),
-    "liquidation": ("liquidations",),
-}
 #: Feed states that mean "the socket is not delivering" (stale = quiet, not lost).
 _DOWN: Final = frozenset({"degraded", "resubscribing"})
 #: B11 hook name (state entry) -> `recording_state` mirrored on the session row.
@@ -72,7 +65,7 @@ _B11_STATE: Final[dict[str, str]] = {
 
 
 def logger() -> structlog.stdlib.BoundLogger:
-    return structlog.get_logger("candleviewer.recorder.sessions")  # type: ignore[no-any-return]
+    return structlog.get_logger("candleviewer.recorder.sessions")  # type: ignore[no-any-return]  # structlog: Any
 
 
 def to_dt(us: int) -> datetime:
@@ -130,6 +123,29 @@ class SessionStore(Protocol):
     async def list_live_sessions(self) -> list[dict[str, Any]]: ...
 
 
+class SessionAudit(Protocol):
+    """Subset of `AuditWriter.emit` (same shape as `recorder.policy.AuditSink`; injected —
+    M11 may not import `audit`, C-3.3)."""
+
+    async def emit(
+        self,
+        action: str,
+        *,
+        actor_label: str,
+        actor_user_id: str | None,
+        object_kind: str,
+        object_id: str,
+        reason: str,
+        after_state: Mapping[str, str | bool | None],
+        env: str,
+        outcome: str = "success",
+    ) -> None: ...
+
+
+#: Actor for automatic recorder session actions (crash recovery).
+SYSTEM_RECORDER: Final = "system:recorder"
+
+
 class WriterSignals(Protocol):
     """The StreamWriter's outputs this module consumes (E16-T03)."""
 
@@ -159,12 +175,14 @@ class SessionConfig:
     store_timeout_s: float = 5.0
 
 
-def _topic_scope(topic: str) -> tuple[str | None, tuple[str, ...]]:
-    """`publicTrade.BTCUSDT` -> ("BTCUSDT", ("trades",)); `*` -> (None, all streams)."""
-    if topic == "*" or "." not in topic:
-        return None, DEFAULT_STREAMS
-    head, _, rest = topic.partition(".")
-    return rest.rsplit(".", 1)[-1], _TOPIC_STREAM.get(head, ())
+#: Venue topic -> (symbol | None, stream_kind names). Injected: the adapter owns the venue
+#: vocabulary (`exchange.base.ports.StreamForTopic`, implemented by the exchange adapter, C-2.2).
+TopicResolver = Callable[[str], tuple[str | None, tuple[str, ...]]]
+
+
+def _all_streams(topic: str) -> tuple[str | None, tuple[str, ...]]:
+    """Fallback resolver when none is injected: treat every event as socket-wide."""
+    return None, DEFAULT_STREAMS
 
 
 class SessionManager:
@@ -177,8 +195,12 @@ class SessionManager:
         now_us: Callable[[], int],
         config: SessionConfig | None = None,
         invalidate: Invalidate | None = None,
+        topics: TopicResolver | None = None,
+        audit: SessionAudit | None = None,
     ) -> None:
+        self._audit = audit
         self._store = store
+        self._topics = topics or _all_streams
         self._now_us = now_us
         self._cfg = config or SessionConfig()
         self._invalidate = invalidate or (lambda _symbol: None)
@@ -285,11 +307,12 @@ class SessionManager:
 
     # -- gap sources ---------------------------------------------------------------------------
 
-    async def on_feed_health(self, topic: str, state: str) -> None:
-        """E08 `FeedHealthEvent`: a `degraded|resubscribing` -> `healthy` window is a
+    async def on_feed_health(self, topic: str, state: str, age_s: float = 0.0) -> None:
+        """E08 `FeedHealthEvent` (`age_s` = its `last_msg_age_s`). A `stale` topic writes its
+        silent window immediately. A `degraded|resubscribing` -> `healthy` window is a
         `ws_disconnect` gap; when the last down stream of a symbol recovers, the session is
         closed (`end_reason='ws_disconnect'`) and a new one opened at the recovery instant."""
-        symbol, streams = _topic_scope(topic)
+        symbol, streams = self._topics(topic)
         now = self._now_us()
         async with self._lock:
             targets = [symbol] if symbol is not None else list(self._live)
@@ -298,7 +321,15 @@ class SessionManager:
                 if live is None:
                     continue
                 wanted = [s for s in streams if s in live.streams]
-                if state in _DOWN:
+                if state == "stale" and age_s > 0:
+                    # A stale topic is resubscribed on the live socket and recovers with no
+                    # per-topic `healthy` event (E08 watchdog), so the observed silent window
+                    # is written now; the session continues (the socket was not lost).
+                    lo = max(live.started_us, now - int(age_s * 1_000_000))
+                    for s in wanted:
+                        if s not in live.down:
+                            await self._gap(sym, live.session_id, s, lo, now, "ws_disconnect")
+                elif state in _DOWN:
                     for s in wanted:
                         live.down.setdefault(s, now)
                 elif state == "healthy":
@@ -342,6 +373,30 @@ class SessionManager:
                     continue
                 await self._touch(live.session_id, first, last)
 
+    async def _audit_restart(self, symbol: str, sid: str, lo: int, hi: int) -> None:
+        """C-2.9 write-ahead: the `recorder.stop` audit precedes the gap row and the close; an
+        audit failure raises, so recovery stops with the session still open (retried on the
+        next start) — never an unaudited close."""
+        if self._audit is None:
+            return
+        async with asyncio.timeout(self._cfg.store_timeout_s):
+            await self._audit.emit(
+                "recorder.stop",
+                actor_label=SYSTEM_RECORDER,
+                actor_user_id=None,
+                object_kind="recorded_symbol",
+                object_id=symbol,
+                reason="process_restart",
+                after_state={
+                    "symbol": symbol,
+                    "session_id": sid,
+                    "reason": "process_restart",
+                    "gap_start_us": str(lo),
+                    "gap_end_us": str(hi),
+                },
+                env=self._cfg.env,
+            )
+
     async def _touch(self, sid: str, first: int, last: int) -> None:
         await self._call(
             lambda: self._store.touch_session_events(sid, first=to_dt(first), last=to_dt(last))
@@ -365,8 +420,11 @@ class SessionManager:
                 sid, symbol = str(row["id"]), str(row["symbol"])
                 if sid in {lv.session_id for lv in self._live.values()}:
                     continue  # opened by this process
+                # Starts at `last_event_ts` once the writer's bounds are tracked (poll_writer);
+                # until then `started_at` (overstates, never understates, the loss).
                 last = row.get("last_event_ts") or row["started_at"]
                 lo = to_us(last)
+                await self._audit_restart(symbol, sid, lo, process_start_us)
                 for s in row.get("streams") or DEFAULT_STREAMS:
                     await self._gap(symbol, sid, str(s), lo, process_start_us, "process_restart")
                 await self._close_row(sid, "process_restart", process_start_us)
@@ -382,7 +440,9 @@ class SessionManager:
                 try:
                     await self._close(sym, "shutdown", now)
                 except (TimeoutError, OSError) as exc:
-                    logger().error("recorder_session_close_failed", symbol=sym, error=str(exc))
+                    logger().error(
+                        "recorder_session_close_failed", symbol=sym, error=type(exc).__name__
+                    )
 
 
 class WarmupGate(Protocol):

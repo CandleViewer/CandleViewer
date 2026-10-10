@@ -1049,7 +1049,7 @@ def create_app(
         make_data_coverage_router(
             lambda: coverage_service,
             principal_resolver=audit_resolver,
-            now_us=lambda: time.time_ns() // 1000,
+            symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
         )
     )
     # E08-S01-2: served from the scheduler's in-memory snapshot; `503` until
@@ -1576,15 +1576,19 @@ def _wire_klines(
 
 
 def recording_started_at_us(ctx: AppContext) -> RecordingStart:
-    """E12-S05 `meta.recording_started_at`. E16-T04: the earliest `first_event_ts` across the
-    symbol's recording sessions when `CoverageService` is composed (real backend); otherwise
-    the oldest trade in the hot `trades` table. `None` when nothing was recorded."""
+    """E12-S05 `meta.recording_started_at`: the EARLIEST of (a) the oldest trade in the hot
+    `trades` tape (`first_trade_us`) and (b) E16-T04's `min(first_event_ts)` across the
+    symbol's recording sessions when `CoverageService` is composed. Sessions only win when
+    present and earlier: until the session manager is wired into the lifespan (#2188) no
+    session rows are written, and the tape remains the source (no false `no_data_recorded`).
+    `None` only when neither source knows of any recorded data."""
 
     async def first(symbol: str) -> int | None:
+        tape = await ctx.storage.market_data.first_trade_us(symbol)
         cov = ctx.recorder.coverage
-        if cov is not None:
-            return await cov.recording_started_at_us(symbol)
-        return await ctx.storage.market_data.first_trade_us(symbol)
+        sessions = await cov.recording_started_at_us(symbol) if cov is not None else None
+        known = [v for v in (tape, sessions) if v is not None]
+        return min(known) if known else None
 
     return first
 

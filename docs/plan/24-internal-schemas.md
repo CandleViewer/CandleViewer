@@ -3003,8 +3003,14 @@ GapInterval(lo: int, hi: int, cause: str, backfilled: bool, backfill_source: str
 Covered = session windows − gaps, merged with `COVERAGE_MERGE_TOLERANCE_MS = 1000` (never
 across a gap row). Tier from the E16-T05 roll-off watermark: older → `parquet`, newer →
 `questdb`, split at the watermark. A `backfilled` (kline) gap stays a gap: tick coverage is
-never reconstructed from bars. DB `cause` → REST `reason`: `process_restart`→`backend_restart`;
-`seq_jump`/`backpressure_drop`→`ws_disconnect` (the REST enum has no finer slug yet).
+never reconstructed from bars. DB `cause` → REST `reason`: `ws_disconnect`, `exchange_outage`
+1:1; `process_restart`→`backend_restart`; `seq_jump`/`backpressure_drop` have no contract value
+yet, so `reason` is omitted for them (never relabelled; #2216). `GET /market/data-coverage` is
+capped server-side to the last 90 days (cache horizon) until the contract adds `from`/`to`
+(#2216). A `stale` feed topic (resubscribed on the live socket, no per-topic `healthy`) writes
+its observed silent window as a `ws_disconnect` gap; the session continues. Crash gaps start at
+`last_event_ts` once the writer's event bounds are polled, else at `started_at` (overstates).
+Venue topics reach the recorder already normalised (`exchange.base.ports.StreamForTopic`).
 
 ### 13.4 Retention
 
