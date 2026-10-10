@@ -263,7 +263,7 @@ class _Connection:
         frame = bye or lifecycle_bye(reason, now_ms=self.wall_ms(), retry_after_ms=retry_after_ms)
         code = int(frame["p"]["code"])
         bye_reason = str(frame["p"].get("reason", reason))
-        cv_ws_closes_total.labels(code=str(code), reason=bye_reason[:40]).inc()
+        cv_ws_closes_total.labels(reason=bye_reason[:40]).inc()
         if self.lifecycle.can(ConnEvent.CLOSE):
             self.lifecycle.fire(ConnEvent.CLOSE)
         for item in (frame, _CLOSE, code):

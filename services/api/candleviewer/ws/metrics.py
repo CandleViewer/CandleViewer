@@ -37,8 +37,8 @@ cv_ws_auth_failures_total = Counter(
 )
 cv_ws_closes_total = Counter(
     "cv_ws_closes_total",
-    "Server-initiated WS closes, by close code and bye reason.",
-    labelnames=("code", "reason"),
+    "Server-initiated WS closes by bye reason (the close code is fixed per reason).",
+    labelnames=("reason",),
 )
 cv_ws_clock_skew_ms = Histogram(
     "cv_ws_clock_skew_ms",

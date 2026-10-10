@@ -78,7 +78,7 @@ TOPIC_PERMISSIONS: Final[dict[str, tuple[Permission, Scope]]] = {
 }
 
 cv_ws_subscribe_total = Counter(
-    "cv_ws_subscribe_total", "WS sub results per topic.", labelnames=("family", "result")
+    "cv_ws_subscribe_total", "WS sub results per topic.", labelnames=("topic", "result")
 )
 cv_ws_topics_per_client = Histogram(
     "cv_ws_topics_per_client",
@@ -732,7 +732,7 @@ def _observe(ch: str, result: Mapping[str, Any]) -> None:
     fam = topic_family(ch)
     label = fam if fam in FAMILIES else "unknown"
     outcome = "ok" if result["ok"] else str(result["error"]["code"])
-    cv_ws_subscribe_total.labels(family=label, result=outcome).inc()
+    cv_ws_subscribe_total.labels(topic=label, result=outcome).inc()
 
 
 _AUDITED_DENIALS: Final = frozenset({"forbidden", "account_scope_denied"})

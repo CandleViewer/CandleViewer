@@ -363,6 +363,17 @@ Rules:
 - Three failed `auth` attempts → `bye` with `auth_failed`, close `4401`, and a `warning` audit entry.
 - `token_expires_at_ms` tells the client when to re-`auth`. The client SHOULD refresh at `expires_at - 60 s`. If the token expires without re-auth, the server sends `bye` (`token_expired`, `4401`) and closes — subscriptions are not silently continued on an expired identity.
 
+**As built (E17-S01, #2132; wired by #377).** These details are binding:
+
+- Failed `auth` attempts 1 and 2 each get `err` `auth_failed` and the socket stays open. The 3rd closes with `bye auth_failed` + `4401`. A `warning` audit entry (`auth.login_failed`, `reason: ws_auth_failed`, never the token) is written.
+- A failed re-`auth` keeps the prior identity until its token expires. A re-`auth` that resolves to a different user is refused.
+- Three malformed or unexpected frames after `hello` close with `bye bad_client` + `4400`.
+- The heartbeat-timeout `bye` (`heartbeat_timeout`) uses `1001`.
+- More than 8 connections per user: the oldest idle one is closed with `too_many_connections` (`4429`).
+- Only `cv.v1.json` is negotiated today; `cv.v1.msgpack` follows its dependency PR.
+- `welcome.server_version` / `git_sha` come from settings (`CV_VERSION`, `CV_GIT_SHA`). `auth_ok.kill_switch` reflects the live kill-switch state at the time of the `auth`.
+- Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_SHUTDOWN_GRACE_MS` (5 000) and `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000). The defaults are the values in this section and §9.4.
+
 ### 4.4 Close codes
 
 | Code   | Name            | Meaning                                       | Client action                                |
@@ -513,6 +524,8 @@ Every requested topic gets exactly one result. Partial success is normal — one
 
 Unsubscribing from an unknown or already-removed topic is **not** an error (`ok: true`, `noop: true`) — this keeps teardown idempotent during pane close races.
 
+**As built (E17-S02, #2159):** `unsub` of `system` returns `ok: false` and the topic stays attached (§6.2).
+
 ### 5.4 `ctl` — retuning a live subscription
 
 Changing throttle or depth without tearing down and re-snapshotting:
@@ -523,6 +536,8 @@ Changing throttle or depth without tearing down and re-snapshotting:
 ```
 
 Changing `depth`, `price_grouping`, `bar_type`/`param`, or the `metrics` list **invalidates the current state**, so the server answers `ctl_ok` with `"resnapshot": true` and immediately sends a fresh `snap` that restarts the sequence. The client must discard its prior state on seeing that flag.
+
+**As built (E17-S02, #2159):** a `sub` that would take a connection past 40 distinct symbols is refused per topic with `subscription_limit`. More than 50 topics in one `sub` gives `too_many_topics` for the excess entries.
 
 **Why `ctl` exists.** The UI changes throttle constantly: a pane that scrolls out of view drops to 1 000 ms, a maximised DOM goes to 20 ms, a backgrounded Electron window goes to 1 000 ms for everything. Doing that with unsub/sub would re-snapshot a 200-level book every time the user switches tabs.
 
@@ -624,6 +639,8 @@ All private topics are **account-scoped**: the server intersects the requested `
 **`orders` and `executions` are never throttled or coalesced.** Losing an intermediate order state or dropping a fill would corrupt the OMS mirror the UI renders and the journal derives from. If a client cannot keep up with these two topics, the server closes the connection (`4429`) rather than silently degrading them — a slow client must not be able to see a wrong position.
 
 **`system` is auto-subscribed.** Every authenticated connection is subscribed to `system` implicitly at `auth_ok`; it carries kill-switch transitions, feature-flag changes, degraded-data notices, exchange connectivity changes and planned-shutdown warnings. A client may not unsubscribe from it.
+
+**As built (#377).** Kill-switch transitions are pushed on `system` as a `kill_switch` frame (§12.5) before the re-evaluation in §9.5 runs, so the UI can disable order entry on that frame alone. A live public subscription takes one shared upstream lease per `(symbol, family)` on the E08 ingestion streams. The lease is released 30 s after the last consumer leaves. Families with no ingestion stream yet stay `snapshot_pending`.
 
 ### 6.3 Topic → permission matrix
 
@@ -820,6 +837,16 @@ A client that already bootstrapped over REST may attach to deltas only:
 ```
 
 The server accepts this **only** when it can prove continuity: it holds state covering `from_ts_ms` and no resync occurred since. Otherwise it answers `sub_ok` with `ok: true, snapshot_forced: true` and sends a `snap` anyway. The client must handle the forced snapshot; it may not assume its REST-derived state survived.
+
+### 7.7 As built (E17-S03, #2178; wired by #377)
+
+- Each (connection, subscription) has its own sequence domain. A `snap` takes exactly one sequence number. `meta.previous_seq` is present whenever an earlier `snap` or `d` existed.
+- While a subscription is `snapshot_pending`, no `d` is sent on it. Snapshots come from the owning module (book, bars, order-flow). Until a module's adapter has landed (#2195 bars, #2196 book, #2197 order-flow), its families stay `snapshot_pending` and no `snap` is emitted. Such a subscription is never an error.
+- `snapshot: false` without provable continuity is answered with `snapshot_forced: true` (§7.6).
+- A `resync` with no `ch`, or with an unknown `reason`, is answered with `err` `frame_malformed`.
+- Every `revoked` frame, including the §7.5 `resync_rate_limited` one, always carries `resubscribe_allowed`. It is `true` only when a scope narrowed and some accounts were kept (E17-S02, #2159).
+- Snapshots over 4 MiB are chunked. Public snapshots are cached per topic and identity. Private snapshots are never cached or shared.
+- Metrics: `cv_ws_resync_total{reason}`, `cv_ws_snapshot_bytes{topic}`, `cv_ws_snapshot_build_seconds{topic}`, `cv_ws_sequence_gaps_detected_total` and `cv_ws_stale_topics`.
 
 ---
 

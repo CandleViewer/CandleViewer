@@ -29,7 +29,7 @@ UpstreamKey = tuple[str, str, tuple[str, ...]]  # (symbol, family, params)
 cv_ws_upstream_refcount = Gauge(
     "cv_ws_upstream_refcount",
     "Consumers of one upstream subscription (0 while in its release grace).",
-    labelnames=("symbol", "family"),
+    labelnames=("symbol", "topic"),
 )
 
 
@@ -121,6 +121,6 @@ class UpstreamRefs:
 
     def _gauge(self, key: UpstreamKey) -> None:
         entry = self._entries.get(key)
-        cv_ws_upstream_refcount.labels(symbol=key[0], family=key[1]).set(
+        cv_ws_upstream_refcount.labels(symbol=key[0], topic=key[1]).set(
             0 if entry is None else len(entry.consumers)
         )
