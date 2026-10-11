@@ -29,6 +29,9 @@ from candleviewer.secrets.store import AuditSink, CredentialStore
 
 Clock = Callable[[], float]
 
+#: Bounded metric label values for `caller_module` (anything else is reported as `other`).
+_KNOWN_CALLERS = frozenset({"exchange_adapter", "admin"})
+
 
 def reject_withdraw(permissions: Mapping[str, object]) -> None:
     """C-2.8: any permission key containing `withdraw` (any case/whitespace) with a
@@ -210,7 +213,9 @@ class CredentialBroker:
             result = "ok"
             return out
         finally:
-            m.credential_borrow_total.labels(module=caller_module, result=result).inc()
+            m.credential_borrow_total.labels(
+                stage=caller_module if caller_module in _KNOWN_CALLERS else "other", result=result
+            ).inc()
 
     async def destroy(self, key_id: UUID) -> None:
         self._cache.flush(key_id)

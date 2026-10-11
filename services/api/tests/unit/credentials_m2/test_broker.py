@@ -40,7 +40,7 @@ async def _borrow(b: CredentialBroker, key_id: Any) -> tuple[str, str]:
     async def fn(k: Secret[str], s: Secret[str]) -> tuple[str, str]:
         return k.reveal(), s.reveal()
 
-    return await b.with_credentials(key_id, fn, caller_module="exchange.bybit", purpose="sign")
+    return await b.with_credentials(key_id, fn, caller_module="exchange_adapter", purpose="sign")
 
 
 async def test_broker_round_trip_returns_stored_plaintext(broker: CredentialBroker) -> None:
@@ -207,7 +207,7 @@ async def test_broker_audits_store_borrow_destroy(
         "security.credential_destroyed",
     ]
     borrowed = audit.records[1][1]
-    assert borrowed["caller_module"] == "exchange.bybit" and borrowed["purpose"] == "sign"
+    assert borrowed["caller_module"] == "exchange_adapter" and borrowed["purpose"] == "sign"
     for _, fields in audit.records:
         assert API_KEY not in str(fields) and API_SECRET not in str(fields)
 

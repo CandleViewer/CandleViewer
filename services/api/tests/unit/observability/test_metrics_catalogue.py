@@ -32,7 +32,7 @@ _UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|m
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "65d7379afcea1c6c53f1e72ccfab85bef9d8ed1d76a8657fc43b1de2ca5216a3"
+GOLDEN_CATALOGUE_SHA256 = "f8e5f62978ef90bf01642871a52f4ce654f580220f59b59bb12e5ccb7a35e168"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -173,11 +173,16 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
+    from candleviewer.secrets._metrics import EXPORTED_NAMES as SECRETS_NAMES
     from candleviewer.ws.metrics import CV_WS_NAMES
     from candleviewer.ws.metrics import EXPORTED_NAMES as CVWB_NAMES
 
     exported = (
-        {s.name for s in live_specs() if s.exported} - CVWB_NAMES - RECORDER_NAMES - CV_WS_NAMES
+        {s.name for s in live_specs() if s.exported}
+        - CVWB_NAMES
+        - RECORDER_NAMES
+        - CV_WS_NAMES
+        - SECRETS_NAMES
     )
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
@@ -232,5 +237,22 @@ def test_exported_recorder_metrics_served_with_env() -> None:
         assert 'recorder_rows_total{env="demo",stream="trades"}' in text
         for name in EXPORTED_NAMES:
             assert f"# HELP {name} " in text, name
+    finally:
+        collector.close()
+
+
+def test_exported_secrets_metrics_served_on_app_registry_with_env() -> None:
+    """E27-T02: every M2 series is served on the scraped registry with `env`."""
+    from candleviewer.secrets import _metrics as sm
+
+    m = Metrics("demo")
+    collector = sm.export_secrets_metrics(m.registry, env="demo")
+    try:
+        sm.kek_load_failures_total.labels(reason="kek_unavailable").inc(0)
+        sm.credential_borrow_total.labels(stage="t", result="ok").inc(0)
+        text = generate_latest(m.registry).decode()
+        for name in sm.EXPORTED_NAMES:
+            assert f"# HELP {name} " in text, name
+        assert 'cv_kek_load_failures_total{env="demo",reason="kek_unavailable"}' in text
     finally:
         collector.close()

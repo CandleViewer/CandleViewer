@@ -124,6 +124,18 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
     # not `*Service`/`*Error` by name, but the module's documented public
     # interface alongside `OmsService`.
     "M14": {"Validator", "ReadOnlyCheck", "OrderPlacementRefused"},
+    # E27-T02: the metadata-only results `admin` consumes (C-3.2) and the `Secret`
+    # wrapper the `with_credentials` callback receives. No key/DEK type is exported.
+    "M2": {
+        "Secret",
+        "KekCheckResult",
+        "RewrapReport",
+        "StoredCredential",
+        "KekUnavailable",
+        "CredentialUnavailable",
+        "KekSourceNotPermitted",
+        "WithdrawPermissionRejected",
+    },
 }
 
 

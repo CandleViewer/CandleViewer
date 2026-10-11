@@ -26,10 +26,12 @@ compose rule (`tests/unit/credentials_m2/test_compose_kek.py`).
 - WSL: `/etc/wsl.conf` `[interop] enabled=false`, `appendWindowsPath=false`.
 - Compose `restart: "no"` for `api`; the launcher is the only restart supervisor (**FU-1**).
 
+<a id="alert-kekunavailable"></a>
+
 ## Symptom: app is Degraded with `secrets.kek_unavailable`
 
 Signals: `/readyz` and the `system` WS topic show the critical notice; `cv_kek_load_failures_total{reason}`
-increments; audit `security.kek_load_failed`; `cv_kek_version` = 0. Order placement is refused, every
+increments; audit `security.kek_load_failed`; `cv_kek_version_state` = 0. Order placement is refused, every
 credential operation raises `kek_unavailable`. The log line contains this remediation verbatim:
 
 > KEK unavailable (reason=<r>): trading disabled. Ensure the host launcher/systemd credential supplies

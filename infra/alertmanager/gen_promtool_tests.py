@@ -40,6 +40,13 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "15m",
         {},
     ),
+    "KekUnavailable": (
+        'cv_kek_load_failures_total{reason="kek_unavailable"}',
+        "0+0x10 1+0x10",
+        "0+0x20",
+        "12m",
+        {"reason": "kek_unavailable"},
+    ),
     "SyntheticAlert": ("cv_synthetic_alert", "1+0x10", "0+0x10", "5m", {}),
     "PublicWsDown": (
         'ws_connection_state{socket="public"}',

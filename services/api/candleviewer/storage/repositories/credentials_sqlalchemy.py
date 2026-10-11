@@ -17,17 +17,17 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 
-_COLS = (
-    "id, exchange_account_id, label, key_id_enc, key_id_last4, secret_enc, enc_nonce, "
-    "dek_ref, kek_version, enc_alg, permission_snapshot, (revoked_at IS NOT NULL) AS revoked"
-)
 _INSERT = sa.text(
     "INSERT INTO api_keys (id, exchange_account_id, label, key_id_enc, key_id_last4, "
     "secret_enc, enc_nonce, enc_alg, dek_ref, kek_version, permission_snapshot) VALUES "
     "(:id, :exchange_account_id, :label, :key_id_enc, :key_id_last4, :secret_enc, "
     ":enc_nonce, :enc_alg, :dek_ref, :kek_version, CAST(:permission_snapshot AS jsonb))"
 )
-_GET = sa.text(f"SELECT {_COLS} FROM api_keys WHERE id = :id")  # noqa: S608 -- constant
+_GET = sa.text(
+    "SELECT id, exchange_account_id, label, key_id_enc, key_id_last4, secret_enc, enc_nonce, "
+    "dek_ref, kek_version, enc_alg, permission_snapshot, (revoked_at IS NOT NULL) AS revoked "
+    "FROM api_keys WHERE id = :id"
+)
 _REVOKE = sa.text(
     "UPDATE api_keys SET revoked_at = COALESCE(revoked_at, now()), status = 'revoked', "
     "updated_at = now() WHERE id = :id"

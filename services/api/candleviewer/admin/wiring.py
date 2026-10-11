@@ -18,10 +18,22 @@ from typing import Any
 from candleviewer.audit.models import Severity
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService
+from candleviewer.secrets._metrics import export_secrets_metrics
 from candleviewer.secrets.service import KcvStore, SecretsService
 from candleviewer.secrets.store import CredentialStore
 
 SecretsHandle = SecretsService
+
+#: The composition root may not import M2 (C-3.2); it gets the metrics exporter from here.
+__all__ = [
+    "AuditHandle",
+    "SecretsHandle",
+    "audit_writer_sink",
+    "build_audit_service",
+    "build_secrets_service",
+    "export_secrets_metrics",
+    "secrets_audit_sink",
+]
 AuditHandle = AuditService
 
 

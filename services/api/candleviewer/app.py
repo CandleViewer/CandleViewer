@@ -37,6 +37,7 @@ from candleviewer.admin.wiring import (
     audit_writer_sink,
     build_audit_service,
     build_secrets_service,
+    export_secrets_metrics,
 )
 from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
 from candleviewer.alerts.evaluator import AlertEvaluator, AlertMetrics
@@ -966,6 +967,7 @@ def create_app(
     )
     # E12-T03: bars series (builders + BarBuilderSet) on the scraped registry.
     app.state.bars_metrics = export_bars_metrics(ctx.metrics, env=resolved.environment.value)
+    app.state.secrets_metrics = export_secrets_metrics(ctx.metrics, env=resolved.environment.value)
     # E17-T02: CVWB encode frames/bytes per body_kind.
     app.state.cvwb_metrics = export_cvwb_metrics(ctx.metrics, env=resolved.environment.value)
     # #377: every `cv_ws_*` gateway series (lifecycle, subscriptions, sequencing).

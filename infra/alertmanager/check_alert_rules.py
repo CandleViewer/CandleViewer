@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 ALERT_DIR = ROOT / "infra" / "prometheus" / "alerts"
 RUNBOOK = "docs/plan/07-release-and-prr.md"
 #: Additional runbooks an alert may link to (E08-T06).
-EXTRA_RUNBOOKS = ("docs/ops/ingestion.md",)
+EXTRA_RUNBOOKS = ("docs/ops/ingestion.md", "docs/ops/runbooks/kek-custody.md")
 SEVERITIES = {"page", "ticket"}
 EXEMPT = {"Watchdog"}
 

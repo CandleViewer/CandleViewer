@@ -127,20 +127,19 @@ class PathKekSource:
             os.close(fd)
         if self.ack_path is not None:
             try:
-                self._ack()
+                self._ack(self.ack_path)
             except BaseException:
                 env.zero(key)
                 raise
         return LoadedKek(key, self.version)
 
-    def _ack(self) -> None:
+    def _ack(self, ack_path: Path) -> None:
         """Echo the handoff nonce to the (separate, writable) ack path, exactly once."""
-        assert self.ack_path is not None  # noqa: S101 -- narrowed by caller
         try:
             nonce = (self.path.parent / _HANDOFF_NAME).read_text(encoding="ascii").strip()
             if not _NONCE_RE.match(nonce):
                 raise KekLoadError("kek_unavailable")
-            fd = os.open(self.ack_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            fd = os.open(ack_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         except OSError as exc:
             raise KekLoadError("kek_unavailable") from exc
         with os.fdopen(fd, "w", encoding="ascii") as fh:
