@@ -819,7 +819,12 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_QUESTDB_PG_USER`             | str    | `admin`                   | process | PG-wire user for the bars ILP sink                                                                                  |
 | `CV_QUESTDB_PG_PASSWORD`         | secret | `quest` (dev)             | process | refused when `live` + `storage_backend=real`                                                                        |
 | `CV_PARQUET_ROOT`                | path   | `/data/parquet`           | process |                                                                                                                     |
-| `CV_KEK_SOURCE`                  | enum   | `host-keychain`           | process | `host-keychain` \| `file` (dev only)                                                                                |
+| `CV_KEK_SOURCE`                  | enum   | `handle`                  | process | `handle` \| `file` (dev/ci; fatal in live) \| `none`; `host-keychain` = deprecated alias |
+| `CV_KEK_HANDLE`                  | path   | `/run/secrets/cv_kek`     | process | read-once 32-byte KEK handle (E27-T02); never an env value |
+| `CV_KEK_VERSION`                 | int    | `1`                       | process | version of the supplied KEK; KCV-checked against `kek_versions` |
+| `CV_KEK_PREV_HANDLE`             | path   | unset                     | process | previous KEK, only during a rotation window |
+| `CV_KEK_ACK_PATH`                | path   | unset                     | process | handoff nonce-ack file (separate writable path) |
+| `CV_DEK_CACHE_TTL_S`             | float  | `300`                     | process | unwrapped-DEK cache TTL, 0-300 |
 | `CV_RECV_WINDOW_MS`              | int    | `5000`                    | process | raising it is a stopgap, alerts when > 5000                                                                         |
 | `CV_MAX_WS_TOPICS_PER_CONN`      | int    | `64`                      | runtime | gateway limit                                                                                                       |
 | `CV_HEATMAP_CADENCE_MS`          | int    | `100`                     | runtime |                                                                                                                     |

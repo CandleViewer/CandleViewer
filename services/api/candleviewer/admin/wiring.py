@@ -18,15 +18,39 @@ from typing import Any
 from candleviewer.audit.models import Severity
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService
-from candleviewer.secrets.service import SecretsService
+from candleviewer.secrets.service import KcvStore, SecretsService
+from candleviewer.secrets.store import CredentialStore
 
 SecretsHandle = SecretsService
 AuditHandle = AuditService
 
 
-def build_secrets_service() -> SecretsHandle:
-    """Construct the M2 scaffold. No I/O; no key material is touched."""
-    return SecretsService()
+def secrets_audit_sink(audit: AuditService) -> Callable[[str, dict[str, str]], Awaitable[None]]:
+    """M2 audit port -> durable `AuditWriter.emit` (write-ahead). Fields are ids only."""
+
+    async def sink(action: str, fields: dict[str, str]) -> None:
+        await audit.writer.emit(
+            action,
+            actor_label=f"system:{fields.get('caller_module', 'secrets')}",
+            object_kind="api_key" if "key_id" in fields else "kek",
+            object_id=fields.get("key_id"),
+            severity=Severity.ERROR if action == "security.kek_load_failed" else Severity.INFO,
+            after_state=dict(fields),
+        )
+
+    return sink
+
+
+def build_secrets_service(
+    store: CredentialStore | None = None,
+    kcv_store: KcvStore | None = None,
+    audit: AuditService | None = None,
+) -> SecretsHandle:
+    """Construct M2. No I/O; the KEK is loaded in `start()`. Without an injected store (fake
+    backend) the broker stays disabled and every credential operation fails closed."""
+    if store is None or audit is None:
+        return SecretsService()
+    return SecretsService(store=store, kcv_store=kcv_store, audit=secrets_audit_sink(audit))
 
 
 def build_audit_service(repository: AuditRepository | None = None) -> AuditHandle:

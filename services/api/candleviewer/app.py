@@ -191,6 +191,7 @@ from candleviewer.storage.repositories.alert_dispatch_sqlalchemy import (
 from candleviewer.storage.repositories.alert_firing_sqlalchemy import SqlAlchemyAlertFiringStore
 from candleviewer.storage.repositories.alerts_sqlalchemy import SqlAlchemyAlertRepository
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.instruments_sqlalchemy import (
     SqlAlchemyInstrumentsRepository,
@@ -385,6 +386,16 @@ def _build_audit(settings: Settings) -> AuditHandle:
     )
 
 
+def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsHandle:
+    """E27-T02: M2 with the M10 Postgres credential/KCV store on the real backend."""
+    if settings.storage_backend != "real":
+        return build_secrets_service()
+    store = SqlAlchemyCredentialStore(
+        SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "secrets")
+    )
+    return build_secrets_service(store, store, audit)
+
+
 def _record_factory(model: Any) -> Callable[..., Any]:
     return lambda **fields: model.model_validate(fields)
 
@@ -416,10 +427,11 @@ def build_app_context(
         env=resolved.environment.value,
         read_only_gate=read_only_gate,
     )
+    audit = _build_audit(resolved)
     return AppContext(
         settings=resolved,
         metrics=CollectorRegistry(),
-        secrets=build_secrets_service(),
+        secrets=_build_secrets(resolved, audit),
         exchange_base=ExchangeBaseService(),
         exchange_bybit=ExchangeBybitService(),
         bus=bus_service,
@@ -436,7 +448,7 @@ def build_app_context(
         paper=PaperService(),
         risk=RiskService(),
         auth=build_auth_service(resolved, clock=auth_clock),
-        audit=_build_audit(resolved),
+        audit=audit,
         journal=JournalService(),
         admin=AdminService(),
         alerts=AlertsService(),
@@ -457,6 +469,7 @@ def build_app_context(
 # first dependant.
 _SUPERVISOR_ORDER: tuple[str, ...] = (
     "storage",
+    "audit",  # E27-T02: before secrets so KEK load/failure is audited; M19 needs only M1/M10
     "secrets",
     "auth",
     "admin",
@@ -470,7 +483,6 @@ _SUPERVISOR_ORDER: tuple[str, ...] = (
     "recorder",
     "accounts",
     "risk",
-    "audit",
     "oms",
     "paper",
     "rules",

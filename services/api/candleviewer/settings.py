@@ -163,7 +163,15 @@ class Settings(BaseSettings):
     audit_wal_path: str = "var/audit/audit.wal"
     audit_checkpoint_path: str = "var/audit/checkpoints.ndjson"
 
-    kek_source: str = "host-keychain"
+    # E27-T02 / e27-kek.md §4: KEK source vocabulary. `host-keychain` is a deprecated alias
+    # of `handle` for one release. The KEK itself never enters Settings or os.environ.
+    kek_source: Literal["handle", "file", "none", "host-keychain"] = "handle"
+    kek_handle: str = "/run/secrets/cv_kek"
+    kek_prev_handle: str | None = None  # only during a KEK rotation window
+    kek_version: int = Field(default=1, ge=1)
+    # Nonce-ack file: separate writable path (the handoff dir is mounted read-only).
+    kek_ack_path: str | None = None
+    dek_cache_ttl_s: float = Field(default=300.0, ge=0.0, le=300.0)
 
     # E04-T01: `configure_logging()` inputs. `log_format="console"` is only
     # permitted in dev/CI contexts — enforced by

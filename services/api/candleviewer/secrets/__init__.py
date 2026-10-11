@@ -1,17 +1,32 @@
-"""secrets module (M2).
+"""secrets module (M2): KEK custody, envelope encryption, scoped credential borrow.
 
-Envelope encryption, key metadata, request signing, key self-check.
-
-Public interface only — internal implementation modules are not re-exported.
-Allowed dependencies (CONSTITUTION.md C-3.1): M1.
-
-This module is a conforming EMPTY module scaffolded by E02-T05
-(docs/plan/backlog/all-tickets.json). Real logic lands in the epic that owns
-this module (see docs/plan/20-architecture.md Sec.3 and the module table in
-CONSTITUTION.md Sec.3). Do not add business logic here without a linked
-ticket.
+Importable only by M4 (`exchange.base`) and M21 (`admin`, metadata only) — C-3.2.
+Plaintext keys and unwrapped DEKs never leave this package except inside the
+`with_credentials` callback; `_kek` / `_envelope` are private.
 """
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from candleviewer.secrets.errors import (
+    CredentialUnavailable,
+    KekSourceNotPermitted,
+    KekUnavailable,
+    SecretsError,
+    WithdrawPermissionRejected,
+)
+from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
+from candleviewer.secrets.secret import Secret
+from candleviewer.secrets.service import SecretsService
+
+__all__ = [
+    "CredentialUnavailable",
+    "KekCheckResult",
+    "KekSourceNotPermitted",
+    "KekUnavailable",
+    "RewrapReport",
+    "Secret",
+    "SecretsError",
+    "SecretsService",
+    "StoredCredential",
+    "WithdrawPermissionRejected",
+]

@@ -816,6 +816,28 @@ CREATE TABLE api_key_rotations (
 CREATE INDEX ix_akr_open ON api_key_rotations (started_at) WHERE completed_at IS NULL AND failed_at IS NULL;
 ```
 
+#### 3.2.3a `kek_versions` (E27-T02, migration `0018_kek_versions`)
+
+Non-secret key-check values identifying each KEK version (`e27-kek.md` §5). `kcv` = first 8 bytes of
+HMAC-SHA256(KEK, `"cv-kek-kcv-v1"`); M2 compares it in constant time at start-up and enters Degraded
+with reason `kek_mismatch` on a difference. Data class: Internal (reveals nothing about the KEK).
+
+```sql
+CREATE TABLE kek_versions (
+  version    integer PRIMARY KEY,
+  kcv        bytea NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  retired_at timestamptz,
+  CONSTRAINT kv_version_pos CHECK (version >= 1),
+  CONSTRAINT kv_kcv_len     CHECK (octet_length(kcv) = 8)
+);
+```
+
+Envelope layout written by M2 into `api_keys` (§3.2.2): `secret_enc` = GCM ciphertext‖tag of the API
+secret under the row DEK with nonce `enc_nonce`; `key_id_enc` = its own fresh 12-byte nonce ‖
+ciphertext‖tag of the API key id; `dek_ref` = `v1:` + hex(nonce‖wrapped DEK‖tag) under the KEK of
+`kek_version`. AADs bind account, row id and field (data layer) and row id + `kek_version` (wrap layer).
+
 #### 3.2.4 `account_profiles`
 
 Per-account execution profile applied when a trade group fans out. Exactly one profile per account is `is_default`; alternates are selectable per ticket (e.g. "scalp" vs "swing").

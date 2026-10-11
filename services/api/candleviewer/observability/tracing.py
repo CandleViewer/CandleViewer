@@ -18,6 +18,8 @@ from opentelemetry import trace
 from opentelemetry.propagate import extract, inject
 from opentelemetry.trace import Span
 
+from candleviewer.observability.secret_type import Secret
+
 TRACER_NAME: Final = "candleviewer"
 
 #: Order path, in causal order, then replay session start.
@@ -37,12 +39,13 @@ class UnsanctionedSpanError(ValueError):
 
 
 @contextmanager
-def span(name: str, attributes: Mapping[str, str] | None = None) -> Iterator[Span]:
+def span(name: str, attributes: Mapping[str, object] | None = None) -> Iterator[Span]:
     """Start a sanctioned span as the current span."""
     if name not in SANCTIONED_SPANS:
         raise UnsanctionedSpanError(f"span {name!r} is not on an ADR-0014 §5 path")
     tracer = trace.get_tracer(TRACER_NAME)
-    with tracer.start_as_current_span(name, attributes=dict(attributes or {})) as s:
+    attrs = {k: "***" if isinstance(v, Secret) else v for k, v in (attributes or {}).items()}
+    with tracer.start_as_current_span(name, attributes=attrs) as s:
         yield s
 
 
