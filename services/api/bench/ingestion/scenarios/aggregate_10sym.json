@@ -1,0 +1,12 @@
+{
+  "title": "10-symbol aggregate steady state: per-symbol task isolation",
+  "kind": "aggregate",
+  "common": {"symbols": 10, "trades_per_s": 50, "book_deltas_per_s": 10, "tick_s": 0.1,
+             "capacity_factor": 4, "inbound_queue": 64, "seed": 11,
+             "lag_band_floor_ms": 105.0, "lag_band_rel": 0.5, "recovery_window_s": 30},
+  "full": {"duration_s": 3600, "sample_every_s": 60, "loads": [["BTCUSDT", 600, 3000, 3]],
+           "scaling": "none: 1 h, 10 symbols at 1x; BTCUSDT at a sustained 3x (within headroom) for 40 min"},
+  "smoke": {"duration_s": 60, "sample_every_s": 5, "loads": [["BTCUSDT", 20, 50, 3]],
+            "scaling": "60 s virtual clock, 10 symbols, BTCUSDT 3x for 30 s"},
+  "tolerances": {"unaffected_lag_loaded_ms": 0.10}
+}

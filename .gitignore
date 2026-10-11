@@ -84,3 +84,8 @@ reports/a11y/
 # Autonomous-run scratch outputs (board_snapshot.py / frontier.py) — regenerate, never commit
 docs/plan/backlog/_tools/_board_snapshot.json
 docs/plan/backlog/_tools/_frontier.json
+
+# E08-Q04 ingestion perf reports: generated per run; one sample is committed
+services/api/bench/reports/*
+!services/api/bench/reports/README.md
+!services/api/bench/reports/e08-sample.md

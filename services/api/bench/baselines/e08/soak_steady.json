@@ -1,0 +1,47 @@
+{
+  "gate": "warn-only",
+  "harness_version": "e08-q04/1",
+  "machine_profile": "laptop-i7-8550U",
+  "metrics": {
+    "event_loop_lag_ms": {
+      "count": 19.0,
+      "max": 2.7385000003050664,
+      "p50": 2.1304000001691747,
+      "p95": 2.7385000003050664
+    },
+    "ingest_lag_ms": {
+      "count": 5400.0,
+      "max": 1.2797999997928855,
+      "p50": 0.11270000049989903,
+      "p95": 0.4024999998364365
+    },
+    "queue_depth": {
+      "count": 19.0,
+      "max": 0.0,
+      "p50": 0.0,
+      "p95": 0.0
+    },
+    "rss_mb_per_symbol": {
+      "count": 19.0,
+      "max": 36.203125,
+      "p50": 36.049479166666664,
+      "p95": 36.203125
+    },
+    "sampling_cost_ms": {
+      "count": 19.0,
+      "max": 0.08467222227813585,
+      "p50": 0.08467222227813585,
+      "p95": 0.08467222227813585
+    },
+    "vcpu_per_symbol": {
+      "count": 18.0,
+      "max": 0.03229166666666667,
+      "p50": 0.028125,
+      "p95": 0.03229166666666667
+    }
+  },
+  "note": "Laptop (i7-8550U, 16 GB, Windows 11) smoke-profile numbers. WARN-only until a CI-runner baseline is recorded on ubuntu-latest (same caveat as bench/bar_determinism).",
+  "profile_scaling": "90 s of scenario time on a virtual clock (runs ~20x faster than 1x on the laptop), sample every 5 s; flatness baseline at the same 1/12 fraction (t=7.5 s)",
+  "run_profile": "smoke",
+  "scenario": "soak_steady"
+}

@@ -1,0 +1,29 @@
+{
+  "gate": "warn-only",
+  "harness_version": "e08-q04/1",
+  "machine_profile": "laptop-i7-8550U",
+  "metrics": {
+    "receipt_to_publish_ms": {
+      "count": 900.0,
+      "max": 0.7070000000000001,
+      "p50": 0.271,
+      "p95": 0.531
+    },
+    "stage_derive_ms": {
+      "count": 900.0,
+      "max": 0.652,
+      "p50": 0.217,
+      "p95": 0.433
+    },
+    "stage_parse_ms": {
+      "count": 900.0,
+      "max": 0.147,
+      "p50": 0.053,
+      "p95": 0.097
+    }
+  },
+  "note": "Laptop (i7-8550U, 16 GB, Windows 11) smoke-profile numbers. WARN-only until a CI-runner baseline is recorded on ubuntu-latest (same caveat as bench/bar_determinism).",
+  "profile_scaling": "30 s virtual clock, 3 symbols, every trade frame stage-stamped",
+  "run_profile": "smoke",
+  "scenario": "latency_internal"
+}

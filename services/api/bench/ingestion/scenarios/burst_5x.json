@@ -1,0 +1,14 @@
+{
+  "title": "Burst injector: 5x trade+orderbook rate for 60 s on one symbol (06-perf §6.4)",
+  "kind": "burst",
+  "common": {"symbols": 10, "trades_per_s": 50, "book_deltas_per_s": 10, "tick_s": 0.1,
+             "capacity_factor": 4, "inbound_queue": 64, "seed": 13,
+             "lag_band_floor_ms": 105.0, "lag_band_rel": 0.5,
+             "recovery_window_s": 30, "backlog_bound": 2000},
+  "full": {"duration_s": 300, "sample_every_s": 60, "loads": [["BTCUSDT", 120, 180, 5]],
+           "scaling": "none: 10 symbols, 2 min steady, 5x for 60 s on BTCUSDT, 2 min after"},
+  "smoke": {"duration_s": 40, "sample_every_s": 5, "loads": [["BTCUSDT", 15, 25, 5]],
+            "backlog_bound": 400,
+            "scaling": "burst shortened to 10 s (15-25 s) on a virtual clock, backlog bound scaled with it; same assertions"},
+  "tolerances": {"recovery_s": 0.25, "max_backlog": 0.10}
+}

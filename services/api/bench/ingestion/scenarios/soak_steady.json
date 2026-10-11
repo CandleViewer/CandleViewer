@@ -1,0 +1,12 @@
+{
+  "title": "Steady-state soak, >=3 symbols (budgets #5, #8, #11, #12 + ±5% memory flatness)",
+  "kind": "soak",
+  "common": {"symbols": 3, "trades_per_s": 50, "book_deltas_per_s": 10, "tick_s": 0.1,
+             "capacity_factor": 4, "inbound_queue": 64, "seed": 7,
+             "flatness_baseline_fraction": 0.0833, "flatness_tolerance": 0.05},
+  "full": {"duration_s": 86400, "sample_every_s": 60, "realtime": true,
+           "scaling": "none: 24 h at 1x fixture cadence on the wall clock, 3 symbols, sample every 60 s; memory baseline = hour 2 (fraction 0.0833)"},
+  "smoke": {"duration_s": 90, "sample_every_s": 5, "realtime": false,
+            "scaling": "90 s of scenario time on a virtual clock (runs ~20x faster than 1x on the laptop), sample every 5 s; flatness baseline at the same 1/12 fraction (t=7.5 s)"},
+  "tolerances": {"ingest_lag_ms": 0.25, "rss_mb_per_symbol": 0.10, "vcpu_per_symbol": 0.50}
+}

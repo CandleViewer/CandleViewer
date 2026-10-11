@@ -1,0 +1,23 @@
+{
+  "gate": "warn-only",
+  "harness_version": "e08-q04/1",
+  "machine_profile": "laptop-i7-8550U",
+  "metrics": {
+    "ip_window_headroom_min": {
+      "count": 362.0,
+      "max": 584.0,
+      "p50": 584.0,
+      "p95": 584.0
+    },
+    "uid_tokens": {
+      "count": 362.0,
+      "max": 10.0,
+      "p50": 9.0,
+      "p95": 10.0
+    }
+  },
+  "note": "Laptop (i7-8550U, 16 GB, Windows 11) smoke-profile numbers. WARN-only until a CI-runner baseline is recorded on ubuntu-latest (same caveat as bench/bar_determinism).",
+  "profile_scaling": "120 s virtual time, same rates",
+  "run_profile": "smoke",
+  "scenario": "ratelimit_headroom"
+}
