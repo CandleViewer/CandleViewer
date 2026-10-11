@@ -141,7 +141,7 @@ jobs:
           set -euo pipefail
           CONFIGS="p/python p/typescript p/react p/electron-desktop-app p/docker p/github-actions \
                    p/secrets p/owasp-top-ten p/sql-injection p/jwt p/insecure-transport"
-          # Rule files only: .semgrep/tests/ holds fixtures (incl. YAML ones) that are not configs.
+          # Rule files only (glob); YAML fixtures live in .semgrep-fixtures/.
           if [ -d .semgrep ]; then CONFIGS="$CONFIGS $(ls .semgrep/cv-*.yml)"; fi
           CONFIG_ARGS=""
           for c in $CONFIGS; do CONFIG_ARGS="$CONFIG_ARGS --config $c"; done

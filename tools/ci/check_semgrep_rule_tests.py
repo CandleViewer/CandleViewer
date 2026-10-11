@@ -83,8 +83,17 @@ def main() -> int:
         rule_id = rule_yaml.stem
         # Fixture language follows the rule (.py default; .ts/.tsx for TypeScript rules, E10-X02).
         fixture = next(
-            (TESTS_DIR / f"{rule_id}{ext}" for ext in (".py", ".ts", ".tsx", ".yml")
-             if (TESTS_DIR / f"{rule_id}{ext}").exists()),
+            (
+                (TESTS_DIR / sub / f"{rule_id}{ext}")
+                for sub, ext in (
+                    (".", ".py"),
+                    (".", ".ts"),
+                    (".", ".tsx"),
+                    # YAML fixtures live in /.semgrep-fixtures so `--config .semgrep` validates.
+                    ("../../.semgrep-fixtures", ".yml"),
+                )
+                if (TESTS_DIR / sub / f"{rule_id}{ext}").exists()
+            ),
             TESTS_DIR / f"{rule_id}.py",
         )
         if not fixture.exists():

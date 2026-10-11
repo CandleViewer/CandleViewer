@@ -41,3 +41,20 @@ def test_expected_lines_ignores_other_rule_ids(tmp_path: Path) -> None:
     must_fire, must_not_fire = expected_lines(fixture, "cv-example")
     assert must_fire == set()
     assert must_not_fire == set()
+
+
+def test_semgrep_config_dir_yaml_files_all_have_rules_key() -> None:
+    """Every YAML directly under .semgrep/ and .semgrep/tests/ is loaded as a config by
+    `semgrep --config .semgrep`, so it must have a top-level `rules:` key (fixtures go in
+    .semgrep-fixtures/)."""
+    import re
+
+    root = Path(__file__).resolve().parents[2] / ".semgrep"
+    files = [
+        f for d in (root, root / "tests") for ext in ("*.yml", "*.yaml") for f in d.glob(ext)
+    ]
+    assert files
+    bad = [
+        f.name for f in files if not re.search(r"^rules:", f.read_text(encoding="utf-8"), re.M)
+    ]
+    assert not bad, f"not semgrep configs (move to .semgrep-fixtures/): {bad}"

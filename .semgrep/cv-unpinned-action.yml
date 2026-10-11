@@ -14,4 +14,4 @@ rules:
       include:
         - "**/.github/workflows/*.yml"
         - "**/.github/workflows/*.yaml"
-        - "**/tests/cv-unpinned-action.yml"
+        - "**/.semgrep-fixtures/cv-unpinned-action.yml"
