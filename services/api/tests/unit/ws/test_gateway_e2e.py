@@ -160,7 +160,10 @@ def test_ws_e2e_permissions_sub_check_and_live_role_change(env: tuple[TestClient
         assert (revoked["t"], revoked["ch"]) == ("revoked", "orders")
         assert _sub(ws, "orders", [ACC])["error"]["code"] == "forbidden"
     assert {a["action"] for a in w.audit} >= {"roles.grant", "roles.revoke"}
-    for rec in w.audit:
+    # #377: the gateway's audit sink is wired, so the denied subs are audited too.
+    denied = [r for r in w.audit if r["action"] == "ws.subscribe.denied"]
+    assert {r["reason"] for r in denied} == {"forbidden", "account_scope_denied"}
+    for rec in (r for r in w.audit if r["action"].startswith("roles.")):
         assert rec["before_state"] == {"roles": ["manager"]}
         assert rec["after_state"] == {"roles": ["viewer"]}
 

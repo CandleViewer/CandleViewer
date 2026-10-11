@@ -224,11 +224,21 @@ from candleviewer.storage.retention.policy import RetentionPolicy, RetentionRule
 from candleviewer.storage.retention.rule_prune import RulePruneTask
 from candleviewer.storage.retention.schedule import RetentionSchedule
 from candleviewer.storage.service import StorageService
-from candleviewer.ws.gateway import Authenticate, make_ws_router
-from candleviewer.ws.metrics import export_cvwb_metrics
-from candleviewer.ws.permissions import ConnectionRegistry
+from candleviewer.ws.gateway import Authenticate, GatewayHub, make_ws_router
+from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
+from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
+from candleviewer.ws.sequencing import SequencingHub
 from candleviewer.ws.service import WsService
+from candleviewer.ws.upstream import UpstreamRefs
+from candleviewer.ws_wiring import (
+    IngestionUpstreamSink,
+    KillSwitchView,
+    WsEvents,
+    WsRuntime,
+    default_snapshot_router,
+    ingestion_streams,
+)
 
 
 @dataclass(frozen=True)
@@ -861,13 +871,38 @@ def create_app(
     # notify the registry, which pushes `permission_change` and revokes
     # now-forbidden subscriptions. Snapshots fail closed (no permissions)
     # until the identity store is injected.
-    ws_registry = ConnectionRegistry(snapshot_loader or _deny_all_snapshot, _now_ms)
+    # #377 wiring: E08 upstream sink, BarBuilderSet leases, audit, instrument check, snapshots
+    # (pending stubs until #2195-#2197), sequencing; lifecycle + shutdown in `WsRuntime`.
+    ws_upstream = UpstreamRefs(IngestionUpstreamSink(ingestion_streams(ctx)))
+    ws_services = SubscriptionServices(
+        upstream=ws_upstream,
+        bars=getattr(getattr(app.state, "bars_runtime", None), "builder_set", None),
+        audit=_LazyAuditEmitter(ctx.audit),
+        instrument_known=lambda sym: _ws_symbol_known(ctx, sym),
+        snapshots=default_snapshot_router(),
+        sequencing=SequencingHub(),
+    )
+    ws_registry = ConnectionRegistry(
+        snapshot_loader or _deny_all_snapshot, _now_ms, services=ws_services
+    )
+    ws_hub = GatewayHub(max_per_user=resolved.ws_max_connections_per_user)
+    kill_switch = KillSwitchView()
     app.state.ws_registry = ws_registry
+    app.state.ws_hub = ws_hub
+    app.state.ws_events = WsEvents(ws_registry, ws_hub, kill_switch)
+    app.state.ws_runtime = WsRuntime(ws_hub, ws_upstream, resolved)
     app.include_router(
         make_ws_router(
             authenticate=ws_authenticate or _session_authenticator(ctx),
             registry=ws_registry,
             revocation_hub=revocation_hub,
+            hub=ws_hub,
+            audit=_LazyAuditEmitter(ctx.audit),
+            auth_timeout_s=resolved.ws_auth_timeout_s,
+            max_frame_bytes=resolved.ws_max_inbound_frame_bytes,
+            server_version=resolved.version,
+            git_sha=resolved.git_sha,
+            kill_switch=kill_switch.snapshot,
         )
     )
     # E09-S04: step-up, owner TOTP reset and the read-only write guard.
@@ -921,6 +956,8 @@ def create_app(
     app.state.bars_metrics = export_bars_metrics(ctx.metrics, env=resolved.environment.value)
     # E17-T02: CVWB encode frames/bytes per body_kind.
     app.state.cvwb_metrics = export_cvwb_metrics(ctx.metrics, env=resolved.environment.value)
+    # #377: every `cv_ws_*` gateway series (lifecycle, subscriptions, sequencing).
+    app.state.ws_metrics = export_ws_metrics(ctx.metrics, env=resolved.environment.value)
     # E40-T01: alert_deliveries retention purge + alert gauges (lifespan-started).
     _alert_pg = SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "alerts")
     _retention = RetentionSchedule.from_settings(resolved)
@@ -1280,6 +1317,15 @@ def _catalogue_listed(ctx: AppContext, symbol: str) -> bool:
     snap = scheduler.snapshot() if scheduler is not None else None
     inst = snap.get(symbol) if snap is not None else None
     return inst is not None and inst.status == "trading"
+
+
+def _ws_symbol_known(ctx: AppContext, symbol: str) -> bool:
+    """WS `sub` symbol check: the catalogue decides once it has a snapshot; before that only the
+    topic grammar (`SYMBOL_RE`) applies, and E08 ingestion still refuses unlisted symbols."""
+    scheduler = ctx.ingestion.instruments
+    if scheduler is None or scheduler.snapshot() is None:
+        return True
+    return _catalogue_listed(ctx, symbol)
 
 
 def _catalogue_tick_size(ctx: AppContext, symbol: str) -> Decimal | None:

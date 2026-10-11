@@ -194,6 +194,12 @@ class Settings(BaseSettings):
     # E08-T04: public WS ingestion skeleton flag (C-4.13: off by default;
     # removal tracked by E08-T05). Public data only — no credentials.
     ingestion_ws_enabled: bool = False
+    # E17 client WS gateway (`23-ws-protocol.md` §4, §9.4): `CV_WS_*`. Defaults = the doc.
+    ws_auth_timeout_s: float = Field(default=10.0, gt=0, le=60)
+    ws_max_inbound_frame_bytes: int = Field(default=262_144, ge=1024, le=1_048_576)
+    ws_max_connections_per_user: int = Field(default=8, ge=1, le=64)
+    ws_shutdown_grace_ms: int = Field(default=5000, ge=0, le=60_000)
+    ws_shutdown_expected_downtime_ms: int = Field(default=20_000, ge=0, le=600_000)
     # E12 #2031: run the BarBuilderSet + BarWriter in the app (C-4.13: off by default; removal
     # with E12-T05 #398 / E12-T06 #399, the first consumers). Never gates a safety invariant.
     # `bars_state_root` holds the 60 s state blobs, created owner-only (0700) where the platform

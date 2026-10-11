@@ -111,9 +111,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         facade.add_process_collectors()
         metrics_runtime = MetricsRuntime(facade, ctx.settings.metrics_bind)
         metrics_runtime.start()
+    ws_runtime = getattr(app.state, "ws_runtime", None)
+    if ws_runtime is not None:
+        ws_runtime.start()
     try:
         yield
     finally:
+        # §9.4: the client gateway stops FIRST (shutdown_notice, grace, bye 1001) so clients
+        # are told before any module they read from goes away.
+        if ws_runtime is not None:
+            await ws_runtime.stop()
         if metrics_runtime is not None:
             await metrics_runtime.stop()
         if health_registry is not None:
