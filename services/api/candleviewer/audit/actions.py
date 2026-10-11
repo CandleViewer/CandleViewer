@@ -98,6 +98,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "recorder.start",
         "recorder.stop",
         "recorder.compact",
+        # E16-T10: public trade-archive import (write-ahead accept + outcome).
+        "recorder.import",
         "retention.change",
         "retention.purge",
         "retention.downsample",

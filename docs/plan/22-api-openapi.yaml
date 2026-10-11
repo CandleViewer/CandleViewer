@@ -8433,6 +8433,56 @@ paths:
                 properties:
                   job_id: { type: string, format: uuid }
 
+  /admin/recorder/import:
+    post:
+      tags: [recording]
+      operationId: importTradeArchive
+      summary: Import public trade archives into the cold tier (E16-T10)
+      description: >
+        Downloads the exchange's public daily trade archives for `symbol` over
+        `[from, to]` (inclusive UTC dates, at most 366 days), verifies each file,
+        and writes trades to the Parquet cold tier. Recorded data wins: rows inside a
+        recorded window are discarded and reported. Imported windows are labelled
+        archive-derived and cover `trades` only. Resumable and idempotent per day: a
+        re-run skips finished days. Asynchronous; poll `GET /admin/jobs/{jobId}`
+        (`kind: archive_import`); `result` carries the import summary. One import at a
+        time (409 `job_running`). Audited as `recorder.import`.
+      x-rbac: { permissions: [recording:write], scope: none }
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKeyRequired"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [symbol, from, to]
+              additionalProperties: false
+              properties:
+                symbol: { $ref: "#/components/schemas/Symbol" }
+                from: { type: string, format: date }
+                to: { type: string, format: date }
+      responses:
+        "202":
+          description: Import accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: An import job is already running.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422":
+          description: Idempotency-Key reused with a different body, or invalid range (`import_range_invalid`).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+
   /admin/recorder/purge:
     post:
       tags: [recording]
@@ -12181,6 +12231,7 @@ components:
                 rule_simulation,
                 retention_sweep,
                 reconciliation,
+                archive_import,
               ],
           }
         status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }

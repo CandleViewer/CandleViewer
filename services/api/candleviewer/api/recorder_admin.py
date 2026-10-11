@@ -1,4 +1,5 @@
-"""`POST /admin/recorder/compact` + `GET /admin/jobs/{jobId}` (E16-T05).
+"""`POST /admin/recorder/compact` (E16-T05), `POST /admin/recorder/import` (E16-T10)
+and `GET /admin/jobs/{jobId}`.
 
 RBAC is resolved server-side (C-12.4): compaction needs `recording:write`,
 polling needs `admin:read` (22-api-openapi.yaml `x-rbac`). Every compaction
@@ -19,7 +20,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Literal, Protocol, cast
 
 import structlog
@@ -42,12 +43,17 @@ ADMIN_READ = "admin:read"
 MAX_JOBS = 256
 #: Job.kind enum in 22-api-openapi.yaml has no compaction value; a retention-family job.
 JOB_KIND = "retention_sweep"
+IMPORT_JOB_KIND = "archive_import"
+IMPORT_MAX_DAYS = 366
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 #: (symbols | None, older_than_days | None, progress callback) -> result document.
 CompactionRunner = Callable[
     [list[str] | None, int | None, Callable[[float], None]], Awaitable[dict[str, object]]
 ]
+
+#: (symbol, from, to, progress callback) -> import summary (`ImportSummary.as_result`).
+ImportRunner = Callable[[str, date, date, Callable[[float], None]], Awaitable[dict[str, object]]]
 
 
 class _Emitter(Protocol):
@@ -68,6 +74,19 @@ class CompactRequest(BaseModel):
         for s in self.symbols or []:
             if not re.fullmatch(r"[A-Z0-9]{2,20}USDT", s):
                 raise ValueError("invalid symbol")
+        return self
+
+
+class ImportRequestBody(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    symbol: str = Field(pattern=r"^[A-Z0-9]{2,20}USDT$")
+    from_: date = Field(alias="from")
+    to: date
+
+    def checked(self) -> ImportRequestBody:
+        if self.to < self.from_ or (self.to - self.from_).days + 1 > IMPORT_MAX_DAYS:
+            raise ValueError("invalid range")
         return self
 
 
@@ -198,8 +217,110 @@ def make_recorder_admin_router(
     runner: CompactionRunner | None,
     audit: _Emitter | None,
     principal_resolver: _PrincipalResolver | None = None,
+    import_runner: ImportRunner | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/admin", tags=["admin"])
+
+    @router.post("/recorder/import")
+    async def import_archive(request: Request) -> JSONResponse:
+        if principal_resolver is None:
+            return _problem(501, "Not implemented", "no principal resolver wired")
+        principal = await principal_resolver.resolve(request)
+        if principal is None:
+            return _problem(401, "Unauthorized", "no verified session for this request")
+        common: dict[str, object] = {
+            "actor_label": principal.username,
+            "actor_user_id": principal.user_id,
+            "actor_ip": principal.ip,
+            "session_id": principal.session_id,
+            "object_kind": "recorder_import",
+            "request_id": principal.request_id,
+        }
+        if not principal.has(RECORDING_WRITE):  # RBAC before any backend check (C-12.4)
+            if audit is not None:
+                await audit.emit(
+                    "recorder.import",
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason=f"missing_permission:{RECORDING_WRITE}",
+                    **common,
+                )
+            return _problem(403, "Forbidden", f"requires {RECORDING_WRITE}")
+        if audit is None or import_runner is None:
+            return _problem(503, "Service unavailable", "import backend is not wired")
+        key = request.headers.get("idempotency-key", "")
+        try:
+            key = str(uuid.UUID(key))
+        except ValueError:
+            return _problem(400, "Bad request", "Idempotency-Key (UUID) is required")
+        try:
+            raw = await request.body()
+            parsed = ImportRequestBody.model_validate(json.loads(raw) if raw else {})
+        except (ValidationError, ValueError):
+            return _problem(400, "Bad request", "invalid import request")
+        try:
+            body = parsed.checked()
+        except ValueError:
+            return _problem(422, "Unprocessable", "invalid date range", "import_range_invalid")
+        params = {"symbol": body.symbol, "from": body.from_.isoformat(), "to": body.to.isoformat()}
+        body_hash = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()
+        actor = str(principal.user_id)
+        prior = jobs.by_idempotency_key(actor, key)
+        if prior is not None:
+            if prior[1] != body_hash:
+                return _problem(
+                    422,
+                    "Unprocessable",
+                    "Idempotency-Key reused with a different body",
+                    "idempotency_key_reused",
+                )
+            return JSONResponse(status_code=202, content={"job_id": prior[0].id})
+        try:
+            jobs.ensure_free(IMPORT_JOB_KIND)
+        except JobConflict:
+            return _problem(409, "Conflict", "an import job is already running", "job_running")
+        runner_ = import_runner
+
+        async def work(progress: Callable[[float], None]) -> dict[str, object]:
+            return await runner_(body.symbol, body.from_, body.to, progress)
+
+        async def done(job: Job) -> None:
+            ok = job.status == "succeeded"
+            result = job.result or {}
+            await audit.emit(
+                "recorder.import",
+                outcome=AuditOutcome.SUCCESS if ok else AuditOutcome.FAILURE,
+                severity=Severity.INFO if ok else Severity.ERROR,
+                reason=None if ok else job.error,
+                object_id=job.id,
+                after_state={
+                    "params": params,
+                    "bytes_downloaded": result.get("bytes_downloaded", 0),
+                    "rows_written": result.get("rows_written", 0),
+                    "files_processed": result.get("files_processed", 0),
+                },
+                **common,
+            )
+
+        job_id = str(uuid.uuid4())
+        # Write-ahead (C-2.9): symbol + range + actor land BEFORE the job exists.
+        try:
+            await audit.emit(
+                "recorder.import", object_id=job_id, before_state={"params": params}, **common
+            )
+        except Exception as exc:
+            logger().error("recorder_import_audit_failed", error=type(exc).__name__)
+            return _problem(
+                503,
+                "Service unavailable",
+                "audit write failed; job not started",
+                "audit_unavailable",
+            )
+        try:
+            job = jobs.submit(IMPORT_JOB_KIND, (actor, key, body_hash), work, done, job_id=job_id)
+        except JobConflict:
+            return _problem(409, "Conflict", "an import job is already running", "job_running")
+        return JSONResponse(status_code=202, content={"job_id": job.id})
 
     @router.post("/recorder/compact")
     async def compact(request: Request) -> JSONResponse:

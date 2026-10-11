@@ -142,6 +142,12 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+  POST /admin/recorder/import:
+    permissions: ['recording:write']
+    scope: none
+    public: false
+    state: executed
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   POST /admin/recorder/purge:
     permissions: ['recording:write']
     scope: none
