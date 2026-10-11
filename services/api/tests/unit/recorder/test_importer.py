@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import uuid
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
@@ -27,6 +29,7 @@ from candleviewer.domain.archive import (
 )
 from candleviewer.recorder.importer import (
     BulkImporter,
+    ImportDiskBudgetExceeded,
     ImportRequest,
     merge_windows,
     split_overlap,
@@ -117,6 +120,8 @@ def _importer(root: Path, src: FakeArchive, rec: Recorded | None = None) -> Bulk
         writer=ColdArchiveDayWriter(reg),
         ledger=FileImportLedger(reg),
         recorded=rec or Recorded(),
+        backlog_rows=lambda: 0,
+        disk_usage=None,
         clock=lambda: datetime(2026, 10, 1, tzinfo=UTC),
         batch_rows=10,
     )
@@ -307,6 +312,7 @@ async def test_import_yields_while_live_backlog_nonzero(tmp_path: Path) -> None:
         ledger=FileImportLedger(reg),
         recorded=Recorded(),
         backlog_rows=lambda: backlog.pop(0) if len(backlog) > 1 else 0,
+        disk_usage=None,
         sleep=fake_sleep,
     )
     d = date(2026, 6, 1)
@@ -341,3 +347,223 @@ def test_split_overlap_written_disjoint_from_recorded_and_partition_complete(
     assert not [r for r in kept if any(a <= r.ts_us < b for a, b in windows)]
     inside = [r for r in rows if any(a <= r.ts_us < b for a, b in windows)]
     assert len(kept) + discarded == len(rows) and discarded == len(inside)
+
+
+# -- review fixes: disk guard (R-D3 / AC-15), yield metric, orphan sweep scope -----------------
+
+
+def _with_disk(root: Path, usage: tuple[int, int]) -> BulkImporter:
+    reg = DatasetRegistry(root)
+    return BulkImporter(
+        source=FakeArchive(),
+        writer=ColdArchiveDayWriter(reg),
+        ledger=FileImportLedger(reg),
+        recorded=Recorded(),
+        backlog_rows=lambda: 0,
+        disk_usage=lambda: usage,
+    )
+
+
+async def test_import_refused_preflight_when_disk_above_80_percent(tmp_path: Path) -> None:
+    d = date(2026, 6, 1)
+    with pytest.raises(ImportDiskBudgetExceeded):
+        await _with_disk(tmp_path, (1000, 801)).run(ImportRequest(SYM, d, d))
+    assert not _parquet_files(tmp_path)
+
+
+async def test_import_refused_before_file_when_projection_crosses_80_percent(
+    tmp_path: Path,
+) -> None:
+    # 10 bytes downloaded x2 projection = 20; 785 + 20 > 800
+    d = date(2026, 6, 1)
+    with pytest.raises(ImportDiskBudgetExceeded):
+        await _with_disk(tmp_path, (1000, 785)).run(ImportRequest(SYM, d, d))
+    assert not _parquet_files(tmp_path)
+
+
+async def test_import_proceeds_under_disk_budget(tmp_path: Path) -> None:
+    d = date(2026, 6, 1)
+    s = await _with_disk(tmp_path, (1000, 100)).run(ImportRequest(SYM, d, d))
+    assert s.rows_written == 24
+
+
+async def test_import_yield_is_metriced(tmp_path: Path) -> None:
+    from candleviewer.recorder.importer import import_yield_seconds_total
+
+    before = import_yield_seconds_total._value.get()
+    backlog = [1, 0]
+
+    async def fake_sleep(_s: float) -> None:
+        return None
+
+    reg = DatasetRegistry(tmp_path)
+    await BulkImporter(
+        source=FakeArchive(),
+        writer=ColdArchiveDayWriter(reg),
+        ledger=FileImportLedger(reg),
+        recorded=Recorded(),
+        backlog_rows=lambda: backlog.pop(0) if backlog else 0,
+        disk_usage=None,
+        sleep=fake_sleep,
+    ).run(ImportRequest(SYM, date(2026, 6, 1), date(2026, 6, 1)))
+    assert import_yield_seconds_total._value.get() == before + 0.25
+
+
+async def test_orphan_sweep_never_deletes_another_writers_unmanifested_part(
+    tmp_path: Path,
+) -> None:
+    part_dir = tmp_path / "trades" / f"symbol={SYM}" / "dt=2026-06-01"
+    part_dir.mkdir(parents=True)
+    foreign = part_dir / "part-0000.parquet"  # exporter in flight: not yet manifested
+    pq.write_table(pa.table({"ts": [1], "_export_run_id": ["exporter-run"]}), foreign)
+    mine = part_dir / "part-0001.parquet"  # crashed import leftover
+    pq.write_table(pa.table({"ts": [1], "_export_run_id": ["archive-import-x"]}), mine)
+    d = date(2026, 6, 1)
+    s = await _importer(tmp_path, FakeArchive()).run(ImportRequest(SYM, d, d))
+    assert foreign.is_file()  # another writer's in-flight part survives
+    assert s.rows_written == 24
+    # the import leftover was swept and its name reused by the new, manifested part
+    assert pq.read_table(mine).num_rows == 24
+    assert pq.read_table(foreign).num_rows == 1
+
+
+async def test_import_holds_partition_lock_shared_with_exporter(tmp_path: Path) -> None:
+    """A concurrent cold writer holding the partition lock (exporter/compactor/downsampler)
+    blocks the import's open -> sweep -> write -> manifest -> checkpoint, so neither side can
+    sweep or clobber the other's part file."""
+    from candleviewer.storage.cold.partition_lock import partition_write_lock
+
+    d = date(2026, 6, 1)
+    part = tmp_path / "trades" / f"symbol={SYM}" / f"dt={d.isoformat()}"
+    release = asyncio.Event()
+    holding = asyncio.Event()
+
+    async def exporter() -> None:
+        async with partition_write_lock(part):
+            holding.set()
+            await release.wait()
+            await asyncio.to_thread(part.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(
+                pq.write_table,
+                pa.table({"ts": [1], "_export_run_id": ["exporter-run"]}),
+                part / "part-0000.parquet",
+            )
+
+    ex = asyncio.ensure_future(exporter())
+    await holding.wait()
+    imp = asyncio.ensure_future(_importer(tmp_path, FakeArchive()).run(ImportRequest(SYM, d, d)))
+    for _ in range(50):
+        await asyncio.sleep(0)
+    assert not imp.done() and _parquet_files(tmp_path) == []  # waiting on the lock
+    release.set()
+    await ex
+    s = await imp
+    assert s.rows_written == 24
+    names = sorted(Path(p).name for p in _parquet_files(tmp_path))
+    assert names == ["part-0000.parquet", "part-0001.parquet"]  # exporter's part survives
+
+
+async def test_import_rerun_after_crash_carries_persisted_discard_counts(tmp_path: Path) -> None:
+    lo, hi = day_lo(date(2026, 6, 20)), day_lo(date(2026, 7, 1))
+    first = await _importer(tmp_path, FakeArchive(), Recorded([(lo, hi)])).run(
+        ImportRequest(SYM, *JUNE)
+    )
+    again = await _importer(tmp_path, FakeArchive(), Recorded([(lo, hi)])).run(
+        ImportRequest(SYM, *JUNE)
+    )
+    prior = again.as_result()["already_imported"]
+    assert prior == {
+        "rows_written": first.rows_written,
+        "rows_discarded_overlap": first.rows_discarded_overlap,
+        "rows_discarded_duplicate": 0,
+    }
+    assert first.rows_discarded_overlap == 264
+
+
+async def test_import_adopted_day_reports_counts_with_its_overlap_bounds(tmp_path: Path) -> None:
+    d = date(2026, 6, 10)
+    w = [(day_lo(d), day_lo(d) + 2 * H)]
+    await _importer(tmp_path, FakeArchive(), Recorded(w)).run(ImportRequest(SYM, d, d))
+    _drop_ledger(tmp_path)  # crash after manifest, before checkpoint
+    s = await _importer(tmp_path, FakeArchive(), Recorded(w)).run(ImportRequest(SYM, d, d))
+    assert s.rows_discarded_overlap == 2 and s.overlap == w
+
+
+async def test_import_corrupt_ledger_fails_job_with_named_reason(tmp_path: Path) -> None:
+    from candleviewer.storage.cold.archive_import import LedgerCorrupt
+
+    led = tmp_path / "_manifests" / "_imports" / "trades" / f"symbol={SYM}.json"
+    await asyncio.to_thread(led.parent.mkdir, parents=True)
+    await asyncio.to_thread(led.write_text, "{not json", encoding="utf-8")
+    src = FakeArchive()
+    with pytest.raises(LedgerCorrupt) as err:
+        await _importer(tmp_path, src).run(ImportRequest(SYM, *JUNE))
+    assert err.value.code == "import_ledger_corrupt"
+    assert src.fetches == [] and _parquet_files(tmp_path) == []
+
+
+class _ScriptedArchive(FakeArchive):
+    """Rows per day from the hypothesis draw; selected days are corrupt."""
+
+    def __init__(self, rows: dict[date, list[int]], corrupt: set[date]) -> None:
+        super().__init__(corrupt=corrupt)
+        self.rows = rows
+
+    def parse(
+        self, file: ArchiveFile, raw: bytes, batch_rows: int
+    ) -> Iterator[Sequence[ArchiveTrade]]:
+        lo = day_lo(file.day)
+        out = [
+            ArchiveTrade(lo + off, file.symbol, "buy", Decimal("1"), Decimal("1"), f"t{off}")
+            for off in sorted(set(self.rows.get(file.day, [])))
+        ]
+        for i in range(0, len(out), batch_rows):
+            yield out[i : i + batch_rows]
+
+
+_DAYS = [date(2026, 6, 1) + timedelta(days=i) for i in range(3)]
+_offsets = st.lists(st.integers(0, DAY_US - 1), max_size=30)
+
+
+@settings(max_examples=40, deadline=None, suppress_health_check=[HealthCheck.too_slow,
+          HealthCheck.function_scoped_fixture])  # fmt: skip
+@given(
+    rows=st.fixed_dictionaries({d: _offsets for d in _DAYS}),
+    prior_days=st.sets(st.sampled_from(_DAYS)),
+    corrupt=st.sets(st.sampled_from(_DAYS)),
+    raw_windows=st.lists(st.tuples(st.integers(0, 3 * DAY_US), st.integers(1, DAY_US)), max_size=5),
+)
+async def test_property_written_disjoint_from_recorded_no_dup_and_counts_partition_parsed(
+    tmp_path_factory: pytest.TempPathFactory,
+    rows: dict[date, list[int]],
+    prior_days: set[date],
+    corrupt: set[date],
+    raw_windows: list[tuple[int, int]],
+) -> None:
+    """Over prior partial imports (an earlier run wrote some days, then its ledger was lost)
+    and corrupt files: (a) no written row lies in a recorded window, (b) no natural key is
+    duplicated on disk, (c) for each non-corrupt day written + overlap + duplicate == parsed,
+    (d) corrupt days write nothing and are named."""
+    # fresh, short root per example (Windows MAX_PATH; hypothesis replays examples)
+    root = tmp_path_factory.mktemp("p", numbered=True) / uuid.uuid4().hex[:8]
+    root.mkdir()
+    base = day_lo(_DAYS[0])
+    windows = merge_windows([(base + a, base + a + w) for a, w in raw_windows])
+
+    if prior_days:  # prior partial import of some days, then the checkpoint is lost
+        for d in sorted(prior_days):
+            await _importer(root, _ScriptedArchive(rows, set())).run(ImportRequest(SYM, d, d))
+        _drop_ledger(root)
+    s = await _importer(root, _ScriptedArchive(rows, corrupt), Recorded(windows)).run(
+        ImportRequest(SYM, _DAYS[0], _DAYS[-1])
+    )
+    on_disk = _rows_on_disk(root)
+    assert len(on_disk) == len(set(on_disk))  # (b)
+    fresh = [d for d in _DAYS if d not in corrupt]
+    parsed = sum(len(set(rows[d])) for d in fresh)
+    assert s.rows_written + s.rows_discarded_overlap + s.rows_discarded_duplicate == parsed  # (c)
+    new_ts = {ts for ts, _ in on_disk} - {day_lo(d) + o for d in prior_days for o in rows[d]}
+    assert not [t for t in new_ts if any(a <= t < b for a, b in windows)]  # (a)
+    assert sorted(f for f, _ in s.skipped) == sorted(
+        f"{SYM}{d.isoformat()}.csv.gz" for d in corrupt
+    )

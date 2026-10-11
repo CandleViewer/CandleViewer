@@ -212,3 +212,23 @@ async def test_import_not_wired_fails_closed() -> None:
     app2.include_router(make_recorder_admin_router(AdminJobStore(), None, _Audit(), res))
     c2 = httpx.AsyncClient(transport=httpx.ASGITransport(app=app2), base_url="http://t")
     assert (await c2.post("/admin/recorder/import", json=BODY, headers=_hdr())).status_code == 503
+
+
+async def test_import_job_failure_reports_typed_reason_code() -> None:
+    from candleviewer.storage.cold.archive_import import LedgerCorrupt
+
+    audit = _Audit()
+
+    async def broken(*_a: object) -> dict[str, object]:
+        raise LedgerCorrupt("import ledger is not valid")
+
+    app = FastAPI()
+    res = _Resolver()
+    res.as_(OWNER)
+    app.include_router(
+        make_recorder_admin_router(AdminJobStore(), None, audit, res, import_runner=broken)
+    )
+    c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+    job_id = (await c.post("/admin/recorder/import", json=BODY, headers=_hdr())).json()["job_id"]
+    body = await _poll(c, job_id, "failed")
+    assert body["error"] == "import_ledger_corrupt"

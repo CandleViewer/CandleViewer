@@ -184,7 +184,10 @@ class AdminJobStore:
                 raise
             except Exception as exc:
                 job.status = "failed"
-                job.error = type(exc).__name__
+                # A typed domain refusal carries a stable slug (`code`); else the class name.
+                # Never the message (may carry paths/values, R-I1).
+                code = getattr(exc, "code", None)
+                job.error = code if isinstance(code, str) else type(exc).__name__
             finally:
                 job.finished_at = self._clock()
                 self._tasks.pop(job.id, None)

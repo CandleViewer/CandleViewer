@@ -239,12 +239,19 @@ class CoverageService:
     async def recorded_windows(
         self, symbol: str, lo: int, hi: int, stream: str = StreamKind.TRADES.value
     ) -> list[tuple[int, int]]:
-        """Union of `recording_sessions` windows carrying `stream`, clipped to `[lo, hi)`. Gaps
-        are NOT subtracted: the archive importer treats a whole session window as recorded
-        (recorded wins, E16-T10), so archive rows never interleave with a live session."""
+        """What the recorder actually covers for `stream` in `[lo, hi)`: session windows MINUS
+        that stream's recorder gaps, by the same `coverage()` algebra `coverage()` reports
+        (E16-T04). The archive importer discards rows only inside these windows (recorded
+        wins) and writes rows that fall in a recorder gap, so `coverage()` then labels that
+        gap window `source='archive'` truthfully."""
         now = self._now_us()
         async with asyncio.timeout(self._timeout_s):
             rows = await self._store.sessions_in(symbol, to_dt(lo), to_dt(hi))
+            gap_rows = await self._store.gaps_in(symbol, to_dt(lo), to_dt(hi))
+        g_spans = [
+            sp for g in gap_rows if g["stream"] == stream
+            and (sp := _span(to_us(g["gap_start"]), to_us(g["gap_end"]))) is not None
+        ]  # fmt: skip
         spans: list[Span] = []
         for s in rows:
             if stream not in (s.get("streams") or ()):
@@ -253,7 +260,7 @@ class CoverageService:
             w = _span(max(lo, to_us(s["started_at"])), min(hi, to_us(end) if end else now))
             if w is not None:
                 spans.append(w)
-        return [(s.lo, s.hi) for s in union(spans)]
+        return [(s.lo, s.hi) for s in coverage(spans, g_spans)]
 
     async def _archive_only(
         self, symbol: str, lo: int, hi: int, recorded: Sequence[Span]

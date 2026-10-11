@@ -46,6 +46,8 @@ async def test_archive_day_round_trip_parquet_router_meta_sources(tmp_path: Path
             source=BybitTradeArchive(client=client),
             writer=ColdArchiveDayWriter(reg),
             ledger=FileImportLedger(reg),
+            backlog_rows=lambda: 0,
+            disk_usage=None,
             recorded=_no_recorded,
         ).run(ImportRequest("BTCUSDT", DAY, DAY))
     assert (summary.files_processed, summary.rows_written, summary.skipped) == (1, 6, [])

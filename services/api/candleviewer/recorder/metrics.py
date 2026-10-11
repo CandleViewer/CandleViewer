@@ -75,3 +75,15 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
 def export_recorder_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
     """Serve the StreamWriter series on `registry` (the scraped one) with `env`."""
     return ReexportCollector(registry, names=EXPORTED_NAMES, const_labels={"env": env})
+
+
+def current_write_backlog_rows() -> int:
+    """Live recorder write backlog as last published by the StreamWriter (`_publish_gauges`).
+
+    The archive importer (E16-T10) polls this so live capture always wins; reads the gauge's
+    public `collect()` sample, so it needs no reference to the writer instance.
+    """
+    for metric in recorder_write_backlog_rows.collect():
+        for sample in metric.samples:
+            return int(sample.value)
+    return 0

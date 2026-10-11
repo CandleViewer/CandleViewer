@@ -162,6 +162,7 @@ from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.recorder.coverage import CoverageService
+from candleviewer.recorder.metrics import current_write_backlog_rows
 from candleviewer.recorder.service import RecorderService
 from candleviewer.replay.service import ReplayService
 from candleviewer.risk.service import RiskService
@@ -1026,6 +1027,7 @@ def create_app(
                 ),
                 resolved.parquet_root,
                 coverage_service,
+                backlog_rows=current_write_backlog_rows,
             ),
         )
     )

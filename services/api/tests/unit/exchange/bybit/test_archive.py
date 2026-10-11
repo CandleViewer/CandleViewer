@@ -213,7 +213,7 @@ async def test_fetch_concurrency_never_exceeds_cap() -> None:
         peak = max(peak, in_flight)
         await gate.wait()
         in_flight -= 1
-        return httpx.Response(200, content=b"ok")
+        return httpx.Response(200, stream=httpx.ByteStream(b"ok"))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         a = BybitTradeArchive(ArchiveConfig(max_concurrency=2), client=client)
@@ -281,5 +281,45 @@ def test_parse_batches_respect_batch_rows() -> None:
     ],
 )
 def test_parse_schema_violations_fail_the_file(raw: bytes) -> None:
+    with pytest.raises(ArchiveParseFailed):
+        list(BybitTradeArchive().parse(_file(), raw, 100))
+
+
+# -- review hardening ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_fetch_rejects_transparent_content_encoding() -> None:
+    respx.get(url__regex=r".*").mock(
+        return_value=httpx.Response(200, content=b"x", headers={"content-encoding": "br"})
+    )
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(ArchiveError):
+            await BybitTradeArchive(client=client).fetch(_file())
+
+
+@respx.mock
+async def test_fetch_returns_wire_bytes_not_decoded_body() -> None:
+    raw = FIXTURE.read_bytes()
+    respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, content=raw))
+    async with httpx.AsyncClient() as client:
+        assert await BybitTradeArchive(client=client).fetch(_file()) == raw
+
+
+def test_owned_client_ignores_proxy_environment() -> None:
+    client = BybitTradeArchive()._http()
+    assert client.trust_env is False and client.follow_redirects is False
+
+
+def test_default_download_buffer_cap_is_bounded() -> None:
+    assert ArchiveConfig().max_download_mb == 256
+    with pytest.raises(ValidationError):
+        ArchiveConfig(max_download_mb=4096)
+
+
+def test_parse_overlong_line_fails_without_unbounded_growth() -> None:
+    from candleviewer.exchange.bybit.archive import MAX_LINE_BYTES
+
+    raw = gzip.compress(HEADER.encode() + b"\n" + b"9" * (MAX_LINE_BYTES * 4), mtime=0)
     with pytest.raises(ArchiveParseFailed):
         list(BybitTradeArchive().parse(_file(), raw, 100))

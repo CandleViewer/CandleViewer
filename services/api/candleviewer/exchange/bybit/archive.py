@@ -40,7 +40,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from candleviewer.domain.archive import (
     ArchiveChecksumFailed,
-    ArchiveError,
+    ArchiveDownloadFailed,
     ArchiveFile,
     ArchiveNotFound,
     ArchiveParseFailed,
@@ -62,6 +62,10 @@ _SIDES = {"Buy": "buy", "Sell": "sell"}
 _US_PER_S = Decimal(1_000_000)
 _DAY_US = 86_400_000_000
 _CHUNK = 64 * 1024
+#: Longest accepted CSV line (a real row is < 200 bytes); bounds the line accumulator.
+MAX_LINE_BYTES = 64 * 1024
+#: Bytes are hashed and size-capped as transferred: no transparent content decoding.
+_ALLOWED_CONTENT_ENCODINGS = frozenset({"", "identity"})
 MAX_RANGE_DAYS = 366
 
 
@@ -76,7 +80,8 @@ class ArchiveConfig(BaseModel):
     base_url: str = DEFAULT_ARCHIVE_BASE
     max_concurrency: int = Field(default=2, ge=1, le=16)
     max_mbps: float = Field(default=50.0, gt=0.0, le=10_000.0)
-    max_download_mb: int = Field(default=1024, ge=1)
+    #: In-memory buffer cap per file (x `max_concurrency` = worst-case resident download bytes).
+    max_download_mb: int = Field(default=256, ge=1, le=1024)
     max_uncompressed_mb: int = Field(default=2048, ge=1)
     connect_timeout_s: float = Field(default=10.0, gt=0.0)
     read_timeout_s: float = Field(default=60.0, gt=0.0)
@@ -166,6 +171,7 @@ class BybitTradeArchive:
                 ),
                 follow_redirects=False,
                 verify=True,
+                trust_env=False,  # never route through an env-configured proxy
             )
         return self._client
 
@@ -203,12 +209,20 @@ class BybitTradeArchive:
                     if resp.status_code == 404:
                         raise ArchiveNotFound("archive file not published")
                     if resp.status_code != 200:
-                        raise ArchiveError(f"archive download failed: HTTP {resp.status_code}")
+                        raise ArchiveDownloadFailed(
+                            f"archive download failed: HTTP {resp.status_code}"
+                        )
+                    encoding = resp.headers.get("content-encoding", "").strip().lower()
+                    if encoding not in _ALLOWED_CONTENT_ENCODINGS:
+                        raise ArchiveDownloadFailed(
+                            "archive download refused: unexpected content-encoding"
+                        )
                     declared = resp.headers.get("content-length")
                     if declared is not None and declared.isdigit() and int(declared) > cap:
                         raise ArchiveTooLarge("archive file exceeds the download cap")
                     buf = bytearray()
-                    async for chunk in resp.aiter_bytes(_CHUNK):
+                    # Raw bytes as sent: the cap and SHA-256 apply to what crossed the wire.
+                    async for chunk in resp.aiter_raw(_CHUNK):
                         await self._limiter.acquire(len(chunk))
                         buf.extend(chunk)
                         if len(buf) > cap:
@@ -244,6 +258,8 @@ class BybitTradeArchive:
         for chunk in self._inflate(raw):
             pending += chunk
             *done, pending = pending.split(b"\n")
+            if len(pending) > MAX_LINE_BYTES or any(len(x) > MAX_LINE_BYTES for x in done):
+                raise ArchiveParseFailed("CSV line exceeds the length cap")
             for line in done:
                 yield line.decode("utf-8")
         if pending:

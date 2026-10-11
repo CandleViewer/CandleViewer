@@ -33,6 +33,8 @@ async def _import(root: Path, store: MemRecorderStore, svc: CoverageService) -> 
         source=FakeArchive(),
         writer=ColdArchiveDayWriter(reg),
         ledger=FileImportLedger(reg),
+        backlog_rows=lambda: 0,
+        disk_usage=None,
         recorded=svc.recorded_windows,
         clock=lambda: datetime(2026, 10, 1, tzinfo=UTC),
     ).run(ImportRequest("BTCUSDT", date(2026, 6, 1), date(2026, 6, 3)))
@@ -77,3 +79,43 @@ async def test_recorded_windows_only_sessions_carrying_the_stream(tmp_path: Path
     assert await svc.recorded_windows("BTCUSDT", 0, 100) == []
     _session(store, 10, 50, ["trades"])
     assert await svc.recorded_windows("BTCUSDT", 20, 100) == [(20, 50)]
+
+
+async def test_archive_rows_inside_a_recorder_gap_are_written_and_labelled_archive(
+    tmp_path: Path,
+) -> None:
+    """Review #2217 (blocking): recorded coverage = session window MINUS recorder gaps. Archive
+    rows inside a 3-min gap are written; outside it they are discarded; coverage shows only the
+    gap window as `archive`, for trades only."""
+    store = MemRecorderStore()
+    lo = day_lo(date(2026, 6, 1))
+    H = 3_600_000_000
+    _session(store, lo, lo + 3 * D, ["trades", "orderbook_delta"])
+    g_lo, g_hi = lo + D + 10 * H, lo + D + 10 * H + 180_000_000  # 3-min gap on day 2
+    store.gaps.append(
+        {"id": 1, "symbol": "BTCUSDT", "stream": "trades", "gap_start": to_dt(g_lo),
+         "gap_end": to_dt(g_hi), "cause": "ws_disconnect", "backfilled": False,
+         "backfill_source": None}
+    )  # fmt: skip
+    svc = CoverageService(
+        store, now_us=lambda: lo + 120 * D, archive=FileImportLedger(DatasetRegistry(tmp_path))
+    )
+    assert await svc.recorded_windows("BTCUSDT", lo, lo + 3 * D) == [
+        (lo, g_lo), (g_hi, lo + 3 * D)
+    ]  # fmt: skip
+    reg = DatasetRegistry(tmp_path)
+    summary = await BulkImporter(
+        source=FakeArchive(),
+        writer=ColdArchiveDayWriter(reg),
+        ledger=FileImportLedger(reg),
+        recorded=svc.recorded_windows,
+        backlog_rows=lambda: 0,
+        disk_usage=None,
+        clock=lambda: datetime(2026, 10, 1, tzinfo=UTC),
+    ).run(ImportRequest("BTCUSDT", date(2026, 6, 1), date(2026, 6, 3)))
+    # FakeArchive puts one row at h*H + 500 µs; only day-2 h10 lies inside the gap.
+    assert (summary.rows_written, summary.rows_discarded_overlap) == (1, 71)
+    trades, book = await svc.coverage("BTCUSDT", ["trades", "orderbook_delta"], lo, lo + 3 * D)
+    archive = [(i.lo, i.hi) for i in trades.intervals if i.source == "archive"]
+    assert archive == [(g_lo, g_hi)]
+    assert all(i.source == "recorded" for i in book.intervals)

@@ -51,6 +51,12 @@ class ArchiveParseFailed(ArchiveError):
     code = "import_parse_failed"
 
 
+class ArchiveDownloadFailed(ArchiveError):
+    """Non-200 (incl. 5xx), refused redirect or content-encoding: transport-level failure."""
+
+    code = "import_download_failed"
+
+
 class ArchiveNotFound(ArchiveError):
     code = "import_file_not_found"
 

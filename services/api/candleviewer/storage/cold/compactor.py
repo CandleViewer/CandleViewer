@@ -29,6 +29,7 @@ from candleviewer.storage.cold.observability import (
     SystemEventSink,
     storage_compaction_files_merged_total,
 )
+from candleviewer.storage.cold.partition_lock import partition_write_lock
 from candleviewer.storage.cold.writer import (
     MARKET_DATA_PROFILE,
     sweep_stale_temps,
@@ -117,15 +118,16 @@ class Compactor:
                 reason=f"active replay_sessions id={session_id}",
             )
         store = ManifestStore(manifests_dir)
-        plan = await asyncio.to_thread(self._plan, store, partition_dir, cold_root)
-        if plan is None:
-            return CompactionResult(
-                partition_dir=partition_dir, skipped=True, reason="below threshold"
+        async with partition_write_lock(partition_dir):
+            plan = await asyncio.to_thread(self._plan, store, partition_dir, cold_root)
+            if plan is None:
+                return CompactionResult(
+                    partition_dir=partition_dir, skipped=True, reason="below threshold"
+                )
+            # Shielded: once originals may be deleted the step must finish.
+            result = await asyncio.shield(
+                asyncio.to_thread(self._merge, store, partition_dir, cold_root, plan)
             )
-        # Shielded: once originals may be deleted the step must finish.
-        result = await asyncio.shield(
-            asyncio.to_thread(self._merge, store, partition_dir, cold_root, plan)
-        )
         storage_compaction_files_merged_total.inc(len(plan))
         await self._events.emit(
             "INFO",
