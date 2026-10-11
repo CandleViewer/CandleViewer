@@ -135,6 +135,8 @@ jobs:
   py-perf:
     name: py-perf
     runs-on: ubuntu-latest
+    # Fixed, not CV_CI_TIMEOUT_MINUTES: the perf set takes ~2.5 min; a run that needs more than 10
+    # is itself a C-13.9 budget failure and should be cancelled rather than waited for.
     timeout-minutes: 10
     defaults:
       run:
