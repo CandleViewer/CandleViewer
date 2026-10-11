@@ -56,6 +56,12 @@ def actual_lines(rule_yaml: Path, fixture: Path) -> set[int]:
             str(rule_yaml),
             "--json",
             "--quiet",
+            # Fixtures live under .semgrepignore'd paths (.semgrep/tests/, .semgrep-fixtures/) so the
+            # product scan never reports their intentional violations; --include overrides that
+            # ignore for this explicit, single-file scan (semgrep docs: --include wins over
+            # .semgrepignore). Without it semgrep 1.99 (CI) silently scans nothing.
+            "--include",
+            fixture.name,
             str(fixture),
         ],
         capture_output=True,
