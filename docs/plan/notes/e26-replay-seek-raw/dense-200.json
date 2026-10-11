@@ -1,0 +1,794 @@
+{
+  "schema_version": 1,
+  "label": "SYNTHETIC 200-depth day (no E16 recorded day exists); laptop, not WSL/docker target",
+  "machine": {
+    "platform": "Windows-11-10.0.26300-SP0",
+    "python": "3.12.3",
+    "cpu": "Intel64 Family 6 Model 142 Stepping 10, GenuineIntel",
+    "logical_cpus": 8,
+    "ram_gb": 17.0
+  },
+  "params": {
+    "rows": 2000000,
+    "depth": 200,
+    "intervals": [
+      300,
+      60,
+      30
+    ],
+    "profile": "dense",
+    "repeats": 5,
+    "seed": 26001,
+    "span_s": 910
+  },
+  "corpus": {
+    "delta_rows": 2420036,
+    "trades": 9912,
+    "snapshots": 32,
+    "generate_s": 9.6,
+    "cold_export_s": 2.9,
+    "arrow_bytes_per_delta_row": 88.0,
+    "delta_rows_per_frame": 265.9,
+    "scale_to_24h": 94.9
+  },
+  "seek": {
+    "cold (Parquet, pyarrow)": [
+      {
+        "interval_s": 300,
+        "busy_window": {
+          "window_start_s": 600,
+          "frames": 3000,
+          "delta_rows": 827938,
+          "trades_replayed": 474,
+          "builder_blob_bytes": 703,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 6000.05,
+            "p95": 8582.11,
+            "max": 8582.11
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 4.61,
+              "p95": 5.45,
+              "max": 5.45
+            },
+            "delta_apply": {
+              "p50": 5655.26,
+              "p95": 8210.4,
+              "max": 8210.4
+            },
+            "builder_restore": {
+              "p50": 35.19,
+              "p95": 38.32,
+              "max": 38.32
+            },
+            "warmup": {
+              "p50": 307.21,
+              "p95": 331.07,
+              "max": 331.07
+            }
+          }
+        },
+        "calm_window": {
+          "window_start_s": 0,
+          "frames": 3000,
+          "delta_rows": 745270,
+          "trades_replayed": 240,
+          "builder_blob_bytes": 700,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 5211.89,
+            "p95": 7855.93,
+            "max": 7855.93
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 4.45,
+              "p95": 4.8,
+              "max": 4.8
+            },
+            "delta_apply": {
+              "p50": 4996.03,
+              "p95": 7680.14,
+              "max": 7680.14
+            },
+            "builder_restore": {
+              "p50": 24.14,
+              "p95": 27.17,
+              "max": 27.17
+            },
+            "warmup": {
+              "p50": 161.95,
+              "p95": 194.3,
+              "max": 194.3
+            }
+          }
+        }
+      },
+      {
+        "interval_s": 60,
+        "busy_window": {
+          "window_start_s": 600,
+          "frames": 600,
+          "delta_rows": 242494,
+          "trades_replayed": 1184,
+          "builder_blob_bytes": 696,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 1859.46,
+            "p95": 3730.73,
+            "max": 3730.73
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 4.67,
+              "p95": 6.96,
+              "max": 6.96
+            },
+            "delta_apply": {
+              "p50": 1612.27,
+              "p95": 3495.97,
+              "max": 3495.97
+            },
+            "builder_restore": {
+              "p50": 56.48,
+              "p95": 66.6,
+              "max": 66.6
+            },
+            "warmup": {
+              "p50": 175.77,
+              "p95": 177.23,
+              "max": 177.23
+            }
+          }
+        },
+        "calm_window": {
+          "window_start_s": 0,
+          "frames": 600,
+          "delta_rows": 136554,
+          "trades_replayed": 1777,
+          "builder_blob_bytes": 265,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 991.45,
+            "p95": 1178.44,
+            "max": 1178.44
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 4.9,
+              "p95": 6.56,
+              "max": 6.56
+            },
+            "delta_apply": {
+              "p50": 927.83,
+              "p95": 1099.35,
+              "max": 1099.35
+            },
+            "builder_restore": {
+              "p50": 58.05,
+              "p95": 73.66,
+              "max": 73.66
+            },
+            "warmup": {
+              "p50": 1.15,
+              "p95": 1.26,
+              "max": 1.26
+            }
+          }
+        }
+      },
+      {
+        "interval_s": 30,
+        "busy_window": {
+          "window_start_s": 600,
+          "frames": 300,
+          "delta_rows": 121211,
+          "trades_replayed": 576,
+          "builder_blob_bytes": 696,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 999.68,
+            "p95": 1026.66,
+            "max": 1026.66
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 4.35,
+              "p95": 11.27,
+              "max": 11.27
+            },
+            "delta_apply": {
+              "p50": 792.82,
+              "p95": 812.79,
+              "max": 812.79
+            },
+            "builder_restore": {
+              "p50": 22.92,
+              "p95": 24.71,
+              "max": 24.71
+            },
+            "warmup": {
+              "p50": 174.49,
+              "p95": 179.59,
+              "max": 179.59
+            }
+          }
+        },
+        "calm_window": {
+          "window_start_s": 0,
+          "frames": 300,
+          "delta_rows": 67262,
+          "trades_replayed": 919,
+          "builder_blob_bytes": 265,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 515.12,
+            "p95": 634.14,
+            "max": 634.14
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 4.85,
+              "p95": 4.98,
+              "max": 4.98
+            },
+            "delta_apply": {
+              "p50": 474.23,
+              "p95": 582.97,
+              "max": 582.97
+            },
+            "builder_restore": {
+              "p50": 34.63,
+              "p95": 45.12,
+              "max": 45.12
+            },
+            "warmup": {
+              "p50": 1.2,
+              "p95": 1.28,
+              "max": 1.28
+            }
+          }
+        }
+      }
+    ],
+    "hot STAND-IN (in-memory, not QuestDB)": [
+      {
+        "interval_s": 300,
+        "busy_window": {
+          "window_start_s": 600,
+          "frames": 3000,
+          "delta_rows": 827938,
+          "trades_replayed": 474,
+          "builder_blob_bytes": 703,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 9789.89,
+            "p95": 10275.97,
+            "max": 10275.97
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 2.08,
+              "p95": 3.17,
+              "max": 3.17
+            },
+            "delta_apply": {
+              "p50": 9354.02,
+              "p95": 9911.12,
+              "max": 9911.12
+            },
+            "builder_restore": {
+              "p50": 22.88,
+              "p95": 25.69,
+              "max": 25.69
+            },
+            "warmup": {
+              "p50": 324.44,
+              "p95": 408.17,
+              "max": 408.17
+            }
+          }
+        },
+        "calm_window": {
+          "window_start_s": 0,
+          "frames": 3000,
+          "delta_rows": 745270,
+          "trades_replayed": 240,
+          "builder_blob_bytes": 700,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 7520.35,
+            "p95": 17804.38,
+            "max": 17804.38
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 2.42,
+              "p95": 2.68,
+              "max": 2.68
+            },
+            "delta_apply": {
+              "p50": 7331.46,
+              "p95": 17619.3,
+              "max": 17619.3
+            },
+            "builder_restore": {
+              "p50": 16.84,
+              "p95": 22.39,
+              "max": 22.39
+            },
+            "warmup": {
+              "p50": 167.19,
+              "p95": 216.94,
+              "max": 216.94
+            }
+          }
+        }
+      },
+      {
+        "interval_s": 60,
+        "busy_window": {
+          "window_start_s": 600,
+          "frames": 600,
+          "delta_rows": 242494,
+          "trades_replayed": 1184,
+          "builder_blob_bytes": 696,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 2857.5,
+            "p95": 3731.81,
+            "max": 3731.81
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 2.17,
+              "p95": 2.47,
+              "max": 2.47
+            },
+            "delta_apply": {
+              "p50": 2624.33,
+              "p95": 3490.12,
+              "max": 3490.12
+            },
+            "builder_restore": {
+              "p50": 51.07,
+              "p95": 66.58,
+              "max": 66.58
+            },
+            "warmup": {
+              "p50": 191.03,
+              "p95": 225.17,
+              "max": 225.17
+            }
+          }
+        },
+        "calm_window": {
+          "window_start_s": 0,
+          "frames": 600,
+          "delta_rows": 136554,
+          "trades_replayed": 1777,
+          "builder_blob_bytes": 265,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 1316.87,
+            "p95": 1346.42,
+            "max": 1346.42
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 2.25,
+              "p95": 2.3,
+              "max": 2.3
+            },
+            "delta_apply": {
+              "p50": 1251.69,
+              "p95": 1281.24,
+              "max": 1281.24
+            },
+            "builder_restore": {
+              "p50": 62.75,
+              "p95": 65.89,
+              "max": 65.89
+            },
+            "warmup": {
+              "p50": 0.28,
+              "p95": 0.29,
+              "max": 0.29
+            }
+          }
+        }
+      },
+      {
+        "interval_s": 30,
+        "busy_window": {
+          "window_start_s": 600,
+          "frames": 300,
+          "delta_rows": 121211,
+          "trades_replayed": 576,
+          "builder_blob_bytes": 696,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 1387.21,
+            "p95": 1556.47,
+            "max": 1556.47
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 2.15,
+              "p95": 4.72,
+              "max": 4.72
+            },
+            "delta_apply": {
+              "p50": 1172.68,
+              "p95": 1318.36,
+              "max": 1318.36
+            },
+            "builder_restore": {
+              "p50": 28.33,
+              "p95": 32.45,
+              "max": 32.45
+            },
+            "warmup": {
+              "p50": 184.26,
+              "p95": 204.03,
+              "max": 204.03
+            }
+          }
+        },
+        "calm_window": {
+          "window_start_s": 0,
+          "frames": 300,
+          "delta_rows": 67262,
+          "trades_replayed": 919,
+          "builder_blob_bytes": 265,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 711.8,
+            "p95": 821.46,
+            "max": 821.46
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 2.46,
+              "p95": 2.92,
+              "max": 2.92
+            },
+            "delta_apply": {
+              "p50": 667.71,
+              "p95": 771.16,
+              "max": 771.16
+            },
+            "builder_restore": {
+              "p50": 47.05,
+              "p95": 64.49,
+              "max": 64.49
+            },
+            "warmup": {
+              "p50": 0.29,
+              "p95": 0.51,
+              "max": 0.51
+            }
+          }
+        }
+      }
+    ],
+    "cold (Parquet, pyarrow) + collapsed deltas (mitigation)": [
+      {
+        "interval_s": 300,
+        "busy_window": {
+          "window_start_s": 600,
+          "frames": 635,
+          "delta_rows": 827938,
+          "trades_replayed": 474,
+          "builder_blob_bytes": 703,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 928.3,
+            "p95": 1327.98,
+            "max": 1327.98
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 5.55,
+              "p95": 6.09,
+              "max": 6.09
+            },
+            "delta_apply": {
+              "p50": 465.09,
+              "p95": 560.53,
+              "max": 560.53
+            },
+            "builder_restore": {
+              "p50": 22.36,
+              "p95": 27.34,
+              "max": 27.34
+            },
+            "warmup": {
+              "p50": 455.93,
+              "p95": 831.26,
+              "max": 831.26
+            }
+          }
+        },
+        "calm_window": {
+          "window_start_s": 0,
+          "frames": 880,
+          "delta_rows": 745270,
+          "trades_replayed": 240,
+          "builder_blob_bytes": 700,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 557.36,
+            "p95": 781.27,
+            "max": 781.27
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 5.17,
+              "p95": 9.69,
+              "max": 9.69
+            },
+            "delta_apply": {
+              "p50": 358.3,
+              "p95": 555.42,
+              "max": 555.42
+            },
+            "builder_restore": {
+              "p50": 14.39,
+              "p95": 26.68,
+              "max": 26.68
+            },
+            "warmup": {
+              "p50": 173.79,
+              "p95": 204.93,
+              "max": 204.93
+            }
+          }
+        }
+      },
+      {
+        "interval_s": 60,
+        "busy_window": {
+          "window_start_s": 600,
+          "frames": 610,
+          "delta_rows": 242494,
+          "trades_replayed": 1184,
+          "builder_blob_bytes": 696,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 384.04,
+            "p95": 410.2,
+            "max": 410.2
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 4.68,
+              "p95": 5.4,
+              "max": 5.4
+            },
+            "delta_apply": {
+              "p50": 144.54,
+              "p95": 174.5,
+              "max": 174.5
+            },
+            "builder_restore": {
+              "p50": 47.67,
+              "p95": 50.78,
+              "max": 50.78
+            },
+            "warmup": {
+              "p50": 177.0,
+              "p95": 210.33,
+              "max": 210.33
+            }
+          }
+        },
+        "calm_window": {
+          "window_start_s": 0,
+          "frames": 619,
+          "delta_rows": 136554,
+          "trades_replayed": 1777,
+          "builder_blob_bytes": 265,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 158.57,
+            "p95": 184.84,
+            "max": 184.84
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 5.44,
+              "p95": 5.76,
+              "max": 5.76
+            },
+            "delta_apply": {
+              "p50": 83.55,
+              "p95": 107.48,
+              "max": 107.48
+            },
+            "builder_restore": {
+              "p50": 68.7,
+              "p95": 70.66,
+              "max": 70.66
+            },
+            "warmup": {
+              "p50": 1.32,
+              "p95": 1.97,
+              "max": 1.97
+            }
+          }
+        }
+      },
+      {
+        "interval_s": 30,
+        "busy_window": {
+          "window_start_s": 600,
+          "frames": 566,
+          "delta_rows": 121211,
+          "trades_replayed": 576,
+          "builder_blob_bytes": 696,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 272.92,
+            "p95": 281.88,
+            "max": 281.88
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 4.41,
+              "p95": 4.56,
+              "max": 4.56
+            },
+            "delta_apply": {
+              "p50": 69.97,
+              "p95": 72.59,
+              "max": 72.59
+            },
+            "builder_restore": {
+              "p50": 25.58,
+              "p95": 28.23,
+              "max": 28.23
+            },
+            "warmup": {
+              "p50": 169.3,
+              "p95": 184.73,
+              "max": 184.73
+            }
+          }
+        },
+        "calm_window": {
+          "window_start_s": 0,
+          "frames": 594,
+          "delta_rows": 67262,
+          "trades_replayed": 919,
+          "builder_blob_bytes": 265,
+          "book_matches_next_snapshot": true,
+          "total_ms": {
+            "p50": 93.18,
+            "p95": 104.22,
+            "max": 104.22
+          },
+          "stage_ms": {
+            "anchor_load": {
+              "p50": 4.83,
+              "p95": 4.93,
+              "max": 4.93
+            },
+            "delta_apply": {
+              "p50": 50.56,
+              "p95": 62.01,
+              "max": 62.01
+            },
+            "builder_restore": {
+              "p50": 36.43,
+              "p95": 36.79,
+              "max": 36.79
+            },
+            "warmup": {
+              "p50": 1.13,
+              "p95": 1.2,
+              "max": 1.2
+            }
+          }
+        }
+      }
+    ]
+  },
+  "snapshot_disk": [
+    {
+      "interval_s": 300,
+      "rows_per_day": 288,
+      "hot_mb_per_day_modelled": 4.4,
+      "parquet_mb_per_day": 0.6,
+      "hot_bytes_per_row": 15360,
+      "parquet_bytes_per_row": 1968
+    },
+    {
+      "interval_s": 60,
+      "rows_per_day": 1440,
+      "hot_mb_per_day_modelled": 22.1,
+      "parquet_mb_per_day": 2.8,
+      "hot_bytes_per_row": 15360,
+      "parquet_bytes_per_row": 1968
+    },
+    {
+      "interval_s": 30,
+      "rows_per_day": 2880,
+      "hot_mb_per_day_modelled": 44.2,
+      "parquet_mb_per_day": 5.7,
+      "hot_bytes_per_row": 15360,
+      "parquet_bytes_per_row": 1968
+    }
+  ],
+  "throughput": {
+    "cold_pyarrow_range": {
+      "rows": 2420036,
+      "events_per_s": {
+        "p50": 9380613.51,
+        "p95": 10618337.86,
+        "max": 10618337.86
+      }
+    },
+    "cold_duckdb_scan": {
+      "rows": 2420036,
+      "events_per_s": {
+        "p50": 7273231.09,
+        "p95": 7770362.86,
+        "max": 7770362.86
+      }
+    },
+    "hot_standin_rows_busiest_minute": {
+      "rows": 242494,
+      "events_per_s": {
+        "p50": 280974.89,
+        "p95": 281405.09,
+        "max": 281405.09
+      }
+    },
+    "merge": {
+      "events": 2429948,
+      "seconds": 0.942,
+      "events_per_s": 2579292
+    }
+  },
+  "busiest_minute": {
+    "delta_rows": 242494,
+    "trades": 1184,
+    "events": 243678,
+    "required_events_per_s_at_100x": 406130
+  },
+  "buffer_100x": {
+    "sustained_events_per_s": 2579292,
+    "busy_wall_s_at_100x": 0.6,
+    "deficit_events": 0,
+    "buffer_mb": 0.0,
+    "buffer_replay_s": 0.0,
+    "stalls_without_buffer": false
+  },
+  "read_ahead_rss": [
+    {
+      "window_s": 5,
+      "rows": 20200,
+      "arrow_mb": 66.2,
+      "arrow_plus_tuples_mb": 69.9,
+      "events_held": 20200
+    },
+    {
+      "window_s": 30,
+      "rows": 121211,
+      "arrow_mb": 77.4,
+      "arrow_plus_tuples_mb": 94.4,
+      "events_held": 121211
+    },
+    {
+      "window_s": 120,
+      "rows": 398117,
+      "arrow_mb": 156.0,
+      "arrow_plus_tuples_mb": 213.3,
+      "events_held": 398117
+    }
+  ],
+  "peak_rss_mb": 649
+}
