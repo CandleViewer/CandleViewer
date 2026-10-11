@@ -96,7 +96,9 @@ services:
     environment:
       CV_ENVIRONMENT: ${CV_ENVIRONMENT:-demo}
       CV_FEED: ${CV_FEED:-synthetic}
-      CV_BIND_HOST: 0.0.0.0
+      # The api's fixed private IP on cv-internal (never the wildcard, C-12.9); the host publish
+      # below stays on 127.0.0.1 only.
+      CV_BIND_HOST: 172.28.0.10
       CV_BIND_PORT: "8000"
       # /metrics refuses public binds; bind the api's fixed private IP so prometheus can scrape it.
       CV_METRICS_BIND: 172.28.0.10:9108
@@ -115,7 +117,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2).status == 200 else 1)",
+          "import os,sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://%s:%s/healthz' % (os.environ['CV_BIND_HOST'], os.environ['CV_BIND_PORT']), timeout=2).status == 200 else 1)",
         ]
       interval: 5s
       timeout: 5s
