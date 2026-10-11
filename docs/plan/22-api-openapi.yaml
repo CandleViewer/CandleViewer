@@ -48,6 +48,44 @@ info:
     use. Login is two-legged when MFA is enabled: `POST /auth/login` returns an `mfa_required`
     challenge, `POST /auth/mfa/verify` exchanges it for tokens.
 
+    ### CSRF (SR-041, double-submit cookie)
+    Every state-changing operation (`POST`/`PUT`/`PATCH`/`DELETE`) requires an `X-CSRF-Token`
+    header (`components.parameters.CsrfToken`), regardless of the auth scheme. There is **no
+    bearer exemption**: non-browser clients also receive the `__Host-cv_csrf` cookie and echo it.
+
+    * **Cookie.** `__Host-cv_csrf`, `Secure; SameSite=Strict; Path=/`, no `Domain`, **not**
+      `HttpOnly` (the client must read it). `Max-Age` equals the refresh-token lifetime
+      (`refresh_expires_in`, the same as `cv_refresh`), so a browser restart never strands
+      `/auth/refresh` or `/auth/logout`. The attributes match `cv_refresh` and the
+      deployment model: TLS via Tailscale or the Electron shell, and `http://127.0.0.1` /
+      `localhost` is a secure context, so `Secure` cookies work in local development.
+    * **Token.** `<nonce>.<mac>`. The nonce has at least 128 bits from a CSPRNG.
+      `mac = HMAC-SHA256(csrf_key, len(session_id) || session_id || nonce)` (length-prefixed
+      session id). `csrf_key` is a dedicated, rotatable server key, separate from the access-JWT
+      and refresh signing keys. `session_id` is the server-side session id (`sid`), **never** the
+      refresh token.
+    * **Validation.** The server requires the header to be present and equal to the cookie,
+      **and** recomputes the MAC against the session id that it resolves itself (the access
+      token's `sid`; for `/auth/refresh`, the session bound to the presented `cv_refresh`).
+      Header/cookie equality alone is never sufficient. Every comparison is constant time.
+    * **Issue, rotate and re-issue.** `POST /auth/login` (when `status=authenticated`),
+      `POST /auth/mfa/verify` and `POST /auth/mfa/recovery` issue a token for the new session.
+      `POST /auth/refresh` validates the presented token against the session bound to
+      `cv_refresh`, then rotates both cookies. `GET /auth/session` re-issues the cookie for the
+      current session when it is absent or does not verify (the bootstrap recovery path).
+      `POST /auth/logout` expires it.
+    * **Multi-tab.** After a rotation in another tab, a request carrying the old token may get
+      `403 csrf_token_invalid`. The client then re-reads the cookie and retries the request
+      **once**; a second refusal is surfaced to the user.
+    * **Exempt.** The pre-session operations that run before any session exists
+      (`POST /auth/login`, `/auth/mfa/verify`, `/auth/mfa/recovery`,
+      `/invites/{inviteToken}`, `/invites/{inviteToken}/confirm`) and the safe methods
+      (`GET`/`HEAD`/`OPTIONS`). `SameSite=Strict` and the SR-042 `Origin` check are
+      additional controls, never the only one.
+    * **Refusal.** A missing, mismatched or session-unbound token yields `403`
+      `csrf_token_invalid` and an `auth.csrf_refused` audit record. The problem `detail` never
+      echoes token or cookie values.
+
     ### RBAC
     Roles `owner` | `manager` | `viewer` map to permission codes (`orders:write`,
     `keys:manage`, …). Each operation lists them in `x-rbac.permissions`. In addition,
@@ -195,6 +233,10 @@ x-error-codes:
     title: Authenticated but lacking the required permission
     retryable: false
     surface: [rest, ws] # same slug, same meaning on the WS (23-ws-protocol.md §10.2)
+  - code: csrf_token_invalid
+    status: 403
+    title: CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session (SR-041)
+    retryable: false
   - code: account_scope_denied
     status: 403
     title: Caller has no granted access to the targeted exchange account
@@ -629,7 +671,7 @@ paths:
           description: Authenticated, or an MFA challenge was issued.
           headers:
             Set-Cookie:
-              description: "`cv_refresh` cookie; present only when `status=authenticated`."
+              description: "`cv_refresh` and `__Host-cv_csrf` (SR-041) cookies; present only when `status=authenticated`."
               schema: { type: string }
           content:
             application/json:
@@ -694,7 +736,11 @@ paths:
         "200":
           description: MFA accepted; session created.
           headers:
-            Set-Cookie: { description: "`cv_refresh` cookie", schema: { type: string } }
+            Set-Cookie:
+              {
+                description: "`cv_refresh` cookie and a fresh `__Host-cv_csrf` cookie (SR-041)",
+                schema: { type: string },
+              }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuthenticatedResponse" }
@@ -711,6 +757,7 @@ paths:
         The method stays `pending` until confirmed via `POST /auth/mfa/enroll/confirm`.
       x-rbac: { permissions: [settings:write], scope: self }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -740,6 +787,7 @@ paths:
       summary: Confirm a pending MFA enrolment
       x-rbac: { permissions: [settings:write], scope: self }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -752,6 +800,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/MfaMethod" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /auth/mfa/methods/{methodId}:
@@ -765,6 +814,7 @@ paths:
       x-rbac: { permissions: [settings:write], scope: self }
       x-idempotency: optional
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - name: X-Reauth-Password
           in: header
           required: true
@@ -792,6 +842,7 @@ paths:
         - {}
       x-rbac: { permissions: [], scope: none }
       x-idempotency: ignored
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: false
         content:
@@ -801,11 +852,16 @@ paths:
         "200":
           description: New token bundle issued.
           headers:
-            Set-Cookie: { description: "Rotated `cv_refresh` cookie", schema: { type: string } }
+            Set-Cookie:
+              {
+                description: "Rotated `cv_refresh` cookie and a rotated `__Host-cv_csrf` cookie bound to the new session (SR-041)",
+                schema: { type: string },
+              }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuthenticatedResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -816,6 +872,7 @@ paths:
       summary: Revoke the current session (or all sessions)
       x-rbac: { permissions: [], scope: self }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: false
         content:
@@ -832,8 +889,13 @@ paths:
         "204":
           description: "Session(s) revoked; `cv_refresh` cleared."
           headers:
-            Set-Cookie: { description: "Expired `cv_refresh` cookie", schema: { type: string } }
+            Set-Cookie:
+              {
+                description: "Expired `cv_refresh` and `__Host-cv_csrf` cookies",
+                schema: { type: string },
+              }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
 
   /auth/session:
     get:
@@ -845,6 +907,10 @@ paths:
       responses:
         "200":
           description: Current session.
+          headers:
+            Set-Cookie:
+              description: "`__Host-cv_csrf` re-issued for the current session when absent or not verifying (SR-041 recovery path); otherwise absent."
+              schema: { type: string }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/SessionInfo" }
@@ -912,6 +978,7 @@ paths:
       description: Revokes all other sessions on success. Argon2id, minimum 12 characters, checked against a local breached-password list.
       x-rbac: { permissions: [], scope: self }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -920,6 +987,7 @@ paths:
       responses:
         "204": { description: "Password changed." }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   # ===========================================================================
@@ -963,7 +1031,11 @@ paths:
       description: "Creates a user in `invited` state and returns a one-time invite link valid for 72 h. No password is set by the owner."
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: recommended
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKey" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -1010,7 +1082,8 @@ paths:
       description: "The owner cannot demote or disable their own account — the last `owner` is protected (`conflict`)."
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
-      parameters: [{ $ref: "#/components/parameters/IfMatch" }]
+      parameters:
+        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -1039,6 +1112,7 @@ paths:
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - name: purge
           in: query
           schema: { type: boolean, default: false }
@@ -1056,6 +1130,7 @@ paths:
       summary: Replace a user's role set
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -1102,6 +1177,7 @@ paths:
       description: "This is the isolation boundary between managers. Changes take effect on the next request; existing WS subscriptions for revoked accounts are force-closed with an `unsubscribed` frame (see 23-ws-protocol.md §9)."
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -1301,7 +1377,11 @@ paths:
         and the server rejects the 6th with `conflict`.
       x-rbac: { permissions: [accounts:write], scope: none }
       x-idempotency: recommended
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKey" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -1353,7 +1433,8 @@ paths:
         fails with `conflict` when the account holds open positions or active orders.
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: optional
-      parameters: [{ $ref: "#/components/parameters/IfMatch" }]
+      parameters:
+        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -1377,6 +1458,7 @@ paths:
       description: "Revokes its keys locally, stops private streams, and marks it `disabled`. Refused with `conflict` while it holds a non-flat position or open orders."
       x-rbac: { permissions: [accounts:write], scope: none }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deactivated." }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1427,7 +1509,11 @@ paths:
         `permission_snapshot` and re-checked nightly.
       x-rbac: { permissions: [keys:manage], scope: none }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -1509,6 +1595,7 @@ paths:
       description: "Local revocation only — CandleViewer never deletes keys on Bybit. Revoking the last active trade key drops the account to `key_status: missing` and halts its private streams."
       x-rbac: { permissions: [keys:manage], scope: none }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Revoked." }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -1530,7 +1617,11 @@ paths:
         start of the overlap. The rotation is recorded in `api_key_rotations`.
       x-rbac: { permissions: [keys:manage], scope: none }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -1593,6 +1684,7 @@ paths:
         Never places orders.
       x-rbac: { permissions: [keys:read], scope: granted_accounts }
       x-idempotency: ignored
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: false
         content:
@@ -1654,7 +1746,11 @@ paths:
       summary: Create a per-account profile (leverage, sizing, offsets, risk caps, allowed symbols)
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: recommended
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKey" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -1715,7 +1811,8 @@ paths:
         `true`. Attempting `false` returns `validation_failed` / `native_stop_mandatory`.
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: optional
-      parameters: [{ $ref: "#/components/parameters/IfMatch" }]
+      parameters:
+        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -1727,6 +1824,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AccountProfile" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
     delete:
@@ -1735,8 +1833,10 @@ paths:
       summary: Delete a per-account profile
       description: "Refused with `conflict` when the profile is the account's active profile or is referenced by an armed rule."
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deleted." }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /exchange-accounts/{accountId}/fee-rate:
@@ -1897,6 +1997,7 @@ paths:
       summary: Force a refresh of the instrument cache from Bybit
       x-rbac: { permissions: [instruments:write], scope: none }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "202":
           description: Refresh scheduled.
@@ -2970,7 +3071,11 @@ paths:
         Adding a symbol already present is idempotent and returns `200` with the existing row.
       x-rbac: { permissions: [recording:write], scope: none }
       x-idempotency: recommended
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKey" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -3025,6 +3130,7 @@ paths:
         `DELETE /recording/symbols/{id}?purge_data=true` for that.
       x-rbac: { permissions: [recording:write], scope: none }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -3038,6 +3144,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecordedSymbol" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
     delete:
@@ -3052,6 +3159,7 @@ paths:
       x-rbac: { permissions: [recording:write], scope: none }
       x-idempotency: optional
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - name: purge_data
           in: query
           schema: { type: boolean, default: false }
@@ -3073,6 +3181,7 @@ paths:
       description: "Convenience endpoint for the one-click pin toggle in the Recorder screen; equivalent to PATCH with `{pinned}`."
       x-rbac: { permissions: [recording:write], scope: none }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -3094,6 +3203,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecordedSymbol" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /recording/status:
@@ -3245,6 +3355,7 @@ paths:
       x-rbac: { permissions: [recording:write], scope: none }
       x-idempotency: optional
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - name: apply_now
           in: query
           schema: { type: boolean, default: false }
@@ -3365,7 +3476,11 @@ paths:
         `GET /market/data-coverage` tells the UI in advance.
       x-rbac: { permissions: [replay:write], scope: self }
       x-idempotency: recommended
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKey" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -3404,6 +3519,7 @@ paths:
                     created_by: "11111111-2222-3333-4444-555555555555"
                     created_at: "2026-09-14T10:32:00Z"
                     progress_pct: 0
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /replay/sessions/{replayId}:
@@ -3425,8 +3541,10 @@ paths:
       operationId: deleteReplaySession
       summary: Destroy a replay session and free its buffers
       x-rbac: { permissions: [replay:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Destroyed." }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /replay/sessions/{replayId}/control:
@@ -3441,6 +3559,7 @@ paths:
         preceding snapshot, so a seek is never cheaper than a snapshot interval (60 s).
       x-rbac: { permissions: [replay:write], scope: self }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -3456,6 +3575,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReplaySession" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
   # ===========================================================================
@@ -3568,7 +3688,11 @@ paths:
         state arrives on the WS `orders` / `executions` topics.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -3660,6 +3784,7 @@ paths:
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKeyRequired"
         - $ref: "#/components/parameters/IfMatch"
       requestBody:
@@ -3688,13 +3813,18 @@ paths:
       description: "Maps to `POST /v5/order/cancel`. Cancelling an already-terminal order is idempotent and returns `202` with the current state rather than an error."
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       responses:
         "202":
           description: Cancel accepted.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Order" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "502": { $ref: "#/components/responses/ExchangeError" }
 
@@ -3710,7 +3840,11 @@ paths:
         per-account results rather than an all-or-nothing error.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -3826,7 +3960,11 @@ paths:
         Child orders are created with `intent: "algo_child` and linked to the leg."
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -3999,7 +4137,11 @@ paths:
       description: "Applies the same amendment to all non-terminal orders of the group, or per-leg values when `legs` is supplied. Reports per-leg outcome; a leg whose order is already terminal is reported `ok: true, affected: 0`."
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -4013,6 +4155,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BulkLegResult" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
@@ -4025,7 +4168,11 @@ paths:
       description: 'Optionally also flattens whatever already filled (`flatten_filled: true`), which issues reduce-only market closes per leg — used by the "abort" button in the ticket.'
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: false
         content:
@@ -4045,6 +4192,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BulkLegResult" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /trading/kill-switch:
@@ -4081,7 +4229,11 @@ paths:
         Every transition writes a `critical` audit entry and broadcasts a `system` WS frame.
       x-rbac: { permissions: [killswitch:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -4233,7 +4385,11 @@ paths:
           profile — `validation_failed` / `native_stop_required`.
       x-rbac: { permissions: [positions:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -4270,6 +4426,7 @@ paths:
                     activation_price: "63300.00"
                     tpsl_mode: Full
                     applied_at: "2026-09-14T10:35:00Z"
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "502": { $ref: "#/components/responses/ExchangeError" }
@@ -4287,7 +4444,11 @@ paths:
         portion is cancelled automatically to avoid orphan conditional orders.
       x-rbac: { permissions: [positions:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -4306,6 +4467,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TradeGroup" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
@@ -4322,7 +4484,11 @@ paths:
         produce one, the reversal is rejected before any order is sent.
       x-rbac: { permissions: [positions:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: false
         content:
@@ -4337,6 +4503,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/TradeGroup" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
@@ -4349,7 +4516,11 @@ paths:
       description: "Maps to `POST /v5/position/set-leverage` (10 req/s). Bybit applies leverage per symbol per account, not per position; the change therefore affects future orders on that symbol too."
       x-rbac: { permissions: [positions:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -4366,6 +4537,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Position" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "502": { $ref: "#/components/responses/ExchangeError" }
 
@@ -4377,7 +4549,11 @@ paths:
       description: The "flatten all" panic control. Independent of the kill-switch, which additionally blocks new orders.
       x-rbac: { permissions: [positions:write], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -4565,7 +4741,11 @@ paths:
         step in the Definition of Done for any rule that can send orders.
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: recommended
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKey" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -4689,7 +4869,8 @@ paths:
         so saving can never silently change live behaviour.
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: optional
-      parameters: [{ $ref: "#/components/parameters/IfMatch" }]
+      parameters:
+        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -4701,6 +4882,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuleDetail" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
     delete:
@@ -4709,8 +4891,10 @@ paths:
       summary: Delete a rule
       description: "Refused with `conflict` while the rule is `armed`; disarm first. Versions and run history are retained for audit."
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deleted." }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /rules/{ruleId}/versions:
@@ -4778,6 +4962,7 @@ paths:
       summary: Activate (or roll back to) a specific rule version
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -4795,6 +4980,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RuleDetail" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /rules/validate:
@@ -4809,6 +4995,7 @@ paths:
         errors **and** warnings; warnings do not block saving but do block arming.
       x-rbac: { permissions: [rules:read], scope: none }
       x-idempotency: ignored
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -4874,6 +5061,7 @@ paths:
         and results are polled from `GET /rules/{ruleId}/runs`.
       x-rbac: { permissions: [rules:write], scope: granted_accounts }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -4927,6 +5115,7 @@ paths:
                 properties:
                   run_id: { type: string, format: uuid }
                   status: { const: running }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /rules/{ruleId}/mode:
@@ -4946,7 +5135,11 @@ paths:
         `step_up_required`.
       x-rbac: { permissions: [rules:write, rules:arm_live], scope: granted_accounts }
       x-idempotency: required
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKeyRequired" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKeyRequired" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -5100,7 +5293,11 @@ paths:
         `every_time`, or `once_per_bar`. Channels are `in_app`, `desktop`, `email`, `webhook`.
       x-rbac: { permissions: [alerts:write], scope: self }
       x-idempotency: recommended
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKey" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -5144,6 +5341,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Alert" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
 
   /alerts/{alertId}:
@@ -5165,7 +5363,8 @@ paths:
       operationId: updateAlert
       summary: Replace an alert
       x-rbac: { permissions: [alerts:write], scope: self }
-      parameters: [{ $ref: "#/components/parameters/IfMatch" }]
+      parameters:
+        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5177,12 +5376,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Alert" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
     delete:
       tags: [alerts]
       operationId: deleteAlert
       summary: Delete an alert
       x-rbac: { permissions: [alerts:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deleted." }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -5196,6 +5397,7 @@ paths:
       operationId: setAlertEnabled
       summary: Enable or disable an alert
       x-rbac: { permissions: [alerts:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5276,12 +5478,14 @@ paths:
       summary: Acknowledge a delivered alert
       x-rbac: { permissions: [alerts:write], scope: self }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "200":
           description: Acknowledged.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AlertDelivery" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /alerts/deliveries/ack-all:
@@ -5291,6 +5495,7 @@ paths:
       summary: Acknowledge every unacknowledged delivery
       x-rbac: { permissions: [alerts:write], scope: self }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "200":
           description: Count acknowledged.
@@ -5394,6 +5599,7 @@ paths:
       summary: Update the user-authored fields of a journal entry
       description: "Computed fields (PnL, R-multiple, MFE/MAE, durations) are read-only and recomputed from executions; only `rating`, `tags`, `setup`, `mistakes` and `checklist` are writable."
       x-rbac: { permissions: [journal:write], scope: granted_accounts }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5416,6 +5622,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/JournalTradeDetail" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /journal/trades/{journalTradeId}/notes:
@@ -5443,6 +5650,7 @@ paths:
       summary: Add a note (markdown, optional chart snapshot reference)
       x-rbac: { permissions: [journal:write], scope: granted_accounts }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5489,6 +5697,7 @@ paths:
       operationId: createJournalTag
       summary: Create a journal tag
       x-rbac: { permissions: [journal:write], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5511,6 +5720,7 @@ paths:
                   id: { type: string, format: uuid }
                   name: { type: string }
                   colour: { type: string }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /journal/analytics:
@@ -5625,6 +5835,7 @@ paths:
       summary: Create a workspace
       x-rbac: { permissions: [workspaces:write], scope: self }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5665,7 +5876,8 @@ paths:
       operationId: updateWorkspace
       summary: Replace a workspace's metadata
       x-rbac: { permissions: [workspaces:write], scope: self }
-      parameters: [{ $ref: "#/components/parameters/IfMatch" }]
+      parameters:
+        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5677,14 +5889,17 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Workspace" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
     delete:
       tags: [workspaces]
       operationId: deleteWorkspace
       summary: Delete a workspace and its layouts
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deleted." }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /workspaces/{workspaceId}/layouts:
@@ -5717,6 +5932,7 @@ paths:
         template. Panes are persisted verbatim so the Electron shell can restore the exact
         workspace on launch.
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5760,6 +5976,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Layout" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /workspaces/{workspaceId}/layouts/{layoutId}:
@@ -5784,7 +6001,8 @@ paths:
       summary: Replace a layout
       description: "Called on pane rearrangement with a 2-second debounce. `If-Match` prevents a stale tab from clobbering a newer arrangement made in another window."
       x-rbac: { permissions: [workspaces:write], scope: self }
-      parameters: [{ $ref: "#/components/parameters/IfMatch" }]
+      parameters:
+        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5796,12 +6014,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Layout" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
     delete:
       tags: [workspaces]
       operationId: deleteLayout
       summary: Delete a layout
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deleted." }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -5841,6 +6061,7 @@ paths:
       operationId: createChartTemplate
       summary: Create a chart template
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5899,7 +6120,8 @@ paths:
       operationId: updateChartTemplate
       summary: Replace a chart template
       x-rbac: { permissions: [workspaces:write], scope: self }
-      parameters: [{ $ref: "#/components/parameters/IfMatch" }]
+      parameters:
+        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5911,14 +6133,17 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ChartTemplate" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
     delete:
       tags: [workspaces]
       operationId: deleteChartTemplate
       summary: Delete a chart template
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deleted." }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /drawings:
@@ -5983,6 +6208,7 @@ paths:
       operationId: createDrawing
       summary: Create a drawing
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -5994,6 +6220,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Drawing" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /drawings/batch:
@@ -6004,7 +6231,11 @@ paths:
       description: The chart engine batches drawing mutations during a drag with a 500 ms debounce, so a single call carries all affected shapes. Operations are applied in order and the whole batch is transactional.
       x-rbac: { permissions: [workspaces:write], scope: self }
       x-idempotency: recommended
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKey" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -6036,6 +6267,7 @@ paths:
                   created: { type: array, items: { $ref: "#/components/schemas/Drawing" } }
                   updated: { type: array, items: { $ref: "#/components/schemas/Drawing" } }
                   deleted: { type: array, items: { type: string, format: uuid } }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /drawings/{drawingId}:
@@ -6045,6 +6277,7 @@ paths:
       operationId: updateDrawing
       summary: Replace a drawing
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6056,12 +6289,14 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Drawing" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [workspaces]
       operationId: deleteDrawing
       summary: Delete a drawing
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deleted." }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -6091,6 +6326,7 @@ paths:
       operationId: createIndicatorPreset
       summary: Save an indicator preset
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6124,6 +6360,7 @@ paths:
       operationId: updateIndicatorPreset
       summary: Replace an indicator preset
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6143,6 +6380,7 @@ paths:
       operationId: deleteIndicatorPreset
       summary: Delete an indicator preset
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deleted." }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -6232,6 +6470,7 @@ paths:
         the deployment default. `trading.one_click_armed` can only be set through the arming
         endpoint — attempting it here returns `validation_failed`.
       x-rbac: { permissions: [settings:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6245,6 +6484,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Settings" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /settings/arm:
@@ -6261,6 +6501,7 @@ paths:
         immediately.
       x-rbac: { permissions: [orders:write], scope: self }
       x-idempotency: ignored
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6391,6 +6632,7 @@ paths:
         `false` to `true` and returns a warning header rather than silently accepting an unsafe
         binding.
       x-rbac: { permissions: [settings:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6402,6 +6644,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HotkeyProfile" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
@@ -6412,7 +6655,8 @@ paths:
       operationId: updateHotkeyProfile
       summary: Replace a hotkey profile
       x-rbac: { permissions: [settings:write], scope: self }
-      parameters: [{ $ref: "#/components/parameters/IfMatch" }]
+      parameters:
+        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6424,6 +6668,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HotkeyProfile" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
     delete:
@@ -6432,8 +6677,10 @@ paths:
       summary: Delete a hotkey profile
       description: The active profile cannot be deleted; activate another first.
       x-rbac: { permissions: [settings:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deleted." }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /settings/hotkey-audit:
@@ -6446,6 +6693,7 @@ paths:
         audit record (C-2.9) attributed to the session principal; actor, role and time are
         never taken from the body.
       x-rbac: { permissions: [settings:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6464,12 +6712,14 @@ paths:
       operationId: activateHotkeyProfile
       summary: Make a hotkey profile active
       x-rbac: { permissions: [settings:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "200":
           description: Activated.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HotkeyProfile" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
   # ===========================================================================
   # ADMIN — audit, health, feature flags, backups
@@ -6598,6 +6848,7 @@ paths:
         job and on demand from the Admin screen. Owner only (`04-security-program.md` §7.2.2
         row 49a): a Manager holding `audit:read` is refused with `403`.
       x-rbac: { permissions: [audit:read], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: false
         content:
@@ -6643,6 +6894,7 @@ paths:
       description: Produces a downloadable NDJSON bundle with a detached signature over the file digest, for offline retention. Export itself is audited.
       x-rbac: { permissions: [audit:export], scope: none }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6811,6 +7063,7 @@ paths:
         across restarts. Audited as `settings.change`; a denied attempt is audited too. Cannot
         enable body logging (that stays behind `CV_LOG_BODIES_UNTIL`).
       x-rbac: { permissions: [admin:write], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6852,6 +7105,7 @@ paths:
         a denied attempt is audited too. Error codes: BUNDLE_SECRET_DETECTED, BUNDLE_WINDOW_TOO_LARGE,
         BUNDLE_ALREADY_RUNNING, BUNDLE_DISK_INSUFFICIENT.
       x-rbac: { permissions: [admin:read], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6919,6 +7173,7 @@ paths:
         rejection increments `telemetry_rejected_total{reason}` and is never logged verbatim. No symbol,
         account or free-form string is accepted (threat A-17).
       x-rbac: { permissions: [], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -6928,6 +7183,7 @@ paths:
         "204": { description: Accepted and aggregated. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
   /admin/feature-flags:
@@ -7013,6 +7269,7 @@ paths:
         Without them the call fails with `validation_failed` / `gate_evidence_required`.
       x-rbac: { permissions: [flags:write], scope: none }
       x-idempotency: optional
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -7106,7 +7363,11 @@ paths:
         verification after the dump completes.
       x-rbac: { permissions: [backups:write], scope: none }
       x-idempotency: recommended
-      parameters: [{ $ref: "#/components/parameters/IdempotencyKey" }]
+      parameters:
+        [
+          { $ref: "#/components/parameters/IdempotencyKey" },
+          { $ref: "#/components/parameters/CsrfToken" },
+        ]
       requestBody:
         required: true
         content:
@@ -7147,8 +7408,10 @@ paths:
       operationId: deleteBackup
       summary: Delete a backup artefact
       x-rbac: { permissions: [backups:write], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: "Deleted." }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { $ref: "#/components/responses/Conflict" }
 
   /admin/backups/{backupId}/verify:
@@ -7159,6 +7422,7 @@ paths:
       summary: Verify a backup by restoring it into a scratch namespace
       description: Restores into an isolated scratch database/namespace, runs integrity assertions (row counts, hash-chain verification, migration version) and discards it. Never touches live data.
       x-rbac: { permissions: [backups:write], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "202":
           description: Verification scheduled.
@@ -7168,6 +7432,7 @@ paths:
                 type: object
                 properties:
                   job_id: { type: string, format: uuid }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /admin/jobs/{jobId}:
@@ -7269,6 +7534,7 @@ paths:
       operationId: updateMyPreferences
       summary: Patch own settings
       x-rbac: { permissions: [settings:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -7280,6 +7546,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Settings" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /me/sessions:
@@ -7312,8 +7579,10 @@ paths:
         Revoking the current session is equivalent to logout. Revocation terminates any
         WebSocket connection bound to that session immediately (23-ws-protocol.md section 9.5).
       x-rbac: { permissions: [], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: Revoked. }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /me/limits:
@@ -7372,6 +7641,7 @@ paths:
         succeeds. Always audited (`auth.step_up_granted`, `auth.step_up_failed`,
         `auth.session_readonly_downgrade`).
       x-rbac: { permissions: [], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -7462,6 +7732,7 @@ paths:
         `auth.mfa_reset_by_owner`. When the position state is unavailable the request must carry
         `acknowledge_unknown_positions: true`, otherwise `409 positions_unknown`.
       x-rbac: { permissions: [users:write], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: false
         content:
@@ -7514,6 +7785,12 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuthenticatedResponse" }
+          headers:
+            Set-Cookie:
+              {
+                description: "`cv_refresh` cookie and a fresh `__Host-cv_csrf` cookie (SR-041)",
+                schema: { type: string },
+              }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
@@ -7544,8 +7821,10 @@ paths:
         Only accepted once every step is `ok`; otherwise 409. Stored server-side so the card
         stays gone on every device.
       x-rbac: { permissions: [], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: Dismissed. }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409": { description: Checklist is not complete. }
 
   /onboarding/complete:
@@ -7554,8 +7833,10 @@ paths:
       operationId: completeOnboarding
       summary: Mark the onboarding wizard finished for the caller
       x-rbac: { permissions: [], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: Marked complete. }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
 
   /invites/{inviteToken}:
     parameters:
@@ -7693,16 +7974,20 @@ paths:
       operationId: reissueInvite
       summary: Revoke open invites and mint a new link (shown once)
       x-rbac: { permissions: [users:write], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "201": { description: New invitation with one-time link. }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [users]
       operationId: revokeInvite
       summary: Revoke the pending invitation
       x-rbac: { permissions: [users:write], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "200": { description: Revoked. }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /session/environment:
@@ -7716,6 +8001,7 @@ paths:
         `403 live_trading_disabled`. The switch is audited and is broadcast on the `system`
         WS topic so every pane re-badges consistently.
       x-rbac: { permissions: [], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -7792,6 +8078,7 @@ paths:
       operationId: createWatchlist
       summary: Create a watchlist
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -7803,6 +8090,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Watchlist" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
 
   /watchlists/{watchlistId}:
     parameters:
@@ -7815,6 +8103,7 @@ paths:
       operationId: updateWatchlist
       summary: Replace a watchlist
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -7826,14 +8115,17 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Watchlist" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [workspaces]
       operationId: deleteWatchlist
       summary: Delete a watchlist
       x-rbac: { permissions: [workspaces:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: Deleted. }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   /scanner:
@@ -7971,6 +8263,7 @@ paths:
         them before the user commits. Never mutates state and is therefore safe to call on
         every keystroke; it is rate-limited rather than idempotency-keyed.
       x-rbac: { permissions: [orders:read], scope: granted_accounts }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -8021,6 +8314,7 @@ paths:
         is written to the audit chain.
       x-rbac: { permissions: [killswitch:write], scope: none }
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKeyRequired"
       requestBody:
         required: true
@@ -8058,6 +8352,7 @@ paths:
       operationId: setDetectorConfig
       summary: Update detector thresholds
       x-rbac: { permissions: [settings:write], scope: self }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -8069,6 +8364,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DetectorConfig" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
 
   /detectors/methodology:
     get:
@@ -8122,6 +8418,7 @@ paths:
         with `GET /admin/jobs/{jobId}`.
       x-rbac: { permissions: [recording:write], scope: none }
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKeyRequired"
       requestBody:
         required: true
@@ -8147,6 +8444,7 @@ paths:
                 type: object
                 properties:
                   job_id: { type: string, format: uuid }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /rules/accounts:
@@ -8233,6 +8531,7 @@ paths:
         identical hash; that equality is the round-trip guarantee asserted by the contract
         tests in 24-internal-schemas.md section 11.4.
       x-rbac: { permissions: [rules:read], scope: granted_accounts }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
         content:
@@ -8276,6 +8575,7 @@ paths:
                             path: { type: string }
                             model: {}
                             counterpart: {}
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/RuleIrInvalid" }
 
   /journal/trades/{journalTradeId}/context:
@@ -8412,6 +8712,7 @@ paths:
         (21-database-schema.md section 5.4). Asynchronous; poll `GET /admin/jobs/{jobId}`.
       x-rbac: { permissions: [recording:write], scope: none }
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKeyRequired"
       requestBody:
         required: false
@@ -8432,6 +8733,7 @@ paths:
                 type: object
                 properties:
                   job_id: { type: string, format: uuid }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
 
   /admin/recorder/import:
     post:
@@ -8449,6 +8751,7 @@ paths:
         time (409 `job_running`). Audited as `recorder.import`.
       x-rbac: { permissions: [recording:write], scope: none }
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKeyRequired"
       requestBody:
         required: true
@@ -8472,6 +8775,7 @@ paths:
                 properties:
                   job_id: { type: string, format: uuid }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "409":
           description: An import job is already running.
           content:
@@ -8495,6 +8799,7 @@ paths:
         window deleted.
       x-rbac: { permissions: [recording:write], scope: none }
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKeyRequired"
       requestBody:
         required: true
@@ -8536,6 +8841,7 @@ paths:
         Asynchronous.
       x-rbac: { permissions: [backups:write], scope: none }
       parameters:
+        - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKeyRequired"
       requestBody:
         required: true
@@ -8583,6 +8889,18 @@ components:
       in: cookie
       name: cv_refresh
       description: "Opaque, single-use, rotated refresh token. `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth`."
+    csrfCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-cv_csrf
+      description: |
+        SR-041 double-submit CSRF token, `<nonce>.<mac>` (rules in the CSRF section of
+        `info.description`). `Secure; SameSite=Strict; Path=/`, no `Domain`, `Max-Age` equal to
+        the `cv_refresh` lifetime, deliberately **not** `HttpOnly` so the client can echo it in
+        `X-CSRF-Token`. Issued at login/MFA completion, rotated on every `/auth/refresh`,
+        re-issued by `GET /auth/session`, expired on logout. It is not an authentication
+        credential on its own and is listed here only to document the cookie. Enforcement is per
+        operation via `components.parameters.CsrfToken`.
 
   # ---------------------------------------------------------------------------
   parameters:
@@ -8662,6 +8980,17 @@ components:
       required: true
       description: "Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`."
       schema: { type: string, format: uuid }
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: |
+        SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+        against the session id the server resolves itself (not merely header == cookie). All
+        comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+        the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+        unbound → `403 csrf_token_invalid`.
+      schema: { type: string, minLength: 1, maxLength: 256 }
     IfMatch:
       name: If-Match
       in: header
@@ -8849,7 +9178,7 @@ components:
                   code: unauthenticated,
                 }
     Forbidden:
-      description: Authenticated but not permitted.
+      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values."
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -8864,6 +9193,33 @@ components:
                   instance: "urn:cv:req:0193f2bb-2222",
                   code: forbidden,
                   required_permissions: [keys:manage],
+                }
+            csrfTokenInvalid:
+              summary: SR-041 refusal on a state-changing operation
+              value:
+                {
+                  type: "https://candleviewer.local/errors/csrf_token_invalid",
+                  title: "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session",
+                  status: 403,
+                  detail: "X-CSRF-Token header is missing.",
+                  instance: "urn:cv:req:0193f2bb-2223",
+                  code: csrf_token_invalid,
+                }
+    CsrfTokenInvalid:
+      description: "SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`). `detail` never echoes token or cookie values; clients re-read the cookie and retry once."
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            missing:
+              value:
+                {
+                  type: "https://candleviewer.local/errors/csrf_token_invalid",
+                  title: "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session",
+                  status: 403,
+                  detail: "X-CSRF-Token header is missing.",
+                  instance: "urn:cv:req:0193f2bb-2223",
+                  code: csrf_token_invalid,
                 }
     AccountScopeDenied:
       description: The targeted exchange account is outside the caller's granted scope.

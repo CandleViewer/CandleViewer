@@ -7332,6 +7332,15 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
+    /** @description SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`). `detail` never echoes token or cookie values; clients re-read the cookie and retry once. */
+    CsrfTokenInvalid: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["Problem"];
+      };
+    };
     /** @description The exchange rejected the request. */
     ExchangeError: {
       headers: {
@@ -7341,7 +7350,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. */
     Forbidden: {
       headers: {
         [name: string]: unknown;
@@ -7427,6 +7436,14 @@ export interface components {
     BackupId: string;
     /** @description Maximum number of bars returned in one page. */
     BarLimit: number;
+    /**
+     * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+     *     against the session id the server resolves itself (not merely header == cookie). All
+     *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+     *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+     *     unbound → `403 csrf_token_invalid`.
+     */
+    CsrfToken: string;
     /** @description Opaque forward cursor from `meta.next_cursor`. Cursors expire after 1 hour. */
     Cursor: string;
     DeliveryId: number;
@@ -7548,7 +7565,16 @@ export interface operations {
   exportAuditLog: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -7585,7 +7611,16 @@ export interface operations {
   verifyAuditChain: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -7654,9 +7689,17 @@ export interface operations {
   createBackup: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -7711,7 +7754,16 @@ export interface operations {
   deleteBackup: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         backupId: components["parameters"]["BackupId"];
       };
@@ -7726,6 +7778,7 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
     };
   };
@@ -7735,6 +7788,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         backupId: components["parameters"]["BackupId"];
@@ -7771,7 +7832,16 @@ export interface operations {
   verifyBackup: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         backupId: components["parameters"]["BackupId"];
       };
@@ -7791,6 +7861,7 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
@@ -7840,7 +7911,16 @@ export interface operations {
   setFeatureFlag: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         flagKey: string;
       };
@@ -7940,7 +8020,16 @@ export interface operations {
   setLogLevelOverride: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8003,6 +8092,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -8028,6 +8125,7 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
     };
   };
   importTradeArchive: {
@@ -8036,6 +8134,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -8065,6 +8171,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      403: components["responses"]["CsrfTokenInvalid"];
       /** @description An import job is already running. */
       409: {
         headers: {
@@ -8091,6 +8198,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -8148,7 +8263,16 @@ export interface operations {
   createSupportBundle: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8257,9 +8381,17 @@ export interface operations {
   createAlert: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -8279,6 +8411,7 @@ export interface operations {
           "application/json": components["schemas"]["Alert"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["RuleIrInvalid"];
     };
   };
@@ -8308,9 +8441,17 @@ export interface operations {
   updateAlert: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         alertId: components["parameters"]["AlertId"];
@@ -8332,13 +8473,23 @@ export interface operations {
           "application/json": components["schemas"]["Alert"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       412: components["responses"]["PreconditionFailed"];
     };
   };
   deleteAlert: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         alertId: components["parameters"]["AlertId"];
       };
@@ -8361,7 +8512,16 @@ export interface operations {
   setAlertEnabled: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         alertId: components["parameters"]["AlertId"];
       };
@@ -8429,7 +8589,16 @@ export interface operations {
   ackAlertDelivery: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         deliveryId: components["parameters"]["DeliveryId"];
       };
@@ -8446,13 +8615,23 @@ export interface operations {
           "application/json": components["schemas"]["AlertDelivery"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
   ackAllAlertDeliveries: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8490,7 +8669,7 @@ export interface operations {
       /** @description Authenticated, or an MFA challenge was issued. */
       200: {
         headers: {
-          /** @description `cv_refresh` cookie; present only when `status=authenticated`. */
+          /** @description `cv_refresh` and `__Host-cv_csrf` (SR-041) cookies; present only when `status=authenticated`. */
           "Set-Cookie"?: string;
           [name: string]: unknown;
         };
@@ -8506,7 +8685,16 @@ export interface operations {
   authLogout: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8525,19 +8713,29 @@ export interface operations {
       /** @description Session(s) revoked; `cv_refresh` cleared. */
       204: {
         headers: {
-          /** @description Expired `cv_refresh` cookie */
+          /** @description Expired `cv_refresh` and `__Host-cv_csrf` cookies */
           "Set-Cookie"?: string;
           [name: string]: unknown;
         };
         content?: never;
       };
       401: components["responses"]["Unauthorized"];
+      403: components["responses"]["CsrfTokenInvalid"];
     };
   };
   authMfaEnroll: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8564,7 +8762,16 @@ export interface operations {
   authMfaEnrollConfirm: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8584,6 +8791,7 @@ export interface operations {
         };
       };
       401: components["responses"]["Unauthorized"];
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
@@ -8591,6 +8799,14 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
         /** @description Current password, re-supplied to authorise the destructive change. */
         "X-Reauth-Password": string;
       };
@@ -8632,6 +8848,8 @@ export interface operations {
       /** @description Authenticated. */
       200: {
         headers: {
+          /** @description `cv_refresh` cookie and a fresh `__Host-cv_csrf` cookie (SR-041) */
+          "Set-Cookie"?: string;
           [name: string]: unknown;
         };
         content: {
@@ -8658,7 +8876,7 @@ export interface operations {
       /** @description MFA accepted; session created. */
       200: {
         headers: {
-          /** @description `cv_refresh` cookie */
+          /** @description `cv_refresh` cookie and a fresh `__Host-cv_csrf` cookie (SR-041) */
           "Set-Cookie"?: string;
           [name: string]: unknown;
         };
@@ -8673,7 +8891,16 @@ export interface operations {
   authChangePassword: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8691,13 +8918,23 @@ export interface operations {
         content?: never;
       };
       401: components["responses"]["Unauthorized"];
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
   authRefresh: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8710,7 +8947,7 @@ export interface operations {
       /** @description New token bundle issued. */
       200: {
         headers: {
-          /** @description Rotated `cv_refresh` cookie */
+          /** @description Rotated `cv_refresh` cookie and a rotated `__Host-cv_csrf` cookie bound to the new session (SR-041) */
           "Set-Cookie"?: string;
           [name: string]: unknown;
         };
@@ -8719,6 +8956,7 @@ export interface operations {
         };
       };
       401: components["responses"]["Unauthorized"];
+      403: components["responses"]["CsrfTokenInvalid"];
       429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -8735,6 +8973,8 @@ export interface operations {
       /** @description Current session. */
       200: {
         headers: {
+          /** @description `__Host-cv_csrf` re-issued for the current session when absent or not verifying (SR-041 recovery path); otherwise absent. */
+          "Set-Cookie"?: string;
           [name: string]: unknown;
         };
         content: {
@@ -8775,7 +9015,16 @@ export interface operations {
   authStepUp: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8855,7 +9104,16 @@ export interface operations {
   createChartTemplate: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8905,9 +9163,17 @@ export interface operations {
   updateChartTemplate: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         templateId: components["parameters"]["TemplateId"];
@@ -8929,13 +9195,23 @@ export interface operations {
           "application/json": components["schemas"]["ChartTemplate"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       412: components["responses"]["PreconditionFailed"];
     };
   };
   deleteChartTemplate: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         templateId: components["parameters"]["TemplateId"];
       };
@@ -8950,6 +9226,7 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
     };
   };
@@ -8976,7 +9253,16 @@ export interface operations {
   setDetectorConfig: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -8995,6 +9281,7 @@ export interface operations {
           "application/json": components["schemas"]["DetectorConfig"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
     };
   };
   getDetectorMethodology: {
@@ -9055,7 +9342,16 @@ export interface operations {
   createDrawing: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -9074,13 +9370,23 @@ export interface operations {
           "application/json": components["schemas"]["Drawing"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
   updateDrawing: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         drawingId: components["parameters"]["DrawingId"];
       };
@@ -9101,13 +9407,23 @@ export interface operations {
           "application/json": components["schemas"]["Drawing"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
   deleteDrawing: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         drawingId: components["parameters"]["DrawingId"];
       };
@@ -9130,9 +9446,17 @@ export interface operations {
   batchUpsertDrawings: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -9167,6 +9491,7 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
@@ -9205,9 +9530,17 @@ export interface operations {
   createExchangeAccount: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -9259,7 +9592,16 @@ export interface operations {
   deleteExchangeAccount: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         accountId: components["parameters"]["AccountId"];
       };
@@ -9282,9 +9624,17 @@ export interface operations {
   updateExchangeAccount: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         accountId: components["parameters"]["AccountId"];
@@ -9380,6 +9730,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         accountId: components["parameters"]["AccountId"];
@@ -9418,7 +9776,16 @@ export interface operations {
   revokeApiKey: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         accountId: components["parameters"]["AccountId"];
         keyId: components["parameters"]["KeyId"];
@@ -9444,6 +9811,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         accountId: components["parameters"]["AccountId"];
@@ -9474,7 +9849,16 @@ export interface operations {
   testApiKey: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         accountId: components["parameters"]["AccountId"];
         keyId: components["parameters"]["KeyId"];
@@ -9531,9 +9915,17 @@ export interface operations {
   createAccountProfile: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         accountId: components["parameters"]["AccountId"];
@@ -9586,9 +9978,17 @@ export interface operations {
   updateAccountProfile: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         accountId: components["parameters"]["AccountId"];
@@ -9611,6 +10011,7 @@ export interface operations {
           "application/json": components["schemas"]["AccountProfile"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["UnprocessableEntity"];
     };
@@ -9618,7 +10019,16 @@ export interface operations {
   deleteAccountProfile: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         accountId: components["parameters"]["AccountId"];
         profileId: components["parameters"]["ProfileId"];
@@ -9634,6 +10044,7 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
     };
   };
@@ -9804,7 +10215,16 @@ export interface operations {
   createIndicatorPreset: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -9831,7 +10251,16 @@ export interface operations {
   updateIndicatorPreset: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         presetId: components["parameters"]["PresetId"];
       };
@@ -9860,7 +10289,16 @@ export interface operations {
   deleteIndicatorPreset: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         presetId: components["parameters"]["PresetId"];
       };
@@ -9987,7 +10425,16 @@ export interface operations {
   refreshInstruments: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -10225,7 +10672,16 @@ export interface operations {
   createJournalTag: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -10253,6 +10709,7 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
     };
   };
@@ -10322,7 +10779,16 @@ export interface operations {
   updateJournalTrade: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         journalTradeId: components["parameters"]["JournalTradeId"];
       };
@@ -10343,6 +10809,7 @@ export interface operations {
           "application/json": components["schemas"]["JournalTradeDetail"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
@@ -10403,7 +10870,16 @@ export interface operations {
   createJournalNote: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         journalTradeId: components["parameters"]["JournalTradeId"];
       };
@@ -10561,6 +11037,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -10592,6 +11076,7 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
@@ -11046,7 +11531,16 @@ export interface operations {
   updateMyPreferences: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -11065,6 +11559,7 @@ export interface operations {
           "application/json": components["schemas"]["Settings"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
@@ -11093,7 +11588,16 @@ export interface operations {
   revokeMySession: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         sessionId: string;
       };
@@ -11108,6 +11612,7 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
@@ -11163,7 +11668,16 @@ export interface operations {
   dismissOnboardingChecklist: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -11176,6 +11690,7 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       /** @description Checklist is not complete. */
       409: {
         headers: {
@@ -11188,7 +11703,16 @@ export interface operations {
   completeOnboarding: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -11201,6 +11725,7 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
     };
   };
   listOrders: {
@@ -11249,6 +11774,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -11310,6 +11843,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         orderId: components["parameters"]["OrderId"];
@@ -11327,6 +11868,7 @@ export interface operations {
           "application/json": components["schemas"]["Order"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       502: components["responses"]["ExchangeError"];
     };
@@ -11339,6 +11881,14 @@ export interface operations {
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         orderId: components["parameters"]["OrderId"];
@@ -11396,6 +11946,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -11506,6 +12064,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         positionId: components["parameters"]["PositionId"];
@@ -11527,6 +12093,7 @@ export interface operations {
           "application/json": components["schemas"]["TradeGroup"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
     };
@@ -11537,6 +12104,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         positionId: components["parameters"]["PositionId"];
@@ -11560,6 +12135,7 @@ export interface operations {
           "application/json": components["schemas"]["Position"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
       502: components["responses"]["ExchangeError"];
     };
@@ -11570,6 +12146,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         positionId: components["parameters"]["PositionId"];
@@ -11591,6 +12175,7 @@ export interface operations {
           "application/json": components["schemas"]["TradeGroup"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
     };
@@ -11601,6 +12186,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         positionId: components["parameters"]["PositionId"];
@@ -11622,6 +12215,7 @@ export interface operations {
           "application/json": components["schemas"]["TpSlResult"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
       502: components["responses"]["ExchangeError"];
@@ -11633,6 +12227,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -11692,7 +12294,16 @@ export interface operations {
       query?: {
         apply_now?: boolean;
       };
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -11832,9 +12443,17 @@ export interface operations {
   addRecordedSymbol: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -11896,7 +12515,16 @@ export interface operations {
         force?: boolean;
         purge_data?: boolean;
       };
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         recordedSymbolId: components["parameters"]["RecordedSymbolId"];
       };
@@ -11919,7 +12547,16 @@ export interface operations {
   updateRecordedSymbol: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         recordedSymbolId: components["parameters"]["RecordedSymbolId"];
       };
@@ -11940,6 +12577,7 @@ export interface operations {
           "application/json": components["schemas"]["RecordedSymbol"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
     };
@@ -11947,7 +12585,16 @@ export interface operations {
   pinRecordedSymbol: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         recordedSymbolId: components["parameters"]["RecordedSymbolId"];
       };
@@ -11972,6 +12619,7 @@ export interface operations {
           "application/json": components["schemas"]["RecordedSymbol"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
@@ -12009,9 +12657,17 @@ export interface operations {
   createReplaySession: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -12031,6 +12687,7 @@ export interface operations {
           "application/json": components["schemas"]["ReplaySession"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
@@ -12060,7 +12717,16 @@ export interface operations {
   deleteReplaySession: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         replayId: components["parameters"]["ReplayId"];
       };
@@ -12075,13 +12741,23 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
   controlReplaySession: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         replayId: components["parameters"]["ReplayId"];
       };
@@ -12102,6 +12778,7 @@ export interface operations {
           "application/json": components["schemas"]["ReplaySession"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
     };
@@ -12112,6 +12789,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         accountId: components["parameters"]["AccountId"];
@@ -12224,9 +12909,17 @@ export interface operations {
   createRule: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -12276,9 +12969,17 @@ export interface operations {
   updateRule: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         ruleId: components["parameters"]["RuleId"];
@@ -12300,6 +13001,7 @@ export interface operations {
           "application/json": components["schemas"]["RuleDetail"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["RuleIrInvalid"];
     };
@@ -12307,7 +13009,16 @@ export interface operations {
   deleteRule: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         ruleId: components["parameters"]["RuleId"];
       };
@@ -12322,13 +13033,23 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
     };
   };
   setActiveRuleVersion: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         ruleId: components["parameters"]["RuleId"];
       };
@@ -12353,13 +13074,23 @@ export interface operations {
           "application/json": components["schemas"]["RuleDetail"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
   compileRule: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         ruleId: components["parameters"]["RuleId"];
       };
@@ -12403,6 +13134,7 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["RuleIrInvalid"];
     };
   };
@@ -12412,6 +13144,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         ruleId: components["parameters"]["RuleId"];
@@ -12482,7 +13222,16 @@ export interface operations {
   simulateRule: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         ruleId: components["parameters"]["RuleId"];
       };
@@ -12517,6 +13266,7 @@ export interface operations {
           };
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
@@ -12647,7 +13397,16 @@ export interface operations {
   validateRule: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -12775,7 +13534,16 @@ export interface operations {
   setSessionEnvironment: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -12827,7 +13595,16 @@ export interface operations {
   updateSettings: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -12846,13 +13623,23 @@ export interface operations {
           "application/json": components["schemas"]["Settings"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
   armOneClickTrading: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -12886,7 +13673,16 @@ export interface operations {
   recordHotkeyBindingAudit: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -12936,7 +13732,16 @@ export interface operations {
   createHotkeyProfile: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -12955,6 +13760,7 @@ export interface operations {
           "application/json": components["schemas"]["HotkeyProfile"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
     };
@@ -12962,9 +13768,17 @@ export interface operations {
   updateHotkeyProfile: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         hotkeyProfileId: components["parameters"]["HotkeyProfileId"];
@@ -12986,6 +13800,7 @@ export interface operations {
           "application/json": components["schemas"]["HotkeyProfile"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
       412: components["responses"]["PreconditionFailed"];
     };
@@ -12993,7 +13808,16 @@ export interface operations {
   deleteHotkeyProfile: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         hotkeyProfileId: components["parameters"]["HotkeyProfileId"];
       };
@@ -13008,13 +13832,23 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
     };
   };
   activateHotkeyProfile: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         hotkeyProfileId: components["parameters"]["HotkeyProfileId"];
       };
@@ -13031,6 +13865,7 @@ export interface operations {
           "application/json": components["schemas"]["HotkeyProfile"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
@@ -13057,7 +13892,16 @@ export interface operations {
   postFrontendTelemetry: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -13076,6 +13920,7 @@ export interface operations {
       };
       400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
+      403: components["responses"]["CsrfTokenInvalid"];
       429: components["responses"]["RateLimited"];
     };
   };
@@ -13121,6 +13966,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -13175,6 +14028,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         tradeGroupId: components["parameters"]["TradeGroupId"];
@@ -13196,6 +14057,7 @@ export interface operations {
           "application/json": components["schemas"]["BulkLegResult"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
     };
@@ -13206,6 +14068,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         tradeGroupId: components["parameters"]["TradeGroupId"];
@@ -13232,13 +14102,23 @@ export interface operations {
           "application/json": components["schemas"]["BulkLegResult"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
   previewTradeGroup: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -13290,6 +14170,14 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -13347,9 +14235,17 @@ export interface operations {
   createUser: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path?: never;
       cookie?: never;
@@ -13403,7 +14299,16 @@ export interface operations {
       query?: {
         purge?: boolean;
       };
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         userId: components["parameters"]["UserId"];
       };
@@ -13426,9 +14331,17 @@ export interface operations {
   updateUser: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         userId: components["parameters"]["UserId"];
@@ -13485,7 +14398,16 @@ export interface operations {
   setUserAccountAccess: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         userId: components["parameters"]["UserId"];
       };
@@ -13517,7 +14439,16 @@ export interface operations {
   reissueInvite: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         userId: string;
       };
@@ -13532,13 +14463,23 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
   revokeInvite: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         userId: string;
       };
@@ -13553,13 +14494,23 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
   resetUserMfa: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         userId: components["parameters"]["UserId"];
       };
@@ -13631,7 +14582,16 @@ export interface operations {
   setUserRoles: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         userId: components["parameters"]["UserId"];
       };
@@ -13705,7 +14665,16 @@ export interface operations {
   createWatchlist: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -13724,12 +14693,22 @@ export interface operations {
           "application/json": components["schemas"]["Watchlist"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
     };
   };
   updateWatchlist: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         watchlistId: string;
       };
@@ -13750,13 +14729,23 @@ export interface operations {
           "application/json": components["schemas"]["Watchlist"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
   deleteWatchlist: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         watchlistId: string;
       };
@@ -13771,6 +14760,7 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
   };
@@ -13807,7 +14797,16 @@ export interface operations {
   createWorkspace: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path?: never;
       cookie?: never;
     };
@@ -13857,9 +14856,17 @@ export interface operations {
   updateWorkspace: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         workspaceId: components["parameters"]["WorkspaceId"];
@@ -13881,13 +14888,23 @@ export interface operations {
           "application/json": components["schemas"]["Workspace"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       412: components["responses"]["PreconditionFailed"];
     };
   };
   deleteWorkspace: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         workspaceId: components["parameters"]["WorkspaceId"];
       };
@@ -13902,6 +14919,7 @@ export interface operations {
         };
         content?: never;
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
     };
   };
@@ -13958,7 +14976,16 @@ export interface operations {
   createLayout: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         workspaceId: components["parameters"]["WorkspaceId"];
       };
@@ -13979,6 +15006,7 @@ export interface operations {
           "application/json": components["schemas"]["Layout"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
@@ -14009,9 +15037,17 @@ export interface operations {
   updateLayout: {
     parameters: {
       query?: never;
-      header?: {
+      header: {
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
       };
       path: {
         layoutId: components["parameters"]["LayoutId"];
@@ -14034,13 +15070,23 @@ export interface operations {
           "application/json": components["schemas"]["Layout"];
         };
       };
+      403: components["responses"]["CsrfTokenInvalid"];
       412: components["responses"]["PreconditionFailed"];
     };
   };
   deleteLayout: {
     parameters: {
       query?: never;
-      header?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
       path: {
         layoutId: components["parameters"]["LayoutId"];
         workspaceId: components["parameters"]["WorkspaceId"];
