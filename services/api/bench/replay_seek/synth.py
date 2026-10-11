@@ -6,7 +6,7 @@ generates a seeded stand-in shaped by the documented figures (exception #1778 A 
 - `dense`: 220 changed levels per 100 ms frame on average, i.e. `21-database-schema.md` Sec.11.1's
   ~190 M level-rows/day / 864 k frames (BTCUSDT-class, 200 depth).
 - `thin`: 5 changed levels per frame, the mean of the recorded corpus
-  `packages/fixtures/bybit/2026-10-05/ws/orderbook_BTCUSDT.jsonl` (4.95/frame) - thin contrast.
+  recorded L2 corpus of 2026-10-05 (`orderbook_BTCUSDT.jsonl`, 4.95/frame) - thin contrast.
 
 Both use a busiest-minute spike (`burst_mult`) at `BUSY_OFFSET_S` and an E12-T04-style random walk
 of the mid (`vol_ticks`, scaled by sqrt(burst)). Trades come from the E12-T04 generator
@@ -30,7 +30,7 @@ import pyarrow as pa
 from bench.bar_determinism.generator import GenConfig, iter_trades
 
 SYMBOL = "BTCUSDT"
-FRAME_US = 100_000  # Bybit orderbook.200 push cadence
+FRAME_US = 100_000  # 200-level L2 delta cadence (100 ms)
 SNAP_GRID_S = 30  # every candidate interval (30/60/300 s) is a multiple of this
 DAY0_US = 1_791_158_400_000_000  # 2026-10-05T00:00:00Z
 SPAN0_US = DAY0_US + 12 * 3_600 * 1_000_000  # span starts 12:00Z

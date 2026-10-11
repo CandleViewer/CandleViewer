@@ -34,18 +34,33 @@ WARMUP_BARS = 20  # max(warmup_bars) assumed for the indicator set (1 m bars)
 SPEC = BarSpec(kind="time", interval_ms=60_000)
 _TICK = Decimal("0.1")
 _EID = uuid.UUID(int=0xE26)
+_LOT = Decimal("0.001")
 
 
-def _lvl(price: float, qty: float) -> BookLevel:
-    ticks = round(price * 10)
+def _ticks(col: pa.ChunkedArray) -> list[int]:
+    """Stored DOUBLE price column -> integer 0.1 ticks (exact for the synthetic grid)."""
+    return [int(x) for x in np.rint(col.to_numpy() * 10).astype(np.int64)]
+
+
+def _lots(col: pa.ChunkedArray) -> list[int]:
+    """Stored DOUBLE size column -> integer 0.001 lots."""
+    return [int(x) for x in np.rint(col.to_numpy() * 1000).astype(np.int64)]
+
+
+def _lvl(ticks: int, lots: int) -> BookLevel:
+    """Integer price ticks (0.1) and size lots (0.001) -> `BookLevel` (Decimal, no float)."""
     return BookLevel.model_construct(
-        price=Decimal(ticks) * _TICK, qty=Decimal(str(qty)), price_ticks=ticks
+        price=Decimal(ticks) * _TICK, qty=Decimal(lots) * _LOT, price_ticks=ticks
     )
 
 
 def book_from_snapshot(row: dict[str, object], depth: int) -> BookState:
-    bids = [_lvl(float(p), float(q)) for p, q in json.loads(str(row["bids"]))]
-    asks = [_lvl(float(p), float(q)) for p, q in json.loads(str(row["asks"]))]
+    def side(raw: object) -> list[BookLevel]:
+        return [
+            _lvl(int(Decimal(p) / _TICK), int(Decimal(q) / _LOT)) for p, q in json.loads(str(raw))
+        ]
+
+    bids, asks = side(row["bids"]), side(row["asks"])
     return BookState.from_levels(depth, bids, asks)
 
 
@@ -55,15 +70,15 @@ def apply_deltas(book: BookState, t: pa.Table) -> int:
         return 0
     uid = t.column("update_id").to_numpy()
     side = np.asarray(t.column("side").to_pylist())
-    price = t.column("price").to_numpy()
-    size = t.column("size").to_numpy()
+    ticks = _ticks(t.column("price"))
+    lots = _lots(t.column("size"))
     cuts = np.flatnonzero(np.diff(uid)) + 1
     frames = 0
     for a, b in zip(np.r_[0, cuts], np.r_[cuts, len(uid)], strict=True):
         bids: list[BookLevel] = []
         asks: list[BookLevel] = []
         for i in range(int(a), int(b)):
-            (bids if side[i] == "bid" else asks).append(_lvl(float(price[i]), float(size[i])))
+            (bids if side[i] == "bid" else asks).append(_lvl(ticks[i], lots[i]))
         book.apply(bids, asks)
         frames += 1
     return frames
@@ -75,15 +90,15 @@ def apply_collapsed(book: BookState, t: pa.Table) -> tuple[BookState, int]:
     if t.num_rows == 0:
         return book, 0
     is_ask = np.asarray(t.column("side").to_pylist()) == "ask"
-    ticks = np.rint(t.column("price").to_numpy() * 10).astype(np.int64)
+    ticks = np.asarray(_ticks(t.column("price")), dtype=np.int64)
     key = is_ask.astype(np.int64) * (1 << 40) + ticks
     _, rev_first = np.unique(key[::-1], return_index=True)
     last = len(key) - 1 - rev_first
-    size = t.column("size").to_numpy()
+    lots = _lots(t.column("size"))
     bids, asks = book.as_dicts()
     for i in last.tolist():
         side = asks if is_ask[i] else bids
-        q = Decimal(str(float(size[i])))
+        q = Decimal(lots[i]) * _LOT
         if q == 0:
             side.pop(int(ticks[i]), None)
         else:
@@ -100,14 +115,14 @@ def apply_collapsed(book: BookState, t: pa.Table) -> tuple[BookState, int]:
 
 def _trades(t: pa.Table) -> list[TradeEvent]:
     ts = t.column("ts").cast(pa.int64()).to_numpy()
-    px = t.column("price").to_numpy()
-    sz = t.column("size").to_numpy()
+    px = _ticks(t.column("price"))
+    sz = _lots(t.column("size"))
     sd = t.column("side").to_pylist()
     seq = t.column("seq").to_numpy()
     out = []
     for i in range(t.num_rows):
-        ticks = round(float(px[i]) * 10)
-        price, qty = Decimal(ticks) * _TICK, Decimal(str(float(sz[i])))
+        ticks = px[i]
+        price, qty = Decimal(ticks) * _TICK, Decimal(sz[i]) * _LOT
         out.append(
             TradeEvent.model_construct(
                 schema_version=1,
