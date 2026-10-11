@@ -128,35 +128,95 @@ def test_partition_range_keys() -> None:
 
 
 class _Pg:
-    def __init__(self) -> None:
-        self.parts = {"2026-08-01": 4096}
-        self.calls: list[str] = []
+    """QuestDB fake with WAL semantics: the DROP bumps `sequencerTxn`; the partition only
+    disappears after `apply_after` more `wal_tables()` polls (async WAL apply)."""
+
+    def __init__(self, *, apply_after: int = 0, wal: bool = True) -> None:
+        self.parts = {"2026-08-01": 4096, "2026-08-02": 10}
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.writer, self.seq, self.apply_after, self.wal = 1, 1, apply_after, wal
+        self.pending: str | None = None
 
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
-        self.calls.append(sql)
+        self.calls.append((sql, params))
+        if sql.startswith("SELECT writerTxn"):
+            assert params == ("trades",)
+            if not self.wal:
+                return []
+            if self.pending and self.apply_after <= 0:
+                self.parts.pop(self.pending)
+                self.pending, self.writer = None, self.seq
+            self.apply_after -= 1
+            return [{"writerTxn": self.writer, "sequencerTxn": self.seq, "suspended": False}]
         if "table_partitions" in sql:
             return [{"name": n, "diskSize": s} for n, s in self.parts.items()]
         if sql.startswith("ALTER TABLE"):
-            self.parts.clear()
+            self.pending = sql.rsplit("'", 2)[1]
+            self.seq += 1
+            if not self.wal:
+                self.parts.pop(self.pending)
             return []
         assert all(isinstance(p, datetime) and p.tzinfo is None for p in params)  # ts_param
         return [{"symbol": "BTCUSDT", "n": 7}, {"symbol": "ETHUSDT", "n": 2}]
 
 
-async def test_hot_store_days_counts_sizes_and_idempotent_drop() -> None:
-    pg = _Pg()
-    store = QuestDbRetentionHotStore(pg)
-    (d,) = await store.days(T, DAY_US + 2 * 86_400_000_000)
+def _store(pg: _Pg) -> QuestDbRetentionHotStore:
+    return QuestDbRetentionHotStore(pg, apply_timeout_s=1.0, poll_s=0.001)
+
+
+async def test_hot_store_days_counts_sizes() -> None:
+    d, _ = await _store(_Pg()).days(T, DAY_US + 3 * 86_400_000_000)
     assert (d.start_us, d.rows_by_symbol, d.bytes) == (
         DAY_US,
         {"BTCUSDT": 7, "ETHUSDT": 2},
         4096,
     )
-    assert await store.drop_day(T, DAY_US) is True
-    assert any("DROP PARTITION LIST '2026-08-01'" in c for c in pg.calls)
-    assert await store.drop_day(T, DAY_US) is False
     with pytest.raises(DatasetNotRegistered):
-        await store.days(StreamKind.BARS, DAY_US)
+        await _store(_Pg()).days(StreamKind.BARS, DAY_US)
+
+
+async def test_hot_drop_statement_targets_exact_utc_day_partition_name() -> None:
+    pg = _Pg()
+    assert await _store(pg).drop_day(T, DAY_US) is True
+    (stmt,) = [c for c, _ in pg.calls if c.startswith("ALTER")]
+    assert stmt == "ALTER TABLE trades DROP PARTITION LIST '2026-08-01'"
+    assert "2026-08-01" not in pg.parts and "2026-08-02" in pg.parts
+
+
+async def test_hot_drop_waits_for_wal_apply_before_reporting_success() -> None:
+    """Regression (#2229 integration): on a WAL table the DROP returns before it is applied;
+    reporting success then left the partition visible. Now the store waits for
+    writerTxn == sequencerTxn AND the partition gone from `table_partitions()`."""
+    pg = _Pg(apply_after=3)
+    assert await _store(pg).drop_day(T, DAY_US) is True
+    assert "2026-08-01" not in pg.parts
+    assert sum(1 for c, _ in pg.calls if c.startswith("SELECT writerTxn")) >= 4
+
+
+async def test_hot_drop_never_applied_raises_timeout_keeps_item_retryable() -> None:
+    pg = _Pg(apply_after=10**9)
+    with pytest.raises(TimeoutError):
+        await _store(pg).drop_day(T, DAY_US)
+
+
+async def test_hot_drop_suspended_wal_raises() -> None:
+    pg = _Pg(apply_after=10**9)
+
+    async def suspended(sql: str, *params: object) -> list[dict[str, object]]:
+        if sql.startswith("SELECT writerTxn"):
+            return [{"writerTxn": 1, "sequencerTxn": 2, "suspended": True}]
+        return await _Pg.fetch(pg, sql, *params)
+
+    pg.fetch = suspended  # type: ignore[method-assign]  # inject a suspended WAL row
+    with pytest.raises(RuntimeError):
+        await _store(pg).drop_day(T, DAY_US)
+
+
+async def test_hot_drop_non_wal_table_and_idempotent_second_drop() -> None:
+    pg = _Pg(wal=False)
+    store = _store(pg)
+    assert await store.drop_day(T, DAY_US) is True
+    assert await store.drop_day(T, DAY_US) is False
 
 
 async def test_checkpoint_round_trip_clear_and_corrupt(tmp_path: Path) -> None:

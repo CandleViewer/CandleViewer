@@ -169,9 +169,18 @@ class ColdRetentionStore:
 class QuestDbRetentionHotStore:
     """QuestDB DAY partitions with per-symbol counts; every await bounded (C-2.18)."""
 
-    def __init__(self, connection: PgWireConnection, *, timeout_s: float = 60.0) -> None:
+    def __init__(
+        self,
+        connection: PgWireConnection,
+        *,
+        timeout_s: float = 60.0,
+        apply_timeout_s: float = 120.0,
+        poll_s: float = 0.2,
+    ) -> None:
         self._conn = connection
         self._timeout_s = timeout_s
+        self._apply_timeout_s = apply_timeout_s
+        self._poll_s = poll_s
         self._parts = QuestDbHotPartitions(connection, timeout_s=timeout_s)
 
     async def _fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
@@ -204,11 +213,33 @@ class QuestDbRetentionHotStore:
             out.append(HotDayInfo(start, counts, sizes.get(day_name(start), 0)))
         return out
 
+    async def _applied(self, stream: StreamKind) -> bool:
+        """WAL tables apply DDL asynchronously: the DROP is only visible once the table writer
+        has caught up with its sequencer (`wal_tables()`; a non-WAL table has no row)."""
+        rows = await self._fetch(
+            "SELECT writerTxn, sequencerTxn, suspended FROM wal_tables() WHERE name = $1",
+            self._table(stream),
+        )
+        if not rows:
+            return True
+        row = rows[0]
+        if str(row.get("suspended")).lower() in ("true", "t", "1"):
+            raise RuntimeError("questdb WAL apply suspended for the table")
+        return int(str(row.get("writerTxn"))) >= int(str(row.get("sequencerTxn")))
+
     async def drop_day(self, stream: StreamKind, day_start_us: int) -> bool:
-        if day_name(day_start_us) not in await self._sizes(stream):
+        """Issue the DROP, then wait (bounded) until it is applied AND the partition is gone.
+        Raises `TimeoutError` otherwise, so the reaper keeps the item `pending` and retries."""
+        name = day_name(day_start_us)
+        if name not in await self._sizes(stream):
             return False  # already dropped (resumed pass): idempotent
         await self._parts.drop_day(stream, day_start_us)
-        return True
+        async with asyncio.timeout(self._apply_timeout_s):
+            for _ in range(max(1, int(self._apply_timeout_s / self._poll_s))):
+                if await self._applied(stream) and name not in await self._sizes(stream):
+                    return True
+                await asyncio.sleep(self._poll_s)
+        raise TimeoutError("partition drop not applied")
 
 
 class FileRetentionCheckpoint:
