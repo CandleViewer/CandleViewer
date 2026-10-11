@@ -69,6 +69,7 @@ from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import make_market_bars_router
+from candleviewer.api.market_coverage import make_data_coverage_router
 from candleviewer.api.onboarding import make_onboarding_router
 from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restriction
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
@@ -159,6 +160,7 @@ from candleviewer.oms.service import OmsService
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
+from candleviewer.recorder.coverage import CoverageService
 from candleviewer.recorder.service import RecorderService
 from candleviewer.replay.service import ReplayService
 from candleviewer.risk.service import RiskService
@@ -174,6 +176,7 @@ from candleviewer.storage.cold.kline_reader import ParquetKlineReader
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.observability import LoggingSystemEventSink
 from candleviewer.storage.cold.scrub import ScrubTask
+from candleviewer.storage.cold.watermarks import FileWatermarkStore
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.questdb.wiring import QuestDbRowSink
 from candleviewer.storage.repositories.alert_deliveries_sqlalchemy import (
@@ -711,6 +714,21 @@ def create_app(
         else None
     )
     app.state.kline_boundary_pg = _kb_pg
+    # E16-T04: sessions-backed coverage + `recording_started_at` (real backend only; the fake
+    # backend keeps the tape-based provider, and the coverage route answers 503).
+    coverage_service = (
+        CoverageService(
+            SqlAlchemyRecorderRepository(_kb_pg),
+            now_us=lambda: time.time_ns() // 1000,
+            # E16-T05 roll-off watermarks: older -> parquet, newer -> questdb.
+            watermarks=FileWatermarkStore(DatasetRegistry(resolved.parquet_root)),
+        )
+        if _kb_pg is not None
+        else None
+    )
+    app.state.coverage_service = coverage_service
+    if coverage_service is not None:
+        ctx.recorder.attach_coverage(coverage_service)
     app.state.kline_boundary_refresh = KlineBoundaryRefreshTask(
         kline_boundary,
         kline_policy_loader(SqlAlchemyRecorderRepository(_kb_pg) if _kb_pg is not None else None),
@@ -1024,6 +1042,14 @@ def create_app(
             principal_resolver=audit_resolver,
             symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
             now_us=lambda: time.time_ns() // 1000,
+        )
+    )
+    # E16-T04: `/market/data-coverage` (503 until a CoverageService is composed).
+    app.include_router(
+        make_data_coverage_router(
+            lambda: coverage_service,
+            principal_resolver=audit_resolver,
+            symbol_listed=lambda sym: _catalogue_listed(ctx, sym),
         )
     )
     # E08-S01-2: served from the scheduler's in-memory snapshot; `503` until
@@ -1550,11 +1576,19 @@ def _wire_klines(
 
 
 def recording_started_at_us(ctx: AppContext) -> RecordingStart:
-    """E12-S05 `meta.recording_started_at`: the oldest recorded trade for the symbol in the hot
-    `trades` table — where tick-accurate (tape) data begins; `None` when no tape exists."""
+    """E12-S05 `meta.recording_started_at`: the EARLIEST of (a) the oldest trade in the hot
+    `trades` tape (`first_trade_us`) and (b) E16-T04's `min(first_event_ts)` across the
+    symbol's recording sessions when `CoverageService` is composed. Sessions only win when
+    present and earlier: until the session manager is wired into the lifespan (#2188) no
+    session rows are written, and the tape remains the source (no false `no_data_recorded`).
+    `None` only when neither source knows of any recorded data."""
 
     async def first(symbol: str) -> int | None:
-        return await ctx.storage.market_data.first_trade_us(symbol)
+        tape = await ctx.storage.market_data.first_trade_us(symbol)
+        cov = ctx.recorder.coverage
+        sessions = await cov.recording_started_at_us(symbol) if cov is not None else None
+        known = [v for v in (tape, sessions) if v is not None]
+        return min(known) if known else None
 
     return first
 

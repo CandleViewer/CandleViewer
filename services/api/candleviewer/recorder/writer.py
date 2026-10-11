@@ -474,6 +474,11 @@ class StreamWriter:
         #: Last observed delta update_id per symbol (seq jumps are E16-T04's to convert).
         self._last_update_id: dict[str, int] = {}
         self.seq_jumps: deque[tuple[str, int, int]] = deque(maxlen=1024)
+        #: E16-T04 signal: (symbol, last delta exch_ts, jumped delta exch_ts) in µs.
+        self._seq_jump_windows: deque[tuple[str, int, int]] = deque(maxlen=1024)
+        self._last_delta_ts: dict[str, int] = {}
+        #: symbol -> [min, max] admitted exch_ts (µs) since the last `take_event_bounds`.
+        self._bounds: dict[str, list[int]] = {}
         self._tasks: set[asyncio.Task[None]] = set()
         self._next_counters_at = 0.0
         self._publish_gauges()
@@ -500,6 +505,7 @@ class StreamWriter:
             # A re-add must not compare against a stale update_id (false seq jump). Counters
             # and gaps are kept until persisted.
             self._last_update_id.pop(event.symbol, None)
+            self._last_delta_ts.pop(event.symbol, None)
         else:
             self._active.add(event.symbol)
 
@@ -521,7 +527,10 @@ class StreamWriter:
         last = self._last_update_id.get(ev.symbol)
         if last is not None and ev.prev_update_id != last:
             self.seq_jumps.append((ev.symbol, last, ev.prev_update_id))
+            prev_ts = self._last_delta_ts.get(ev.symbol, ev.ts_event)
+            self._seq_jump_windows.append((ev.symbol, prev_ts, ev.ts_event))
         self._last_update_id[ev.symbol] = ev.update_id
+        self._last_delta_ts[ev.symbol] = ev.ts_event
         await self._admit("orderbook_deltas", ev.symbol, delta_records(ev))
 
     async def on_book_snapshot(self, ev: BookSnapshotLike) -> None:
@@ -548,6 +557,14 @@ class StreamWriter:
         self._ctr(symbol).received += 1
         if not records:
             return
+        ts = records[0].exch_ts
+        b = self._bounds.get(symbol)
+        if b is None:
+            self._bounds[symbol] = [ts, ts]
+        elif ts < b[0]:
+            b[0] = ts
+        elif ts > b[1]:
+            b[1] = ts
         lane = self._lanes[stream]
         if lane.spilling:
             lane.spill_buf.extend(records)
@@ -968,6 +985,18 @@ class StreamWriter:
 
     def is_spilling(self, stream: Stream) -> bool:
         return self._lanes[stream].spilling
+
+    def take_seq_jump_windows(self) -> list[tuple[str, int, int]]:
+        """Drain the seq-jump windows (E16-T04 turns them into `seq_jump` gap rows)."""
+        out = list(self._seq_jump_windows)
+        self._seq_jump_windows.clear()
+        return out
+
+    def take_event_bounds(self) -> dict[str, tuple[int, int]]:
+        """Drain per-symbol admitted exch_ts bounds (session `first/last_event_ts`)."""
+        out = {sym: (b[0], b[1]) for sym, b in self._bounds.items()}
+        self._bounds.clear()
+        return out
 
     def pending_gaps(self) -> dict[tuple[str, Stream], tuple[int, int]]:
         return {k: (v[0], v[1]) for k, v in self._gaps.items()}

@@ -14,6 +14,7 @@ from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.recorder.coverage import CoverageService
 
 
 class RecorderService:
@@ -21,6 +22,11 @@ class RecorderService:
 
     def __init__(self) -> None:
         self._started = False
+        #: E16-T04 `CoverageService` (composed by `create_app` on the real backend).
+        self.coverage: CoverageService | None = None
+
+    def attach_coverage(self, service: CoverageService) -> None:
+        self.coverage = service
 
     def recorded_symbols(self) -> frozenset[str]:
         """Symbols with an active recording. Empty until the recorder epic (E16) lands."""

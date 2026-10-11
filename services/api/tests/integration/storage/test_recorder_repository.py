@@ -148,3 +148,42 @@ async def test_repository_lifecycle(dsns: tuple[str, str], conn: psycopg.Connect
     assert await repo.close_session(sid, "manual_stop")
     assert await repo.soft_remove(rid)
     assert await repo.list_recorded() == []
+
+
+async def test_e16_t04_session_gap_coverage_round_trip(
+    dsns: tuple[str, str], conn: psycopg.Connection
+) -> None:
+    """E16-T04: crash-close + gap + coverage query against real Postgres (tiers: no watermark
+    store wired here -> all `questdb`; tier split is unit-tested)."""
+    from candleviewer.recorder.coverage import CoverageService
+    from candleviewer.recorder.models import RecorderSetChanged
+    from candleviewer.recorder.sessions import SessionManager, to_us
+
+    repo = SqlAlchemyRecorderRepository(SqlAlchemyRelationalRepository(dsns[1]))
+    t0 = to_us(datetime(2026, 9, 1, tzinfo=UTC))
+    clock = [t0]
+    dead = SessionManager(repo, now_us=lambda: clock[0])
+    ev = RecorderSetChanged(symbol="BTCUSDT", change="added", reason="manual",
+                            reasons=("manual",), priority=300, auto_evictable=False,
+                            ts_event=t0)  # fmt: skip
+    await dead.on_set_changed(ev)
+    sid = dead.live_session("BTCUSDT")
+    assert sid is not None
+    await repo.touch_session_events(sid, first=datetime(2026, 9, 1, 0, 0, 1, tzinfo=UTC),
+                                    last=datetime(2026, 9, 1, 1, tzinfo=UTC))  # fmt: skip
+    restart = to_us(datetime(2026, 9, 1, 1, 5, tzinfo=UTC))
+    clock[0] = restart
+    fresh = SessionManager(repo, now_us=lambda: clock[0])
+    assert await fresh.recover_on_startup(restart) == 1
+    assert await repo.list_live_sessions() == []
+    svc = CoverageService(repo, now_us=lambda: clock[0])
+    (cov,) = await svc.coverage("BTCUSDT", ["trades"], t0, restart)
+    assert [(i.lo, i.hi, i.tier) for i in cov.intervals] == [
+        (t0, to_us(datetime(2026, 9, 1, 1, tzinfo=UTC)), "questdb")
+    ]
+    assert [g.cause for g in cov.gaps] == ["process_restart"]
+    assert await svc.recording_started_at_us("BTCUSDT") == t0 + 1_000_000
+    row = conn.execute(
+        "SELECT state::text, end_reason FROM recording_sessions WHERE id = %s", (sid,)
+    ).fetchone()
+    assert row == ("stopped", "process_restart")

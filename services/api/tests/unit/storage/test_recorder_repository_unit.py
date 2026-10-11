@@ -179,3 +179,36 @@ async def test_record_live_gap_false_without_live_session() -> None:
     sql, params = rel.calls[0]
     assert not ok and "INSERT INTO recording_gaps" in sql and "CAST(:stream AS stream_kind)" in sql
     assert params["cause"] == "backpressure_drop"
+
+
+async def test_e16_t04_session_and_gap_methods_plumb_params() -> None:
+    """E16-T04: explicit-time open/close, state mirror, event bounds, windows, backfill flag."""
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    t1 = datetime(2026, 1, 2, tzinfo=UTC)
+    repo, rel = _repo([{"id": "s", "first": t0}])
+    sid = await repo.open_session_at(recorded_symbol_id="rs", symbol="BTCUSDT",
+                                     streams=["trades"], orderbook_depth=1, ws_endpoint="w",
+                                     started_at=t0)  # fmt: skip
+    assert rel.calls[-1][1]["started"] == t0 and rel.calls[-1][1]["id"] == sid
+    assert await repo.close_session_at("s", reason="process_restart", ended_at=t1)
+    assert rel.calls[-1][1] == {"id": "s", "ended": t1, "reason": "process_restart",
+                                "state": "stopped"}  # fmt: skip
+    assert await repo.close_session_at("s", reason="error", ended_at=t1, error=True)
+    assert rel.calls[-1][1]["state"] == "error"
+    assert await repo.set_session_state("s", "degraded")
+    assert await repo.touch_session_events("s", first=t0, last=t1)
+    assert "COALESCE(first_event_ts" in rel.calls[-1][0]
+    assert await repo.list_live_sessions() == [{"id": "s", "first": t0}]
+    assert await repo.sessions_in("BTCUSDT", t0, t1)
+    assert await repo.gaps_in("BTCUSDT", t0, t1)
+    assert rel.calls[-1][1] == {"symbol": "BTCUSDT", "lo": t0, "hi": t1}
+    assert await repo.earliest_first_event("BTCUSDT") == t0
+    assert await repo.mark_gap_backfilled(7, "kline")
+    sql = rel.calls[-1][0]
+    assert "backfilled = true" in sql and "gap_start" not in sql.split("WHERE")[0]
+    assert "DELETE" not in " ".join(c[0].upper() for c in rel.calls)
+
+
+async def test_earliest_first_event_none_when_no_sessions() -> None:
+    repo, _ = _repo([{"first": None}])
+    assert await repo.earliest_first_event("BTCUSDT") is None

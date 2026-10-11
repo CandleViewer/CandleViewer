@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, Protocol
 
@@ -124,6 +124,10 @@ class AuditSink(Protocol):
     ) -> None: ...
 
 
+#: (symbol, B11 hook name, chart context) -> None; see `RecordingPolicy.observe_states`.
+StateObserver = Callable[[str, str, Mapping[str, object]], Awaitable[None]]
+
+
 @dataclass(frozen=True, slots=True)
 class PolicyConfig:
     """`CV_RECORDER_*` keys (20-architecture.md §7.2)."""
@@ -217,6 +221,12 @@ class RecordingPolicy:
         #: Closed on construction; opened by `positions_reloaded()` (E16-T03/T04 wiring
         #: calls it after the startup reconcile).
         self._positions_ready = False
+        #: E16-T04: B11 state-entry hooks are forwarded here (SessionManager.on_b11_state) so
+        #: the session row mirrors the published state without querying the interpreter.
+        self._state_observer: StateObserver | None = None
+
+    def observe_states(self, observer: StateObserver) -> None:
+        self._state_observer = observer
 
     # --- public triggers ---------------------------------------------------------------
 
@@ -583,6 +593,13 @@ class RecordingPolicy:
         """B11 side effects for THIS policy's charts. Audit is write-ahead and raises if
         unavailable, so the service fails and the chart goes to `error` (C-2.9)."""
         symbol = str(context.get("symbol") or "")
+        if self._state_observer is not None:
+            try:
+                await self._state_observer(symbol, name, context)
+            except Exception as exc:  # the mirror never fails the chart's audited I/O
+                logger().error(
+                    "recorder_session_mirror_failed", symbol=symbol, error=type(exc).__name__
+                )
         if name == "error":
             recorder_b11_error_total.labels(env=self._env).inc()
             logger().error(

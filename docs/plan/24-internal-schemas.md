@@ -2985,6 +2985,33 @@ class DataGap(BaseModel):
 
 Detection: per-stream watchdog on `last_msg_ts` (threshold = 5× expected cadence, floor 5 s); book `update_id` gaps; process-restart bracketing (`shutdown_ts` → `startup_ts`). Every gap is persisted, exposed in the API, **rendered on the chart as a hatched region**, and marks every derived bar with `gap_before=True`. Backfill: trades from `GET /v5/market/recent-trade` (≤1000 records — only helps for gaps of seconds), klines from `GET /v5/market/kline` (OHLCV only, no order flow), and the public bulk CSV archive at `public.bybit.com/trading/{SYMBOL}/` for whole-day gaps. **Order-book gaps cannot be backfilled at all** — the UI must say so plainly rather than showing an interpolated lie. Note the CSV timestamp-unit trap: derivatives files use fractional seconds, spot files use integer ms; the importer branches on it and the fixture suite covers both.
 
+#### 13.3.1 `CoverageService` (E16-T04) — the interface downstream consumers call
+
+`candleviewer.recorder.coverage.CoverageService` is the single source for "what exists" before
+any historical render. Consumers: E18 footprint, E19 profiles, E23 CVD, E26 replay.
+
+```python
+async def coverage(symbol: str, streams: Sequence[str], from_us: int, to_us: int
+                   ) -> list[StreamCoverage]          # one per requested stream, in order
+async def recording_started_at_us(symbol: str) -> int | None   # min(first_event_ts) of sessions
+
+StreamCoverage(stream: str, intervals: tuple[CoveredInterval, ...], gaps: tuple[GapInterval, ...])
+CoveredInterval(lo: int, hi: int, tier: Literal["questdb", "parquet"])   # half-open µs
+GapInterval(lo: int, hi: int, cause: str, backfilled: bool, backfill_source: str | None)
+```
+
+Covered = session windows − gaps, merged with `COVERAGE_MERGE_TOLERANCE_MS = 1000` (never
+across a gap row). Tier from the E16-T05 roll-off watermark: older → `parquet`, newer →
+`questdb`, split at the watermark. A `backfilled` (kline) gap stays a gap: tick coverage is
+never reconstructed from bars. DB `cause` → REST `reason`: `ws_disconnect`, `exchange_outage`
+1:1; `process_restart`→`backend_restart`; `seq_jump`/`backpressure_drop` have no contract value
+yet, so `reason` is omitted for them (never relabelled; #2216). `GET /market/data-coverage` is
+capped server-side to the last 90 days (cache horizon) until the contract adds `from`/`to`
+(#2216). A `stale` feed topic (resubscribed on the live socket, no per-topic `healthy`) writes
+its observed silent window as a `ws_disconnect` gap; the session continues. Crash gaps start at
+`last_event_ts` once the writer's event bounds are polled, else at `started_at` (overstates).
+Venue topics reach the recorder already normalised (`exchange.base.ports.StreamForTopic`).
+
 ### 13.4 Retention
 
 ```python

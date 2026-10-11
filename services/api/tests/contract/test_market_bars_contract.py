@@ -479,11 +479,42 @@ class TestAdversarialRound:
         _problem(_client().get("/market/bars", params={**self._Q, "cursor": v1}),
                  400, "invalid_cursor")  # fmt: skip
 
-    def test_recording_provider_not_wired_is_503_not_no_data_recorded(self) -> None:
+    def test_sessions_provider_refuses_pre_recording_window_with_recording_started_at(
+        self,
+    ) -> None:
+        """E16-T04 (replaces the E12-T05 503-when-unwired case): the real provider is the
+        earliest session `first_event_ts` (`CoverageService`); a window before it is 422
+        `no_data_recorded` carrying `recording_started_at`, never an empty success."""
+        import asyncio
+
+        from candleviewer.recorder.coverage import CoverageService
+        from candleviewer.recorder.sessions import to_dt
+        from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
+
+        store = MemRecorderStore()
+        sid = asyncio.run(store.open_session_at(
+            recorded_symbol_id="r", symbol="BTCUSDT", streams=["trades"], orderbook_depth=1,
+            ws_endpoint="x", started_at=to_dt(_T0 + 60_000_000)))  # fmt: skip
+        asyncio.run(store.touch_session_events(sid, first=to_dt(_T0 + 60_000_000),
+                                               last=to_dt(_NOW)))  # fmt: skip
+        svc = CoverageService(store, now_us=UsClock(_NOW))
         fetch = _Fetch()
+        app = FastAPI()
+        app.include_router(make_market_bars_router(
+            lambda: BarReader(fetch, _noop), recording_started_at_us=svc.recording_started_at_us,
+            principal_resolver=_Resolver(frozenset({"marketdata:read"})),
+            symbol_listed=lambda s: s == "BTCUSDT", now_us=lambda: _NOW))  # fmt: skip
+        resp = TestClient(app, client=("127.0.0.1", 50000)).get("/market/bars", params=self._Q)
+        body = _problem(resp, 422, "no_data_recorded")
+        assert body["recording_started_at"] == _iso(_T0 + 60_000_000).replace("Z", "+00:00")
+        assert fetch.calls == 0
+        # No recording at all: still 422, `recording_started_at: null`.
+        none = _problem(_client(recording_us=None).get("/market/bars", params=self._Q),
+                        422, "no_data_recorded")  # fmt: skip
+        assert none["recording_started_at"] is None
+        # The router itself still fails closed (503) if composed without a provider.
         resp = _client(recording_wired=False, fetch=fetch).get("/market/bars", params=self._Q)
         _problem(resp, 503, "store_unavailable")
-        assert fetch.calls == 0
         time_q = {**_P, "bar_type": "time", "param": "1"}  # time bars need no recording fact
         assert _client(recording_wired=False).get("/market/bars", params=time_q).status_code == 200
 

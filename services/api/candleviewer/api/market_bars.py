@@ -50,6 +50,7 @@ from candleviewer.api.market_response import (
     kline_response,
     problem,
     serialize_bar,
+    with_recording_started_at,
 )
 from candleviewer.bars.errors import BarSpecError
 from candleviewer.bars.limits import (
@@ -255,9 +256,10 @@ def make_market_bars_router(
             else:
                 begins = datetime.fromtimestamp(started / 1e6, UTC)
                 when = f"recording for {symbol} begins {begins:%d %b %Y}"
-            return problem(422, "no_data_recorded", "No data recorded",
-                           f"{bar_type.capitalize()} bars need recorded trade data; {when}. "
-                           "Choose a later window or use time bars.")  # fmt: skip
+            refused = problem(422, "no_data_recorded", "No data recorded",
+                              f"{bar_type.capitalize()} bars need recorded trade data; {when}. "
+                              "Choose a later window or use time bars.")  # fmt: skip
+            return with_recording_started_at(refused, started)
         span_cap = MAX_TIME_WINDOW_US if spec.kind == "time" else MAX_NON_TIME_WINDOW_US
         span = end_us - max(start_us, (after_us or 0) + 1)
         if span > span_cap:

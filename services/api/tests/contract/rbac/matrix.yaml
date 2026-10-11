@@ -708,8 +708,9 @@ operations:
     permissions: ['marketdata:read']
     scope: none
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: not_executable
+    reason: 'authorisation is unreachable in the CI app: fake backend has no session resolver (501)
+      and no CoverageService (503); RBAC is unit-tested in tests/unit/api/test_market_coverage.py'
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /market/footprint:
     permissions: ['marketdata:read']

@@ -32,6 +32,29 @@ def topic_kind(topic: str) -> str:
     return _TOPIC_KIND.get(head, head)
 
 
+#: Topic prefix -> Postgres `stream_kind` names (E16-T04 recorder gap attribution).
+_TOPIC_STREAMS: dict[str, tuple[str, ...]] = {
+    "publicTrade": ("trades",),
+    "orderbook": ("orderbook_delta", "orderbook_snapshot"),
+    "tickers": ("tickers",),
+    "allLiquidation": ("liquidations",),
+    "liquidation": ("liquidations",),
+}
+#: Streams a socket-wide (`*`) health event affects.
+_ALL_STREAMS: tuple[str, ...] = (
+    "trades", "orderbook_delta", "orderbook_snapshot", "tickers", "liquidations"
+)  # fmt: skip
+
+
+def stream_for_topic(topic: str) -> tuple[str | None, tuple[str, ...]]:
+    """`exchange.base.ports.StreamForTopic`: `publicTrade.BTCUSDT` -> ("BTCUSDT", ("trades",));
+    `*` -> (None, all recorded streams); unknown prefix -> (symbol, ())."""
+    if topic == "*" or "." not in topic:
+        return None, _ALL_STREAMS
+    head, _, rest = topic.partition(".")
+    return rest.rsplit(".", 1)[-1], _TOPIC_STREAMS.get(head, ())
+
+
 _TOPIC_RE = re.compile(r'"topic"\s*:\s*"([A-Za-z0-9._]{1,64})"')
 
 

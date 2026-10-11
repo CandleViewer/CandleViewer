@@ -84,6 +84,11 @@ _OPEN_SESSION = sa.text(
     "orderbook_depth, ws_endpoint) VALUES (CAST(:id AS uuid), CAST(:rsid AS uuid), :symbol, "
     "CAST(CAST(:streams AS text[]) AS stream_kind[]), :depth, :ws)"
 )
+_OPEN_SESSION_AT = sa.text(
+    "INSERT INTO recording_sessions (id, recorded_symbol_id, symbol, streams, "
+    "orderbook_depth, ws_endpoint, started_at) VALUES (CAST(:id AS uuid), CAST(:rsid AS uuid), "
+    ":symbol, CAST(CAST(:streams AS text[]) AS stream_kind[]), :depth, :ws, :started)"
+)
 _CLOSE_SESSION = sa.text(
     "UPDATE recording_sessions SET ended_at = now(), "
     "state = CAST(CASE WHEN :reason = 'error' THEN 'error' ELSE 'stopped' END AS recording_state), "
@@ -109,6 +114,46 @@ _RECORD_LIVE_GAP = sa.text(
     "(SELECT id FROM recording_sessions WHERE symbol = :symbol "
     "AND state IN ('starting','recording','degraded') ORDER BY started_at DESC LIMIT 1)"
     " AS s RETURNING id"
+)
+# --- E16-T04 sessions / gaps / coverage ------------------------------------------------------
+_LIVE_SESSIONS = sa.text(
+    "SELECT id::text AS id, symbol::text AS symbol, state::text AS state, "
+    "streams::text[] AS streams, started_at, ended_at, first_event_ts, last_event_ts, "
+    "end_reason FROM recording_sessions "
+    "WHERE state IN ('starting','recording','degraded','stopping') ORDER BY started_at"
+)
+_CLOSE_SESSION_AT = sa.text(
+    "UPDATE recording_sessions SET ended_at = GREATEST(started_at, :ended), "
+    "state = CAST(:state AS recording_state), end_reason = :reason "
+    "WHERE id = CAST(:id AS uuid) AND ended_at IS NULL RETURNING 1"
+)
+_SET_STATE = sa.text(
+    "UPDATE recording_sessions SET state = CAST(:state AS recording_state) "
+    "WHERE id = CAST(:id AS uuid) AND ended_at IS NULL RETURNING 1"
+)
+_TOUCH_EVENTS = sa.text(
+    "UPDATE recording_sessions SET first_event_ts = COALESCE(first_event_ts, :first), "
+    "last_event_ts = GREATEST(COALESCE(last_event_ts, :last), :last) "
+    "WHERE id = CAST(:id AS uuid) RETURNING 1"
+)
+_SESSIONS_IN = sa.text(
+    "SELECT id::text AS id, symbol::text AS symbol, state::text AS state, "
+    "streams::text[] AS streams, started_at, ended_at, first_event_ts, last_event_ts, "
+    "end_reason FROM recording_sessions WHERE symbol = :symbol "
+    "AND started_at < :hi AND (ended_at IS NULL OR ended_at > :lo) ORDER BY started_at"
+)
+_GAPS_IN = sa.text(
+    "SELECT id, stream::text AS stream, gap_start, gap_end, cause, backfilled, backfill_source "
+    "FROM recording_gaps WHERE symbol = :symbol AND gap_start < :hi AND gap_end > :lo "
+    "ORDER BY gap_start"
+)
+_EARLIEST = sa.text(
+    "SELECT min(first_event_ts) AS first FROM recording_sessions WHERE symbol = :symbol"
+)
+# Flags only: a gap row's window is never shrunk or deleted (E16-T04 security notes).
+_MARK_BACKFILLED = sa.text(
+    "UPDATE recording_gaps SET backfilled = true, backfill_source = :source "
+    "WHERE id = :id RETURNING 1"
 )
 # Pinned symbol -> infinite (NULL); else symbol-scoped; else default; else caller's hard default.
 _RESOLVE = sa.text(
@@ -251,6 +296,73 @@ class SqlAlchemyRecorderRepository:
             "cause": cause,
         }
         return bool(await self._all(_RECORD_LIVE_GAP, params))
+
+    # --- E16-T04 ------------------------------------------------------------------------------
+
+    async def list_live_sessions(self) -> list[dict[str, Any]]:
+        """Sessions not yet closed (`starting|recording|degraded|stopping`), oldest first."""
+        return await self._all(_LIVE_SESSIONS, {})
+
+    async def open_session_at(
+        self,
+        *,
+        recorded_symbol_id: str,
+        symbol: str,
+        streams: Sequence[str],
+        orderbook_depth: int,
+        ws_endpoint: str,
+        started_at: datetime,
+    ) -> str:
+        """`open_session` with the caller's (injected-clock) `started_at`."""
+        session_id = str(uuid.uuid4())
+        await self._exec(
+            _OPEN_SESSION_AT,
+            {
+                "id": session_id,
+                "rsid": recorded_symbol_id,
+                "symbol": symbol,
+                "streams": list(streams),
+                "depth": orderbook_depth,
+                "ws": ws_endpoint,
+                "started": started_at,
+            },
+        )
+        return session_id
+
+    async def close_session_at(
+        self, session_id: str, *, reason: str, ended_at: datetime, error: bool = False
+    ) -> bool:
+        """Close with an explicit `ended_at` (clamped to `started_at`) and `end_reason`."""
+        params = {
+            "id": session_id,
+            "ended": ended_at,
+            "reason": reason,
+            "state": "error" if error else "stopped",
+        }
+        return bool(await self._all(_CLOSE_SESSION_AT, params))
+
+    async def set_session_state(self, session_id: str, state: str) -> bool:
+        return bool(await self._all(_SET_STATE, {"id": session_id, "state": state}))
+
+    async def touch_session_events(
+        self, session_id: str, *, first: datetime, last: datetime
+    ) -> bool:
+        params = {"id": session_id, "first": first, "last": last}
+        return bool(await self._all(_TOUCH_EVENTS, params))
+
+    async def sessions_in(self, symbol: str, lo: datetime, hi: datetime) -> list[dict[str, Any]]:
+        return await self._all(_SESSIONS_IN, {"symbol": symbol, "lo": lo, "hi": hi})
+
+    async def gaps_in(self, symbol: str, lo: datetime, hi: datetime) -> list[dict[str, Any]]:
+        return await self._all(_GAPS_IN, {"symbol": symbol, "lo": lo, "hi": hi})
+
+    async def earliest_first_event(self, symbol: str) -> datetime | None:
+        rows = await self._all(_EARLIEST, {"symbol": symbol})
+        value = rows[0]["first"] if rows else None
+        return value if isinstance(value, datetime) else None
+
+    async def mark_gap_backfilled(self, gap_id: int, source: str) -> bool:
+        return bool(await self._all(_MARK_BACKFILLED, {"id": gap_id, "source": source}))
 
     async def resolve_policy(self, symbol: str, stream: str) -> int | None:
         """Retention days for (symbol, stream); `None` is the infinite sentinel (pinned)."""

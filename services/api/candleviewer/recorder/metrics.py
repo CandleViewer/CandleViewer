@@ -27,6 +27,20 @@ recorder_b11_error_total = Counter(
     ["env"],
 )
 
+# --- Sessions / gaps (E16-T04) ---------------------------------------------------------------
+recorder_gaps_total = Counter(
+    "recorder_gaps_total", "recording_gaps rows written by cause (E16-T04).", ["cause"]
+)
+recorder_gap_seconds_total = Counter(
+    "recorder_gap_seconds_total", "Seconds of recorded data lost to gaps.", ["symbol"]
+)
+recorder_sessions_open = Gauge("recorder_sessions_open", "Open recording sessions.")
+recorder_integrity_anomalies_total = Counter(
+    "recorder_integrity_anomalies_total",
+    "Daily integrity-job anomalies (gap = explained, event = unexplainable).",
+    ["kind"],
+)
+
 # --- StreamWriter (E16-T03) — exported via `export_recorder_metrics` ------------------------
 recorder_rows_total = Counter(
     "recorder_rows_total", "Rows written to QuestDB by the recorder.", ["stream"]

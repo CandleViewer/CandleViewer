@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Final, Protocol
@@ -59,6 +60,14 @@ def problem(status: int, code: str, title: str, detail: str) -> JSONResponse:
         },
         media_type=_PROBLEM_MEDIA,
     )
+
+
+def with_recording_started_at(resp: JSONResponse, started_us: int | None) -> JSONResponse:
+    """E16-T04: a `no_data_recorded` problem carries `recording_started_at` (null when nothing
+    was ever recorded) so the UI can offer the first recorded window (22-api /market/bars)."""
+    body = json.loads(bytes(resp.body))
+    body["recording_started_at"] = iso_us(started_us) if started_us is not None else None
+    return JSONResponse(status_code=resp.status_code, content=body, media_type=resp.media_type)
 
 
 #: Plausible exchange time: 2015-01-01 .. 2100-01-01 (µs). Outside it a cursor is forged.

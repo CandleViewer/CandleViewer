@@ -194,6 +194,32 @@ async def test_delta_seq_jump_is_observed_not_healed(tmp_path: Path) -> None:
     assert w.backlog_rows == 4  # still recorded
 
 
+async def test_seq_jump_windows_and_event_bounds_are_drained_for_sessions(
+    tmp_path: Path,
+) -> None:
+    """E16-T04 signal: the jump window is (last delta ts, jumped delta ts); bounds feed the
+    session's first/last_event_ts. Both drain on take."""
+    w, *_ = await make_writer(tmp_path)
+    await w.on_book_delta(delta(5))
+    await w.on_book_delta(delta(9, prev=7))
+    await w.on_trade(trade(1))
+    await w.on_trade(trade(0))
+    assert w.take_seq_jump_windows() == [("BTCUSDT", T0 + 5, T0 + 9)]
+    assert w.take_seq_jump_windows() == []
+    assert w.take_event_bounds() == {"BTCUSDT": (T0, T0 + 9)}
+    assert w.take_event_bounds() == {}
+    w.on_set_changed(
+        RecorderSetChanged(symbol="BTCUSDT", change="removed", reason="manual", reasons=(),
+                           priority=300, auto_evictable=False, ts_event=0)
+    )  # fmt: skip
+    w.on_set_changed(
+        RecorderSetChanged(symbol="BTCUSDT", change="added", reason="manual", reasons=(),
+                           priority=300, auto_evictable=False, ts_event=0)
+    )  # fmt: skip
+    await w.on_book_delta(delta(20, prev=17))  # re-add: no stale jump
+    assert w.take_seq_jump_windows() == []
+
+
 async def test_counters_written_every_10s_as_deltas(tmp_path: Path) -> None:
     w, _, store, _, clock = await make_writer(tmp_path)
     await w.start()
