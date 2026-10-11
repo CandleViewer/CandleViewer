@@ -18,9 +18,15 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from bench.ingestion import HARNESS_VERSION, budgets
+from bench.ingestion import budgets
 from bench.ingestion.config import REPORTS_DIR, SCENARIOS, Scenario, load, machine_profile
-from bench.ingestion.engine import LaneConfig, ProcSampler, PsutilProcSampler, run_lanes, symbols_for
+from bench.ingestion.engine import (
+    LaneConfig,
+    ProcSampler,
+    PsutilProcSampler,
+    run_lanes,
+    symbols_for,
+)
 from bench.ingestion.ratelimit import run_headroom
 
 PREFERRED = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
@@ -39,7 +45,7 @@ def _lane_cfg(sc: Scenario, **over: Any) -> LaneConfig:
         inbound_queue=int(p.get("inbound_queue", 64)),
         sample_every_s=float(p.get("sample_every_s", 60.0)),
         seed=int(p.get("seed", 7)),
-        loads=loads,  # type: ignore[arg-type]  # JSON lists -> (sym, lo, hi, factor) tuples
+        loads=loads,
         realtime=bool(p.get("realtime", False)),
     )
     for k, v in over.items():
@@ -54,18 +60,26 @@ async def run_soak(sc: Scenario, sampler: ProcSampler, **over: Any) -> budgets.V
     v.add(budgets.check_loss(res.injected, res.ingested, res.detected_gap))
     base_at = float(sc.p("flatness_baseline_fraction")) * cfg.duration_s
     v.checks.extend(
-        budgets.check_soak(res.samples, len(cfg.symbols), base_at, float(sc.p("flatness_tolerance")))
+        budgets.check_soak(
+            res.samples, len(cfg.symbols), base_at, float(sc.p("flatness_tolerance"))
+        )
     )
     lags = [x for per in res.lag_ms.values() for x in per["steady"]]
     v.metrics = {
         "ingest_lag_ms": budgets.summary(lags),
-        "rss_mb_per_symbol": budgets.summary(budgets.rss_per_symbol_mb(res.samples, len(cfg.symbols))),
+        "rss_mb_per_symbol": budgets.summary(
+            budgets.rss_per_symbol_mb(res.samples, len(cfg.symbols))
+        ),
         "vcpu_per_symbol": budgets.summary(budgets.vcpu_per_symbol(res.samples, len(cfg.symbols))),
         "event_loop_lag_ms": budgets.summary([s.loop_lag_ms for s in res.samples]),
         "queue_depth": budgets.summary([float(s.queue_depth) for s in res.samples]),
-        "sampling_cost_ms": {"p50": res.sampling_cost_ms, "p95": res.sampling_cost_ms,
-                             "max": res.sampling_cost_ms, "count": float(len(res.samples))},
-    }  # fmt: skip
+        "sampling_cost_ms": {
+            "p50": res.sampling_cost_ms,
+            "p95": res.sampling_cost_ms,
+            "max": res.sampling_cost_ms,
+            "count": float(len(res.samples)),
+        },
+    }
     v.metrics["_curve"] = {f"{s.t_s:.0f}": s.rss_bytes / 2**20 for s in res.samples}
     return v
 
@@ -73,7 +87,9 @@ async def run_soak(sc: Scenario, sampler: ProcSampler, **over: Any) -> budgets.V
 async def run_isolation(sc: Scenario, sampler: ProcSampler) -> budgets.Verdict:
     """Scenarios 2 and 3: a loaded symbol (2: 3x sustained, 3: 5x/60 s) vs the others."""
     cfg = _lane_cfg(sc)
-    res = await run_lanes(cfg, sampler, drain_ticks=int(float(sc.p("recovery_window_s")) * 4 / cfg.tick_s))
+    res = await run_lanes(
+        cfg, sampler, drain_ticks=int(float(sc.p("recovery_window_s")) * 4 / cfg.tick_s)
+    )
     hot = [str(x[0]) for x in cfg.loads]
     v = budgets.Verdict(sc.name)
     v.add(budgets.check_loss(res.injected, res.ingested, res.detected_gap))
@@ -81,16 +97,21 @@ async def run_isolation(sc: Scenario, sampler: ProcSampler) -> budgets.Verdict:
         budgets.check_isolation(
             {s: d["steady"] for s, d in res.lag_ms.items()},
             {s: d["loaded"] for s, d in res.lag_ms.items()},
-            hot, float(sc.p("lag_band_floor_ms")), float(sc.p("lag_band_rel")),
-        )  # fmt: skip
+            hot,
+            float(sc.p("lag_band_floor_ms")),
+            float(sc.p("lag_band_rel")),
+        )
     )
     if sc.kind == "burst":
         sym = hot[0]
         v.checks.extend(
             budgets.check_burst(
-                res.max_backlog[sym], int(sc.p("backlog_bound")), res.recovery_s[sym],
-                float(sc.p("recovery_window_s")), float(res.backpressure[sym]),
-            )  # fmt: skip
+                res.max_backlog[sym],
+                int(sc.p("backlog_bound")),
+                res.recovery_s[sym],
+                float(sc.p("recovery_window_s")),
+                float(res.backpressure[sym]),
+            )
         )
     others = [x for s, d in res.lag_ms.items() if s not in hot for x in d["loaded"]]
     v.metrics = {
@@ -116,17 +137,26 @@ async def run_latency(sc: Scenario, sampler: ProcSampler) -> budgets.Verdict:
 async def run_ratelimit(sc: Scenario) -> budgets.Verdict:
     p = sc.params
     res = await run_headroom(
-        duration_s=float(p["duration_s"]), refresh_every_s=float(p["refresh_every_s"]),
-        backfill_pages_per_s=float(p["backfill_pages_per_s"]), symbols=int(p["symbols"]),
-        bucket_capacity=float(p["bucket_capacity"]), bucket_refill_per_s=float(p["bucket_refill_per_s"]),
-    )  # fmt: skip
+        duration_s=float(p["duration_s"]),
+        refresh_every_s=float(p["refresh_every_s"]),
+        backfill_pages_per_s=float(p["backfill_pages_per_s"]),
+        symbols=int(p["symbols"]),
+        bucket_capacity=float(p["bucket_capacity"]),
+        bucket_refill_per_s=float(p["bucket_refill_per_s"]),
+    )
     v = budgets.Verdict(sc.name)
-    v.checks.extend(budgets.check_headroom(res.min_uid_tokens, res.ip_holds, res.rate_limited_10018))
+    v.checks.extend(
+        budgets.check_headroom(res.min_uid_tokens, res.ip_holds, res.rate_limited_10018)
+    )
     v.metrics = {
         "uid_tokens": budgets.summary(res.tokens_trace),
-        "ip_window_headroom_min": {"p50": float(res.min_ip_window_headroom), "p95": float(res.min_ip_window_headroom),
-                                   "max": float(res.min_ip_window_headroom), "count": float(res.requests)},
-    }  # fmt: skip
+        "ip_window_headroom_min": {
+            "p50": float(res.min_ip_window_headroom),
+            "p95": float(res.min_ip_window_headroom),
+            "max": float(res.min_ip_window_headroom),
+            "count": float(res.requests),
+        },
+    }
     return v
 
 
@@ -169,11 +199,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         v = asyncio.run(run_scenario(sc))
         g = gate.compare(v, gate.load_baseline(name), profile, sc.tolerances, a.profile)
         runs.append((sc, v, g))
-        print(f"{name}: {'PASS' if v.passed else 'FAIL'} gate={g.status} "
-              f"({time.perf_counter() - t0:.1f}s)")  # fmt: skip
+        print(
+            f"{name}: {'PASS' if v.passed else 'FAIL'} gate={g.status} "
+            f"({time.perf_counter() - t0:.1f}s)"
+        )
         for c in v.checks:
             if not c.passed:
-                print(f"  {'FAIL' if c.hard else 'warn'} {c.name}: {c.measured:.4g} > {c.limit:.4g} {c.note}")
+                tag = "FAIL" if c.hard else "warn"
+                print(f"  {tag} {c.name}: {c.measured:.4g} > {c.limit:.4g} {c.note}")
         for w in g.warnings:
             print(f"::warning::{name}: {w}")
         for f in g.failures:
@@ -186,12 +219,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     md = a.out_dir / f"e08-{a.profile}-{stamp}.md"
     md.write_text(report.render(runs, profile, started, finished, a.grafana_url), encoding="utf-8")
     js = a.out_dir / f"e08-{a.profile}-{stamp}.json"
-    js.write_text(json.dumps([{"verdict": v.as_dict(), "gate": {"status": g.status, "diff": g.diff,
-                                "failures": g.failures, "warnings": g.warnings}}
-                              for _, v, g in runs], indent=2) + "\n", encoding="utf-8")  # fmt: skip
+    js.write_text(
+        json.dumps(
+            [
+                {
+                    "verdict": v.as_dict(),
+                    "gate": {
+                        "status": g.status,
+                        "diff": g.diff,
+                        "failures": g.failures,
+                        "warnings": g.warnings,
+                    },
+                }
+                for _, v, g in runs
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     diff = a.out_dir / "gate-diff.md"
-    diff.write_text("\n\n".join(f"### {sc.name} ({g.status})\n\n{gate.render_diff(g)}"
-                                for sc, _, g in runs), encoding="utf-8")  # fmt: skip
+    diff.write_text(
+        "\n\n".join(f"### {sc.name} ({g.status})\n\n{gate.render_diff(g)}" for sc, _, g in runs),
+        encoding="utf-8",
+    )
     print(f"report: {md}")
     failed = any(not v.passed for _, v, _ in runs) or any(g.failures for _, _, g in runs)
     return 1 if failed else 0

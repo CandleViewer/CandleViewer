@@ -31,10 +31,11 @@ from bench.ingestion.budgets import Sample
 from bench.ingestion_soak import Reservoir, SyntheticMarket
 from candleviewer.bus.bus import Bus
 from candleviewer.bus.models import QueuePolicy
+from candleviewer.exchange.base.trade_print import TradePrint
 
 # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.trades import parse_trade_frame, trade_topic
-from candleviewer.ingestion.trade_stream import GapEvent, TradePrint, TradeStream
+from candleviewer.ingestion.trade_stream import GapEvent, TradeStream
 from candleviewer.observability.latency import StageStamps, stage_durations
 
 #: Corpus envelope epoch (`clean_publicTrade_*.jsonl` starts at ts=1700000000000).
@@ -44,6 +45,12 @@ COLD_BYTES_PER_TRADE = 24
 COLD_BYTES_PER_DELTA_LEVEL = 6
 SIDES = ("Buy", "Sell")
 PHASES = ("steady", "loaded", "after")
+
+
+def _us_stamp(perf_s: float) -> int:
+    """perf_counter seconds -> integer microseconds, fed to `StageStamps` (whose unit is ms) so
+    `stage_durations` returns ms at µs resolution instead of rounding sub-ms stages to zero."""
+    return int(perf_s * 1_000_000)
 
 
 class ProcSampler(Protocol):
@@ -103,7 +110,7 @@ class LaneResult:
 
 
 class _Frame:
-    __slots__ = ("enq_tick", "enq_wall", "payload", "prints", "deltas")
+    __slots__ = ("deltas", "enq_tick", "enq_wall", "payload", "prints")
 
     def __init__(self, payload: str, prints: int, deltas: int, enq_tick: int) -> None:
         self.payload, self.prints, self.deltas = payload, prints, deltas
@@ -152,7 +159,9 @@ class Lane:
         # Bounded reservoirs (E08-T06 `Reservoir`): a 24 h run's bookkeeping must not leak.
         self.lag = {k: Reservoir(seed=cfg.seed + i) for i, k in enumerate(PHASES)}
         self.stage = Reservoir(seed=cfg.seed + 5)
-        self.parts = {k: Reservoir(seed=cfg.seed + 6 + i) for i, k in enumerate(("parse", "derive"))}
+        self.parts = {
+            k: Reservoir(seed=cfg.seed + 6 + i) for i, k in enumerate(("parse", "derive"))
+        }
         self.recovery_s: float | None = None
 
     def _parse(self, frame: str) -> list[TradePrint] | None:
@@ -181,9 +190,17 @@ class Lane:
             side = SIDES[self.next_id % 2]
             px = self.market.books[self.sym].snapshot()[0][0].price
             data.append(
-                {"T": ts_ms - 5, "s": self.sym, "S": side, "v": "0.001", "p": str(px),
-                 "L": "PlusTick", "i": f"b{self.next_id:015d}", "BT": False}
-            )  # fmt: skip
+                {
+                    "T": ts_ms - 5,
+                    "s": self.sym,
+                    "S": side,
+                    "v": "0.001",
+                    "p": str(px),
+                    "L": "PlusTick",
+                    "i": f"b{self.next_id:015d}",
+                    "BT": False,
+                }
+            )
         return json.dumps(
             {"topic": trade_topic(self.sym), "type": "snapshot", "ts": ts_ms, "data": data}
         )
@@ -245,10 +262,8 @@ class Lane:
             queued_ms = (tick - fr.enq_tick) * self.cfg.tick_s * 1000
             self.lag[phase].add(queued_ms + (t_emit - t_recv) * 1000)
             if record_stages and fr.prints:
-                ms = lambda x: int(x * 1_000_000)  # noqa: E731 - µs-resolution "ms" stamps
-                parts = stage_durations(
-                    StageStamps(ms(t_recv), ms(t_recv), ms(t_parsed), ms(t_derived), ms(t_emit)), 0
-                )
+                r, p_, d, e = (_us_stamp(x) for x in (t_recv, t_parsed, t_derived, t_emit))
+                parts = stage_durations(StageStamps(r, r, p_, d, e), 0)
                 parse, derive = parts["parse"] or 0.0, parts["derive"] or 0.0
                 self.parts["parse"].add(parse)
                 self.parts["derive"].add(derive)
@@ -272,6 +287,11 @@ class Lane:
                 self.pending_detect = 0
 
     async def settle(self) -> None:
+        """End of feed. A gap opened by the very last frame is closed the way production closes
+        it — by the next live frame — so one trailing frame is injected (and counted)."""
+        if self.pending_detect:
+            self.injected += 1
+            await self.stream.handle_frame(self._trade_frame(1, T0_MS + 10**9))
         await self.stream.wait_backfills()
         self._drain_bus()
 

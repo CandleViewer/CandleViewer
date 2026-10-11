@@ -5,9 +5,9 @@
   "metrics": {
     "loaded_symbol_lag_ms": {
       "count": 800.0,
-      "max": 2000.4340999994383,
-      "p50": 1000.0755999999456,
-      "p95": 1900.0895000002859
+      "max": 2000.270499999715,
+      "p50": 1000.0269000001936,
+      "p95": 1900.036100000216
     },
     "max_backlog": {
       "count": 1.0,
@@ -23,9 +23,9 @@
     },
     "unaffected_lag_loaded_ms": {
       "count": 1800.0,
-      "max": 1.2644999997064588,
-      "p50": 0.11379999978089472,
-      "p95": 0.47979999999370193
+      "max": 1.4586000006602262,
+      "p50": 0.07389999973383965,
+      "p95": 0.25009999990288634
     }
   },
   "note": "Laptop (i7-8550U, 16 GB, Windows 11) smoke-profile numbers. WARN-only until a CI-runner baseline is recorded on ubuntu-latest (same caveat as bench/bar_determinism).",

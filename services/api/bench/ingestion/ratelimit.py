@@ -138,9 +138,13 @@ async def run_headroom(
             res.catalogue_refreshes += 1
         else:
             await fetch_kline_page(
-                client, "BTCUSDT", "1", start_us=1_699_900_000_000_000,
-                end_us=1_700_026_920_000_000, limit=200,
-            )  # fmt: skip
+                client,
+                "BTCUSDT",
+                "1",
+                start_us=1_699_900_000_000_000,
+                end_us=1_700_026_920_000_000,
+                limit=200,
+            )
             res.backfill_pages += 1
 
     try:

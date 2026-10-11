@@ -12,7 +12,7 @@ import asyncio
 import json
 import shutil
 import socket
-import subprocess  # noqa: S404 - runs the pinned k6 binary against a loopback fixture app only
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -22,7 +22,12 @@ import httpx
 
 from bench.ingestion import budgets
 from bench.ingestion.config import Scenario
-from bench.ingestion.fixture_app import assert_loopback_target, build_app, requests_plan, write_cold_lake
+from bench.ingestion.fixture_app import (
+    assert_loopback_target,
+    build_app,
+    requests_plan,
+    write_cold_lake,
+)
 
 K6_SCRIPT = Path(__file__).resolve().parents[4] / "tests" / "load" / "k6" / "ingestion_rest.js"
 
@@ -47,7 +52,7 @@ async def drive_inprocess(iterations: int, concurrency: int) -> dict[str, list[f
                     if r.status_code != 200:
                         raise RuntimeError(f"{route}: HTTP {r.status_code}")
 
-            for route, spec in requests_plan().items():  # one untimed warm-up per route
+            for spec in requests_plan().values():  # one untimed warm-up per route
                 await client.get(spec["path"], params=spec["params"])
             await asyncio.gather(
                 *(one(r, s) for _ in range(iterations) for r, s in requests_plan().items())
@@ -74,7 +79,9 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
     with tempfile.TemporaryDirectory(prefix="cv-e08q04-") as tmp:
         write_cold_lake(Path(tmp))
         app = asyncio.run(build_app(Path(tmp)))
-        server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+        server = uvicorn.Server(
+            uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+        )
         import threading
 
         th = threading.Thread(target=server.run, daemon=True)
@@ -88,10 +95,25 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
         summary = Path(tmp) / "summary.json"
         try:
             subprocess.run(  # noqa: S603 - fixed argv, loopback target asserted above
-                [k6, "run", "--quiet", "--summary-export", str(summary), "-e", f"BASE_URL={base}",
-                 "-e", f"PLAN={plan}", "-e", f"DURATION={duration}", "-e", f"VUS={vus}", str(K6_SCRIPT)],
-                check=False, timeout=3600,
-            )  # fmt: skip
+                [
+                    k6,
+                    "run",
+                    "--quiet",
+                    "--summary-export",
+                    str(summary),
+                    "-e",
+                    f"BASE_URL={base}",
+                    "-e",
+                    f"PLAN={plan}",
+                    "-e",
+                    f"DURATION={duration}",
+                    "-e",
+                    f"VUS={vus}",
+                    str(K6_SCRIPT),
+                ],
+                check=False,
+                timeout=3600,
+            )
             data = json.loads(summary.read_text(encoding="utf-8"))
         finally:
             server.should_exit = True
@@ -109,9 +131,12 @@ def verdict(sc: Scenario, lat: dict[str, list[float]]) -> budgets.Verdict:
     p95 = {r: budgets.percentile(x, 0.95) for r, x in lat.items() if x}
     v.checks.extend(
         budgets.check_rest(
-            {r: p for r, p in p95.items() if r != "klines_cold"} | {"klines_cold": p95.get("klines_cold", 0.0)},
-            p95.get("klines_cold", 0.0), p95.get("klines_warm", 0.0), float(sc.p("min_cache_speedup")),
-        )  # fmt: skip
+            {r: p for r, p in p95.items() if r != "klines_cold"}
+            | {"klines_cold": p95.get("klines_cold", 0.0)},
+            p95.get("klines_cold", 0.0),
+            p95.get("klines_warm", 0.0),
+            float(sc.p("min_cache_speedup")),
+        )
     )
     v.metrics = {f"rest_{r}_ms": budgets.summary(x) for r, x in lat.items()}
     return v

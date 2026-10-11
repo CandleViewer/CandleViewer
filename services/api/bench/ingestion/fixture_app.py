@@ -134,7 +134,11 @@ def _corpus_json(rel: str) -> dict[str, Any]:
 
 
 def _kline_template() -> list[list[str]]:
-    rows = [r for i in range(3) for r in _corpus_json(f"rest/kline_BTCUSDT_1_page{i}.json")["result"]["list"]]
+    rows = [
+        r
+        for i in range(3)
+        for r in _corpus_json(f"rest/kline_BTCUSDT_1_page{i}.json")["result"]["list"]
+    ]
     return sorted(rows, key=lambda r: int(r[0]))
 
 
@@ -142,9 +146,11 @@ def _rows(n: int, end_us: int) -> list[ColdKlineRow]:
     """`n` 1m bars ending at `end_us`, OHLCV tiled from the 600 corpus bars."""
     tpl = _kline_template()
     start = end_us - n * MIN_US
-    return [
-        ColdKlineRow(start + i * MIN_US, *tpl[i % len(tpl)][1:7], True, "tape") for i in range(n)
-    ]
+    out: list[ColdKlineRow] = []
+    for i in range(n):
+        o, h, lo, c, v, t = tpl[i % len(tpl)][1:7]
+        out.append(ColdKlineRow(start + i * MIN_US, o, h, lo, c, v, t, True, "tape"))
+    return out
 
 
 def write_cold_lake(root: Path) -> int:
@@ -162,21 +168,27 @@ def write_cold_lake(root: Path) -> int:
         table = pa.table(
             {
                 "ts": pa.array([r.ts_us for r in part], type=pa.timestamp("us", tz="UTC")),
-                **{k: [float(getattr(r, k)) for r in part]
-                   for k in ("open", "high", "low", "close", "volume", "turnover")},
+                **{
+                    k: [float(getattr(r, k)) for r in part]
+                    for k in ("open", "high", "low", "close", "volume", "turnover")
+                },
                 "confirmed": [True] * len(part),
                 "source": ["tape"] * len(part),
             }
-        )  # fmt: skip
+        )
         f = paths.partition_dir / "part-0000.parquet"
         pq.write_table(table, f)
         ManifestStore(paths.manifests_dir).append_reconciled(
             paths.partition_dir,
             paths.root,
             ManifestEntry(
-                file=f.name, sha256=sha256_of(f), row_count=len(part), source_table="klines",
-                export_run_id="e08-q04", exported_at_us=0,
-            ),  # fmt: skip
+                file=f.name,
+                sha256=sha256_of(f),
+                row_count=len(part),
+                source_table="klines",
+                export_run_id="e08-q04",
+                exported_at_us=0,
+            ),
         )
     return len(rows)
 
@@ -193,10 +205,17 @@ async def _trades() -> TradeStream:
     now = T0_MS * 1000 + 3_600_000_000
 
     stream = TradeStream(
-        bus=Bus(), env="live", set_desired=lambda _d: None, parse_frame=parse_trade_frame,
-        topic_for=trade_topic, is_listed=lambda s: s == SYMBOL, touch=lambda _t: None,
-        tick_size=lambda _s: Decimal("0.1"), clock=lambda: 0.0, now_us=lambda: now,
-    )  # fmt: skip
+        bus=Bus(),
+        env="live",
+        set_desired=lambda _d: None,
+        parse_frame=parse_trade_frame,
+        topic_for=trade_topic,
+        is_listed=lambda s: s == SYMBOL,
+        touch=lambda _t: None,
+        tick_size=lambda _s: Decimal("0.1"),
+        clock=lambda: 0.0,
+        now_us=lambda: now,
+    )
     stream.acquire("bench-rest", SYMBOL)
     for raw in _corpus_lines("ws/clean_publicTrade_BTCUSDT.jsonl"):
         await stream.handle_frame(raw)
@@ -208,11 +227,16 @@ async def _book() -> BookStream:
         return None
 
     stream = BookStream(
-        bus=Bus(), env="live", set_desired=lambda _t: None,
+        bus=Bus(),
+        env="live",
+        set_desired=lambda _t: None,
         parse_frame=lambda f: parse_book_frame(f, lambda _s: Decimal("0.1")),
-        topic_for=book_topic, resubscribe=resub, is_listed=lambda s: s == SYMBOL,
-        touch=lambda _t: None, now_us=lambda: T0_MS * 1000,
-    )  # fmt: skip
+        topic_for=book_topic,
+        resubscribe=resub,
+        is_listed=lambda s: s == SYMBOL,
+        touch=lambda _t: None,
+        now_us=lambda: T0_MS * 1000,
+    )
     stream.acquire("bench-rest", SYMBOL)
     for raw in _corpus_lines("ws/orderbook_BTCUSDT.jsonl")[:500]:  # before the deliberate hole
         await stream.handle_frame(raw)
@@ -226,27 +250,37 @@ async def build_app(cold_root: Path) -> FastAPI:
     listed = snap.get
     hot = _HotTier(_rows(HOT_BARS, HOT_BOUNDARY_US + HOT_BARS * MIN_US))
     svc = KlineReadService(
-        hot, cold=ParquetKlineReader(DatasetRegistry(cold_root)),
+        hot,
+        cold=ParquetKlineReader(DatasetRegistry(cold_root)),
         hot_boundary_us=lambda: HOT_BOUNDARY_US,
-    )  # fmt: skip
+    )
     trades, book = await _trades(), await _book()
     coverage = CoverageService(_CoverageStore(), now_us=lambda: HOT_BOUNDARY_US + 86_400_000_000)
     app = FastAPI()
-    app.include_router(make_instruments_router(lambda: _Catalogue(snap),
-                                               principal_resolver=_InstrumentsResolver(),
-                                               now_us=lambda: T0_MS * 1000))  # fmt: skip
+    app.include_router(
+        make_instruments_router(
+            lambda: _Catalogue(snap),
+            principal_resolver=_InstrumentsResolver(),
+            now_us=lambda: T0_MS * 1000,
+        )
+    )
     app.include_router(
         make_market_router(
-            lambda: hot, principal_resolver=_Resolver(), read_service_provider=lambda: svc,
+            lambda: hot,
+            principal_resolver=_Resolver(),
+            read_service_provider=lambda: svc,
             symbol_listed=lambda s: listed(s) is not None,
             now_us=lambda: HOT_BOUNDARY_US + HOT_BARS * MIN_US,
-        )  # fmt: skip
+        )
     )
     app.include_router(make_trades_router(lambda: trades, principal_resolver=_Resolver()))
     app.include_router(make_orderbook_router(lambda: book, principal_resolver=_Resolver()))
     app.include_router(
-        make_data_coverage_router(lambda: coverage, principal_resolver=_Resolver(),
-                                  symbol_listed=lambda s: listed(s) is not None)  # fmt: skip
+        make_data_coverage_router(
+            lambda: coverage,
+            principal_resolver=_Resolver(),
+            symbol_listed=lambda s: listed(s) is not None,
+        )
     )
     return app
 
@@ -261,19 +295,40 @@ def requests_plan() -> dict[str, dict[str, Any]]:
     cold_end = HOT_BOUNDARY_US - 86_400_000_000  # fully inside the cold lake
     return {
         "instruments": {"path": "/instruments", "params": {"limit": 100}},
-        "klines_cold": {"path": "/market/klines", "params": {
-            "symbol": SYMBOL, "interval": INTERVAL, "from": iso(cold_end - 5000 * MIN_US),
-            "to": iso(cold_end), "limit": 5000}},
-        "klines_warm": {"path": "/market/klines", "params": {
-            "symbol": SYMBOL, "interval": INTERVAL, "from": iso(warm_end - 1000 * MIN_US),
-            "to": iso(warm_end), "limit": 1000}},
-        "klines_page_boundary": {"path": "/market/klines", "params": {
-            "symbol": SYMBOL, "interval": INTERVAL, "from": iso(HOT_BOUNDARY_US - 500 * MIN_US),
-            "to": iso(HOT_BOUNDARY_US + 500 * MIN_US), "limit": 1000}},
+        "klines_cold": {
+            "path": "/market/klines",
+            "params": {
+                "symbol": SYMBOL,
+                "interval": INTERVAL,
+                "from": iso(cold_end - 5000 * MIN_US),
+                "to": iso(cold_end),
+                "limit": 5000,
+            },
+        },
+        "klines_warm": {
+            "path": "/market/klines",
+            "params": {
+                "symbol": SYMBOL,
+                "interval": INTERVAL,
+                "from": iso(warm_end - 1000 * MIN_US),
+                "to": iso(warm_end),
+                "limit": 1000,
+            },
+        },
+        "klines_page_boundary": {
+            "path": "/market/klines",
+            "params": {
+                "symbol": SYMBOL,
+                "interval": INTERVAL,
+                "from": iso(HOT_BOUNDARY_US - 500 * MIN_US),
+                "to": iso(HOT_BOUNDARY_US + 500 * MIN_US),
+                "limit": 1000,
+            },
+        },
         "trades": {"path": "/market/trades", "params": {"symbol": SYMBOL, "limit": 100}},
         "orderbook": {"path": "/market/orderbook", "params": {"symbol": SYMBOL, "depth": 50}},
         "data_coverage": {"path": "/market/data-coverage", "params": {"symbol": SYMBOL}},
-    }  # fmt: skip
+    }
 
 
 def assert_loopback_target(base_url: str) -> None:

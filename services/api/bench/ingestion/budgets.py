@@ -6,6 +6,7 @@ beside the budget so the report can print both (AC 1). Hard vs soft follows the 
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
@@ -99,8 +100,11 @@ def check_loss(
         if n != ingested.get(s, 0) + detected_gap.get(s, 0)
     }
     undetected = float(sum(abs(v) for v in bad.values()))
-    note = "" if not bad else "P0 undetected discrepancy: " + ", ".join(
-        f"{s}={v:+d}" for s, v in sorted(bad.items())
+    note = (
+        ""
+        if not bad
+        else "P0 undetected discrepancy: "
+        + ", ".join(f"{s}={v:+d}" for s, v in sorted(bad.items()))
     )
     return Check("undetected_loss", "#5", undetected, 0.0, "events", undetected == 0.0, note=note)
 
@@ -116,7 +120,7 @@ def vcpu_per_symbol(samples: Sequence[Sample], n_symbols: int) -> list[float]:
     """CPU seconds consumed per scenario second per symbol, between consecutive samples. On a
     virtual-time run this is the cost of simulating 1 s of 1x cadence, i.e. vCPU at 1x."""
     out: list[float] = []
-    for a, b in zip(samples, samples[1:], strict=False):
+    for a, b in itertools.pairwise(samples):
         dt = b.t_s - a.t_s
         if dt > 0:
             out.append(max(0.0, b.cpu_s - a.cpu_s) / dt / max(1, n_symbols))
@@ -152,19 +156,37 @@ def check_soak(
     gb = storage_gb_per_day_per_symbol(samples, n_symbols)
     dev, at = flatness(samples, baseline_at_s)
     return [
-        Check("rss_per_symbol_p95", "#8", rss, B8_RSS_MB_PER_SYMBOL, "MB", rss <= B8_RSS_MB_PER_SYMBOL),
         Check(
-            "vcpu_per_symbol_p95", "#11", cpu, B11_VCPU_PER_SYMBOL, "vCPU",
-            cpu <= B11_VCPU_PER_SYMBOL, hard=False,
-        ),  # fmt: skip
+            "rss_per_symbol_p95", "#8", rss, B8_RSS_MB_PER_SYMBOL, "MB", rss <= B8_RSS_MB_PER_SYMBOL
+        ),
         Check(
-            "storage_gb_day_symbol", "#12", gb, B12_GB_PER_DAY_PER_SYMBOL, "GB/day",
-            gb <= B12_GB_PER_DAY_PER_SYMBOL, hard=False, note="modelled bytes/row (E16-K01)",
-        ),  # fmt: skip
+            "vcpu_per_symbol_p95",
+            "#11",
+            cpu,
+            B11_VCPU_PER_SYMBOL,
+            "vCPU",
+            cpu <= B11_VCPU_PER_SYMBOL,
+            hard=False,
+        ),
         Check(
-            "memory_flatness", "±5%", dev, tolerance, "ratio", dev <= tolerance,
+            "storage_gb_day_symbol",
+            "#12",
+            gb,
+            B12_GB_PER_DAY_PER_SYMBOL,
+            "GB/day",
+            gb <= B12_GB_PER_DAY_PER_SYMBOL,
+            hard=False,
+            note="modelled bytes/row (E16-K01)",
+        ),
+        Check(
+            "memory_flatness",
+            "±5%",
+            dev,
+            tolerance,
+            "ratio",
+            dev <= tolerance,
             note=f"max deviation from the t={at:.0f}s baseline sample",
-        ),  # fmt: skip
+        ),
     ]
 
 
@@ -208,17 +230,31 @@ def check_burst(
     rec = math.inf if recovery_s is None else recovery_s
     return [
         Check(
-            "queue_growth_bounded", "#5", float(max_backlog), float(backlog_bound), "events",
+            "queue_growth_bounded",
+            "#5",
+            float(max_backlog),
+            float(backlog_bound),
+            "events",
             max_backlog <= backlog_bound,
-        ),  # fmt: skip
+        ),
         Check(
-            "recovery_s", "#5", rec, recovery_window_s, "s", rec <= recovery_window_s,
+            "recovery_s",
+            "#5",
+            rec,
+            recovery_window_s,
+            "s",
+            rec <= recovery_window_s,
             note="burst end -> backlog empty",
-        ),  # fmt: skip
+        ),
         Check(
-            "backpressure_applied", "#5", backpressure_events, 1.0, "events",
-            backpressure_events >= 1.0, note="the burst must actually exercise backpressure",
-        ),  # fmt: skip
+            "backpressure_applied",
+            "#5",
+            backpressure_events,
+            1.0,
+            "events",
+            backpressure_events >= 1.0,
+            note="the burst must actually exercise backpressure",
+        ),
     ]
 
 
@@ -228,9 +264,14 @@ def check_burst(
 def check_latency(stage_ms: Sequence[float], budget_ms: float = B6_BACKEND_SLICE_P95_MS) -> Check:
     p95 = percentile(stage_ms, 0.95)
     return Check(
-        "receipt_to_publish_p95", "#6", p95, budget_ms, "ms", p95 <= budget_ms,
+        "receipt_to_publish_p95",
+        "#6",
+        p95,
+        budget_ms,
+        "ms",
+        p95 <= budget_ms,
         note="E08 slice (parse+derive); fan-out slice is E17",
-    )  # fmt: skip
+    )
 
 
 def check_rest(
@@ -243,17 +284,35 @@ def check_rest(
     speedup = cold_p95 / warm_p95 if warm_p95 > 0 else math.inf
     out.append(
         Check(
-            "klines_cache_speedup", "#13", speedup, min_speedup, "x", speedup >= min_speedup,
+            "klines_cache_speedup",
+            "#13",
+            speedup,
+            min_speedup,
+            "x",
+            speedup >= min_speedup,
             note=f"cold p95 {cold_p95:.2f}ms vs warm p95 {warm_p95:.2f}ms",
-        )  # fmt: skip
+        )
     )
     return out
 
 
 def check_headroom(min_tokens: float, ip_holds: int, rate_limited_10018: int) -> list[Check]:
     return [
-        Check("min_bucket_headroom", "C-12.7", min_tokens, 0.0, "tokens", min_tokens > 0.0,
-              note="headroom must never reach zero"),  # fmt: skip
-        Check("provoked_10018", "C-12.7", float(rate_limited_10018), 0.0, "responses",
-              rate_limited_10018 == 0 and ip_holds == 0),  # fmt: skip
+        Check(
+            "min_bucket_headroom",
+            "C-12.7",
+            min_tokens,
+            0.0,
+            "tokens",
+            min_tokens > 0.0,
+            note="headroom must never reach zero",
+        ),
+        Check(
+            "provoked_10018",
+            "C-12.7",
+            float(rate_limited_10018),
+            0.0,
+            "responses",
+            rate_limited_10018 == 0 and ip_holds == 0,
+        ),
     ]

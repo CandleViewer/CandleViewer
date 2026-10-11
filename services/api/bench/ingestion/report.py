@@ -17,6 +17,7 @@ from bench.ingestion.budgets import Verdict
 from bench.ingestion.config import Scenario
 from bench.ingestion.gate import GateResult, render_diff
 
+_ISO = "%Y-%m-%dT%H:%M:%SZ"
 _SECRETISH = re.compile(
     r"(?i)(authorization|cookie|x-bapi-[a-z-]+|api[_-]?key|secret|token|signature|session"
     r"|uid|account[_-]?id)\s*[:=]\s*\S+"
@@ -60,7 +61,7 @@ def render(
         f"# E08-Q04 ingestion performance report — {'PASS' if ok else 'FAIL'}",
         "",
         f"- Harness: `{HARNESS_VERSION}` · machine profile: `{profile}`",
-        f"- Run: {started.astimezone(UTC):%Y-%m-%dT%H:%M:%SZ} → {finished.astimezone(UTC):%Y-%m-%dT%H:%M:%SZ}",
+        f"- Run: {started.astimezone(UTC):{_ISO}} → {finished.astimezone(UTC):{_ISO}}",
         f"- Grafana range: `{grafana_url}?{rng}`" if grafana_url else f"- Grafana range: `{rng}`",
         "- Data: recorded corpus `packages/fixtures/bybit/2026-10-05` + seeded synthetic feed; "
         "no network.",
@@ -78,9 +79,8 @@ def render(
         for c in v.checks:
             res = "pass" if c.passed else ("FAIL" if c.hard else "warn (soft)")
             note = f" — {c.note}" if c.note else ""
-            out.append(
-                f"| {c.name}{note} | {c.budget} | {c.measured:.4g} | {c.limit:.4g} | {c.unit} | {res} |"
-            )
+            nums = f"{c.measured:.4g} | {c.limit:.4g} | {c.unit}"
+            out.append(f"| {c.name}{note} | {c.budget} | {nums} | {res} |")
         out += ["", "| metric | p50 | p95 | max | n |", "|---|---:|---:|---:|---:|"]
         for k, m in sorted(v.metrics.items()):
             if k.startswith("_"):
