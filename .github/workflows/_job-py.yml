@@ -11,6 +11,7 @@ name: _job-py
 #   -> pytest -m "not exchange_smoke" --cov (network-guarded, ADR-0012/SR-140)
 #   -> uv build -> upload coverage artifact (consumed by E03-T04's threshold
 #   gate; this job does not itself gate on the number).
+#   `py-perf` (parallel): pytest -m perf --no-cov, the C-13.9 wall-clock budgets.
 #
 # Out of scope (per ticket): coverage threshold enforcement (E03-T04),
 # Bandit/pip-audit (E03-T07), Alembic migration checks (E03-T10), contract
@@ -114,12 +115,6 @@ jobs:
           --durations=10
           --cov --cov-report=xml:coverage.xml --cov-report=term
 
-      # C-13.9 wall-clock budgets are measured here, alone and without coverage tracing: under the
-      # covered 7k-test run they fail on shared runners (test_create_app_under_200ms measured 766 ms
-      # on four unrelated PRs this week, passing alone every time). Still a blocking step (#2185).
-      - name: pytest perf budgets (C-13.9, no coverage tracing, isolated)
-        run: uv run pytest -m perf --no-cov -p no:cacheprovider -p no:randomly --durations=0
-
       - name: uv build
         run: uv build
 
@@ -130,6 +125,36 @@ jobs:
           name: py-coverage
           path: services/api/coverage.xml
           retention-days: 14
+
+  # C-13.9 wall-clock budgets run in their own parallel job (#2185 follow-up): measured inside the
+  # covered run they failed on shared runners (test_create_app_under_200ms read 766 ms vs 200 ms on
+  # four unrelated PRs, passing alone every time), and as a trailing step they pushed the `py` job
+  # past its 20-minute default timeout once the unit suite reached ~17 min (8094 passed, then
+  # cancelled at 20m01 on #2182). Same selection, same flags, still blocking: `ci-required` in
+  # pr.yml depends on `py`, whose reusable-workflow conclusion aggregates every job in this file.
+  py-perf:
+    name: py-perf
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv (cache keyed on uv.lock)
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+
+      - name: uv sync --frozen
+        run: uv sync --frozen --all-groups
+
+      - name: pytest perf budgets (C-13.9, no coverage tracing, isolated)
+        run: uv run pytest -m perf --no-cov -p no:cacheprovider -p no:randomly --durations=0
 
   architecture:
     # Reported as its own required check named `architecture` per the
