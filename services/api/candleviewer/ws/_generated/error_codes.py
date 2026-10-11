@@ -25,6 +25,7 @@ class ErrorCode(StrEnum):
     SESSION_READ_ONLY = "session_read_only"
     POSITIONS_UNKNOWN = "positions_unknown"
     FORBIDDEN = "forbidden"
+    CSRF_TOKEN_INVALID = "csrf_token_invalid"
     ACCOUNT_SCOPE_DENIED = "account_scope_denied"
     TRADING_DISABLED = "trading_disabled"
     RISK_LIMIT_BREACHED = "risk_limit_breached"
@@ -95,6 +96,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.SESSION_READ_ONLY: ErrorMeta(("rest",), None, False, None, None),
     ErrorCode.POSITIONS_UNKNOWN: ErrorMeta(("rest",), None, False, None, None),
     ErrorCode.FORBIDDEN: ErrorMeta(("rest", "ws",), "any", False, None, None),
+    ErrorCode.CSRF_TOKEN_INVALID: ErrorMeta(("rest",), None, False, None, None),
     ErrorCode.ACCOUNT_SCOPE_DENIED: ErrorMeta(("rest", "ws",), "any", False, None, None),
     ErrorCode.TRADING_DISABLED: ErrorMeta(("rest",), None, False, None, None),
     ErrorCode.RISK_LIMIT_BREACHED: ErrorMeta(("rest",), None, False, None, None),
