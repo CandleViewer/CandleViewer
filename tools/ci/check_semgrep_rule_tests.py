@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -47,29 +49,46 @@ def expected_lines(fixture: Path, rule_id: str) -> tuple[set[int], set[int]]:
     return must_fire, must_not_fire
 
 
+def _staged_relpath(fixture: Path) -> Path:
+    """Path of the fixture inside the temp scan tree.
+
+    Rules scope themselves with `paths.include`; .py/.ts fixtures keep their real repo-relative
+    path (`.semgrep/tests/<name>`) because several rules include `.semgrep/tests/**` on purpose,
+    while the YAML fixture is staged under `.github/workflows/` so workflow-targeted rules match it
+    without naming the fixture file.
+    """
+    if fixture.suffix in (".yml", ".yaml"):
+        return Path(".github/workflows") / fixture.name
+    return fixture.resolve().relative_to(REPO_ROOT)
+
+
 def actual_lines(rule_yaml: Path, fixture: Path) -> set[int]:
-    proc = subprocess.run(
-        [
-            "semgrep",
-            "scan",
-            "--config",
-            str(rule_yaml),
-            "--json",
-            "--quiet",
-            # Fixtures live under .semgrepignore'd paths (.semgrep/tests/, .semgrep-fixtures/) so the
-            # product scan never reports their intentional violations; --include overrides that
-            # ignore for this explicit, single-file scan (semgrep docs: --include wins over
-            # .semgrepignore). Without it semgrep 1.99 (CI) silently scans nothing.
-            "--include",
-            fixture.name,
-            str(fixture),
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    # Fixtures live under .semgrepignore'd paths (.semgrep/tests/, .semgrep-fixtures/) so the
+    # product scan never reports their intentional violations. Semgrep's ignore handling varies by
+    # version (1.99 in CI ignored the file even with --include), so the checker copies the fixture
+    # into a temp tree with no .semgrepignore and scans that copy; line numbers are unchanged.
+    with tempfile.TemporaryDirectory(prefix="cv-semgrep-fixture-") as tmp:
+        staged = Path(tmp) / _staged_relpath(fixture)
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(fixture, staged)
+        proc = subprocess.run(
+            [
+                "semgrep",
+                "scan",
+                "--config",
+                str(rule_yaml.resolve()),
+                "--json",
+                "--quiet",
+                "--no-git-ignore",
+                str(staged),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            cwd=tmp,
+        )
     if proc.returncode not in (0, 1):
         raise RuntimeError(
             f"semgrep scan failed (exit {proc.returncode}) on {fixture}:\n"
