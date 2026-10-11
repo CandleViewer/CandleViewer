@@ -23,12 +23,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final, Literal, Protocol
 
-from candleviewer.recorder.intervals import Span, coverage, split_at
+from candleviewer.recorder.intervals import Span, coverage, split_at, subtract, union
 from candleviewer.recorder.rolloff import WatermarkStore
 from candleviewer.recorder.sessions import to_dt, to_us
 from candleviewer.storage.models import StreamKind
 
 Tier = Literal["questdb", "parquet"]
+Source = Literal["recorded", "archive"]
+#: The only stream a public trade archive can cover (E16-T10): book/ticker/liquidation
+#: coverage is never inferred from an archive window.
+ARCHIVE_STREAMS: Final = frozenset({StreamKind.TRADES.value})
 #: Coverage cache horizon (ticket technical notes).
 CACHE_DAYS: Final = 90
 _DAY_US: Final = 86_400_000_000
@@ -57,6 +61,12 @@ class CoverageStore(Protocol):
     async def earliest_first_event(self, symbol: str) -> datetime | None: ...
 
 
+class ArchiveCoverage(Protocol):
+    """Imported archive windows (E16-T10 ledger), `[lo, hi)` microseconds, sorted."""
+
+    async def archive_windows(self, symbol: str, lo: int, hi: int) -> list[tuple[int, int]]: ...
+
+
 #: The E16-T05 roll-off watermark API (`recorder.rolloff.WatermarkStore`; production impl
 #: `storage.cold.watermarks.FileWatermarkStore`). Only `get` is used here.
 WatermarkReader = WatermarkStore
@@ -67,6 +77,7 @@ class CoveredInterval:
     lo: int
     hi: int
     tier: Tier
+    source: Source = "recorded"
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,9 +128,11 @@ class CoverageService:
         *,
         now_us: Callable[[], int],
         watermarks: WatermarkReader | None = None,
+        archive: ArchiveCoverage | None = None,
         timeout_s: float = 5.0,
     ) -> None:
         self._store = store
+        self._archive = archive
         self._now_us = now_us
         self._marks = watermarks
         self._timeout_s = timeout_s
@@ -200,6 +213,11 @@ class CoverageService:
             g_spans = [Span(to_us(g["gap_start"]), to_us(g["gap_end"])) for g in g_rows]
             covered = coverage(windows, g_spans)
             tiers = attribute_tiers(covered, await self._watermark(symbol, stream))
+            if stream in ARCHIVE_STREAMS:
+                tiers = sorted(
+                    tiers + await self._archive_only(symbol, lo, hi, covered),
+                    key=lambda i: i.lo,
+                )
             out.append(
                 StreamCoverage(
                     stream=stream,
@@ -217,3 +235,43 @@ class CoverageService:
                 )
             )
         return out
+
+    async def recorded_windows(
+        self, symbol: str, lo: int, hi: int, stream: str = StreamKind.TRADES.value
+    ) -> list[tuple[int, int]]:
+        """What the recorder actually covers for `stream` in `[lo, hi)`: session windows MINUS
+        that stream's recorder gaps, by the same `coverage()` algebra `coverage()` reports
+        (E16-T04). The archive importer discards rows only inside these windows (recorded
+        wins) and writes rows that fall in a recorder gap, so `coverage()` then labels that
+        gap window `source='archive'` truthfully."""
+        now = self._now_us()
+        async with asyncio.timeout(self._timeout_s):
+            rows = await self._store.sessions_in(symbol, to_dt(lo), to_dt(hi))
+            gap_rows = await self._store.gaps_in(symbol, to_dt(lo), to_dt(hi))
+        g_spans = [
+            sp for g in gap_rows if g["stream"] == stream
+            and (sp := _span(to_us(g["gap_start"]), to_us(g["gap_end"]))) is not None
+        ]  # fmt: skip
+        spans: list[Span] = []
+        for s in rows:
+            if stream not in (s.get("streams") or ()):
+                continue
+            end = s.get("ended_at")
+            w = _span(max(lo, to_us(s["started_at"])), min(hi, to_us(end) if end else now))
+            if w is not None:
+                spans.append(w)
+        return [(s.lo, s.hi) for s in coverage(spans, g_spans)]
+
+    async def _archive_only(
+        self, symbol: str, lo: int, hi: int, recorded: Sequence[Span]
+    ) -> list[CoveredInterval]:
+        """Archive windows minus recorded coverage (recorded wins), always cold tier."""
+        if self._archive is None:
+            return []
+        async with asyncio.timeout(self._timeout_s):
+            raw = await self._archive.archive_windows(symbol, lo, hi)
+        spans = [s for a, b in raw if (s := _span(a, b)) is not None]
+        return [
+            CoveredInterval(s.lo, s.hi, "parquet", "archive")
+            for s in subtract(union(spans), list(recorded))
+        ]

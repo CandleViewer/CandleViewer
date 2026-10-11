@@ -219,6 +219,14 @@ class Settings(BaseSettings):
     retention_cron: str = "0 3 * * *"
     export_cron: str = "15 2 * * *"
     compact_cron: str = "0 3 * * 0"
+    # E16-T10: public trade-archive import (20-architecture.md §7.2). Concurrency and bandwidth
+    # bound every download so an import never starves live ingestion (C-12.7); the archive base
+    # is host-pinned by the adapter's allow-list; decompressed size is capped per file.
+    import_max_concurrency: int = Field(default=2, ge=1, le=16)
+    import_max_mbps: float = Field(default=50.0, gt=0.0, le=10_000.0)
+    import_max_uncompressed_mb: int = Field(default=2048, ge=1)
+    # `CV_BYBIT_ARCHIVE_BASE`: None = the adapter's pinned default origin.
+    bybit_archive_base: str | None = None
     # E07-X02 (SR-094): weekly cold-tier checksum scrub (off by default, C-4.13).
     scrub_enabled: bool = False
     scrub_interval_s: int = 7 * 24 * 3600

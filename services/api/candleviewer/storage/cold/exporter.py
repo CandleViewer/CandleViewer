@@ -37,6 +37,7 @@ from candleviewer.storage.cold.observability import (
     storage_export_rows_total,
     storage_export_verify_failures_total,
 )
+from candleviewer.storage.cold.partition_lock import partition_write_lock
 from candleviewer.storage.cold.scrub import verify_partition
 from candleviewer.storage.cold.writer import (
     DEFAULT_ROWS_PER_GROUP,
@@ -175,7 +176,8 @@ class ColdExporter:
         manifest entry is written last (crash ordering: file without
         manifest is recoverable; manifest without file cannot occur)."""
         started = time.perf_counter()
-        async with asyncio.timeout(self._timeout_s):
+        part_dir = self._paths(symbol, stream, rng, partition_extra).partition_dir
+        async with asyncio.timeout(self._timeout_s), partition_write_lock(part_dir):
             run = await self._export(symbol, stream, rng, partition_extra)
         storage_export_duration_seconds.labels(stream=stream.value).observe(
             time.perf_counter() - started

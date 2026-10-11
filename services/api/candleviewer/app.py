@@ -118,6 +118,7 @@ from candleviewer.health_wiring import (
     register_real_probes,
     register_write_behind_probe,
 )
+from candleviewer.import_wiring import build_import_runner
 from candleviewer.ingestion.book_supervisor import B14BookSupervisor
 from candleviewer.ingestion.clock import ClockGuard, ServerTimeFetcher, rest_client_fetcher
 from candleviewer.ingestion.connection import MAX_FRAME_BYTES, ConnectionManager
@@ -161,6 +162,7 @@ from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.recorder.coverage import CoverageService
+from candleviewer.recorder.metrics import current_write_backlog_rows
 from candleviewer.recorder.service import RecorderService
 from candleviewer.replay.service import ReplayService
 from candleviewer.risk.service import RiskService
@@ -170,6 +172,7 @@ from candleviewer.rules_store_pg import PostgresRuleStore
 from candleviewer.settings import Environment, Settings, get_settings
 from candleviewer.statechart.bindings.b16_session import set_audit_sink as set_b16_audit_sink
 from candleviewer.statechart.gateway import GatewayOverloadedError
+from candleviewer.storage.cold.archive_import import FileImportLedger
 from candleviewer.storage.cold.compaction_run import compact_all
 from candleviewer.storage.cold.compactor import Compactor
 from candleviewer.storage.cold.kline_reader import ParquetKlineReader
@@ -722,6 +725,8 @@ def create_app(
             now_us=lambda: time.time_ns() // 1000,
             # E16-T05 roll-off watermarks: older -> parquet, newer -> questdb.
             watermarks=FileWatermarkStore(DatasetRegistry(resolved.parquet_root)),
+            # E16-T10: imported archive windows -> `trades` coverage labelled `archive`.
+            archive=FileImportLedger(DatasetRegistry(resolved.parquet_root)),
         )
         if _kb_pg is not None
         else None
@@ -1008,7 +1013,22 @@ def create_app(
     app.state.admin_jobs = admin_jobs  # cancelled by the lifespan at shutdown
     app.include_router(
         make_recorder_admin_router(
-            admin_jobs, _compact, _LazyAuditEmitter(ctx.audit), audit_resolver
+            admin_jobs,
+            _compact,
+            _LazyAuditEmitter(ctx.audit),
+            audit_resolver,
+            # E16-T10: archive import (503 unless the real backend + coverage are composed).
+            import_runner=build_import_runner(
+                ctx.exchange_bybit.trade_archive(
+                    max_concurrency=resolved.import_max_concurrency,
+                    max_mbps=resolved.import_max_mbps,
+                    max_uncompressed_mb=resolved.import_max_uncompressed_mb,
+                    base_url=resolved.bybit_archive_base,
+                ),
+                resolved.parquet_root,
+                coverage_service,
+                backlog_rows=current_write_backlog_rows,
+            ),
         )
     )
     # E16-T05: nightly roll-off composition (constructed only; scheduling is flag-gated).

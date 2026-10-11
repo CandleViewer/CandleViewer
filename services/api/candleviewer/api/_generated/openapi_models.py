@@ -4036,6 +4036,7 @@ class Job(BaseModel):
             "rule_simulation",
             "retention_sweep",
             "reconciliation",
+            "archive_import",
         ]
         | None
     ) = None

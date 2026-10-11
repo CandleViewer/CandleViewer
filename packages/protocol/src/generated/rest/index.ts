@@ -359,6 +359,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/admin/recorder/import": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Import public trade archives into the cold tier (E16-T10)
+     * @description Downloads the exchange's public daily trade archives for `symbol` over `[from, to]` (inclusive UTC dates, at most 366 days), verifies each file, and writes trades to the Parquet cold tier. Recorded data wins: rows inside a recorded window are discarded and reported. Imported windows are labelled archive-derived and cover `trades` only. Resumable and idempotent per day: a re-run skips finished days. Asynchronous; poll `GET /admin/jobs/{jobId}` (`kind: archive_import`); `result` carries the import summary. One import at a time (409 `job_running`). Audited as `recorder.import`.
+     */
+    post: operations["importTradeArchive"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/admin/recorder/purge": {
     parameters: {
       query?: never;
@@ -5065,7 +5085,8 @@ export interface components {
         | "backup_verify"
         | "rule_simulation"
         | "retention_sweep"
-        | "reconciliation";
+        | "reconciliation"
+        | "archive_import";
       progress_pct?: number;
       result?: {
         [key: string]: unknown;
@@ -8005,6 +8026,61 @@ export interface operations {
             /** Format: uuid */
             job_id?: string;
           };
+        };
+      };
+    };
+  };
+  importTradeArchive: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** Format: date */
+          from: string;
+          symbol: components["schemas"]["Symbol"];
+          /** Format: date */
+          to: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Import accepted. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            /** Format: uuid */
+            job_id?: string;
+          };
+        };
+      };
+      400: components["responses"]["BadRequest"];
+      /** @description An import job is already running. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description Idempotency-Key reused with a different body, or invalid range (`import_range_invalid`). */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
         };
       };
     };

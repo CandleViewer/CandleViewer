@@ -49,6 +49,7 @@ from candleviewer.storage.cold.manifest import (
     sha256_of,
 )
 from candleviewer.storage.cold.observability import LoggingSystemEventSink, SystemEventSink
+from candleviewer.storage.cold.partition_lock import partition_write_lock
 from candleviewer.storage.cold.scrub import verify_partition
 from candleviewer.storage.cold.watermarks import ArchiveOutcome
 from candleviewer.storage.cold.writer import (
@@ -479,6 +480,7 @@ class ColdDownsampler:
                 if session is not None:  # replay lease held: never rewrite data being read
                     logger().info("downsample_deferred", code="compaction_deferred")
                     continue
-            await asyncio.shield(asyncio.to_thread(downsample_partition_sync, paths, stream))
+            async with partition_write_lock(paths.partition_dir):
+                await asyncio.shield(asyncio.to_thread(downsample_partition_sync, paths, stream))
             through = max(through, day_end_us)
         return through
