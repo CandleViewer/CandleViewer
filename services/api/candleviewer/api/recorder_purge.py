@@ -1,6 +1,7 @@
 """`POST /admin/recorder/purge` (E16-T06): irreversible, owner-only, step-up, audited.
 
-Order is a safety property: session -> RBAC (`recording:write`, before the body is read) ->
+Order is a safety property: session -> RBAC (`recording:write`, then owner-only capability 9a,
+before the body is read) ->
 step-up (`recorder` class, server-side elevation) -> Idempotency-Key -> body (reason 3-280,
 `confirm_symbol == symbol`) -> pinned check (`include_pinned` required) -> plan the exact
 window -> `retention.purge` audit with that window -> job. If the audit cannot be written the
@@ -107,6 +108,11 @@ def make_recorder_purge_router(
         if not principal.has(RECORDING_WRITE):  # RBAC before anything else (C-12.4)
             await denied(f"missing_permission:{RECORDING_WRITE}")
             return _problem(403, "Forbidden", f"requires {RECORDING_WRITE}")
+        # Capability 9a (04-security-program §13) is owner-only even though managers hold
+        # `recording:write`; `is_owner` is resolved via `PrincipalSnapshot.is_owner` (SR-017).
+        if not principal.is_owner:
+            await denied("purge_owner_only")
+            return _problem(403, "Forbidden", "purging recorded data is owner-only", "forbidden")
         if audit is None or backend is None or require_elevation is None:
             return _problem(503, "Service unavailable", "purge backend is not wired")
         refusal = await require_elevation(request, STEP_UP_CLASS)

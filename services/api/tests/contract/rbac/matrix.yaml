@@ -153,6 +153,7 @@ operations:
     scope: none
     public: false
     state: executed
+    # Capability 9a (04-security-program §13): owner-only, enforced in the handler (SR-017).
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /admin/security/summary:
     permissions: ['audit:read']

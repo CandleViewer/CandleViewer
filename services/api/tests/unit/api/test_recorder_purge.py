@@ -43,11 +43,20 @@ class _Resolver:
     def __init__(self) -> None:
         self.p: AuditPrincipal | None = None
 
-    def as_(self, perms: set[str] | None, uid: uuid.UUID | None = None) -> None:
+    def as_(
+        self, perms: set[str] | None, uid: uuid.UUID | None = None, *, owner: bool = True
+    ) -> None:
         self.p = (
             None
             if perms is None
-            else AuditPrincipal(uid or uuid.uuid4(), "u", frozenset(perms), uuid.uuid4())
+            else AuditPrincipal(
+                uid or uuid.uuid4(),
+                "u",
+                frozenset(perms),
+                uuid.uuid4(),
+                request_id=uuid.uuid4(),
+                is_owner=owner,
+            )
         )
 
     async def resolve(self, request: Any) -> AuditPrincipal | None:
@@ -263,3 +272,14 @@ async def test_purge_unwired_backend_is_503() -> None:
     app2.include_router(make_recorder_purge_router(AdminJobStore(), None, None, None, None))
     c2 = httpx.AsyncClient(transport=httpx.ASGITransport(app=app2), base_url="http://t")
     assert (await c2.post("/admin/recorder/purge", json=BODY)).status_code == 501
+
+
+async def test_purge_manager_with_recording_write_is_403_owner_only_and_audited() -> None:
+    env = _Env()
+    env.res.as_(OWNER, owner=False)
+    r = await env.post(BODY)
+    assert r.status_code == 403
+    assert env.elevation_checks == 0 and env.backend.runs == 0 and env.w.deletes == []
+    action, kw = env.audit.calls[0]
+    assert action == "retention.purge" and kw["reason"] == "purge_owner_only"
+    assert kw["outcome"].value == "denied"
