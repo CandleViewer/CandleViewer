@@ -32,7 +32,7 @@ _UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|m
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "c84bc4d5ae9af673f82d1538aca6553b0020521abf265fae9ff52af7386287e8"
+GOLDEN_CATALOGUE_SHA256 = "65d7379afcea1c6c53f1e72ccfab85bef9d8ed1d76a8657fc43b1de2ca5216a3"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -53,16 +53,9 @@ def test_catalogue_names_are_unique_and_documented() -> None:
         assert s.help and s.alert and s.unit
 
 
-#: Count-valued gateway series whose names are fixed by the E17 tickets / 23-ws-protocol.md
-#: (#377): the unit is the noun itself. Exactly these names; nothing else is exempt.
-_UNIT_SUFFIX_EXEMPT = frozenset(
-    {"cv_ws_clients", "cv_ws_topics_per_client", "cv_ws_upstream_refcount", "cv_ws_stale_topics"}
-)
-
-
 def test_catalogue_live_names_are_unit_suffixed() -> None:
     for s in live_specs():
-        assert _UNIT_SUFFIX.search(s.name) or s.name in _UNIT_SUFFIX_EXEMPT, s.name
+        assert _UNIT_SUFFIX.search(s.name), s.name
 
 
 def test_catalogue_every_planned_entry_has_owning_epic() -> None:

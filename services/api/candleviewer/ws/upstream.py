@@ -24,11 +24,19 @@ from candleviewer.observability.metrics import Gauge
 GRACE_S: Final = 30.0
 SWEEP_INTERVAL_S: Final = 1.0
 
+#: Cardinality bound on the `symbol` label (catalogue max_series=200): the first
+#: MAX_SYMBOL_LABELS distinct tracked symbols get their own label value; any further
+#: symbol is recorded as "other" until a labelled symbol is fully dropped.
+MAX_SYMBOL_LABELS: Final = 20
+OTHER_SYMBOL: Final = "other"
+
 UpstreamKey = tuple[str, str, tuple[str, ...]]  # (symbol, family, params)
 
-cv_ws_upstream_refcount = Gauge(
-    "cv_ws_upstream_refcount",
-    "Consumers of one upstream subscription (0 while in its release grace).",
+cv_ws_upstream_consumers_in_use = Gauge(
+    "cv_ws_upstream_consumers_in_use",
+    "Consumers of upstream subscriptions per symbol and topic family (the topic label "
+    "holds the topic family); symbols beyond MAX_SYMBOL_LABELS share symbol=other; "
+    "the series is removed when it reaches 0.",
     labelnames=("symbol", "topic"),
 )
 
@@ -45,6 +53,7 @@ class UpstreamSink(Protocol):
 class _Entry:
     consumers: set[str] = field(default_factory=set)
     expires_at: float | None = None
+    label: str = OTHER_SYMBOL
 
 
 class UpstreamRefs:
@@ -52,6 +61,7 @@ class UpstreamRefs:
         self._sink = sink
         self._grace_s = grace_s
         self._entries: dict[UpstreamKey, _Entry] = {}
+        self._labelled: set[str] = set()
 
     def __len__(self) -> int:
         return len(self._entries)
@@ -69,7 +79,7 @@ class UpstreamRefs:
         entry = self._entries.get(key)
         fresh = entry is None
         if entry is None:
-            entry = self._entries[key] = _Entry()
+            entry = self._entries[key] = _Entry(label=self._label_for(key[0]))
         entry.consumers.add(consumer)
         entry.expires_at = None
         self._gauge(key)
@@ -78,6 +88,8 @@ class UpstreamRefs:
                 await self._sink.open(key)
             except BaseException:
                 self._entries.pop(key, None)
+                self._gauge_label(entry.label, key[1])
+                self._forget_label(entry.label)
                 raise
 
     def release(self, key: UpstreamKey, consumer: str, now: float) -> None:
@@ -98,8 +110,9 @@ class UpstreamRefs:
             if not e.consumers and e.expires_at is not None and e.expires_at <= now
         ]
         for key in due:
-            del self._entries[key]
-            cv_ws_upstream_refcount.remove(key[0], key[1])
+            entry = self._entries.pop(key)
+            self._gauge_label(entry.label, key[1])
+            self._forget_label(entry.label)
             if self._sink is not None:
                 try:
                     await self._sink.drop(key)
@@ -119,8 +132,34 @@ class UpstreamRefs:
             await sleep(SWEEP_INTERVAL_S)
             await self.sweep(clock())
 
+    def _label_for(self, symbol: str) -> str:
+        if symbol in self._labelled:
+            return symbol
+        if len(self._labelled) < MAX_SYMBOL_LABELS:
+            self._labelled.add(symbol)
+            return symbol
+        return OTHER_SYMBOL
+
+    def _forget_label(self, label: str) -> None:
+        if label != OTHER_SYMBOL and not any(e.label == label for e in self._entries.values()):
+            self._labelled.discard(label)
+
     def _gauge(self, key: UpstreamKey) -> None:
         entry = self._entries.get(key)
-        cv_ws_upstream_refcount.labels(symbol=key[0], topic=key[1]).set(
-            0 if entry is None else len(entry.consumers)
+        if entry is not None:
+            self._gauge_label(entry.label, key[1])
+
+    def _gauge_label(self, label: str, family: str) -> None:
+        """Set the series to the summed consumers; remove it once that reaches 0."""
+        total = sum(
+            len(e.consumers)
+            for k, e in self._entries.items()
+            if e.label == label and k[1] == family
         )
+        if total:
+            cv_ws_upstream_consumers_in_use.labels(symbol=label, topic=family).set(total)
+        else:
+            try:
+                cv_ws_upstream_consumers_in_use.remove(label, family)
+            except KeyError:
+                pass

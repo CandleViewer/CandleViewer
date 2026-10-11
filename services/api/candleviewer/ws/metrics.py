@@ -26,7 +26,9 @@ cvwb_bytes_encoded_total = Counter(
 )
 
 # -- E17-S01 connection lifecycle (gateway.py); bounded labels only (reason/code enums) --------
-cv_ws_clients = Gauge("cv_ws_clients", "Open client WS connections (any lifecycle state).")
+cv_ws_connections_in_use = Gauge(
+    "cv_ws_connections_in_use", "Open client WS connections (any lifecycle state)."
+)
 cv_ws_handshake_seconds = Histogram(
     "cv_ws_handshake_seconds",
     "Socket accept to first auth_ok.",
@@ -52,20 +54,20 @@ AUTH_FAILURE_REASONS: Final = frozenset({"missing_token", "rejected", "user_mism
 #: Every `cv_ws_*` series the ws package owns (module-level, re-exported on the app registry).
 CV_WS_NAMES: Final[frozenset[str]] = frozenset(
     {
-        "cv_ws_clients",
+        "cv_ws_connections_in_use",
         "cv_ws_handshake_seconds",
         "cv_ws_auth_failures_total",
         "cv_ws_closes_total",
         "cv_ws_clock_skew_ms",
         "cv_ws_subscribe_total",
-        "cv_ws_topics_per_client",
+        "cv_ws_client_topics_depth",
         "cv_ws_revoked_total",
-        "cv_ws_upstream_refcount",
+        "cv_ws_upstream_consumers_in_use",
         "cv_ws_resync_total",
         "cv_ws_snapshot_bytes",
         "cv_ws_snapshot_build_seconds",
         "cv_ws_sequence_gaps_detected_total",
-        "cv_ws_stale_topics",
+        "cv_ws_stale_topics_in_use",
     }
 )
 

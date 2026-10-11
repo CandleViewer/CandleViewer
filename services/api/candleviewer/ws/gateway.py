@@ -61,9 +61,9 @@ from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import AUTH_TIMEOUT_S, MAX_INBOUND_FRAME_BYTES
 from candleviewer.ws.metrics import (
     cv_ws_auth_failures_total,
-    cv_ws_clients,
     cv_ws_clock_skew_ms,
     cv_ws_closes_total,
+    cv_ws_connections_in_use,
     cv_ws_handshake_seconds,
 )
 from candleviewer.ws.permissions import (
@@ -186,6 +186,11 @@ class GatewayHub:
         return len(conns)
 
 
+def close_reason_label(reason: str) -> str:
+    """Bounded `reason` label: a known §13.6 close/bye reason, else "other"."""
+    return reason if reason in CLOSE_REASONS else "other"
+
+
 class _Connection:
     """One socket's state; the handler owns its reader and writer tasks."""
 
@@ -263,7 +268,7 @@ class _Connection:
         frame = bye or lifecycle_bye(reason, now_ms=self.wall_ms(), retry_after_ms=retry_after_ms)
         code = int(frame["p"]["code"])
         bye_reason = str(frame["p"].get("reason", reason))
-        cv_ws_closes_total.labels(reason=bye_reason[:40]).inc()
+        cv_ws_closes_total.labels(reason=close_reason_label(bye_reason)).inc()
         if self.lifecycle.can(ConnEvent.CLOSE):
             self.lifecycle.fire(ConnEvent.CLOSE)
         for item in (frame, _CLOSE, code):
@@ -594,7 +599,7 @@ def make_ws_router(
         )
         conn.lifecycle.fire(ConnEvent.OPEN_NEGOTIATED)
         gateway_hub.add(conn)
-        cv_ws_clients.inc()
+        cv_ws_connections_in_use.inc()
         structlog.contextvars.bind_contextvars(connection_id=conn.connection_id)
         # TG5: exactly one reader (this handler task) and one writer task,
         # owned here and always cancelled + awaited before returning (C-2.18).
@@ -638,7 +643,7 @@ def make_ws_router(
                     await ws.send_text(json.dumps(bye))
                     await ws.close(code=int(CLOSE_REASONS["internal_error"][0]))
             gateway_hub.discard(conn)
-            cv_ws_clients.dec()
+            cv_ws_connections_in_use.dec()
             if conn.authz is not None:
                 if registry.services.sequencing is not None:
                     registry.services.sequencing.unregister(conn.authz)

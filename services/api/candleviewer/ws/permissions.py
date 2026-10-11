@@ -78,10 +78,12 @@ TOPIC_PERMISSIONS: Final[dict[str, tuple[Permission, Scope]]] = {
 }
 
 cv_ws_subscribe_total = Counter(
-    "cv_ws_subscribe_total", "WS sub results per topic.", labelnames=("topic", "result")
+    "cv_ws_subscribe_total",
+    "WS sub results; the topic label holds the topic family.",
+    labelnames=("topic", "result"),
 )
-cv_ws_topics_per_client = Histogram(
-    "cv_ws_topics_per_client",
+cv_ws_client_topics_depth = Histogram(
+    "cv_ws_client_topics_depth",
     "Subscriptions held by a connection, observed after each sub/unsub.",
     buckets=(1, 5, 10, 20, 50, 100, 150, 200),
 )
@@ -678,7 +680,7 @@ async def handle_sub(
         _observe(ch, result)
         if not result["ok"]:
             await _audit_denial(authz, ch, result["error"]["code"])
-    cv_ws_topics_per_client.observe(len(authz.by_id))
+    cv_ws_client_topics_depth.observe(len(authz.by_id))
     out: dict[str, Any] = {"t": "sub_ok", "id": frame.get("id"), "p": {"results": results}}
     if now_ms is not None:
         out["ts"] = now_ms
@@ -700,7 +702,7 @@ def handle_unsub(authz: ConnectionAuthz, frame: dict[str, Any]) -> list[dict[str
             results.append({"ch": ch, "ok": True})
         else:
             results.append({"ch": ch, "ok": True, "noop": True})
-    cv_ws_topics_per_client.observe(len(authz.by_id))
+    cv_ws_client_topics_depth.observe(len(authz.by_id))
     return results
 
 

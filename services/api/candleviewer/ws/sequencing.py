@@ -104,13 +104,13 @@ cv_ws_resync_total = Counter(
 )
 cv_ws_snapshot_bytes = Histogram(
     "cv_ws_snapshot_bytes",
-    "Serialized snapshot size (all chunks).",
+    "Serialized snapshot size (all chunks); the topic label holds the topic family.",
     labelnames=("topic",),
     buckets=(1024, 16384, 131072, 716800, 2097152, 4194304, 16777216),
 )
 cv_ws_snapshot_build_seconds = Histogram(
     "cv_ws_snapshot_build_seconds",
-    "Snapshot build + render time.",
+    "Snapshot build + render time; the topic label holds the topic family.",
     labelnames=("topic",),
     buckets=(0.001, 0.005, 0.025, 0.1, 0.4, 1.5),
 )
@@ -118,7 +118,9 @@ cv_ws_sequence_gaps_detected_total = Counter(
     "cv_ws_sequence_gaps_detected_total",
     "Client-reported sequence gaps (resync reason sequence_gap); must stay zero.",
 )
-cv_ws_stale_topics = Gauge("cv_ws_stale_topics", "Topics whose last snapshot was stale.")
+cv_ws_stale_topics_in_use = Gauge(
+    "cv_ws_stale_topics_in_use", "Topics whose last snapshot was stale."
+)
 
 
 def _log() -> Any:
@@ -354,7 +356,7 @@ class SnapshotCache:
             self._stale.add(ch)
         else:
             self._stale.discard(ch)
-        cv_ws_stale_topics.set(len(self._stale))
+        cv_ws_stale_topics_in_use.set(len(self._stale))
 
 
 # -- upstream book sequence guard ----------------------------------------------------------------
