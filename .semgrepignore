@@ -17,3 +17,5 @@ docs/research/
 docs/plan/backlog/_tools/
 # Rule-test fixtures intentionally contain violations; they are scanned explicitly by tools/ci/check_semgrep_rule_tests.py (#1778 B5)
 .semgrep/tests/
+# YAML rule-test fixture lives outside the config dir so `--config .semgrep` validates (#2066); same treatment
+.semgrep-fixtures/
