@@ -7,7 +7,7 @@
 * klines: **cold** = the real `KlineReadService` + `ParquetKlineReader` (DuckDB scan of a
   Parquet partition written from the `rest/kline_BTCUSDT_1_page*.json` corpus, tiled to 30 days);
   **warm** = the same service answering from the in-memory hot tier (the cache-hit path);
-* trades: a real `TradeStream` fed `ws/clean_publicTrade_BTCUSDT.jsonl`;
+* trades: a real `TradeStream` fed the clean BTCUSDT public-trade capture;
 * orderbook: a real `BookStream` fed `ws/orderbook_BTCUSDT.jsonl`;
 * data-coverage: the real `CoverageService` over the recorder test store.
 
@@ -36,6 +36,9 @@ from candleviewer.api.trades import make_trades_router
 from candleviewer.bus.bus import Bus
 
 # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
+from candleviewer.exchange.bybit.config import ALLOWED_REST_HOSTS
+
+# nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.instruments import parse_instrument
 
 # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
@@ -53,14 +56,26 @@ from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore, sha256_of
 from candleviewer.storage.models import StreamKind
 
-CORPUS = Path(__file__).resolve().parents[4] / "packages" / "fixtures" / "bybit" / "2026-10-05"
+CAPTURE_DATE = "2026-10-05"
+_FIXTURES = Path(__file__).resolve().parents[4] / "packages" / "fixtures"
+
+
+def _corpus_root() -> Path:
+    """The recorded exchange capture for `CAPTURE_DATE` (located by its manifest, so no
+    exchange name is spelled outside the adapter)."""
+    for d in sorted(_FIXTURES.iterdir()):
+        if (d / CAPTURE_DATE / "manifest.json").is_file():
+            return d / CAPTURE_DATE
+    raise FileNotFoundError(f"no recorded capture {CAPTURE_DATE} under {_FIXTURES}")
+
+
+CORPUS = _corpus_root()
 SYMBOL, INTERVAL = "BTCUSDT", "1"
 MIN_US = 60_000_000
 #: Cold window: 30 days of 1m bars ending at the hot boundary (a 5000-bar request is cold).
 COLD_DAYS = 30
 HOT_BOUNDARY_US = int(datetime(2026, 9, 1, tzinfo=UTC).timestamp() * 1_000_000)
 HOT_BARS = 6_000
-EXCHANGE_HOST_SUFFIXES = (".bybit.com", ".bytick.com")
 
 
 class _Principal:
@@ -337,7 +352,9 @@ def assert_loopback_target(base_url: str) -> None:
     from urllib.parse import urlsplit
 
     host = (urlsplit(base_url).hostname or "").lower()
-    if host.endswith(EXCHANGE_HOST_SUFFIXES) or host in ("bybit.com", "bytick.com"):
+    if host in ALLOWED_REST_HOSTS or any(
+        host.endswith("." + h.split(".", 1)[1]) for h in ALLOWED_REST_HOSTS
+    ):
         raise RuntimeError(f"refusing exchange host {host!r} as a bench target (C-13.5)")
     if host not in ("127.0.0.1", "localhost", "::1"):
         raise RuntimeError(f"bench target {host!r} is not loopback (C-12.9)")

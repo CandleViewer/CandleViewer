@@ -77,7 +77,7 @@ async def test_headroom_steady_passes_and_overload_hits_zero() -> None:
         bucket_refill_per_s=5,
     )
     assert all(
-        c.passed for c in b.check_headroom(ok.min_uid_tokens, ok.ip_holds, ok.rate_limited_10018)
+        c.passed for c in b.check_headroom(ok.min_uid_tokens, ok.ip_holds, ok.ip_limit_errors)
     )
     bad = await run_headroom(
         duration_s=10,
@@ -109,4 +109,4 @@ def test_loopback_guard_accepts_local() -> None:
 def test_cli_ratelimit_smoke_writes_report(tmp_path: Path) -> None:
     assert main(["ratelimit_headroom", "--out-dir", str(tmp_path)]) == 0
     md = next(tmp_path.glob("e08-smoke-*.md")).read_text(encoding="utf-8")
-    assert "ratelimit_headroom" in md and "provoked_10018" in md
+    assert "ratelimit_headroom" in md and "provoked_ip_limit" in md

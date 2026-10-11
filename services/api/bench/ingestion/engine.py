@@ -4,7 +4,7 @@ Each symbol gets the composition-root shape the architecture mandates (20-archit
 §3.3-3.4): its own bounded inbound frame queue, its own worker task running the *real*
 `TradeStream.handle_frame` (parse -> dedupe -> bus publish) and the real `BookState.apply`, and a
 NEVER_DROP bus subscriber counting what was actually ingested. Frames are synthetic but shaped
-exactly like the recorded `publicTrade` corpus (`packages/fixtures/bybit/2026-10-05`) and run
+exactly like the recorded public-trade corpus (`fixture_app.CORPUS`, capture 2026-10-05) and run
 through the production parser; prices are anchored on the E08-T06 `SyntheticMarket`.
 
 Time is virtual (tick index; no sleeps, C-13.7). A worker processes at most `capacity_factor x`
@@ -38,7 +38,7 @@ from candleviewer.exchange.bybit.trades import parse_trade_frame, trade_topic
 from candleviewer.ingestion.trade_stream import GapEvent, TradeStream
 from candleviewer.observability.latency import StageStamps, stage_durations
 
-#: Corpus envelope epoch (`clean_publicTrade_*.jsonl` starts at ts=1700000000000).
+#: Corpus envelope epoch (the clean public-trade captures start at ts=1700000000000).
 T0_MS = 1_700_000_000_000
 #: Modelled cold (Parquet, compressed) bytes per row, E16-K01 note §2 (depth 200).
 COLD_BYTES_PER_TRADE = 24

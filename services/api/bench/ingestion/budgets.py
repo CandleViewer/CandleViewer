@@ -296,7 +296,7 @@ def check_rest(
     return out
 
 
-def check_headroom(min_tokens: float, ip_holds: int, rate_limited_10018: int) -> list[Check]:
+def check_headroom(min_tokens: float, ip_holds: int, ip_limit_errors: int) -> list[Check]:
     return [
         Check(
             "min_bucket_headroom",
@@ -308,11 +308,11 @@ def check_headroom(min_tokens: float, ip_holds: int, rate_limited_10018: int) ->
             note="headroom must never reach zero",
         ),
         Check(
-            "provoked_10018",
+            "provoked_ip_limit",
             "C-12.7",
-            float(rate_limited_10018),
+            float(ip_limit_errors),
             0.0,
             "responses",
-            rate_limited_10018 == 0 and ip_holds == 0,
+            ip_limit_errors == 0 and ip_holds == 0,
         ),
     ]

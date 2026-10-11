@@ -3,7 +3,7 @@
 - Harness: `e08-q04/1` · machine profile: `laptop-i7-8550U`
 - Run: 2026-10-11T14:48:18Z → 2026-10-11T14:48:58Z
 - Grafana range: `from=1791730098962&to=1791730138758`
-- Data: recorded corpus `packages/fixtures/bybit/2026-10-05` + seeded synthetic feed; no network.
+- Data: recorded exchange corpus (capture 2026-10-05) + seeded synthetic feed; no network.
 
 ## soak_steady — Steady-state soak, >=3 symbols (budgets #5, #8, #11, #12 + ±5% memory flatness) — PASS (gate WARN)
 
@@ -162,7 +162,7 @@ Profile `smoke`. Scaling: 120 s virtual time, same rates
 | check | budget | measured | limit | unit | result |
 |---|---|---:|---:|---|---|
 | min_bucket_headroom — headroom must never reach zero | C-12.7 | 6 | 0 | tokens | pass |
-| provoked_10018 | C-12.7 | 0 | 0 | responses | pass |
+| provoked_ip_limit | C-12.7 | 0 | 0 | responses | pass |
 
 | metric | p50 | p95 | max | n |
 |---|---:|---:|---:|---:|

@@ -145,9 +145,7 @@ async def run_ratelimit(sc: Scenario) -> budgets.Verdict:
         bucket_refill_per_s=float(p["bucket_refill_per_s"]),
     )
     v = budgets.Verdict(sc.name)
-    v.checks.extend(
-        budgets.check_headroom(res.min_uid_tokens, res.ip_holds, res.rate_limited_10018)
-    )
+    v.checks.extend(budgets.check_headroom(res.min_uid_tokens, res.ip_holds, res.ip_limit_errors))
     v.metrics = {
         "uid_tokens": budgets.summary(res.tokens_trace),
         "ip_window_headroom_min": {

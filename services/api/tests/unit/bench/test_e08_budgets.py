@@ -98,7 +98,7 @@ def test_rest_budget_and_cache_speedup() -> None:
     assert not bad["rest_p95[klines_cold]"].passed and not bad["klines_cache_speedup"].passed
 
 
-def test_headroom_zero_or_10018_fails() -> None:
+def test_headroom_zero_or_ip_limit_fails() -> None:
     assert all(c.passed for c in b.check_headroom(3.0, 0, 0))
     assert not b.check_headroom(0.0, 0, 0)[0].passed
     assert not b.check_headroom(3.0, 0, 1)[1].passed

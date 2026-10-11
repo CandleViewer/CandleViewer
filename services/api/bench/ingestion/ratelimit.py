@@ -3,7 +3,8 @@
 Drives the *real* `BybitRestClient` + `TokenBucketGovernor` (per-UID, per endpoint class, plus
 the IP-wide bucket) through the real adapter calls (`make_instruments_info_fetcher`,
 `fetch_kline_page`) over an `httpx.MockTransport` that serves the recorded corpus and models the
-exchange's IP window (600 req / 5 s): exceeding it returns the recorded `rest/error_10018.json`.
+exchange's IP window (600 req / 5 s): exceeding it returns the recorded IP-limit error
+(`IP_LIMIT_FIXTURE`).
 Virtual time only; headroom is read from the governor before every request. A request that would
 have to wait for a token counts as "headroom reached zero" (the assertion), so the bucket's own
 wait loop is never entered and the run stays deterministic.
@@ -22,7 +23,11 @@ import httpx
 from bench.ingestion.fixture_app import CORPUS
 
 # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
-from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
+from candleviewer.exchange.bybit.config import (
+    ALLOWED_REST_HOSTS,
+    EndpointClass,
+    RestClientConfig,
+)
 
 # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.instruments import make_instruments_info_fetcher
@@ -36,8 +41,11 @@ from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.rest import BybitRestClient
 
-#: Allowlisted demo origin; never contacted — `MockTransport` answers every request in-process.
-BASE_URL = "https://api-demo.bybit.com"
+#: The adapter's allowlisted demo origin (taken from its own config, never spelled here); never
+#: contacted — `MockTransport` answers every request in-process.
+BASE_URL = "https://" + next(h for h in sorted(ALLOWED_REST_HOSTS) if h.startswith("api-demo."))
+#: Recorded IP-level rate-limit response (the venue's "too many visits" error).
+IP_LIMIT_FIXTURE = "rest/error_10018.json"
 IP_WINDOW_S, IP_WINDOW_MAX = 5.0, 600
 
 
@@ -49,20 +57,20 @@ class HeadroomResult:
     min_uid_tokens: float = float("inf")
     min_ip_window_headroom: int = IP_WINDOW_MAX
     would_block: int = 0
-    rate_limited_10018: int = 0
+    ip_limit_errors: int = 0
     ip_holds: int = 0
     tokens_trace: list[float] = field(default_factory=list)
 
 
 class _Exchange:
-    """Corpus-backed venue with an IP sliding window that answers 10018 when exceeded."""
+    """Corpus-backed venue; an IP sliding window answers the IP-limit error when exceeded."""
 
     def __init__(self, world: _World, res: HeadroomResult) -> None:
         self.world, self.res = world, res
         self.sent: deque[float] = deque()
         self.instruments = _json("rest/instruments_before.json")
         self.kline = _json("rest/kline_BTCUSDT_1_page0.json")
-        self.err = _json("rest/error_10018.json")
+        self.err = _json(IP_LIMIT_FIXTURE)
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         now = self.world.now
@@ -73,7 +81,7 @@ class _Exchange:
             self.res.min_ip_window_headroom, IP_WINDOW_MAX - len(self.sent)
         )
         if len(self.sent) > IP_WINDOW_MAX:
-            self.res.rate_limited_10018 += 1
+            self.res.ip_limit_errors += 1
             return httpx.Response(200, json=self.err)
         body = self.instruments if "instruments-info" in request.url.path else self.kline
         return httpx.Response(200, json=body)

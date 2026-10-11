@@ -63,7 +63,7 @@ def render(
         f"- Harness: `{HARNESS_VERSION}` · machine profile: `{profile}`",
         f"- Run: {started.astimezone(UTC):{_ISO}} → {finished.astimezone(UTC):{_ISO}}",
         f"- Grafana range: `{grafana_url}?{rng}`" if grafana_url else f"- Grafana range: `{rng}`",
-        "- Data: recorded corpus `packages/fixtures/bybit/2026-10-05` + seeded synthetic feed; "
+        "- Data: recorded exchange corpus (capture 2026-10-05) + seeded synthetic feed; "
         "no network.",
         "",
     ]
