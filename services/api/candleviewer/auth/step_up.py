@@ -55,7 +55,10 @@ GRACE_WINDOW = timedelta(minutes=5)
 FAILURE_CAP = 3
 #: Ticket: read-only downgrade lasts 5 minutes.
 READONLY_WINDOW = timedelta(minutes=5)
-ACTION_CLASSES = frozenset({"keys", "users", "live_enablement", "killswitch", "risk_caps"})
+#: `recorder`: irreversible recorded-data purge (permission 51, E16-T06); a grace class.
+ACTION_CLASSES = frozenset(
+    {"keys", "users", "live_enablement", "killswitch", "risk_caps", "recorder"}
+)
 #: Ticket "No-grace list": always a fresh code.
 NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch"})
 #: `PositionStateProvider.source` when no position store exists yet.

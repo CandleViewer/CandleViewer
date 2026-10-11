@@ -78,6 +78,7 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
         ("POST", "/exchange-accounts/a/keys/k/rotate", "keys"),
         ("DELETE", "/exchange-accounts/a/keys/k", "keys"),
         ("POST", "/risk/lockouts/a/override", "risk_caps"),
+        ("POST", "/admin/recorder/purge", "recorder"),
     ],
 )
 def test_contract_dangerous_routes_map_to_action_class(

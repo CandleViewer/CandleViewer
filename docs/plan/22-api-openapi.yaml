@@ -8104,7 +8104,7 @@ paths:
                     `403 step_up_required` challenged on this session; a different
                     value is `400`. Without a pending challenge it is required.
                   type: string
-                  enum: [keys, users, live_enablement, killswitch, risk_caps]
+                  enum: [keys, users, live_enablement, killswitch, risk_caps, recorder]
       responses:
         "200":
           description: Elevated.
@@ -9373,6 +9373,15 @@ paths:
         an explicit `confirm_symbol` echo that must equal the symbol being purged. Pinned
         symbols are refused unless `include_pinned` is set. Always audited with the exact
         window deleted.
+        Elevation is the `recorder` step-up class (403 `step_up_required` with
+        `action_class: recorder` until `POST /auth/step-up`; the ticket's
+        `purge_requires_elevation`), checked after RBAC and before the body is parsed. 422 codes: `purge_confirmation_mismatch` (echo differs),
+        `retention_pinned_refused` (pinned without `include_pinned`), `validation_failed`,
+        `idempotency_key_reused`. 409 `job_running` while a purge is queued or running.
+        The audit record (`retention.purge`, exact window, partition count, rows, bytes) is
+        written BEFORE the job exists; if it cannot be written the answer is 503 and no job
+        starts. `before` (default: now) bounds the window `[earliest, before)`; QuestDB DAY
+        partitions shared with other symbols are left to the nightly roll-off.
       x-rbac: { permissions: [recording:write], scope: none }
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
@@ -9400,8 +9409,12 @@ paths:
                 type: object
                 properties:
                   job_id: { type: string, format: uuid }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/backups/{backupId}/restore:
     parameters:
@@ -13747,6 +13760,7 @@ components:
                 retention_sweep,
                 reconciliation,
                 archive_import,
+                retention_purge,
               ],
           }
         status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }

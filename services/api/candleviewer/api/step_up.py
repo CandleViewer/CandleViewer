@@ -158,6 +158,8 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("GET", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("POST", re.compile(r"^/risk/lockouts/[^/]+/override$"), "risk_caps"),
+    # E16-T06: irreversible purge (permission 51, step-up per 04-security-program §13).
+    ("POST", re.compile(r"^/admin/recorder/purge$"), "recorder"),
 )
 
 #: No-grace classes cannot be gated by path alone: kill-switch *engage* must
@@ -175,7 +177,7 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
 #: registries above (deny-by-default for future tickets).
 DANGEROUS_PATH_PATTERN = re.compile(
     r"^/(admin/)?(users|exchange-accounts/[^/]+/keys|keys|live|kill|trading/kill-switch"
-    r"|session/environment|risk/lockouts)(/|$)"
+    r"|session/environment|risk/lockouts|recorder/purge)(/|$)"
 )
 
 
