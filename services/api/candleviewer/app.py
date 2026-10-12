@@ -60,7 +60,7 @@ from candleviewer.api import (
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.contract_conformance import load_openapi_spec
-from candleviewer.api.csrf import CsrfMiddleware
+from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
 from candleviewer.api.deny_by_default import (
     assert_app_routes_declared,
     declared_operations,
@@ -887,6 +887,9 @@ def create_app(
     )
     csrf_codec = build_csrf_codec(resolved)
     app.state.csrf_codec = csrf_codec
+    # In-flight CSRF-refusal audits; drained (bounded) at shutdown before audit stops.
+    csrf_audits = RefusalAuditTracker()
+    app.state.csrf_refusal_audits = csrf_audits
     app.include_router(make_auth_router(ctx.auth, ctx.audit, identity=identity, csrf=csrf_codec))
     # E09-S03: session routes; revocation is pushed to sockets via the hub
     # (4401). Identity provider is E09-T03, so refresh/session return 501 and
@@ -1268,6 +1271,8 @@ def create_app(
         audit=_LazyAuditEmitter(ctx.audit),
         allowed_origins=resolved.allowed_origin_set,
         operations=frozenset(declared_operations(spec)),
+        clock=auth_clock or (lambda: datetime.now(UTC)),
+        tracker=csrf_audits,
     )
     # E09-T04: rejects off-mesh requests before any credential is evaluated.
     app.add_middleware(

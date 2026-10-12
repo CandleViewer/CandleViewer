@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from types import SimpleNamespace
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -20,6 +20,7 @@ from candleviewer.api.csrf import (
     verify_refresh_csrf,
 )
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec
+from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.throttle import PerIpLoginThrottle
 
 _CODEC = CsrfCodec(b"\x07" * 32)
@@ -27,22 +28,49 @@ _SID = uuid.uuid4()
 _ORIGIN = "https://app.example"
 
 
-def _rec(sid: uuid.UUID = _SID, *, revoked: bool = False, expired: bool = False) -> Any:
-    return SimpleNamespace(
+_NOW = datetime(2026, 10, 12, 12, 0, tzinfo=UTC)
+
+
+def _rec(
+    sid: uuid.UUID = _SID,
+    *,
+    revoked: bool = False,
+    expired: bool = False,
+    ttl_expired: bool = False,
+    idle_locked: bool = False,
+) -> SessionRecord:
+    """A real record; each flag breaks exactly one `is_live_session` condition."""
+    issued = _NOW - (timedelta(minutes=13) if ttl_expired else timedelta(minutes=1))
+    return SessionRecord(
         id=sid,
         user_id=sid,
-        is_revoked=revoked,
-        is_absolute_expired=lambda now: expired,
+        refresh_token_hash="x",  # noqa: S106 - inert placeholder
+        access_token_jti=None,
+        issued_at=issued,
+        last_seen_at=_NOW - (timedelta(hours=1) if idle_locked else timedelta(seconds=5)),
+        expires_at=_NOW - timedelta(seconds=1) if expired else _NOW + timedelta(hours=1),
+        revoked_at=_NOW if revoked else None,
+        revoked_reason="logout" if revoked else None,
+        ip=None,
+        user_agent=None,
+        device_label=None,
+        is_electron=False,
+        mfa_satisfied_at=None,
     )
+
+
+_BEARERS = {
+    "good": _rec(),
+    "revoked": _rec(revoked=True),
+    "expired": _rec(expired=True),
+    "ttl_expired": _rec(ttl_expired=True),
+    "idle_locked": _rec(idle_locked=True),
+}
 
 
 class _Sessions:
     async def peek_access_token(self, token: str) -> Any:
-        return {
-            "good": _rec(),
-            "revoked": _rec(revoked=True),
-            "expired": _rec(expired=True),
-        }.get(token)
+        return _BEARERS.get(token)
 
 
 class _Audit:
@@ -64,7 +92,11 @@ class _Raises:
 
 
 def _app(
-    sessions: Any = None, audit: Any = None, anon_max: int = 1000, timeout_s: float = 2.0
+    sessions: Any = None,
+    audit: Any = None,
+    anon_max: int = 1000,
+    timeout_s: float = 2.0,
+    session_max: int = 1000,
 ) -> tuple[TestClient, Any]:
     app = FastAPI()
     audit = audit if audit is not None else _Audit()
@@ -93,7 +125,11 @@ def _app(
         allowed_origins=frozenset({_ORIGIN}),
         operations=frozenset({("POST", "/w/{item}"), ("POST", "/auth/login"), ("PURGE", "/purge")}),
         anon_throttle=PerIpLoginThrottle(max_attempts=anon_max, window_s=60.0, clock=lambda: 0.0),
+        session_throttle=PerIpLoginThrottle(
+            max_attempts=session_max, window_s=60.0, clock=lambda: 0.0
+        ),
         audit_timeout_s=timeout_s,
+        clock=lambda: _NOW,
     )
     return TestClient(app, raise_server_exceptions=False), audit
 
@@ -287,7 +323,7 @@ def test_over_budget_refusals_stay_403_without_audit_but_counted() -> None:
     assert auth_csrf_refused_total.labels(reason="missing")._value.get() == before + 6
 
 
-@pytest.mark.parametrize("bearer", ["revoked", "expired"])
+@pytest.mark.parametrize("bearer", ["revoked", "expired", "ttl_expired", "idle_locked"])
 def test_dead_session_refusals_share_the_per_ip_budget(bearer: str) -> None:
     """A revoked / absolute-expired record still has its MAC checked, but its refusals
     are not 'session-bound' for audit: an old leaked bearer cannot flood the audit log."""
@@ -297,11 +333,13 @@ def test_dead_session_refusals_share_the_per_ip_budget(bearer: str) -> None:
     assert codes == [403] * 5 and len(audit.calls) == 2
 
 
-def test_session_bound_refusals_are_audited_one_for_one() -> None:
-    client, audit = _app(_Sessions(), anon_max=1)
+def test_live_session_refusals_have_their_own_per_session_budget() -> None:
+    """Not capped by the per-IP budget, but bounded per session (#2238 r3)."""
+    client, audit = _app(_Sessions(), anon_max=1, session_max=3)
     h = {**_pair(uuid.uuid4()), "Authorization": "Bearer good"}
-    codes = [client.post("/w/x", headers=h).status_code for _ in range(4)]
-    assert codes == [403] * 4 and len(audit.calls) == 4
+    rs = [client.post("/w/x", headers=h) for _ in range(5)]
+    assert [r.status_code for r in rs] == [403] * 5
+    assert len(audit.calls) == 3 and "retry-after" in rs[-1].headers
 
 
 @pytest.mark.parametrize("sink", [_Hangs(), _Raises()])
@@ -343,6 +381,7 @@ def test_slow_audit_is_never_cancelled_mid_append() -> None:
         audit=wal,
         allowed_origins=frozenset(),
         audit_timeout_s=0.05,
+        clock=lambda: _NOW,
     )
     sent: list[Any] = []
 
@@ -357,9 +396,9 @@ def test_slow_audit_is_never_cancelled_mid_append() -> None:
         await mw(scope, recv, send)  # returns at the timeout, refused
         seen["status"] = sent[0]["status"]
         seen["locked_after_refusal"] = wal.lock.locked()
-        seen["pending"] = len(mw._pending)
+        seen["pending"] = len(mw.tracker)
         release.set()  # the "disk" finishes the append
-        await asyncio.gather(*mw._pending)  # the tracked task completes on its own
+        assert await mw.tracker.drain(5) == 0  # the tracked task completes on its own
         seen["records"] = list(wal.records)
         seen["locked_at_end"] = wal.lock.locked()
 
@@ -418,3 +457,127 @@ def test_chunked_body_on_a_guarded_route_is_passed_through_intact() -> None:
     headers = {**_pair(), "Authorization": "Bearer good", "Content-Type": "application/json"}
     r = TestClient(app).post("/echo", content=chunks(), headers=headers)
     assert r.status_code == 200 and len(r.json()["a"]) == 10_000
+
+
+def test_inflight_audits_are_capped_during_a_wal_stall() -> None:
+    """C-2.18 (#2238 r3): with the writer stalled, a flood of refusals (each from its own
+    live session, so no per-session/IP budget applies) never puts more than the cap in
+    flight, nor more than the cap waiting on the WAL lock; the rest are counted
+    `audit_throttled` and still get the same 403."""
+    import threading
+
+    from candleviewer.api.csrf import RefusalAuditTracker
+    from candleviewer.auth.metrics import auth_csrf_refused_total
+
+    release = threading.Event()
+    waiters = {"max": 0, "now": 0}
+
+    class _StalledWal:
+        def __init__(self) -> None:
+            self.lock = asyncio.Lock()
+            self.records = 0
+
+        async def emit(self, action: str, **kw: Any) -> None:
+            waiters["now"] += 1
+            waiters["max"] = max(waiters["max"], waiters["now"])
+            try:
+                async with self.lock:  # stands in for AuditWriter._wal_lock
+                    await asyncio.to_thread(release.wait, 5)
+                    self.records += 1
+            finally:
+                waiters["now"] -= 1
+
+    class _ManySessions:
+        async def peek_access_token(self, token: str) -> Any:
+            return _rec(uuid.UUID(token))  # every bearer is its own live session
+
+    cap = 8
+    wal = _StalledWal()
+
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        raise AssertionError("refused requests never reach the app")
+
+    mw = CsrfMiddleware(
+        inner,
+        codec=_CODEC,
+        sessions=_ManySessions,
+        audit=wal,
+        allowed_origins=frozenset(),
+        audit_timeout_s=0.01,
+        clock=lambda: _NOW,
+        tracker=RefusalAuditTracker(cap=cap),
+    )
+    statuses: list[int] = []
+
+    async def recv() -> Any:
+        return {"type": "http.request", "body": b""}
+
+    async def drive() -> None:
+        before = auth_csrf_refused_total.labels(reason="audit_throttled")._value.get()
+        peak = 0
+        for _ in range(60):
+            sid = uuid.uuid4()
+            other = _CODEC.issue(str(uuid.uuid4()))  # bound to another session -> refused
+            headers = [
+                (b"authorization", f"Bearer {sid}".encode()),
+                (b"x-csrf-token", other.encode()),
+                (b"cookie", f"{CSRF_COOKIE}={other}".encode()),
+            ]
+            sent: list[Any] = []
+
+            async def send(msg: Any, sent: list[Any] = sent) -> None:
+                sent.append(msg)
+
+            scope = {"type": "http", "method": "POST", "path": "/w/x", "headers": headers}
+            await mw(scope, recv, send)
+            statuses.append(sent[0]["status"])
+            peak = max(peak, len(mw.tracker))
+        assert peak <= cap and waiters["max"] <= cap
+        throttled = auth_csrf_refused_total.labels(reason="audit_throttled")._value.get()
+        assert throttled - before == 60 - cap
+        release.set()
+        assert await mw.tracker.drain(5) == 0
+        assert wal.records == cap
+
+    asyncio.run(drive())
+    assert set(statuses) == {403}
+
+
+def test_tracker_drain_is_bounded_and_reports_leftovers() -> None:
+    from candleviewer.api.csrf import RefusalAuditTracker
+
+    async def never() -> None:
+        await asyncio.Event().wait()
+
+    async def drive() -> int:
+        tracker = RefusalAuditTracker(cap=2)
+        task = tracker.track(never())
+        left = await tracker.drain(0.01)
+        task.cancel()
+        return left
+
+    assert asyncio.run(drive()) == 1
+
+
+def test_late_audit_failure_is_logged_with_its_type_only_after_timeout() -> None:
+    from structlog.testing import capture_logs
+
+    from candleviewer.api.csrf import RefusalAuditTracker
+
+    async def boom() -> None:
+        await asyncio.sleep(0)
+        raise RuntimeError("disk gone")
+
+    async def drive() -> None:
+        tracker = RefusalAuditTracker()
+        awaited = tracker.track(boom())  # its failure is handled by the awaiting caller
+        late = tracker.track(boom())
+        tracker.mark_timed_out(late)
+        await asyncio.wait({awaited, late})
+        for t in (awaited, late):
+            t.exception()  # retrieved: no "never retrieved" noise
+
+    with capture_logs() as logs:
+        asyncio.run(drive())
+    late_logs = [e for e in logs if e["event"] == "auth.csrf_refused.audit_failed_late"]
+    assert len(late_logs) == 1 and late_logs[0]["error"] == "RuntimeError"

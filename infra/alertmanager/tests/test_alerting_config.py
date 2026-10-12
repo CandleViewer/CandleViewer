@@ -99,7 +99,10 @@ def test_csrf_refusal_alerts_watch_the_bounded_metric() -> None:
         assert "auth_csrf_refused_total" in rules[name]["expr"]
         assert rules[name]["labels"]["severity"] == "ticket"
         assert rules[name]["labels"]["component"] == "auth"
-    assert 'reason!="audit_unavailable"' in rules["CsrfRefusalsHigh"]["expr"]
+    high = rules["CsrfRefusalsHigh"]["expr"]
+    for bookkeeping in ("audit_unavailable", "audit_slow", "audit_throttled"):
+        assert bookkeeping in high  # excluded: only real refusal reasons drive the alert
+    assert 'reason="audit_unavailable"' in rules["CsrfRefusalAuditUnavailable"]["expr"]
 
 
 def test_oms_unknown_orders_for_60s() -> None:

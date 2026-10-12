@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import candleviewer.app as appmod
@@ -68,7 +69,9 @@ class _Stack:
         self.audit = audit
         self.clock = clock
         self.seed = b""
-        self.codec: CsrfCodec = client.app.state.csrf_codec  # type: ignore[attr-defined]  # TestClient.app is untyped ASGI
+        app = client.app
+        assert isinstance(app, FastAPI)  # TestClient.app is typed as bare ASGI
+        self.codec: CsrfCodec = app.state.csrf_codec
 
     def code(self, offset: int = 0) -> str:
         return generate_code(self.seed, time_step_for(self.clock.now.timestamp()) + offset)
@@ -397,7 +400,7 @@ def test_off_mesh_unsafe_request_gets_the_mesh_403_and_no_csrf_audit(stack: _Sta
     """Order: Correlation -> MeshOnly -> Csrf. Off-mesh traffic never reaches a session
     lookup or an `auth.csrf_refused` write."""
     app = stack.client.app
-    off = TestClient(app, base_url=_ORIGIN, client=("203.0.113.9", 4000))  # type: ignore[arg-type]
+    off = TestClient(app, base_url=_ORIGIN, client=("203.0.113.9", 4000))
     r = off.post("/auth/logout", headers={"Authorization": "Bearer x"})
     assert r.status_code == 403 and r.json() == {"detail": "Forbidden"}
     assert not stack.audit.of("auth.csrf_refused")
@@ -408,14 +411,11 @@ def test_middleware_order_is_correlation_mesh_csrf() -> None:
     from candleviewer.net import MeshOnlyMiddleware
     from candleviewer.observability.correlation import CorrelationMiddleware
 
-    order = [m.cls for m in appmod.create_app().user_middleware]  # outermost first
-    pos = {c: order.index(c) for c in (CorrelationMiddleware, MeshOnlyMiddleware, CsrfMiddleware)}
-    assert pos[CorrelationMiddleware] < pos[MeshOnlyMiddleware] < pos[CsrfMiddleware]
-    assert order[: pos[CsrfMiddleware] + 1][-3:] == [
-        CorrelationMiddleware,
-        MeshOnlyMiddleware,
-        CsrfMiddleware,
-    ]
+    # Starlette types `Middleware.cls` as a factory protocol; compare as plain objects.
+    order: list[object] = [m.cls for m in appmod.create_app().user_middleware]  # outermost first
+    guards: list[object] = [CorrelationMiddleware, MeshOnlyMiddleware, CsrfMiddleware]
+    pos = [order.index(c) for c in guards]
+    assert pos == sorted(pos) and pos[2] - pos[0] == 2  # adjacent, in this order
 
 
 # -- lifecycle ------------------------------------------------------------------------
@@ -716,8 +716,10 @@ def test_middleware_and_routers_share_one_codec(stack: _Stack) -> None:
     from candleviewer.api.csrf import CsrfMiddleware
 
     app = stack.client.app
-    mw = next(m for m in app.user_middleware if m.cls is CsrfMiddleware)  # type: ignore[attr-defined]
-    assert mw.kwargs["codec"] is app.state.csrf_codec  # type: ignore[attr-defined]
+    assert isinstance(app, FastAPI)  # TestClient.app is typed as bare ASGI
+    csrf_cls: object = CsrfMiddleware
+    mw = next(m for m in app.user_middleware if m.cls is csrf_cls)
+    assert mw.kwargs["codec"] is app.state.csrf_codec
 
 
 def test_key_rotation_through_create_app_keeps_open_tabs_working(
@@ -776,3 +778,46 @@ def test_refresh_route_refuses_missing_or_mismatched_pair_without_rotating(
     reason = "mismatch" if variant == "mismatch" else "missing"
     _assert_refused(stack, out, reason, token)
     assert not stack.audit.of("auth.session_refreshed")
+
+
+def test_refresh_csrf_refusal_with_audit_writer_down_is_403_not_500(stack: _Stack) -> None:
+    """r3: the refresh route's CSRF-refusal audit catches the writer's AuditError,
+    counts `audit_unavailable`, logs, and still answers 403 csrf_token_invalid."""
+    from candleviewer.audit.writer import AuditUnavailable
+    from candleviewer.auth.metrics import auth_csrf_refused_total
+
+    r = stack.login()
+
+    class _Down:
+        async def emit(self, action: str, **kw: Any) -> None:
+            raise AuditUnavailable("WAL full")
+
+    stack.ctx.audit._writer = _Down()
+    before = auth_csrf_refused_total.labels(reason="audit_unavailable")._value.get()
+    wrong = _CODEC_OTHER.issue("x")
+    stack.client.cookies.clear()
+    out = stack.client.post(
+        "/auth/refresh",
+        headers={"Origin": _ORIGIN, CSRF_HEADER: wrong},
+        cookies={"cv_refresh": r.cookies["cv_refresh"], CSRF_COOKIE: wrong},
+    )
+    assert out.status_code == 403 and out.json()["code"] == "csrf_token_invalid"
+    assert auth_csrf_refused_total.labels(reason="audit_unavailable")._value.get() == before + 1
+
+
+def test_tracker_is_on_app_state_and_drained_by_the_lifespan() -> None:
+    """r3: in-flight refusal audits are reachable from app state and the ASGI lifespan
+    drains them (bounded) before the modules stop."""
+    import inspect
+
+    from candleviewer import main as main_mod
+    from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
+
+    app = appmod.create_app()
+    tracker = app.state.csrf_refusal_audits
+    assert isinstance(tracker, RefusalAuditTracker)
+    csrf_cls: object = CsrfMiddleware
+    mw = next(m for m in app.user_middleware if m.cls is csrf_cls)
+    assert mw.kwargs["tracker"] is tracker
+    src = inspect.getsource(main_mod._lifespan)
+    assert src.index("csrf_refusal_audits") < src.index("supervisor.stop_all()")

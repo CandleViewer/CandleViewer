@@ -32,6 +32,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol
 
+import structlog
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -42,6 +43,7 @@ from candleviewer.api.csrf import (
     source_ip,
     verify_refresh_csrf,
 )
+from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerdict
 from candleviewer.auth.errors import (
@@ -162,6 +164,10 @@ def _bearer(request: Request) -> str | None:
     header = request.headers.get("authorization", "")
     scheme, _, value = header.partition(" ")
     return value.strip() or None if scheme.lower() == "bearer" else None
+
+
+def _log() -> Any:
+    return structlog.get_logger(__name__)
 
 
 def _source_ip(request: Request) -> str | None:
@@ -375,8 +381,10 @@ def make_session_router(
                         severity=Severity.WARNING,
                         reason=refusal.value,
                     )
-                except AuditUnavailableError:
+                except (AuditUnavailableError, AuditError) as exc:
+                    # Refused regardless (fail closed): a 403, never a 500 (#2238 r3).
                     auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
+                    _log().error("auth.csrf_refused.audit_unavailable", error=type(exc).__name__)
                 return csrf_problem(refusal)
         # C-2.9 write-ahead: the audit record is written before `refresh()`
         # rotates or revokes anything; if the sink is down we refuse (503)

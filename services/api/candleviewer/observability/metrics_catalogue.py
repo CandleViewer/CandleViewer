@@ -1322,7 +1322,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "CsrfRefusalsHigh (>20/10m) / CsrfRefusalAuditUnavailable (ticket)",
         _L,
         "E09",
-        max_series=8,
+        max_series=12,
         exported=True,
     ),
     _s(

@@ -98,6 +98,19 @@ def hash_access_token(token: str) -> uuid.UUID:
     return uuid.UUID(bytes=hashlib.sha256(token.encode("utf-8")).digest()[:16])
 
 
+def is_live_session(session: SessionRecord, *, now: datetime) -> bool:
+    """Read-only twin of `authenticate_access_token`'s acceptance rule: not revoked,
+    not absolute-expired, not idle-locked, and the access handle within
+    `ACCESS_TOKEN_TTL`. No state change; used to decide whether a CSRF refusal is
+    bound to a session that could actually act (#2238 review)."""
+    return (
+        not session.is_revoked
+        and not session.is_absolute_expired(now=now)
+        and not session.is_idle_locked(now=now)
+        and now < session.issued_at + ACCESS_TOKEN_TTL
+    )
+
+
 def clamp_idle_timeout_s(idle_timeout_s: int) -> int:
     """Ticket "5-60 min idle lock" — the API edge and this service both
     clamp so a stored/requested value outside the documented range can

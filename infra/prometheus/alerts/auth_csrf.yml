@@ -5,7 +5,7 @@ groups:
   - name: auth-csrf
     rules:
       - alert: CsrfRefusalsHigh
-        expr: sum(increase(auth_csrf_refused_total{reason!="audit_unavailable"}[10m])) > 20
+        expr: sum(increase(auth_csrf_refused_total{reason!~"audit_unavailable|audit_slow|audit_throttled"}[10m])) > 20
         for: 5m
         labels:
           severity: ticket
@@ -25,5 +25,6 @@ groups:
           runbook_url: "docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh"
           summary: "CSRF refusals could not be audited (C-2.9)"
           description: >-
-            The guard refused requests but the audit sink timed out or failed.
-            Requests stayed refused; the audit trail has gaps. Check the audit WAL.
+            The guard refused requests but the audit write failed. Requests stayed
+            refused; the audit trail has gaps. Check the audit WAL. (Slow writes are
+            counted separately as audit_slow and still land.)

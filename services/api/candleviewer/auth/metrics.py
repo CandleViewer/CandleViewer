@@ -39,8 +39,8 @@ auth_readonly_downgrades_total = Counter(
 auth_csrf_refused_total = Counter(
     "auth_csrf_refused_total",
     "State-changing requests refused by the SR-041/SR-042 CSRF guard, by reason.",
-    # closed set: missing | mismatch | bad_mac | wrong_session | cross_origin
-    #             | audit_unavailable | audit_throttled
+    # closed set: missing | mismatch | bad_mac | wrong_session | cross_origin (refusals)
+    #             | audit_unavailable | audit_slow | audit_throttled (audit bookkeeping)
     ["reason"],
 )
 auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets performed.")

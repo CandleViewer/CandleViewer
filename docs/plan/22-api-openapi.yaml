@@ -83,8 +83,9 @@ info:
       (`GET`/`HEAD`/`OPTIONS`). `SameSite=Strict` and the SR-042 `Origin` check are
       additional controls, never the only one.
     * **Refusal.** A missing, mismatched or session-unbound token yields `403`
-      `csrf_token_invalid` and an `auth.csrf_refused` audit record. The problem `detail` never
-      echoes token or cookie values.
+      `csrf_token_invalid` and an `auth.csrf_refused` audit record, up to a per-session /
+      per-source budget (beyond it: the same `403` with an optional `Retry-After` and no audit
+      record). The problem `detail` never echoes token or cookie values.
 
     ### RBAC
     Roles `owner` | `manager` | `viewer` map to permission codes (`orders:write`,
@@ -9206,7 +9207,9 @@ components:
                   code: csrf_token_invalid,
                 }
     CsrfTokenInvalid:
-      description: "SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`). `detail` never echoes token or cookie values; clients re-read the cookie and retry once."
+      description: "SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`) up to a per-session / per-source budget; beyond it the response is identical but carries `Retry-After` and writes no audit record. `detail` never echoes token or cookie values; clients re-read the cookie and retry once."
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }

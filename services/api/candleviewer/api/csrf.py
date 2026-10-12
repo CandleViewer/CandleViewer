@@ -34,22 +34,22 @@ mints), the route runs the full check with `verify_refresh_csrf()` before it
 audits or rotates. The middleware never reads a request body, so a body it
 cannot read can never weaken the check.
 
-A refusal is `403 csrf_token_invalid` (`detail` never echoes a value),
+A refusal is always `403 csrf_token_invalid` (`detail` never echoes a value),
 `auth_csrf_refused_total{reason}`, and an `auth.csrf_refused` audit record
-(C-2.9) with a bounded path (the matched route template or `(unmatched)`).
-Refusals bound to a session are audited one-for-one. Refusals that resolve no
-session are throttled per source IP. Above the limit the reply is 429 with no
-audit write, which bounds an unauthenticated flood while the metric keeps
-counting. The audit write has a timeout; if it fails or hangs the request is
-still refused. There is no bearer exemption, no flag and no test bypass
-(C-4.14).
+(C-2.9) with a bounded path (the contract route template or `(unmatched)`), up to
+a budget: per session for refusals bound to a live session, per source IP for the
+rest, plus a global cap on audits in flight (C-2.18). Over a budget the reply is
+the same 403 with `Retry-After` and no audit write; the metric keeps counting
+(`audit_throttled`). The audit write is never cancelled mid-append (see
+`RefusalAuditTracker`); a slow or failed write still refuses the request.
+There is no bearer exemption, no flag and no test bypass (C-4.14).
 """
 
 from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Protocol
@@ -64,6 +64,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerdict, tokens_equal
 from candleviewer.auth.metrics import auth_csrf_refused_total
 from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.session_service import is_live_session
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.net.middleware import RESOLVED_SOURCE_KEY
 from candleviewer.observability.context import spawn
@@ -81,11 +82,16 @@ _EXEMPT_PATH = re.compile(
 REFRESH_PATH = "/auth/refresh"
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _UNMATCHED = "(unmatched)"
-#: Unauthenticated refusals per source IP per window before the guard stops
-#: writing audit records and answers 429 (session-bound refusals are not capped).
+#: Refusals not bound to a live session, per source IP per window, that are
+#: audited; beyond that the reply is the same 403 + Retry-After with no audit row.
 ANON_REFUSALS_PER_WINDOW = 20
 ANON_REFUSAL_WINDOW_S = 60.0
 AUDIT_TIMEOUT_S = 2.0
+#: Refusals bound to a live session, per session per window, that are audited.
+SESSION_REFUSALS_PER_WINDOW = 20
+#: Hard cap on refusal audits in flight (C-2.18): during a WAL stall the shielded
+#: writes would otherwise pile up behind `_wal_lock` ahead of order-path audits.
+MAX_INFLIGHT_AUDITS = 64
 
 
 class CsrfRefusal(StrEnum):
@@ -240,6 +246,55 @@ def match_operation(method: str, path: str, operations: tuple[_Operation, ...]) 
     return _UNMATCHED
 
 
+class RefusalAuditTracker:
+    """Bounded set of in-flight refusal audits (C-2.18).
+
+    Each audit runs as a tracked task under `asyncio.shield` so a timeout never
+    cancels `AuditWriter.emit` mid-append (cancelling would release the WAL lock
+    while the append thread still runs; writer fix #2250). At most `cap` may be in
+    flight: over the cap the caller skips the write (counted `audit_throttled`).
+    `drain()` waits a bounded time at shutdown, before the audit module stops."""
+
+    def __init__(self, cap: int = MAX_INFLIGHT_AUDITS) -> None:
+        self._cap = cap
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._timed_out: set[asyncio.Task[None]] = set()
+
+    def __len__(self) -> int:
+        return len(self._tasks)
+
+    @property
+    def full(self) -> bool:
+        return len(self._tasks) >= self._cap
+
+    def track(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+        """Run *coro* as a tracked task (not a lifecycle `start`; nothing to stop)."""
+        task = spawn(coro, name="csrf-refusal-audit")
+        self._tasks.add(task)
+        task.add_done_callback(self._done)
+        return task
+
+    def mark_timed_out(self, task: asyncio.Task[None]) -> None:
+        if not task.done():
+            self._timed_out.add(task)
+
+    def _done(self, task: asyncio.Task[None]) -> None:
+        self._tasks.discard(task)
+        late = task in self._timed_out
+        self._timed_out.discard(task)
+        if late and not task.cancelled() and task.exception() is not None:
+            # Only failures nobody awaited any more are reported here.
+            exc = task.exception()
+            _log().error("auth.csrf_refused.audit_failed_late", error=type(exc).__name__)
+
+    async def drain(self, timeout_s: float = AUDIT_TIMEOUT_S) -> int:
+        """Wait up to *timeout_s* for in-flight audits; returns how many remain."""
+        pending = set(self._tasks)
+        if pending:
+            await asyncio.wait(pending, timeout=timeout_s)
+        return len(self._tasks)
+
+
 class CsrfMiddleware:
     """Pure ASGI SR-041/SR-042 guard; see the module docstring."""
 
@@ -255,6 +310,8 @@ class CsrfMiddleware:
         anon_throttle: PerIpLoginThrottle | None = None,
         audit_timeout_s: float = AUDIT_TIMEOUT_S,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        tracker: RefusalAuditTracker | None = None,
+        session_throttle: PerIpLoginThrottle | None = None,
     ) -> None:
         self._app = app
         self._codec = codec
@@ -267,8 +324,11 @@ class CsrfMiddleware:
         self._audit_timeout_s = audit_timeout_s
         self._operations = _compile_operations(operations)
         self._now = clock
-        #: In-flight refusal audits (strong refs; see `_emit_audit`).
-        self._pending: set[asyncio.Task[None]] = set()
+        # `is None`, not `or`: an empty tracker has len() == 0 and is falsy.
+        self.tracker = tracker if tracker is not None else RefusalAuditTracker()
+        self._per_session = session_throttle or PerIpLoginThrottle(
+            max_attempts=SESSION_REFUSALS_PER_WINDOW, window_s=ANON_REFUSAL_WINDOW_S
+        )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or not is_unsafe(scope["method"]):
@@ -325,11 +385,12 @@ class CsrfMiddleware:
         (closed set), never raw input; `(unmatched)` otherwise."""
         return match_operation(scope["method"], route_path(scope["path"]), self._operations)
 
-    def _budget(self, key: str) -> bool:
+    @staticmethod
+    def _take(throttle: PerIpLoginThrottle, key: str) -> bool:
         """True while *key* may still write refusal audit records (C-2.9 vs C-12.8)."""
-        if self._anon.is_blocked(key):
+        if throttle.is_blocked(key):
             return False
-        self._anon.record_failure(key)
+        throttle.record_failure(key)
         return True
 
     async def _refuse(
@@ -344,21 +405,20 @@ class CsrfMiddleware:
         ip = source_ip(scope)
         path = self._route_template(scope)
         method = bounded_method(scope["method"])
-        # A record only counts as session-bound for audit when it is a live session:
-        # revoked / absolute-expired rows (old leaked bearers) share the per-IP budget.
-        live = (
-            record is not None
-            and not record.is_revoked
-            and not record.is_absolute_expired(now=self._now())
-        )
-        audit_it = True if live else self._budget(ip or "(unknown)")
+        # Budgets: refusals bound to a live session (same rule as authentication) get a
+        # per-session budget; everything else (no session, revoked / expired / locked
+        # records, old leaked bearers) shares the per-IP budget. Plus a global cap on
+        # audits in flight. Over any of them: same 403, no audit write.
+        if record is not None and is_live_session(record, now=self._now()):
+            throttle, key = self._per_session, f"sid:{record.id}"
+        else:
+            throttle, key = self._anon, ip or "(unknown)"
         response = csrf_problem(reason)
         log = _log()
-        if not audit_it:
-            # Over the budget: same 403 (client recovery and contract unchanged), no audit
-            # write, the metric keeps counting.
+        if self.tracker.full or not self._take(throttle, key):
             auth_csrf_refused_total.labels(reason="audit_throttled").inc()
-            response.headers["Retry-After"] = str(self._anon.retry_after_s(ip or "(unknown)"))
+            retry = throttle.retry_after_s(key) or int(self._audit_timeout_s) or 1
+            response.headers["Retry-After"] = str(retry)
             log.warning("auth.csrf_refused.unaudited", reason=reason.value, path=path)
             await response(scope, receive, send)
             return
@@ -377,44 +437,22 @@ class CsrfMiddleware:
         await response(scope, receive, send)
 
     async def _emit_audit(self, why: str, **fields: Any) -> None:
-        """Write the refusal record without ever cancelling the writer mid-append.
-
-        `AuditWriter.emit` holds the WAL lock across a worker-thread append; cancelling
-        it would release the lock while the append is still running (WAL corruption).
-        So the emit runs as a tracked task under `asyncio.shield`: on timeout the
-        request is refused anyway (fail closed) and the task is left to finish, keeping
-        a strong reference and an error callback."""
-        task = spawn(self._audit.emit("auth.csrf_refused", **fields), name="csrf-refusal-audit")
-        self._pending.add(task)
-        task.add_done_callback(self._on_audit_done)
+        """Write the refusal record without ever cancelling the writer mid-append:
+        a tracked task under `asyncio.shield` (see `RefusalAuditTracker`). A slow write
+        refuses at the timeout (`audit_slow`) and is left to finish; a failed write is
+        `audit_unavailable`. Either way the request stays refused (fail closed)."""
+        task = self.tracker.track(self._audit.emit("auth.csrf_refused", **fields))
         try:
             await asyncio.wait_for(asyncio.shield(task), self._audit_timeout_s)
         except TimeoutError:
+            self.tracker.mark_timed_out(task)
+            auth_csrf_refused_total.labels(reason="audit_slow").inc()
+            _log().warning("auth.csrf_refused.audit_slow", reason=why)
+        except Exception as exc:
             auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
-            _log().error("auth.csrf_refused.audit_slow", reason=why)
-        except Exception:
-            auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
-            _log().error("auth.csrf_refused.audit_unavailable", reason=why)
-
-    def _on_audit_done(self, task: asyncio.Task[None]) -> None:
-        self._pending.discard(task)
-        if not task.cancelled() and task.exception() is not None:
-            _log().error("auth.csrf_refused.audit_failed_late")
-
-
-def _throttled(retry_after: int) -> JSONResponse:
-    return JSONResponse(
-        status_code=429,
-        content={
-            "type": "https://candleviewer.local/errors/rate_limited",
-            "title": "Per-user API rate limit exceeded",
-            "status": 429,
-            "code": "rate_limited",
-            "detail": "Too many refused state-changing requests.",
-        },
-        headers={"Retry-After": str(retry_after)},
-        media_type="application/problem+json",
-    )
+            _log().error(
+                "auth.csrf_refused.audit_unavailable", reason=why, error=type(exc).__name__
+            )
 
 
 async def _bad_path(scope: Scope, receive: Receive, send: Send) -> None:
