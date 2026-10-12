@@ -23,6 +23,21 @@ DECLARED = RR.load_declared_ids(str(ROOT))
 OWNERS = "* @alice\n/services/ @bob @org/team\n"
 
 
+GEN = ("set", "unspecified", "unspecified")
+NONE = ("unspecified", "unspecified", "unspecified")
+
+
+def states(r, base_gen=(), head_gen=()):
+    """Fake attr states: paths in `*_gen` are linguist-generated (plus real ATTRS patterns)."""
+    def mk(gen):
+        out = {}
+        for _a, _d, path in r:
+            hit = path in gen or path.startswith("packages/protocol/src/generated/")
+            out[path] = GEN if hit else NONE
+        return out
+    return mk(base_gen), mk(head_gen or base_gen)
+
+
 def pr(title=GOOD_TITLE, body=GOOD_BODY, labels=()):
     return {"title": title, "body": body, "labels": [{"name": n} for n in labels]}
 
@@ -31,10 +46,12 @@ def rows(*specs):
     return [(a, d, p) for a, d, p in specs]
 
 
-def run(p=None, r=None, base=ATTRS, head=None, **kw):
+def run(p=None, r=None, base=ATTRS, head=None, base_gen=(), head_gen=(), **kw):
+    r = r if r is not None else rows(("1", "1", "src/a.py"))
+    bs, hs = states(r, base_gen, head_gen)
     return m.check(
-        p or pr(), r if r is not None else rows(("1", "1", "src/a.py")), base,
-        base if head is None else head, CL, DECLARED, RR.RULE_ID_RE, **kw,
+        p or pr(), r, bs, hs, base, base if head is None else head, CL, DECLARED,
+        RR.RULE_ID_RE, **kw,
     )
 
 
@@ -42,12 +59,14 @@ def codes(errs):
     return [e.split()[0] for e in errs]
 
 
-def labeled(actor="alice"):
-    return [{"event": "labeled", "label": {"name": m.LABEL}, "actor": {"login": actor}}]
+def labeled(actor="alice", at="2026-10-12T10:00:00Z"):
+    return [{"event": "labeled", "label": {"name": m.LABEL}, "actor": {"login": actor},
+             "created_at": at}]
 
 
-def comment(user="alice", text="large-pr-approved: single atomic migration, cannot be split safely"):
-    return [{"user": {"login": user}, "body": text}]
+def comment(user="alice", text="large-pr-approved: single atomic migration, cannot be split safely",
+            at="2026-10-12T10:01:00Z"):
+    return [{"user": {"login": user}, "body": text, "created_at": at}]
 
 
 def test_clean_pr_passes():
@@ -69,7 +88,7 @@ def test_label_with_provenance_allows_large_pr():
 def test_label_applied_by_non_owner_fails():
     errs, _ = run(pr(labels=[m.LABEL]), rows(("900", "0", "a")), events=labeled("mallory"),
                   comments=comment(), base_codeowners=OWNERS)
-    assert codes(errs) == ["PR-SIZE-004"]
+    assert codes(errs) == ["PR-SIZE-004", "PR-SIZE-005"]  # alice's comment is not the labeller's
 
 
 def test_label_without_justification_fails():
@@ -79,6 +98,20 @@ def test_label_without_justification_fails():
     errs, _ = run(pr(labels=[m.LABEL]), rows(("900", "0", "a")), events=labeled(),
                   comments=comment(user="mallory"), base_codeowners=OWNERS)
     assert codes(errs) == ["PR-SIZE-005"]
+
+
+def test_justification_must_be_by_labeller_and_not_older_than_label():
+    big = rows(("900", "0", "a"))
+    kw = dict(base_codeowners=OWNERS, repo_owner="basiltt")
+    errs, _ = run(pr(labels=[m.LABEL]), big, events=labeled("alice"),
+                  comments=comment("basiltt"), **kw)
+    assert codes(errs) == ["PR-SIZE-005"]  # a different owner's comment does not count
+    errs, _ = run(pr(labels=[m.LABEL]), big, events=labeled(at="2026-10-12T10:00:00Z"),
+                  comments=comment(at="2026-10-12T09:00:00Z"), **kw)
+    assert codes(errs) == ["PR-SIZE-005"]  # justification predates the labelling
+    errs, _ = run(pr(labels=[m.LABEL]), big, events=labeled(),
+                  comments=comment(text="Do NOT apply large-pr-approved here, please split it up!"), **kw)
+    assert errs == []  # wording is not judged; documented limitation of a text check
 
 
 def test_repo_owner_may_apply_label():
@@ -95,18 +128,20 @@ def test_owners_exclude_teams_and_use_last_match():
 def test_generated_and_lockfiles_excluded_from_base_attrs():
     r = rows(("5000", "0", "packages/protocol/src/generated/x.ts"), ("3000", "10", "pnpm-lock.yaml"),
              ("10", "0", "services/api/uv.lock"), ("20", "5", "src/a.py"))
-    assert m.count_loc(r, m.attr_rules(ATTRS, "linguist-generated"))[:2] == (25, 8020)
+    bs, _ = states(r)
+    assert m.count_loc(r, bs)[:2] == (25, 8020)
     assert run(r=r)[0] == []
 
 
 def test_uv_lock_elsewhere_is_not_excluded():
-    assert m.count_loc(rows(("10", "0", "services/api/candleviewer/oms/uv.lock")), [])[0] == 10
+    assert m.count_loc(rows(("10", "0", "services/api/candleviewer/oms/uv.lock")), {})[0] == 10
 
 
 def test_pr_cannot_exempt_itself_via_new_generated_pattern():
     head = ATTRS + "\nservices/api/candleviewer/oms/** linguist-generated=true\n"
-    r = rows(("5000", "0", "services/api/candleviewer/oms/engine.py"), ("2", "0", ".gitattributes"))
-    errs, _ = run(r=r, head=head)
+    p = "services/api/candleviewer/oms/engine.py"
+    r = rows(("5000", "0", p), ("2", "0", ".gitattributes"))
+    errs, _ = run(r=r, head=head, head_gen=(p,))
     assert codes(errs) == ["PR-SIZE-001", "PR-SIZE-002"]
     assert "5000 LOC would be newly excluded" in errs[1]
 
@@ -117,21 +152,24 @@ def test_attribute_change_needs_label_even_when_small():
     assert run(r=rows(("1", "0", ".gitattributes")), head=ATTRS + "# comment only\n")[0] == []
 
 
-def test_unset_and_last_match_wins():
-    rules = m.attr_rules("a/** linguist-generated=true\na/keep/** -linguist-generated\n",
-                         "linguist-generated")
-    assert m.is_generated("a/x.ts", rules)
-    assert not m.is_generated("a/keep/y.ts", rules)
-    assert not m.is_generated("a/z.ts", m.attr_rules("a/** linguist-generated=false\n",
-                                                     "linguist-generated"))
+def test_hash_midline_pattern_is_not_a_comment():
+    assert m.attr_lines("a#b/** linguist-generated=true\n") == {"a#b/** linguist-generated=true"}
+    assert m.attr_lines("# a -diff\n") == set()
 
 
-def test_binary_rows_reported_not_silently_dropped():
+def test_binary_rows_warn_and_images_are_allowed():
     imgs = rows(*[("-", "-", f"docs/{i}.png") for i in range(10)])
-    assert run(r=imgs)[0] == []
-    blobs = rows(*[("-", "-", f"src/{i}.bin") for i in range(4)])
-    assert codes(run(r=blobs)[0]) == ["PR-SIZE-003"]
-    assert m.count_loc(blobs, [])[2] == [f"src/{i}.bin" for i in range(4)]
+    assert run(r=imgs) == ([], [])
+    blobs = rows(*[("-", "-", f"data/{i}.bin") for i in range(3)])
+    errs, warns = run(r=blobs, binary_sizes={"data/0.bin": 42})
+    assert errs == [] and len(warns) == 3 and "42 bytes" in warns[0]
+    assert codes(run(r=rows(*[("-", "-", f"data/{i}.bin") for i in range(4)]))[0]) == ["PR-SIZE-003"]
+
+
+def test_single_binary_source_file_needs_approval():
+    errs, warns = run(r=rows(("-", "-", "src/evil.ts")))
+    assert codes(errs) == ["PR-SIZE-003"] and warns
+    assert m.count_loc(rows(("-", "-", "icon.svg")), {})[2] == ["icon.svg"]
 
 
 def test_numstat_z_parsing_keeps_odd_paths():
@@ -284,3 +322,101 @@ def test_refs_with_empty_or_quoted_partial_fails():
 
 def test_closes_wins_over_refs_without_warning():
     assert run(pr(body="Closes #1\nRefs #2"))[1] == []
+
+
+def test_main_binary_source_file_warns_with_size_and_fails(repo, monkeypatch, capsys):
+    root, base = repo
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    _git(root, "checkout", "-qb", "feat")
+    (root / "src").mkdir()
+    (root / "src/evil.ts").write_bytes(b"export const x = 1;\n\0\n" * 50)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "head")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, pr())) == 1
+    cap = capsys.readouterr()
+    assert "PR-SIZE-003" in cap.err and "src/evil.ts" in cap.out and "bytes" in cap.out
+
+
+def test_main_attribute_semantics_come_from_git_check_attr(repo):
+    """`/gen` is root-anchored and `dist/` matches no files in git; our glob code must not decide."""
+    root, base = repo
+    (root / ".gitattributes").write_text("/top linguist-generated=true\ndist/ linguist-generated=true\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "attrs")
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    st = m.attr_state(root, sha, ["top", "a/top", "dist/a.py"])
+    assert m._generated(st["top"])
+    assert not m._generated(st["a/top"])
+    assert not m._generated(st["dist/a.py"])
+
+
+def test_check_attr_honours_unset_and_last_match(repo):
+    root, base = repo
+    (root / ".gitattributes").write_text("a/** linguist-generated=true\na/keep/** -linguist-generated\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "attrs")
+    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    st = m.attr_state(root, sha, ["a/x.ts", "a/keep/y.ts"])
+    assert m._generated(st["a/x.ts"]) and not m._generated(st["a/keep/y.ts"])
+
+
+def test_main_rule_ids_come_from_head_constitution_as_data(repo, monkeypatch, capsys):
+    root, base = repo
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    _git(root, "checkout", "-qb", "feat")
+    c = root / "CONSTITUTION.md"
+    c.write_text(c.read_text(encoding="utf-8") + "\n**C-98.1** New rule added by this PR.\n",
+                 encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "head")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    _git(root, "checkout", "-q", "main")  # the gate's worktree is BASE; head is only data
+    p = pr(body="Closes #1\nSee C-98.1")
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, p)) == 0
+    p = pr(body="Closes #1\nSee C-98.2")
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, p)) == 1
+
+
+def test_api_pagination_fails_closed_at_page_limit(monkeypatch):
+    import io
+    import json as j
+
+    class R(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(m.urllib.request, "urlopen", lambda req, timeout: R(j.dumps([{}] * 100).encode()))
+    with pytest.raises(m.ConfigError, match="failing closed"):
+        m.make_api_fetch("o/r", "t")("/issues/1/events")
+
+
+def test_strip_markup_unclosed_and_indented_blocks():
+    assert codes(run(pr(body="    Closes #1"))[0]) == ["PR-BODY-001"]
+    assert codes(run(pr(body="~~~\nCloses #1\n~~~"))[0]) == ["PR-BODY-001"]
+    assert codes(run(pr(body="<!-- hidden\nCloses #1"))[0]) == ["PR-BODY-001"]
+    assert run(pr(body="text\n\nCloses #1\n"))[0] == []
+
+
+def test_main_attribute_diff_is_against_merge_base_not_base_tip(repo, monkeypatch, capsys):
+    root, old_base = repo
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    _git(root, "checkout", "-qb", "feat")
+    (root / "src").mkdir()
+    (root / "src/a.py").write_text("x\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "head")
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    _git(root, "checkout", "-q", "main")  # main then edits .gitattributes after the branch point
+    (root / ".gitattributes").write_text("gen/** linguist-generated=true\nnew/** linguist-generated=true\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "main moved")
+    new_base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    assert m.main(["--repo-root", str(root)], fetch=_fake(new_base, head, pr())) == 0
+    assert "PR-SIZE-002" not in capsys.readouterr().err

@@ -9,9 +9,13 @@ name: pr-metadata
 # The required-check context is `pr-metadata` (job name). Branch protection must list it; only the
 # repo owner can change that.
 #
-# Runs on `pull_request` (never pull_request_target) with a read-only token. The data files the
-# script trusts (.gitattributes, CODEOWNERS) are read from the BASE commit, so the PR under test cannot
-# widen its own exclusions.
+# Trust model: runs on `pull_request` (never pull_request_target, SR-132). The checker, its
+# commitlint.config.cjs, scripts/check_rule_refs.py, .gitattributes and CODEOWNERS are taken from a
+# worktree of the BASE commit, so a PR cannot rewrite the gate that judges it; the head
+# CONSTITUTION.md is read via `git show` as data only. One-time bootstrap: while the base has no
+# copy of the checker (the PR that introduces it) the PR copy runs, with a warning.
+# REMAINING GAP: under `pull_request` this workflow file is itself PR-controlled, so editing
+# pr-metadata.yml is still a bypass; only the C-10.2 workflow security review catches it.
 
 on:
   pull_request:
@@ -23,7 +27,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: pr-metadata-${{ github.event.pull_request.number }}
+  group: metadata-gate-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -47,4 +51,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: python tools/ci/check_pr_metadata.py --repo-root .
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if git cat-file -e "${BASE_SHA}:tools/ci/check_pr_metadata.py" 2>/dev/null; then
+            git worktree add --detach "$RUNNER_TEMP/gate" "$BASE_SHA"
+            python -I "$RUNNER_TEMP/gate/tools/ci/check_pr_metadata.py" --repo-root "$RUNNER_TEMP/gate"
+          else
+            echo "::warning title=pr-metadata::bootstrap: base has no checker, running the PR copy (one-time)"
+            python -I tools/ci/check_pr_metadata.py --repo-root .
+          fi
