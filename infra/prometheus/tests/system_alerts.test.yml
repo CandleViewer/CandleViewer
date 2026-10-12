@@ -138,6 +138,29 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: cv_kek_degraded_state{env="live"}
+    values: 1+0x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: KekUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: secrets
+        env: live
+      exp_annotations:
+        summary: 'KEK unavailable: credential broker degraded, trading disabled'
+        runbook_url: docs/ops/runbooks/kek-custody.md#alert-kekunavailable
+- interval: 1m
+  input_series:
+  - series: cv_kek_degraded_state{env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: KekUnavailable
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: cv_synthetic_alert
     values: 1+0x10
   alert_rule_test:

@@ -120,19 +120,25 @@ retired_at)` (migration in T02 #835 scope). The loader compares with `hmac.compa
 (constant-time); a mismatch is `kek_mismatch`, not a decrypt storm.
 
 ★ **Two version layers, two AADs (SR-003).**
-- Data layer: credential ciphertext under the DEK, AAD = `cv-cred-v1 ‖ account_id ‖ credential_id ‖
-  key_version` (`key_version` = the Bybit key rotation counter, ADR-0009 §5). Never changes on KEK
-  rotation.
+- Data layer: credential ciphertext under the DEK. **As implemented (E27-T02 #835):** AAD =
+  `cv-cred-v2 ‖ environment ‖ account_id ‖ credential_id ‖ field` (length-prefixed). `key_version`
+  is bound through `credential_id`, because every exchange key rotation inserts a new `api_keys` row
+  (21-database-schema §3.2.3a). This is a recorded deviation pending Security sign-off on #835.
+  Never changes on KEK rotation.
 - Wrap layer: wrapped DEK under the KEK, AAD = `cv-dek-v1 ‖ credential_id ‖ kek_version`. Binding the
   wrapped DEK to `credential_id` stops a DB writer from swapping DEKs between rows; binding
   `kek_version` stops a downgrade to a retired wrap.
 
 Rotation procedure (owner-run, app in maintenance or Degraded, no order flow required):
 1. Provision KEK v(n+1) into custody (C1 / C3) alongside v(n); launcher supplies **both** handles
-   (`CV_KEK_HANDLE` + `CV_KEK_PREV_HANDLE`, the latter only during rotation).
+   (`CV_KEK_HANDLE` + `CV_KEK_PREV_HANDLE`, the latter only during rotation). FIFO order: current
+   first, then previous, both in the handoff dir (`dirname(CV_KEK_HANDLE)`); cv-api drains them in
+   that order.
 2. Audit `security.kek_rotation_started` (from, to, row count) before the first row; on a re-run
    with rows still at v(n), `security.kek_rotation_resumed` (from, to, remaining).
-3. Re-wrap job (admin-invoked; runs inside `secrets`, admin sees only a report — §7): for each row
+3. Re-wrap job (admin-invoked; runs inside `secrets`, admin sees only a report — §7; implementation
+   status: the job ships in E27-T02 #835, its entry point + the same-transaction per-row audit + step 2's
+   `kek_rotation_resumed` are tracked in #2266): for each row
    `WHERE kek_version = n` (via `ix_api_keys_kek`), unwrap DEK with v(n), wrap with v(n+1), and in
    **one transaction** update `dek_ref` + `kek_version` **and** write its per-row progress audit
    record. Ciphertext and `enc_nonce` untouched. Idempotent and resumable.
