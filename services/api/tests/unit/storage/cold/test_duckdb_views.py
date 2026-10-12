@@ -100,3 +100,18 @@ def test_postgres_attach_rejects_non_cv_ro_or_injected_dsn(tmp_path: Path, dsn: 
 
     with pytest.raises(UnsafeAnalyticsDsn):
         build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn=dsn)
+
+
+def test_unsafe_dsn_refused_before_any_duckdb_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (#2235): refusal must precede connect/INSTALL/LOAD (no network)."""
+    from candleviewer.storage.cold import duckdb_views
+    from candleviewer.storage.cold.duckdb_views import UnsafeAnalyticsDsn
+
+    def _boom(*_a: object, **_k: object) -> None:
+        raise AssertionError("duckdb touched before DSN validation")
+
+    monkeypatch.setattr(duckdb_views.duckdb, "connect", _boom)
+    with pytest.raises(UnsafeAnalyticsDsn):
+        build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn="dbname=x user=cv_app")

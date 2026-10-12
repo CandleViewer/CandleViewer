@@ -5,7 +5,7 @@ in-process only (SR-048: no server mode, no port). The optional Postgres
 attachment is `READ_ONLY` as the `cv_ro` role, so analytics can never mutate
 the ledger. No `INSTALL` is issued for the Parquet path (the reader is built
 in), so building the lake views needs no network; the `postgres` extension
-is only installed/loaded when a DSN is supplied (deployment-time).
+is only LOADed (never installed at runtime) when a DSN is supplied (deployment-time).
 """
 
 from __future__ import annotations
@@ -79,10 +79,17 @@ def _checked_ro_dsn(dsn: str) -> str:
 
 
 def build_views(db_path: Path, registry: DatasetRegistry, *, pg_dsn: str | None = None) -> None:
-    """(Re)create every cold-tier view in `db_path` (idempotent)."""
+    """(Re)create every cold-tier view in `db_path` (idempotent).
+
+    The DSN is validated before DuckDB is even opened, so a refused DSN never
+    touches extensions or the network. The `postgres` extension is only ever
+    LOADed (never INSTALLed at runtime): the deployment image must preinstall it.
+    """
+    checked_dsn = _checked_ro_dsn(pg_dsn) if pg_dsn else None
     con = duckdb.connect(str(db_path))
     try:
         con.execute("SET TimeZone = 'UTC'")
+        con.execute("SET autoinstall_known_extensions = false")
         for view_name, stream in VIEW_STREAMS.items():
             if not _create_parquet_view(con, view_name, registry.dataset_glob(stream)):
                 # Not yet exported: a typed empty view so queries return 0 rows.
@@ -101,11 +108,10 @@ def build_views(db_path: Path, registry: DatasetRegistry, *, pg_dsn: str | None 
             oms_ok[view_name] = _create_parquet_view(con, view_name, glob)
 
         journal_parts = ["SELECT * FROM journal_cold"] if oms_ok["journal_cold"] else []
-        if pg_dsn:
-            con.execute("INSTALL postgres")
-            con.execute("LOAD postgres")
+        if checked_dsn:
+            con.execute("LOAD postgres")  # preinstalled in the image; no runtime INSTALL
             con.execute("DETACH DATABASE IF EXISTS pg")
-            dsn = _checked_ro_dsn(pg_dsn)
+            dsn = checked_dsn
             # ATTACH has no bind params (DuckDB grammar); DSN validated above
             # and emitted as an escaped string literal.
             attach = " ".join(
