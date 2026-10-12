@@ -49,6 +49,9 @@ class ReadOnlyGate:
         self._reason_code: str | None = None
         self._reason_text: str | None = None
         self._listeners: list[GateListener] = []
+        # E27-T02: a sticky (reason_code, reason_text) set by `latch()`; while set, the gate
+        # cannot be cleared and its published reason cannot be replaced.
+        self._latched_reason: tuple[str, str] | None = None
 
     def subscribe(self, listener: GateListener) -> None:
         """Register a callback invoked with `(is_read_only, reason_code,
@@ -81,8 +84,19 @@ class ReadOnlyGate:
                     reason_code,
                 )
 
+    def latch(self, *, reason_code: str, reason_text: str) -> None:
+        """Trip permanently for this process (E27-T02: KEK unavailable). Overrides any current
+        reason; a later passing mesh self-check cannot clear it. Recovery is a restart."""
+        with self._lock:
+            self._latched_reason = (reason_code, reason_text)
+            self._tripped = True
+            self._reason_code, self._reason_text = reason_code, reason_text
+        self._notify()
+
     def trip(self, *, reason_code: str, reason_text: str) -> None:
         with self._lock:
+            if self._latched_reason is not None:
+                return  # already closed with the latched reason
             self._tripped = True
             self._reason_code = reason_code
             self._reason_text = reason_text
@@ -103,6 +117,8 @@ class ReadOnlyGate:
                 "tripped until the self-check actually passes."
             )
         with self._lock:
+            if self._latched_reason is not None:
+                return
             self._tripped = False
             self._reason_code = None
             self._reason_text = None
