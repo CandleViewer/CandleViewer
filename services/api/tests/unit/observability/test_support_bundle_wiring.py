@@ -9,13 +9,17 @@ from fastapi.testclient import TestClient
 
 from candleviewer.app import create_app
 from candleviewer.observability.support_bundle_wiring import LogRingBuffer
-from tests.csrf_helpers import arm_csrf
+from tests.csrf_helpers import arm_csrf, wire_fake_sessions
 
 
 def test_route_mounted_and_fails_closed_without_identity() -> None:
     app = create_app()
     client = arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
-    resp = client.post("/admin/support-bundle", json={})
+    # SR-041: no session -> the CSRF guard refuses first (contract: unbound token = 403)
+    refused = client.post("/admin/support-bundle", json={})
+    assert refused.status_code == 403 and refused.json()["code"] == "csrf_token_invalid"
+    wire_fake_sessions(app, "any")
+    resp = client.post("/admin/support-bundle", json={}, headers={"Authorization": "Bearer any"})
     assert resp.status_code == 501  # mounted (not 404), fails closed without identity
 
 
@@ -57,6 +61,12 @@ _SID = uuid.uuid4()  # one session id for both fake bearers (the CSRF token bind
 
 
 class _Sessions:
+    async def peek_access_token(self, token: str) -> Any:  # SR-041 sid binding (#2090)
+        try:
+            return await self.authenticate_access_token(token)
+        except SessionNotFound:
+            return None
+
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         users = {"owner": _OWNER, "mgr": _MGR}
         if token not in users:
@@ -100,10 +110,14 @@ def test_wired_unauthenticated_401_and_manager_403(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     c = _wired(monkeypatch, tmp_path)
-    assert c.post("/admin/support-bundle", json=_body()).status_code == 401
+    anon = c.post("/admin/support-bundle", json=_body())  # SR-041: no session -> CSRF 403
+    assert anon.status_code == 403 and anon.json()["code"] == "csrf_token_invalid"
+    expired = c.post("/admin/support-bundle", json=_body(), headers={"Authorization": "Bearer x"})
+    assert expired.status_code == 403  # unknown bearer: no session to bind the token to
     r = c.post("/admin/support-bundle", json=_body(), headers={"Authorization": "Bearer mgr"})
     assert r.status_code == 403
-    assert _RecEmitter.calls == ["health.diagnostics_exported"]  # denial audited
+    assert _RecEmitter.calls[-1] == "health.diagnostics_exported"  # denial audited
+    assert _RecEmitter.calls.count("auth.csrf_refused") == 2
 
 
 def test_wired_owner_gets_202_then_409_while_running(

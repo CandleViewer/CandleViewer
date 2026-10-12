@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from candleviewer import app as app_module
 from candleviewer.app import create_app
 from candleviewer.auth.errors import SessionNotFound
-from tests.csrf_helpers import arm_csrf
+from tests.csrf_helpers import arm_csrf, wire_fake_sessions
 
 PATH = "/telemetry/frontend"
 _BODY = {
@@ -29,6 +29,12 @@ _SID = uuid.uuid4()
 
 
 class _Sessions:
+    async def peek_access_token(self, token: str) -> Any:  # SR-041 sid binding (#2090)
+        try:
+            return await self.authenticate_access_token(token)
+        except SessionNotFound:
+            return None
+
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         if token != "good":  # noqa: S105 - test token
             raise SessionNotFound("nope")
@@ -45,6 +51,7 @@ class _Identity:
 
 def test_fake_backend_fails_closed_501() -> None:
     app = create_app()
+    wire_fake_sessions(app, "good")
     c = arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
     assert c.post(PATH, json=_BODY, headers={"Authorization": "Bearer good"}).status_code == 501
 
@@ -56,7 +63,8 @@ def test_authenticated_session_gets_204_and_series_recorded(
     app = create_app()
     app.state.app_context.auth._sessions = _Sessions()
     c = arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec, _SID)
-    assert c.post(PATH, json=_BODY).status_code == 401
+    anon = c.post(PATH, json=_BODY)  # SR-041: no session -> CSRF 403 before the route's 401
+    assert anon.status_code == 403 and anon.json()["code"] == "csrf_token_invalid"
     r = c.post(PATH, json=_BODY, headers={"Authorization": "Bearer good"})
     assert r.status_code == 204
     reg = app.state.metrics_facade.registry

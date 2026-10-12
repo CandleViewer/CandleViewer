@@ -91,6 +91,12 @@ _ADMIN_SID = uuid.uuid4()
 
 
 class _Sessions:
+    async def peek_access_token(self, token: str) -> Any:  # SR-041 sid binding (#2090)
+        try:
+            return await self.authenticate_access_token(token)
+        except SessionNotFound:
+            return None
+
     async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         if token != "admin-token":  # noqa: S105
             raise SessionNotFound("x")

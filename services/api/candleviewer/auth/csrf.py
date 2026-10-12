@@ -26,6 +26,7 @@ import hashlib
 import hmac
 import secrets
 import struct
+from collections.abc import Callable
 from enum import StrEnum
 
 CSRF_COOKIE = "__Host-cv_csrf"
@@ -75,27 +76,37 @@ class CsrfCodec:
     """Mint / verify session-bound CSRF tokens.
 
     *key* mints and verifies; *previous_keys* only verify (rotation window).
+    *token_bytes* is the nonce source; production always uses the default
+    `secrets.token_bytes` (CSPRNG). Tests inject a deterministic source at
+    construction; no caller can choose a nonce per token.
     """
 
-    def __init__(self, key: bytes, previous_keys: tuple[bytes, ...] = ()) -> None:
+    def __init__(
+        self,
+        key: bytes,
+        previous_keys: tuple[bytes, ...] = (),
+        *,
+        token_bytes: Callable[[int], bytes] = secrets.token_bytes,
+    ) -> None:
         for k in (key, *previous_keys):
             if len(k) < MIN_KEY_BYTES:
                 raise ValueError(f"CSRF key must be at least {MIN_KEY_BYTES} bytes")
         self._key = key
         self._verify_keys = (key, *(k for k in previous_keys if k != key))
+        self._token_bytes = token_bytes
 
     @staticmethod
     def _mac(key: bytes, session_id: str, nonce: bytes) -> bytes:
         return hmac.new(key, _message(session_id, nonce), hashlib.sha256).digest()
 
-    def issue(self, session_id: str, *, nonce: bytes | None = None) -> str:
-        """A fresh token bound to *session_id*. *nonce* is for tests only."""
+    def issue(self, session_id: str) -> str:
+        """A fresh token bound to *session_id*."""
         if not session_id:
             raise ValueError("session id is required")
-        n = secrets.token_bytes(NONCE_BYTES) if nonce is None else nonce
-        if len(n) != NONCE_BYTES:
-            raise ValueError(f"nonce must be {NONCE_BYTES} bytes")
-        return f"{_b64e(n)}.{_b64e(self._mac(self._key, session_id, n))}"
+        nonce = self._token_bytes(NONCE_BYTES)
+        if len(nonce) != NONCE_BYTES:
+            raise ValueError(f"nonce source must return {NONCE_BYTES} bytes")
+        return f"{_b64e(nonce)}.{_b64e(self._mac(self._key, session_id, nonce))}"
 
     def verify(self, token: str, session_id: str) -> CsrfVerdict:
         """Check *token* against the server-resolved *session_id*."""
@@ -107,7 +118,7 @@ class CsrfCodec:
         if nonce is None or mac is None:
             return CsrfVerdict.BAD_MAC
         ok = False
-        for key in self._verify_keys:  # no early exit: constant work per key set
+        for key in self._verify_keys:  # no early exit: same work for a given key count
             ok |= hmac.compare_digest(mac, self._mac(key, session_id, nonce))
         return CsrfVerdict.OK if ok else CsrfVerdict.WRONG_SESSION
 

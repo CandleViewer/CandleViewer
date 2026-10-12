@@ -1,7 +1,7 @@
-import { apiFetch } from "../lib/http/csrfFetch";
 import { useEffect, useState, type FormEvent, type JSX } from "react";
 import { useNavigate } from "react-router-dom";
 import { getStepUpExpiresAt, recordStepUp } from "../lib/auth/meCache";
+import { apiFetch } from "../lib/http/csrfFetch";
 
 function remainingSeconds(expiresAt: string | null, nowMs: number): number {
   if (!expiresAt) return 0;

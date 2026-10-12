@@ -1,6 +1,7 @@
 /** Thin REST client for the E09-S06 first-run checklist (state is always server-evaluated). */
 
 import { apiFetch } from "../../lib/http/csrfFetch";
+
 export type StepState = "ok" | "pending" | "blocked" | "error" | "not_applicable";
 export interface ChecklistItem {
   readonly key: string;

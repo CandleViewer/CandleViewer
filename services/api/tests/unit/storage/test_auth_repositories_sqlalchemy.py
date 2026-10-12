@@ -302,3 +302,21 @@ def test_build_csrf_codec_dedicated_key_required_on_real_backend_and_rotatable()
     a = build_csrf_codec(Settings())
     b = build_csrf_codec(Settings())
     assert a.verify(b.issue("s"), "s") is CsrfVerdict.WRONG_SESSION
+
+
+def test_build_csrf_codec_refuses_reusing_the_totp_or_recovery_key() -> None:
+    """Review #2238: the CSRF key must be dedicated (contract), checked at startup."""
+    from pydantic import SecretStr
+
+    from candleviewer.app import build_csrf_codec
+
+    for reused in ("11" * 32, "22" * 32):  # _real_settings' TOTP / recovery keys
+        with pytest.raises(ValueError, match="dedicated"):
+            build_csrf_codec(_real_settings(auth_csrf_key_hex=SecretStr(reused)))
+        with pytest.raises(ValueError, match="dedicated"):
+            build_csrf_codec(
+                _real_settings(
+                    auth_csrf_key_hex=SecretStr("cc" * 32),
+                    auth_csrf_previous_key_hex=SecretStr(reused),
+                )
+            )

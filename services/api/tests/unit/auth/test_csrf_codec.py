@@ -25,13 +25,18 @@ sids = st.text(min_size=1, max_size=64)
 nonces = st.binary(min_size=NONCE_BYTES, max_size=NONCE_BYTES)
 
 
+def _fixed(nonce: bytes, key: bytes = K1) -> CsrfCodec:
+    """Codec whose nonce source is pinned (the construction-time test seam)."""
+    return CsrfCodec(key, token_bytes=lambda n: nonce[:n])
+
+
 def _b64(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
 
 def test_token_shape_and_mac_definition_match_the_contract() -> None:
     nonce = bytes(range(32))
-    token = CsrfCodec(K1).issue("sid-1", nonce=nonce)
+    token = _fixed(nonce).issue("sid-1")
     n, m = token.split(".")
     assert n == _b64(nonce)
     msg = struct.pack(">I", 5) + b"sid-1" + nonce  # len(sid) || sid || nonce
@@ -54,7 +59,7 @@ def test_short_keys_empty_sid_and_bad_nonce_are_rejected() -> None:
     with pytest.raises(ValueError):
         CsrfCodec(K1).issue("")
     with pytest.raises(ValueError):
-        CsrfCodec(K1).issue("s", nonce=b"x")
+        CsrfCodec(K1, token_bytes=lambda _n: b"x").issue("s")
     assert CsrfCodec(K1).verify(CsrfCodec(K1).issue("s"), "") is CsrfVerdict.BAD_MAC
 
 
@@ -74,14 +79,14 @@ def test_tokens_equal_is_exact_and_rejects_non_ascii() -> None:
 
 @given(sid=sids, nonce=nonces)
 def test_roundtrip_verifies_for_its_own_session(sid: str, nonce: bytes) -> None:
-    assert CsrfCodec(K1).verify(CsrfCodec(K1).issue(sid, nonce=nonce), sid) is CsrfVerdict.OK
+    assert CsrfCodec(K1).verify(_fixed(nonce).issue(sid), sid) is CsrfVerdict.OK
 
 
 @given(a=sids, b=sids, nonce=nonces)
 def test_token_never_verifies_for_another_session(a: str, b: str, nonce: bytes) -> None:
     if a == b:
         return
-    token = CsrfCodec(K1).issue(a, nonce=nonce)
+    token = _fixed(nonce).issue(a)
     assert CsrfCodec(K1).verify(token, b) is CsrfVerdict.WRONG_SESSION
 
 
@@ -90,16 +95,15 @@ def test_length_prefix_prevents_resplitting_sid_and_nonce(
     prefix: str, rest: str, nonce: bytes
 ) -> None:
     """(sid=prefix+rest, nonce) and (sid=prefix, nonce'=rest||nonce[..]) never share a MAC."""
-    codec = CsrfCodec(K1)
-    t1 = codec.issue(prefix + rest, nonce=nonce)
+    t1 = _fixed(nonce).issue(prefix + rest)
     shifted = (rest.encode() + nonce)[:NONCE_BYTES]
-    t2 = codec.issue(prefix, nonce=shifted)
+    t2 = _fixed(shifted).issue(prefix)
     assert t1.split(".")[1] != t2.split(".")[1]
 
 
 @given(sid=sids, nonce=nonces, pos=st.integers(min_value=0), ch=st.sampled_from("AQgw-_09"))
 def test_any_single_character_change_is_refused(sid: str, nonce: bytes, pos: int, ch: str) -> None:
-    token = CsrfCodec(K1).issue(sid, nonce=nonce)
+    token = _fixed(nonce).issue(sid)
     i = pos % len(token)
     if token[i] in (ch, "."):
         return
@@ -114,6 +118,18 @@ def test_arbitrary_input_never_verifies_and_never_raises(junk: str, sid: str) ->
 
 @given(sid=sids, nonce=nonces)
 def test_non_canonical_base64_is_bad_mac(sid: str, nonce: bytes) -> None:
-    token = CsrfCodec(K1).issue(sid, nonce=nonce)
+    token = _fixed(nonce).issue(sid)
     assert CsrfCodec(K1).verify(token + "=", sid) is CsrfVerdict.BAD_MAC
     assert CsrfCodec(K1).verify(token.replace(".", ".."), sid) is CsrfVerdict.BAD_MAC
+
+
+def test_issue_takes_no_caller_chosen_nonce() -> None:
+    """Security review #2238: the nonce source is fixed at construction (CSPRNG
+    by default); `issue()` has no per-call nonce parameter."""
+    import inspect
+
+    assert list(inspect.signature(CsrfCodec.issue).parameters) == ["self", "session_id"]
+    import secrets
+
+    default = inspect.signature(CsrfCodec.__init__).parameters["token_bytes"].default
+    assert default is secrets.token_bytes

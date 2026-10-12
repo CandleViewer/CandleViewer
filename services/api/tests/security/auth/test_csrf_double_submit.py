@@ -28,6 +28,7 @@ from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
+_CODEC_OTHER = CsrfCodec(b"\x09" * 32)  # an attacker's own key: never verifies here
 _PW = "pw-canary-csrf-7"
 _ORIGIN = "https://app.example.test"
 _T0 = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
@@ -253,16 +254,44 @@ def test_malformed_token_is_refused_as_bad_mac(stack: _Stack, bad: str) -> None:
     _assert_refused(stack, out, "bad_mac")
 
 
-def test_forged_unbound_token_without_session_never_reaches_a_state_change(
-    stack: _Stack,
-) -> None:
-    """header == cookie with a syntactically valid but unsigned token, no bearer."""
-    forged = "A" * 43 + "." + "A" * 43  # canonical shape, never signed
+def test_forged_unbound_token_without_session_is_refused(stack: _Stack) -> None:
+    """Contract: header == cookie alone is never sufficient. A canonical-shaped but
+    unsigned token with no session is refused (403), not passed to the route."""
+    forged = "A" * 43 + "." + "A" * 43
     stack.client.cookies.clear()
     out = stack.client.post(
         "/auth/logout", headers={CSRF_HEADER: forged}, cookies={CSRF_COOKIE: forged}
     )
-    assert out.status_code == 401  # no session resolved: the route refuses itself
+    _assert_refused(stack, out, "wrong_session", forged)
+
+
+def test_expired_access_token_still_gets_its_mac_verified_then_the_route_401(
+    stack: _Stack,
+) -> None:
+    """Option (a): the guard binds to the session an expired bearer was issued for, so a
+    correct token reaches the route (which answers 401, starting the refresh path) and a
+    wrong one is refused 403 before it."""
+    r = stack.login()
+    access, token = _bearer(r), _csrf(r)
+    stack.clock.now += timedelta(minutes=13)  # past the 12-min access-token TTL
+    other = _csrf(stack.login())
+    assert _post_logout(stack, access, token, token).status_code == 401
+    _assert_refused(stack, _post_logout(stack, access, other, other), "wrong_session", other)
+
+
+def test_idle_locked_session_logout_still_works_with_its_token(stack: _Stack) -> None:
+    """`allow_locked`: the guard's session lookup ignores the idle lock, so logout of a
+    locked session (with its own token) is not a CSRF refusal and succeeds."""
+    r = stack.login()
+    portal = stack.client.portal
+    assert portal is not None
+    rec = portal.call(stack.ctx.auth.sessions.authenticate_access_token, _bearer(r))
+    repo = stack.ctx.auth.sessions._repository
+    locked = rec.model_copy(update={"last_seen_at": stack.clock.now - timedelta(hours=1)})
+    repo.sessions[str(rec.id)] = locked
+    assert locked.is_idle_locked(now=stack.clock.now)
+    out = _post_logout(stack, _bearer(r), _csrf(r), _csrf(r))
+    assert out.status_code == 204, out.text
 
 
 @pytest.mark.parametrize(
@@ -329,29 +358,64 @@ def test_exemption_is_exact_not_a_prefix(stack: _Stack) -> None:
         assert out.status_code == 403 and out.json()["code"] == "csrf_token_invalid", path
 
 
-def test_cross_origin_login_attempt_yields_no_usable_csrf_authority(stack: _Stack) -> None:
-    """SR-042: a cross-site page can POST /auth/login (pre-session, exempt) but gets a
-    fresh mfa_required challenge only - no session, no CSRF cookie - and a cross-site
-    write with the victim's session but no readable token is refused."""
+def test_sr042_cross_origin_requests_are_refused_including_login(stack: _Stack) -> None:
+    """SR-042 / SR-152 "wrong Origin": an Origin outside the allow-list, or
+    `Sec-Fetch-Site: cross-site`, is refused on every unsafe method - including the
+    exempt pre-session login - before anything else runs."""
     victim = stack.login()
-    access = _bearer(victim)
+    access, token = _bearer(victim), _csrf(victim)
+    for evil in ({"Origin": "https://evil.example"}, {"Sec-Fetch-Site": "cross-site"}):
+        stack.client.cookies.clear()
+        r = stack.client.post(
+            "/auth/login", headers=evil, json={"identifier": "basiltt", "password": _PW}
+        )
+        _assert_refused(stack, r, "cross_origin")
+        assert CSRF_COOKIE not in r.cookies and "cv_refresh" not in r.cookies
+        # even with the victim's bearer and a valid token pair
+        out = stack.client.post(
+            "/auth/logout",
+            headers={**evil, "Authorization": f"Bearer {access}", CSRF_HEADER: token},
+            cookies={CSRF_COOKIE: token},
+        )
+        _assert_refused(stack, out, "cross_origin", token)
+        rr = stack.client.post(
+            "/auth/refresh",
+            headers={**evil, CSRF_HEADER: token},
+            cookies={"cv_refresh": victim.cookies["cv_refresh"], CSRF_COOKIE: token},
+        )
+        _assert_refused(stack, rr, "cross_origin", token)
+    assert not stack.audit.of("auth.session_refreshed")
+    # same-origin login still works
     stack.client.cookies.clear()
-    evil = {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}
-    r = stack.client.post(
-        "/auth/login", headers=evil, json={"identifier": "basiltt", "password": _PW}
+    ok = stack.client.post(
+        "/auth/login", headers={"Origin": _ORIGIN}, json={"identifier": "basiltt", "password": _PW}
     )
-    assert r.json()["status"] == "mfa_required"
-    assert CSRF_COOKIE not in r.cookies and "cv_refresh" not in r.cookies
-    # the attacker cannot read __Host-cv_csrf, so a forged write carries none
-    out = stack.client.post("/auth/logout", headers={**evil, "Authorization": f"Bearer {access}"})
-    assert out.status_code == 403 and out.json()["code"] == "csrf_token_invalid"
-    # cookie-authenticated refresh from a foreign origin is refused before rotating
-    rr = stack.client.post(
-        "/auth/refresh",
-        headers={**evil, CSRF_HEADER: _csrf(victim)},
-        cookies={"cv_refresh": victim.cookies["cv_refresh"], CSRF_COOKIE: _csrf(victim)},
-    )
-    assert rr.status_code == 403
+    assert ok.json()["status"] == "mfa_required"
+
+
+def test_off_mesh_unsafe_request_gets_the_mesh_403_and_no_csrf_audit(stack: _Stack) -> None:
+    """Order: Correlation -> MeshOnly -> Csrf. Off-mesh traffic never reaches a session
+    lookup or an `auth.csrf_refused` write."""
+    app = stack.client.app
+    off = TestClient(app, base_url=_ORIGIN, client=("203.0.113.9", 4000))  # type: ignore[arg-type]
+    r = off.post("/auth/logout", headers={"Authorization": "Bearer x"})
+    assert r.status_code == 403 and r.json() == {"detail": "Forbidden"}
+    assert not stack.audit.of("auth.csrf_refused")
+
+
+def test_middleware_order_is_correlation_mesh_csrf() -> None:
+    from candleviewer.api.csrf import CsrfMiddleware
+    from candleviewer.net import MeshOnlyMiddleware
+    from candleviewer.observability.correlation import CorrelationMiddleware
+
+    order = [m.cls for m in appmod.create_app().user_middleware]  # outermost first
+    pos = {c: order.index(c) for c in (CorrelationMiddleware, MeshOnlyMiddleware, CsrfMiddleware)}
+    assert pos[CorrelationMiddleware] < pos[MeshOnlyMiddleware] < pos[CsrfMiddleware]
+    assert order[: pos[CsrfMiddleware] + 1][-3:] == [
+        CorrelationMiddleware,
+        MeshOnlyMiddleware,
+        CsrfMiddleware,
+    ]
 
 
 # -- lifecycle ------------------------------------------------------------------------
@@ -475,3 +539,130 @@ def test_audit_sink_down_still_refuses(stack: _Stack) -> None:
     stack.ctx.audit._writer = _Down()
     out = _post_logout(stack, _bearer(r), None, None)
     assert out.status_code == 403 and out.json()["code"] == "csrf_token_invalid"
+
+
+# -- review #2238 regressions --------------------------------------------------------------
+
+
+def test_blocker_refresh_with_trailing_newline_path_is_refused_and_does_not_rotate(
+    stack: _Stack,
+) -> None:
+    """`POST /auth/refresh%0A` (Starlette's `$` tolerates a trailing newline) used to skip
+    the binding. Now: 400 at the edge, and even a plain path is bound by the route."""
+    victim = stack.login()
+    forged = _CODEC_OTHER.issue("anything")
+    refresh = victim.cookies["cv_refresh"]
+    for path in ("/auth/refresh%0A", "/api/v1/auth/refresh%0A"):
+        stack.client.cookies.clear()
+        r = stack.client.post(
+            path,
+            headers={"Origin": _ORIGIN, CSRF_HEADER: forged},
+            cookies={"cv_refresh": refresh, CSRF_COOKIE: forged},
+        )
+        assert r.status_code == 400, (path, r.text)
+    assert not stack.audit.of("auth.session_refreshed")
+
+
+def test_blocker_padded_refresh_body_with_forged_token_is_refused_and_does_not_rotate(
+    stack: _Stack,
+) -> None:
+    """A refresh body padded past the old 4 KiB peek used to resolve 'no session' and pass.
+    The route now verifies the token against `presented_record.id` itself."""
+    victim = stack.login()
+    stack.client.cookies.clear()
+    refreshed = stack.client.post(
+        "/auth/refresh",
+        headers={"Origin": _ORIGIN, CSRF_HEADER: _csrf(victim)},
+        cookies={"cv_refresh": victim.cookies["cv_refresh"], CSRF_COOKIE: _csrf(victim)},
+    )
+    body_token = refreshed.json()["tokens"].get("refresh_token") or refreshed.cookies["cv_refresh"]
+    forged = _CODEC_OTHER.issue("anything")
+    payload = b'{"refresh_token": "' + body_token.encode() + b'"' + b" " * 5000 + b"}"
+    stack.client.cookies.clear()
+    before = len(stack.audit.of("auth.session_refreshed"))
+    r = stack.client.post(
+        "/auth/refresh",
+        content=payload,
+        headers={"Content-Type": "application/json", CSRF_HEADER: forged},
+        cookies={CSRF_COOKIE: forged},
+    )
+    assert r.status_code == 403 and r.json()["code"] == "csrf_token_invalid", r.text
+    assert len(stack.audit.of("auth.session_refreshed")) == before  # nothing rotated
+    rec = stack.audit.of("auth.csrf_refused")[-1]
+    assert rec["session_id"] is not None  # audited against the refresh token's session
+
+
+def test_refresh_reuse_with_its_valid_token_still_reaches_reuse_detection(stack: _Stack) -> None:
+    """A rotated-out refresh token presented with that session's own token is not swallowed
+    by the guard: the route's family revocation (reuse detection) still runs."""
+    r = stack.login()
+    old_refresh, old_token = r.cookies["cv_refresh"], _csrf(r)
+    stack.client.cookies.clear()
+    ok = stack.client.post(
+        "/auth/refresh",
+        headers={"Origin": _ORIGIN, CSRF_HEADER: old_token},
+        cookies={"cv_refresh": old_refresh, CSRF_COOKIE: old_token},
+    )
+    assert ok.status_code == 200
+    stack.client.cookies.clear()
+    replay = stack.client.post(
+        "/auth/refresh",
+        headers={"Origin": _ORIGIN, CSRF_HEADER: old_token},
+        cookies={"cv_refresh": old_refresh, CSRF_COOKIE: old_token},
+    )
+    assert replay.status_code == 401
+    assert stack.audit.of("auth.refresh_reuse_detected")
+
+
+def test_revoking_another_session_keeps_the_callers_csrf_cookie(stack: _Stack) -> None:
+    me = stack.login()
+    other = stack.login()
+    portal = stack.client.portal
+    assert portal is not None
+    other_rec = portal.call(stack.ctx.auth.sessions.authenticate_access_token, _bearer(other))
+    stack.client.cookies.clear()
+    h = {"Authorization": f"Bearer {_bearer(me)}", CSRF_HEADER: _csrf(me)}
+    out = stack.client.delete(
+        f"/me/sessions/{other_rec.id}", headers=h, cookies={CSRF_COOKIE: _csrf(me)}
+    )
+    assert out.status_code == 204, out.text
+    assert not [c for c in out.headers.get_list("set-cookie") if c.startswith(CSRF_COOKIE)]
+    nxt = _post_logout(stack, _bearer(me), _csrf(me), _csrf(me))
+    assert nxt.status_code == 204  # the caller's next write still succeeds
+
+
+def test_revoking_own_session_expires_the_csrf_cookie(stack: _Stack) -> None:
+    me = stack.login()
+    portal = stack.client.portal
+    assert portal is not None
+    rec = portal.call(stack.ctx.auth.sessions.authenticate_access_token, _bearer(me))
+    stack.client.cookies.clear()
+    h = {"Authorization": f"Bearer {_bearer(me)}", CSRF_HEADER: _csrf(me)}
+    out = stack.client.delete(f"/me/sessions/{rec.id}", headers=h, cookies={CSRF_COOKIE: _csrf(me)})
+    assert out.status_code == 204
+    assert [c for c in out.headers.get_list("set-cookie") if c.startswith(CSRF_COOKIE)]
+
+
+def test_unauthenticated_flood_is_throttled_429_without_audit_rows(stack: _Stack) -> None:
+    stack.client.cookies.clear()
+    codes = [stack.client.post("/auth/logout").status_code for _ in range(25)]
+    assert codes[:20] == [403] * 20 and set(codes[20:]) == {429}
+    assert len(stack.audit.of("auth.csrf_refused")) == 20
+
+
+def test_key_rotation_through_create_app_keeps_open_tabs_working(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic import SecretStr
+
+    from candleviewer.settings import Settings
+
+    old = "ab" * 32
+    s_old = Settings(auth_csrf_key_hex=SecretStr(old))
+    s_new = Settings(
+        auth_csrf_key_hex=SecretStr("cd" * 32), auth_csrf_previous_key_hex=SecretStr(old)
+    )
+    token = appmod.create_app(s_old).state.csrf_codec.issue("sid")
+    rotated = appmod.create_app(s_new).state.csrf_codec
+    assert rotated.verify(token, "sid") is CsrfVerdict.OK
+    assert rotated.issue("sid") != token

@@ -1,66 +1,88 @@
-"""SR-041 double-submit CSRF enforcement at the HTTP edge (#2090).
+"""SR-041 double-submit CSRF and SR-042 Origin enforcement at the HTTP edge (#2090).
 
 Contract: `docs/plan/22-api-openapi.yaml` info "CSRF", `components.parameters.
 CsrfToken`, `components.responses.CsrfTokenInvalid`.
 
-`CsrfMiddleware` is a pure ASGI middleware (no blocking calls). On every
-`POST`/`PUT`/`PATCH`/`DELETE` except the five pre-session operations it
-requires, in order:
+`CsrfMiddleware` is a pure ASGI middleware (no blocking calls) mounted inside
+`MeshOnlyMiddleware`, so off-mesh traffic never reaches it. Every method except
+`GET`/`HEAD`/`OPTIONS`/`TRACE` is state-changing. For those requests, in order:
 
-1. the `X-CSRF-Token` header and the `__Host-cv_csrf` cookie (`missing`);
-2. header == cookie, constant time (`mismatch`);
-3. a well-formed ``<nonce>.<mac>`` token (`bad_mac`);
-4. a session the server resolves itself: the bearer access token's session,
-   or for `POST /auth/refresh` the session bound to the presented refresh
-   token. The MAC must verify for *that* session id (`wrong_session`). A
-   request with no resolvable session is refused too, so header == cookie is
-   never sufficient on its own.
+0. a path containing a control character is refused with 400 before anything
+   else (Starlette's `$` route regex tolerates a trailing newline; exact
+   matching here must never disagree with the router);
+1. SR-042: `Sec-Fetch-Site: cross-site` is refused, and a present `Origin`
+   must be in `Settings.allowed_origins`. This also covers the 5 exempt
+   pre-session operations. A missing `Origin` is allowed (non-browser
+   clients); the double-submit token below is what binds those.
 
-There is no bearer exemption, no flag and no test bypass (C-4.14). A refusal
-is `403 csrf_token_invalid`, an `auth.csrf_refused` audit record (C-2.9) and
-`auth_csrf_refused_total{reason}`; neither the body nor the log nor the audit
-record carries a token or cookie value.
+Then, except for the five pre-session operations (contract "Exempt"):
 
-The cookie helpers are used by the auth/session routers: issue on session
-mint, rotate on refresh, re-issue on `GET /auth/session`, expire on logout.
+2. `X-CSRF-Token` and the `__Host-cv_csrf` cookie are both present (`missing`);
+3. header == cookie, constant time (`mismatch`);
+4. a well-formed ``<nonce>.<mac>`` token (`bad_mac`);
+5. a session the server resolves itself: the session the bearer handle was
+   issued for (looked up even when the access token has expired, so an expired
+   bearer still gets its MAC verified before the route answers 401). The MAC
+   must verify for that session id (`wrong_session`). If no session resolves,
+   or the sessions backend is not wired, the request is refused
+   (`wrong_session`): header == cookie is never sufficient on its own.
+
+`POST /auth/refresh` is the one exception to step 5. Its session is the one
+bound to the presented refresh token, which the route itself loads (after its
+throttles) and must verify with `verify_refresh_csrf()` before it audits or
+rotates. The middleware only does steps 0-4 for that path, so a body the
+middleware cannot read can never weaken the check.
+
+A refusal is `403 csrf_token_invalid` (`detail` never echoes a value),
+`auth_csrf_refused_total{reason}`, and an `auth.csrf_refused` audit record
+(C-2.9) with a bounded path (the matched route template or `(unmatched)`).
+Refusals bound to a session are audited one-for-one. Refusals that resolve no
+session are throttled per source IP. Above the limit the reply is 429 with no
+audit write, which bounds an unauthenticated flood while the metric keeps
+counting. The audit write has a timeout; if it fails or hangs the request is
+still refused. There is no bearer exemption, no flag and no test bypass
+(C-4.14).
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 import re
 from collections.abc import Callable
 from enum import StrEnum
-from http.cookies import CookieError, SimpleCookie
 from typing import Any, Protocol
 
 import structlog
 from starlette.datastructures import Headers
+from starlette.requests import cookie_parser
 from starlette.responses import JSONResponse, Response
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.routing import Match
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerdict, tokens_equal
-from candleviewer.auth.errors import AuthError
 from candleviewer.auth.metrics import auth_csrf_refused_total
 from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.throttle import PerIpLoginThrottle
 
 CSRF_ERROR_CODE = "csrf_token_invalid"
 CSRF_PROBLEM_TYPE = f"https://candleviewer.local/errors/{CSRF_ERROR_CODE}"
 _TITLE = "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session"
-_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 _API_PREFIX = "/api/v1"
-#: The pre-session operations (contract info "CSRF", "Exempt"). POST only.
+#: The five pre-session operations (contract info "CSRF", "Exempt"), POST only.
+#: One invite-token path segment: no `/`, no `%2F`-decoded separators.
 _EXEMPT_PATH = re.compile(
-    r"^/(?:auth/login|auth/mfa/verify|auth/mfa/recovery|invites/[^/]+(?:/confirm)?)$"
+    r"/(?:auth/login|auth/mfa/verify|auth/mfa/recovery|invites/[^/]+|invites/[^/]+/confirm)"
 )
-_REFRESH_PATH = "/auth/refresh"
-_REFRESH_COOKIE = "cv_refresh"
-#: `POST /auth/refresh` bodies are `{"refresh_token": "..."}`; anything larger
-#: cannot name a session and is refused without buffering further (C-2.18).
-_MAX_REFRESH_BODY = 4096
-#: Any non-empty id: used only to run the shape checks of `CsrfCodec.verify`.
-_PROBE_SID = "-"
+REFRESH_PATH = "/auth/refresh"
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_UNMATCHED = "(unmatched)"
+#: Unauthenticated refusals per source IP per window before the guard stops
+#: writing audit records and answers 429 (session-bound refusals are not capped).
+ANON_REFUSALS_PER_WINDOW = 20
+ANON_REFUSAL_WINDOW_S = 60.0
+AUDIT_TIMEOUT_S = 2.0
 
 
 class CsrfRefusal(StrEnum):
@@ -70,6 +92,7 @@ class CsrfRefusal(StrEnum):
     MISMATCH = "mismatch"
     BAD_MAC = "bad_mac"
     WRONG_SESSION = "wrong_session"
+    CROSS_ORIGIN = "cross_origin"
 
 
 _DETAIL = {
@@ -77,15 +100,12 @@ _DETAIL = {
     CsrfRefusal.MISMATCH: "X-CSRF-Token header does not match the __Host-cv_csrf cookie.",
     CsrfRefusal.BAD_MAC: "X-CSRF-Token is malformed.",
     CsrfRefusal.WRONG_SESSION: "X-CSRF-Token is not bound to the current session.",
+    CsrfRefusal.CROSS_ORIGIN: "Cross-origin state-changing request refused.",
 }
 
 
 class SessionsLike(Protocol):
-    async def authenticate_access_token(
-        self, raw_access_token: str, *, touch: bool = False, allow_locked: bool = False
-    ) -> SessionRecord: ...
-
-    async def peek_refresh(self, raw_refresh_token: str) -> SessionRecord | None: ...
+    async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None: ...
 
 
 class AuditEmitterLike(Protocol):
@@ -103,10 +123,15 @@ def route_path(path: str) -> str:
     return path
 
 
+def is_unsafe(method: str) -> bool:
+    return method.upper() not in _SAFE_METHODS
+
+
 def is_exempt(method: str, path: str) -> bool:
-    if method.upper() not in _UNSAFE_METHODS:
+    """True for safe methods and the five pre-session POSTs (exact match)."""
+    if not is_unsafe(method):
         return True
-    return method.upper() == "POST" and _EXEMPT_PATH.match(route_path(path)) is not None
+    return method.upper() == "POST" and _EXEMPT_PATH.fullmatch(route_path(path)) is not None
 
 
 def set_csrf_cookie(response: Response, token: str, *, max_age: int) -> None:
@@ -134,17 +159,25 @@ def csrf_problem(reason: CsrfRefusal) -> JSONResponse:
     )
 
 
+def verify_refresh_csrf(
+    codec: CsrfCodec, header: str | None, cookie: str | None, session_id: str
+) -> CsrfRefusal | None:
+    """SR-041 check for `POST /auth/refresh`, run by the route against the exact
+    session it is about to rotate. `None` means OK."""
+    if not header or not cookie:
+        return CsrfRefusal.MISSING
+    if not tokens_equal(header, cookie):
+        return CsrfRefusal.MISMATCH
+    verdict = codec.verify(header, session_id)
+    if verdict is CsrfVerdict.OK:
+        return None
+    return CsrfRefusal.BAD_MAC if verdict is CsrfVerdict.BAD_MAC else CsrfRefusal.WRONG_SESSION
+
+
 def _cookies(headers: Headers) -> dict[str, str]:
-    jar: SimpleCookie = SimpleCookie()
-    out: dict[str, str] = {}
-    for raw in headers.getlist("cookie"):
-        try:
-            jar.load(raw)
-        except CookieError:
-            return out  # malformed Cookie header: treated as no cookie at all (fails closed)
-    for name, morsel in jar.items():
-        out[name] = morsel.value
-    return out
+    """Same lenient parser Starlette uses for `Request.cookies`, so the guard and
+    the routes (e.g. the `GET /auth/session` re-issue) always agree."""
+    return cookie_parser(headers.get("cookie", ""))
 
 
 def _bearer(headers: Headers) -> str | None:
@@ -152,8 +185,15 @@ def _bearer(headers: Headers) -> str | None:
     return value.strip() or None if scheme.lower() == "bearer" else None
 
 
+def _origin_refused(headers: Headers, allowed: frozenset[str]) -> bool:
+    if headers.get("sec-fetch-site", "").lower() == "cross-site":
+        return True
+    origin = headers.get("origin")
+    return origin is not None and origin.rstrip("/") not in allowed
+
+
 class CsrfMiddleware:
-    """Pure ASGI SR-041 guard; see the module docstring."""
+    """Pure ASGI SR-041/SR-042 guard; see the module docstring."""
 
     def __init__(
         self,
@@ -162,65 +202,77 @@ class CsrfMiddleware:
         codec: CsrfCodec,
         sessions: Callable[[], SessionsLike | None],
         audit: AuditEmitterLike,
+        allowed_origins: frozenset[str],
+        anon_throttle: PerIpLoginThrottle | None = None,
+        audit_timeout_s: float = AUDIT_TIMEOUT_S,
     ) -> None:
         self._app = app
         self._codec = codec
         self._sessions = sessions
         self._audit = audit
+        self._allowed = allowed_origins
+        self._anon = anon_throttle or PerIpLoginThrottle(
+            max_attempts=ANON_REFUSALS_PER_WINDOW, window_s=ANON_REFUSAL_WINDOW_S
+        )
+        self._audit_timeout_s = audit_timeout_s
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or is_exempt(scope["method"], scope["path"]):
+        if scope["type"] != "http" or not is_unsafe(scope["method"]):
             await self._app(scope, receive, send)
             return
+        path: str = scope["path"]
+        if _CONTROL.search(path):
+            await _bad_path(scope, receive, send)
+            return
         headers = Headers(scope=scope)
-        cookies = _cookies(headers)
+        if _origin_refused(headers, self._allowed):
+            await self._refuse(scope, receive, send, CsrfRefusal.CROSS_ORIGIN, None)
+            return
+        if is_exempt(scope["method"], path):
+            await self._app(scope, receive, send)
+            return
         header = headers.get(CSRF_HEADER)
-        cookie = cookies.get(CSRF_COOKIE)
+        cookie = _cookies(headers).get(CSRF_COOKIE)
         if not header or not cookie:
             await self._refuse(scope, receive, send, CsrfRefusal.MISSING, None)
             return
         if not tokens_equal(header, cookie):
             await self._refuse(scope, receive, send, CsrfRefusal.MISMATCH, None)
             return
-        record, receive = await self._resolve(scope, receive, headers, cookies)
-        if record is None:
-            # No session resolves: the request holds no session authority (no
-            # ambient credential exists besides `cv_refresh`, resolved above)
-            # and the route answers 401 itself, which keeps the client's
-            # 401 -> refresh path intact. The token must still be well formed.
-            if self._codec.verify(header, _PROBE_SID) is CsrfVerdict.BAD_MAC:
-                await self._refuse(scope, receive, send, CsrfRefusal.BAD_MAC, None)
-                return
+        if self._codec.verify(header, "-") is CsrfVerdict.BAD_MAC:  # shape only
+            await self._refuse(scope, receive, send, CsrfRefusal.BAD_MAC, None)
+            return
+        if route_path(path) == REFRESH_PATH and scope["method"] == "POST":
+            # Bound to the refresh token's session: verified by the route itself.
             await self._app(scope, receive, send)
             return
-        verdict = self._codec.verify(header, str(record.id))
-        if verdict is not CsrfVerdict.OK:
-            reason = (
-                CsrfRefusal.BAD_MAC if verdict is CsrfVerdict.BAD_MAC else CsrfRefusal.WRONG_SESSION
-            )
-            await self._refuse(scope, receive, send, reason, record)
+        record = await self._resolve(headers)
+        if record is None:
+            await self._refuse(scope, receive, send, CsrfRefusal.WRONG_SESSION, None)
+            return
+        if self._codec.verify(header, str(record.id)) is not CsrfVerdict.OK:
+            await self._refuse(scope, receive, send, CsrfRefusal.WRONG_SESSION, record)
             return
         await self._app(scope, receive, send)
 
-    async def _resolve(
-        self, scope: Scope, receive: Receive, headers: Headers, cookies: dict[str, str]
-    ) -> tuple[SessionRecord | None, Receive]:
+    async def _resolve(self, headers: Headers) -> SessionRecord | None:
         sessions = self._sessions()
-        if sessions is None:
-            return None, receive
-        if route_path(scope["path"]) == _REFRESH_PATH:
-            raw = cookies.get(_REFRESH_COOKIE)
-            if not raw:
-                raw, receive = await _refresh_token_from_body(receive)
-            return (await sessions.peek_refresh(raw) if raw else None), receive
         token = _bearer(headers)
-        if token is None:
-            return None, receive
-        try:
-            # allow_locked: no touch, no state change; logout must work while locked.
-            return await sessions.authenticate_access_token(token, allow_locked=True), receive
-        except AuthError:
-            return None, receive
+        if sessions is None or token is None:
+            return None
+        return await sessions.peek_access_token(token)
+
+    def _route_template(self, scope: Scope) -> str:
+        """Bounded audit/log path: the matched route template, never raw input."""
+        app = scope.get("app")
+        for route in getattr(getattr(app, "router", None), "routes", ()):
+            matches = getattr(route, "matches", None)
+            if matches is None:
+                continue
+            match, _ = matches(scope)
+            if match is Match.FULL:
+                return str(getattr(route, "path", _UNMATCHED))
+        return _UNMATCHED
 
     async def _refuse(
         self,
@@ -233,53 +285,60 @@ class CsrfMiddleware:
         auth_csrf_refused_total.labels(reason=reason.value).inc()
         client = scope.get("client")
         ip = client[0] if client else None
-        path = route_path(scope["path"])
-        _log().warning("auth.csrf_refused", reason=reason.value, method=scope["method"], path=path)
+        path = self._route_template(scope)
+        log = _log()
+        if record is None:
+            key = ip or "(unknown)"
+            if self._anon.is_blocked(key):
+                log.warning("auth.csrf_refused.throttled", reason=reason.value, path=path)
+                await _throttled(self._anon.retry_after_s(key))(scope, receive, send)
+                return
+            self._anon.record_failure(key)
+        log.warning("auth.csrf_refused", reason=reason.value, method=scope["method"], path=path)
         try:
-            await self._audit.emit(
-                "auth.csrf_refused",
-                actor_label=str(record.user_id) if record is not None else "(unknown)",
-                actor_user_id=record.user_id if record is not None else None,
-                actor_ip=ip,
-                session_id=record.id if record is not None else None,
-                outcome=AuditOutcome.DENIED,
-                severity=Severity.WARNING,
-                reason=reason.value,
-                after_state={"method": scope["method"], "path": path},
-            )
+            async with asyncio.timeout(self._audit_timeout_s):
+                await self._audit.emit(
+                    "auth.csrf_refused",
+                    actor_label=str(record.user_id) if record is not None else "(unknown)",
+                    actor_user_id=record.user_id if record is not None else None,
+                    actor_ip=ip,
+                    session_id=record.id if record is not None else None,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason=reason.value,
+                    after_state={"method": scope["method"], "path": path},
+                )
         except Exception:
-            # The request is refused regardless (fail closed); only the record is lost.
-            _log().error("auth.csrf_refused.audit_unavailable", reason=reason.value)
+            # Fail closed: the request is refused regardless; only the record is lost.
+            auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
+            log.error("auth.csrf_refused.audit_unavailable", reason=reason.value)
         await csrf_problem(reason)(scope, receive, send)
 
 
-async def _refresh_token_from_body(receive: Receive) -> tuple[str | None, Receive]:
-    """Read at most `_MAX_REFRESH_BODY` bytes of a refresh body to find
-    `refresh_token`; every consumed message is replayed to the route unchanged."""
-    consumed: list[Message] = []
-    size = 0
-    complete = False
-    while not complete and size <= _MAX_REFRESH_BODY:
-        message = await receive()
-        consumed.append(message)
-        if message["type"] != "http.request":
-            break
-        size += len(message.get("body", b""))
-        complete = not message.get("more_body", False)
+def _throttled(retry_after: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={
+            "type": "https://candleviewer.local/errors/rate_limited",
+            "title": "Per-user API rate limit exceeded",
+            "status": 429,
+            "code": "rate_limited",
+            "detail": "Too many refused state-changing requests.",
+        },
+        headers={"Retry-After": str(retry_after)},
+        media_type="application/problem+json",
+    )
 
-    async def replay() -> Message:
-        if consumed:
-            return consumed.pop(0)
-        return await receive()
 
-    if not complete or size > _MAX_REFRESH_BODY:
-        return None, replay
-    buffered = b"".join(m.get("body", b"") for m in consumed if m["type"] == "http.request")
-    try:
-        parsed = json.loads(buffered) if buffered else None
-    except ValueError:
-        parsed = None
-    token: str | None = None
-    if isinstance(parsed, dict) and isinstance(parsed.get("refresh_token"), str):
-        token = parsed["refresh_token"] or None
-    return token, replay
+async def _bad_path(scope: Scope, receive: Receive, send: Send) -> None:
+    await JSONResponse(
+        status_code=400,
+        content={
+            "type": "https://candleviewer.local/errors/validation_failed",
+            "title": "Request body or parameters failed schema validation",
+            "status": 400,
+            "code": "validation_failed",
+            "detail": "Request path contains a control character.",
+        },
+        media_type="application/problem+json",
+    )(scope, receive, send)

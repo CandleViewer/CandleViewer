@@ -114,6 +114,12 @@ class _Sessions:
     async def revoke(self, session_id: str, *, reason: str) -> None:
         return None
 
+    async def peek_access_token(self, token: str) -> Any:  # SR-041 sid binding (#2090)
+        try:
+            return await self.authenticate_access_token(token)
+        except SessionNotFound:
+            return None
+
     async def authenticate_access_token(
         self, token: str, *, touch: bool = False, allow_locked: bool = False
     ) -> Any:

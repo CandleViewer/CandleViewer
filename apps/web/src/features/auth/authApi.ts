@@ -1,6 +1,7 @@
 /** Thin REST client for E09-S01 sign-in (`docs/plan/22-api-openapi.yaml` /auth/login, /auth/password). */
 
 import { apiFetch } from "../../lib/http/csrfFetch";
+
 const BASE = "/api/v1";
 
 export type LoginOutcome =

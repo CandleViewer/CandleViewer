@@ -235,7 +235,12 @@ repository's secret settings, never from an agent session.
   `__Host-cv_csrf` token MAC; required on live or `storage_backend=real`. Rotate: set the old value
   as `auth_csrf_previous_key_hex` (verify-only) and a new `auth_csrf_key_hex`, restart, then drop the
   previous key after one refresh lifetime (12 h). A dropped or changed key only forces clients to
-  re-fetch the cookie via `GET /auth/session`; no data is lost.
+  re-fetch the cookie via `GET /auth/session`; no data is lost. Startup refuses a CSRF key (current
+  or previous) equal to the TOTP or recovery key. Alerts: `CsrfRefusalsHigh`,
+  `CsrfRefusalAuditUnavailable` (`docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh`).
+- **SR-042 origins (`CV_ALLOWED_ORIGINS`).** The CSRF guard refuses any state-changing request
+  whose `Origin` is not in this list (or that carries `Sec-Fetch-Site: cross-site`). Set it to every
+  app origin (localhost dev port, tailnet hostname, the Electron origin) before rollout.
 - **Unit and contract tests** use in-process fakes and keys generated inside the test process; there
   is no shared credential to rotate.
 - **Secret scanning.** If a fixture secret leaks, follow `SECURITY.md` and rotate immediately.

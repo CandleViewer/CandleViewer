@@ -1,6 +1,7 @@
 /** Thin REST client for E09-S05 invites (`docs/plan/22-api-openapi.yaml`). */
 
 import { apiFetch } from "../../lib/http/csrfFetch";
+
 const BASE = "/api/v1";
 
 export interface ApiResult<T> {

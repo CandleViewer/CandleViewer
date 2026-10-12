@@ -35,15 +35,21 @@ from typing import Annotated, Any, Protocol
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse, Response
 
-from candleviewer.api.csrf import clear_csrf_cookie, set_csrf_cookie
+from candleviewer.api.csrf import (
+    clear_csrf_cookie,
+    csrf_problem,
+    set_csrf_cookie,
+    verify_refresh_csrf,
+)
 from candleviewer.audit.models import AuditOutcome, Severity
-from candleviewer.auth.csrf import CSRF_COOKIE, CsrfCodec, CsrfVerdict
+from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerdict
 from candleviewer.auth.errors import (
     RefreshReuseDetected,
     SessionIdleLocked,
     SessionNotFound,
     SessionRevoked,
 )
+from candleviewer.auth.metrics import auth_csrf_refused_total
 from candleviewer.auth.models import (
     MintedSession,
     RefreshOutcome,
@@ -343,6 +349,29 @@ def make_session_router(
         if by_session.is_blocked(session_key):
             return _throttled(by_session.retry_after_s(session_key))
         by_session.record_failure(session_key)
+        if csrf is not None:
+            # SR-041: validate against the exact session this refresh would rotate,
+            # after the throttles and before any audit write or state change.
+            refusal = verify_refresh_csrf(
+                csrf,
+                request.headers.get(CSRF_HEADER),
+                request.cookies.get(CSRF_COOKIE),
+                str(presented_record.id),
+            )
+            if refusal is not None:
+                auth_csrf_refused_total.labels(reason=refusal.value).inc()
+                try:
+                    await _audit(
+                        "auth.csrf_refused",
+                        record=presented_record,
+                        ip=ip,
+                        outcome=AuditOutcome.DENIED,
+                        severity=Severity.WARNING,
+                        reason=refusal.value,
+                    )
+                except AuditUnavailableError:
+                    pass  # refused regardless (fail closed)
+                return csrf_problem(refusal)
         # C-2.9 write-ahead: the audit record is written before `refresh()`
         # rotates or revokes anything; if the sink is down we refuse (503)
         # with no state change.
@@ -555,9 +584,9 @@ def make_session_router(
         if revoked is not None:
             await _propagate(revoked.id, "session_revoked")
         response = Response(status_code=204)
-        if session_id == record.id:
+        if session_id == record.id:  # only the caller's own session ends its cookies
             _clear_refresh_cookie(response)
-        clear_csrf_cookie(response)
+            clear_csrf_cookie(response)
         return response
 
     return router
