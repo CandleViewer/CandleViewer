@@ -19,6 +19,8 @@ from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, han
 from candleviewer.ws.revocation import RevocationHub
 
 USER = uuid.uuid4()
+ORIGIN = "http://testserver"  # §2.5: allow-listed and sent on every upgrade
+ALLOWED = frozenset({ORIGIN})
 
 
 async def _resolve(uid: uuid.UUID) -> PrincipalSnapshot:
@@ -36,10 +38,14 @@ def _client(**kw: Any) -> TestClient:
     reg = ConnectionRegistry(_resolve, lambda: 1)
     app.include_router(
         make_ws_router(
-            authenticate=_authenticate, registry=reg, revocation_hub=RevocationHub(), **kw
+            authenticate=_authenticate,
+            registry=reg,
+            revocation_hub=RevocationHub(),
+            allowed_origins=ALLOWED,
+            **kw,
         )
     )
-    return TestClient(app)
+    return TestClient(app, headers={"origin": ORIGIN})
 
 
 def _hello(ws: Any) -> None:
@@ -184,14 +190,19 @@ def test_gateway_evict_hook_sends_slow_consumer_and_closes_4429() -> None:
     app = FastAPI()
     reg = ConnectionRegistry(_resolve, lambda: 1)
     app.include_router(
-        make_ws_router(authenticate=_authenticate, registry=reg, revocation_hub=RevocationHub())
+        make_ws_router(
+            authenticate=_authenticate,
+            registry=reg,
+            revocation_hub=RevocationHub(),
+            allowed_origins=ALLOWED,
+        )
     )
-    client = TestClient(app)
+    client = TestClient(app, headers={"origin": ORIGIN})
     with client, client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
         _hello(ws)
         ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "ok"}})
         assert ws.receive_json()["t"] == "auth_ok"
-        (_, _, evict) = reg._conns[USER][0]
+        _, _, evict = reg._conns[USER][0]
         assert client.portal is not None
         client.portal.call(evict)
         assert ws.receive_json()["p"]["reason"] == "slow_consumer"

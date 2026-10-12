@@ -54,6 +54,9 @@ _TOKENS = {f"tok-{a}": a for a in ACTORS[:4]}
 NON_CONTRACT = frozenset({"/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json", "/metrics"})
 PUBLIC_OPERATIONAL = NON_CONTRACT | {"/healthz", "/readyz"}
 HTTP = ("get", "put", "post", "delete", "patch")
+#: `23-ws-protocol.md` §2.5: put in `CV_ALLOWED_ORIGINS` and sent by the client on every request,
+#: so a WS upgrade passes the Origin check (REST outcomes are unchanged by an allowed Origin).
+WS_ORIGIN = "http://testserver"
 
 
 def load_contract() -> dict[str, Any]:
@@ -323,6 +326,7 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
 
     mp.setattr(appmod, "build_identity_provider", lambda _settings: _Identity(spec))
     mp.setattr(appmod, "SqlAlchemyAlertRepository", lambda _pg: _AlertRepo())
+    mp.setenv("CV_ALLOWED_ORIGINS", WS_ORIGIN)  # create_app() reads get_settings()
     app = appmod.create_app(
         principal_resolver=resolver,
         user_role_store=users,
@@ -347,7 +351,12 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
     ctx.rules.bind(store=store, audit=audit_adapter(audit))
     ctx.rules.wire_scope(_ScopeSource(spec), "demo", _scope_sink)
     asyncio.run(ctx.rules.start(ctx))
-    client = TestClient(app, client=("127.0.0.1", 50000), raise_server_exceptions=False)
+    client = TestClient(
+        app,
+        client=("127.0.0.1", 50000),
+        raise_server_exceptions=False,
+        headers={"origin": WS_ORIGIN},
+    )
     return World(
         app, client, audit, spec, resolver,
         scope_events=scope_events, step_up=step_up, users=users, rule_store=store,

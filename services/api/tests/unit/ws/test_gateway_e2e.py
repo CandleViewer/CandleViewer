@@ -22,6 +22,7 @@ ADMIN = uuid.uuid4()
 MGR = uuid.uuid4()
 ACC = uuid.uuid4()
 OTHER_ACC = uuid.uuid4()
+ORIGIN = "http://testserver"  # §2.5: in CV_ALLOWED_ORIGINS and sent on every upgrade
 _PERMS = {
     "owner": frozenset(Permission),
     "manager": frozenset({Permission.MARKETDATA_READ, Permission.ORDERS_READ}),
@@ -100,7 +101,8 @@ async def _authenticate(presented: str) -> tuple[str, uuid.UUID]:
 
 
 @pytest.fixture
-def env() -> tuple[TestClient, _World]:
+def env(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, _World]:
+    monkeypatch.setenv("CV_ALLOWED_ORIGINS", ORIGIN)  # create_app() reads get_settings()
     w = _World()
     app = create_app(
         snapshot_loader=w.load,
@@ -133,9 +135,14 @@ def _sub(ws: Any, ch: str, accounts: list[uuid.UUID] | None = None) -> dict[str,
     return result
 
 
+def _ws(client: TestClient) -> Any:
+    """`/ws` upgrade from the allow-listed origin (§2.5)."""
+    return client.websocket_connect("/ws", subprotocols=["cv.v1.json"], headers={"origin": ORIGIN})
+
+
 def test_ws_e2e_permissions_sub_check_and_live_role_change(env: tuple[TestClient, _World]) -> None:
     client, w = env
-    with client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+    with _ws(client) as ws:
         ws.send_json({"t": "hello", "id": "h"})
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "mgr-token"}})
@@ -172,7 +179,7 @@ def test_ws_e2e_bad_token_closes_4401_and_frames_before_auth_refused(
     env: tuple[TestClient, _World],
 ) -> None:
     client, _ = env
-    with client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+    with _ws(client) as ws:
         ws.send_json({"t": "hello", "id": "h"})
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "ping", "id": "p"})
@@ -211,7 +218,7 @@ def test_ws_e2e_last_owner_demotion_409_is_audited(env: tuple[TestClient, _World
 def test_ws_e2e_session_revocation_closes_socket(env: tuple[TestClient, _World]) -> None:
     client, _ = env
     hub = client.app.state.revocation_hub  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
-    with client, client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+    with client, _ws(client) as ws:
         ws.send_json({"t": "hello", "id": "h"})
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "mgr-token"}})

@@ -30,6 +30,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService
+from candleviewer.settings import Settings
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, RevocationHub
 from tests.unit.auth.auth_fakes import FakeUserRepository
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
@@ -39,6 +40,7 @@ _T0 = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
 #: SR-029 says "immediately"; E42-T04 states the product bound as 5 s.
 _SR029_BOUND = timedelta(seconds=5)
 _WS_TIMEOUT_S = 5.0
+_ORIGIN = "http://testserver"  # §2.5: in CV_ALLOWED_ORIGINS and sent on every WS upgrade
 
 
 class _Clock:
@@ -59,7 +61,9 @@ class _Env:
     def __init__(self) -> None:
         self.clock = _Clock()
         self.repo = FakeSessionRepository()
-        self.app = create_app(snapshot_loader=_snapshot, auth_clock=self.clock)
+        self.app = create_app(
+            Settings(allowed_origins=_ORIGIN), snapshot_loader=_snapshot, auth_clock=self.clock
+        )
         auth: Any = self.app.state.app_context.auth
         self.sessions = SessionService(
             self.repo, Hasher(pepper=os.urandom(16).hex()), clock=self.clock
@@ -78,7 +82,7 @@ class _Env:
         self.audit: list[dict[str, Any]] = []
         self.app.state.app_context.audit._writer = self  # stand-in for the started AuditWriter
         self.hub: RevocationHub = self.app.state.revocation_hub
-        self.client = TestClient(self.app, client=("127.0.0.1", 50000))
+        self.client = TestClient(self.app, client=("127.0.0.1", 50000), headers={"origin": _ORIGIN})
 
     async def emit(self, action: str, **kw: Any) -> None:
         self.audit.append({"action": action, **kw})

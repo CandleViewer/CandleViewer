@@ -3,6 +3,9 @@
 One socket = one `_Connection` with exactly one reader and one writer task,
 both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` TG5):
 
+- **Origin** (§2.5, SR-042/SR-183): checked first, against `CV_ALLOWED_ORIGINS`. A
+  `cross-site`/`same-site` fetch or a missing, `null` or unlisted `Origin` is closed
+  `4403` before `accept` (HTTP 403, no `bye`): no negotiation, frame, auth or store access.
 - **Negotiation** (§2.2): the subprotocol is chosen before `accept`; when the
   client offers none we serve -> close `1002` before the handshake completes.
 - **hello -> welcome** (§4.2): any other first frame -> `bye` + `1002`.
@@ -49,12 +52,14 @@ from candleviewer.ws.lifecycle import (
     MAX_CONNECTIONS_PER_USER,
     MAX_PROTOCOL_VIOLATIONS,
     MAX_UNAUTHENTICATED_FRAMES,
+    ORIGIN_FORBIDDEN,
     SHUTDOWN_GRACE_MS,
     ConnEvent,
     InboundRateLimiter,
     Lifecycle,
     Watchdog,
     negotiate_subprotocol,
+    origin_refusal,
     welcome_payload,
 )
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
@@ -348,6 +353,9 @@ def make_ws_router(
     authenticate: Authenticate,
     registry: ConnectionRegistry,
     revocation_hub: RevocationHub,
+    # §2.5 allow-list (`Settings.allowed_origin_set`, shared with REST). No default, so no
+    # caller can build a router that skips the check; an empty set refuses every upgrade.
+    allowed_origins: frozenset[str],
     hub: GatewayHub | None = None,
     audit: AuditEmitter | None = None,
     auth_timeout_s: float = AUTH_TIMEOUT_S,
@@ -588,6 +596,16 @@ def make_ws_router(
 
     @router.websocket(WS_PATH)
     async def ws_endpoint(ws: WebSocket) -> None:
+        # §2.5 (SR-042, SR-183): first of all - before negotiation, `accept`, any frame,
+        # auth or store access. Closing before `accept` refuses the upgrade (HTTP 403).
+        refused = origin_refusal(
+            ws.headers.getlist("origin"), ws.headers.getlist("sec-fetch-site"), allowed_origins
+        )
+        if refused is not None:
+            cv_ws_closes_total.labels(reason=ORIGIN_FORBIDDEN).inc()
+            _log().warning("ws upgrade refused", reason=ORIGIN_FORBIDDEN, check=refused.value)
+            await ws.close(code=int(CLOSE_REASONS[ORIGIN_FORBIDDEN][0]))
+            return
         # §4.3: a token in the URL query string is never read; it is ignored.
         encoding = negotiate_subprotocol(ws.scope.get("subprotocols") or ())
         if encoding is None:
