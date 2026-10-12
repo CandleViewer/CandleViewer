@@ -104,20 +104,23 @@ The server echoes exactly one. A client offering no recognised subprotocol is cl
 
 ### 2.5 Origin check on the upgrade (SR-042, SR-183)
 
-The server checks the upgrade request's `Origin` and `Sec-Fetch-Site` headers before anything else in §2–§4 runs: before subprotocol negotiation (§2.2), before `accept`, and before any frame, auth (§4.3) or store access. The allow-list is the app-origin list REST uses, `CV_ALLOWED_ORIGINS` (SR-042). When it is empty, every upgrade is refused.
+The server checks the upgrade request's `Origin` header against the app-origin allow-list before anything else in §2–§4 runs: before subprotocol negotiation (§2.2), before `accept`, and before any frame, auth (§4.3) or store access. The allow-list is the one REST uses, `CV_ALLOWED_ORIGINS` (SR-042). Each entry must be a serialised origin (`scheme://host[:port]`: lowercase, ASCII host, no path, no default port), and a bad entry fails startup. When the list is empty, every upgrade is refused. An `Origin` matches an entry when it is equal to it once a trailing `/` is dropped. Header names are matched case-insensitively.
 
-| Upgrade request                                                                  | Result            |
-| -------------------------------------------------------------------------------- | ----------------- |
-| `Sec-Fetch-Site: cross-site` or `same-site`                                      | Refused           |
-| No `Origin` header, or more than one                                             | Refused           |
-| `Origin: null` (a sandboxed frame, or a `file:` or `data:` page), even if listed | Refused           |
-| `Origin` not in the allow-list (exact match once trailing `/` is dropped)        | Refused           |
-| `Origin` in the allow-list, and `Sec-Fetch-Site` absent, `same-origin` or `none` | Continues to §2.2 |
+| Upgrade request                                                                  | Result                         |
+| -------------------------------------------------------------------------------- | ------------------------------ |
+| Exactly one `Origin`, in the allow-list, whatever `Sec-Fetch-Site` says          | Continues to §2.2              |
+| No `Origin` header                                                               | Refused (`origin_missing`)     |
+| More than one `Origin` header                                                    | Refused (`origin_not_allowed`) |
+| `Origin: null` (a sandboxed frame, or a `file:` or `data:` page), even if listed | Refused (`origin_null`)        |
+| `Origin` not in the allow-list, with `Sec-Fetch-Site: cross-site` or `same-site` | Refused (`cross_site`)         |
+| `Origin` not in the allow-list, any other `Sec-Fetch-Site`                       | Refused (`origin_not_allowed`) |
 
+- **The allow-list decides.** A listed origin is admitted even on a `cross-site` or `same-site` fetch, so a listed app origin on another site works: the packaged Electron shell's `app://` origin, or a dev page on another port. A foreign page cannot make a browser send a listed `Origin`, so `Sec-Fetch-Site` adds nothing on top of the list. It only labels the refusal of an unlisted origin: `cross_site` is the cross-site WebSocket hijacking signature, while `origin_not_allowed` on a same-origin fetch usually means the list is missing an app origin.
 - **Refusal.** The server closes with `4403` (reason `origin_forbidden`) before `accept`, the same way an off-mesh source is refused. The ASGI server answers the upgrade request with HTTP `403 Forbidden` and the socket never opens. There is no `bye` (S11 applies once a socket is open), and the close code never reaches the client. A browser only sees a failed connection (close event `1006`), so it backs off as for any other failure (§9.2). Every retry is refused the same way.
-- **No exemption for non-browser clients.** The endpoint is same-origin (§2.1), and every supported client is a browser engine, which always sends `Origin` on the upgrade. Load tests and debugging tools MUST send an allowed `Origin` themselves. The packaged Electron shell needs an `app://`-style origin in the list (SR-042), because a `file://` page sends `null`.
+- **No exemption for non-browser clients.** REST accepts a request without `Origin` because the SR-041 token still binds it. The WS upgrade has no second control before `accept`, so here a missing `Origin` is refused. The difference is deliberate (SR-042). The endpoint is same-origin (§2.1), and every supported client is a browser engine, which always sends `Origin` on the upgrade. Any other client MUST send an `Origin` that is already listed for the app: the debugging and third-party clients of §2.2, a future mobile client (the client-agnostic scope note at the top of this document), and the planned k6 WS fan-out load test (C-13.9). Never add a tool-only entry, because `CV_ALLOWED_ORIGINS` also widens the REST CSRF allow-list. A client that cannot send a listed origin needs its own ticketed, token-authenticated path, not an exemption.
+- **Electron.** The packaged shell loads `file://` and would send `null`, which is always refused. Before it opens `/ws`, it must load the UI from a listable origin: an `app://`-style scheme that is in the list, or a same-origin proxy.
 - **Defence in depth.** Authentication is still the first-frame bearer token (§4.3), which a cross-site page cannot read. This check stops a cross-site page from opening a socket at all (cross-site WebSocket hijacking).
-- **Observability.** Each refusal increments `cv_ws_closes_total{reason="origin_forbidden"}` and logs one warning with the bounded cause (`fetch_site`, `origin_missing`, `origin_null` or `origin_not_allowed`), never the header values. No audit record is written: a refused upgrade carries no identity, and its rate is set by the sender.
+- **Observability.** Each refusal increments `cv_ws_closes_total{reason="origin_forbidden"}`, which the `WsOriginRefusalsHigh` alert reads (runbook in `07-release-and-prr.md`). It also logs one `ws upgrade refused` warning with the bounded cause and the source address MeshOnly admitted, never a header value. At most 10 such lines are logged per cause per minute; the next refusal logs one `ws upgrade refusals suppressed` line, and the rest of that minute is only counted. Audit: pending #2269 (a bounded `auth.ws_origin_refused` record).
 
 ---
 
@@ -3346,7 +3349,7 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | E2E (Playwright) | Hidden tab drops throttles; restored tab does not re-snapshot.                                                                                                                                        | C8, §5.4.                                                 |
 | E2E (Playwright) | Kill-switch frame disables the order ticket without a REST round-trip.                                                                                                                                | C12.                                                      |
 | Security         | Token in query string is rejected; expired token closes `4401`.                                                                                                                                       | §4.3.                                                     |
-| Security         | Upgrade with `Sec-Fetch-Site: cross-site`/`same-site`, or a missing, `null` or unlisted `Origin`, is refused before `accept` (`4403`, HTTP `403`); the authenticator is never called.                 | §2.5, S13.                                                |
+| Security         | A missing, duplicated, `null` or unlisted `Origin` is refused before `accept` (`4403`, HTTP `403`) and never reaches auth; a listed `Origin` passes whatever `Sec-Fetch-Site` says.                   | §2.5, S13.                                                |
 | Security         | Manager cannot subscribe to another manager's accounts, even by raw frame.                                                                                                                            | §6.3, arch P8.                                            |
 | Security         | Fuzzed binary bodies never panic the server or the client decoder.                                                                                                                                    | C10, S12.                                                 |
 
