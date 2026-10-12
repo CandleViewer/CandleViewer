@@ -1,0 +1,50 @@
+name: pr-metadata
+
+# #2249 / CONSTITUTION C-9.1 #20: PR size (C-4.8), conventional title (C-4.10), `Closes #N` (C-4.7),
+# dangling `C-x.y` references in the PR text (C-16.4).
+#
+# Its own workflow (precedent: regression-guard.yml) so that title/body/label edits re-run it and,
+# with its own concurrency group, never cancel the main `pr` pipeline. The script reads the LIVE
+# title, body, labels and label events from the API, so a manual re-run never replays a stale payload.
+# The required-check context is `pr-metadata` (job name). Branch protection must list it; only the
+# repo owner can change that.
+#
+# Runs on `pull_request` (never pull_request_target) with a read-only token. The data files the
+# script trusts (.gitattributes, CODEOWNERS) are read from the BASE commit, so the PR under test cannot
+# widen its own exclusions.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-metadata-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-metadata:
+    name: pr-metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Check PR size, title, body and rule references (live PR data)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python tools/ci/check_pr_metadata.py --repo-root .
