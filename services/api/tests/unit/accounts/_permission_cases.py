@@ -3,14 +3,14 @@
 Every JSON case is run through the M13 predicate and `PermissionSnapshot` (unit tests) and through
 the `ak_snapshot_shape` CHECK of migration 0019 (integration test); all three must agree.
 
-Shape: Bybit v5 `GET /v5/user/query-api` reports a key's rights as values inside permission
-groups, e.g. `"Wallet": ["AccountTransfer", "SubMemberTransfer", "Withdraw"]`
-(https://bybit-exchange.github.io/docs/v5/user/apikey-info; SR-030a in
-docs/plan/04-security-program.md). packages/fixtures has no recorded, redacted query-api capture
-yet, so DOCUMENTED is structural: the synthetic accounts fixture's groups plus the three SR-030a
-Wallet rights, nothing else. ROBUSTNESS cases are deliberately not Bybit shapes; they pin case
-and space handling, the empty-group exemption, recursion and fail-closed behaviour, mirroring the
-M2 gate's own tests (E27-T02).
+Shape: the exchange's key-info response (`GET /v5/user/query-api`) reports a key's rights as
+values inside permission groups, e.g. `"Wallet": ["AccountTransfer", "SubMemberTransfer",
+"Withdraw"]` (SR-030a in docs/plan/04-security-program.md; the API doc is cited in
+test_withdraw_transfer_predicate.py). packages/fixtures has no recorded, redacted query-api
+capture yet, so DOCUMENTED is structural: the synthetic accounts fixture's groups plus the three
+SR-030a Wallet rights, nothing else. ROBUSTNESS cases are deliberately not exchange shapes; they
+pin case and space handling, the empty-group exemption, recursion and fail-closed behaviour,
+mirroring the M2 gate's own tests (E27-T02).
 """
 
 from __future__ import annotations

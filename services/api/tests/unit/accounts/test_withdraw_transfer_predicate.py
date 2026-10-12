@@ -2,6 +2,12 @@
 
 Before #2240, `PermissionSnapshot` only looked at a top-level `Withdraw` group, so
 `"Wallet": ["AccountTransfer"]` passed. The refused-case tests below fail on that code.
+
+Shape source: Bybit v5 "Get API Key Information" (`GET /v5/user/query-api`,
+https://bybit-exchange.github.io/docs/v5/user/apikey-info) returns the key's `permissions` as
+groups whose values are the granted rights; SR-030a names the `Wallet` rights to refuse:
+`AccountTransfer`, `SubMemberTransfer`, `Withdraw`. No recorded, redacted capture exists yet, so
+the cases in `_permission_cases.py` are structural.
 """
 
 from __future__ import annotations

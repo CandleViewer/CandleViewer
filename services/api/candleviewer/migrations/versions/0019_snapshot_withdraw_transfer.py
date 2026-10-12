@@ -4,11 +4,11 @@ Revision ID: 0019_snapshot_withdraw_transfer
 Revises: 0017_exchange_accounts_api_keys
 
 Fix forward for 0017, which is immutable (C-5.4). 0017's `ak_snapshot_shape` refused only a
-non-empty top-level `Withdraw` group. Bybit's `GET /v5/user/query-api` reports rights as values
-inside a group (`"Wallet": ["AccountTransfer", "SubMemberTransfer", "Withdraw"]`), and C-2.8 /
-SR-030a refuse transfer rights as well as withdrawal. The new CHECK keeps 0017's expression
-verbatim and adds three SQL/JSON path scans of `permissions`. Each looks for `withdraw` or
-`transfer`, ignoring case, in:
+non-empty top-level `Withdraw` group. The exchange's key-info response (`GET /v5/user/query-api`)
+reports rights as values inside a group (`"Wallet": ["AccountTransfer", "SubMemberTransfer",
+"Withdraw"]`), and C-2.8 / SR-030a refuse transfer rights as well as withdrawal. The new CHECK
+keeps 0017's expression verbatim and adds three SQL/JSON path scans of `permissions`. Each looks
+for `withdraw` or `transfer`, ignoring case, in:
   1. a string at any depth (`"Wallet": ["AccountTransfer"]`);
   2. an object key below the group level;
   3. a group name whose value grants anything (null, "" and [] grant nothing).
@@ -23,8 +23,8 @@ existing row (expected: none). Only then is 0017's constraint dropped and the ne
 into its place, so `ak_snapshot_shape` keeps its name. Alembic runs the revision in one
 transaction, so the scan runs under the ACCESS EXCLUSIVE lock the ADD took; api_keys holds one
 row per stored key, which keeps that short. If VALIDATE fails, a stored key grants withdraw or
-transfer rights: revoke the key at Bybit and remove its row, then upgrade. Never weaken the
-CHECK to get past it.
+transfer rights: revoke the key on the exchange and remove its row, then upgrade. Never weaken
+the CHECK to get past it.
 """
 
 from __future__ import annotations
