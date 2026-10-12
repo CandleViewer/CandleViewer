@@ -16,12 +16,10 @@ accident.
 
 from __future__ import annotations
 
-import ipaddress
 import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -59,43 +57,6 @@ class RecorderWalDirError(ValueError):
     """`CV_RECORDER_WAL_DIR` is unsafe (relative, `..`, symlink, or outside the data dir)."""
 
     code = "recorder_wal_dir_invalid"
-
-
-#: Ports a browser leaves out of a serialised origin (WHATWG URL "special" schemes).
-_DEFAULT_PORTS: dict[str, int] = {"http": 80, "https": 443, "ws": 80, "wss": 443}
-_ORIGIN_SCHEME_RE = re.compile(r"[a-z][a-z0-9+.-]*")
-_ORIGIN_LABEL = r"[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?"
-_ORIGIN_HOST_RE = re.compile(rf"{_ORIGIN_LABEL}(?:\.{_ORIGIN_LABEL})*\.?")
-
-
-def _is_origin_host(host: str) -> bool:
-    if ":" in host:  # IPv6 literal; `urlsplit` drops the brackets
-        try:
-            return str(ipaddress.IPv6Address(host)) == host
-        except ValueError:
-            return False
-    return _ORIGIN_HOST_RE.fullmatch(host) is not None
-
-
-def is_serialised_origin(entry: str) -> bool:
-    """#2239 (SR-042): True when `entry` is spelled exactly as a browser serialises an
-    origin: `scheme://host[:port]` with a lowercase scheme and host, an ASCII (punycode)
-    host or IP literal, no userinfo/path/query/fragment, and no explicit default port.
-    `null` and wildcards never qualify."""
-    try:
-        parts = urlsplit(entry)
-        port = parts.port
-    except ValueError:
-        return False
-    host = parts.hostname or ""
-    if not _ORIGIN_SCHEME_RE.fullmatch(parts.scheme) or not _is_origin_host(host):
-        return False
-    if "@" in parts.netloc or parts.path or parts.query or parts.fragment:
-        return False
-    if port is not None and (port == 0 or _DEFAULT_PORTS.get(parts.scheme) == port):
-        return False
-    netloc = f"[{host}]" if ":" in host else host
-    return entry == f"{parts.scheme}://{netloc}" + ("" if port is None else f":{port}")
 
 
 class Settings(BaseSettings):
@@ -160,8 +121,7 @@ class Settings(BaseSettings):
     # (`CV_ALLOWED_ORIGINS`, comma separated, e.g. "http://127.0.0.1:5173").
     # Empty (default) fails closed: every cookie refresh is refused.
     # #2239 (SR-042/SR-183): also the WS upgrade allow-list (`23-ws-protocol.md`
-    # §2.5); empty refuses every WS upgrade. Every entry must be a serialised
-    # origin (`is_serialised_origin`); a bad entry fails startup.
+    # §2.5); empty refuses every WS upgrade.
     allowed_origins: str = ""
 
     pg_dsn: SecretStr = SecretStr("postgresql+asyncpg://cv:cv@localhost:5432/candleviewer")
@@ -375,22 +335,6 @@ class Settings(BaseSettings):
         """`CV_FEED_RATE_HZ` must be positive (acceptance criterion 2)."""
         if value <= 0:
             raise ValueError("CV_FEED_RATE_HZ must be > 0")
-        return value
-
-    @field_validator("allowed_origins")
-    @classmethod
-    def _allowed_origins_are_serialised(cls, value: str) -> str:
-        """#2239 (SR-042): REST and the WS upgrade compare browser `Origin` headers exactly,
-        so each entry (after `allowed_origin_set`'s trim and trailing-`/` drop) must be a
-        serialised origin. A bad entry fails startup instead of silently never matching;
-        blank segments between commas are ignored."""
-        for part in value.split(","):
-            entry = part.strip()
-            if entry and not is_serialised_origin(entry.rstrip("/")):
-                raise ValueError(
-                    f"CV_ALLOWED_ORIGINS entry {entry!r} is not a serialised origin "
-                    "(scheme://host[:port]: lowercase, ASCII host, no path, no default port)"
-                )
         return value
 
     def model_post_init(self, __context: object) -> None:
