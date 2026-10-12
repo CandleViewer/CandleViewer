@@ -19,7 +19,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from candleviewer.accounts._permissions import FORBIDDEN_TOKENS, reject_withdraw
 from candleviewer.accounts.errors import WithdrawPermissionError
@@ -103,8 +103,13 @@ def test_snapshot_checks_a_prebuilt_permission_set() -> None:
         _snapshot(PermissionSet(Wallet=("AccountTransfer",)))
 
 
+def test_snapshot_accepts_a_prebuilt_clean_permission_set() -> None:
+    snapshot = _snapshot(PermissionSet(ContractTrade=("Order", "Position")))
+    assert snapshot.permissions.ContractTrade == ("Order", "Position")
+
+
 def test_snapshot_refuses_non_object_permissions() -> None:
-    with pytest.raises(ValidationError, match="permissions"):
+    with pytest.raises(ValidationError, match="key_withdraw_permission"):
         _snapshot(["Order"])
 
 
@@ -182,6 +187,39 @@ def test_snapshot_from_attributes_refuses_withdraw_and_transfer_rights(
     ids=["wallet_right", "withdraw_group"],
 )
 def test_snapshot_refuses_rights_on_attribute_object_permissions(permissions: object) -> None:
+    with pytest.raises(ValidationError, match="key_withdraw_permission"):
+        PermissionSnapshot.model_validate(
+            {"fetched_at": _NOW, "uid": "1000001", "permissions": permissions},
+            from_attributes=True,
+        )
+
+
+class _ForeignPermissions(BaseModel):
+    """Another module's model: pydantic keeps its extra groups as attributes."""
+
+    model_config = ConfigDict(extra="allow")
+
+
+@dataclass(frozen=True)
+class _PermissionsRow:
+    ContractTrade: tuple[str, ...]
+    FiatP2P: tuple[str, ...]  # not a PermissionSet group
+
+
+@pytest.mark.parametrize(
+    "permissions",
+    [
+        SimpleNamespace(Earn=["Withdraw"]),
+        _PermissionsRow(ContractTrade=("Order",), FiatP2P=("Transfer",)),
+        _ForeignPermissions.model_validate({"Earn": ["Withdraw"]}),
+    ],
+    ids=["namespace_extra_group", "dataclass_extra_group", "foreign_model_extra_group"],
+)
+def test_snapshot_refuses_attribute_permissions_whose_groups_would_be_dropped(
+    permissions: object,
+) -> None:
+    """`from_attributes` reads only the declared groups, so an undeclared one would vanish
+    unchecked; attribute-object permissions therefore fail closed."""
     with pytest.raises(ValidationError, match="key_withdraw_permission"):
         PermissionSnapshot.model_validate(
             {"fetched_at": _NOW, "uid": "1000001", "permissions": permissions},

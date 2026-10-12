@@ -17,6 +17,7 @@ from uuid import UUID
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 from candleviewer.accounts._permissions import reject_withdraw
+from candleviewer.accounts.errors import WithdrawPermissionError
 
 
 def _require_utc(value: datetime | None) -> datetime | None:
@@ -106,6 +107,16 @@ class PermissionSet(BaseModel):
     NFT: tuple[str, ...] = ()
     Withdraw: tuple[str, ...] = ()
 
+    @model_validator(mode="before")
+    @classmethod
+    def _mapping_only(cls, data: object) -> object:
+        """Only a mapping or a built `PermissionSet` may carry permissions: `from_attributes`
+        reads just the declared groups off an attribute object and drops the rest unchecked, so
+        such input fails closed (C-2.8)."""
+        if isinstance(data, Mapping | PermissionSet):
+            return data
+        raise WithdrawPermissionError("key_withdraw_permission")
+
 
 class PermissionSnapshot(BaseModel):
     """`api_keys.permission_snapshot` (21-database-schema.md §3.2.2)."""
@@ -133,8 +144,9 @@ class PermissionSnapshot(BaseModel):
 
     @model_validator(mode="after")
     def _no_withdraw(self) -> PermissionSnapshot:
-        """The same rule on the validated model, whatever the input shape: attribute objects read
-        with `from_attributes=True` (DTOs, ORM rows) never reach the raw check above."""
+        """The same rule on the validated model, for input the raw check above never sees: a
+        snapshot read with `from_attributes=True` (DTOs, ORM rows). Attribute-object
+        `permissions` are refused earlier, by `PermissionSet._mapping_only`."""
         reject_withdraw(self.permissions.model_dump())
         return self
 

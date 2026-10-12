@@ -33,11 +33,11 @@ blocks reads and writes on api_keys until the whole upgrade commits. The scans a
 per stored key). `lock_timeout` (5 s, reset to the default at the end) bounds the wait to acquire
 that lock, so the migration fails fast instead of queueing api_keys traffic behind it.
 
-If VALIDATE fails, a stored key grants withdraw or transfer rights: a C-2.8 incident. Never edit
-api_keys by hand (C-2.9) or weaken a CHECK to get past it. Turn the right off on the exchange and
-re-run the audited key verification (SR-031), which refreshes the stored snapshot and flags. A
-key that cannot be re-verified is revoked through the audited key-management flow
-(`api_key.revoke`) and escalated to the owner: no audited path removes a stored row yet.
+If VALIDATE fails, a stored key grants withdraw or transfer rights, or claims `can_transfer`: a
+C-2.8 incident. Turn the right off on the exchange, revoke the key through the audited
+key-management flow (`api_key.revoke`) and escalate to the owner. The migration stays blocked
+until an audited, owner-approved correction of the offending row exists; never edit api_keys by
+hand (C-2.9) or weaken a CHECK to get past it.
 """
 
 from __future__ import annotations
