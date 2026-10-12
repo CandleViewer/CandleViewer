@@ -123,6 +123,8 @@ def test_unsafe_dsn_refused_before_any_duckdb_connection(
         "dbname=x user=cv_ro user=cv_app",
         "dbname=x user=cv_app user=cv_ro",
         "dbname=x user=cv_ro host=evil",
+        "dbname=x user=cv_ro host=postgres.evil",
+        "dbname=x user=cv_ro host=10.0.0.5",
         "dbname=x user=cv_ro service=svc",
         "dbname=x user=cv_ro passfile=/etc/pw",
         "dbname=x user=cv_ro options=-cx=y",
@@ -183,3 +185,13 @@ def test_missing_extension_raises_typed_error_without_download(
     with pytest.raises(PostgresExtensionUnavailable):
         build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn="dbname=x user=cv_ro")
     assert not any(q.upper().startswith("INSTALL") for q in con.sql)
+
+
+@pytest.mark.parametrize(
+    "host", ["postgres", "127.0.0.1", "::1", "localhost", "/var/run/postgresql"]
+)
+def test_checked_ro_dsn_accepts_allowed_hosts(host: str) -> None:
+    from candleviewer.storage.cold.duckdb_views import _checked_ro_dsn
+
+    dsn = f"dbname=x user=cv_ro host={host}"
+    assert _checked_ro_dsn(dsn) == dsn

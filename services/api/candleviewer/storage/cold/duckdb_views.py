@@ -73,14 +73,16 @@ class PostgresExtensionUnavailable(RuntimeError):
 
 
 _DSN_ALLOWED_KEYS = frozenset(("dbname", "host", "port", "user", "sslmode"))
-_DSN_LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
+# `postgres` is the compose service name on cv-internal (infra/compose/docker-compose.yml,
+# service `postgres`, used in CV_PG_DSN); the rest are loopback. No other hostnames or IPs.
+_DSN_LOOPBACK_HOSTS = frozenset(("postgres", "127.0.0.1", "::1", "localhost"))
 _DSN_BAD_VALUE_CHARS = frozenset("=\\'\"; \t")
 
 
 def _checked_ro_dsn(dsn: str) -> str:
     """Parse a libpq key/value DSN and accept it only if every key is on the
     allow-list, no key repeats (libpq takes the last), `user` is exactly `cv_ro`,
-    `host` is loopback or a unix-socket directory and `sslmode` is not `disable`
+    `host` is the compose service `postgres`, loopback or a unix-socket directory and `sslmode` is not `disable`
     for a non-local host. Values may not contain `=`, backslash, quotes, `;` or
     whitespace/control characters. The DSN is never logged."""
     fail = UnsafeAnalyticsDsn("analytics attachment requires a plain cv_ro key/value DSN")
