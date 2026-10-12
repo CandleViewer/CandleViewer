@@ -207,6 +207,26 @@ jobs:
         run: |
           python tools/ci/check_changelog_fragment.py --title "$PR_TITLE" --body "$PR_BODY"
 
+  pr-metadata:
+    name: pr-metadata
+    # C-9.1 #20 / #2249: PR size (C-4.8), conventional title (C-4.10), Closes/Refs (C-4.7),
+    # dangling C-x.y references in the PR text (C-16.4). Rule-id loading is reused from
+    # scripts/check_rule_refs.py (GOV-002); title type/scope lists come from commitlint.config.cjs.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Check PR size, title, body and rule references
+        run: python tools/ci/check_pr_metadata.py --event "$GITHUB_EVENT_PATH" --repo-root .
+
   licence-header:
     name: licence-header
     runs-on: ubuntu-latest
@@ -454,6 +474,7 @@ jobs:
       - spike-containment
       - commitlint
       - changelog-fragment
+      - pr-metadata
       - licence-header
       - docs-link-check
       - gen
@@ -496,6 +517,7 @@ jobs:
           RESULT_PIN_CHECK: ${{ needs.pin-check.result }}
           RESULT_SPIKE_CONTAINMENT: ${{ needs.spike-containment.result }}
           RESULT_COMMITLINT: ${{ needs.commitlint.result }}
+          RESULT_PR_METADATA: ${{ needs.pr-metadata.result }}
           RESULT_CHANGELOG_FRAGMENT: ${{ needs.changelog-fragment.result }}
           RESULT_LICENCE_HEADER: ${{ needs.licence-header.result }}
           RESULT_DOCS_LINK_CHECK: ${{ needs.docs-link-check.result }}
@@ -525,6 +547,7 @@ jobs:
               "spike-containment": { applicable: true, result: process.env.RESULT_SPIKE_CONTAINMENT },
               commitlint: { applicable: true, result: process.env.RESULT_COMMITLINT },
               "changelog-fragment": { applicable: true, result: process.env.RESULT_CHANGELOG_FRAGMENT },
+              "pr-metadata": { applicable: true, result: process.env.RESULT_PR_METADATA },
               "licence-header": { applicable: true, result: process.env.RESULT_LICENCE_HEADER },
               "docs-link-check": { applicable: true, result: process.env.RESULT_DOCS_LINK_CHECK },
               gen: { applicable: true, result: process.env.RESULT_GEN },
