@@ -308,7 +308,18 @@ class _Connection:
         still be closed; every later push is dropped."""
         if self.closing:
             if seal and not self.sealed:
-                self._seal()
+                # An identity-ending event during a close already under way.
+                dropped = self._seal()
+                label = str(bye["p"].get("reason", reason)) if bye is not None else reason
+                cv_ws_closes_total.labels(reason=close_reason_label(label)).inc()
+                _log().info(
+                    "ws close sealed",
+                    connection_id=self.connection_id,
+                    reason=reason,
+                    dropped=dropped,
+                    user_id=str(self.user_id) if self.user_id else None,
+                    session_id=self.session_id,
+                )
             return
         self.closing = True
         frame = bye or lifecycle_bye(reason, now_ms=self.wall_ms(), retry_after_ms=retry_after_ms)
@@ -475,14 +486,18 @@ def make_ws_router(
         except AuthenticatorContractError:
             raise  # a server fault, not a failed auth: the handler closes 1011
         except Exception:
-            if conn.closing:
-                return  # the socket began closing while this auth was in flight
+            # C-2.9: count the failure and audit the 3rd one even when the socket
+            # began closing while this auth was in flight.
             cv_ws_auth_failures_total.labels(reason=failure).inc()
             conn.auth_failures += 1
+            third = conn.auth_failures >= MAX_AUTH_FAILURES
+            if third:
+                await audit_auth_failure(conn)
+            if conn.closing:
+                return  # already closing: no lifecycle step, no err, no second close
             if reauth:
                 conn.lifecycle.fire(ConnEvent.REAUTH_FAILED)
-            if conn.auth_failures >= MAX_AUTH_FAILURES:
-                await audit_auth_failure(conn)
+            if third:
                 conn.close_with("auth_failed")
             else:
                 conn.push(build_ws_error("auth_failed", id=_str_or_none(frame.get("id"))))

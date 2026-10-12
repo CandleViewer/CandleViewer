@@ -10,7 +10,9 @@ bounded (`_recv`), so a socket that outlives its token fails fast, not hangs.
 
 from __future__ import annotations
 
+import asyncio
 import functools
+import threading
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -20,6 +22,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from structlog.testing import capture_logs
 
 from candleviewer import app as app_module
 from candleviewer.auth.models import MintedSession
@@ -27,7 +30,11 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.ws import gateway
-from candleviewer.ws.metrics import AUTH_FAILURE_REASONS, cv_ws_auth_failures_total
+from candleviewer.ws.metrics import (
+    AUTH_FAILURE_REASONS,
+    cv_ws_auth_failures_total,
+    cv_ws_closes_total,
+)
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -196,11 +203,36 @@ def test_expiry_is_capped_by_the_sessions_absolute_lifetime(stack: _Stack) -> No
 # -- gateway contract: whatever the injected authenticator reports -----------------------------
 
 
+class _Gate:
+    """ASGI wrapper that can hold every outbound WS frame. While it is held the
+    writer waits inside `send_text`, like one whose client stopped reading."""
+
+    def __init__(self, app: FastAPI) -> None:
+        self.app = app
+        self.hold: asyncio.Event | None = None
+
+    def block(self) -> None:
+        self.hold = asyncio.Event()
+
+    def release(self) -> None:
+        if self.hold is not None:
+            self.hold.set()
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        async def gated(message: Any) -> None:
+            if message["type"] == "websocket.send" and self.hold is not None:
+                await self.hold.wait()
+            await send(message)
+
+        await self.app(scope, receive, gated)
+
+
 @dataclass
 class _Bare:
     client: TestClient
     hub: gateway.GatewayHub
     revocation: RevocationHub
+    gate: _Gate
 
     def call(self, fn: Callable[[], Any]) -> Any:
         """Run `fn` in the app's event loop. Nothing else runs there until it
@@ -209,7 +241,7 @@ class _Bare:
         return self.client.portal.call(fn)
 
 
-def _bare_gateway(result: Any, clock: _Clock, *, tick_s: float = 0.005) -> _Bare:
+def _bare_gateway(result: Any, clock: _Clock, *, tick_s: float = 0.005, audit: Any = None) -> _Bare:
     """A bare `/ws` router whose authenticator returns `result` verbatim, or
     awaits `result(token)` when `result` is an authenticator itself."""
 
@@ -227,16 +259,23 @@ def _bare_gateway(result: Any, clock: _Clock, *, tick_s: float = 0.005) -> _Bare
             registry=ConnectionRegistry(resolve, clock.wall_ms),
             revocation_hub=revocation,
             hub=hub,
+            audit=audit,
             clock=clock.monotonic,
             wall_ms=clock.wall_ms,
             tick_s=tick_s,
         )
     )
-    return _Bare(TestClient(app), hub, revocation)
+    gate = _Gate(app)
+    return _Bare(TestClient(gate), hub, revocation, gate)
 
 
 def _failures(reason: str) -> float:
     value: float = cv_ws_auth_failures_total.labels(reason=reason)._value.get()
+    return value
+
+
+def _closes(reason: str) -> float:
+    value: float = cv_ws_closes_total.labels(reason=reason)._value.get()
     return value
 
 
@@ -353,20 +392,28 @@ def test_expiry_during_a_close_under_way_still_drops_the_backlog() -> None:
     clock = _Clock()
     expiry = _T0 + timedelta(minutes=1)
     gw = _bare_gateway(("sess", _USER, expiry), clock, tick_s=_NO_IDLE_TICK_S)
-    with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
-        assert _open(ws, "any")["t"] == "auth_ok"
+    before = _closes("token_expired")
+    with capture_logs() as logs:
+        with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+            assert _open(ws, "any")["t"] == "auth_ok"
 
-        async def burst_shutdown_then_expire() -> None:
-            for _ in range(gateway.OUTBOUND_QUEUE_MAX - 2):
-                gw.hub.broadcast_system({"kind": "tick"})
-            # A planned shutdown is an ordinary close: its `bye` follows the backlog...
-            await gw.hub.shutdown(grace_ms=0, sleep=_no_sleep)
-            clock.now = expiry  # ...until the identity ends while it drains.
+            async def burst_shutdown_then_expire() -> None:
+                for _ in range(gateway.OUTBOUND_QUEUE_MAX - 2):
+                    gw.hub.broadcast_system({"kind": "tick"})
+                # A planned shutdown is an ordinary close: its `bye` follows the backlog...
+                await gw.hub.shutdown(grace_ms=0, sleep=_no_sleep)
+                clock.now = expiry  # ...until the identity ends while it drains.
 
-        gw.call(burst_shutdown_then_expire)
-        bye = _recv(ws)
-        assert (bye["t"], bye["p"]["reason"]) == ("bye", "shutdown"), bye
-        assert _closed(ws) == 1001
+            gw.call(burst_shutdown_then_expire)
+            bye = _recv(ws)
+            assert (bye["t"], bye["p"]["reason"]) == ("bye", "shutdown"), bye
+            assert _closed(ws) == 1001
+    sealed = [e for e in logs if e["event"] == "ws close sealed"]
+    # One tick was in the writer's hand; the other 1021 ticks and the shutdown notice dropped.
+    assert [(e["reason"], e["dropped"]) for e in sealed] == [
+        ("token_expired", gateway.OUTBOUND_QUEUE_MAX - 2)
+    ]
+    assert _closes("token_expired") == before + 1
 
 
 def test_a_forward_wall_clock_step_expires_the_token_on_the_wall_clock() -> None:
@@ -406,3 +453,52 @@ def test_a_revocation_during_a_reauth_still_closes_with_bye_4401(outcome: str) -
         bye = _recv(ws)
         assert (bye["t"], bye["p"]["reason"]) == ("bye", "session_revoked"), bye
         assert _closed(ws) == 4401
+
+
+class _SlowAudit:
+    """Audit sink whose `emit` yields once, as the real WAL append does."""
+
+    def __init__(self) -> None:
+        self.records: list[dict[str, Any]] = []
+        self.written = threading.Event()
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        await asyncio.sleep(0)  # a scheduling point, not a wait
+        self.records.append({"action": action, **kw})
+        self.written.set()
+
+
+def test_third_failed_auth_is_audited_while_a_close_is_in_flight() -> None:
+    # C-2.9: a planned shutdown has queued its `bye`, but the writer is blocked
+    # (the client stopped reading). The 3rd failed `auth` that lands meanwhile is
+    # still counted and audited; the shutdown close then completes as queued.
+    clock = _Clock()
+    audit = _SlowAudit()
+
+    async def authenticate(_token: str) -> Any:
+        raise PermissionError("bad token")
+
+    gw = _bare_gateway(authenticate, clock, audit=audit)
+    before = _failures("rejected")
+    with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+        assert _open(ws, "bad-1")["p"]["code"] == "auth_failed"
+        ws.send_json({"t": "auth", "id": "a2", "p": {"access_token": "bad-2"}})
+        assert _recv(ws)["p"]["code"] == "auth_failed"
+
+        async def block_writer_then_shut_down() -> None:
+            gw.gate.block()
+            await gw.hub.shutdown(grace_ms=0, sleep=_no_sleep)
+
+        gw.call(block_writer_then_shut_down)
+        try:
+            ws.send_json({"t": "auth", "id": "a3", "p": {"access_token": "bad-3"}})
+            assert audit.written.wait(timeout=5.0), "the 3rd failed auth was not audited"
+        finally:
+            gw.call(gw.gate.release)
+        bye = _recv(ws)
+        assert (bye["t"], bye["p"]["reason"]) == ("bye", "shutdown"), bye
+        assert _closed(ws) == 1001
+    assert [(r["action"], r["reason"]) for r in audit.records] == [
+        ("auth.login_failed", "ws_auth_failed")
+    ]
+    assert _failures("rejected") == before + 3
