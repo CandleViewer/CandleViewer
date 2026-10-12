@@ -403,3 +403,20 @@ async def test_rewrap_tolerates_row_vanishing() -> None:
     s.ids_at_kek_version = once  # type: ignore[method-assign]  # single page
     assert (await b.rewrap_all(2)).rewrapped == 0
     s.get = orig  # type: ignore[method-assign]
+
+
+async def test_last_used_touch_is_debounced(store: Any, audit: AuditLog, clock: FakeClock) -> None:
+    touched: list[Any] = []
+
+    async def touch(key_id: Any) -> None:
+        touched.append(key_id)
+
+    store.touch_last_used = touch
+    b = CredentialBroker(store, audit, kek(), clock=clock)
+    meta = await _store(b)
+    await _borrow(b, meta.key_id)
+    clock.t = 59
+    await _borrow(b, meta.key_id)
+    clock.t = 61
+    await _borrow(b, meta.key_id)
+    assert len(touched) == 2

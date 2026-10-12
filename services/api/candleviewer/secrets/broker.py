@@ -30,6 +30,7 @@ from candleviewer.secrets.store import AuditSink, CredentialStore
 Clock = Callable[[], float]
 
 #: Bounded metric label values for `caller_module` (anything else is reported as `other`).
+_TOUCH_INTERVAL_S = 60.0
 _KNOWN_CALLERS = frozenset({"exchange_adapter", "admin"})
 
 
@@ -67,6 +68,10 @@ class _DekCache:
             if item is not None:
                 env.zero(item[1])
 
+    def holds(self, key_id: UUID, dek: bytearray) -> bool:
+        item = self._items.get(key_id)
+        return item is not None and item[1] is dek
+
     def __len__(self) -> int:
         return len(self._items)
 
@@ -85,6 +90,16 @@ class CredentialBroker:
         self._store, self._audit = store, audit
         self._kek, self._prev = kek, prev_kek
         self._cache = _DekCache(dek_cache_ttl_s, clock)
+        self._clock = clock
+        self._last_touch: dict[UUID, float] = {}
+
+    async def _touch(self, key_id: UUID) -> None:
+        """`last_used_at`, debounced to one write per key per 60 s (21 §3.2.2, as E27-T01)."""
+        now = self._clock()
+        prev = self._last_touch.get(key_id)
+        if prev is None or now - prev >= _TOUCH_INTERVAL_S:
+            await self._store.touch_last_used(key_id)
+            self._last_touch[key_id] = now
 
     def _require_kek(self) -> LoadedKek:
         if self._kek is None:
@@ -205,10 +220,10 @@ class CredentialBroker:
             except (InvalidTag, ValueError):
                 self._cache.flush(key_id)
                 raise CredentialUnavailable("credential_unavailable") from None
-            if self._cache.get(key_id) is None:
+            if not self._cache.holds(key_id, dek):
                 env.zero(dek)
             m.credential_borrow_seconds.observe(time.perf_counter() - started)
-            await self._store.touch_last_used(key_id)
+            await self._touch(key_id)
             out = await fn(Secret(key.decode()), Secret(secret.decode()))
             result = "ok"
             return out
