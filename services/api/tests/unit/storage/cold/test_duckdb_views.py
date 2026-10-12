@@ -122,16 +122,36 @@ def test_unsafe_dsn_refused_before_any_duckdb_connection(
     [
         "dbname=x user=cv_ro user=cv_app",
         "dbname=x user=cv_app user=cv_ro",
-        "dbname=x user=cv_ro host=evil",
+        "dbname=x user=cv_ro host=evil sslmode=require",
         "dbname=x user=cv_ro host=postgres.evil",
         "dbname=x user=cv_ro host=10.0.0.5",
         "dbname=x user=cv_ro service=svc",
         "dbname=x user=cv_ro passfile=/etc/pw",
         "dbname=x user=cv_ro options=-cx=y",
-        "dbname=x user=cv_ro host=127.0.0.1 sslmode=disable",
+        "dbname=x user=cv_ro host=postgres sslmode=disable",
         "dbname=x user=cv_ro host=a\\b",
         "dbname=x user=cv_ro host=a'b",
         "dbname=x user=cv_ro\nhost=127.0.0.1",
+        "dbname=x user=cv_ro host=/tmp,evil.example.com",
+        "dbname=x user=cv_ro host=/var/run/postgresql,10.0.0.5",
+        "dbname=x user=cv_ro host=/tmp/../evil",
+        "dbname=x user=cv_ro host=/",
+        "dbname=postgresql://evil/x user=cv_ro host=localhost",
+        "dbname=-x user=cv_ro host=localhost",
+        "dbname=x user=cv_ro host=localhost port=abc",
+        "dbname=x user=cv_ro host=localhost port=99999999999",
+        "dbname=x user=cv_ro host=localhost host=postgres",
+        "dbname=x user=cv_ro host=localhost bare",
+        "dbname=x user=cv_ro host=localhost port=",
+        "dbname=x USER=cv_ro host=localhost",
+        "dbname=x\tuser=cv_ro host=localhost",
+        "dbname=x user=cv_ro2 host=localhost",
+        "dbname=x user=cv_ro",
+        "dbname=x user=cv_ro host=postgres",
+        "dbname=x user=cv_ro host=postgres sslmode=prefer",
+        "dbname=x user=cv_ro host=localhost sslmode=allow",
+        "dbname=x user=cv_ro host=lo\x7fcalhost",
+        "dbname=x user=cv_ro host=localhost\u00e9",
         "dbname=x user=cv_ro host=127.0.0.1 port=1=2",
     ],
 )
@@ -140,6 +160,9 @@ def test_checked_ro_dsn_rejects_bypass_cases(dsn: str) -> None:
 
     with pytest.raises(UnsafeAnalyticsDsn):
         _checked_ro_dsn(dsn)
+
+
+_OK_DSN = "dbname=x user=cv_ro host=localhost"
 
 
 class _RecordingCon:
@@ -183,15 +206,34 @@ def test_missing_extension_raises_typed_error_without_download(
     con = _RecordingCon(fail_load=True)
     _patch_connect(monkeypatch, con)
     with pytest.raises(PostgresExtensionUnavailable):
-        build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn="dbname=x user=cv_ro")
+        build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn=_OK_DSN)
     assert not any(q.upper().startswith("INSTALL") for q in con.sql)
 
 
 @pytest.mark.parametrize(
-    "host", ["postgres", "127.0.0.1", "::1", "localhost", "/var/run/postgresql"]
+    "host",
+    ["postgres", "127.0.0.1", "::1", "localhost", "/var/run/postgresql", "/run/postgresql", "/tmp"],  # noqa: S108 - allow-listed socket dir literal, not a temp file
 )
 def test_checked_ro_dsn_accepts_allowed_hosts(host: str) -> None:
     from candleviewer.storage.cold.duckdb_views import _checked_ro_dsn
 
-    dsn = f"dbname=x user=cv_ro host={host}"
+    dsn = f"dbname=x user=cv_ro host={host} sslmode=require"
     assert _checked_ro_dsn(dsn) == dsn
+
+
+def test_local_hosts_allow_prefer_disable_or_absent_sslmode() -> None:
+    from candleviewer.storage.cold.duckdb_views import _checked_ro_dsn
+
+    for ssl in ("", " sslmode=prefer", " sslmode=disable"):
+        dsn = f"dbname=x user=cv_ro host=/tmp{ssl}"
+        assert _checked_ro_dsn(dsn) == dsn
+
+
+def test_validated_dsn_reaches_attach_as_escaped_literal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    con = _RecordingCon(fail_load=False)
+    _patch_connect(monkeypatch, con)
+    build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn=_OK_DSN)
+    attach = next(q for q in con.sql if q.startswith("ATTACH"))
+    assert attach == "ATTACH 'dbname=x user=cv_ro host=localhost' AS pg (TYPE postgres, READ_ONLY)"

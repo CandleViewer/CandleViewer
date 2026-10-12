@@ -10,6 +10,7 @@ is only LOADed (never installed at runtime) when a DSN is supplied (deployment-t
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import duckdb
@@ -72,21 +73,29 @@ class PostgresExtensionUnavailable(RuntimeError):
     never downloaded at runtime; the deployment image must preinstall it."""
 
 
+_DSN_BAD_VALUE_CHARS = frozenset("=,\\'\";\t ")
 _DSN_ALLOWED_KEYS = frozenset(("dbname", "host", "port", "user", "sslmode"))
 # `postgres` is the compose service name on cv-internal (infra/compose/docker-compose.yml,
 # service `postgres`, used in CV_PG_DSN); the rest are loopback. No other hostnames or IPs.
-_DSN_LOOPBACK_HOSTS = frozenset(("postgres", "127.0.0.1", "::1", "localhost"))
-_DSN_BAD_VALUE_CHARS = frozenset("=\\'\"; \t")
+_DSN_LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
+_DSN_TCP_HOSTS = _DSN_LOOPBACK_HOSTS | {"postgres"}
+_DSN_SOCKET_DIRS = frozenset(("/var/run/postgresql", "/run/postgresql", "/tmp"))  # noqa: S108
+_DSN_DBNAME = re.compile(r"[A-Za-z0-9_]{1,63}")
+_DSN_STRONG_SSL = frozenset(("require", "verify-ca", "verify-full"))
+_DSN_LOCAL_SSL = _DSN_STRONG_SSL | {"disable", "prefer"}
 
 
 def _checked_ro_dsn(dsn: str) -> str:
-    """Parse a libpq key/value DSN and accept it only if every key is on the
-    allow-list, no key repeats (libpq takes the last), `user` is exactly `cv_ro`,
-    `host` is the compose service `postgres`, loopback or a unix-socket directory,
-    and `sslmode` is not `disable`. Values may not contain `=`, backslash, quotes, `;` or
-    whitespace/control characters. The DSN is never logged."""
+    """Parse a libpq key/value DSN and accept it only through exact allow-lists, so
+    nothing libpq could reinterpret (multi-host lists, URI expansion, env fallbacks,
+    duplicate keys) gets through. Keys: dbname/host/port/user/sslmode, no repeats.
+    `user` is exactly `cv_ro`; `host` is required and is one of a fixed set of TCP
+    hosts or socket directories; `dbname` is `[A-Za-z0-9_]{1,63}`; `port` is 1..65535;
+    `sslmode` must be require/verify-ca/verify-full unless the host is loopback or a
+    socket, where `disable`/`prefer` (and an absent sslmode) are also fine. Values are
+    printable ASCII with no space, `=`, `,`, quote, backslash or `;`. Never logged."""
     fail = UnsafeAnalyticsDsn("analytics attachment requires a plain cv_ro key/value DSN")
-    if any(ord(ch) < 32 and ch != " " for ch in dsn):
+    if not dsn.isascii() or any((ord(ch) < 32 and ch != " ") or ord(ch) == 127 for ch in dsn):
         raise fail
     pairs: dict[str, str] = {}
     for token in dsn.split(" "):
@@ -95,15 +104,22 @@ def _checked_ro_dsn(dsn: str) -> str:
         key, sep, value = token.partition("=")
         if not sep or key not in _DSN_ALLOWED_KEYS or key in pairs or not value:
             raise fail
-        if any(ch in _DSN_BAD_VALUE_CHARS or ord(ch) < 32 for ch in value):
+        if any(ch in _DSN_BAD_VALUE_CHARS for ch in value):
             raise fail
         pairs[key] = value
-    if pairs.get("user") != "cv_ro":
-        raise fail
     host = pairs.get("host")
-    if host is not None and host not in _DSN_LOOPBACK_HOSTS and not host.startswith("/"):
+    if pairs.get("user") != "cv_ro" or host is None:
         raise fail
-    if pairs.get("sslmode") == "disable":
+    local = host in _DSN_LOOPBACK_HOSTS or host in _DSN_SOCKET_DIRS
+    if not local and host not in _DSN_TCP_HOSTS:
+        raise fail
+    if not _DSN_DBNAME.fullmatch(pairs.get("dbname", "")):
+        raise fail
+    port = pairs.get("port")
+    if port is not None and not (port.isascii() and port.isdigit() and 1 <= int(port) <= 65535):
+        raise fail
+    ssl = pairs.get("sslmode")
+    if ssl not in (_DSN_LOCAL_SSL if local else _DSN_STRONG_SSL) and not (local and ssl is None):
         raise fail
     return dsn
 
