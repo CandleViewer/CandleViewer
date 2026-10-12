@@ -367,6 +367,7 @@ Rules:
 
 - Failed `auth` attempts 1 and 2 each get `err` `auth_failed` and the socket stays open. The 3rd closes with `bye auth_failed` + `4401`. A `warning` audit entry (`auth.login_failed`, `reason: ws_auth_failed`, never the token) is written.
 - A failed re-`auth` keeps the prior identity until its token expires. A re-`auth` that resolves to a different user is refused.
+- `token_expires_at_ms` is the presented token's real expiry: the instant the session service starts refusing it (`issued_at` + the ADR-0020 access-token TTL, capped by the session's absolute expiry). There is no gateway-side default, and a re-`auth` takes the new token's expiry. A token that is already expired when its `auth` is processed is refused like any failed `auth`. An authenticator that reports no timezone-aware expiry is a server fault: `bye internal_error` + `1011`, and nothing is served (#2259).
 - Three malformed or unexpected frames after `hello` close with `bye bad_client` + `4400`.
 - The heartbeat-timeout `bye` (`heartbeat_timeout`) uses `1001`.
 - More than 8 connections per user: the oldest idle one is closed with `too_many_connections` (`4429`).

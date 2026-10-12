@@ -11,6 +11,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -31,6 +32,8 @@ ACC_B = uuid.UUID(int=0xB2)
 PERMS = frozenset({Permission.MARKETDATA_READ, Permission.POSITIONS_READ, Permission.ORDERS_READ})
 JSON = ["cv.v1.json"]
 _TIMEOUT_S = 5.0
+#: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
+_EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
 
 
 def _recv(ws: Any) -> dict[str, Any]:
@@ -54,10 +57,10 @@ class _World:
         async def resolve(uid: uuid.UUID) -> PrincipalSnapshot:
             return PrincipalSnapshot(uid, frozenset({"manager"}), PERMS, self.grants)
 
-        async def authenticate(token: str) -> tuple[str, uuid.UUID]:
+        async def authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
             if token != "good":  # noqa: S105 - fake test token, not a credential
                 raise PermissionError("bad token")
-            return "sess-1", MGR
+            return "sess-1", MGR, _EXPIRES
 
         self.registry = ConnectionRegistry(
             resolve, lambda: 1, SubscriptionServices(upstream=UpstreamRefs())

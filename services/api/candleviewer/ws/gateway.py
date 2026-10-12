@@ -10,6 +10,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   body, never the URL. Verified by the injected E09 `authenticate`; the
   `PrincipalSnapshot` is resolved by the `ConnectionRegistry` (the same RBAC
   source REST uses); the socket is registered with the `RevocationHub`.
+  The socket lives until the token's real expiry, as `authenticate` reports
+  it; an already-expired token is refused like any failed `auth` (#2259).
   Three failures -> `bye auth_failed` + `4401` + a `warning` audit entry.
 - **In-place re-auth** (§4.1): a later `auth` re-validates and swaps the
   principal without touching subscriptions.
@@ -34,7 +36,7 @@ import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Protocol
 
 import structlog
@@ -83,16 +85,35 @@ OUTBOUND_QUEUE_MAX: Final = 1024
 WATCHDOG_TICK_S: Final = 0.05
 #: Upper bound for the writer to flush `bye` + close once the reader stopped.
 CLOSE_FLUSH_TIMEOUT_S: Final = 2.0
-#: Token lifetime assumed when `authenticate` reports no expiry (E09
-#: ACCESS_TOKEN_TTL is 12 min); measured from the successful `auth`.
-DEFAULT_TOKEN_TTL_S: Final = 12 * 60.0
 
-#: (raw access token) -> (session_id, user_id) or (session_id, user_id,
-#: token expires_at); raises on any invalid token.
-AuthResult = tuple[str, uuid.UUID] | tuple[str, uuid.UUID, datetime]
+#: (raw access token) -> (session_id, user_id, token expires_at); raises on any
+#: invalid token. The expiry is mandatory and timezone-aware: the instant the
+#: token stops authenticating (E09 `access_token_expires_at`). The socket never
+#: outlives it, and the gateway never assumes a default lifetime (#2259).
+AuthResult = tuple[str, uuid.UUID, datetime]
 Authenticate = Callable[[str], Awaitable[AuthResult]]
 Clock = Callable[[], float]
 WallClockMs = Callable[[], int]
+
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+_ONE_MS: Final = timedelta(milliseconds=1)
+
+
+class AuthenticatorContractError(RuntimeError):
+    """The injected `authenticate` returned no timezone-aware token expiry. That
+    is a server fault, not a client auth failure: the socket closes `1011` and
+    nothing is served (fail closed, #2259)."""
+
+
+def _token_expiry_ms(result: AuthResult) -> int:
+    """The token expiry of an `authenticate` result as epoch ms. It is floored,
+    so it is never later than the real expiry."""
+    expires_at = result[2] if len(result) == 3 else None
+    if not isinstance(expires_at, datetime) or expires_at.utcoffset() is None:
+        raise AuthenticatorContractError(
+            "authenticate must return (session_id, user_id, timezone-aware expires_at)"
+        )
+    return (expires_at - _EPOCH) // _ONE_MS
 
 
 class AuditEmitter(Protocol):
@@ -397,10 +418,17 @@ def make_ws_router(
                 raise ValueError("missing access_token")
             result = await authenticate(token)
             session_id, user_id = result[0], result[1]
+            expires_ms = _token_expiry_ms(result)
             if reauth and user_id != conn.user_id:
                 failure = "user_mismatch"
                 raise PermissionError("re-auth must keep the same user")
             principal = await registry.resolve(user_id)
+            now, now_ms = conn.clock(), conn.wall_ms()
+            if expires_ms <= now_ms:
+                failure = "token_expired"  # never `auth_ok` an identity that is already dead
+                raise PermissionError("access token already expired")
+        except AuthenticatorContractError:
+            raise  # a server fault, not a failed auth: the handler closes 1011
         except Exception:
             cv_ws_auth_failures_total.labels(reason=failure).inc()
             conn.auth_failures += 1
@@ -413,13 +441,8 @@ def make_ws_router(
                 conn.push(build_ws_error("auth_failed", id=_str_or_none(frame.get("id"))))
             return
         conn.auth_failures = 0
-        now, now_ms = conn.clock(), conn.wall_ms()
-        if len(result) == 3:
-            expires_ms = int(result[2].timestamp() * 1000)
-        else:
-            expires_ms = now_ms + int(DEFAULT_TOKEN_TTL_S * 1000)
         conn.watchdog.auth_deadline = None
-        conn.watchdog.token_expires_at = now + max(0, expires_ms - now_ms) / 1000
+        conn.watchdog.token_expires_at = now + (expires_ms - now_ms) / 1000
         if conn.session_id != session_id:
             if conn.session_id is not None:
                 revocation_hub.unregister(conn.session_id, conn.closer)

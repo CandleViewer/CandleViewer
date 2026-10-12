@@ -105,6 +105,15 @@ def clamp_idle_timeout_s(idle_timeout_s: int) -> int:
     return max(MIN_IDLE_TIMEOUT_S, min(MAX_IDLE_TIMEOUT_S, idle_timeout_s))
 
 
+def access_token_expires_at(session: SessionRecord) -> datetime:
+    """The first instant `authenticate_access_token` refuses this session's
+    access handle: `issued_at + ACCESS_TOKEN_TTL`, capped by the absolute
+    `expires_at` that `require_active` enforces. A WS socket authenticated with
+    the handle closes here (#2259). Revocation and the idle lock are events,
+    not deadlines, so they are not part of it."""
+    return min(session.issued_at + ACCESS_TOKEN_TTL, session.expires_at)
+
+
 class SessionService:
     def __init__(
         self,

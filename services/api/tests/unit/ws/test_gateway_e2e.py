@@ -5,6 +5,7 @@ permission_change pushed and the now-forbidden subscription dropped."""
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -22,6 +23,8 @@ ADMIN = uuid.uuid4()
 MGR = uuid.uuid4()
 ACC = uuid.uuid4()
 OTHER_ACC = uuid.uuid4()
+#: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
+_EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
 _PERMS = {
     "owner": frozenset(Permission),
     "manager": frozenset({Permission.MARKETDATA_READ, Permission.ORDERS_READ}),
@@ -93,10 +96,10 @@ class _Sessions:
         return SimpleNamespace(id=uuid.uuid4(), user_id=ADMIN)
 
 
-async def _authenticate(presented: str) -> tuple[str, uuid.UUID]:
+async def _authenticate(presented: str) -> tuple[str, uuid.UUID, datetime]:
     if presented != "mgr-token":
         raise PermissionError("bad token")
-    return "sess-1", MGR
+    return "sess-1", MGR, _EXPIRES
 
 
 @pytest.fixture

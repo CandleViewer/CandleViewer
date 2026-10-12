@@ -49,7 +49,9 @@ cv_ws_clock_skew_ms = Histogram(
 )
 
 #: Bounded `cv_ws_auth_failures_total{reason}` values.
-AUTH_FAILURE_REASONS: Final = frozenset({"missing_token", "rejected", "user_mismatch"})
+AUTH_FAILURE_REASONS: Final = frozenset(
+    {"missing_token", "rejected", "token_expired", "user_mismatch"}
+)
 
 #: Every `cv_ws_*` series the ws package owns (module-level, re-exported on the app registry).
 CV_WS_NAMES: Final[frozenset[str]] = frozenset(

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -33,6 +34,8 @@ from candleviewer.ws_wiring import (
 USER = uuid.uuid4()
 ACC = uuid.uuid4()
 JSON = ["cv.v1.json"]
+#: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
+_EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
 
 
 class _Kill:
@@ -50,10 +53,10 @@ class _Kill:
         return PrincipalSnapshot(uid, frozenset({"manager"}), frozenset(perms), grants)
 
 
-async def _authenticate(token: str) -> tuple[str, uuid.UUID]:
+async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
     if token != "tok":  # noqa: S105 - test vector, not a credential
         raise PermissionError("bad token")
-    return "sess-1", USER
+    return "sess-1", USER, _EXPIRES
 
 
 def _settings() -> Settings:

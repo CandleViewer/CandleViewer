@@ -4,6 +4,7 @@ client `resync` and the 6th-in-a-minute revocation. Every receive is bounded by 
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import FastAPI
@@ -17,6 +18,9 @@ from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
 from candleviewer.ws.upstream import UpstreamRefs
 from tests.unit.ws._seq_support import Book, Clock, Source, principal, validate
 from tests.unit.ws.test_lifecycle_socket import JSON, _recv
+
+#: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
+_EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
 
 
 class _World:
@@ -34,10 +38,10 @@ class _World:
         async def resolve(uid: uuid.UUID) -> PrincipalSnapshot:
             return principal()
 
-        async def authenticate(token: str) -> tuple[str, uuid.UUID]:
+        async def authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
             if token != "good":  # noqa: S105 - fake test token, not a credential
                 raise PermissionError("bad token")
-            return "sess-1", principal().user_id
+            return "sess-1", principal().user_id, _EXPIRES
 
         services = SubscriptionServices(
             upstream=UpstreamRefs(), snapshots=self.source, sequencing=self.hub
