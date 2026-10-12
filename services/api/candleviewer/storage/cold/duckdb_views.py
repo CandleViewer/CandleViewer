@@ -82,8 +82,8 @@ _DSN_BAD_VALUE_CHARS = frozenset("=\\'\"; \t")
 def _checked_ro_dsn(dsn: str) -> str:
     """Parse a libpq key/value DSN and accept it only if every key is on the
     allow-list, no key repeats (libpq takes the last), `user` is exactly `cv_ro`,
-    `host` is the compose service `postgres`, loopback or a unix-socket directory and `sslmode` is not `disable`
-    for a non-local host. Values may not contain `=`, backslash, quotes, `;` or
+    `host` is the compose service `postgres`, loopback or a unix-socket directory,
+    and `sslmode` is not `disable`. Values may not contain `=`, backslash, quotes, `;` or
     whitespace/control characters. The DSN is never logged."""
     fail = UnsafeAnalyticsDsn("analytics attachment requires a plain cv_ro key/value DSN")
     if any(ord(ch) < 32 and ch != " " for ch in dsn):
