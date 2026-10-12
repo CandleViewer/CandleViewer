@@ -607,3 +607,76 @@ def test_approvers_limited_to_owners_of_triggering_paths():
     one = rows(("900", "0", "services/a.py"))
     errs, _ = run(pr(labels=[m.LABEL]), one, events=labeled("bob"), comments=comment("bob"), **kw)
     assert errs == []
+
+
+def test_main_non_utf8_path_fails_closed_not_reported_deleted(repo, monkeypatch, capsys):
+    root, base = repo
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    _git(root, "checkout", "-qb", "feat")
+    name = b"svc/p\xff.bin"
+    os_path = __import__("os").fsencode(root) + b"/" + name
+    __import__("os").makedirs(__import__("os").path.dirname(os_path), exist_ok=True)
+    with open(os_path, "wb") as fh:
+        fh.write(b"\0" * 900)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "nonutf8")
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, _head_sha(root), pr())) == 2
+    assert "failed" in capsys.readouterr().err
+
+
+def test_main_gate_sha_governs_exclusions_and_owners(repo, monkeypatch, capsys):
+    """GATE_SHA (origin/main tip) is trusted over the PR's stale base: it narrows an exclusion
+    and drops an owner that the old base still granted."""
+    root, _ = repo
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    (root / ".gitattributes").write_text("svc/** linguist-generated=true\n")
+    (root / ".github").mkdir()
+    (root / ".github/CODEOWNERS").write_text("* @alice\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "old base")
+    old_base = _head_sha(root)
+    _git(root, "checkout", "-qb", "feat")
+    (root / "svc").mkdir()
+    (root / "svc/big.py").write_text("x\n" * 900)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "head")
+    head = _head_sha(root)
+    labelled = pr(labels=[m.LABEL])
+    fetch = _fake(old_base, head, labelled, labeled("alice"), comment("alice"))
+    assert m.main(["--repo-root", str(root)], fetch=fetch) == 0  # old base: excluded, no approval
+    _git(root, "checkout", "-q", "main")
+    (root / ".gitattributes").write_text("")  # tip narrows the exclusion
+    (root / ".github/CODEOWNERS").write_text("* @carol\n")  # tip drops alice
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "tip")
+    monkeypatch.setenv("GATE_SHA", _head_sha(root))
+    assert m.main(["--repo-root", str(root)], fetch=fetch) == 1
+    err = capsys.readouterr().err
+    assert "PR-SIZE-004" in err and "['carol', 'o']" in err  # alice no longer an owner at the tip
+
+
+def test_approver_must_own_paths_of_every_trigger():
+    owners = "/svc/ @bob\n/docs/ @alice\n"
+    big_svc = rows(("900", "0", "svc/a.py"))
+    gate = rows(("1", "0", "commitlint.config.cjs"))
+    r = big_svc + gate  # size trigger -> svc + gate file; gate-file trigger -> gate file only
+    kw = dict(base_codeowners=owners, repo_owner="")
+    errs, _ = run(pr(labels=[m.LABEL]), r, events=labeled("bob"), comments=comment("bob"), **kw)
+    assert codes(errs) == ["PR-SIZE-004"]  # bob owns svc but not the gate file
+    errs, _ = run(pr(labels=[m.LABEL]), r, events=labeled("bob"), comments=comment("bob"),
+                  base_codeowners=owners + "/commitlint.config.cjs @bob\n", repo_owner="")
+    assert errs == []
+
+
+def test_allowlist_anchored_with_end_of_string():
+    assert "\\Z" in m.BINARY_OK_RE.pattern
+    assert not m.BINARY_OK_RE.fullmatch("a.png\n")
+
+
+def test_eot_magic_is_checked_at_offset_34():
+    ok = b"\0" * 34 + b"LP" + b"\0" * 4
+    assert not m.bad_magic("f.eot", ok)
+    assert m.bad_magic("f.eot", b"\0" * 40)
+    assert m.bad_magic("f.eot", b"not an eot")

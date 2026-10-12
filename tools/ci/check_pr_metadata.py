@@ -20,11 +20,12 @@ with a read-only token (only `@user` entries and the repo owner count).
 
 Rules
   C-4.8  changed LOC, excluding lockfiles and paths whose `linguist-generated` attribute is set in
-         the BASE commit (evaluated by `git check-attr --source=<base>`, so git's own matching
-         rules apply and the PR cannot widen its own exclusions). Warn > 400, FAIL > 800 without
+         origin/main (GATE_SHA; the PR base when run outside the workflow), evaluated by
+         `git check-attr --source=<sha>`, so git's own matching
+         rules apply and the PR cannot widen its own exclusions. Warn > 400, FAIL > 800 without
          `large-pr-approved`.
-         PR-SIZE-002: the PR changes linguist-generated/diff/binary attributes (vs the merge-base)
-         -> needs the label; the LOC that would be newly excluded is printed.
+         PR-SIZE-002: the PR changes the root .gitattributes (any non-comment line, vs the merge-base) or a nested
+         one, or the attributes of a changed path -> needs the label; the LOC that would be newly excluded is printed.
          PR-SIZE-003: LOC of binary-classified files is counted from a `-U0 --text` patch (NUL bytes / `-diff` cannot hide lines).
          Files git still classes as binary are reviewer-invisible: images/fonts are allowlisted,
          paths generated in base AND declared binary there (`-diff`/`binary`) are excluded; every other one gets a ::warning with its size and
@@ -72,12 +73,12 @@ GATE_FILES = frozenset({
 })
 LABEL = "large-pr-approved"
 LOCKFILES = frozenset({"pnpm-lock.yaml", "services/api/uv.lock"})
-BINARY_OK_RE = re.compile(r".*\.(png|jpe?g|gif|webp|ico|woff2?|ttf|otf|eot)", re.IGNORECASE)
+BINARY_OK_RE = re.compile(r".*\.(png|jpe?g|gif|webp|ico|woff2?|ttf|otf|eot)\Z", re.IGNORECASE)
 MAGIC = {  # allowlisted extension -> accepted leading bytes
     "png": (b"\x89PNG",), "jpg": (b"\xff\xd8",), "jpeg": (b"\xff\xd8",), "gif": (b"GIF8",),
     "webp": (b"RIFF",), "ico": (b"\x00\x00\x01\x00", b"\x00\x00\x02\x00", b"\x89PNG"),
     "woff": (b"wOFF",), "woff2": (b"wOF2",), "ttf": (b"\x00\x01\x00\x00", b"true"),
-    "otf": (b"OTTO",), "eot": (),
+    "otf": (b"OTTO",),
 }
 ATTRS = ("linguist-generated", "diff", "binary")
 MAX_PAGES = 10
@@ -177,6 +178,8 @@ def parse_numstat_z(raw: str) -> list[tuple[str, str, str]]:
 def bad_magic(path: str, head: bytes) -> bool:
     """True when an allowlisted image/font name does not start with that format's magic bytes."""
     accepted = MAGIC.get(path.rsplit(".", 1)[-1].lower(), ())
+    if path.lower().endswith(".eot"):  # EOT: magic 0x504C ("LP") at byte offset 34
+        return head[34:36] != b"LP"
     return bool(accepted) and not head.startswith(accepted)
 
 
@@ -201,9 +204,10 @@ def count_loc(
     """Return (counted LOC, excluded LOC, binary paths needing approval).
 
     `rows` carry real +/- counts even for files git classes as binary (see text_loc), so a NUL
-    byte or a `-diff` attribute never hides lines. `binary_paths` (rows git reports as binary WITHOUT --text) are only used for reviewer
-    visibility: allowlisted images/fonts count 0 LOC; linguist-generated (in base) paths are
-    excluded; every other binary path is counted AND flagged (allowlist, not denylist).
+    byte or a `-diff` attribute never hides lines. `binary_paths` are the rows git reports as
+    binary. Allowlisted images/fonts (valid magic) count 0 LOC; paths generated AND declared binary
+    in the gate attributes are excluded; every other binary path is counted AND flagged
+    (allowlist, not denylist).
     """
     counted = excluded = 0
     flagged: list[str] = []
@@ -349,7 +353,7 @@ def check(
             and p not in LOCKFILES
         )
         needs_approval.append(
-            f"PR-SIZE-002 C-4.8: PR changes linguist-generated/diff/binary attributes "
+            f"PR-SIZE-002 C-4.8: PR changes .gitattributes or the attributes of changed paths "
             f"({newly} LOC would be newly excluded; nested .gitattributes: {nested}; "
             f"changed-path attribute drift: {drift[:5]})"
         )
@@ -452,15 +456,17 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
         binary_paths = frozenset(r[2] for r in rows if r[0] == "-")
         sizes: dict[str, str] = {}
         force: set[str] = set()
-        for path in sorted(binary_paths):
-            if subprocess.run(["git", "cat-file", "-e", f"{head}:{path}"], cwd=root,
-                              capture_output=True).returncode != 0:
-                continue  # deleted: reported as info only
+        deleted = set(_git(root, "diff", "--no-renames", "--diff-filter=D", "--name-only", "-z",
+                           f"{base}...{head}").split("\0")) - {""}
+        for path in sorted(binary_paths - deleted):
+            # an unresolvable path (e.g. non-UTF-8 bytes) raises ConfigError -> rc 2, fail closed
             sizes[path] = _git(root, "cat-file", "-s", f"{head}:{path}").strip()
             if BINARY_OK_RE.fullmatch(path):
-                blob = subprocess.run(["git", "cat-file", "blob", f"{head}:{path}"], cwd=root,
-                                      capture_output=True).stdout[:8]
-                if bad_magic(path, blob):
+                r = subprocess.run(["git", "cat-file", "blob", f"{head}:{path}"], cwd=root,
+                                   capture_output=True)
+                if r.returncode != 0:
+                    raise ConfigError(f"cannot read blob {path!r}")
+                if bad_magic(path, r.stdout[:40]):
                     force.add(path)  # image/font name with foreign content: not allowlisted
         fixed = []
         for add, dele, path in rows:
