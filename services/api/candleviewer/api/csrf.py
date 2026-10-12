@@ -31,7 +31,7 @@ import json
 import re
 from collections.abc import Callable
 from enum import StrEnum
-from http.cookies import SimpleCookie
+from http.cookies import CookieError, SimpleCookie
 from typing import Any, Protocol
 
 import structlog
@@ -110,16 +110,10 @@ def is_exempt(method: str, path: str) -> bool:
 
 
 def set_csrf_cookie(response: Response, token: str, *, max_age: int) -> None:
-    """`__Host-` prefix: Secure, Path=/, no Domain. Not HttpOnly: the client reads it."""
-    response.set_cookie(
-        CSRF_COOKIE,
-        token,
-        max_age=max_age,
-        path="/",
-        secure=True,
-        httponly=False,
-        samesite="strict",
-    )
+    """`__Host-` prefix: Secure, Path=/, no Domain. Deliberately NOT HttpOnly: the client
+    must read it (contract `csrfCookie`, SR-041). The value is a session-bound MAC, not a
+    credential, so it is the one documented exception to SR-012's HttpOnly rule."""
+    response.set_cookie(CSRF_COOKIE, token, max_age=max_age, path="/", secure=True, httponly=False, samesite="strict")  # nosem: cookie-flags reason=SR-041-double-submit-cookie-must-be-script-readable owner=@CandleViewer/security review=2027-03-31  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
 
 
 def clear_csrf_cookie(response: Response) -> None:
@@ -146,8 +140,8 @@ def _cookies(headers: Headers) -> dict[str, str]:
     for raw in headers.getlist("cookie"):
         try:
             jar.load(raw)
-        except Exception:  # noqa: S112 -- a malformed cookie header is simply absent
-            continue
+        except CookieError:
+            return out  # malformed Cookie header: treated as no cookie at all (fails closed)
     for name, morsel in jar.items():
         out[name] = morsel.value
     return out
