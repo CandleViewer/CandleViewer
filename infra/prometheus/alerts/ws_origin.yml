@@ -1,0 +1,19 @@
+# #2239 (SR-042, SR-183): a burst of refused WS upgrades means a cross-site page is
+# opening sockets in a user's browser, or CV_ALLOWED_ORIGINS no longer lists an app
+# origin. Every refusal is counted; log lines are capped per cause (23-ws-protocol.md
+# §2.5) and the audit record is pending #2269, so this alert is what makes them visible.
+groups:
+  - name: ws-origin
+    rules:
+      - alert: WsOriginRefusalsHigh
+        expr: sum(increase(cv_ws_closes_total{reason="origin_forbidden"}[10m])) > 20
+        for: 5m
+        labels:
+          severity: ticket
+          component: auth
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-wsoriginrefusalshigh"
+          summary: "WebSocket upgrades refused by the SR-042 Origin check"
+          description: >-
+            More than 20 WS upgrades refused in 10 minutes. Group the `ws upgrade refused`
+            warnings by `check` and `source_ip`; see 23-ws-protocol.md section 2.5.
