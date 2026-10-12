@@ -759,7 +759,10 @@ CREATE INDEX ix_api_keys_kek      ON api_keys (kek_version)     WHERE revoked_at
 COMMENT ON COLUMN api_keys.secret_enc IS 'SECRET: AES-256-GCM ciphertext; decryption only inside the credential broker module';
 ```
 
-`permission_snapshot` shape (validated by `jsonb` CHECK on required keys):
+`permission_snapshot` shape (validated by the `jsonb` CHECK `ak_snapshot_shape` below). Bybit reports a
+key's rights as **values inside a group**: `permissions.Wallet` may list `AccountTransfer`,
+`SubMemberTransfer` and `Withdraw` (SR-030a). A storable snapshot grants none of them, so its `Wallet`
+group is empty:
 
 ```json
 {
@@ -770,7 +773,7 @@ COMMENT ON COLUMN api_keys.secret_enc IS 'SECRET: AES-256-GCM ciphertext; decryp
   "permissions": {
     "ContractTrade": ["Order", "Position"],
     "Spot": [],
-    "Wallet": ["AccountTransfer"],
+    "Wallet": [],
     "Options": [],
     "Derivatives": ["DerivativesTrade"],
     "Exchange": [],
@@ -784,13 +787,41 @@ COMMENT ON COLUMN api_keys.secret_enc IS 'SECRET: AES-256-GCM ciphertext; decryp
 ```
 
 ```sql
+-- Current definition (migration 0019_snapshot_withdraw_transfer, #2240): 0017's rule plus three
+-- SQL/JSON path scans, so it only tightens.
 ALTER TABLE api_keys ADD CONSTRAINT ak_snapshot_shape CHECK (
   permission_snapshot ? 'permissions'
   AND permission_snapshot ? 'uid'
   AND jsonb_typeof(permission_snapshot->'permissions') = 'object'
   AND COALESCE(jsonb_array_length(permission_snapshot->'permissions'->'Withdraw'), 0) = 0
+  -- a right named as a value, at any depth ("Wallet": ["AccountTransfer"])
+  AND jsonb_path_exists(permission_snapshot->'permissions',
+    'strict $.** ? (@.type() == "string" && @ like_regex "withdraw|transfer" flag "i")'
+  ) IS FALSE
+  -- a right named as an object key below the group level
+  AND jsonb_path_exists(permission_snapshot->'permissions',
+    'strict $ ? (@.type() == "object").*.** ? (@.type() == "object").keyvalue()
+       ? (@.key like_regex "withdraw|transfer" flag "i")'
+  ) IS FALSE
+  -- a group named for a right that grants anything (null, "" and [] grant nothing)
+  AND jsonb_path_exists(permission_snapshot->'permissions',
+    'strict $ ? (@.type() == "object").keyvalue()
+       ? (@.key like_regex "withdraw|transfer" flag "i"
+          && !(@.value.type() == "null"
+               || (@.value.type() == "string" && @.value == "")
+               || (@.value.type() == "array" && @.value.size() == 0)))'
+  ) IS FALSE
 );
 ```
+
+> **Landed:** `0017_exchange_accounts_api_keys` created `ak_snapshot_shape` with only the first four
+> conditions, which refused a top-level `Withdraw` group but passed `"Wallet": ["AccountTransfer"]`.
+> `0019_snapshot_withdraw_transfer` (#2240) replaced it in place: add the new CHECK `NOT VALID`,
+> `VALIDATE` it against existing rows, drop 0017's, rename the new one to `ak_snapshot_shape`. The rule
+> is the same as `PermissionSnapshot` in `accounts/models.py` (M13) and the M2 credential gate (C-2.8,
+> SR-030a): `withdraw` or `transfer`, ignoring case, as a value or a key at any depth, except a group
+> named for a right that grants nothing. One shared corpus tests the model and the CHECK
+> (`tests/unit/accounts/_permission_cases.py`).
 
 #### 3.2.3 `api_key_rotations`
 

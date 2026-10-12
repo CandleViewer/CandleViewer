@@ -7,6 +7,7 @@ credential broker's internal row type reads them. `key_id_last4` is the only key
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -15,7 +16,7 @@ from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
-from candleviewer.accounts.errors import WithdrawPermissionError
+from candleviewer.accounts._permissions import reject_withdraw
 
 
 def _require_utc(value: datetime | None) -> datetime | None:
@@ -90,7 +91,9 @@ class ExchangeAccount(BaseModel):
 
 
 class PermissionSet(BaseModel):
-    """Exchange-reported `permissions` object; `Withdraw` must be empty (C-2.8)."""
+    """Exchange-reported `permissions` object. Rights are values inside a group
+    (`"Wallet": ["AccountTransfer"]`); `PermissionSnapshot` refuses any withdraw or transfer
+    right (C-2.8, SR-030a)."""
 
     model_config = ConfigDict(frozen=True, extra="allow")
 
@@ -118,11 +121,17 @@ class PermissionSnapshot(BaseModel):
     type: int = 1
     expiredAt: str | None = None
 
-    @model_validator(mode="after")
-    def _no_withdraw(self) -> PermissionSnapshot:
-        if self.permissions.Withdraw:
-            raise WithdrawPermissionError("key_withdraw_permission")
-        return self
+    @model_validator(mode="before")
+    @classmethod
+    def _no_withdraw(cls, data: object) -> object:
+        """C-2.8 / SR-030a on the raw payload, before pydantic coerces anything; the same rule
+        as migration 0019's `ak_snapshot_shape` CHECK."""
+        permissions = data.get("permissions") if isinstance(data, Mapping) else None
+        if isinstance(permissions, PermissionSet):
+            permissions = permissions.model_dump()
+        if isinstance(permissions, Mapping):
+            reject_withdraw(permissions)
+        return data
 
 
 class ApiKeyMetadata(BaseModel):

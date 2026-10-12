@@ -86,6 +86,11 @@
       "path": "services/api/candleviewer/migrations/versions/0017_exchange_accounts_api_keys.py",
       "sha256": "8cf6869ddbadec4e02e49e129ba710909d15eaa1144c23cf474e9ad74cda963d",
       "down_revision": "0016_audit_read_grants"
+    },
+    "0019_snapshot_withdraw_transfer": {
+      "path": "services/api/candleviewer/migrations/versions/0019_snapshot_withdraw_transfer.py",
+      "sha256": "11191f750225d87b62129581a37256ca5d5f06a09c9d812a52355ebc13452eed",
+      "down_revision": "0017_exchange_accounts_api_keys"
     }
   }
 }

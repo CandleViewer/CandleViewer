@@ -24,8 +24,18 @@ _NOW = datetime(2026, 9, 14, tzinfo=UTC)
 _SECRET = {"secret_enc", "key_id_enc", "enc_nonce", "dek_ref"}
 
 
-def _fixtures() -> list[dict[str, Any]]:
+def _shipped_fixtures() -> list[dict[str, Any]]:
     return json.loads(_FX.read_text())["accounts"]  # type: ignore[no-any-return]
+
+
+def _fixtures() -> list[dict[str, Any]]:
+    """Fixture rows minus the `AccountTransfer` right the synthetic fixture grants, which
+    C-2.8 / SR-030a refuse (#2240); the shipped rows are covered by
+    `test_shipped_fixture_transfer_right_is_refused`."""
+    rows = _shipped_fixtures()
+    for row in rows:
+        row["permission_snapshot"]["permissions"]["Wallet"] = []
+    return rows
 
 
 def _account(row: dict[str, Any]) -> ExchangeAccount:
@@ -69,6 +79,14 @@ def test_models_never_expose_secret_columns() -> None:
 def test_snapshot_rejects_withdraw() -> None:
     snap = _fixtures()[0]["permission_snapshot"]
     snap["permissions"]["Withdraw"] = ["Withdraw"]
+    with pytest.raises(ValidationError, match="key_withdraw_permission"):
+        PermissionSnapshot(**snap)
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_shipped_fixture_transfer_right_is_refused(index: int) -> None:
+    snap = _shipped_fixtures()[index]["permission_snapshot"]
+    assert snap["permissions"]["Wallet"] == ["AccountTransfer"]
     with pytest.raises(ValidationError, match="key_withdraw_permission"):
         PermissionSnapshot(**snap)
 
