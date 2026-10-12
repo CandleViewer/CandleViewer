@@ -115,3 +115,71 @@ def test_unsafe_dsn_refused_before_any_duckdb_connection(
     monkeypatch.setattr(duckdb_views.duckdb, "connect", _boom)
     with pytest.raises(UnsafeAnalyticsDsn):
         build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn="dbname=x user=cv_app")
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    [
+        "dbname=x user=cv_ro user=cv_app",
+        "dbname=x user=cv_app user=cv_ro",
+        "dbname=x user=cv_ro host=evil",
+        "dbname=x user=cv_ro service=svc",
+        "dbname=x user=cv_ro passfile=/etc/pw",
+        "dbname=x user=cv_ro options=-cx=y",
+        "dbname=x user=cv_ro host=127.0.0.1 sslmode=disable",
+        "dbname=x user=cv_ro host=a\\b",
+        "dbname=x user=cv_ro host=a'b",
+        "dbname=x user=cv_ro\nhost=127.0.0.1",
+        "dbname=x user=cv_ro host=127.0.0.1 port=1=2",
+    ],
+)
+def test_checked_ro_dsn_rejects_bypass_cases(dsn: str) -> None:
+    from candleviewer.storage.cold.duckdb_views import UnsafeAnalyticsDsn, _checked_ro_dsn
+
+    with pytest.raises(UnsafeAnalyticsDsn):
+        _checked_ro_dsn(dsn)
+
+
+class _RecordingCon:
+    def __init__(self, fail_load: bool) -> None:
+        self.sql: list[str] = []
+        self._fail_load = fail_load
+
+    def execute(self, sql: str, *_a: object) -> _RecordingCon:
+        self.sql.append(sql)
+        if self._fail_load and sql == "LOAD postgres":
+            raise duckdb.IOException("extension not found")
+        return self
+
+    def close(self) -> None:
+        return None
+
+
+def _patch_connect(monkeypatch: pytest.MonkeyPatch, con: _RecordingCon) -> None:
+    from candleviewer.storage.cold import duckdb_views
+
+    monkeypatch.setattr(duckdb_views.duckdb, "connect", lambda *_a, **_k: con)
+
+
+def test_valid_cv_ro_dsn_reaches_load_and_never_installs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    con = _RecordingCon(fail_load=False)
+    _patch_connect(monkeypatch, con)
+    dsn = "dbname=candleviewer user=cv_ro host=127.0.0.1 port=5432 sslmode=prefer"
+    build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn=dsn)
+    assert "LOAD postgres" in con.sql
+    assert not any(q.upper().startswith("INSTALL") for q in con.sql)
+    assert any(q.startswith("ATTACH") for q in con.sql)
+
+
+def test_missing_extension_raises_typed_error_without_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from candleviewer.storage.cold.duckdb_views import PostgresExtensionUnavailable
+
+    con = _RecordingCon(fail_load=True)
+    _patch_connect(monkeypatch, con)
+    with pytest.raises(PostgresExtensionUnavailable):
+        build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn="dbname=x user=cv_ro")
+    assert not any(q.upper().startswith("INSTALL") for q in con.sql)

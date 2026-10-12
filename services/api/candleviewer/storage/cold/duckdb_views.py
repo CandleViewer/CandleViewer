@@ -67,14 +67,42 @@ class UnsafeAnalyticsDsn(ValueError):
     key/value DSN (SR-048: analytics must never hold a writable role)."""
 
 
-_DSN_FORBIDDEN = frozenset((chr(39), chr(34), ";", chr(10), chr(13)))  # quote, dquote, ;, LF, CR
+class PostgresExtensionUnavailable(RuntimeError):
+    """The preinstalled DuckDB `postgres` extension could not be LOADed. It is
+    never downloaded at runtime; the deployment image must preinstall it."""
+
+
+_DSN_ALLOWED_KEYS = frozenset(("dbname", "host", "port", "user", "sslmode"))
+_DSN_LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
+_DSN_BAD_VALUE_CHARS = frozenset("=\\'\"; \t")
 
 
 def _checked_ro_dsn(dsn: str) -> str:
-    """Accept only a libpq key/value DSN for the `cv_ro` role with no quote,
-    semicolon or newline characters. The DSN is never logged."""
-    if any(ch in dsn for ch in _DSN_FORBIDDEN) or "user=cv_ro" not in dsn.split():
-        raise UnsafeAnalyticsDsn("analytics attachment requires a plain cv_ro key/value DSN")
+    """Parse a libpq key/value DSN and accept it only if every key is on the
+    allow-list, no key repeats (libpq takes the last), `user` is exactly `cv_ro`,
+    `host` is loopback or a unix-socket directory and `sslmode` is not `disable`
+    for a non-local host. Values may not contain `=`, backslash, quotes, `;` or
+    whitespace/control characters. The DSN is never logged."""
+    fail = UnsafeAnalyticsDsn("analytics attachment requires a plain cv_ro key/value DSN")
+    if any(ord(ch) < 32 and ch != " " for ch in dsn):
+        raise fail
+    pairs: dict[str, str] = {}
+    for token in dsn.split(" "):
+        if not token:
+            continue
+        key, sep, value = token.partition("=")
+        if not sep or key not in _DSN_ALLOWED_KEYS or key in pairs or not value:
+            raise fail
+        if any(ch in _DSN_BAD_VALUE_CHARS or ord(ch) < 32 for ch in value):
+            raise fail
+        pairs[key] = value
+    if pairs.get("user") != "cv_ro":
+        raise fail
+    host = pairs.get("host")
+    if host is not None and host not in _DSN_LOOPBACK_HOSTS and not host.startswith("/"):
+        raise fail
+    if pairs.get("sslmode") == "disable":
+        raise fail
     return dsn
 
 
@@ -109,7 +137,12 @@ def build_views(db_path: Path, registry: DatasetRegistry, *, pg_dsn: str | None 
 
         journal_parts = ["SELECT * FROM journal_cold"] if oms_ok["journal_cold"] else []
         if checked_dsn:
-            con.execute("LOAD postgres")  # preinstalled in the image; no runtime INSTALL
+            try:
+                con.execute("LOAD postgres")  # preinstalled in the image; no runtime INSTALL
+            except duckdb.Error as exc:
+                raise PostgresExtensionUnavailable(
+                    "duckdb postgres extension is not preinstalled; it is never downloaded"
+                ) from exc
             con.execute("DETACH DATABASE IF EXISTS pg")
             dsn = checked_dsn
             # ATTACH has no bind params (DuckDB grammar); DSN validated above
