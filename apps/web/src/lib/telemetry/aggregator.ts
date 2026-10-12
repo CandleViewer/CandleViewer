@@ -9,6 +9,7 @@
  * against a degraded backend. Memory is O(buckets): a fixed set of counters.
  */
 
+import { apiFetch } from "../http/csrfFetch";
 import type { generated } from "@candleviewer/protocol";
 
 /** Bucket edges in ms; must match `22-api-openapi.yaml` FrontendTelemetry. */
@@ -128,7 +129,7 @@ export function fetchTransport(baseUrl = "/api/v1"): Transport {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 5_000);
     try {
-      const res = await fetch(`${baseUrl}${TELEMETRY_PATH}`, {
+      const res = await apiFetch(`${baseUrl}${TELEMETRY_PATH}`, {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },

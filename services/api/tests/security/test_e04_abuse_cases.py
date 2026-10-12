@@ -37,6 +37,7 @@ from candleviewer.observability.telemetry import (
     SessionRateLimiter,
     TelemetrySink,
 )
+from tests.csrf_helpers import arm_csrf
 
 # Secret-shaped values are assembled at runtime so no literal sits in the repo.
 FAKE_KEY = "AKIA" + "Zq9Xw3Lm" + "Pv7Rt2Yb" + "Nc4Hd"
@@ -64,7 +65,8 @@ def world() -> TestClient:
         roles=frozenset({"manager"}),
         permissions=frozenset({Permission.AUDIT_READ}),
     )
-    return TestClient(create_app(principal_resolver=res), client=("127.0.0.1", 50000))
+    app = create_app(principal_resolver=res)
+    return arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
 
 
 @pytest.fixture

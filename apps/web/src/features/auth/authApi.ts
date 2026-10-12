@@ -1,5 +1,6 @@
 /** Thin REST client for E09-S01 sign-in (`docs/plan/22-api-openapi.yaml` /auth/login, /auth/password). */
 
+import { apiFetch } from "../../lib/http/csrfFetch";
 const BASE = "/api/v1";
 
 export type LoginOutcome =
@@ -19,7 +20,7 @@ const DEFAULT_LOCK_S = 15 * 60;
 export async function login(identifier: string, password: string): Promise<LoginOutcome> {
   let res: Response;
   try {
-    res = await fetch(`${BASE}/auth/login`, {
+    res = await apiFetch(`${BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ identifier, password }),
@@ -57,7 +58,7 @@ export async function changePassword(
 ): Promise<ChangePasswordOutcome> {
   let res: Response;
   try {
-    res = await fetch(`${BASE}/auth/password`, {
+    res = await apiFetch(`${BASE}/auth/password`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ current_password: current, new_password: next }),

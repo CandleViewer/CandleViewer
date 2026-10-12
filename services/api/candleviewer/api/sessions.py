@@ -8,7 +8,8 @@ emission here (`auth` may not import `audit`). Authentication is the opaque
 bearer access token of ADR-0020 (hashed at rest, constant-time compared);
 the `cv_refresh` cookie is `HttpOnly; Secure; SameSite=Strict;
 Path=/api/v1/auth` and cookie-authenticated refreshes get an Origin check
-(CSRF, ticket Security notes).
+(SR-042). The SR-041 `__Host-cv_csrf` token is enforced by `api.csrf.CsrfMiddleware`
+and rotated here on refresh, re-issued by `GET /auth/session`, expired on logout.
 
 **Identity seam (not invented here):** `SessionInfo`/`AuthenticatedResponse`
 need `user`, `permissions` and `account_scope`, which come from the RBAC
@@ -34,7 +35,9 @@ from typing import Annotated, Any, Protocol
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from candleviewer.api.csrf import clear_csrf_cookie, set_csrf_cookie
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.auth.csrf import CSRF_COOKIE, CsrfCodec, CsrfVerdict
 from candleviewer.auth.errors import (
     RefreshReuseDetected,
     SessionIdleLocked,
@@ -237,6 +240,7 @@ def make_session_router(
     allowed_origins: frozenset[str] = frozenset(),
     ip_throttle: PerIpLoginThrottle | None = None,
     session_throttle: PerIpLoginThrottle | None = None,
+    csrf: CsrfCodec | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["auth"])
     by_ip = ip_throttle or PerIpLoginThrottle(
@@ -391,6 +395,10 @@ def make_session_router(
             },
         )
         _set_refresh_cookie(response, minted.refresh_token, max_age=REFRESH_EXPIRES_IN_S)
+        if csrf is not None:  # SR-041: validated by CsrfMiddleware, rotated with the session
+            set_csrf_cookie(
+                response, csrf.issue(str(minted.session_id)), max_age=REFRESH_EXPIRES_IN_S
+            )
         return response
 
     @router.get("/auth/session")
@@ -406,7 +414,7 @@ def make_session_router(
             )
         info = await identity.session_info(str(record.user_id))
 
-        return JSONResponse(
+        response = JSONResponse(
             {
                 **info,
                 "user": await identity.user(str(record.user_id)),
@@ -422,6 +430,12 @@ def make_session_router(
                 },
             }
         )
+        if csrf is not None:
+            # SR-041 recovery path: re-issue when absent or not verifying.
+            present = request.cookies.get(CSRF_COOKIE)
+            if not present or csrf.verify(present, str(record.id)) is not CsrfVerdict.OK:
+                set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=REFRESH_EXPIRES_IN_S)
+        return response
 
     @router.get("/auth/sessions")
     async def list_sessions(
@@ -506,6 +520,7 @@ def make_session_router(
             await _propagate(r.id, "session_revoked")
         response = Response(status_code=204)
         _clear_refresh_cookie(response)
+        clear_csrf_cookie(response)
         return response
 
     @router.delete("/me/sessions/{sessionId}")
@@ -542,6 +557,7 @@ def make_session_router(
         response = Response(status_code=204)
         if session_id == record.id:
             _clear_refresh_cookie(response)
+        clear_csrf_cookie(response)
         return response
 
     return router

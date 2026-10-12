@@ -78,10 +78,9 @@ def test_matrix_covers_every_contract_operation_and_has_no_orphan_rows() -> None
 def test_every_served_route_has_a_row_and_every_row_state_matches_the_app(world: World) -> None:
     served = _served_ops(world)
     undeclared = sorted(served - set(_OPS))
-    assert not undeclared, (
-        "app serves routes with no matrix row; add rows (all 5 actors) for: "
-        + ", ".join(undeclared)
-    )
+    assert (
+        not undeclared
+    ), "app serves routes with no matrix row; add rows (all 5 actors) for: " + ", ".join(undeclared)
     now_mounted = sorted(k for k, r in _OPS.items() if r["state"] == "not_mounted" and k in served)
     assert not now_mounted, (
         "rows marked not_mounted are now served; change state to `executed` and fill in the "
@@ -114,9 +113,10 @@ def test_matrix_permissions_and_scope_agree_with_the_contract() -> None:
 
 def test_topic_matrix_is_total_over_the_ws_registry_and_agrees_with_it() -> None:
     registry = set(TOPIC_PERMISSIONS) | {"system"}
-    assert not (registry - set(_TOPICS)), (
-        "WS topic families with no matrix row; add all 5 actors for: "
-        + ", ".join(sorted(registry - set(_TOPICS)))
+    assert not (
+        registry - set(_TOPICS)
+    ), "WS topic families with no matrix row; add all 5 actors for: " + ", ".join(
+        sorted(registry - set(_TOPICS))
     )
     assert not (set(_TOPICS) - registry), "orphan topic rows: " + ", ".join(
         sorted(set(_TOPICS) - registry)
@@ -200,12 +200,13 @@ def test_cell_outcome_matches_matrix(world: World, key: str, actor: str) -> None
     record_cell(_group(key), key, actor, "xfail" if pending else "pass", started)
     # 501/503 after authorisation = backend not wired in the CI app (authz still passed); any
     # other 5xx is an unhandled error and fails the cell.
-    assert resp.status_code not in range(500, 600) or resp.status_code in (501, 503), (
-        f"{key} as {actor}: unhandled server error {resp.status_code}"
-    )
-    assert observed == row["outcomes"][actor], (
-        f"{key} as {actor}: expected {row['outcomes'][actor]}, got {resp.status_code}"
-    )
+    assert resp.status_code not in range(500, 600) or resp.status_code in (
+        501,
+        503,
+    ), f"{key} as {actor}: unhandled server error {resp.status_code}"
+    assert (
+        observed == row["outcomes"][actor]
+    ), f"{key} as {actor}: expected {row['outcomes'][actor]}, got {resp.status_code}"
 
 
 def test_not_executable_rows_still_refuse_the_unauthenticated_caller_or_say_why(
@@ -218,7 +219,10 @@ def test_not_executable_rows_still_refuse_the_unauthenticated_caller_or_say_why(
             continue
         method, path = key.split(" ", 1)
         resp = world.client.request(
-            method, fill_path(path), json={} if method in ("POST", "PUT", "PATCH") else None
+            method,
+            fill_path(path),
+            json={} if method in ("POST", "PUT", "PATCH") else None,
+            headers=bearer("unauthenticated"),  # SR-041 pair only, so the route itself answers
         )
         assert resp.status_code in (401, 422, 501, 503), f"{key}: {resp.status_code}"
         assert resp.status_code < 200 or resp.status_code >= 300, f"{key}: unauthenticated 2xx"

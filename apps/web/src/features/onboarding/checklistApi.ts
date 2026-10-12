@@ -1,5 +1,6 @@
 /** Thin REST client for the E09-S06 first-run checklist (state is always server-evaluated). */
 
+import { apiFetch } from "../../lib/http/csrfFetch";
 export type StepState = "ok" | "pending" | "blocked" | "error" | "not_applicable";
 export interface ChecklistItem {
   readonly key: string;
@@ -18,7 +19,7 @@ const BASE = "/api/v1/onboarding/checklist";
 
 export async function fetchChecklist(): Promise<Checklist | null> {
   try {
-    const res = await fetch(BASE);
+    const res = await apiFetch(BASE);
     if (!res.ok) return null;
     return (await res.json()) as Checklist;
   } catch {
@@ -28,7 +29,7 @@ export async function fetchChecklist(): Promise<Checklist | null> {
 
 export async function dismissChecklist(): Promise<boolean> {
   try {
-    return (await fetch(`${BASE}/dismiss`, { method: "POST" })).ok;
+    return (await apiFetch(`${BASE}/dismiss`, { method: "POST" })).ok;
   } catch {
     return false;
   }

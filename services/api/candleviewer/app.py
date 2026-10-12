@@ -60,6 +60,7 @@ from candleviewer.api import (
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.csrf import CsrfMiddleware
 from candleviewer.api.deny_by_default import (
     assert_app_routes_declared,
     declared_operations,
@@ -80,6 +81,7 @@ from candleviewer.api.step_up import make_read_only_guard, make_step_up_router
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.users import SnapshotResolver, UserRoleStore, make_users_router
+from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.models import (
     InviteRecord,
     MfaChallengeRecord,
@@ -361,6 +363,24 @@ def build_auth_service(
         clock=clock,
         invite_repository=SqlAlchemyInviteRepository(relational, _record_factory(InviteRecord)),
     )
+
+
+def build_csrf_codec(settings: Settings) -> CsrfCodec:
+    """#2090 (SR-041): the dedicated CSRF HMAC key, loaded exactly like the
+    other auth keys (`_decode_key`, 32-byte hex). Required on live or the real
+    backend; otherwise a process-local random key (tokens die with the process,
+    which only forces a cookie re-issue via `GET /auth/session`)."""
+    current = settings.auth_csrf_key_hex
+    if current is None and (
+        settings.environment is Environment.LIVE or settings.storage_backend == "real"
+    ):
+        raise ValueError(
+            "CV_AUTH_CSRF_KEY_HEX is required (live or storage_backend=real); "
+            "refusing to start auth (SR-041)"
+        )
+    key = _decode_key("CV_AUTH_CSRF_KEY_HEX", current) or os.urandom(32)
+    previous = _decode_key("CV_AUTH_CSRF_PREVIOUS_KEY_HEX", settings.auth_csrf_previous_key_hex)
+    return CsrfCodec(key, (previous,) if previous is not None else ())
 
 
 def build_identity_provider(settings: Settings) -> SqlAlchemyIdentityProvider | None:
@@ -852,7 +872,9 @@ def create_app(
             environment=resolved.environment.value,
         )
     )
-    app.include_router(make_auth_router(ctx.auth, ctx.audit, identity=identity))
+    csrf_codec = build_csrf_codec(resolved)
+    app.state.csrf_codec = csrf_codec
+    app.include_router(make_auth_router(ctx.auth, ctx.audit, identity=identity, csrf=csrf_codec))
     # E09-S03: session routes; revocation is pushed to sockets via the hub
     # (4401). Identity provider is E09-T03, so refresh/session return 501 and
     # every route answers 503 until a session repository is wired.
@@ -865,6 +887,7 @@ def create_app(
             identity=identity,
             publish_revocation=_hub_publisher(revocation_hub),
             allowed_origins=resolved.allowed_origin_set,
+            csrf=csrf_codec,
         )
     )
     # QA #1648 d1: live WS gateway. Role changes (`PUT /users/{id}/roles`)
@@ -1217,6 +1240,15 @@ def create_app(
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).
     app.include_router(
         make_orderbook_router(lambda: ctx.ingestion.books, principal_resolver=audit_resolver)
+    )
+    # #2090 (SR-041): added before CorrelationMiddleware, so it runs inside it (a
+    # refusal carries a correlation id) and outside every route-level guard
+    # (read-only/step-up, RBAC): no write reaches them without a valid token.
+    app.add_middleware(
+        CsrfMiddleware,
+        codec=csrf_codec,
+        sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
+        audit=_LazyAuditEmitter(ctx.audit),
     )
     app.add_middleware(CorrelationMiddleware)
     # E09-T03 / #1648: a served route without an RBAC declaration fails the build.

@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.app import create_app
 from candleviewer.auth.scopes import PrincipalSnapshot
+from tests.csrf_helpers import arm_csrf
 
 MGR = uuid.uuid4()
 OTHER = uuid.uuid4()
@@ -60,7 +61,7 @@ class _Writer:
 def _client(store: _Store, w: _Writer) -> TestClient:
     app = create_app(principal_resolver=_Resolver(), onboarding_store=store)
     app.state.app_context.audit._writer = w
-    return TestClient(app, client=("127.0.0.1", 50000))
+    return arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
 
 
 H = {"Authorization": "Bearer mgr"}

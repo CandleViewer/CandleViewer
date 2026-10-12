@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 import candleviewer.app as appmod
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
 from candleviewer.audit.models import AuditPage, ExportResult, VerifyResult
+from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     InviteNotFound,
     InviteRejected,
@@ -37,6 +38,7 @@ from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.rules.manager import InMemoryRuleStore
 from candleviewer.storage.repositories.alerts import Page
+from tests.csrf_helpers import csrf_headers
 
 MATRIX_PATH = Path(__file__).with_name("matrix.yaml")
 ACTORS = ("owner", "manager_with_grant", "manager_without_grant", "viewer", "unauthenticated")
@@ -329,6 +331,7 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
         snapshot_loader=snapshot_loader,
         ws_authenticate=ws_authenticate,
     )
+    _CSRF_CODEC[:] = [app.state.csrf_codec]
     ctx = app.state.app_context
     audit = _AuditSink()
     ctx.audit._writer = audit
@@ -354,8 +357,19 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
     )  # fmt: skip
 
 
+#: The app's SR-041 codec, set by `build_world` (one app per world).
+_CSRF_CODEC: list[CsrfCodec] = []
+
+
 def bearer(actor: str) -> dict[str, str]:
-    return {} if actor == "unauthenticated" else {"Authorization": f"Bearer tok-{actor}"}
+    """Bearer + the SR-041 header/cookie pair a browser would send for that session (#2090).
+    The unauthenticated caller still sends a well-formed token so the route's own 401 is
+    observed, not the CSRF refusal (that is covered by tests/security/auth/test_csrf_*)."""
+    sid = None if actor == "unauthenticated" else uuid.uuid5(_USER_IDS[actor], "session")
+    csrf = csrf_headers(_CSRF_CODEC[-1], sid) if _CSRF_CODEC else {}
+    if actor == "unauthenticated":
+        return csrf
+    return {"Authorization": f"Bearer tok-{actor}", **csrf}
 
 
 def fill_path(path: str, params: dict[str, str] | None = None) -> str:

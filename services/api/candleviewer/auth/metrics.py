@@ -30,6 +30,11 @@ auth_step_up_failures_total = Counter(
 auth_readonly_downgrades_total = Counter(
     "auth_readonly_downgrades_total", "Sessions downgraded to read-only after repeated failures."
 )
+auth_csrf_refused_total = Counter(
+    "auth_csrf_refused_total",
+    "State-changing requests refused by the SR-041 CSRF guard, by reason.",
+    ["reason"],  # closed set: missing | mismatch | bad_mac | wrong_session
+)
 auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets performed.")
 auth_revocation_latency_seconds = Histogram(
     "auth_revocation_latency_seconds",

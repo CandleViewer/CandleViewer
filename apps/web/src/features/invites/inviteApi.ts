@@ -1,5 +1,6 @@
 /** Thin REST client for E09-S05 invites (`docs/plan/22-api-openapi.yaml`). */
 
+import { apiFetch } from "../../lib/http/csrfFetch";
 const BASE = "/api/v1";
 
 export interface ApiResult<T> {
@@ -14,7 +15,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<Ap
   if (body !== undefined) init.body = JSON.stringify(body);
   let response: Response;
   try {
-    response = await fetch(`${BASE}${path}`, init);
+    response = await apiFetch(`${BASE}${path}`, init);
   } catch {
     return { ok: false, status: 0, code: null, data: null };
   }

@@ -9,10 +9,12 @@ from fastapi.testclient import TestClient
 
 from candleviewer.app import create_app
 from candleviewer.observability.support_bundle_wiring import LogRingBuffer
+from tests.csrf_helpers import arm_csrf
 
 
 def test_route_mounted_and_fails_closed_without_identity() -> None:
-    client = TestClient(create_app(), client=("127.0.0.1", 50000))
+    app = create_app()
+    client = arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
     resp = client.post("/admin/support-bundle", json={})
     assert resp.status_code == 501  # mounted (not 404), fails closed without identity
 
@@ -51,14 +53,15 @@ from candleviewer.auth.errors import SessionNotFound  # noqa: E402
 
 _OWNER = uuid.uuid4()
 _MGR = uuid.uuid4()
+_SID = uuid.uuid4()  # one session id for both fake bearers (the CSRF token binds to it)
 
 
 class _Sessions:
-    async def authenticate_access_token(self, token: str, *, touch: bool = False) -> Any:
+    async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         users = {"owner": _OWNER, "mgr": _MGR}
         if token not in users:
             raise SessionNotFound("nope")
-        return SimpleNamespace(id=uuid.uuid4(), user_id=users[token])
+        return SimpleNamespace(id=_SID, user_id=users[token])
 
 
 class _Identity:
@@ -85,7 +88,7 @@ def _wired(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> TestClient:
     monkeypatch.setattr(app_module, "build_identity_provider", lambda _s: _Identity())
     app = app_module.create_app()
     app.state.app_context.auth._sessions = _Sessions()
-    return TestClient(app, client=("127.0.0.1", 50000))
+    return arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec, _SID)
 
 
 def _body() -> dict[str, str]:

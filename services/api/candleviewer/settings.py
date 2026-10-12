@@ -149,6 +149,11 @@ class Settings(BaseSettings):
     auth_totp_key_hex: SecretStr | None = None
     auth_recovery_hmac_key_hex: SecretStr | None = None
     auth_pepper: SecretStr = SecretStr("")
+    # #2090 (SR-041): dedicated CSRF-token HMAC key (hex, 32 bytes), separate from
+    # the TOTP / recovery keys and the refresh tokens. Rotatable: move the old
+    # value to `auth_csrf_previous_key_hex` (verify-only) for one refresh lifetime.
+    auth_csrf_key_hex: SecretStr | None = None
+    auth_csrf_previous_key_hex: SecretStr | None = None
 
     # E03-T10: bounds `pg_advisory_lock` acquisition in the boot-time
     # migration runner (`candleviewer.migrations.boot`). A deadlocked

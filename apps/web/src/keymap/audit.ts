@@ -1,3 +1,4 @@
+import { apiFetch } from "../lib/http/csrfFetch";
 import { getCommand } from "./keymap";
 
 export const TRADING_BINDING_CHANGED = "hotkey.trading_binding_changed";
@@ -72,7 +73,7 @@ const outbox: AuditRecord[] = load();
 
 export async function sendAudit(r: AuditRecord): Promise<boolean> {
   try {
-    const res = await fetch(AUDIT_PATH, {
+    const res = await apiFetch(AUDIT_PATH, {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },

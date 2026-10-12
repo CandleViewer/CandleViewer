@@ -1,7 +1,9 @@
 """E09-X02 CSRF / cookie-flag abuse cases (AC-CSRF-*) against the real session router.
 
-Finding F-1 (design gap, see abuse-cases doc): the repo has no double-submit CSRF token in
-`auth/`; the implemented controls are SameSite=Strict + Origin allow-list on cookie refresh.
+These exercise the session router on its own (no `CsrfMiddleware` mounted), i.e. the
+SameSite=Strict + Origin allow-list controls that stay in place as additional defences. The
+SR-041 double-submit token (finding F-1, #2090) is covered end to end through `create_app()` in
+`test_csrf_double_submit.py`.
 """
 
 from __future__ import annotations

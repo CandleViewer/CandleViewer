@@ -1,3 +1,4 @@
+import { apiFetch } from "../lib/http/csrfFetch";
 import { useEffect, useState, type FormEvent, type JSX } from "react";
 import { useNavigate } from "react-router-dom";
 import { getStepUpExpiresAt, recordStepUp } from "../lib/auth/meCache";
@@ -48,7 +49,7 @@ export function StepUpGate({ redirectTo }: StepUpGateProps): JSX.Element {
     setSubmitting(true);
     setError(null);
     try {
-      const response = await fetch("/api/v1/auth/step-up", {
+      const response = await apiFetch("/api/v1/auth/step-up", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, password }),
