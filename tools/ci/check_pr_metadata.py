@@ -18,6 +18,9 @@ Rules
   C-4.10 title is `type(scope)[!]: subject`; type/scope sets are parsed from commitlint.config.cjs
          (never restated); scope is required iff commitlint's `scope-empty` is `never`.
   C-4.7  body (HTML comments and code spans stripped) contains `Closes #N` or `Fixes #N`.
+         INTERPRETATION pending a C-4.7 amendment: `Refs #N` is accepted (with a WARN) only when
+         the body also has a line `Partial: <reason>` (stack slice, contract-first, scaffold), so
+         partial work is not pushed into `Closes` (which auto-closes the issue). Neither -> PR-BODY-001.
   C-16.4 every `C-x.y` cited in title/body is declared in CONSTITUTION.md. The declaration loader
          is reused from scripts/check_rule_refs.py (GOV-002; scans tracked files, not PR text) -
          C-16.5, no second implementation.
@@ -48,6 +51,8 @@ LOCKFILES = frozenset({"pnpm-lock.yaml", "services/api/uv.lock"})
 BINARY_OK_RE = re.compile(r"\.(png|jpe?g|gif|webp|ico|svg|woff2?|ttf|otf|eot)$", re.IGNORECASE)
 ATTRS = ("linguist-generated", "diff", "binary")
 LINK_RE = re.compile(r"\b(?:Closes|Fixes)\s+#\d+\b", re.IGNORECASE)
+REFS_RE = re.compile(r"\bRefs\s+#\d+\b", re.IGNORECASE)
+PARTIAL_RE = re.compile(r"^[ \t]*Partial:[ \t]*\S", re.MULTILINE)
 Fetch = Callable[[str], object]
 
 
@@ -273,7 +278,14 @@ def check(
         if m["scope"] and m["scope"] not in scopes:
             errors.append(f"PR-TITLE-003 C-4.10: scope {m['scope']!r} not an allowed scope")
 
-    if not LINK_RE.search(strip_markup(body)):
+    clean = strip_markup(body)
+    if LINK_RE.search(clean):
+        pass
+    elif REFS_RE.search(clean) and PARTIAL_RE.search(clean):
+        warnings.append("C-4.7: `Refs #N` + `Partial:` accepted as a partial/stacked PR (interpretation)")
+    elif REFS_RE.search(clean):
+        errors.append("PR-BODY-002 C-4.7: `Refs #N` needs a `Partial: <reason>` line (else use `Closes #N`)")
+    else:
         errors.append("PR-BODY-001 C-4.7: body needs `Closes #N` (or `Fixes #N`) outside code/comments")
 
     for rid in sorted(set(rule_id_re.findall(f"{title}\n{body}")) - declared):

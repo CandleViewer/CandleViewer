@@ -160,7 +160,7 @@ def test_empty_commitlint_parse_fails_loudly():
 
 def test_body_requires_closes_or_fixes_not_refs():
     assert codes(run(pr(body="no link"))[0]) == ["PR-BODY-001"]
-    assert codes(run(pr(body="Refs #12"))[0]) == ["PR-BODY-001"]
+    assert codes(run(pr(body="Refs #12"))[0]) == ["PR-BODY-002"]
     assert run(pr(body="Fixes #12"))[0] == []
     assert codes(run(pr(body=None))[0]) == ["PR-BODY-001"]
 
@@ -269,3 +269,18 @@ def test_main_pr_cannot_hide_lines_with_own_diff_attribute(repo, monkeypatch, ca
     assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, pr())) == 1
     err = capsys.readouterr().err
     assert "PR-SIZE-001" in err and "901 changed LOC" in err
+
+
+def test_refs_with_partial_line_warns_not_fails():
+    errs, warns = run(pr(body="Refs #12\nPartial: stack slice 2 of 5\n"))
+    assert errs == [] and any("Partial" in w for w in warns)
+
+
+def test_refs_with_empty_or_quoted_partial_fails():
+    assert codes(run(pr(body="Refs #12\nPartial:\n"))[0]) == ["PR-BODY-002"]
+    assert codes(run(pr(body="Refs #12\n`Partial: x`"))[0]) == ["PR-BODY-002"]
+    assert codes(run(pr(body="Partial: x"))[0]) == ["PR-BODY-001"]
+
+
+def test_closes_wins_over_refs_without_warning():
+    assert run(pr(body="Closes #1\nRefs #2"))[1] == []
