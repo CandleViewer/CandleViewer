@@ -7,6 +7,7 @@ Pure, I/O-free building blocks the gateway drives:
   (B1-B20) - it is the per-frame transport path, which C-2.20 keeps out of the
   statechart runtime.
 - `negotiate_subprotocol`: §2.2 subprotocol selection.
+- `origin_refusal`: §2.5 `Origin` / `Sec-Fetch-Site` check on the upgrade (SR-042, SR-183).
 - `bye_frame`: the one `bye` builder (§4.4, requirement S11).
 - `InboundRateLimiter`: 30 frames/s and 300 frames/min excluding `pong` (§8.5).
 - `Watchdog`: auth deadline, token expiry, unsolicited ping and heartbeat
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 import enum
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -75,12 +76,16 @@ class CloseCode(enum.IntEnum):
     BAD_CLIENT = 4400
 
 
+#: §2.5 / §4.4: reason of a refused upgrade (closed `4403` before `accept`, so no `bye`).
+ORIGIN_FORBIDDEN: Final = "origin_forbidden"
+
 #: reason -> (close code, reconnect). Every server-initiated close maps here.
 CLOSE_REASONS: Final[dict[str, tuple[CloseCode, bool]]] = {
     "normal": (CloseCode.NORMAL, False),
     "shutdown": (CloseCode.GOING_AWAY, True),
     "protocol_violation": (CloseCode.PROTOCOL_ERROR, False),
     "unsupported_protocol": (CloseCode.PROTOCOL_ERROR, False),
+    ORIGIN_FORBIDDEN: (CloseCode.FORBIDDEN, False),
     "frame_too_big": (CloseCode.TOO_BIG, False),
     "internal_error": (CloseCode.INTERNAL_ERROR, True),
     "server_shedding_load": (CloseCode.TRY_AGAIN_LATER, True),
@@ -199,6 +204,44 @@ def negotiate_subprotocol(
     """§2.2: the first server-preferred subprotocol the client offered, else None."""
     wanted = {o.strip() for o in offered}
     return next((p for p in supported if p in wanted), None)
+
+
+class OriginRefusal(enum.StrEnum):
+    """§2.5 bounded refusal cause: the `check` log field, never a header value."""
+
+    FETCH_SITE = "fetch_site"
+    ORIGIN_MISSING = "origin_missing"
+    ORIGIN_NULL = "origin_null"
+    ORIGIN_NOT_ALLOWED = "origin_not_allowed"
+
+
+#: §2.5: the endpoint is same-origin (§2.1), so a sibling host is refused like a foreign one.
+REFUSED_FETCH_SITES: Final = frozenset({"cross-site", "same-site"})
+#: §2.5: the serialised opaque origin (sandboxed frame, `file:`, `data:`); never admitted.
+NULL_ORIGIN: Final = "null"
+
+
+def origin_refusal(
+    origins: Sequence[str], fetch_sites: Sequence[str], allowed: frozenset[str]
+) -> OriginRefusal | None:
+    """§2.5 upgrade check (SR-042, SR-183); None admits the upgrade.
+
+    `origins` / `fetch_sites` are every `Origin` / `Sec-Fetch-Site` value received. Fails
+    closed: a `cross-site` / `same-site` fetch, no `Origin`, more than one, `null` (even if
+    listed) and anything outside `allowed` (exact match once trailing `/` is dropped, as
+    `Settings.allowed_origin_set` normalises) are refused. No non-browser exemption."""
+    if any(site.strip().lower() in REFUSED_FETCH_SITES for site in fetch_sites):
+        return OriginRefusal.FETCH_SITE
+    if not origins:
+        return OriginRefusal.ORIGIN_MISSING
+    if len(origins) > 1:
+        return OriginRefusal.ORIGIN_NOT_ALLOWED  # ambiguous: never pick one
+    origin = origins[0].strip().rstrip("/")
+    if origin.lower() == NULL_ORIGIN:
+        return OriginRefusal.ORIGIN_NULL
+    if origin not in allowed:
+        return OriginRefusal.ORIGIN_NOT_ALLOWED
+    return None
 
 
 def bye_frame(

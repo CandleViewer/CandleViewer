@@ -36,6 +36,7 @@ ACC = uuid.uuid4()
 JSON = ["cv.v1.json"]
 #: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
 _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
+ORIGIN = "http://testserver"  # §2.5: in CV_ALLOWED_ORIGINS and sent on every upgrade
 
 
 class _Kill:
@@ -62,6 +63,7 @@ async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
 def _settings() -> Settings:
     return Settings(
         environment=Environment.DEMO,
+        allowed_origins=ORIGIN,
         git_sha="cafe123",
         version="4.5.6",
         ws_shutdown_grace_ms=0,
@@ -73,7 +75,7 @@ def _settings() -> Settings:
 def world() -> Iterator[tuple[TestClient, _Kill]]:
     k = _Kill()
     app = create_app(_settings(), snapshot_loader=k.load, ws_authenticate=_authenticate)
-    client = TestClient(app, client=("127.0.0.1", 50000))
+    client = TestClient(app, client=("127.0.0.1", 50000), headers={"origin": ORIGIN})
     with client:  # opens the portal; create_app's own lifespan only (no supervisor)
         yield client, k
 

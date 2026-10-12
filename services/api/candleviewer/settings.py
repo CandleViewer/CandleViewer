@@ -120,6 +120,8 @@ class Settings(BaseSettings):
     # E09-S03: CSRF allow-list for cookie-authenticated `POST /auth/refresh`
     # (`CV_ALLOWED_ORIGINS`, comma separated, e.g. "http://127.0.0.1:5173").
     # Empty (default) fails closed: every cookie refresh is refused.
+    # #2239 (SR-042/SR-183): also the WS upgrade allow-list (`23-ws-protocol.md`
+    # §2.5); empty refuses every WS upgrade.
     allowed_origins: str = ""
 
     pg_dsn: SecretStr = SecretStr("postgresql+asyncpg://cv:cv@localhost:5432/candleviewer")

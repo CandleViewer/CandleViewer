@@ -31,6 +31,7 @@ ACC_A = uuid.UUID(int=0xA1)
 ACC_B = uuid.UUID(int=0xB2)
 PERMS = frozenset({Permission.MARKETDATA_READ, Permission.POSITIONS_READ, Permission.ORDERS_READ})
 JSON = ["cv.v1.json"]
+ORIGIN = "http://testserver"  # §2.5: allow-listed and sent on every upgrade
 _TIMEOUT_S = 5.0
 #: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
 _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
@@ -71,10 +72,11 @@ class _World:
                 authenticate=authenticate,
                 registry=self.registry,
                 revocation_hub=RevocationHub(),
+                allowed_origins=frozenset({ORIGIN}),
                 tick_s=0.005,
             )
         )
-        self.client = TestClient(app)
+        self.client = TestClient(app, headers={"origin": ORIGIN})
 
 
 @pytest.fixture
