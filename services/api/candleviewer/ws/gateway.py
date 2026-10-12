@@ -51,7 +51,7 @@ import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from candleviewer.audit.models import AuditOutcome, Severity
-from candleviewer.net.middleware import RESOLVED_SOURCE_KEY
+from candleviewer.net import RESOLVED_SOURCE_KEY
 from candleviewer.observability.context import spawn
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.lifecycle import (
@@ -230,7 +230,10 @@ def close_reason_label(reason: str) -> str:
 
 
 def _source_ip(scope: Mapping[str, Any]) -> str | None:
-    """The address MeshOnly admitted (trusted-proxy aware), else the socket peer."""
+    """The address MeshOnly admitted (trusted-proxy aware), else `scope["client"]`.
+
+    Not a verified identity: under uvicorn's default `proxy_headers` a loopback peer can
+    set it through `X-Forwarded-For` (#2275 makes that trust one explicit setting)."""
     admitted = (scope.get("state") or {}).get(RESOLVED_SOURCE_KEY)
     if admitted:
         return str(admitted)
