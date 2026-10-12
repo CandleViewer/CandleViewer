@@ -10,12 +10,12 @@ see .github/workflows/pr-metadata.yml; the event's base.sha is never trusted, it
 PR opened before a merge), so a PR cannot rewrite the checker, its commitlint.config.cjs,
 scripts/check_rule_refs.py, .gitattributes or CODEOWNERS that judge it. The PR's CONSTITUTION.md is
 read through `git show` as data only. The workflow has a bootstrap branch (PR #2256 only, while the
-checker has no history on main) that runs the PR copy; it must be deleted right after merge (#2280).
+checker has no history on main) that runs the PR copy; it must be deleted right after merge (#2281).
 REMAINING GAPS (not fixable inside this script): under `pull_request` the workflow YAML itself is
 PR-controlled, so editing pr-metadata.yml is still a bypass that only the C-10.2 workflow security
 review catches; and every agent session currently acts as the repo owner account, so label
 provenance (PR-SIZE-004/005) is not independent of the PR author until agents use a separate
-machine user / GitHub App (follow-up issue). `@org/team` CODEOWNERS entries are not resolvable
+machine user / GitHub App (#2280). `@org/team` CODEOWNERS entries are not resolvable
 with a read-only token (only `@user` entries and the repo owner count).
 
 Rules
@@ -27,7 +27,7 @@ Rules
          -> needs the label; the LOC that would be newly excluded is printed.
          PR-SIZE-003: LOC of binary-classified files is counted from a `-U0 --text` patch (NUL bytes / `-diff` cannot hide lines).
          Files git still classes as binary are reviewer-invisible: images/fonts are allowlisted,
-         paths generated in base are excluded; every other one gets a ::warning with its size and
+         paths generated in base AND declared binary there (`-diff`/`binary`) are excluded; every other one gets a ::warning with its size and
          needs the label (allowlist, not denylist: .so/.node/.wasm, extensionless, hooks).
          PR-SIZE-006: changing the gate's own files needs the label.
          PR-SIZE-004/005: the label must have been applied by an owner, and that same owner must
@@ -68,10 +68,17 @@ GATE_FILES = frozenset({
     "tools/ci/check_pr_metadata.py",
     "scripts/check_rule_refs.py",
     "commitlint.config.cjs",
+    ".github/CODEOWNERS",
 })
 LABEL = "large-pr-approved"
 LOCKFILES = frozenset({"pnpm-lock.yaml", "services/api/uv.lock"})
-BINARY_OK_RE = re.compile(r"\.(png|jpe?g|gif|webp|ico|woff2?|ttf|otf|eot)$", re.IGNORECASE)
+BINARY_OK_RE = re.compile(r".*\.(png|jpe?g|gif|webp|ico|woff2?|ttf|otf|eot)", re.IGNORECASE)
+MAGIC = {  # allowlisted extension -> accepted leading bytes
+    "png": (b"\x89PNG",), "jpg": (b"\xff\xd8",), "jpeg": (b"\xff\xd8",), "gif": (b"GIF8",),
+    "webp": (b"RIFF",), "ico": (b"\x00\x00\x01\x00", b"\x00\x00\x02\x00", b"\x89PNG"),
+    "woff": (b"wOFF",), "woff2": (b"wOF2",), "ttf": (b"\x00\x01\x00\x00", b"true"),
+    "otf": (b"OTTO",), "eot": (),
+}
 ATTRS = ("linguist-generated", "diff", "binary")
 MAX_PAGES = 10
 LINK_RE = re.compile(r"\b(?:Closes|Fixes)\s+#\d+\b", re.IGNORECASE)
@@ -167,17 +174,29 @@ def parse_numstat_z(raw: str) -> list[tuple[str, str, str]]:
     return rows
 
 
+def bad_magic(path: str, head: bytes) -> bool:
+    """True when an allowlisted image/font name does not start with that format's magic bytes."""
+    accepted = MAGIC.get(path.rsplit(".", 1)[-1].lower(), ())
+    return bool(accepted) and not head.startswith(accepted)
+
+
 def text_loc(patch: str) -> int:
-    """+/- line count of a `git diff --text -U0` patch for ONE path (headers excluded)."""
+    """+/- line count of a `git diff --text -U0` patch for ONE path (counted after the first @@)."""
     n = 0
+    in_hunk = False
     for line in patch.split("\n"):
-        if line[:1] in "+-" and not line.startswith(("+++", "---")):
+        if line.startswith("@@"):
+            in_hunk = True
+        elif in_hunk and line and line[0] in "+-":
             n += 1
     return n
 
 
 def count_loc(
-    rows: list[tuple[str, str, str]], base_state: AttrState, binary_paths: frozenset[str] = frozenset()
+    rows: list[tuple[str, str, str]],
+    base_state: AttrState,
+    binary_paths: frozenset[str] = frozenset(),
+    force_flag: frozenset[str] = frozenset(),
 ) -> tuple[int, int, list[str]]:
     """Return (counted LOC, excluded LOC, binary paths needing approval).
 
@@ -191,8 +210,10 @@ def count_loc(
     for add, dele, path in rows:
         n = int(add) + int(dele)
         generated = path in LOCKFILES or _generated(base_state.get(path))
-        if path in binary_paths and not generated:
-            if BINARY_OK_RE.search(path):
+        st = base_state.get(path) or ("unspecified",) * 3
+        declared_binary = st[1] == "unset" or st[2] == "set"  # base itself says "generated binary"
+        if path in binary_paths and not (generated and declared_binary):
+            if BINARY_OK_RE.fullmatch(path) and path not in force_flag:
                 continue
             flagged.append(path)
         if generated:
@@ -203,29 +224,28 @@ def count_loc(
 
 
 def attr_lines(text: str) -> list[str]:
-    """Normalised attribute lines mentioning linguist-generated/diff/binary (`#` only at line start)."""
-    out = []  # ordered: git is last-match-wins, so reordering changes the result
-    for line in text.splitlines():
-        s = line.strip()
-        if s and not s.startswith("#") and any(a in tok for tok in s.split()[1:] for a in ATTRS):
-            out.append(" ".join(s.split()))
-    return out
+    """Ordered non-comment lines (`#` only at line start): git is last-match-wins and `[attr]`
+    macros can hide the attribute names, so ANY non-comment change counts (PR-SIZE-002)."""
+    return [" ".join(line.split()) for line in text.splitlines()
+            if line.strip() and not line.strip().startswith("#")]
 
 
 def owners_for(codeowners: str, paths: list[str]) -> set[str]:
-    owners: set[str] = set()
+    """`@user` owners common to EVERY path (last matching CODEOWNERS rule wins; teams unresolvable)."""
     rules = []
     for line in codeowners.splitlines():
         parts = line.split("#", 1)[0].split()
         if len(parts) >= 2:
             rules.append((_glob_re(parts[0]), parts[1:]))
+    common: set[str] | None = None
     for path in paths:
         hit: list[str] = []
-        for pat, own in rules:  # last match wins
+        for pat, own in rules:
             if pat.match(path):
                 hit = own
-        owners |= {o[1:].lower() for o in hit if o.startswith("@") and "/" not in o}
-    return owners
+        users = {o[1:].lower() for o in hit if o.startswith("@") and "/" not in o}
+        common = users if common is None else common & users
+    return common or set()
 
 
 def strip_markup(body: str) -> str:
@@ -280,6 +300,7 @@ def check(
     repo_owner: str = "",
     binary_sizes: dict[str, str] | None = None,
     binary_paths: frozenset[str] = frozenset(),
+    force_flag: frozenset[str] = frozenset(),
     merge_base_state: AttrState | None = None,
 ) -> tuple[list[str], list[str]]:
     title = pr.get("title") or ""
@@ -288,21 +309,28 @@ def check(
     errors: list[str] = []
     warnings: list[str] = []
     needs_approval: list[str] = []
+    trigger_paths: list[list[str]] = []  # paths behind each approval trigger (approver scope)
 
-    loc, excl, binary = count_loc(rows, base_state, binary_paths)
+    loc, excl, binary = count_loc(rows, base_state, binary_paths, force_flag)
     info = f"{loc} changed LOC ({excl} excluded: generated/lockfiles)"
     if loc > FAIL_LOC:
         needs_approval.append(f"PR-SIZE-001 C-4.8: {info} exceeds {FAIL_LOC}")
+        trigger_paths.append([r[2] for r in rows])
     elif loc > WARN_LOC:
         warnings.append(f"C-4.8: {info} exceeds preferred {WARN_LOC}; add a why-not-split note")
+    sizes = binary_sizes or {}
+    present = [p for p in binary if p in sizes]
     for path in binary:
-        size = (binary_sizes or {}).get(path, "deleted")
-        warnings.append(f"C-4.8: binary-classified file {path!r} ({size} bytes) is hidden from reviewers")
-    if binary:
+        if path in sizes:
+            warnings.append(f"C-4.8: binary-classified file {path!r} ({sizes[path]} bytes) is hidden from reviewers")
+        else:
+            warnings.append(f"C-4.8: binary-classified file {path!r} deleted (info only)")
+    if present:
         needs_approval.append(
-            f"PR-SIZE-003 C-4.8: {len(binary)} binary file(s) that are neither images/fonts nor "
-            f"generated in base: {binary[:5]}"
+            f"PR-SIZE-003 C-4.8: {len(present)} binary file(s) that are neither valid images/fonts "
+            f"nor generated-binary in base: {present[:5]}"
         )
+        trigger_paths.append(present)
     changed = [r[2] for r in rows]
     nested = [p for p in changed if p.rsplit("/", 1)[-1] == ".gitattributes" and p != ".gitattributes"]
     before = merge_base_state if merge_base_state is not None else base_state
@@ -312,6 +340,7 @@ def check(
         needs_approval.append(
             f"PR-SIZE-006 C-4.8/C-10.2: PR changes the gate's own files {touched_gate}"
         )
+        trigger_paths.append(touched_gate)
     if attr_lines(base_attrs) != attr_lines(head_attrs) or nested or drift:
         newly = sum(
             int(a) + int(d)
@@ -324,11 +353,15 @@ def check(
             f"({newly} LOC would be newly excluded; nested .gitattributes: {nested}; "
             f"changed-path attribute drift: {drift[:5]})"
         )
+        trigger_paths.append([p for p in changed if p.endswith(".gitattributes")] or changed)
     if needs_approval:
         if not has_label:
             errors += [f"{m}; split it or have a CODEOWNER apply `{LABEL}`" for m in needs_approval]
         else:
-            allowed = owners_for(base_codeowners, changed) | ({repo_owner.lower()} - {""})
+            # approver must own the paths behind EVERY trigger (intersection), not any changed path
+            scoped = [owners_for(base_codeowners, tp) for tp in trigger_paths if tp]
+            allowed = set.intersection(*scoped) if scoped else set()
+            allowed |= {repo_owner.lower()} - {""}
             errors += check_label_provenance(events, comments, allowed)
             warnings += [f"{m} (approved by label)" for m in needs_approval]
 
@@ -413,25 +446,34 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
         assert isinstance(pr, dict)
         base, head = pr["base"]["sha"], pr["head"]["sha"]
         merge_base = _git(root, "merge-base", base, head).strip()
-        diff = ["--attr-source=" + base, "diff", "--numstat", "-z", "--no-renames", f"{base}...{head}"]
+        gate = os.environ.get("GATE_SHA") or base  # trusted tip (workflow: origin/main); else base
+        diff = ["--attr-source=" + gate, "diff", "--numstat", "-z", "--no-renames", f"{base}...{head}"]
         rows = parse_numstat_z(_git(root, *diff))
         binary_paths = frozenset(r[2] for r in rows if r[0] == "-")
+        sizes: dict[str, str] = {}
+        force: set[str] = set()
+        for path in sorted(binary_paths):
+            if subprocess.run(["git", "cat-file", "-e", f"{head}:{path}"], cwd=root,
+                              capture_output=True).returncode != 0:
+                continue  # deleted: reported as info only
+            sizes[path] = _git(root, "cat-file", "-s", f"{head}:{path}").strip()
+            if BINARY_OK_RE.fullmatch(path):
+                blob = subprocess.run(["git", "cat-file", "blob", f"{head}:{path}"], cwd=root,
+                                      capture_output=True).stdout[:8]
+                if bad_magic(path, blob):
+                    force.add(path)  # image/font name with foreign content: not allowlisted
         fixed = []
         for add, dele, path in rows:
-            if path in binary_paths and not BINARY_OK_RE.search(path):  # numstat shows `-`; recount from a forced-text patch
-                patch = _git(root, "--attr-source=" + base, "diff", "--text", "-U0", "--no-renames",
-                             f"{base}...{head}", "--", path)
+            if path in binary_paths and (path in force or not BINARY_OK_RE.fullmatch(path)):
+                # numstat shows `-`; recount real lines from a forced-text patch
+                patch = _git(root, "--literal-pathspecs", "--attr-source=" + gate, "diff", "--text",
+                             "-U0", "--no-renames", f"{base}...{head}", "--", path)
                 add, dele = str(text_loc(patch)), "0"
-            elif path in binary_paths:  # allowlisted image/font: counts no LOC
+            elif path in binary_paths:  # genuine image/font: counts no LOC
                 add, dele = "0", "0"
             fixed.append((add, dele, path))
         rows = fixed
         paths = [r[2] for r in rows]
-        sizes = {}
-        for path in sorted(binary_paths):
-            if subprocess.run(["git", "cat-file", "-e", f"{head}:{path}"], cwd=root,
-                              capture_output=True).returncode == 0:
-                sizes[path] = _git(root, "cat-file", "-s", f"{head}:{path}").strip()
         rr = _load_rule_refs(root)  # root is the BASE worktree in CI
         with tempfile.TemporaryDirectory() as tmp:  # head CONSTITUTION: data only, never executed
             (Path(tmp) / "CONSTITUTION.md").write_text(
@@ -441,7 +483,7 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
         errors, warnings = check(
             pr,
             rows,
-            attr_state(root, base, paths),
+            attr_state(root, gate, paths),
             attr_state(root, head, paths),
             _show(root, merge_base, ".gitattributes"),
             _show(root, head, ".gitattributes"),
@@ -450,10 +492,11 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
             rr.RULE_ID_RE,
             events=fetch(f"/issues/{num}/events"),
             comments=fetch(f"/issues/{num}/comments"),
-            base_codeowners=_show(root, base, ".github/CODEOWNERS"),
+            base_codeowners=_show(root, gate, ".github/CODEOWNERS"),
             repo_owner=repo.split("/")[0],
             binary_sizes=sizes,
             binary_paths=binary_paths,
+            force_flag=frozenset(force),
             merge_base_state=attr_state(root, merge_base, paths),
         )
     except ConfigError as exc:

@@ -23,7 +23,7 @@ DECLARED = RR.load_declared_ids(str(ROOT))
 OWNERS = "* @alice\n/services/ @bob @org/team\n"
 
 
-GEN = ("set", "unspecified", "unspecified")
+GEN = ("set", "unset", "unspecified")  # real protocol dirs: generated AND -diff
 NONE = ("unspecified", "unspecified", "unspecified")
 
 
@@ -185,11 +185,6 @@ def test_binary_that_is_generated_in_base_is_excluded_not_flagged():
     p = "packages/protocol/src/generated/rest/index.ts"
     errs, warns = bin_run([p])
     assert errs == [] and warns == []
-
-
-def test_deleted_binary_reports_deleted_size():
-    errs, warns = bin_run(["data/old.bin"])
-    assert codes(errs) == ["PR-SIZE-003"] and "deleted bytes" in warns[0]
 
 
 def test_gate_files_need_approval():
@@ -421,7 +416,7 @@ def test_main_deleting_and_moving_binaries_does_not_crash(repo, monkeypatch, cap
     _git(root, "commit", "-qm", "rm/mv")
     rc = m.main(["--repo-root", str(root)], fetch=_fake(base, _head_sha(root), pr()))
     cap = capsys.readouterr()
-    assert rc == 1 and "PR-SIZE-003" in cap.err and "blob.bin" in cap.out and "deleted" in cap.out
+    assert rc == 0 and "blob.bin" in cap.out and "deleted (info only)" in cap.out
 
 
 def test_main_attribute_semantics_come_from_git_check_attr(repo):
@@ -505,3 +500,110 @@ def test_main_attribute_diff_is_against_merge_base_not_base_tip(repo, monkeypatc
     new_base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     assert m.main(["--repo-root", str(root)], fetch=_fake(new_base, head, pr())) == 0
     assert "PR-SIZE-002" not in capsys.readouterr().err
+
+
+def test_so_under_generated_python_package_still_needs_approval():
+    # generated in base but NOT declared binary there (ws/_generated/** has no -diff)
+    p = "services/api/candleviewer/ws/_generated/x.cpython-313-x86_64-linux-gnu.so"
+    r = rows(("5", "0", p))
+    st = {p: ("set", "unspecified", "unspecified")}
+    errs, _ = m.check(pr(), r, st, st, ATTRS, ATTRS, CL, DECLARED, RR.RULE_ID_RE,
+                      binary_paths=frozenset({p}), binary_sizes={p: "10"})
+    assert codes(errs) == ["PR-SIZE-003"]
+
+
+def test_main_nul_so_under_ws_generated_fails_and_protocol_regen_passes(repo, monkeypatch, capsys):
+    root, _ = repo
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    (root / ".gitignore").write_text("__pycache__/\n")
+    (root / ".gitattributes").write_text(
+        "services/api/candleviewer/ws/_generated/** linguist-generated=true\n")
+    pkg = root / "packages/protocol"
+    pkg.mkdir(parents=True)
+    (pkg / ".gitattributes").write_text("src/generated/** linguist-generated=true\n"
+                                        "src/generated/** -diff\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "attrs")
+    base = _head_sha(root)
+    _git(root, "checkout", "-qb", "feat")
+    so = root / "services/api/candleviewer/ws/_generated/m.cpython-313-x86_64-linux-gnu.so"
+    so.parent.mkdir(parents=True)
+    so.write_bytes(b"\x7fELF\0\0" * 20)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "so")
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, _head_sha(root), pr())) == 1
+    assert "PR-SIZE-003" in capsys.readouterr().err
+    _git(root, "checkout", "-q", "main")
+    _git(root, "checkout", "-qb", "regen")
+    (pkg / "src/generated").mkdir(parents=True)
+    (pkg / "src/generated/index.ts").write_text("export {};\n" * 500)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "regen")
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, _head_sha(root), pr())) == 0
+
+
+def test_text_loc_counts_plusplus_content_lines_after_hunk_header():
+    patch = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -0,0 +1,3 @@\n+++0\n+--1\n+ok\n"
+    assert m.text_loc(patch) == 3
+
+
+def test_literal_pathspecs_recount_for_magic_names(repo, monkeypatch, capsys):
+    root, base = repo
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    _git(root, "checkout", "-qb", "feat")
+    (root / ":!x").write_bytes(b"a\0\n" * 900)
+    (root / "other.txt").write_text("1\n" * 3)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "magic")
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, _head_sha(root), pr())) == 1
+    err = capsys.readouterr().err
+    assert "PR-SIZE-001" in err and "903 changed LOC" in err
+
+
+def test_image_name_with_foreign_content_is_not_allowlisted(repo, monkeypatch, capsys):
+    root, base = repo
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    _git(root, "checkout", "-qb", "feat")
+    (root / "docs").mkdir()
+    (root / "docs/a.png").write_bytes(b"not a png\0\n" * 900)
+    (root / "docs/real.png").write_bytes(b"\x89PNG\r\n\x1a\n\0\0")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "png")
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, _head_sha(root), pr())) == 1
+    err = capsys.readouterr().err
+    assert "PR-SIZE-003" in err and "docs/a.png" in err and "real.png" not in err
+
+
+def test_allowlist_regex_uses_fullmatch_not_trailing_newline():
+    assert not m.BINARY_OK_RE.fullmatch("a.png\n")
+    assert m.BINARY_OK_RE.fullmatch("docs/a.PNG")
+
+
+def test_any_non_comment_gitattributes_change_triggers_size_002():
+    base = "[attr]gen linguist-generated=true\n"
+    errs, _ = run(r=rows(("1", "0", ".gitattributes")), base=base, head=base + "svc/** gen\n")
+    assert codes(errs) == ["PR-SIZE-002"]
+
+
+def test_codeowners_is_a_gate_file():
+    assert ".github/CODEOWNERS" in m.GATE_FILES
+
+
+def test_deleted_binary_is_info_only():
+    errs, warns = bin_run(["data/old.bin"])
+    assert errs == [] and "deleted (info only)" in warns[0]
+
+
+def test_approvers_limited_to_owners_of_triggering_paths():
+    owners = "/services/ @bob\n/docs/ @alice\n"
+    big = rows(("900", "0", "services/a.py"), ("1", "0", "docs/x.md"))
+    kw = dict(base_codeowners=owners, repo_owner="")
+    # size trigger spans every changed path, so no single non-owner-of-all may approve
+    errs, _ = run(pr(labels=[m.LABEL]), big, events=labeled("alice"), comments=comment("alice"), **kw)
+    assert codes(errs) == ["PR-SIZE-004"]
+    one = rows(("900", "0", "services/a.py"))
+    errs, _ = run(pr(labels=[m.LABEL]), one, events=labeled("bob"), comments=comment("bob"), **kw)
+    assert errs == []
