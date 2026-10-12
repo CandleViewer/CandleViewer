@@ -14,6 +14,8 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | LatencyBudgetBreach | ticket | 60s | `docs/plan/07-release-and-prr.md#alert-latencybudgetbreach` | synthetic | | | | | | pending |
 | TickToPaintSloFastBurn | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-ticktopaintslofastburn` | synthetic | | | | | | pending |
 | SupportBundleSecretDetected | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-supportbundlesecretdetected` | synthetic | | | | | | pending |
+| CsrfRefusalsHigh | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh` | synthetic | | | | | | pending |
+| CsrfRefusalAuditUnavailable | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh` | synthetic | | | | | | pending |
 | NakedPositionDetected | page | 0m | `docs/plan/07-release-and-prr.md#alert-nakedpositiondetected` | synthetic | | | | | | pending |
 | OmsUnknownOrders | page | 1m | `docs/plan/07-release-and-prr.md#alert-omsunknownorders` | synthetic | | | | | | pending |
 | PostgresDown | page | 1m | `docs/plan/07-release-and-prr.md#alert-postgresdown` | real+synthetic | | | | | | pending |

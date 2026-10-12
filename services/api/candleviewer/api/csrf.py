@@ -64,6 +64,7 @@ from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerd
 from candleviewer.auth.metrics import auth_csrf_refused_total
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.net.middleware import RESOLVED_SOURCE_KEY
 
 CSRF_ERROR_CODE = "csrf_token_invalid"
 CSRF_PROBLEM_TYPE = f"https://candleviewer.local/errors/{CSRF_ERROR_CODE}"
@@ -284,7 +285,7 @@ class CsrfMiddleware:
     ) -> None:
         auth_csrf_refused_total.labels(reason=reason.value).inc()
         client = scope.get("client")
-        ip = client[0] if client else None
+        ip = scope.get("state", {}).get(RESOLVED_SOURCE_KEY) or (client[0] if client else None)
         path = self._route_template(scope)
         log = _log()
         if record is None:

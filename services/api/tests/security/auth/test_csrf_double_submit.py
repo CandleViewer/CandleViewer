@@ -666,3 +666,22 @@ def test_key_rotation_through_create_app_keeps_open_tabs_working(
     rotated = appmod.create_app(s_new).state.csrf_codec
     assert rotated.verify(token, "sid") is CsrfVerdict.OK
     assert rotated.issue("sid") != token
+
+
+def test_audit_actor_ip_is_the_address_mesh_admitted_not_a_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behind the configured trusted proxy, `actor_ip` is MeshOnly's resolved client;
+    a client-supplied header from anyone else is ignored."""
+    monkeypatch.setenv("CV_MESH_TRUSTED_PROXY_HEADER", "X-Forwarded-For")
+    monkeypatch.setenv("CV_MESH_TRUSTED_PROXY_ADDRESS", "127.0.0.1")
+    monkeypatch.setenv("CV_MESH_CIDRS_CSV", "100.64.0.0/10")
+    app = appmod.create_app()
+    audit = _Audit()
+    app.state.app_context.audit._writer = audit
+    via_proxy = TestClient(app, client=("127.0.0.1", 1), raise_server_exceptions=False)
+    via_proxy.post("/auth/logout", headers={"X-Forwarded-For": "6.6.6.6, 100.64.0.7"})
+    assert audit.of("auth.csrf_refused")[-1]["actor_ip"] == "100.64.0.7"
+    direct = TestClient(app, client=("100.64.0.9", 1), raise_server_exceptions=False)
+    direct.post("/auth/logout", headers={"X-Forwarded-For": "100.64.0.7"})
+    assert audit.of("auth.csrf_refused")[-1]["actor_ip"] == "100.64.0.9"
