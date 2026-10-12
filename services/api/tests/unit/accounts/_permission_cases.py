@@ -2,15 +2,18 @@
 
 Every JSON case is run through the M13 predicate and `PermissionSnapshot` (unit tests) and through
 the `ak_snapshot_shape` CHECK of migration 0019 (integration test); all three must agree.
+EXACT_WITHDRAW records the one place where they refuse in different ways, and KNOWN_GAPS the
+spellings all three accept (#2270).
 
 Shape: the exchange's key-info response (`GET /v5/user/query-api`) reports a key's rights as
 values inside permission groups, e.g. `"Wallet": ["AccountTransfer", "SubMemberTransfer",
 "Withdraw"]` (SR-030a in docs/plan/04-security-program.md; the API doc is cited in
 test_withdraw_transfer_predicate.py). packages/fixtures has no recorded, redacted query-api
 capture yet, so DOCUMENTED is structural: the synthetic accounts fixture's groups plus the three
-SR-030a Wallet rights, nothing else. ROBUSTNESS cases are deliberately not exchange shapes; they
-pin case and space handling, the empty-group exemption, recursion and fail-closed behaviour,
-mirroring the M2 gate's own tests (E27-T02).
+SR-030a Wallet rights, nothing else. The fixture's top-level `Withdraw` group is the legacy group
+of 0017 and the schema doc, not one the exchange reports (#2267 item 10). ROBUSTNESS cases are
+deliberately not exchange shapes; they pin case and space handling, the empty-group exemption,
+recursion and fail-closed behaviour, mirroring the M2 gate's own tests (E27-T02).
 """
 
 from __future__ import annotations
@@ -75,6 +78,27 @@ ROBUSTNESS: list[Case] = [
 JSON_CASES: list[Case] = DOCUMENTED + ROBUSTNESS
 ALLOWED: list[Case] = [c for c in JSON_CASES if c[2]]
 REFUSED: list[Case] = [c for c in JSON_CASES if not c[2]]
+
+#: The exact key `Withdraw` (the legacy group of 0017 and the schema doc, not an exchange group)
+#: keeps a stricter shape than the bare predicate's null/""/[] exemption: `PermissionSnapshot`
+#: types it as a list of strings, and 0017's retained conjunct (`jsonb_array_length`) raises
+#: SQLSTATE 22023 for any non-array. So the layers refuse these differently, but all refuse:
+#: (case id, permissions, bare predicate allows, PermissionSnapshot error text)
+EXACT_WITHDRAW: list[tuple[str, dict[str, Any], bool, str]] = [
+    ("withdraw_null", {"Withdraw": None}, True, "valid tuple"),
+    ("withdraw_empty_string", {"Withdraw": ""}, True, "valid tuple"),
+    ("withdraw_scalar", {"Withdraw": 0}, False, "key_withdraw_permission"),
+    ("withdraw_object", {"Withdraw": {}}, False, "key_withdraw_permission"),
+]
+
+#: Spellings the substring deny-list misses, at every layer alike: the predicate, the model and
+#: the CHECK all accept them. Pinned so the parity holds and the gap stays visible; the allow-list
+#: in #2270 is the fix.
+KNOWN_GAPS: list[Case] = [
+    ("gap_inner_space", _with(Wallet=["With draw"]), True),
+    ("gap_zero_width_space", _with(Wallet=["With\u200bdraw"]), True),
+    ("gap_long_s", _with(Wallet=["AccountTran\u017ffer"]), True),
+]
 
 
 def non_json_cases() -> list[tuple[str, dict[str, Any]]]:

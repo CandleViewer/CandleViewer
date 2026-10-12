@@ -44,8 +44,11 @@ def reject_withdraw(permissions: Mapping[str, object]) -> None:
     """Raise `WithdrawPermissionError` if any permission grants a withdraw or transfer right.
 
     A right counts as a value inside a group (`"Wallet": ["AccountTransfer"]`, the shape the
-    exchange reports) or as a key, at any depth. A group named for a right that grants nothing
-    (`"Withdraw": []`, `null` or `""`) is allowed.
+    exchange reports) or as a key, at any depth. Matching ignores case and leading/trailing
+    whitespace only, not inner spacing or lookalike characters (allow-list follow-up: #2270).
+    A group named for a right that grants nothing (`[]`, `null` or `""`) is allowed. That
+    exemption is this predicate's alone: for the legacy key `Withdraw`, `PermissionSnapshot`
+    (a list of strings) and 0017's DB conjunct (`jsonb_array_length`) still refuse `null`/`""`.
     """
     for name, value in _normalise(permissions).items():
         if _names_right(value) or (_names_right(name) and value not in (None, [], "")):

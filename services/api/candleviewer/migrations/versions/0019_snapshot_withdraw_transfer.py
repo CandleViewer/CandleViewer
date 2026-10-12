@@ -13,18 +13,31 @@ for `withdraw` or `transfer`, ignoring case, in:
   2. an object key below the group level;
   3. a group name whose value grants anything (null, "" and [] grant nothing).
 That is the M13 predicate `candleviewer.accounts._permissions.reject_withdraw`, which mirrors
-the M2 credential gate. Each scan must be `IS FALSE`, so a NULL result fails closed. A plain
-CHECK suffices because `.**` walks the document recursively: no trigger, and no helper function
-(replacing one would change the rule under an already-validated constraint). Being 0017's rule
-plus extra conjuncts, the CHECK only tightens, so the downgrade's VALIDATE always succeeds.
+the M2 credential gate, with one difference: 0017's retained conjunct still requires the legacy
+`Withdraw` group to be absent or an array. A `null`, `""`, scalar or object there raises SQLSTATE
+22023 (`jsonb_array_length`) rather than a check violation; the write fails either way. Each scan
+must be `IS FALSE`, so a NULL result fails closed. A plain CHECK suffices because `.**` walks the
+document recursively: no trigger, and no helper function (replacing one would change the rule
+under an already-validated constraint). Being 0017's rule plus extra conjuncts, the CHECK only
+tightens, so the downgrade's VALIDATE always succeeds. The scans are a substring deny-list and
+share its blind spots (inner spacing, lookalike characters); #2270 tracks an allow-list.
 
-Locks and existing rows (C-5.6): the CHECK is added NOT VALID, then VALIDATE checks every
+`ak_no_transfer CHECK (can_transfer = false)` pins the flag as `ak_no_withdraw` pins
+`can_withdraw`: with transfer rights refused, a stored key can never claim one.
+
+Locks and existing rows (C-5.6): each CHECK is added NOT VALID, then VALIDATE checks every
 existing row (expected: none). Only then is 0017's constraint dropped and the new one renamed
-into its place, so `ak_snapshot_shape` keeps its name. Alembic runs the revision in one
-transaction, so the scan runs under the ACCESS EXCLUSIVE lock the ADD took; api_keys holds one
-row per stored key, which keeps that short. If VALIDATE fails, a stored key grants withdraw or
-transfer rights: revoke the key on the exchange and remove its row, then upgrade. Never weaken
-the CHECK to get past it.
+into its place, so `ak_snapshot_shape` keeps its name. env.py runs every pending revision in one
+transaction, so NOT VALID buys no lock relief here: the ACCESS EXCLUSIVE lock the first ADD takes
+blocks reads and writes on api_keys until the whole upgrade commits. The scans are short (one row
+per stored key). `lock_timeout` (5 s, reset to the default at the end) bounds the wait to acquire
+that lock, so the migration fails fast instead of queueing api_keys traffic behind it.
+
+If VALIDATE fails, a stored key grants withdraw or transfer rights: a C-2.8 incident. Never edit
+api_keys by hand (C-2.9) or weaken a CHECK to get past it. Turn the right off on the exchange and
+re-run the audited key verification (SR-031), which refreshes the stored snapshot and flags. A
+key that cannot be re-verified is revoked through the audited key-management flow
+(`api_key.revoke`) and escalated to the owner: no audited path removes a stored row yet.
 """
 
 from __future__ import annotations
@@ -72,18 +85,27 @@ ALTER TABLE api_keys ADD CONSTRAINT ak_snapshot_shape_0017 CHECK (
 
 
 def upgrade() -> None:
+    op.execute("SET LOCAL lock_timeout = '5s';")
     op.execute(_ADD_0019)
     op.execute("ALTER TABLE api_keys VALIDATE CONSTRAINT ak_snapshot_shape_0019;")
     op.execute("ALTER TABLE api_keys DROP CONSTRAINT ak_snapshot_shape;")
     op.execute(
         "ALTER TABLE api_keys RENAME CONSTRAINT ak_snapshot_shape_0019 TO ak_snapshot_shape;"
     )
+    op.execute(
+        "ALTER TABLE api_keys ADD CONSTRAINT ak_no_transfer CHECK (can_transfer = false) NOT VALID;"
+    )
+    op.execute("ALTER TABLE api_keys VALIDATE CONSTRAINT ak_no_transfer;")
+    op.execute("SET LOCAL lock_timeout = DEFAULT;")
 
 
 def downgrade() -> None:
+    op.execute("SET LOCAL lock_timeout = '5s';")
+    op.execute("ALTER TABLE api_keys DROP CONSTRAINT ak_no_transfer;")
     op.execute(_ADD_0017)
     op.execute("ALTER TABLE api_keys VALIDATE CONSTRAINT ak_snapshot_shape_0017;")
     op.execute("ALTER TABLE api_keys DROP CONSTRAINT ak_snapshot_shape;")
     op.execute(
         "ALTER TABLE api_keys RENAME CONSTRAINT ak_snapshot_shape_0017 TO ak_snapshot_shape;"
     )
+    op.execute("SET LOCAL lock_timeout = DEFAULT;")

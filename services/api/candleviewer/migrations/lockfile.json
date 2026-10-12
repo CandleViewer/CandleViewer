@@ -89,7 +89,7 @@
     },
     "0019_snapshot_withdraw_transfer": {
       "path": "services/api/candleviewer/migrations/versions/0019_snapshot_withdraw_transfer.py",
-      "sha256": "a43bded9e62695ec6e6ac18b5dc3f54b876e024a7a6bf7dea3edc3bc251177fb",
+      "sha256": "022080bc632bc4d6be81eee2aa2c833f0791dcbd52f59891e1c575871c90f004",
       "down_revision": "0017_exchange_accounts_api_keys"
     }
   }

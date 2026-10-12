@@ -699,7 +699,7 @@ Envelope encryption: a per-key **DEK** (AES-256-GCM) encrypts the credential; th
 | `permission_snapshot_at`    | timestamptz | no   | `now()`         | Freshness for admin UI ("checked 3 min ago")                |
 | `can_trade`                 | boolean     | no   | `false`         | Derived from snapshot, denormalised for fast gate           |
 | `can_withdraw`              | boolean     | no   | `false`         | **CHECK (can_withdraw = false)** — hard invariant           |
-| `can_transfer`              | boolean     | no   | `false`         | Sub-account transfer capability                             |
+| `can_transfer`              | boolean     | no   | `false`         | **CHECK (can_transfer = false)** (0019) — transfer refused  |
 | `read_only`                 | boolean     | no   | `false`         |                                                             |
 | `ip_whitelist`              | cidr[]      | yes  | NULL            | As configured on Bybit (browser-only config since Feb 2026) |
 | `ip_whitelist_verified_at`  | timestamptz | yes  | NULL            | Last time we compared to Bybit's reported list              |
@@ -812,15 +812,23 @@ ALTER TABLE api_keys ADD CONSTRAINT ak_snapshot_shape CHECK (
                || (@.value.type() == "array" && @.value.size() == 0)))'
   ) IS FALSE
 );
+-- 0019 also pins the transfer flag, as ak_no_withdraw pins can_withdraw: transfer rights are refused.
+ALTER TABLE api_keys ADD CONSTRAINT ak_no_transfer CHECK (can_transfer = false);
 ```
 
 > **Landed:** `0017_exchange_accounts_api_keys` created `ak_snapshot_shape` with only the first four
 > conditions, which refused a top-level `Withdraw` group but passed `"Wallet": ["AccountTransfer"]`.
 > `0019_snapshot_withdraw_transfer` (#2240) replaced it in place: add the new CHECK `NOT VALID`,
-> `VALIDATE` it against existing rows, drop 0017's, rename the new one to `ak_snapshot_shape`. The rule
+> `VALIDATE` it against existing rows, drop 0017's, rename the new one to `ak_snapshot_shape`. It adds
+> `ak_no_transfer` the same way. The migration sets `lock_timeout` to 5 s. NOT VALID gives no lock
+> relief here, because every pending revision runs in one transaction. The rule
 > is the same as `PermissionSnapshot` in `accounts/models.py` (M13) and the M2 credential gate (C-2.8,
 > SR-030a): `withdraw` or `transfer`, ignoring case, as a value or a key at any depth, except a group
-> named for a right that grants nothing. One shared corpus tests the model and the CHECK
+> named for a right that grants nothing. There is one difference: the legacy `Withdraw` key keeps
+> 0017's conjunct, so a non-array value there (`null`, `""`, a scalar, an object) raises SQLSTATE
+> 22023 instead of a check violation. The model refuses it too. It is a substring deny-list: case and
+> leading/trailing whitespace only, so inner spacing and lookalike characters pass (allow-list
+> follow-up #2270). One shared corpus tests the model and the CHECK
 > (`tests/unit/accounts/_permission_cases.py`).
 
 #### 3.2.3 `api_key_rotations`

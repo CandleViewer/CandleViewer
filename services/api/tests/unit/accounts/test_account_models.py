@@ -112,6 +112,15 @@ def test_key_readonly_excl_and_withdraw_flag() -> None:
     assert _key(snap).key_id_masked == "...AbC1"
 
 
+def test_key_transfer_flag_is_pinned_false() -> None:
+    """Transfer rights are refused (C-2.8, SR-030a), so a stored key can never claim one; the
+    `ak_no_transfer` CHECK (migration 0019) pins the column the same way."""
+    snap = _fixtures()[0]["permission_snapshot"]
+    with pytest.raises(ValidationError, match="can_transfer"):
+        _key(snap, can_transfer=True)
+    assert _key(snap).can_transfer is False
+
+
 def test_rotation_validators() -> None:
     a, b = uuid4(), uuid4()
     ok = ApiKeyRotation(id=uuid4(), old_api_key_id=a, new_api_key_id=b, started_at=_NOW)

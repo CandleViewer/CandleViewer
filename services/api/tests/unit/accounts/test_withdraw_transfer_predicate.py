@@ -12,23 +12,29 @@ the cases in `_permission_cases.py` are structural.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
 from candleviewer.accounts._permissions import FORBIDDEN_TOKENS, reject_withdraw
 from candleviewer.accounts.errors import WithdrawPermissionError
-from candleviewer.accounts.models import PermissionSet, PermissionSnapshot
+from candleviewer.accounts.models import ApiKeyMetadata, PermissionSet, PermissionSnapshot
 from tests.unit.accounts._permission_cases import (
     ALLOWED,
+    EXACT_WITHDRAW,
+    KNOWN_GAPS,
     REFUSED,
     SR030A_WALLET_RIGHTS,
     Case,
     non_json_cases,
 )
 
+_NOW = datetime(2026, 9, 14, tzinfo=UTC)
 _NON_JSON_IDS = [name for name, _ in non_json_cases()]
 
 
@@ -44,11 +50,7 @@ def _non_json() -> pytest.MarkDecorator:
 
 def _snapshot(permissions: object) -> PermissionSnapshot:
     return PermissionSnapshot.model_validate(
-        {
-            "fetched_at": datetime(2026, 9, 14, tzinfo=UTC),
-            "uid": "1000001",
-            "permissions": permissions,
-        }
+        {"fetched_at": _NOW, "uid": "1000001", "permissions": permissions}
     )
 
 
@@ -104,3 +106,98 @@ def test_snapshot_checks_a_prebuilt_permission_set() -> None:
 def test_snapshot_refuses_non_object_permissions() -> None:
     with pytest.raises(ValidationError, match="permissions"):
         _snapshot(["Order"])
+
+
+def _allows(permissions: dict[str, Any]) -> bool:
+    try:
+        reject_withdraw(permissions)
+    except WithdrawPermissionError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize(
+    ("permissions", "predicate_allows"),
+    [(c[1], c[2]) for c in EXACT_WITHDRAW],
+    ids=[c[0] for c in EXACT_WITHDRAW],
+)
+def test_reject_withdraw_exempts_only_null_and_empty_on_the_legacy_withdraw_key(
+    permissions: dict[str, Any], predicate_allows: bool
+) -> None:
+    assert _allows(permissions) is predicate_allows
+
+
+@pytest.mark.parametrize(
+    ("permissions", "model_error"),
+    [(c[1], c[3]) for c in EXACT_WITHDRAW],
+    ids=[c[0] for c in EXACT_WITHDRAW],
+)
+def test_snapshot_refuses_every_non_list_legacy_withdraw_group(
+    permissions: dict[str, Any], model_error: str
+) -> None:
+    with pytest.raises(ValidationError, match=model_error):
+        _snapshot(permissions)
+
+
+@_perms(KNOWN_GAPS)
+def test_deny_list_gaps_pass_the_predicate_and_the_model_alike(
+    permissions: dict[str, Any],
+) -> None:
+    reject_withdraw(permissions)
+    assert _snapshot(permissions).uid == "1000001"
+
+
+@dataclass(frozen=True)
+class _SnapshotRow:
+    """An attribute object (adapter DTO, ORM row) read with `from_attributes=True`."""
+
+    fetched_at: datetime
+    uid: str
+    permissions: object
+
+
+def _from_attributes(permissions: object) -> PermissionSnapshot:
+    row = _SnapshotRow(_NOW, "1000001", permissions)
+    return PermissionSnapshot.model_validate(row, from_attributes=True)
+
+
+@_perms(ALLOWED)
+def test_snapshot_from_attributes_accepts_grant_free_permissions(
+    permissions: dict[str, Any],
+) -> None:
+    assert _from_attributes(permissions).uid == "1000001"
+
+
+@_perms(REFUSED)
+def test_snapshot_from_attributes_refuses_withdraw_and_transfer_rights(
+    permissions: dict[str, Any],
+) -> None:
+    with pytest.raises(ValidationError, match="key_withdraw_permission"):
+        _from_attributes(permissions)
+
+
+@pytest.mark.parametrize(
+    "permissions",
+    [SimpleNamespace(Wallet=("AccountTransfer",)), SimpleNamespace(Withdraw=("Withdraw",))],
+    ids=["wallet_right", "withdraw_group"],
+)
+def test_snapshot_refuses_rights_on_attribute_object_permissions(permissions: object) -> None:
+    with pytest.raises(ValidationError, match="key_withdraw_permission"):
+        PermissionSnapshot.model_validate(
+            {"fetched_at": _NOW, "uid": "1000001", "permissions": permissions},
+            from_attributes=True,
+        )
+
+
+def test_api_key_metadata_from_attributes_checks_the_snapshot() -> None:
+    row = SimpleNamespace(
+        id=uuid4(),
+        exchange_account_id=uuid4(),
+        label="k",
+        key_id_last4="AbC1",
+        permission_snapshot=_SnapshotRow(_NOW, "1000001", {"Wallet": ["SubMemberTransfer"]}),
+        permission_snapshot_at=_NOW,
+        created_at=_NOW,
+    )
+    with pytest.raises(ValidationError, match="key_withdraw_permission"):
+        ApiKeyMetadata.model_validate(row, from_attributes=True)

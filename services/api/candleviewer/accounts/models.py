@@ -123,15 +123,20 @@ class PermissionSnapshot(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _no_withdraw(cls, data: object) -> object:
-        """C-2.8 / SR-030a on the raw payload, before pydantic coerces anything; the same rule
-        as migration 0019's `ak_snapshot_shape` CHECK."""
+    def _no_withdraw_raw(cls, data: object) -> object:
+        """C-2.8 / SR-030a on a raw mapping payload, before pydantic coerces anything, so a value
+        JSON cannot carry fails closed; the same rule as migration 0019's `ak_snapshot_shape`."""
         permissions = data.get("permissions") if isinstance(data, Mapping) else None
-        if isinstance(permissions, PermissionSet):
-            permissions = permissions.model_dump()
         if isinstance(permissions, Mapping):
             reject_withdraw(permissions)
         return data
+
+    @model_validator(mode="after")
+    def _no_withdraw(self) -> PermissionSnapshot:
+        """The same rule on the validated model, whatever the input shape: attribute objects read
+        with `from_attributes=True` (DTOs, ORM rows) never reach the raw check above."""
+        reject_withdraw(self.permissions.model_dump())
+        return self
 
 
 class ApiKeyMetadata(BaseModel):
@@ -148,7 +153,8 @@ class ApiKeyMetadata(BaseModel):
     permission_snapshot_at: UtcDatetime
     can_trade: bool = False
     can_withdraw: Literal[False] = False
-    can_transfer: bool = False
+    #: Transfer rights are refused like withdrawal (C-2.8, SR-030a); `ak_no_transfer` pins it.
+    can_transfer: Literal[False] = False
     read_only: bool = False
     status: KeyStatus = KeyStatus.PENDING
     expires_at: OptUtcDatetime = None

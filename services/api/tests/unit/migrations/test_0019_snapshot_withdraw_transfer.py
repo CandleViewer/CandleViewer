@@ -11,8 +11,10 @@ from pathlib import Path
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from sqlalchemy import CheckConstraint
 
 from candleviewer.accounts._permissions import FORBIDDEN_TOKENS
+from candleviewer.db import models
 
 _ROOT = Path(__file__).resolve().parents[3]
 _REV = "0019_snapshot_withdraw_transfer"
@@ -83,10 +85,47 @@ def test_downgrade_restores_the_0017_rule_the_same_way() -> None:
 
 
 @pytest.mark.parametrize(
+    ("direction", "span", "altered"),
+    [("upgrade", f"{_PREV}:{_REV}", 6), ("downgrade", f"{_REV}:{_PREV}", 5)],
+)
+def test_alters_only_api_keys(direction: str, span: str, altered: int) -> None:
+    sql = _sql(direction, span)
+    assert re.findall(r"ALTER TABLE (\S+)", sql) == ["api_keys"] * altered
+    assert "audit" not in sql
+
+
+@pytest.mark.parametrize(
     ("direction", "span"),
     [("upgrade", f"{_PREV}:{_REV}"), ("downgrade", f"{_REV}:{_PREV}")],
 )
-def test_alters_only_api_keys(direction: str, span: str) -> None:
+def test_bounds_the_lock_wait_then_resets_it(direction: str, span: str) -> None:
     sql = _sql(direction, span)
-    assert re.findall(r"ALTER TABLE (\S+)", sql) == ["api_keys"] * 4
-    assert "audit" not in sql
+    assert sql.index("SET LOCAL lock_timeout = '5s';") < sql.index("ALTER TABLE")
+    assert sql.rindex("ALTER TABLE") < sql.index("SET LOCAL lock_timeout = DEFAULT;")
+
+
+def test_upgrade_pins_can_transfer_false_not_valid_then_validated() -> None:
+    assert _in_order(
+        _sql("upgrade", f"{_PREV}:{_REV}"),
+        [
+            "ALTER TABLE api_keys ADD CONSTRAINT ak_no_transfer "
+            "CHECK (can_transfer = false) NOT VALID;",
+            "ALTER TABLE api_keys VALIDATE CONSTRAINT ak_no_transfer;",
+        ],
+    )
+
+
+def test_downgrade_drops_ak_no_transfer() -> None:
+    sql = _sql("downgrade", f"{_REV}:{_PREV}")
+    assert "ALTER TABLE api_keys DROP CONSTRAINT ak_no_transfer;" in sql
+
+
+def test_models_mirror_ak_no_transfer() -> None:
+    """`db.models` mirrors api_keys' flag CHECKs, as it does `ak_no_withdraw`. CHECK names get
+    the metadata naming-convention prefix (`ck_<table>_`)."""
+    checks = {
+        str(c.name): str(c.sqltext)
+        for c in models.api_keys.constraints
+        if isinstance(c, CheckConstraint)
+    }
+    assert checks["ck_api_keys_ak_no_transfer"] == "can_transfer = false"
