@@ -117,6 +117,19 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "admin.audit_denied",
         "rbac.denied",
         "health.diagnostics_exported",
+        # E27-T02: credential broker / KEK lifecycle (e27-kek.md §5-§6).
+        "security.kek_loaded",
+        "security.kek_load_failed",
+        "security.kek_rotation_started",
+        "security.kek_rotation_failed",
+        "security.kek_rotated",
+        "security.kek_rotation_incomplete",
+        "security.kek_enrolled",
+        "security.credential_stored",
+        "security.credential_borrowed",
+        "security.credential_destroyed",
+        "security.credential_destroy_failed",
+        "security.credential_store_failed",
     }
 )
 

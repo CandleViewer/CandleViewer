@@ -25,6 +25,8 @@ from __future__ import annotations
 import re
 from typing import Any, Final
 
+from candleviewer.observability.secret_type import Secret
+
 #: Exact key names redacted regardless of value shape (case-insensitive).
 #: Frozenset membership test — O(1), no regex, per the ticket's cost-control
 #: note.
@@ -105,6 +107,10 @@ def _redact_str_value(value: str) -> str:
 def _redact_value(value: Any, depth: int) -> Any:
     if depth > _MAX_DEPTH:
         return "[redacted:depth]"
+    if isinstance(value, Secret):  # E27-T02: Secret never renders, whatever it wraps
+        return "***"
+    if isinstance(value, bytes | bytearray | memoryview):  # E27-T02: raw key buffers
+        return "[redacted:bytes]"
     if isinstance(value, str):
         return _redact_str_value(value)
     if isinstance(value, dict):
