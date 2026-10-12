@@ -17,7 +17,7 @@ import asyncio
 import os
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -33,10 +33,12 @@ from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.service import AdminService
 from candleviewer.admin.wiring import (
     AuditHandle,
+    SecretsBundle,
     SecretsHandle,
     audit_writer_sink,
     build_audit_service,
     build_secrets_service,
+    export_secrets_metrics,
 )
 from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
 from candleviewer.alerts.evaluator import AlertEvaluator, AlertMetrics
@@ -120,6 +122,7 @@ from candleviewer.health_wiring import (
     register_ingestion_probe,
     register_public_ws_probe,
     register_real_probes,
+    register_secrets_probe,
     register_write_behind_probe,
 )
 from candleviewer.import_wiring import build_import_runner
@@ -150,6 +153,7 @@ from candleviewer.net import (
     real_socket_enumerator,
     register_system_topic_subscriber,
 )
+from candleviewer.net.system_topic import client_notice
 from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.observability.health_metrics import bind_health_metrics
 from candleviewer.observability.health_probes import HealthRegistry
@@ -195,6 +199,7 @@ from candleviewer.storage.repositories.alert_dispatch_sqlalchemy import (
 from candleviewer.storage.repositories.alert_firing_sqlalchemy import SqlAlchemyAlertFiringStore
 from candleviewer.storage.repositories.alerts_sqlalchemy import SqlAlchemyAlertRepository
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.instruments_sqlalchemy import (
     SqlAlchemyInstrumentsRepository,
@@ -427,12 +432,38 @@ def _build_audit(settings: Settings) -> AuditHandle:
     )
 
 
+def _gate_notices(ctx: AppContext) -> list[dict[str, Any]]:
+    gate = ctx.oms_read_only_gate
+    if not gate.is_read_only:
+        return []
+    return [client_notice(True, gate.reason_code)]
+
+
+def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsBundle:
+    """E27-T02: M2 with the M10 Postgres credential/KCV store on the real backend.
+
+    `storage_backend != "real"` (the fake backend: dev/CI) wires M2 with **no** credential
+    store: every credential operation fails closed (`kek_unavailable`). Outside live the module
+    reports STOPPED (nothing deployed, not a red alarm); in live it latches the read-only gate
+    with reason `no_credential_store` at start (trading off). Tested in
+    `tests/unit/credentials_m2/test_degraded_wiring.py`."""
+    if settings.storage_backend != "real":
+        return build_secrets_service(audit=audit)
+    store = SqlAlchemyCredentialStore(
+        SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "secrets")
+    )
+    return build_secrets_service(store, store, audit)
+
+
 def _record_factory(model: Any) -> Callable[..., Any]:
     return lambda **fields: model.model_validate(fields)
 
 
 def build_app_context(
-    settings: Settings | None = None, *, auth_clock: Callable[[], datetime] | None = None
+    settings: Settings | None = None,
+    *,
+    auth_clock: Callable[[], datetime] | None = None,
+    secrets_bundle: SecretsBundle | None = None,
 ) -> AppContext:
     """Construct an `AppContext` with real scaffold modules, no I/O performed.
 
@@ -458,12 +489,14 @@ def build_app_context(
         env=resolved.environment.value,
         read_only_gate=read_only_gate,
     )
+    audit = _build_audit(resolved)
+    secrets = secrets_bundle or _build_secrets(resolved, audit)
     return AppContext(
         settings=resolved,
         metrics=CollectorRegistry(),
-        secrets=build_secrets_service(),
+        secrets=secrets.lifecycle,
         exchange_base=ExchangeBaseService(),
-        exchange_bybit=ExchangeBybitService(),
+        exchange_bybit=ExchangeBybitService(credentials=secrets.exchange_borrower),
         bus=bus_service,
         ingestion=IngestionService(),
         book=BookService(),
@@ -478,9 +511,9 @@ def build_app_context(
         paper=PaperService(),
         risk=RiskService(),
         auth=build_auth_service(resolved, clock=auth_clock),
-        audit=_build_audit(resolved),
+        audit=audit,
         journal=JournalService(),
-        admin=AdminService(),
+        admin=AdminService(secrets=secrets.metadata),
         alerts=AlertsService(),
         observability=ObservabilityService(),
         ws=WsService(),
@@ -499,6 +532,7 @@ def build_app_context(
 # first dependant.
 _SUPERVISOR_ORDER: tuple[str, ...] = (
     "storage",
+    "audit",  # E27-T02: before secrets so KEK load/failure is audited; M19 needs only M1/M10
     "secrets",
     "auth",
     "admin",
@@ -512,7 +546,6 @@ _SUPERVISOR_ORDER: tuple[str, ...] = (
     "recorder",
     "accounts",
     "risk",
-    "audit",
     "oms",
     "paper",
     "rules",
@@ -531,14 +564,31 @@ class Supervisor:
         self._ctx = ctx
 
     async def start_all(self) -> None:
-        for name in _SUPERVISOR_ORDER:
-            module = getattr(self._ctx, name)
-            await module.start(self._ctx)
+        """Start in order; if one module raises, stop the already-started ones in reverse
+        (E27-T02: a fatal KEK rule must not leave the audit writer / pools running)."""
+        started: list[str] = []
+        try:
+            for name in _SUPERVISOR_ORDER:
+                await getattr(self._ctx, name).start(self._ctx)
+                started.append(name)
+        except BaseException:
+            await self._stop_each(reversed(started), 1.0)
+            raise
 
     async def stop_all(self, grace_s: float = 15.0) -> None:
-        for name in reversed(_SUPERVISOR_ORDER):
-            module = getattr(self._ctx, name)
-            await module.stop(grace_s)
+        await self._stop_each(reversed(_SUPERVISOR_ORDER), grace_s)
+
+    async def _stop_each(self, names: Iterable[str], grace_s: float) -> None:
+        """Stop every module, isolated and bounded: one raising or hanging `stop()` never
+        prevents a later one (e.g. `secrets.stop()` zeroing the KEK) from running."""
+        for name in names:
+            try:
+                async with asyncio.timeout(grace_s + 1.0):
+                    await getattr(self._ctx, name).stop(grace_s)
+            except Exception:  # incl. TimeoutError; CancelledError still propagates
+                structlog.get_logger("candleviewer.app").exception(
+                    "supervisor: module stop failed", module=name
+                )
 
 
 def _hub_publisher(hub: RevocationHub) -> Callable[[str, str], Awaitable[None]]:
@@ -733,6 +783,7 @@ def create_app(
     auth_clock: Callable[[], datetime] | None = None,
     onboarding_store: Any = None,
     bars_now_us: Callable[[], int] | None = None,
+    secrets_bundle: SecretsBundle | None = None,
 ) -> FastAPI:
     """Build the FastAPI application without touching Postgres/QuestDB/network.
 
@@ -759,7 +810,7 @@ def create_app(
     )
     app.add_exception_handler(GatewayOverloadedError, gateway_overloaded_handler)
     install_error_redaction(app)  # E43-T06: no secret echo via 422/500 bodies
-    ctx = build_app_context(resolved, auth_clock=auth_clock)
+    ctx = build_app_context(resolved, auth_clock=auth_clock, secrets_bundle=secrets_bundle)
     app.state.app_context = ctx
     # #2060: klines hot/cold boundary from the DB-seeded retention policy; the lifespan loads it
     # (`load_kline_policy`), until then (and on failure) the 90 d fallback applies.
@@ -846,6 +897,7 @@ def create_app(
             mesh_read_only_gate=ctx.oms_read_only_gate,
             write_behind=lambda: _write_behind_buffers(ctx),
             ingestion_health=ctx.ingestion.health,
+            secrets_health=ctx.secrets.health,
         )
     )
     # E04-T04: cached component health. Unbuilt modules register `not_deployed`
@@ -874,6 +926,7 @@ def create_app(
     bind_health_metrics(health_registry, ctx.metrics, resolved)
     register_write_behind_probe(health_registry, lambda: _write_behind_buffers(ctx))
     register_ingestion_probe(health_registry, ctx.ingestion.health)
+    register_secrets_probe(health_registry, ctx.secrets.health)
     register_bars_probe(health_registry, ctx.bars.health)
     register_bars_writer_probe(
         health_registry, lambda: _bars_writer_state(getattr(app.state, "bars_runtime", None))
@@ -945,8 +998,11 @@ def create_app(
             server_version=resolved.version,
             git_sha=resolved.git_sha,
             kill_switch=kill_switch.snapshot,
+            system_notices=lambda: _gate_notices(ctx),
         )
     )
+    # E27-T02: gate transitions (KEK latch, mesh trip) reach connected clients directly.
+    ctx.mesh_system_topic_publisher.direct_sinks.append(ws_hub.broadcast_system)
     # E09-S04: step-up, owner TOTP reset and the read-only write guard.
     app.include_router(
         make_step_up_router(
@@ -996,6 +1052,7 @@ def create_app(
     )
     # E12-T03: bars series (builders + BarBuilderSet) on the scraped registry.
     app.state.bars_metrics = export_bars_metrics(ctx.metrics, env=resolved.environment.value)
+    app.state.secrets_metrics = export_secrets_metrics(ctx.metrics, env=resolved.environment.value)
     # E17-T02: CVWB encode frames/bytes per body_kind.
     app.state.cvwb_metrics = export_cvwb_metrics(ctx.metrics, env=resolved.environment.value)
     # #377: every `cv_ws_*` gateway series (lifecycle, subscriptions, sequencing).

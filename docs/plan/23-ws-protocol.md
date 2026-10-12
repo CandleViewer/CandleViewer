@@ -3229,6 +3229,21 @@ discarded rather than applied out of order.
 }
 ```
 
+**Read-only / degraded notice (E27-T02).** When the server's process read-only gate changes —
+the mesh binding self-check or the credential key (KEK) being unavailable — every authenticated
+connection receives a `system` frame of `kind: "notice"` using only the fields above:
+`severity` (`critical` while trading is disabled, `info` when it is re-enabled), a role-neutral
+`message`, and `reason` carrying the machine code. The code set is **open**; current values are
+`secrets.kek_unavailable`, `net.public_binding_detected`, `net.off_mesh_binding_detected`,
+`net.binding_check_failed`, `net.self_check_timed_out` and `net.binding_safe`. The clear-state
+message is "Read-only mode cleared." It does not claim trading is enabled, because the kill switch,
+risk lockouts or a session downgrade may still block it. While the
+gate is closed, the same notice is pushed right after `auth_ok` on a **first** authentication, so
+a client connecting after the transition still disables order entry (CMP-092). It is not repeated
+on an in-place re-auth. Internal details (listening addresses, remediation text) are never sent
+to clients; they appear in logs and `/readyz` only. This uses the existing schema; no schema
+change.
+
 ---
 
 ## 16. Conformance, limits and test matrix

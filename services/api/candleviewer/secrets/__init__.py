@@ -1,17 +1,53 @@
-"""secrets module (M2).
+"""secrets module (M2): KEK custody, envelope encryption, scoped credential borrow.
 
-Envelope encryption, key metadata, request signing, key self-check.
-
-Public interface only — internal implementation modules are not re-exported.
-Allowed dependencies (CONSTITUTION.md C-3.1): M1.
-
-This module is a conforming EMPTY module scaffolded by E02-T05
-(docs/plan/backlog/all-tickets.json). Real logic lands in the epic that owns
-this module (see docs/plan/20-architecture.md Sec.3 and the module table in
-CONSTITUTION.md Sec.3). Do not add business logic here without a linked
-ticket.
+Importable only by M4 (the exchange adapter) and M21 (`admin`, metadata only) — C-3.2.
+Plaintext keys and unwrapped DEKs never leave this package except inside a caller-bound
+borrow callback (`CredentialBorrower`, minted once by `admin.wiring` via `mint_borrower`);
+`_kek`, `_envelope`, `_source`, `_metrics` and `broker` are internal.
 """
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from candleviewer.secrets.errors import (
+    CredentialUnavailable,
+    KekSourceNotPermitted,
+    KekUnavailable,
+    SecretsError,
+    WithdrawPermissionRejected,
+)
+from candleviewer.secrets.metrics import export_secrets_metrics
+from candleviewer.secrets.models import KekCheckResult, RewrapReport, StoredCredential
+from candleviewer.secrets.secret import Secret
+from candleviewer.secrets.service import (
+    CredentialBorrower,
+    SecretsLifecycle,
+    SecretsLifecycleFacade,
+    SecretsMetadata,
+    SecretsMetadataFacade,
+    SecretsService,
+    mint_borrower,
+)
+from candleviewer.secrets.store import AuditSink, CredentialStore, KcvStore
+
+__all__ = [
+    "AuditSink",
+    "CredentialBorrower",
+    "CredentialStore",
+    "CredentialUnavailable",
+    "KcvStore",
+    "KekCheckResult",
+    "KekSourceNotPermitted",
+    "KekUnavailable",
+    "RewrapReport",
+    "Secret",
+    "SecretsError",
+    "SecretsLifecycle",
+    "SecretsLifecycleFacade",
+    "SecretsMetadata",
+    "SecretsMetadataFacade",
+    "SecretsService",
+    "StoredCredential",
+    "WithdrawPermissionRejected",
+    "export_secrets_metrics",
+    "mint_borrower",
+]

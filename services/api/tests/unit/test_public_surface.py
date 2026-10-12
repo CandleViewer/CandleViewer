@@ -124,6 +124,29 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
     # not `*Service`/`*Error` by name, but the module's documented public
     # interface alongside `OmsService`.
     "M14": {"Validator", "ReadOnlyCheck", "OrderPlacementRefused"},
+    # E27-T02: metadata-only results and capability Protocols `admin` consumes (C-3.2), the
+    # caller-bound borrow capability minted at wiring time for M4, and the `Secret` wrapper.
+    # No key/DEK type and no broker is exported.
+    "M2": {
+        "Secret",
+        "KekCheckResult",
+        "RewrapReport",
+        "StoredCredential",
+        "KekUnavailable",
+        "CredentialUnavailable",
+        "KekSourceNotPermitted",
+        "WithdrawPermissionRejected",
+        "SecretsMetadata",
+        "SecretsLifecycle",
+        "CredentialBorrower",
+        "mint_borrower",
+        "export_secrets_metrics",
+        "AuditSink",
+        "CredentialStore",
+        "KcvStore",
+        "SecretsLifecycleFacade",
+        "SecretsMetadataFacade",
+    },
 }
 
 

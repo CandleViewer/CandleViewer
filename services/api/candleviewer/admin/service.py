@@ -14,13 +14,16 @@ from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.secrets import SecretsMetadata
 
 
 class AdminService:
     """Empty scaffold for the M21 `admin` module lifecycle."""
 
-    def __init__(self) -> None:
+    def __init__(self, secrets: SecretsMetadata | None = None) -> None:
         self._started = False
+        #: E27-T02 / C-3.2: M2 metadata only (verify KEK, counts-only re-wrap).
+        self.secrets = secrets
 
     async def start(self, ctx: AppContext) -> None:
         """Start the module. No-op until the owning epic implements it."""

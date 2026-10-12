@@ -435,6 +435,7 @@ def make_ws_router(
     server_version: str = "0.0.0",
     git_sha: str = "unknown",
     kill_switch: Callable[[], dict[str, Any]] | None = None,
+    system_notices: Callable[[], list[dict[str, Any]]] | None = None,
 ) -> APIRouter:
     """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline,
     so tests inject a fake clock; `tick_s` is only the poll cadence."""
@@ -543,6 +544,12 @@ def make_ws_router(
             kill_switch=killed(),
         )
         conn.push(_reply("auth_ok", frame.get("id"), ts=now_ms, p=payload))
+        # E27-T02: current degraded/read-only state, so a client connecting after the
+        # transition still gets the blocking notice (§6 `system`, CMP-092). First auth only:
+        # an in-place re-auth (token refresh) keeps the socket's existing state.
+        if not reauth:
+            for body in system_notices() if system_notices is not None else ():
+                conn.push_system(body)
         for f in revoked:
             conn.push(f)
         structlog.contextvars.bind_contextvars(user_id=str(user_id), session_id=session_id)
