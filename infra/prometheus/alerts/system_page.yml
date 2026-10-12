@@ -58,6 +58,17 @@ groups:
         annotations:
           summary: "Audit chain verification failed"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-auditchainverificationfailed"
+      - alert: KekUnavailable
+        # A state gauge, not increase(): the failure happens at boot before the first scrape,
+        # and the latch lasts for the life of the process (E27-T02 review).
+        expr: max by (env) (cv_kek_degraded_state) == 1
+        for: 0m
+        labels:
+          severity: page
+          component: secrets
+        annotations:
+          summary: "KEK unavailable: credential broker degraded, trading disabled"
+          runbook_url: "docs/ops/runbooks/kek-custody.md#alert-kekunavailable"
       - alert: SyntheticAlert
         expr: cv_synthetic_alert == 1
         for: 1m

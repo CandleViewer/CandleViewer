@@ -22,6 +22,7 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | ClockDriftBlockingTrading | page | 1m | `docs/plan/07-release-and-prr.md#alert-clockdriftblockingtrading` | synthetic | | | | | | pending |
 | DiskCritical | page | 2m | `docs/plan/07-release-and-prr.md#alert-diskcritical` | synthetic | | | | | | pending |
 | AuditChainVerificationFailed | page | 0m | `docs/plan/07-release-and-prr.md#alert-auditchainverificationfailed` | synthetic | | | | | | pending |
+| KekUnavailable | page | 0m | `docs/ops/runbooks/kek-custody.md#alert-kekunavailable` | synthetic | | | | | | pending |
 | SyntheticAlert | page | 1m | `docs/plan/07-release-and-prr.md#alert-syntheticalert` | synthetic | | | | | | pending |
 | PublicWsDown | ticket | 1m | `docs/plan/07-release-and-prr.md#alert-publicwsdown` | real+synthetic | | | | | | pending |
 | BookResyncHigh | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-bookresynchigh` | synthetic | | | | | | pending |
