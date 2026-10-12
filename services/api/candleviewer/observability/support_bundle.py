@@ -10,6 +10,7 @@ uploaded. Concurrency 1; hard timeout; free-disk precheck.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 import os
@@ -308,7 +309,8 @@ class SupportBundleService:
             job.status, job.error_code = "failed", exc.code
             result = "secret_detected" if exc.code == "BUNDLE_SECRET_DETECTED" else "error"
             # Log file + rule only, never the matched value.
-            self._on_event(result, {"code": exc.code, "findings": [vars(f) for f in exc.findings]})
+            findings = [dataclasses.asdict(f) for f in exc.findings]
+            self._on_event(result, {"code": exc.code, "findings": findings})
         except TimeoutError:
             job.status, job.error_code = "failed", "BUNDLE_TIMEOUT"
             result = "timeout"
