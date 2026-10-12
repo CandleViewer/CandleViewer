@@ -79,7 +79,7 @@ _DSN_ALLOWED_KEYS = frozenset(("dbname", "host", "port", "user", "sslmode"))
 # service `postgres`, used in CV_PG_DSN); the rest are loopback. No other hostnames or IPs.
 _DSN_LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
 _DSN_TCP_HOSTS = _DSN_LOOPBACK_HOSTS | {"postgres"}
-_DSN_SOCKET_DIRS = frozenset(("/var/run/postgresql", "/run/postgresql", "/tmp"))  # noqa: S108
+_DSN_SOCKET_DIRS = frozenset(("/var/run/postgresql", "/run/postgresql"))
 _DSN_DBNAME = re.compile(r"[A-Za-z0-9_]{1,63}")
 _DSN_STRONG_SSL = frozenset(("require", "verify-ca", "verify-full"))
 _DSN_LOCAL_SSL = _DSN_STRONG_SSL | {"disable", "prefer"}

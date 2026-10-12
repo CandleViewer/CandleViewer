@@ -132,9 +132,10 @@ def test_unsafe_dsn_refused_before_any_duckdb_connection(
         "dbname=x user=cv_ro host=a\\b",
         "dbname=x user=cv_ro host=a'b",
         "dbname=x user=cv_ro\nhost=127.0.0.1",
-        "dbname=x user=cv_ro host=/tmp,evil.example.com",
+        "dbname=x user=cv_ro host=/var/tmpx,evil.example.com",
         "dbname=x user=cv_ro host=/var/run/postgresql,10.0.0.5",
-        "dbname=x user=cv_ro host=/tmp/../evil",
+        "dbname=x user=cv_ro host=/run/postgresql/../evil",
+        "dbname=x user=cv_ro host=/tmp sslmode=require",
         "dbname=x user=cv_ro host=/",
         "dbname=postgresql://evil/x user=cv_ro host=localhost",
         "dbname=-x user=cv_ro host=localhost",
@@ -211,8 +212,7 @@ def test_missing_extension_raises_typed_error_without_download(
 
 
 @pytest.mark.parametrize(
-    "host",
-    ["postgres", "127.0.0.1", "::1", "localhost", "/var/run/postgresql", "/run/postgresql", "/tmp"],  # noqa: S108 - allow-listed socket dir literal, not a temp file
+    "host", ["postgres", "127.0.0.1", "::1", "localhost", "/var/run/postgresql", "/run/postgresql"]
 )
 def test_checked_ro_dsn_accepts_allowed_hosts(host: str) -> None:
     from candleviewer.storage.cold.duckdb_views import _checked_ro_dsn
@@ -225,7 +225,7 @@ def test_local_hosts_allow_prefer_disable_or_absent_sslmode() -> None:
     from candleviewer.storage.cold.duckdb_views import _checked_ro_dsn
 
     for ssl in ("", " sslmode=prefer", " sslmode=disable"):
-        dsn = f"dbname=x user=cv_ro host=/tmp{ssl}"
+        dsn = f"dbname=x user=cv_ro host=/run/postgresql{ssl}"
         assert _checked_ro_dsn(dsn) == dsn
 
 
