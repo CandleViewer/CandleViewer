@@ -23,6 +23,9 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from .audit import AuditSink, NullAuditSink
 from .cidr import CidrAllowList
 
+#: `scope["state"]` key holding the source address MeshOnly admitted (#2090).
+RESOLVED_SOURCE_KEY = "cv_mesh_source"
+
 _GENERIC_403_BODY = b'{"detail":"Forbidden"}'
 
 
@@ -58,6 +61,9 @@ class MeshOnlyMiddleware:
 
         source = self._resolve_source_address(scope)
         if source is not None and self._allow_list.is_allowed(source):
+            # #2090: downstream audit (e.g. the CSRF guard) records the address this
+            # check actually admitted, never a client-supplied header.
+            scope.setdefault("state", {})[RESOLVED_SOURCE_KEY] = source
             await self._app(scope, receive, send)
             return
 

@@ -7,7 +7,8 @@ Pure, I/O-free building blocks the gateway drives:
   (B1-B20) - it is the per-frame transport path, which C-2.20 keeps out of the
   statechart runtime.
 - `negotiate_subprotocol`: §2.2 subprotocol selection.
-- `origin_refusal`: §2.5 `Origin` / `Sec-Fetch-Site` check on the upgrade (SR-042, SR-183).
+- `origin_refusal`: §2.5 `Origin` check on the upgrade (SR-042, SR-183), `header_values`
+  (case-insensitive header names) and `RefusalLogLimiter` (the refusal log cap).
 - `bye_frame`: the one `bye` builder (§4.4, requirement S11).
 - `InboundRateLimiter`: 30 frames/s and 300 frames/min excluding `pong` (§8.5).
 - `Watchdog`: auth deadline, token expiry, unsolicited ping and heartbeat
@@ -209,16 +210,22 @@ def negotiate_subprotocol(
 class OriginRefusal(enum.StrEnum):
     """§2.5 bounded refusal cause: the `check` log field, never a header value."""
 
-    FETCH_SITE = "fetch_site"
     ORIGIN_MISSING = "origin_missing"
     ORIGIN_NULL = "origin_null"
+    CROSS_SITE = "cross_site"
     ORIGIN_NOT_ALLOWED = "origin_not_allowed"
 
 
-#: §2.5: the endpoint is same-origin (§2.1), so a sibling host is refused like a foreign one.
-REFUSED_FETCH_SITES: Final = frozenset({"cross-site", "same-site"})
+#: §2.5: `Sec-Fetch-Site` values that label an unlisted origin's refusal as `cross_site`.
+CROSS_SITE_FETCHES: Final = frozenset({"cross-site", "same-site"})
 #: §2.5: the serialised opaque origin (sandboxed frame, `file:`, `data:`); never admitted.
 NULL_ORIGIN: Final = "null"
+
+
+def header_values(raw: Iterable[tuple[bytes, bytes]], name: bytes) -> list[str]:
+    """Every value of header `name` (lowercase) in raw ASGI headers, matching names in any
+    case: servers lowercase them, but a refusal must never hinge on that."""
+    return [value.decode("latin-1") for key, value in raw if key.lower() == name]
 
 
 def origin_refusal(
@@ -226,12 +233,12 @@ def origin_refusal(
 ) -> OriginRefusal | None:
     """§2.5 upgrade check (SR-042, SR-183); None admits the upgrade.
 
-    `origins` / `fetch_sites` are every `Origin` / `Sec-Fetch-Site` value received. Fails
-    closed: a `cross-site` / `same-site` fetch, no `Origin`, more than one, `null` (even if
-    listed) and anything outside `allowed` (exact match once trailing `/` is dropped, as
-    `Settings.allowed_origin_set` normalises) are refused. No non-browser exemption."""
-    if any(site.strip().lower() in REFUSED_FETCH_SITES for site in fetch_sites):
-        return OriginRefusal.FETCH_SITE
+    `origins` / `fetch_sites` are every `Origin` / `Sec-Fetch-Site` value received. The
+    allow-list decides: exactly one `Origin`, not `null` (even if listed) and in `allowed`
+    (exact match once trailing `/` is dropped, as `Settings.allowed_origin_set` normalises)
+    is admitted whatever `Sec-Fetch-Site` says. Everything else is refused, with no
+    non-browser exemption. `Sec-Fetch-Site` only labels an unlisted origin's refusal:
+    `cross-site` / `same-site` is the cross-site hijacking signature (`cross_site`)."""
     if not origins:
         return OriginRefusal.ORIGIN_MISSING
     if len(origins) > 1:
@@ -239,9 +246,49 @@ def origin_refusal(
     origin = origins[0].strip().rstrip("/")
     if origin.lower() == NULL_ORIGIN:
         return OriginRefusal.ORIGIN_NULL
-    if origin not in allowed:
-        return OriginRefusal.ORIGIN_NOT_ALLOWED
-    return None
+    if origin in allowed:
+        return None
+    if any(site.strip().lower() in CROSS_SITE_FETCHES for site in fetch_sites):
+        return OriginRefusal.CROSS_SITE
+    return OriginRefusal.ORIGIN_NOT_ALLOWED
+
+
+#: §2.5 log cap: refusal lines per cause per window; the counter still counts every refusal.
+REFUSAL_LOG_LIMIT: Final = 10
+REFUSAL_LOG_WINDOW_S: Final = 60.0
+
+
+class RefusalLog(enum.Enum):
+    """What one refusal may log under `RefusalLogLimiter`."""
+
+    LINE = "line"
+    SUMMARY = "summary"
+    NONE = "none"
+
+
+class RefusalLogLimiter:
+    """Fixed-window cap on §2.5 refusal log lines, per cause: the first `limit` refusals of
+    a cause in a window log a line, the next logs one summary, the rest are only counted.
+
+    Bounded (C-2.18): one entry per `OriginRefusal` value; time is an injected monotonic
+    clock reading, so tests drive windows without sleeping."""
+
+    def __init__(
+        self, *, limit: int = REFUSAL_LOG_LIMIT, window_s: float = REFUSAL_LOG_WINDOW_S
+    ) -> None:
+        self._limit = limit
+        self._window_s = window_s
+        self._seen: dict[OriginRefusal, tuple[float, int]] = {}
+
+    def admit(self, cause: OriginRefusal, now: float) -> RefusalLog:
+        start, count = self._seen.get(cause, (now, 0))
+        if now - start >= self._window_s:
+            start, count = now, 0
+        count += 1
+        self._seen[cause] = (start, count)
+        if count <= self._limit:
+            return RefusalLog.LINE
+        return RefusalLog.SUMMARY if count == self._limit + 1 else RefusalLog.NONE
 
 
 def bye_frame(
