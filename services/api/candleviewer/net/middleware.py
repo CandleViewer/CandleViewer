@@ -2,11 +2,13 @@
 
 Applies to both HTTP and the WS upgrade (ASGI `scope["type"]` in
 `{"http", "websocket"}`). The source address is taken from the ASGI
-`scope["client"]` socket peer tuple only; a client-controllable header
-(`X-Forwarded-For` and friends) is never consulted unless an explicitly
+`scope["client"]` tuple only; this middleware never consults a
+client-controllable header (`X-Forwarded-For` and friends) unless an explicitly
 configured trusted proxy sits in front — and even then only that proxy's
 own immediate peer address is trusted to supply it, never an arbitrary
-downstream hop.
+downstream hop. `scope["client"]` is what the ASGI server reports, which is not
+always the socket peer: under uvicorn's default `proxy_headers` a loopback peer
+can set it through `X-Forwarded-For` (#2275 makes that trust one explicit setting).
 
 This middleware only guards the *mesh-membership* check (per-request CIDR
 match on the source address); it does not consult or mutate
@@ -23,7 +25,9 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from .audit import AuditSink, NullAuditSink
 from .cidr import CidrAllowList
 
-#: `scope["state"]` key holding the source address MeshOnly admitted (#2090).
+#: `scope["state"]` key holding the source address MeshOnly admitted (#2090): whatever
+#: `scope["client"]` says. Not a verified identity: under uvicorn's default `proxy_headers`
+#: a loopback peer can set it through `X-Forwarded-For` (#2275).
 RESOLVED_SOURCE_KEY = "cv_mesh_source"
 
 _GENERIC_403_BODY = b'{"detail":"Forbidden"}'
@@ -61,8 +65,9 @@ class MeshOnlyMiddleware:
 
         source = self._resolve_source_address(scope)
         if source is not None and self._allow_list.is_allowed(source):
-            # #2090: downstream audit (e.g. the CSRF guard) records the address this
-            # check actually admitted, never a client-supplied header.
+            # #2090: downstream logs and audits (the CSRF guard, the WS Origin check)
+            # record the address this check admitted. A loopback peer can set it through
+            # `X-Forwarded-For` (uvicorn's default `proxy_headers`) until #2275.
             scope.setdefault("state", {})[RESOLVED_SOURCE_KEY] = source
             await self._app(scope, receive, send)
             return
