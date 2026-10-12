@@ -107,10 +107,13 @@ def clamp_idle_timeout_s(idle_timeout_s: int) -> int:
 
 def access_token_expires_at(session: SessionRecord) -> datetime:
     """The first instant `authenticate_access_token` refuses this session's
-    access handle: `issued_at + ACCESS_TOKEN_TTL`, capped by the absolute
-    `expires_at` that `require_active` enforces. A WS socket authenticated with
-    the handle closes here (#2259). Revocation and the idle lock are events,
-    not deadlines, so they are not part of it."""
+    access handle on time grounds: `issued_at + ACCESS_TOKEN_TTL`, capped by
+    the absolute `expires_at` that `require_active` enforces. The WS gateway
+    ends a socket's identity here (#2259). Revocation is not a deadline: it is
+    pushed to sockets through the `RevocationHub`. The idle lock is a sliding
+    deadline that can come first, but it intentionally does not end the
+    socket: E09-S03 keeps the data feed alive while locked, and REST refuses
+    the locked session through `require_active`."""
     return min(session.issued_at + ACCESS_TOKEN_TTL, session.expires_at)
 
 

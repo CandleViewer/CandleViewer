@@ -524,9 +524,9 @@ def _now_ms() -> int:
 
 def _session_authenticator(ctx: AppContext) -> Authenticate:
     """Opaque bearer token -> (session_id, user_id, token expiry) via the session
-    service. The expiry is the instant the service starts refusing the token, so
-    the socket never outlives it (#2259). Raises (fail closed) while no session
-    repository is wired."""
+    service. The expiry is the first instant the service refuses the token on
+    time grounds; the gateway ends the socket's identity there (#2259). Raises
+    (fail closed) while no session repository is wired."""
 
     async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
         record = await ctx.auth.sessions.authenticate_access_token(token)

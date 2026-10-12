@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import functools
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
@@ -30,7 +31,7 @@ from candleviewer.ws.metrics import AUTH_FAILURE_REASONS, cv_ws_auth_failures_to
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
 from tests.unit.auth.session_fakes import FakeSessionRepository
-from tests.unit.ws.test_lifecycle_socket import _closed, _recv, _recv_type
+from tests.unit.ws.test_lifecycle_socket import _closed, _no_sleep, _recv, _recv_type
 
 _T0 = datetime(2026, 10, 12, 9, 0, tzinfo=UTC)
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
@@ -44,10 +45,12 @@ def _ms(at: datetime) -> int:
 
 class _Clock:
     """One fake instant behind every clock: the session service's `datetime`,
-    the gateway's monotonic seconds and its wall-clock epoch ms."""
+    the gateway's monotonic seconds and its wall-clock epoch ms. `wall_step`
+    moves only the wall clock, like an NTP step or a resume."""
 
     def __init__(self) -> None:
         self.now = _T0
+        self.wall_step = timedelta(0)
 
     def __call__(self) -> datetime:
         return self.now
@@ -56,7 +59,7 @@ class _Clock:
         return (self.now - _T0).total_seconds()
 
     def wall_ms(self) -> int:
-        return _ms(self.now)
+        return _ms(self.now + self.wall_step)
 
 
 class _Stack:
@@ -193,27 +196,43 @@ def test_expiry_is_capped_by_the_sessions_absolute_lifetime(stack: _Stack) -> No
 # -- gateway contract: whatever the injected authenticator reports -----------------------------
 
 
-def _bare_gateway(result: Any, clock: _Clock) -> TestClient:
-    """A bare `/ws` router whose authenticator returns `result` verbatim."""
+@dataclass
+class _Bare:
+    client: TestClient
+    hub: gateway.GatewayHub
+    revocation: RevocationHub
 
-    async def authenticate(_token: str) -> Any:
-        return result
+    def call(self, fn: Callable[[], Any]) -> Any:
+        """Run `fn` in the app's event loop. Nothing else runs there until it
+        returns, so the writer cannot interleave with what `fn` does."""
+        assert self.client.portal is not None
+        return self.client.portal.call(fn)
+
+
+def _bare_gateway(result: Any, clock: _Clock, *, tick_s: float = 0.005) -> _Bare:
+    """A bare `/ws` router whose authenticator returns `result` verbatim, or
+    awaits `result(token)` when `result` is an authenticator itself."""
+
+    async def authenticate(token: str) -> Any:
+        return await result(token) if callable(result) else result
 
     async def resolve(uid: uuid.UUID) -> PrincipalSnapshot:
         return PrincipalSnapshot(uid, frozenset(), frozenset())
 
+    hub, revocation = gateway.GatewayHub(), RevocationHub()
     app = FastAPI()
     app.include_router(
         gateway.make_ws_router(
             authenticate=authenticate,
             registry=ConnectionRegistry(resolve, clock.wall_ms),
-            revocation_hub=RevocationHub(),
+            revocation_hub=revocation,
+            hub=hub,
             clock=clock.monotonic,
             wall_ms=clock.wall_ms,
-            tick_s=0.005,
+            tick_s=tick_s,
         )
     )
-    return TestClient(app)
+    return _Bare(TestClient(app), hub, revocation)
 
 
 def _failures(reason: str) -> float:
@@ -225,7 +244,7 @@ def _failures(reason: str) -> float:
 def test_gateway_refuses_a_token_expired_by_its_own_clock(left: timedelta) -> None:
     clock = _Clock()
     before = _failures("token_expired")
-    client = _bare_gateway(("sess", _USER, clock.now + left), clock)
+    client = _bare_gateway(("sess", _USER, clock.now + left), clock).client
     with client, client.websocket_connect("/ws", subprotocols=_JSON) as ws:
         err = _open(ws, "any")
         assert (err["t"], err["p"]["code"]) == ("err", "auth_failed")
@@ -246,7 +265,7 @@ def test_gateway_refuses_a_token_expired_by_its_own_clock(left: timedelta) -> No
 )
 def test_authenticator_without_a_tz_aware_expiry_is_a_server_fault_1011(result: Any) -> None:
     clock = _Clock()
-    client = _bare_gateway(result, clock)
+    client = _bare_gateway(result, clock).client
     with client, client.websocket_connect("/ws", subprotocols=_JSON) as ws:
         bye = _open(ws, "any")  # never auth_ok, never a default lifetime
         code = _closed(ws)
@@ -257,7 +276,133 @@ def test_expiry_is_floored_to_the_ms_and_honours_the_utc_offset() -> None:
     clock = _Clock()
     plus5 = timezone(timedelta(hours=5))
     expires = (_T0 + timedelta(minutes=10, microseconds=999)).astimezone(plus5)
-    client = _bare_gateway(("sess", _USER, expires), clock)
+    client = _bare_gateway(("sess", _USER, expires), clock).client
     with client, client.websocket_connect("/ws", subprotocols=_JSON) as ws:
         ok = _open(ws, "any")
     assert ok["p"]["token_expires_at_ms"] == _ms(_T0 + timedelta(minutes=10))
+
+
+# -- a busy socket still expires (#2259 review: watchdog starvation) ---------------------------
+
+#: The writer's idle tick in these tests: an hour, so a deadline can only fire from the
+#: check before each dequeue and send, never from an idle poll (the old code's only check).
+_NO_IDLE_TICK_S = 3600.0
+_FEED_PERIOD = timedelta(milliseconds=10)  # 100 Hz on the fake clock
+
+
+def _broadcast(gw: _Bare, ws: Any, clock: _Clock) -> dict[str, Any]:
+    """Advance one feed period, broadcast one `system` frame, return the next frame."""
+    clock.now += _FEED_PERIOD
+    gw.call(lambda: gw.hub.broadcast_system({"kind": "tick"}))
+    return _recv(ws)
+
+
+def test_busy_socket_expires_with_bye_instead_of_the_first_frame_at_the_expiry() -> None:
+    clock = _Clock()
+    expiry = _T0 + timedelta(seconds=1)
+    gw = _bare_gateway(("sess", _USER, expiry), clock, tick_s=_NO_IDLE_TICK_S)
+    data: list[dict[str, Any]] = []
+    with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+        assert _open(ws, "any")["t"] == "auth_ok"
+        while (frame := _broadcast(gw, ws, clock))["t"] != "bye":
+            data.append(frame)
+            assert len(data) < 150, "the socket kept serving past its token expiry"
+        code = _closed(ws)
+    assert (frame["p"]["reason"], code) == ("token_expired", 4401)
+    # Frames at 10 ms .. 990 ms are served; the one stamped at the expiry is not.
+    assert len(data) == 99
+    assert max(f["ts"] for f in data) < _ms(expiry)
+
+
+def test_expiry_drops_the_queued_backlog_and_sends_bye_next() -> None:
+    clock = _Clock()
+    expiry = _T0 + timedelta(minutes=1)
+    gw = _bare_gateway(("sess", _USER, expiry), clock, tick_s=_NO_IDLE_TICK_S)
+    with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+        assert _open(ws, "any")["t"] == "auth_ok"
+
+        def burst_then_expire() -> None:
+            for _ in range(gateway.OUTBOUND_QUEUE_MAX - 1):
+                gw.hub.broadcast_system({"kind": "tick"})
+            clock.now = expiry
+
+        gw.call(burst_then_expire)
+        bye = _recv(ws)  # not one of the 1023 queued frames
+        assert (bye["t"], bye["p"]["reason"]) == ("bye", "token_expired"), bye
+        assert _closed(ws) == 4401
+
+
+def test_revocation_drops_the_queued_backlog_and_sends_bye_next() -> None:
+    clock = _Clock()
+    gw = _bare_gateway(("sess", _USER, _T0 + ACCESS_TOKEN_TTL), clock, tick_s=_NO_IDLE_TICK_S)
+    with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+        assert _open(ws, "any")["t"] == "auth_ok"
+
+        async def burst_then_revoke() -> int:
+            for _ in range(gateway.OUTBOUND_QUEUE_MAX - 1):
+                gw.hub.broadcast_system({"kind": "tick"})
+            return await gw.revocation.revoke("sess")
+
+        assert gw.call(burst_then_revoke) == 1
+        bye = _recv(ws)
+        assert (bye["t"], bye["p"]["reason"]) == ("bye", "session_revoked"), bye
+        assert _closed(ws) == 4401
+
+
+def test_expiry_during_a_close_under_way_still_drops_the_backlog() -> None:
+    clock = _Clock()
+    expiry = _T0 + timedelta(minutes=1)
+    gw = _bare_gateway(("sess", _USER, expiry), clock, tick_s=_NO_IDLE_TICK_S)
+    with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+        assert _open(ws, "any")["t"] == "auth_ok"
+
+        async def burst_shutdown_then_expire() -> None:
+            for _ in range(gateway.OUTBOUND_QUEUE_MAX - 2):
+                gw.hub.broadcast_system({"kind": "tick"})
+            # A planned shutdown is an ordinary close: its `bye` follows the backlog...
+            await gw.hub.shutdown(grace_ms=0, sleep=_no_sleep)
+            clock.now = expiry  # ...until the identity ends while it drains.
+
+        gw.call(burst_shutdown_then_expire)
+        bye = _recv(ws)
+        assert (bye["t"], bye["p"]["reason"]) == ("bye", "shutdown"), bye
+        assert _closed(ws) == 1001
+
+
+def test_a_forward_wall_clock_step_expires_the_token_on_the_wall_clock() -> None:
+    # An NTP step or a resume moves only the wall clock. REST then refuses the
+    # token at once, so the socket must not wait for the monotonic deadline.
+    clock = _Clock()
+    gw = _bare_gateway(("sess", _USER, _T0 + ACCESS_TOKEN_TTL), clock)
+    with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+        assert _open(ws, "any")["t"] == "auth_ok"
+        clock.wall_step = ACCESS_TOKEN_TTL  # 0 s elapsed on the monotonic clock
+        bye = _recv(ws)
+        assert (bye["t"], bye["p"]["reason"]) == ("bye", "token_expired"), bye
+        assert _closed(ws) == 4401
+
+
+@pytest.mark.parametrize("outcome", ["accepted", "refused"])
+def test_a_revocation_during_a_reauth_still_closes_with_bye_4401(outcome: str) -> None:
+    # The session is revoked while the re-auth awaits the session service. The
+    # sealed close must finish (`bye session_revoked` + 4401); the late auth
+    # result must not hit the closing lifecycle and fault the socket into 1011.
+    clock = _Clock()
+    calls: list[str] = []
+    gw: _Bare
+
+    async def authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
+        calls.append(token)
+        if len(calls) == 2:
+            await gw.revocation.revoke("sess")
+            if outcome == "refused":
+                raise PermissionError("revoked")
+        return "sess", _USER, _T0 + ACCESS_TOKEN_TTL
+
+    gw = _bare_gateway(authenticate, clock)
+    with gw.client, gw.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+        assert _open(ws, "first")["t"] == "auth_ok"
+        ws.send_json({"t": "auth", "id": "re", "p": {"access_token": "second"}})
+        bye = _recv(ws)
+        assert (bye["t"], bye["p"]["reason"]) == ("bye", "session_revoked"), bye
+        assert _closed(ws) == 4401

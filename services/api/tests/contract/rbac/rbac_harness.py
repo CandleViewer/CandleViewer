@@ -319,7 +319,7 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
         actor = _TOKENS.get(token)
         if actor is None:
             raise PermissionError("unknown token")
-        return f"ws-{actor}", _USER_IDS[actor], datetime.now(UTC) + timedelta(hours=1)
+        return f"ws-{actor}", _USER_IDS[actor], datetime(2100, 1, 1, tzinfo=UTC)  # far future
 
     mp.setattr(appmod, "build_identity_provider", lambda _settings: _Identity(spec))
     mp.setattr(appmod, "SqlAlchemyAlertRepository", lambda _pg: _AlertRepo())

@@ -48,7 +48,9 @@ cv_ws_clock_skew_ms = Histogram(
     buckets=(10, 50, 100, 250, 500, 1000, 2000, 5000, 30000),
 )
 
-#: Bounded `cv_ws_auth_failures_total{reason}` values.
+#: Bounded `cv_ws_auth_failures_total{reason}` values. `token_expired` counts
+#: tokens the session service accepted but the gateway clock had already passed
+#: (a sub-ms race in production); tokens the service refuses count as `rejected`.
 AUTH_FAILURE_REASONS: Final = frozenset(
     {"missing_token", "rejected", "token_expired", "user_mismatch"}
 )
