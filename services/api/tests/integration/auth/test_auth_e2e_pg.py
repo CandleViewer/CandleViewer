@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.app import create_app
+from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.models import MfaChallengeRecord, MfaMethodRecord
 from candleviewer.auth.totp import generate_code, generate_secret, time_step_for
@@ -94,6 +95,7 @@ async def client(pg_dsn: str, tmp_path: Path) -> AsyncIterator[httpx.AsyncClient
         pg_dsn=SecretStr(pg_dsn),
         auth_totp_key_hex=SecretStr(_TOTP_KEY.hex()),
         auth_recovery_hmac_key_hex=SecretStr("22" * 32),
+        auth_csrf_key_hex=SecretStr("33" * 32),
         auth_pepper=SecretStr(_PEPPER),
         audit_wal_path=str(tmp_path / "audit.wal"),
     )
@@ -162,7 +164,8 @@ async def test_login_totp_session_cookie_session_logout_round_trip(
     assert "httponly" in cookie and "samesite=strict" in cookie and "secure" in cookie
     assert "path=/api/v1/auth" in cookie
 
-    bearer = {"Authorization": f"Bearer {body['tokens']['access_token']}"}
+    csrf = verified.cookies[CSRF_COOKIE]  # SR-041: issued with the session (#2090)
+    bearer = {"Authorization": f"Bearer {body['tokens']['access_token']}", CSRF_HEADER: csrf}
     session = await client.get("/auth/session", headers=bearer)
     assert session.status_code == 200, session.text
     info = session.json()
@@ -206,9 +209,8 @@ async def test_audit_rows_for_login_failure_totp_failure_success_and_logout(
     assert totp_bad.status_code == 401
     ok = await _login_and_verify(client, "e2e_audited", secret)
     token = ok.json()["tokens"]["access_token"]
-    assert (
-        await client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
-    ).status_code == 204
+    hdrs = {"Authorization": f"Bearer {token}", CSRF_HEADER: ok.cookies[CSRF_COOKIE]}
+    assert (await client.post("/auth/logout", headers=hdrs)).status_code == 204
     await client.app_context.audit.writer.flush(10.0)  # type: ignore[attr-defined]
 
     failed = await _audit_rows(pg_dsn, "e2e***%")
