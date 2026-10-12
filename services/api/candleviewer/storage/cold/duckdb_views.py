@@ -5,11 +5,12 @@ in-process only (SR-048: no server mode, no port). The optional Postgres
 attachment is `READ_ONLY` as the `cv_ro` role, so analytics can never mutate
 the ledger. No `INSTALL` is issued for the Parquet path (the reader is built
 in), so building the lake views needs no network; the `postgres` extension
-is only installed/loaded when a DSN is supplied (deployment-time).
+is only LOADed (never installed at runtime) when a DSN is supplied (deployment-time).
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import duckdb
@@ -67,22 +68,74 @@ class UnsafeAnalyticsDsn(ValueError):
     key/value DSN (SR-048: analytics must never hold a writable role)."""
 
 
-_DSN_FORBIDDEN = frozenset((chr(39), chr(34), ";", chr(10), chr(13)))  # quote, dquote, ;, LF, CR
+class PostgresExtensionUnavailable(RuntimeError):
+    """The preinstalled DuckDB `postgres` extension could not be LOADed. It is
+    never downloaded at runtime; the deployment image must preinstall it."""
+
+
+_DSN_BAD_VALUE_CHARS = frozenset("=,\\'\";\t ")
+_DSN_ALLOWED_KEYS = frozenset(("dbname", "host", "port", "user", "sslmode"))
+# `postgres` is the compose service name on cv-internal (infra/compose/docker-compose.yml,
+# service `postgres`, used in CV_PG_DSN); the rest are loopback. No other hostnames or IPs.
+_DSN_LOOPBACK_HOSTS = frozenset(("127.0.0.1", "::1", "localhost"))
+_DSN_TCP_HOSTS = _DSN_LOOPBACK_HOSTS | {"postgres"}
+_DSN_SOCKET_DIRS = frozenset(("/var/run/postgresql", "/run/postgresql"))
+_DSN_DBNAME = re.compile(r"[A-Za-z0-9_]{1,63}")
+_DSN_STRONG_SSL = frozenset(("require", "verify-ca", "verify-full"))
+_DSN_LOCAL_SSL = _DSN_STRONG_SSL | {"disable", "prefer"}
 
 
 def _checked_ro_dsn(dsn: str) -> str:
-    """Accept only a libpq key/value DSN for the `cv_ro` role with no quote,
-    semicolon or newline characters. The DSN is never logged."""
-    if any(ch in dsn for ch in _DSN_FORBIDDEN) or "user=cv_ro" not in dsn.split():
-        raise UnsafeAnalyticsDsn("analytics attachment requires a plain cv_ro key/value DSN")
+    """Parse a libpq key/value DSN and accept it only through exact allow-lists, so
+    nothing libpq could reinterpret (multi-host lists, URI expansion, env fallbacks,
+    duplicate keys) gets through. Keys: dbname/host/port/user/sslmode, no repeats.
+    `user` is exactly `cv_ro`; `host` is required and is one of a fixed set of TCP
+    hosts or socket directories; `dbname` is `[A-Za-z0-9_]{1,63}`; `port` is 1..65535;
+    `sslmode` must be require/verify-ca/verify-full unless the host is loopback or a
+    socket, where `disable`/`prefer` (and an absent sslmode) are also fine. Values are
+    printable ASCII with no space, `=`, `,`, quote, backslash or `;`. Never logged."""
+    fail = UnsafeAnalyticsDsn("analytics attachment requires a plain cv_ro key/value DSN")
+    if not dsn.isascii() or any((ord(ch) < 32 and ch != " ") or ord(ch) == 127 for ch in dsn):
+        raise fail
+    pairs: dict[str, str] = {}
+    for token in dsn.split(" "):
+        if not token:
+            continue
+        key, sep, value = token.partition("=")
+        if not sep or key not in _DSN_ALLOWED_KEYS or key in pairs or not value:
+            raise fail
+        if any(ch in _DSN_BAD_VALUE_CHARS for ch in value):
+            raise fail
+        pairs[key] = value
+    host = pairs.get("host")
+    if pairs.get("user") != "cv_ro" or host is None:
+        raise fail
+    local = host in _DSN_LOOPBACK_HOSTS or host in _DSN_SOCKET_DIRS
+    if not local and host not in _DSN_TCP_HOSTS:
+        raise fail
+    if not _DSN_DBNAME.fullmatch(pairs.get("dbname", "")):
+        raise fail
+    port = pairs.get("port")
+    if port is not None and not (port.isascii() and port.isdigit() and 1 <= int(port) <= 65535):
+        raise fail
+    ssl = pairs.get("sslmode")
+    if ssl not in (_DSN_LOCAL_SSL if local else _DSN_STRONG_SSL) and not (local and ssl is None):
+        raise fail
     return dsn
 
 
 def build_views(db_path: Path, registry: DatasetRegistry, *, pg_dsn: str | None = None) -> None:
-    """(Re)create every cold-tier view in `db_path` (idempotent)."""
+    """(Re)create every cold-tier view in `db_path` (idempotent).
+
+    The DSN is validated before DuckDB is even opened, so a refused DSN never
+    touches extensions or the network. The `postgres` extension is only ever
+    LOADed (never INSTALLed at runtime): the deployment image must preinstall it.
+    """
+    checked_dsn = _checked_ro_dsn(pg_dsn) if pg_dsn else None
     con = duckdb.connect(str(db_path))
     try:
         con.execute("SET TimeZone = 'UTC'")
+        con.execute("SET autoinstall_known_extensions = false")
         for view_name, stream in VIEW_STREAMS.items():
             if not _create_parquet_view(con, view_name, registry.dataset_glob(stream)):
                 # Not yet exported: a typed empty view so queries return 0 rows.
@@ -101,11 +154,15 @@ def build_views(db_path: Path, registry: DatasetRegistry, *, pg_dsn: str | None 
             oms_ok[view_name] = _create_parquet_view(con, view_name, glob)
 
         journal_parts = ["SELECT * FROM journal_cold"] if oms_ok["journal_cold"] else []
-        if pg_dsn:
-            con.execute("INSTALL postgres")
-            con.execute("LOAD postgres")
+        if checked_dsn:
+            try:
+                con.execute("LOAD postgres")  # preinstalled in the image; no runtime INSTALL
+            except duckdb.Error as exc:
+                raise PostgresExtensionUnavailable(
+                    "duckdb postgres extension is not preinstalled; it is never downloaded"
+                ) from exc
             con.execute("DETACH DATABASE IF EXISTS pg")
-            dsn = _checked_ro_dsn(pg_dsn)
+            dsn = checked_dsn
             # ATTACH has no bind params (DuckDB grammar); DSN validated above
             # and emitted as an escaped string literal.
             attach = " ".join(
