@@ -46,7 +46,7 @@ describe("csrfFetch (SR-041)", () => {
     expect(readCsrfCookie(`${CSRF_COOKIE}=`)).toBeNull();
   });
 
-  it.each(["POST", "PUT", "PATCH", "DELETE", "post", "PURGE"])(
+  it.each(["POST", "PUT", "PATCH", "DELETE", "post", "PURGE", "TRACE"])(
     "sends the cookie as X-CSRF-Token on %s",
     async (method) => {
       setCookie("tok.mac");
@@ -120,23 +120,51 @@ describe("csrfFetch (SR-041)", () => {
       return new Response("{}", { status: 200 });
     });
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
-    const res = await apiFetch("/api/v1/x", { method: "PUT", body: "{}" });
+    const res = await apiFetch("/api/v1/x", {
+      method: "PUT",
+      body: "{}",
+      headers: { Authorization: "Bearer acc" },
+    });
     expect(res.status).toBe(204);
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/v1/auth/session");
+    // GET /auth/session authenticates the bearer only: it must be forwarded
+    const bootInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(new Headers(bootInit.headers).get("Authorization")).toBe("Bearer acc");
     expect(sentToken(fetchMock, 0)).toBeNull();
     expect(sentToken(fetchMock, 2)).toBe("reissued.mac");
   });
 
   it("missing cookie that the bootstrap cannot restore surfaces the first refusal", async () => {
     setCookie(null);
+    const auth = { headers: { Authorization: "Bearer acc" } };
     fetchMock.mockResolvedValueOnce(problem("csrf_token_invalid"));
     fetchMock.mockResolvedValueOnce(new Response("{}", { status: 401 }));
-    const res = await apiFetch("/api/v1/x", { method: "POST" });
+    const res = await apiFetch("/api/v1/x", { method: "POST", ...auth });
     expect(res.status).toBe(403);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     fetchMock.mockResolvedValueOnce(problem("csrf_token_invalid"));
     fetchMock.mockRejectedValueOnce(new Error("offline"));
+    expect((await apiFetch("/api/v1/x", { method: "POST", ...auth })).status).toBe(403);
+  });
+
+  it("without a bearer there is no session to re-issue for: no bootstrap call", async () => {
+    setCookie(null);
+    fetchMock.mockResolvedValueOnce(problem("csrf_token_invalid"));
     expect((await apiFetch("/api/v1/x", { method: "POST" })).status).toBe(403);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("forwards a Request's own Authorization to the bootstrap", async () => {
+    setCookie(null);
+    fetchMock.mockResolvedValueOnce(problem("csrf_token_invalid"));
+    fetchMock.mockResolvedValueOnce(new Response("{}", { status: 401 }));
+    const req = new Request(new URL("/api/v1/x", window.location.href), {
+      method: "POST",
+      headers: { Authorization: "Bearer req" },
+    });
+    await apiFetch(req);
+    const bootInit = fetchMock.mock.calls[1]?.[1] as RequestInit;
+    expect(new Headers(bootInit.headers).get("Authorization")).toBe("Bearer req");
   });
 
   it("surfaces a second csrf refusal without a third attempt", async () => {

@@ -239,8 +239,18 @@ repository's secret settings, never from an agent session.
   or previous) equal to the TOTP or recovery key. Alerts: `CsrfRefusalsHigh`,
   `CsrfRefusalAuditUnavailable` (`docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh`).
 - **SR-042 origins (`CV_ALLOWED_ORIGINS`).** The CSRF guard refuses any state-changing request
-  whose `Origin` is not in this list (or that carries `Sec-Fetch-Site: cross-site`). Set it to every
-  app origin (localhost dev port, tailnet hostname, the Electron origin) before rollout.
+  whose `Origin` is not in this exact list, or that carries `Sec-Fetch-Site: cross-site` or
+  `same-site`. `null` and wildcards are never accepted. Empty (the default) refuses every browser
+  write, which is the production fail-closed state. Set it before rollout to each origin the web app
+  is served from, scheme + host + port, comma separated, e.g.
+  `CV_ALLOWED_ORIGINS=https://candleviewer.<tailnet>.ts.net`. The dev compose override
+  (`infra/compose/docker-compose.dev.yml`) defaults it to the Vite dev and preview origins
+  (`http://127.0.0.1:5173`, `http://localhost:5173`, `:4173`).
+- **Electron desktop shell.** In dev (`CV_DEV_SERVER_URL`) the renderer runs on the Vite origin
+  above and works unchanged. The packaged shell loads `file://…/index.html`, so its requests carry
+  `Origin: null` and are refused by design (never allow-list `null`), and the backend's
+  `__Host-cv_csrf` cookie is not readable from a `file://` page. Packaged-Electron writes need a
+  privileged custom scheme or a main-process proxy, which is not part of #2090 (see the PR).
 - **Unit and contract tests** use in-process fakes and keys generated inside the test process; there
   is no shared credential to rotate.
 - **Secret scanning.** If a fixture secret leaks, follow `SECURITY.md` and rotate immediately.

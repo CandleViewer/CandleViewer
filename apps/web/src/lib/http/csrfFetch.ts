@@ -1,14 +1,14 @@
 /**
  * SR-041 double-submit CSRF for every REST call (`22-api-openapi.yaml` info "CSRF", #2090).
  *
- * On every state-changing method (anything but GET/HEAD/OPTIONS/TRACE) to this origin, the client
+ * On every state-changing method (anything but GET/HEAD/OPTIONS) to this origin, the client
  * reads the `__Host-cv_csrf` cookie and sends it in `X-CSRF-Token`. The header is never attached to
  * a cross-origin URL. It is also sent on the exempt pre-session routes (login, MFA, invites), where
  * the server ignores it.
  *
  * On `403 csrf_token_invalid` (e.g. another tab rotated the token) the client recovers once:
- * - if the cookie is absent, it calls `GET /auth/session` first (the contract's bootstrap recovery
- *   path re-issues the cookie);
+ * - if the cookie is absent, it calls `GET /auth/session` first with the request's own
+ *   `Authorization` header (that route authenticates the bearer only, then re-issues the cookie);
  * - if the re-read cookie equals the token just sent, nothing rotated, so the first 403 is returned
  *   without repeating a non-idempotent request;
  * - otherwise it retries exactly once. A second refusal is returned to the caller unchanged.
@@ -24,7 +24,8 @@ export const CSRF_HEADER = "X-CSRF-Token";
 export const CSRF_ERROR_CODE: keyof typeof ERROR_META = "csrf_token_invalid";
 const SESSION_PATH = "/api/v1/auth/session";
 
-const SAFE = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
+/** The contract's safe set ("Exempt"); everything else, TRACE included, is guarded. */
+const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /** Current `__Host-cv_csrf` value, or `null` when absent. */
 export function readCsrfCookie(cookieSource: string = document.cookie): string | null {
@@ -61,6 +62,12 @@ function withToken(init: RequestInit, token: string | null): RequestInit {
   return { ...init, headers };
 }
 
+function authorizationOf(input: RequestInfo | URL, init: RequestInit): string | null {
+  const own = new Headers(init.headers).get("Authorization");
+  if (own !== null) return own;
+  return input instanceof Request ? input.headers.get("Authorization") : null;
+}
+
 async function isCsrfRefusal(res: Response): Promise<boolean> {
   if (res.status !== 403) return false;
   try {
@@ -86,8 +93,10 @@ export async function apiFetch(
   if (!(await isCsrfRefusal(first))) return first;
   let fresh = readCsrfCookie();
   if (fresh === null) {
+    const auth = authorizationOf(input, init);
+    if (auth === null) return first; // no session to re-issue for
     try {
-      await fetch(SESSION_PATH, { credentials: "same-origin" }); // re-issues the cookie
+      await fetch(SESSION_PATH, { credentials: "same-origin", headers: { Authorization: auth } });
     } catch {
       return first;
     }

@@ -42,16 +42,16 @@ async def test_ac_csrf_02_empty_allowlist_refuses_every_origin() -> None:
 async def test_ac_csrf_03_refresh_cookie_flags_not_downgradable() -> None:  # SR-012
     env = _Env(origins=frozenset({_ORIGIN}))
     m = await env.mint(uuid.uuid4())
-    env.client.cookies.clear()
+    env.client.cookies.delete(REFRESH_COOKIE, path="/api/v1/auth")  # keep the SR-041 pair
     r = env.client.post(
         "/api/v1/auth/refresh",
         cookies={REFRESH_COOKIE: m.refresh_token},
         headers={"Origin": _ORIGIN, "X-Forwarded-Proto": "http"},
     )
     assert r.status_code == 200
-    cookie = r.headers["set-cookie"].lower()
+    cookie = next(h for h in r.headers.get_list("set-cookie") if h.startswith(REFRESH_COOKIE))
     for flag in ("httponly", "secure", "samesite=strict"):
-        assert flag in cookie
+        assert flag in cookie.lower()
 
 
 async def test_ac_csrf_04_state_changing_routes_require_bearer_not_cookie() -> None:

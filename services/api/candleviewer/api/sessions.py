@@ -39,6 +39,7 @@ from candleviewer.api.csrf import (
     clear_csrf_cookie,
     csrf_problem,
     set_csrf_cookie,
+    source_ip,
     verify_refresh_csrf,
 )
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -164,7 +165,8 @@ def _bearer(request: Request) -> str | None:
 
 
 def _source_ip(request: Request) -> str | None:
-    return request.client.host if request.client is not None else None
+    """The address MeshOnly admitted (trusted-proxy aware), else the socket peer."""
+    return source_ip(request.scope)
 
 
 # `/auth/refresh` budget (reuses the E09-S01 sliding-window throttle, one
@@ -246,7 +248,7 @@ def make_session_router(
     allowed_origins: frozenset[str] = frozenset(),
     ip_throttle: PerIpLoginThrottle | None = None,
     session_throttle: PerIpLoginThrottle | None = None,
-    csrf: CsrfCodec | None = None,
+    csrf: CsrfCodec,
 ) -> APIRouter:
     router = APIRouter(tags=["auth"])
     by_ip = ip_throttle or PerIpLoginThrottle(
@@ -349,9 +351,13 @@ def make_session_router(
         if by_session.is_blocked(session_key):
             return _throttled(by_session.retry_after_s(session_key))
         by_session.record_failure(session_key)
-        if csrf is not None:
+        reuse = presented_record.revoked_reason == "rotated"
+        if not reuse:
             # SR-041: validate against the exact session this refresh would rotate,
-            # after the throttles and before any audit write or state change.
+            # after the throttles and before any audit write or state change. A
+            # rotated-out token skips this and goes straight to reuse detection: that
+            # branch only revokes (never mints), and `cv_refresh` is HttpOnly +
+            # SameSite=Strict, so it is not CSRF-reachable.
             refusal = verify_refresh_csrf(
                 csrf,
                 request.headers.get(CSRF_HEADER),
@@ -370,12 +376,11 @@ def make_session_router(
                         reason=refusal.value,
                     )
                 except AuditUnavailableError:
-                    pass  # refused regardless (fail closed)
+                    auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
                 return csrf_problem(refusal)
         # C-2.9 write-ahead: the audit record is written before `refresh()`
         # rotates or revokes anything; if the sink is down we refuse (503)
         # with no state change.
-        reuse = presented_record.revoked_reason == "rotated"
         try:
             if reuse:
                 await _audit(
@@ -424,10 +429,8 @@ def make_session_router(
             },
         )
         _set_refresh_cookie(response, minted.refresh_token, max_age=REFRESH_EXPIRES_IN_S)
-        if csrf is not None:  # SR-041: validated by CsrfMiddleware, rotated with the session
-            set_csrf_cookie(
-                response, csrf.issue(str(minted.session_id)), max_age=REFRESH_EXPIRES_IN_S
-            )
+        # SR-041: validated above, rotated with the session
+        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=REFRESH_EXPIRES_IN_S)
         return response
 
     @router.get("/auth/session")
@@ -459,11 +462,10 @@ def make_session_router(
                 },
             }
         )
-        if csrf is not None:
-            # SR-041 recovery path: re-issue when absent or not verifying.
-            present = request.cookies.get(CSRF_COOKIE)
-            if not present or csrf.verify(present, str(record.id)) is not CsrfVerdict.OK:
-                set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=REFRESH_EXPIRES_IN_S)
+        # SR-041 recovery path: re-issue when absent or not verifying.
+        present = request.cookies.get(CSRF_COOKIE)
+        if not present or csrf.verify(present, str(record.id)) is not CsrfVerdict.OK:
+            set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=REFRESH_EXPIRES_IN_S)
         return response
 
     @router.get("/auth/sessions")

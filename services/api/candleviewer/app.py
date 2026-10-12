@@ -82,6 +82,7 @@ from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.users import SnapshotResolver, UserRoleStore, make_users_router
 from candleviewer.auth.csrf import CsrfCodec
+from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.models import (
     InviteRecord,
     MfaChallengeRecord,
@@ -993,6 +994,8 @@ def create_app(
     app.state.cvwb_metrics = export_cvwb_metrics(ctx.metrics, env=resolved.environment.value)
     # #377: every `cv_ws_*` gateway series (lifecycle, subscriptions, sequencing).
     app.state.ws_metrics = export_ws_metrics(ctx.metrics, env=resolved.environment.value)
+    # #2090: auth series (incl. auth_csrf_refused_total) on the scraped registry.
+    app.state.auth_metrics = export_auth_metrics(ctx.metrics, env=resolved.environment.value)
     # E40-T01: alert_deliveries retention purge + alert gauges (lifespan-started).
     _alert_pg = SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "alerts")
     _retention = RetentionSchedule.from_settings(resolved)
@@ -1264,6 +1267,7 @@ def create_app(
         sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
         audit=_LazyAuditEmitter(ctx.audit),
         allowed_origins=resolved.allowed_origin_set,
+        operations=frozenset(declared_operations(spec)),
     )
     # E09-T04: rejects off-mesh requests before any credential is evaluated.
     app.add_middleware(

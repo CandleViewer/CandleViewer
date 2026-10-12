@@ -643,11 +643,81 @@ def test_revoking_own_session_expires_the_csrf_cookie(stack: _Stack) -> None:
     assert [c for c in out.headers.get_list("set-cookie") if c.startswith(CSRF_COOKIE)]
 
 
-def test_unauthenticated_flood_is_throttled_429_without_audit_rows(stack: _Stack) -> None:
+def test_unauthenticated_flood_stays_403_but_stops_writing_audit_rows(stack: _Stack) -> None:
     stack.client.cookies.clear()
-    codes = [stack.client.post("/auth/logout").status_code for _ in range(25)]
-    assert codes[:20] == [403] * 20 and set(codes[20:]) == {429}
+    rs = [stack.client.post("/auth/logout") for _ in range(25)]
+    assert {r.status_code for r in rs} == {403}
+    assert {r.json()["code"] for r in rs} == {"csrf_token_invalid"}
     assert len(stack.audit.of("auth.csrf_refused")) == 20
+    assert "retry-after" in rs[-1].headers
+
+
+def test_production_audit_records_the_contract_route_template(stack: _Stack) -> None:
+    """r2: under create_app (included routers) the audited path is the contract
+    template, not `(unmatched)`."""
+    r = stack.login()
+    stack.client.cookies.clear()
+    stack.client.post("/auth/logout", headers={"Authorization": f"Bearer {_bearer(r)}"})
+    assert stack.audit.of("auth.csrf_refused")[-1]["after_state"]["path"] == "/auth/logout"
+    sid = uuid.uuid4()
+    stack.client.delete(f"/api/v1/me/sessions/{sid}", headers={"Authorization": "Bearer x"})
+    rec = stack.audit.of("auth.csrf_refused")[-1]
+    assert rec["after_state"]["path"] == "/me/sessions/{sessionId}"
+    assert str(sid) not in repr(rec)
+
+
+@pytest.mark.parametrize("csrf", ["missing", "wrong"])
+def test_rotated_refresh_token_without_its_csrf_token_still_revokes_the_family(
+    stack: _Stack, csrf: str
+) -> None:
+    """r2: reuse detection runs before the CSRF check (it only revokes, never mints).
+    A thief replaying a rotated token without the old session's CSRF token still
+    triggers the family revoke and the CRITICAL reuse audit."""
+    r = stack.login()
+    old_refresh, token = r.cookies["cv_refresh"], _csrf(r)
+    stack.client.cookies.clear()
+    ok = stack.client.post(
+        "/auth/refresh",
+        headers={"Origin": _ORIGIN, CSRF_HEADER: token},
+        cookies={"cv_refresh": old_refresh, CSRF_COOKIE: token},
+    )
+    assert ok.status_code == 200
+    successor_access = _bearer(ok)
+    other = _CODEC_OTHER.issue("x")
+    stack.client.cookies.clear()
+    headers = {"Origin": _ORIGIN} if csrf == "missing" else {"Origin": _ORIGIN, CSRF_HEADER: other}
+    cookies = {"cv_refresh": old_refresh}
+    if csrf == "wrong":
+        cookies[CSRF_COOKIE] = other
+    replay = stack.client.post("/auth/refresh", headers=headers, cookies=cookies)
+    assert replay.status_code == 401, replay.text
+    reuse = stack.audit.of("auth.refresh_reuse_detected")
+    assert reuse and reuse[-1]["severity"].value == "critical"
+    stack.client.cookies.clear()
+    gone = stack.client.get(
+        "/auth/session", headers={"Authorization": f"Bearer {successor_access}"}
+    )
+    assert gone.status_code == 401  # successor revoked with the family
+
+
+def test_refusal_is_visible_on_the_scraped_registry(stack: _Stack) -> None:
+    """r2: `auth_csrf_refused_total` is re-exported onto ctx.metrics (what Prometheus
+    scrapes via CV_METRICS_BIND), so the CsrfRefusals* alerts can fire."""
+    from prometheus_client import generate_latest
+
+    stack.client.cookies.clear()
+    stack.client.post("/auth/logout")
+    text = generate_latest(stack.ctx.metrics).decode()
+    line = next((ln for ln in text.splitlines() if ln.startswith("auth_csrf_refused_total{")), "")
+    assert 'reason="missing"' in text and 'env="' in line
+
+
+def test_middleware_and_routers_share_one_codec(stack: _Stack) -> None:
+    from candleviewer.api.csrf import CsrfMiddleware
+
+    app = stack.client.app
+    mw = next(m for m in app.user_middleware if m.cls is CsrfMiddleware)  # type: ignore[attr-defined]
+    assert mw.kwargs["codec"] is app.state.csrf_codec  # type: ignore[attr-defined]
 
 
 def test_key_rotation_through_create_app_keeps_open_tabs_working(
@@ -685,3 +755,24 @@ def test_audit_actor_ip_is_the_address_mesh_admitted_not_a_header(
     direct = TestClient(app, client=("100.64.0.9", 1), raise_server_exceptions=False)
     direct.post("/auth/logout", headers={"X-Forwarded-For": "100.64.0.7"})
     assert audit.of("auth.csrf_refused")[-1]["actor_ip"] == "100.64.0.9"
+
+
+@pytest.mark.parametrize("variant", ["no_header", "no_cookie", "mismatch"])
+def test_refresh_route_refuses_missing_or_mismatched_pair_without_rotating(
+    stack: _Stack, variant: str
+) -> None:
+    r = stack.login()
+    token, refresh = _csrf(r), r.cookies["cv_refresh"]
+    headers = {"Origin": _ORIGIN, CSRF_HEADER: token}
+    cookies = {"cv_refresh": refresh, CSRF_COOKIE: token}
+    if variant == "no_header":
+        del headers[CSRF_HEADER]
+    elif variant == "no_cookie":
+        del cookies[CSRF_COOKIE]
+    else:
+        cookies[CSRF_COOKIE] = _CODEC_OTHER.issue("x")
+    stack.client.cookies.clear()
+    out = stack.client.post("/auth/refresh", headers=headers, cookies=cookies)
+    reason = "mismatch" if variant == "mismatch" else "missing"
+    _assert_refused(stack, out, reason, token)
+    assert not stack.audit.of("auth.session_refreshed")

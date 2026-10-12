@@ -14,10 +14,14 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.sessions import REFRESH_COOKIE, make_session_router
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from tests.csrf_helpers import arm_csrf
 from tests.unit.auth.session_fakes import FakeSessionRepository
+
+_CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
 
 _NOW = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
 _BASE = "https://testserver"
@@ -86,13 +90,18 @@ class _Env:
                 session_throttle=PerIpLoginThrottle(
                     max_attempts=throttle_max, window_s=60.0, clock=lambda: self.t
                 ),
+                csrf=_CSRF_CODEC,
             ),
             prefix="/api/v1",
         )
         self.client = TestClient(app, base_url=_BASE)
 
     async def mint(self, user: uuid.UUID) -> Any:
-        return await self.svc.mint(str(user))
+        """Mint a session and hold its SR-041 token, as the browser holds the
+        `__Host-cv_csrf` cookie issued at login (refresh verifies it, #2090)."""
+        minted = await self.svc.mint(str(user))
+        arm_csrf(self.client, _CSRF_CODEC, minted.session_id)
+        return minted
 
 
 def _h(token: str) -> dict[str, str]:

@@ -218,7 +218,7 @@ def make_auth_router(
     audit_service: AuditServiceLike | None = None,
     *,
     identity: IdentityProvider | None = None,
-    csrf: CsrfCodec | None = None,
+    csrf: CsrfCodec,
 ) -> APIRouter:
     """Bind `/auth/login` to a concrete `AuthService` instance. *csrf* issues the
     SR-041 `__Host-cv_csrf` cookie wherever a session is minted (#2090)."""
@@ -350,10 +350,8 @@ def make_auth_router(
             },
         )
         _set_refresh_cookie(response, minted.refresh_token, max_age=REFRESH_EXPIRES_IN_S)
-        if csrf is not None:  # SR-041: the new session gets its own CSRF token
-            set_csrf_cookie(
-                response, csrf.issue(str(minted.session_id)), max_age=REFRESH_EXPIRES_IN_S
-            )
+        # SR-041: the new session gets its own CSRF token
+        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=REFRESH_EXPIRES_IN_S)
         return response
 
     @router.post("/auth/mfa/recovery")

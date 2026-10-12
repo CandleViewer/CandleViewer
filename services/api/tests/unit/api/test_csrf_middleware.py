@@ -27,9 +27,22 @@ _SID = uuid.uuid4()
 _ORIGIN = "https://app.example"
 
 
+def _rec(sid: uuid.UUID = _SID, *, revoked: bool = False, expired: bool = False) -> Any:
+    return SimpleNamespace(
+        id=sid,
+        user_id=sid,
+        is_revoked=revoked,
+        is_absolute_expired=lambda now: expired,
+    )
+
+
 class _Sessions:
     async def peek_access_token(self, token: str) -> Any:
-        return SimpleNamespace(id=_SID, user_id=_SID) if token == "good" else None  # noqa: S105
+        return {
+            "good": _rec(),
+            "revoked": _rec(revoked=True),
+            "expired": _rec(expired=True),
+        }.get(token)
 
 
 class _Audit:
@@ -78,6 +91,7 @@ def _app(
         sessions=lambda: sessions,
         audit=audit,
         allowed_origins=frozenset({_ORIGIN}),
+        operations=frozenset({("POST", "/w/{item}"), ("POST", "/auth/login"), ("PURGE", "/purge")}),
         anon_throttle=PerIpLoginThrottle(max_attempts=anon_max, window_s=60.0, clock=lambda: 0.0),
         audit_timeout_s=timeout_s,
     )
@@ -103,7 +117,8 @@ def test_route_path_unsafe_methods_and_exact_exemptions() -> None:
     assert route_path("/api/v1/auth/login") == "/auth/login"
     assert route_path("/api/v1") == "/"
     assert route_path("/api/v10/x") == "/api/v10/x"
-    assert not is_unsafe("GET") and not is_unsafe("trace") and not is_unsafe("OPTIONS")
+    assert not is_unsafe("GET") and not is_unsafe("head") and not is_unsafe("OPTIONS")
+    assert is_unsafe("TRACE")  # contract "Exempt" lists GET/HEAD/OPTIONS only
     assert is_unsafe("PURGE") and is_unsafe("PROPFIND")  # allow-list of safe methods only
     assert is_exempt("post", "/api/v1/invites/t/confirm")
     assert not is_exempt("PUT", "/auth/login")  # exemption is POST only
@@ -158,17 +173,22 @@ def test_refusal_audit_is_bounded_and_carries_no_token_value() -> None:
     assert rec["actor_ip"] == "testclient"
     client.post("/nowhere/" + "y" * 100, headers=h)
     assert audit.calls[-1]["after_state"]["path"] == "(unmatched)"
+    client.request("X" * 4000, "/w/x", headers=h)
+    assert audit.calls[-1]["after_state"]["method"] == "(other)"  # closed method set
 
 
 # -- refresh: the route owns the binding check ------------------------------------------
 
 
-def test_refresh_gets_presence_equality_and_shape_checks_then_the_route() -> None:
-    client, _ = _app(_Sessions())
-    assert _code(client.post("/auth/refresh")) == "csrf_token_invalid"  # missing
-    t = _CODEC.issue("whatever")
-    r = client.post("/auth/refresh", headers={CSRF_HEADER: t, "Cookie": f"{CSRF_COOKIE}={t}"})
-    assert r.json() == {"route": "refresh"}  # route verifies against presented_record.id
+def test_refresh_is_delegated_whole_to_the_route() -> None:
+    """The route verifies presence, equality and the binding to the refresh token's
+    own session (after reuse detection); the middleware passes the exact path on."""
+    client, audit = _app(_Sessions())
+    assert client.post("/auth/refresh").json() == {"route": "refresh"}
+    assert client.post("/api/v1/auth/refresh").status_code == 404  # not mounted here
+    assert not audit.calls
+    r = client.post("/auth/refresh", headers={"Origin": "https://evil.example"})
+    assert _code(r) == "csrf_token_invalid"  # SR-042 still applies first
 
 
 def test_verify_refresh_csrf_reasons() -> None:
@@ -223,7 +243,12 @@ def test_duplicate_csrf_cookie_last_value_wins_like_request_cookies() -> None:
 
 @pytest.mark.parametrize(
     "headers",
-    [{"Origin": "https://evil.example"}, {"Sec-Fetch-Site": "cross-site"}, {"Origin": "null"}],
+    [
+        {"Origin": "https://evil.example"},
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},  # a sibling host (e.g. another *.ts.net node)
+        {"Origin": "null"},
+    ],
 )
 def test_cross_origin_unsafe_requests_are_refused_including_exempt_routes(
     headers: dict[str, str],
@@ -240,21 +265,36 @@ def test_allowed_origin_and_same_site_pass() -> None:
     h = {**_pair(), "Authorization": "Bearer good"}
     assert client.post("/w/x", headers={**h, "Origin": _ORIGIN + "/"}).status_code == 200
     assert client.post("/w/x", headers={**h, "Sec-Fetch-Site": "same-origin"}).status_code == 200
+    assert client.post("/w/x", headers={**h, "Sec-Fetch-Site": "none"}).status_code == 200
     assert client.post("/auth/login", headers={"Origin": _ORIGIN}).status_code == 200
 
 
 # -- audit flood / failure -------------------------------------------------------------------
 
 
-def test_unauthenticated_refusals_are_throttled_without_audit_but_counted() -> None:
+def test_over_budget_refusals_stay_403_without_audit_but_counted() -> None:
+    """Over the per-IP budget only the audit write is skipped: the reply stays the same
+    403 csrf_token_invalid (+Retry-After) so client recovery keeps working."""
     from candleviewer.auth.metrics import auth_csrf_refused_total
 
     client, audit = _app(_Sessions(), anon_max=3)
     before = auth_csrf_refused_total.labels(reason="missing")._value.get()
-    codes = [client.post("/w/x").status_code for _ in range(6)]
-    assert codes == [403, 403, 403, 429, 429, 429]
+    rs = [client.post("/w/x") for _ in range(6)]
+    assert [r.status_code for r in rs] == [403] * 6
+    assert all(_code(r) == "csrf_token_invalid" for r in rs)
+    assert "retry-after" not in rs[2].headers and int(rs[3].headers["retry-after"]) >= 1
     assert len(audit.calls) == 3  # no audit write once over the per-IP budget
     assert auth_csrf_refused_total.labels(reason="missing")._value.get() == before + 6
+
+
+@pytest.mark.parametrize("bearer", ["revoked", "expired"])
+def test_dead_session_refusals_share_the_per_ip_budget(bearer: str) -> None:
+    """A revoked / absolute-expired record still has its MAC checked, but its refusals
+    are not 'session-bound' for audit: an old leaked bearer cannot flood the audit log."""
+    client, audit = _app(_Sessions(), anon_max=2)
+    h = {**_pair(uuid.uuid4()), "Authorization": f"Bearer {bearer}"}
+    codes = [client.post("/w/x", headers=h).status_code for _ in range(5)]
+    assert codes == [403] * 5 and len(audit.calls) == 2
 
 
 def test_session_bound_refusals_are_audited_one_for_one() -> None:
@@ -269,6 +309,65 @@ def test_audit_hang_or_failure_still_refuses_promptly(sink: Any) -> None:
     client, _ = _app(_Sessions(), audit=sink, timeout_s=0.05)
     r = client.post("/w/x")
     assert r.status_code == 403 and _code(r) == "csrf_token_invalid"
+
+
+def test_slow_audit_is_never_cancelled_mid_append() -> None:
+    """Review #2238 r2: a timed-out refusal audit must not cancel `AuditWriter.emit`
+    (cancelling releases the WAL lock while the append thread still runs). The emit
+    runs as a shielded, tracked task: the request is refused at the timeout, the lock
+    stays held until the append returns, and the record still lands."""
+    import threading
+
+    release = threading.Event()
+    seen: dict[str, Any] = {}
+
+    class _SlowWal:
+        def __init__(self) -> None:
+            self.lock = asyncio.Lock()
+            self.records: list[str] = []
+
+        async def emit(self, action: str, **kw: Any) -> None:
+            async with self.lock:  # stands in for AuditWriter._wal_lock
+                await asyncio.to_thread(release.wait, 5)  # the blocking WAL append
+                self.records.append(action)
+
+    wal = _SlowWal()
+
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        raise AssertionError("refused requests never reach the app")
+
+    mw = CsrfMiddleware(
+        inner,
+        codec=_CODEC,
+        sessions=lambda: None,
+        audit=wal,
+        allowed_origins=frozenset(),
+        audit_timeout_s=0.05,
+    )
+    sent: list[Any] = []
+
+    async def recv() -> Any:
+        return {"type": "http.request", "body": b""}
+
+    async def send(msg: Any) -> None:
+        sent.append(msg)
+
+    async def drive() -> None:
+        scope = {"type": "http", "method": "POST", "path": "/w/x", "headers": []}
+        await mw(scope, recv, send)  # returns at the timeout, refused
+        seen["status"] = sent[0]["status"]
+        seen["locked_after_refusal"] = wal.lock.locked()
+        seen["pending"] = len(mw._pending)
+        release.set()  # the "disk" finishes the append
+        await asyncio.gather(*mw._pending)  # the tracked task completes on its own
+        seen["records"] = list(wal.records)
+        seen["locked_at_end"] = wal.lock.locked()
+
+    asyncio.run(drive())
+    assert seen["status"] == 403
+    assert seen["locked_after_refusal"] is True  # NOT released by a cancellation
+    assert seen["pending"] == 1  # tracked (strong reference)
+    assert seen["records"] == ["auth.csrf_refused"] and seen["locked_at_end"] is False
 
 
 # -- non-HTTP scopes and safe methods pass untouched ------------------------------------------
@@ -290,10 +389,11 @@ def test_websocket_lifespan_and_safe_methods_pass_untouched() -> None:
     async def drive() -> None:
         await mw({"type": "websocket", "path": "/ws", "headers": []}, noop, noop)
         await mw({"type": "lifespan"}, noop, noop)
-        await mw({"type": "http", "method": "GET", "path": "/x", "headers": []}, noop, noop)
+        for method in ("GET", "HEAD", "OPTIONS"):
+            await mw({"type": "http", "method": method, "path": "/x", "headers": []}, noop, noop)
 
     asyncio.run(drive())
-    assert seen == ["websocket:", "lifespan:", "http:GET"]
+    assert seen == ["websocket:", "lifespan:", "http:GET", "http:HEAD", "http:OPTIONS"]
 
 
 def test_chunked_body_on_a_guarded_route_is_passed_through_intact() -> None:

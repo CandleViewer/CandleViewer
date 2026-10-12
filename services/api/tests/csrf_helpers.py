@@ -28,6 +28,8 @@ def csrf_headers(codec: CsrfCodec, session_id: str | uuid.UUID | None = None) ->
 def arm_csrf(client: Any, codec: CsrfCodec, session_id: str | uuid.UUID | None = None) -> Any:
     """Give a `TestClient` the cookie + default header a browser client would send."""
     token = codec.issue(str(session_id or TEST_SID))
+    for cookie in [c for c in client.cookies.jar if c.name == CSRF_COOKIE]:
+        client.cookies.jar.clear(cookie.domain, cookie.path, cookie.name)  # drop server-set copies
     client.cookies.set(CSRF_COOKIE, token)
     client.headers[CSRF_HEADER] = token
     return client
