@@ -56,7 +56,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     await ctx.mesh_self_check.run_once()
     if ctx.oms_read_only_gate.is_read_only:
         logger().error(
-            "boot binding self-check failed (%s): %s — starting in read-only mode",
+            "starting in read-only mode (%s): %s",
             ctx.oms_read_only_gate.reason_code,
             ctx.oms_read_only_gate.reason_text,
         )

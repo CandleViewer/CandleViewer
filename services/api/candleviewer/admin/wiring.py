@@ -13,20 +13,91 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from candleviewer.audit.models import Severity
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService
-from candleviewer.secrets.service import SecretsService
+from candleviewer.secrets import (
+    CredentialBorrower,
+    CredentialStore,
+    KcvStore,
+    SecretsLifecycle,
+    SecretsLifecycleFacade,
+    SecretsMetadata,
+    SecretsMetadataFacade,
+    SecretsService,
+    export_secrets_metrics,
+    mint_borrower,
+)
 
-SecretsHandle = SecretsService
+#: What `AppContext.secrets` holds: lifecycle + health only (C-3.2). `admin` is injected
+#: `SecretsMeta`; M4 is injected the one `CredentialBorrower` minted here.
+SecretsHandle = SecretsLifecycle
+SecretsMeta = SecretsMetadata
+
+
+@dataclass(frozen=True)
+class SecretsBundle:
+    """The three narrow capabilities of one `SecretsService` (built once, in wiring)."""
+
+    lifecycle: SecretsLifecycle
+    metadata: SecretsMetadata
+    exchange_borrower: CredentialBorrower
+
+
+__all__ = [
+    "AuditHandle",
+    "SecretsBundle",
+    "SecretsHandle",
+    "SecretsMeta",
+    "audit_writer_sink",
+    "build_audit_service",
+    "build_secrets_service",
+    "export_secrets_metrics",
+    "secrets_audit_sink",
+]
 AuditHandle = AuditService
 
 
-def build_secrets_service() -> SecretsHandle:
-    """Construct the M2 scaffold. No I/O; no key material is touched."""
-    return SecretsService()
+def secrets_audit_sink(audit: AuditService) -> Callable[[str, dict[str, str]], Awaitable[None]]:
+    """M2 audit port -> durable `AuditWriter.emit` (write-ahead). Fields are ids only; the
+    actor comes from the wiring-bound caller identity, never from the borrower."""
+
+    async def sink(action: str, fields: dict[str, str]) -> None:
+        await audit.writer.emit(
+            action,
+            actor_label=f"{fields.get('actor_kind', 'system')}:{fields.get('actor_role', '')}",
+            actor_user_id=fields.get("actor_user_id"),
+            object_kind="api_key" if "key_id" in fields else "kek",
+            object_id=fields.get("key_id"),
+            severity=Severity.ERROR
+            if action in ("security.kek_load_failed", "security.kek_rotation_failed")
+            else Severity.INFO,
+            after_state=dict(fields),
+        )
+
+    return sink
+
+
+def build_secrets_service(
+    store: CredentialStore | None = None,
+    kcv_store: KcvStore | None = None,
+    audit: AuditService | None = None,
+) -> SecretsBundle:
+    """Construct M2 once and split it into narrow capabilities. No I/O; the KEK is loaded in
+    `start()`. Without an injected store (fake backend) every credential op fails closed."""
+    sink = secrets_audit_sink(audit) if audit is not None else None
+    if store is None or kcv_store is None:
+        svc = SecretsService(audit=sink)  # no store: fail closed, but still audited (C-2.9)
+    else:
+        svc = SecretsService(store=store, kcv_store=kcv_store, audit=sink)
+    return SecretsBundle(
+        SecretsLifecycleFacade(svc),
+        SecretsMetadataFacade(svc),
+        mint_borrower(svc, "exchange_adapter"),
+    )
 
 
 def build_audit_service(repository: AuditRepository | None = None) -> AuditHandle:

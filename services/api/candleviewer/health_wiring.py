@@ -242,6 +242,22 @@ def register_ingestion_probe(registry: HealthRegistry, health: Callable[[], Heal
     registry.register(CallableProbe(INGESTION, probe, timeout=1.0))
 
 
+#: E27-T02: M2 component; DOWN while the KEK is unavailable (trading latched off).
+SECRETS = "secrets"
+
+
+def register_secrets_probe(registry: HealthRegistry, health: Callable[[], HealthReport]) -> None:
+    async def probe() -> ProbeResult:
+        report = health()
+        if report.status is HealthStatus.DEGRADED:
+            return ProbeResult(ComponentState.DOWN, report.detail)
+        if report.status is HealthStatus.STOPPED:
+            return ProbeResult(ComponentState.NOT_DEPLOYED, "secrets stopped")
+        return ProbeResult(ComponentState.HEALTHY, "")
+
+    registry.register(CallableProbe(SECRETS, probe, timeout=1.0))
+
+
 def register_bars_probe(registry: HealthRegistry, health: Callable[[], HealthReport]) -> None:
     """E12-T03: `bars` component. DEGRADED with a `BarsHealthReason` token when a state blob
     was discarded and its series cold-started; same mapping as ingestion (#1919)."""
