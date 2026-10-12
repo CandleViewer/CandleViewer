@@ -46,7 +46,7 @@ def rows(*specs):
     return [(a, d, p) for a, d, p in specs]
 
 
-def run(p=None, r=None, base=ATTRS, head=None, base_gen=(), head_gen=(), **kw):
+def run(p=None, r=None, base=ATTRS, head=None, base_gen=(), head_gen=(), **kw):  # noqa: D103
     r = r if r is not None else rows(("1", "1", "src/a.py"))
     bs, hs = states(r, base_gen, head_gen)
     return m.check(
@@ -153,23 +153,58 @@ def test_attribute_change_needs_label_even_when_small():
 
 
 def test_hash_midline_pattern_is_not_a_comment():
-    assert m.attr_lines("a#b/** linguist-generated=true\n") == {"a#b/** linguist-generated=true"}
-    assert m.attr_lines("# a -diff\n") == set()
+    assert m.attr_lines("a#b/** linguist-generated=true\n") == ["a#b/** linguist-generated=true"]
+    assert m.attr_lines("# a -diff\n") == []
 
 
-def test_binary_rows_warn_and_images_are_allowed():
-    imgs = rows(*[("-", "-", f"docs/{i}.png") for i in range(10)])
-    assert run(r=imgs) == ([], [])
-    blobs = rows(*[("-", "-", f"data/{i}.bin") for i in range(3)])
-    errs, warns = run(r=blobs, binary_sizes={"data/0.bin": 42})
-    assert errs == [] and len(warns) == 3 and "42 bytes" in warns[0]
-    assert codes(run(r=rows(*[("-", "-", f"data/{i}.bin") for i in range(4)]))[0]) == ["PR-SIZE-003"]
+def test_reordering_attribute_lines_triggers_size_002():
+    a = "svc/** linguist-generated=true\nsvc/core/** -linguist-generated\n"
+    b = "svc/core/** -linguist-generated\nsvc/** linguist-generated=true\n"
+    errs, _ = run(r=rows(("1", "0", ".gitattributes")), base=a, head=b)
+    assert codes(errs) == ["PR-SIZE-002"]
 
 
-def test_single_binary_source_file_needs_approval():
-    errs, warns = run(r=rows(("-", "-", "src/evil.ts")))
-    assert codes(errs) == ["PR-SIZE-003"] and warns
-    assert m.count_loc(rows(("-", "-", "icon.svg")), {})[2] == ["icon.svg"]
+def bin_run(paths, **kw):
+    r = rows(*[("5", "0", p) for p in paths])
+    return run(r=r, binary_paths=frozenset(paths), **kw)
+
+
+def test_images_and_fonts_are_allowlisted_and_count_no_loc():
+    assert bin_run([f"docs/{i}.png" for i in range(10)] + ["f.woff2"]) == ([], [])
+
+
+def test_any_other_binary_needs_approval_whatever_the_count():
+    for path in ("src/evil.ts", "oms/core.cpython-312-x86_64-linux-gnu.so", "LICENSE_BLOB",
+                 ".husky/pre-commit", "x.wasm", "icon.svg"):
+        errs, warns = bin_run([path], binary_sizes={path: "42"})
+        assert codes(errs) == ["PR-SIZE-003"], path
+        assert path in warns[0] and "42 bytes" in warns[0]
+
+
+def test_binary_that_is_generated_in_base_is_excluded_not_flagged():
+    p = "packages/protocol/src/generated/rest/index.ts"
+    errs, warns = bin_run([p])
+    assert errs == [] and warns == []
+
+
+def test_deleted_binary_reports_deleted_size():
+    errs, warns = bin_run(["data/old.bin"])
+    assert codes(errs) == ["PR-SIZE-003"] and "deleted bytes" in warns[0]
+
+
+def test_gate_files_need_approval():
+    for f in sorted(m.GATE_FILES):
+        assert codes(run(r=rows(("1", "0", f)))[0]) == ["PR-SIZE-006"], f
+
+
+def test_attr_drift_uses_merge_base_state():
+    r = rows(("5", "0", "new/x.py"))
+    bs, hs = states(r, head_gen=("new/x.py",))  # base tip says generated; merge-base agrees
+    mb = dict(hs)
+    errs, _ = m.check(pr(), r, hs, hs, ATTRS, ATTRS, CL, DECLARED, RR.RULE_ID_RE, merge_base_state=mb)
+    assert errs == []
+    errs, _ = m.check(pr(), r, hs, hs, ATTRS, ATTRS, CL, DECLARED, RR.RULE_ID_RE)
+    assert errs == []  # no merge-base state: falls back to base state
 
 
 def test_numstat_z_parsing_keeps_odd_paths():
@@ -324,19 +359,69 @@ def test_closes_wins_over_refs_without_warning():
     assert run(pr(body="Closes #1\nRefs #2"))[1] == []
 
 
-def test_main_binary_source_file_warns_with_size_and_fails(repo, monkeypatch, capsys):
+def _head_sha(root):
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+
+
+def test_main_nul_byte_source_counts_real_loc_warns_and_fails(repo, monkeypatch, capsys):
     root, base = repo
     monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
     monkeypatch.setenv("PR_NUMBER", "7")
     _git(root, "checkout", "-qb", "feat")
     (root / "src").mkdir()
-    (root / "src/evil.ts").write_bytes(b"export const x = 1;\n\0\n" * 50)
+    (root / "src/evil.ts").write_bytes(b"export const x = 1;\n\0\n" * 500)
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "head")
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
-    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, pr())) == 1
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, _head_sha(root), pr())) == 1
     cap = capsys.readouterr()
-    assert "PR-SIZE-003" in cap.err and "src/evil.ts" in cap.out and "bytes" in cap.out
+    assert "PR-SIZE-003" in cap.err and "PR-SIZE-001" in cap.err  # 1000 real lines, not 0
+    assert "src/evil.ts" in cap.out and "bytes" in cap.out
+
+
+def test_main_real_nested_minus_diff_on_generated_dir_is_not_flagged(repo, monkeypatch, capsys):
+    root, base = repo
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    pkg = root / "packages/protocol"
+    pkg.mkdir(parents=True)
+    (pkg / ".gitattributes").write_text("src/generated/** linguist-generated=true\n"
+                                        "src/generated/** -diff\n")
+    (root / ".gitattributes").write_text("")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "attrs on base")
+    base = _head_sha(root)
+    _git(root, "checkout", "-qb", "feat")
+    (pkg / "src/generated").mkdir(parents=True)
+    (pkg / "src/generated/index.ts").write_text("export {};\n" * 3000)
+    (pkg / "src/generated/.manifest.json").write_text("{}\n" * 10)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "regen")
+    head = _head_sha(root)
+    raw = subprocess.check_output(["git", "--attr-source=" + base, "diff", "--numstat", base, head],
+                                  cwd=root, text=True)
+    assert "-\t-\t" in raw  # git really reports these as binary
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, pr())) == 0
+    assert "PR-SIZE" not in capsys.readouterr().err
+
+
+def test_main_deleting_and_moving_binaries_does_not_crash(repo, monkeypatch, capsys):
+    root, _ = repo
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    (root / "docs").mkdir()
+    (root / "docs/old.png").write_bytes(b"\x89PNG\0\0")
+    (root / "docs/a.png").write_bytes(b"\x89PNG\0\1")
+    (root / "blob.bin").write_bytes(b"\0\1\2")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "add bins")
+    base = _head_sha(root)
+    _git(root, "checkout", "-qb", "feat")
+    _git(root, "rm", "-q", "docs/old.png", "blob.bin")
+    _git(root, "mv", "docs/a.png", "docs/b.png")
+    _git(root, "commit", "-qm", "rm/mv")
+    rc = m.main(["--repo-root", str(root)], fetch=_fake(base, _head_sha(root), pr()))
+    cap = capsys.readouterr()
+    assert rc == 1 and "PR-SIZE-003" in cap.err and "blob.bin" in cap.out and "deleted" in cap.out
 
 
 def test_main_attribute_semantics_come_from_git_check_attr(repo):
