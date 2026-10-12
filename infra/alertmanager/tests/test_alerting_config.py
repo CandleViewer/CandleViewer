@@ -237,3 +237,15 @@ def test_alert_drill_push_is_received(monkeypatch: pytest.MonkeyPatch) -> None:
     assert got[0][1] == b"cv_synthetic_alert 1\n"
     assert got[1][1] == b"cv_synthetic_alert 0\n"
     assert got[0][0].startswith("/metrics/job/alert_drill")
+
+
+def test_ws_origin_refusal_alert_watches_the_bounded_close_reason() -> None:
+    """#2239: the SR-042 WS Origin alert reads the closed-label close counter (no per-origin
+    or per-IP series); a ticket for the auth owner, with its runbook entry."""
+    rules = {r["alert"]: r for r in _rules()}
+    rule = rules["WsOriginRefusalsHigh"]
+    assert 'cv_ws_closes_total{reason="origin_forbidden"}' in rule["expr"]
+    assert rule["for"] == "5m"
+    assert rule["labels"] == {"severity": "ticket", "component": "auth"}
+    url = rule["annotations"]["runbook_url"]
+    assert url == "docs/plan/07-release-and-prr.md#alert-wsoriginrefusalshigh"
