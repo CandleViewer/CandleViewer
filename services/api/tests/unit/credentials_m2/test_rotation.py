@@ -156,7 +156,7 @@ async def test_kcv_recorded_when_no_rows_at_version(store: Any) -> None:
 
 
 async def test_kcv_wrong_kek_not_pinned_when_rows_exist() -> None:
-    s, _, _ = await _seed(1)  # rows at v1, no KCV yet (0018 on a populated DB)
+    s, _, _ = await _seed(1)  # rows at v1, no KCV yet (0020 on a populated DB)
     wrong = kek(KEK_V2, 1)
     with pytest.raises(KekLoadError) as ei:
         await CredentialBroker(s, AuditLog(), wrong).verify_kcv(wrong, s, must_exist=False)
