@@ -163,6 +163,7 @@
 /services/api/secrets/                  @CandleViewer/security
 # future: E02/later scaffolding; directory does not exist yet.
 /services/api/auth/                     @CandleViewer/security
+/services/api/tests/contract/rbac/matrix.yaml  @CandleViewer/security
 # future: E02/later scaffolding; directory does not exist yet.
 /services/api/audit/                    @CandleViewer/security
 # future: E02/later scaffolding; directory does not exist yet.
