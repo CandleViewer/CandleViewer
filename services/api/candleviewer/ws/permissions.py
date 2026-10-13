@@ -22,7 +22,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Final, Protocol
+from typing import Any, Final, Literal, Protocol
 
 import structlog
 
@@ -87,6 +87,12 @@ cv_ws_client_topics_depth = Histogram(
     "Subscriptions held by a connection, observed after each sub/unsub.",
     buckets=(1, 5, 10, 20, 50, 100, 150, 200),
 )
+cv_ws_permission_snapshots_refused_total = Counter(
+    "cv_ws_permission_snapshots_refused_total",
+    "Older WS permission snapshots refused because a newer one was applied (SR-189).",
+    labelnames=("event",),
+)
+SnapshotEvent = Literal["reauth", "grant_change", "handshake"]  # the step that was refused
 
 
 def _log() -> Any:
@@ -122,6 +128,16 @@ class SubscriptionServices:
     snapshots: SnapshotSource | None = None
     snapshot_cache: SnapshotCache = field(default_factory=SnapshotCache)
     sequencing: SequencingHub | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VersionedSnapshot:
+    """A principal snapshot plus the registry's monotonic version (SR-189), taken before the
+    read starts: an earlier read has a smaller number, and a change takes its number when it
+    begins (after E09 committed it), so every read that began later already sees it."""
+
+    principal: PrincipalSnapshot
+    version: int
 
 
 def topic_family(topic: str) -> str:
@@ -235,8 +251,10 @@ class ConnectionAuthz:
         services: SubscriptionServices | None = None,
         *,
         connection_id: str | None = None,
+        version: int = 0,
     ) -> None:
         self.principal = principal
+        self.version = version  # SR-189: the applied snapshot's; 0 = not from the registry
         self.services = services if services is not None else SubscriptionServices()
         self.connection_id = connection_id or f"c-{uuid.uuid4().hex[:12]}"
         self.by_id: dict[str, Subscription] = {}
@@ -502,14 +520,17 @@ class ConnectionAuthz:
 
     # -- live revocation (§9.5, S7) -----------------------------------------------------------
 
-    def apply_snapshot(self, new: PrincipalSnapshot, now_ms: int) -> list[dict[str, Any]]:
+    def apply_snapshot(self, new: VersionedSnapshot, now_ms: int) -> list[dict[str, Any]] | None:
         """Swap in `new`; return one `permission_change` then a `revoked` per affected
         subscription. Lost permission or every account -> the subscription is removed; a partial
         scope loss narrows it in place (`removed_accounts`, `resubscribe_allowed: true`) and the
-        rest of the connection continues untouched."""
-        self.principal = new
+        rest of the connection continues untouched. SR-189: `None`, and nothing changes, when
+        `new` is older than the applied snapshot (a read begun before a grant change)."""
+        if new.version < self.version:
+            return None
+        self.principal, self.version = new.principal, new.version
         frames: list[dict[str, Any]] = [
-            {"t": "permission_change", "ts": now_ms, "p": auth_ok_payload(new)}
+            {"t": "permission_change", "ts": now_ms, "p": auth_ok_payload(new.principal)}
         ]
         for sub in sorted(self.by_id.values(), key=lambda s: (s.ch, s.sub_id)):
             frame = self._reevaluate(sub, now_ms)
@@ -575,6 +596,9 @@ class ConnectionRegistry:
         self._conns: dict[uuid.UUID, list[tuple[ConnectionAuthz, Any, Any]]] = {}
         self._closers: dict[int, Closer] = {}
         self.send_timeout_s = FANOUT_SEND_TIMEOUT_S
+        #: SR-189: one version source for every snapshot; `_changed_at`: the latest change's.
+        self._versions = itertools.count(1)
+        self._changed_at = 0
 
     def register(
         self, authz: ConnectionAuthz, send: Any, close: Any = None, closer: Closer | None = None
@@ -595,19 +619,43 @@ class ConnectionRegistry:
         self._closers.pop(id(authz), None)
         authz.release_all()
 
-    async def resolve(self, user_id: uuid.UUID) -> PrincipalSnapshot:
-        return await self._resolve(user_id)
+    async def resolve(self, user_id: uuid.UUID) -> VersionedSnapshot:
+        """The principal, stamped with a version taken before the read starts (SR-189)."""
+        version = next(self._versions)
+        return VersionedSnapshot(await self._resolve(user_id), version)
+
+    async def apply(
+        self, authz: ConnectionAuthz, snap: VersionedSnapshot, now_ms: int, *, event: SnapshotEvent
+    ) -> list[dict[str, Any]]:
+        """`authz.apply_snapshot`; an older snapshot is refused, counted, audited (SR-189)."""
+        frames = authz.apply_snapshot(snap, now_ms)
+        if frames is not None:
+            return frames
+        cv_ws_permission_snapshots_refused_total.labels(event=event).inc()
+        await _audit_refused_snapshot(authz, snap, event)
+        return []
+
+    async def recheck(self, authz: ConnectionAuthz) -> None:
+        """SR-189, right after `register` and before `auth_ok`: a change (any user's; one extra
+        read at worst) begun after `authz`'s read may have fanned out before this socket was
+        registered, so read again. Nothing is subscribed yet: `auth_ok` carries the principal."""
+        if authz.version >= self._changed_at:
+            return
+        snap = await self.resolve(authz.principal.user_id)
+        await self.apply(authz, snap, self._clock_ms(), event="handshake")
 
     async def roles_changed(self, user_id: uuid.UUID) -> None:
         """Role / permission / account-grant change: push `permission_change` and the `revoked`
         frames to every live socket of `user_id`."""
+        # SR-189: before the early return, so a mid-handshake socket's `recheck` sees it.
+        self._changed_at = version = next(self._versions)
         entries = list(self._conns.get(user_id, ()))
         if not entries:
             return
-        snap = await self._resolve(user_id)
+        snap = VersionedSnapshot(await self._resolve(user_id), version)
         for authz, send, close in entries:
             # Subscriptions are dropped/narrowed synchronously here, before any I/O.
-            frames = authz.apply_snapshot(snap, self._clock_ms())
+            frames = await self.apply(authz, snap, self._clock_ms(), event="grant_change")
             try:
                 async with asyncio.timeout(self.send_timeout_s):
                     for frame in frames:
@@ -627,6 +675,7 @@ class ConnectionRegistry:
 
     async def kill_switch_changed(self) -> None:
         """§9.5: kill-switch transitions re-evaluate every connected user."""
+        self._changed_at = next(self._versions)  # SR-189: also for a socket mid-handshake
         for user_id in list(self._conns):
             await self.roles_changed(user_id)
 
@@ -791,6 +840,30 @@ async def _audit_revocations(authz: ConnectionAuthz, frames: list[dict[str, Any]
             )
         except Exception:
             _log().warning("ws revocation audit not written", exc_info=True)
+
+
+async def _audit_refused_snapshot(
+    authz: ConnectionAuthz, refused: VersionedSnapshot, event: SnapshotEvent
+) -> None:
+    """`ws.permission_snapshot.refused` (SR-189). Best effort, like every WS audit write."""
+    audit = authz.services.audit
+    if audit is None:
+        return
+    versions = {"applied_version": authz.version, "refused_version": refused.version}
+    try:
+        await audit.emit(
+            "ws.permission_snapshot.refused",
+            actor_label="ws",
+            actor_user_id=authz.principal.user_id,
+            object_kind="ws_connection",
+            object_id=authz.connection_id,
+            outcome=AuditOutcome.DENIED,
+            severity=Severity.WARNING,
+            reason="stale",
+            after_state={"event": event, **versions},
+        )
+    except Exception:
+        _log().warning("ws refused-snapshot audit not written", exc_info=True)
 
 
 def close_connection(registry: ConnectionRegistry, authz: ConnectionAuthz) -> None:

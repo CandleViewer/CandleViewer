@@ -1135,6 +1135,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_permission_snapshots_refused_total",
+        "counter",
+        "snapshots",
+        ("event",),
+        "Older WS permission snapshots refused for a newer one (SR-189), by step.",
+        "any: a grant change raced a re-auth or handshake",
+        _L,
+        "E17",
+        max_series=4,
+        exported=True,
+    ),
+    _s(
         "cv_ws_upstream_consumers_in_use",
         "gauge",
         "consumers",

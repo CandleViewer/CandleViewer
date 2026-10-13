@@ -330,8 +330,9 @@ class _Connection:
         self.outbound.put_nowait(frame)
 
     async def send(self, frame: dict[str, Any]) -> None:
-        """Async adapter for `ConnectionRegistry` / `handle_sub`."""
-        self.push(frame)
+        """Registry / `handle_sub` adapter; silent before the first `auth_ok` (SR-189)."""
+        if self.lifecycle.authenticated:
+            self.push(frame)
 
     def push_system(self, body: dict[str, Any]) -> None:
         self.system_seq += 1
@@ -584,7 +585,7 @@ def make_ws_router(
             if reauth and user_id != conn.user_id:
                 failure = "user_mismatch"
                 raise PermissionError("re-auth must keep the same user")
-            principal = await registry.resolve(user_id)
+            snap = await registry.resolve(user_id)  # versioned: never undoes a newer one
             now, now_ms = conn.clock(), conn.wall_ms()
             if expires_ms <= now_ms:
                 failure = "token_expired"  # never `auth_ok` an identity that is already dead
@@ -621,7 +622,10 @@ def make_ws_router(
         conn.session_id, conn.user_id = session_id, user_id
         if conn.authz is None:
             conn.authz = ConnectionAuthz(
-                principal, registry.services, connection_id=conn.connection_id
+                snap.principal,
+                registry.services,
+                connection_id=conn.connection_id,
+                version=snap.version,
             )
             registry.register(conn.authz, conn.send, conn.evict, conn.closer)
             svc = registry.services
@@ -636,14 +640,18 @@ def make_ws_router(
             if svc.sequencing is not None:
                 svc.sequencing.register(conn.authz, conn.emitter)
             revoked: list[dict[str, Any]] = []
+            await registry.recheck(conn.authz)  # SR-189: a change may have raced this read
         else:
             # Subscriptions + sequences are kept; only ones the refreshed
             # principal no longer allows are revoked (§9.5, same RBAC source).
-            frames = conn.authz.apply_snapshot(principal, now_ms)
+            # SR-189: a read older than a grant change applied meanwhile is refused.
+            frames = await registry.apply(conn.authz, snap, now_ms, event="reauth")
             revoked = [f for f in frames if f["t"] == "revoked"]
+        if conn.closing:
+            return  # closed while the snapshot was re-checked or audited: no auth_ok
         conn.lifecycle.fire(ConnEvent.AUTH_OK)
         payload = auth_ok_payload(
-            principal,
+            conn.authz.principal,  # the applied snapshot: the newest, never the stale read
             session_id=session_id,
             token_expires_at_ms=expires_ms,
             kill_switch=killed(),

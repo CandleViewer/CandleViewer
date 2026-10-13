@@ -18,6 +18,7 @@ from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
     SubscriptionServices,
+    VersionedSnapshot,
     handle_ctl,
     handle_sub,
     handle_unsub,
@@ -483,10 +484,16 @@ def test_ctl_keys_and_scope_keys_are_disjoint() -> None:
 # -- live revocation (§9.5) ----------------------------------------------------------------------
 
 
+def _apply(conn: ConnectionAuthz, new: PrincipalSnapshot, now_ms: int) -> list[dict[str, Any]]:
+    frames = conn.apply_snapshot(VersionedSnapshot(new, conn.version + 1), now_ms)
+    assert frames is not None  # a newer version is always applied (SR-189)
+    return frames
+
+
 def test_scope_narrowed_mid_stream_revokes_only_the_removed_account() -> None:
     conn = ConnectionAuthz(_mgr(A, B), _services())
     _sub(conn, {"ch": "positions", "opts": _acc(A, B)}, "book.BTCUSDT.50")
-    frames = conn.apply_snapshot(_mgr(A), 9)
+    frames = _apply(conn, _mgr(A), 9)
     assert [f["t"] for f in frames] == ["permission_change", "revoked"]
     rv = frames[1]
     assert (rv["ch"], rv["p"]["reason"]) == ("positions", "account_scope_changed")
@@ -497,7 +504,7 @@ def test_scope_narrowed_mid_stream_revokes_only_the_removed_account() -> None:
 def test_last_account_removed_drops_the_subscription() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
     _sub(conn, {"ch": "positions", "opts": _acc(A)})
-    frames = conn.apply_snapshot(_mgr(), 9)
+    frames = _apply(conn, _mgr(), 9)
     assert frames[1]["p"]["removed_accounts"] == [str(A)]
     assert frames[1]["p"]["resubscribe_allowed"] is False
     assert conn.by_id == {}
@@ -506,7 +513,7 @@ def test_last_account_removed_drops_the_subscription() -> None:
 def test_permission_lost_revokes_with_permission_revoked() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
     _sub(conn, {"ch": "positions", "opts": _acc(A)}, "trades.BTCUSDT")
-    frames = conn.apply_snapshot(_mgr(A, perms=frozenset({Permission.MARKETDATA_READ})), 9)
+    frames = _apply(conn, _mgr(A, perms=frozenset({Permission.MARKETDATA_READ})), 9)
     assert [(f["ch"], f["p"]["reason"]) for f in frames[1:]] == [
         ("positions", "permission_revoked")
     ]
@@ -516,7 +523,7 @@ def test_permission_lost_revokes_with_permission_revoked() -> None:
 def test_unchanged_snapshot_revokes_nothing() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
     _sub(conn, {"ch": "positions", "opts": _acc(A)})
-    assert conn.apply_snapshot(_mgr(A), 1)[1:] == []
+    assert _apply(conn, _mgr(A), 1)[1:] == []
 
 
 def _registry(snaps: dict[uuid.UUID, PrincipalSnapshot], **kw: Any) -> ConnectionRegistry:
@@ -716,7 +723,7 @@ def test_denials_are_audited_and_audit_failure_is_not_fatal() -> None:
     conn2 = ConnectionAuthz(_viewer(), _services(audit=_Broken()))
     (r,) = _sub(conn2, {"ch": "positions", "opts": _acc(A)})
     assert r["error"]["code"] == "forbidden"
-    assert conn2.apply_snapshot(_viewer(), 1)  # no crash either
+    assert _apply(conn2, _viewer(), 1)  # no crash either
     reg = _registry({VIEWER_ID: _viewer()}, audit=_Broken())
 
     async def noop(_f: dict[str, Any]) -> None:
