@@ -1,0 +1,71 @@
+name: pr-metadata
+
+# #2249 / CONSTITUTION C-9.1 #20: PR size (C-4.8), conventional title (C-4.10), `Closes #N` (C-4.7),
+# dangling `C-x.y` references in the PR text (C-16.4).
+#
+# Its own workflow (precedent: regression-guard.yml) so that title/body/label edits re-run it and,
+# with its own concurrency group, never cancel the main `pr` pipeline. The script reads the LIVE
+# title, body, labels and label events from the API, so a manual re-run never replays a stale payload.
+# The required-check context is `pr-metadata` (job name). Branch protection must list it; only the
+# repo owner can change that.
+#
+# Trust model: runs on `pull_request` (never pull_request_target, SR-132). The checker, its
+# commitlint.config.cjs, scripts/check_rule_refs.py, .gitattributes and CODEOWNERS are taken from a
+# worktree of current origin/main (this job's own fetch; the event base.sha is never trusted), so a
+# PR cannot rewrite the gate that judges it; the head CONSTITUTION.md is read via `git show` as
+# data only. A bootstrap branch (PR #2256 only, while main has no checker) runs the PR copy; delete
+# it right after merge (#2281). Changing the gate's own files needs `large-pr-approved` (PR-SIZE-006).
+# REMAINING GAP: under `pull_request` this workflow file is itself PR-controlled, so editing
+# pr-metadata.yml is still a bypass; only the C-10.2 workflow security review catches it.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: metadata-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-metadata:
+    name: pr-metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Check PR size, title, body and rule references (live PR data)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Anchor on THIS job's own fetch of main; never trust the event's base.sha (stale for any
+          # PR opened before the gate merged) and never fall back to PR code once main has the gate.
+          GATE="$(git rev-parse --verify 'refs/remotes/origin/main^{commit}')"
+          ENTRY="$(git ls-tree "$GATE" -- tools/ci/check_pr_metadata.py | cut -d' ' -f1)"
+          if [ "$ENTRY" = "100644" ] || [ "$ENTRY" = "100755" ]; then
+            git worktree add --detach "$RUNNER_TEMP/gate" "$GATE"
+            GATE_SHA="$GATE" python -I "$RUNNER_TEMP/gate/tools/ci/check_pr_metadata.py" --repo-root "$RUNNER_TEMP/gate"
+          elif [ "$PR_NUMBER" = "2256" ] && [ -z "$(git log -1 --format=%H "$GATE" -- tools/ci/check_pr_metadata.py)" ]; then
+            # BOOTSTRAP (delete this branch right after #2256 merges; tracked in #2281).
+            echo "::warning title=pr-metadata::bootstrap: main has no checker yet, running the PR copy (#2256 only)"
+            GATE_SHA="$GATE" python -I tools/ci/check_pr_metadata.py --repo-root .
+          else
+            echo "::error title=pr-metadata::main has no valid tools/ci/check_pr_metadata.py (entry='$ENTRY'); refusing to run PR code"
+            exit 1
+          fi
