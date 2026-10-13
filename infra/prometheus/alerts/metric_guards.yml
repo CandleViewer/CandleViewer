@@ -22,6 +22,15 @@ groups:
         annotations:
           summary: "Expected metric oms_unknown_orders is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingCvKekDegradedState
+        expr: absent(cv_kek_degraded_state)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_kek_degraded_state is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingPgUp
         expr: absent(pg_up)
         for: 15m

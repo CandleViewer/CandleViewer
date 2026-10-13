@@ -40,6 +40,10 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "15m",
         {},
     ),
+    # Starts at 1 (degraded from the first scrape) — the real boot-failure shape.
+    "KekUnavailable": (
+        'cv_kek_degraded_state{env="live"}', "1+0x20", "0+0x20", "5m", {"env": "live"}
+    ),
     "SyntheticAlert": ("cv_synthetic_alert", "1+0x10", "0+0x10", "5m", {}),
     "PublicWsDown": (
         'ws_connection_state{socket="public"}',
