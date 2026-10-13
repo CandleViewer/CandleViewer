@@ -20,6 +20,8 @@ from tests.unit.ws._seq_support import validate
 
 USER = uuid.uuid4()
 JSON = ["cv.v1.json"]
+ORIGIN = "http://testserver"  # the TestClient's own origin
+HDR = {"origin": ORIGIN}
 #: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
 _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
 
@@ -31,7 +33,7 @@ async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
 
 
 def _settings() -> Settings:
-    return Settings(environment=Environment.DEMO, ws_shutdown_grace_ms=0)
+    return Settings(environment=Environment.DEMO, ws_shutdown_grace_ms=0, allowed_origins=ORIGIN)
 
 
 def _latch(ctx: AppContext) -> None:
@@ -67,7 +69,7 @@ def test_client_notice_is_schema_valid_and_role_neutral() -> None:
 
 def test_ws_connect_after_latch_gets_schema_valid_notice(client: TestClient) -> None:
     _latch(_ctx(client))
-    with client.websocket_connect("/ws", subprotocols=JSON) as ws:
+    with client.websocket_connect("/ws", subprotocols=JSON, headers=HDR) as ws:
         _open_and_auth(ws)
         frame = ws.receive_json()
         validate(frame)
@@ -77,7 +79,7 @@ def test_ws_connect_after_latch_gets_schema_valid_notice(client: TestClient) -> 
 
 
 def test_ws_authenticated_client_receives_broadcast_on_latch(client: TestClient) -> None:
-    with client.websocket_connect("/ws", subprotocols=JSON) as ws:
+    with client.websocket_connect("/ws", subprotocols=JSON, headers=HDR) as ws:
         _open_and_auth(ws)
         _latch(_ctx(client))
         frame = ws.receive_json()
@@ -87,7 +89,7 @@ def test_ws_authenticated_client_receives_broadcast_on_latch(client: TestClient)
 
 def test_ws_reauth_does_not_repeat_the_notice(client: TestClient) -> None:
     _latch(_ctx(client))
-    with client.websocket_connect("/ws", subprotocols=JSON) as ws:
+    with client.websocket_connect("/ws", subprotocols=JSON, headers=HDR) as ws:
         _open_and_auth(ws)
         assert ws.receive_json()["p"]["kind"] == "notice"
         ws.send_json({"t": "auth", "id": "b", "p": {"access_token": "tok"}})
