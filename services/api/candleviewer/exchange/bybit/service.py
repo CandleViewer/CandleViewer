@@ -37,13 +37,17 @@ from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.secrets import CredentialBorrower
 
 
 class ExchangeBybitService:
     """Empty scaffold for the M4 `exchange.bybit` module lifecycle."""
 
-    def __init__(self) -> None:
+    def __init__(self, credentials: CredentialBorrower | None = None) -> None:
         self._started = False
+        #: E27-T02: the one caller-bound borrow capability, injected by `admin.wiring`.
+        #: Signing (E08) uses `credentials.with_credentials(...)`; never minted here.
+        self._credentials = credentials
 
     #: E08-T06: venue name for the `exchange` metric label (owned here, C-2.2).
     venue = "bybit"

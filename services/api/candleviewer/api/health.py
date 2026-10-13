@@ -64,6 +64,7 @@ def make_health_router(
     mesh_read_only_gate: ReadOnlyGateLike | None = None,
     write_behind: Callable[[], Sequence[WriteBehindStatus]] | None = None,
     ingestion_health: Callable[[], HealthReport] | None = None,
+    secrets_health: Callable[[], HealthReport] | None = None,
 ) -> APIRouter:
     """Bind the health/metrics routes to a concrete `Settings` instance.
 
@@ -102,6 +103,11 @@ def make_health_router(
             if rep.status is not HealthStatus.STOPPED:
                 ok = rep.status is HealthStatus.OK
                 checks.append(ReadyCheck(name=INGESTION, ok=ok, detail=rep.detail))
+        if secrets_health is not None:  # E27-T02: KEK unavailable = trading off
+            rep = secrets_health()
+            if rep.status is not HealthStatus.STOPPED:
+                ok = rep.status is HealthStatus.OK
+                checks.append(ReadyCheck(name="secrets", ok=ok, detail=rep.detail))
         degraded = any(not c.ok for c in checks)
         return ReadinessResponse(
             status="degraded" if degraded else "ok",
