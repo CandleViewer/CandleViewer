@@ -19,7 +19,7 @@ from candleviewer.exchange.base.errors import (
     TransportError,
     UnknownStateError,
 )
-from candleviewer.exchange.bybit.config import RestClientConfig
+from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
@@ -111,18 +111,45 @@ async def test_5xx_is_retried_then_becomes_transport_error_without_leaking_the_b
 
 
 @respx.mock
-async def test_html_error_page_on_a_200_is_unknown_state_not_a_crash() -> None:
-    respx.get(f"{BASE}{PATH}").mock(return_value=httpx.Response(200, text=HTML_503))
-    with pytest.raises(UnknownStateError) as info:
-        await _get(_client())
-    assert "<html" not in info.value.user_message
+async def test_html_error_page_on_a_200_is_retried_transport_error_not_a_crash() -> None:
+    # #1909 / E08-Q03 #6: non-ORDER classes retry a non-JSON 2xx, then TransportError.
+    route = respx.get(f"{BASE}{PATH}").mock(return_value=httpx.Response(200, text=HTML_503))
+    with pytest.raises(TransportError) as info:
+        await _get(_client(max_retries=1))
+    assert route.call_count == 2
+    assert "<html" not in info.value.user_message and "<html" not in str(info.value)
 
 
 @respx.mock
-async def test_truncated_json_is_unknown_state() -> None:
-    respx.get(f"{BASE}{PATH}").mock(return_value=httpx.Response(200, text='{"retCode":0,"res'))
-    with pytest.raises(UnknownStateError):
-        await _get(_client())
+async def test_truncated_json_is_retried_transport_error() -> None:
+    # #1909 / E08-Q03 #6: same mapping for a truncated body on a market-data read.
+    route = respx.get(f"{BASE}{PATH}").mock(
+        return_value=httpx.Response(200, text='{"retCode":0,"res')
+    )
+    with pytest.raises(TransportError):
+        await _get(_client(max_retries=1))
+    assert route.call_count == 2
+
+
+@respx.mock
+async def test_truncated_json_on_order_class_stays_unknown_state_without_retry() -> None:
+    # #1909: ORDER class is never blindly retried (C-2.10); reconciliation owns recovery.
+    route = respx.post(f"{BASE}/v5/order/create").mock(
+        return_value=httpx.Response(200, text='{"retCode":0,"res')
+    )
+    signer = BybitSigner(api_key="CONTRACT-KEY-1234", api_secret=SecretStr("CONTRACT-SECRET-9"))
+    client = _client(max_retries=3, signer=signer)
+    try:
+        with pytest.raises(UnknownStateError):
+            await client.signed_request(
+                "POST",
+                "/v5/order/create",
+                body={"symbol": "BTCUSDT", "orderLinkId": "cv-1"},
+                endpoint_class=EndpointClass.ORDER,
+            )
+    finally:
+        await client.aclose()
+    assert route.call_count == 1
 
 
 @respx.mock
