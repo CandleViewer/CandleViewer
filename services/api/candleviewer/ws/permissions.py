@@ -132,9 +132,7 @@ class SubscriptionServices:
 
 @dataclass(frozen=True, slots=True)
 class VersionedSnapshot:
-    """A principal snapshot plus the registry's monotonic version (SR-189), taken before the
-    read starts: an earlier read has a smaller number, and a change takes its number when it
-    begins (after E09 committed it), so every read that began later already sees it."""
+    """A principal plus the registry's monotonic version, taken before the read (SR-189)."""
 
     principal: PrincipalSnapshot
     version: int
@@ -627,18 +625,33 @@ class ConnectionRegistry:
     async def apply(
         self, authz: ConnectionAuthz, snap: VersionedSnapshot, now_ms: int, *, event: SnapshotEvent
     ) -> list[dict[str, Any]]:
-        """`authz.apply_snapshot`; an older snapshot is refused, counted, audited (SR-189)."""
+        """`authz.apply_snapshot`. An older snapshot is refused, counted and audited (best
+        effort, like every WS audit write) and yields no frames (SR-189)."""
         frames = authz.apply_snapshot(snap, now_ms)
         if frames is not None:
             return frames
         cv_ws_permission_snapshots_refused_total.labels(event=event).inc()
-        await _audit_refused_snapshot(authz, snap, event)
+        versions = {"applied_version": authz.version, "refused_version": snap.version}
+        if (audit := authz.services.audit) is not None:
+            try:
+                await audit.emit(
+                    "ws.permission_snapshot.refused",
+                    actor_label="ws",
+                    actor_user_id=authz.principal.user_id,
+                    object_kind="ws_connection",
+                    object_id=authz.connection_id,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason="stale",
+                    after_state={"event": event, **versions},
+                )
+            except Exception:
+                _log().warning("ws refused-snapshot audit not written", exc_info=True)
         return []
 
     async def recheck(self, authz: ConnectionAuthz) -> None:
         """SR-189, right after `register` and before `auth_ok`: a change (any user's; one extra
-        read at worst) begun after `authz`'s read may have fanned out before this socket was
-        registered, so read again. Nothing is subscribed yet: `auth_ok` carries the principal."""
+        read at worst) begun after `authz`'s read may have fanned out before it was registered."""
         if authz.version >= self._changed_at:
             return
         snap = await self.resolve(authz.principal.user_id)
@@ -696,22 +709,6 @@ class ConnectionRegistry:
 
 
 Send = Any  # async (frame: dict) -> None
-
-
-async def open_connection(
-    registry: ConnectionRegistry,
-    principal: PrincipalSnapshot,
-    send: Send,
-    *,
-    close: Any = None,
-    **extra: Any,
-) -> ConnectionAuthz:
-    """Gateway hook for a verified `auth`: registers the socket for `permission_change`
-    pushes and sends `auth_ok` with permissions/scope."""
-    authz = ConnectionAuthz(principal, registry.services)
-    registry.register(authz, send, close)
-    await send({"t": "auth_ok", "p": auth_ok_payload(principal, **extra)})
-    return authz
 
 
 async def handle_sub(
@@ -840,30 +837,6 @@ async def _audit_revocations(authz: ConnectionAuthz, frames: list[dict[str, Any]
             )
         except Exception:
             _log().warning("ws revocation audit not written", exc_info=True)
-
-
-async def _audit_refused_snapshot(
-    authz: ConnectionAuthz, refused: VersionedSnapshot, event: SnapshotEvent
-) -> None:
-    """`ws.permission_snapshot.refused` (SR-189). Best effort, like every WS audit write."""
-    audit = authz.services.audit
-    if audit is None:
-        return
-    versions = {"applied_version": authz.version, "refused_version": refused.version}
-    try:
-        await audit.emit(
-            "ws.permission_snapshot.refused",
-            actor_label="ws",
-            actor_user_id=authz.principal.user_id,
-            object_kind="ws_connection",
-            object_id=authz.connection_id,
-            outcome=AuditOutcome.DENIED,
-            severity=Severity.WARNING,
-            reason="stale",
-            after_state={"event": event, **versions},
-        )
-    except Exception:
-        _log().warning("ws refused-snapshot audit not written", exc_info=True)
 
 
 def close_connection(registry: ConnectionRegistry, authz: ConnectionAuthz) -> None:
