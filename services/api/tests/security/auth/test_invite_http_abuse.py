@@ -5,25 +5,15 @@ real `AuditWriter`, so a 500 or a missing row here is what production would do."
 from __future__ import annotations
 
 import base64
-from collections.abc import Iterator
 from typing import Any
-
-import pytest
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.invite_service import hash_token
 from tests.csrf_helpers import csrf_headers
-from tests.unit.auth.test_invite_service import GOOD_PW
 
-from ._stack import Stack, open_stack
+from ._stack import INVITE_PW, Stack
 
 _INVITE = {"email": "ann@example.com", "username": "annie", "roles": ["viewer"]}
-
-
-@pytest.fixture
-def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
-    with open_stack(monkeypatch) as s:
-        yield s
 
 
 def _owner(stack: Stack) -> dict[str, str]:
@@ -43,7 +33,7 @@ def _redeem(stack: Stack, token: str, headers: dict[str, str] | None = None) -> 
 
 
 def _begin(stack: Stack, token: str, headers: dict[str, str] | None = None) -> Any:
-    start = stack.client.post(f"/invites/{token}", headers=headers, json={"password": GOOD_PW})
+    start = stack.client.post(f"/invites/{token}", headers=headers, json={"password": INVITE_PW})
     assert start.status_code == 200, start.text
     return start
 
@@ -99,7 +89,7 @@ def test_ac_inv_07_signed_in_other_identity_never_receives_the_invite(stack: Sta
     }
     for claim in ({"username": "bob"}, {"user_id": str(bob)}, {"email": "bob@example.test"}):
         r = stack.client.post(
-            f"/invites/{token}", headers=as_bob, json={"password": GOOD_PW, **claim}
+            f"/invites/{token}", headers=as_bob, json={"password": INVITE_PW, **claim}
         )
         assert r.status_code == 400, r.text  # the invited identity cannot be swapped
     assert stack.client.get(f"/invites/{token}").status_code == 200  # nothing was consumed
@@ -109,7 +99,7 @@ def test_ac_inv_07_signed_in_other_identity_never_receives_the_invite(stack: Sta
     assert redeemed["actor_label"] == "annie" and redeemed["actor_user_id"] != bob
     caller = stack.call(stack.auth.sessions.authenticate_access_token, minted.access_token)
     assert caller.user_id == bob  # the caller's own session and identity are untouched
-    late = stack.client.post(f"/invites/{token}", json={"password": GOOD_PW})
+    late = stack.client.post(f"/invites/{token}", json={"password": INVITE_PW})
     assert late.status_code == 404  # the real invitee then finds the link spent...
     assert stack.audit.of("users.invite_rejected")[-1]["reason"] == "redeemed"  # ...audited
 

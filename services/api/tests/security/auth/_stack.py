@@ -11,13 +11,13 @@ from __future__ import annotations
 import base64
 import contextlib
 import functools
-import os
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import candleviewer.app as appmod
@@ -36,6 +36,7 @@ from tests.unit.auth.test_invite_service import FakeRepo as FakeInviteRepository
 
 ORIGIN = "https://app.example.test"
 PW = "pw-canary-x02-abuse"  # test-only literal, never a credential
+INVITE_PW = "correct horse battery"  # an invitee's new password (SR-028 policy)
 _PEPPER = "x02-test-pepper"
 T0 = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
 
@@ -97,7 +98,7 @@ class Stack:
         self.clock = clock
         self.resolver = resolver
         self.audit = RegistryAudit()
-        self.state: Any = client.app.state  # type: ignore[attr-defined]  # Starlette ASGIApp
+        self.state: Any = cast(FastAPI, client.app).state
         self.state.app_context.audit._writer = self.audit  # the lazy emitters resolve it per call
 
     def call(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
@@ -173,8 +174,8 @@ def open_stack(monkeypatch: pytest.MonkeyPatch, **create_app_kwargs: Any) -> Ite
         users,
         pepper=_PEPPER,
         mfa_repository=FakeMfaRepository(),
-        totp_encryption_key=os.urandom(32),
-        recovery_code_hmac_key=os.urandom(32),
+        totp_encryption_key=bytes(range(32)),  # fixed test keys (determinism)
+        recovery_code_hmac_key=bytes(range(32, 64)),
         session_repository=FakeSessionRepository(),
         invite_repository=FakeInviteRepository(),
         clock=clock,

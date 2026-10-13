@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 import uuid
-from collections.abc import Iterator
 from datetime import timedelta
 
 import pytest
@@ -21,20 +19,14 @@ from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, SessionService
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 from ._kit import Clock
-from ._stack import ORIGIN, PW, Stack, open_stack
+from ._stack import ORIGIN, PW, Stack
 
 _FIXATION = "auth.session_fixation_attempt"
 
 
 def _svc() -> tuple[SessionService, FakeSessionRepository, Clock]:
     repo, clock = FakeSessionRepository(), Clock()
-    return SessionService(repo, Hasher(pepper=os.urandom(8).hex()), clock=clock), repo, clock
-
-
-@pytest.fixture
-def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
-    with open_stack(monkeypatch) as s:
-        yield s
+    return SessionService(repo, Hasher(pepper="x02-session-pepper"), clock=clock), repo, clock
 
 
 def _present(stack: Stack, token: str) -> tuple[int, int]:
