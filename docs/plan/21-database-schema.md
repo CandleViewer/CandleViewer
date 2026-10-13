@@ -681,7 +681,7 @@ Additional invariant, enforced by trigger `trg_ea_env_parent`: a sub-account's `
 
 #### 3.2.2 `api_keys`
 
-Envelope encryption: a per-key **DEK** (AES-256-GCM) encrypts the credential; the DEK itself is wrapped by the **KEK** held outside the database (OS keyring / file with 0600 in the WSL deployment, KMS on VPS). Postgres stores only ciphertext + nonce + wrapped DEK reference. Withdrawal permission is **always OFF** — enforced by a CHECK against the permission snapshot.
+Envelope encryption: a per-key **DEK** (AES-256-GCM) encrypts the credential; the DEK itself is wrapped by the **KEK** held outside the database (host launcher FIFO on WSL, systemd credential on the VPS — `docs/plan/spikes/e27-kek.md`). Postgres stores only ciphertext + nonce + the KEK-wrapped DEK. Withdrawal permission is **always OFF** — enforced by a CHECK against the permission snapshot.
 
 | Column                      | Type        | Null | Default         | Constraints / notes                                         |
 | --------------------------- | ----------- | ---- | --------------- | ----------------------------------------------------------- |
@@ -693,7 +693,7 @@ Envelope encryption: a per-key **DEK** (AES-256-GCM) encrypts the credential; th
 | `secret_enc`                | bytea       | no   | —               | **SECRET** ciphertext of the API secret                     |
 | `enc_nonce`                 | bytea       | no   | —               | 12-byte GCM nonce, unique per encryption                    |
 | `enc_alg`                   | text        | no   | `'AES-256-GCM'` | CHECK in ('AES-256-GCM')                                    |
-| `dek_ref`                   | text        | no   | —               | Keyring handle of the wrapped DEK                           |
+| `dek_ref`                   | text        | no   | —               | Wrapped DEK (`v1:` + hex), see §3.2.3a                      |
 | `kek_version`               | integer     | no   | `1`             | Bumped on KEK rotation; drives re-wrap job                  |
 | `permission_snapshot`       | jsonb       | no   | —               | As reported by Bybit `/v5/user/query-api` at import/refresh |
 | `permission_snapshot_at`    | timestamptz | no   | `now()`         | Freshness for admin UI ("checked 3 min ago")                |
@@ -854,6 +854,42 @@ CREATE TABLE api_key_rotations (
 );
 CREATE INDEX ix_akr_open ON api_key_rotations (started_at) WHERE completed_at IS NULL AND failed_at IS NULL;
 ```
+
+#### 3.2.3a `kek_versions` (E27-T02, migration `0020_kek_versions`)
+
+Non-secret key-check values identifying each KEK version (`e27-kek.md` §5). `kcv` = first 8 bytes of
+HMAC-SHA256(KEK, `"cv-kek-kcv-v1"`), compared in constant time at start-up. No trust-on-first-use: a
+KCV is recorded only when no live `api_keys` row exists at that version, or after a trial unwrap of
+one such row succeeds; the previous KEK's KCV must already exist. Data class: Internal.
+
+```sql
+CREATE TABLE kek_versions (
+  version    integer PRIMARY KEY,
+  kcv        bytea NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  retired_at timestamptz,
+  CONSTRAINT kv_version_pos CHECK (version >= 1),
+  CONSTRAINT kv_kcv_len     CHECK (octet_length(kcv) = 8),
+  CONSTRAINT kv_kcv_unique  UNIQUE (kcv)
+);
+```
+
+**Envelope layout written by M2 into `api_keys` (§3.2.2).** Every sealed field uses one layout,
+`nonce(12) ‖ ciphertext ‖ tag(16)`, each with a fresh nonce:
+- `key_id_enc`, `secret_enc`: API key id / secret under the row DEK. `enc_nonce` repeats the nonce
+  prefix of `secret_enc` (the column is `NOT NULL` with the 12-byte CHECK); M2 verifies they match
+  on read.
+- `dek_ref`: `v1:` + hex of the DEK sealed under the KEK of `kek_version` (the wrapped DEK itself;
+  useless without the KEK, which never touches the database).
+- AADs are length-prefixed (u16 big-endian per part): data layer `cv-cred-v2 ‖ environment ‖
+  account_id ‖ id ‖ field` (SR-003; `environment` is the account's `exchange_accounts.env`); wrap
+  layer `cv-dek-v1 ‖ id ‖ kek_version`.
+- SR-003 `key_version`: recorded deviation — there is no key-version column; each Bybit key
+  rotation inserts a new `api_keys` row (linked by `api_key_rotations`), so the row id already
+  binds the key version.
+- `kek_versions.kcv` is `UNIQUE` (`kv_kcv_unique`): one KEK can never be enrolled under two
+  versions (no no-op "rotation"). Start-up refuses a reused, retired or out-of-sequence KEK.
+- Only `status IN ('active','rotating')` rows are signable; `pending` only for key verification.
 
 #### 3.2.4 `account_profiles`
 
@@ -3365,14 +3401,14 @@ Enforcement:
 
 ```mermaid
 flowchart LR
-    KEK[KEK — OS keyring / KMS, outside DB] -->|unwrap| DEK[Per-key DEK AES-256]
+    KEK[KEK — launcher FIFO / systemd credential, outside DB] -->|unwrap| DEK[Per-key DEK AES-256]
     DEK -->|AES-256-GCM + 96-bit nonce| CT[secret_enc in api_keys]
     CT -->|dek_ref, kek_version| KEK
 ```
 
-- One DEK per `api_keys` row; DEK wrapped by the KEK and stored in the OS keyring under `dek_ref`.
+- One DEK per `api_keys` row; DEK wrapped by the KEK and stored (wrapped) in `dek_ref` (§3.2.3a).
 - `kek_version` allows KEK rotation without touching ciphertext: a rotation job unwraps with KEK v_n, rewraps with v_(n+1), bumps `kek_version`. Ciphertext and nonce are untouched.
-- AAD for the GCM operation is `api_keys.id || exchange_account_id`, so a ciphertext moved to another row fails authentication.
+- AADs are length-prefixed and bind environment, account, row id and field (data) / row id and `kek_version` (wrap) — §3.2.3a — so a ciphertext moved to another row, account or environment fails authentication.
 - The application process holds decrypted secrets only inside a short-lived credential object with `__slots__`, never in a dict that could be serialised, and never in a global cache beyond the signing call.
 
 ---

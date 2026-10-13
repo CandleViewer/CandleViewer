@@ -91,6 +91,11 @@
       "path": "services/api/candleviewer/migrations/versions/0019_snapshot_withdraw_transfer.py",
       "sha256": "1a2d0b4a444b61db17dfd62de0305af729e5d2c57c451b3e66afbdf5c8aa1451",
       "down_revision": "0017_exchange_accounts_api_keys"
+    },
+    "0020_kek_versions": {
+      "path": "services/api/candleviewer/migrations/versions/0020_kek_versions.py",
+      "sha256": "43723339f1e174bd9a2fd1e1b0bc708278abe4f10bce1c7d229ce91efebf502d",
+      "down_revision": "0019_snapshot_withdraw_transfer"
     }
   }
 }

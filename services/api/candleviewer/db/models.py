@@ -1361,3 +1361,16 @@ api_key_rotations = Table(
         postgresql_where=text("completed_at IS NULL AND failed_at IS NULL"),
     ),
 )
+
+#: `kek_versions` (E27-T02, revision 0020_kek_versions): non-secret KEK key-check values.
+kek_versions = Table(
+    "kek_versions",
+    metadata,
+    Column("version", Integer, primary_key=True, autoincrement=False),
+    Column("kcv", BYTEA, nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("retired_at", TIMESTAMP(timezone=True)),
+    CheckConstraint("version >= 1", name="kv_version_pos"),
+    CheckConstraint("octet_length(kcv) = 8", name="kv_kcv_len"),
+    UniqueConstraint("kcv", name="kv_kcv_unique"),
+)
