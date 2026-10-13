@@ -38,6 +38,7 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | OmsRateRejects | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-omsraterejects` | synthetic | | | | | | pending |
 | EgressIpChanged | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-egressipchanged` | synthetic | | | | | | pending |
 | AlertmanagerNotificationsFailed | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-alertmanagernotificationsfailed` | synthetic | | | | | | pending |
+| WsOriginRefusalsHigh | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-wsoriginrefusalshigh` | synthetic | | | | | | pending |
 | IngestionTopicStale | ticket | 1m | `docs/ops/ingestion.md#alert-ingestiontopicstale` | synthetic | | | | | | pending |
 | IngestionBookResyncRateHigh | ticket | 5m | `docs/ops/ingestion.md#alert-ingestionbookresyncratehigh` | synthetic | | | | | | pending |
 | BookResyncStorm | page | 5m | `docs/ops/ingestion.md#alert-bookresyncstorm` | synthetic | | | | | | pending |

@@ -902,8 +902,11 @@ consults the same `ReadOnlyGate` instance through a structurally-typed `ReadOnly
 never imports `candleviewer.net` directly, per its CONSTITUTION §3 allow-list. Allowed CIDRs are
 configured via `Settings.mesh_cidrs_csv` (comma-separated, parsed into `Settings.mesh_cidrs`); a trusted
 reverse proxy (if any) is configured via `Settings.mesh_trusted_proxy_header` /
-`Settings.mesh_trusted_proxy_address` — unset by default, so `X-Forwarded-For` and similar headers are
-always ignored and only the ASGI `scope["client"]` peer address is trusted. `make audit-net`
+`Settings.mesh_trusted_proxy_address` — unset by default, so MeshOnly reads no forwarded header and
+judges the ASGI `scope["client"]` address. That address is not always the socket peer: uvicorn's default
+`proxy_headers=True` (`forwarded_allow_ips` `127.0.0.1,::1`) rewrites it from `X-Forwarded-For` when the
+peer is loopback, so a loopback peer can choose it (#2275 makes forwarded-header trust one explicit
+setting, with MeshOnly as the only interpreter). `make audit-net`
 (`tools/ci/audit_net.py`) runs the identical `BindingSelfCheck` against the host's real listening
 sockets — host-wide via `psutil.net_connections()` plus the Windows `netsh interface portproxy` table,
 catching a `portproxy` leak that neither the process's own sockets nor a per-process `psutil` scope can
