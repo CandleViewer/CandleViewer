@@ -233,6 +233,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Performance:** Modal mounts <=100 ms; all live WS subscriptions are paused (not torn down) while it is open so re-auth resumes without a full resubscribe storm.
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-098 SessionTimeoutWarning, CMP-201 PasswordField.
 - **Stories:** US-ONB-004.
+- **Hi-fi (E09-D06):** idle-lock and absolute-expiry variants drawn over a live workspace (WS paused, not torn down; armed 1-click disarmed and not auto-restored; draft ticket retained). Pre-lock warning is CMP-098 (60 s). Spec: `docs/design/E09/E09-D06.md`.
 - **Design sign-off acceptance checklist:** [ ] underlying screen state is preserved and visibly frozen, not destroyed [ ] 'sign out instead' escape drawn [ ] expiry-during-order-entry case drawn (draft ticket retained, unarmed) [ ] focus moves to the modal and returns on close
 
 ### SCR-006 — Step-up authentication modal (S)
@@ -256,6 +257,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Performance:** Step-up token issue <=400 ms p95; token TTL and remaining validity are rendered from a server-provided expiry, never a client clock assumption.
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-043 Dialog, CMP-201 PasswordField, CMP-204 OtpInput.
 - **Stories:** US-ONB-005.
+- **Hi-fi (E09-D06):** code-only, code+typed confirmation, valid-grace (server expiry), failures 1-2, 3rd-failure read-only downgrade (5 min), no-grace variant for Live enablement / kill-switch disable. Spec: `docs/design/E09/E09-D06.md`.
 - **Design sign-off acceptance checklist:** [ ] the exact action being authorised is restated verbatim in the dialog [ ] remaining-TTL indicator for an already-valid step-up token [ ] failure/lockout state drawn [ ] cancel returns the caller to a safe no-op state
 
 ### SCR-010 — App shell (global chrome)
@@ -2699,6 +2701,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Performance:** Token issue <=400 ms; the token's TTL (15 min) is server-issued and the remaining validity is displayed in the admin chrome so the user is never surprised by a mid-task expiry.
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-043 Dialog, CMP-201 PasswordField, CMP-204 OtpInput.
 - **Stories:** US-ONB-005.
+- **Hi-fi (E09-D06):** drawn as a declared variant of the SCR-005/006 chassis (default, verifying, wrong credentials, lockout, expiry during admin edit, unlocked indicator). See `docs/design/E09/E09-D06.md`.
 - **Design sign-off acceptance checklist:** [ ] the reason for the gate and the resulting token's validity window are stated [ ] the countdown/freshness indicator in the admin chrome is drawn [ ] expiry-during-an-admin-edit case drawn (the form's content is preserved, the save is held) [ ] failure and lockout states [ ] cancel returns to the non-admin app, not to a dead end
 
 ---
