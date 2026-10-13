@@ -32,6 +32,16 @@ PAIRS: dict[str, tuple[tuple[int, int, int], tuple[int, int, int], float, str]] 
     "text.primary on surface.card": ((232, 234, 237), (22, 27, 34), 4.5, "AA text"),
     "action.primary on surface.canvas": ((43, 108, 232), (11, 14, 17), 3.0, "AA non-text UI"),
     "focus.ring on surface.card": ((91, 156, 242), (22, 27, 34), 3.0, "AA non-text UI"),
+    # E09-D06 light literals (provisional, pending #2289)
+    "light text.primary on card": ((31, 35, 40), (246, 248, 250), 4.5, "AA text"),
+    "light text.secondary on card": ((66, 74, 83), (246, 248, 250), 4.5, "AA text"),
+    "light text.muted on card": ((87, 96, 106), (246, 248, 250), 4.5, "AA text"),
+    "light text.primary on raised": ((31, 35, 40), (234, 238, 242), 4.5, "AA text"),
+    "light danger text on card": ((164, 14, 38), (246, 248, 250), 4.5, "AA text"),
+    "light warn text on raised": ((125, 78, 0), (234, 238, 242), 4.5, "AA text"),
+    "light info text on raised": ((5, 80, 174), (234, 238, 242), 4.5, "AA text"),
+    "dark warn text on raised": ((240, 180, 41), (28, 35, 43), 4.5, "AA text"),
+    "dark danger text on raised": ((255, 138, 142), (28, 35, 43), 4.5, "AA text"),
 }
 
 

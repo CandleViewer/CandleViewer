@@ -221,20 +221,21 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 +------------------------------------------+
 | Session expired                          |
 | Sign in again to continue. Your layout   |
-| and unsent ticket inputs are preserved.  |
+| is preserved; unsent ticket inputs only |
+| while locked (discarded on sign-out).    |
 | Password [_______]   [ Sign in ]         |
 | [ Sign out instead ]                     |
 +------------------------------------------+
 ```
 
-- **Behaviour:** all WS subscriptions pause; trading controls disable behind the modal; on success subscriptions resume and open-order state is reconciled from `GET /api/v1/orders?status=open`.
+- **Behaviour:** all WS subscriptions pause; trading controls disable behind the modal; on success subscriptions resume and open-order state is reconciled from `GET /orders?open_only=true` (client never resubmits). An **Emergency stop** path (needs `killswitch:write`; also the kill-switch hotkey) takes the password and opens SCR-072 on unlock; nothing else that changes state is possible while locked.
 - **A11y:** focus trap, `role="alertdialog"`, Escape does **not** dismiss.
 - **Audit:** `auth.session.expired`, `auth.session.reauth`. **Stories:** US-AUTH-007.
 - **Performance:** Modal mounts <=100 ms; all live WS subscriptions are paused (not torn down) while it is open so re-auth resumes without a full resubscribe storm.
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-098 SessionTimeoutWarning, CMP-201 PasswordField.
 - **Stories:** US-ONB-004.
 - **Hi-fi (E09-D06):** idle-lock and absolute-expiry variants drawn over a live workspace (WS paused, not torn down; armed 1-click disarmed and not auto-restored; draft ticket retained). Pre-lock warning is CMP-098 (60 s). Spec: `docs/design/E09/E09-D06.md`.
-- **Design sign-off acceptance checklist:** [ ] underlying screen state is preserved and visibly frozen, not destroyed [ ] 'sign out instead' escape drawn [ ] expiry-during-order-entry case drawn (draft ticket retained, unarmed) [ ] focus moves to the modal and returns on close
+- **Design sign-off acceptance checklist:** [ ] underlying screen state is preserved and visibly frozen, not destroyed [ ] 'sign out instead' escape drawn [ ] expiry-during-order-entry case drawn (idle lock: draft retained, unarmed; absolute expiry: not sent, discarded, disarmed) [ ] focus moves to the modal and returns on close
 
 ### SCR-006 — Step-up authentication modal (S)
 
@@ -250,7 +251,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 +--------------------------------------------------+
 ```
 
-- **Data:** `POST /api/v1/auth/step-up` → short-lived `stepUpToken` (5 min, single scope).
+- **Data:** `POST /auth/step-up` `{password, code, action_class?}` → `{elevated_until, action_class, single_use, step_up_expires_at}`; there is no token, elevation is server-side session state.
 - **Validation:** typed confirmation must match exactly (case-sensitive); Confirm disabled until both fields are valid.
 - **Audit:** `auth.stepup.granted|denied` with the target action key. **Stories:** US-AUTH-008, US-ADMIN-011.
 - **A11y:** Dialog is `role="alertdialog"` with the sensitive action named in the accessible description ('Confirm: rotate API key for Main'); the reason for step-up is text, not an icon; focus starts on the code field and is trapped until resolved; failures are announced via `aria-live="assertive"`.
