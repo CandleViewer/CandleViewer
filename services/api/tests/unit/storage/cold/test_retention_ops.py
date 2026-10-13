@@ -136,6 +136,7 @@ class _Pg:
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.writer, self.seq, self.apply_after, self.wal = 1, 1, apply_after, wal
         self.pending: str | None = None
+        self.ghosts: list[str] = []  # dropped but still listed, empty (real QuestDB behaviour)
 
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
         self.calls.append((sql, params))
@@ -145,11 +146,18 @@ class _Pg:
                 return []
             if self.pending and self.apply_after <= 0:
                 self.parts.pop(self.pending)
+                self.ghosts.append(self.pending)
                 self.pending, self.writer = None, self.seq
             self.apply_after -= 1
             return [{"writerTxn": self.writer, "sequencerTxn": self.seq, "suspended": False}]
         if "table_partitions" in sql:
-            return [{"name": n, "diskSize": s} for n, s in self.parts.items()]
+            live = [
+                {"name": n, "diskSize": s, "numRows": 5, "minTimestamp": "x"}
+                for n, s in self.parts.items()
+            ]
+            return live + [
+                {"name": n, "diskSize": 0, "numRows": 0, "minTimestamp": None} for n in self.ghosts
+            ]
         if sql.startswith("ALTER TABLE"):
             self.pending = sql.rsplit("'", 2)[1]
             self.seq += 1
@@ -237,3 +245,16 @@ async def test_checkpoint_round_trip_clear_and_corrupt(tmp_path: Path) -> None:
     assert not list(path.parent.glob("*.tmp"))
     with pytest.raises(DatasetNotRegistered):
         FileRetentionCheckpoint(reg, "../x")
+
+
+async def test_hot_drop_treats_empty_listed_partition_as_dropped() -> None:
+    """Regression (#2229 integration): after the DROP is applied QuestDB may still list the
+    partition with numRows=0 / null minTimestamp; waiting for the name to vanish timed out."""
+    pg = _Pg(apply_after=1)
+    store = _store(pg)
+    assert await store.drop_day(T, DAY_US) is True
+    assert pg.ghosts == ["2026-08-01"]
+    assert [d.start_us for d in await store.days(T, DAY_US + 3 * 86_400_000_000)] == [
+        DAY_US + 86_400_000_000
+    ]
+    assert await store.drop_day(T, DAY_US) is False

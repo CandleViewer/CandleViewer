@@ -159,11 +159,21 @@ async def test_retention_real_pass_drops_archived_hot_day_and_expired_parquet(
         )
         report = await mgr.run_nightly()
 
-        assert sorted(i.tier for i in report.deleted) == ["cold", "hot"]
+        held = [(i.tier, i.key, why) for i, why in report.failed] + [
+            (p.item.tier, p.item.key, f"{p.reason}:{p.info}") for p in report.skipped
+        ]
+        wal = await pg.fetch("SELECT * FROM wal_tables() WHERE name = 'trades'")
+        parts = await pg.fetch("SELECT * FROM table_partitions('trades')")
+        assert sorted(i.tier for i in report.deleted) == ["cold", "hot"], (held, wal, parts)
+        # A dropped partition may stay listed empty (numRows 0, null minTimestamp): not data.
         names = {
-            str(r["name"]) for r in await pg.fetch("SELECT name FROM table_partitions('trades')")
+            str(r["name"])
+            for r in await pg.fetch(
+                "SELECT name, numRows, minTimestamp FROM table_partitions('trades')"
+            )
+            if int(str(r["numRows"] or 0)) > 0 and r["minTimestamp"] is not None
         }
-        assert "2026-10-01" not in names and "2026-10-09" in names
+        assert "2026-10-01" not in names and "2026-10-09" in names, parts
         assert await cold.partitions("BTCUSDT", T) == []
         assert not (tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-01").exists()
         deleted = [d for a, d in audit.rows if a == "data.deleted"]

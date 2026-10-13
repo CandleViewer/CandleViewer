@@ -196,11 +196,14 @@ class QuestDbRetentionHotStore:
 
     async def _sizes(self, stream: StreamKind) -> dict[str, int]:
         literal = sql_string_literal(self._table(stream))
-        sql = f"SELECT name, diskSize FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted table as escaped literal
+        sql = f"SELECT name, diskSize, numRows, minTimestamp FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted table as escaped literal
         out: dict[str, int] = {}
         for row in await self._fetch(sql):
             name = str(row.get("name", ""))
-            if _DATE_RE.fullmatch(name):
+            # QuestDB can keep listing a dropped / emptied partition (no rows, null
+            # minTimestamp) until it is purged; that is not data, so it is not "present".
+            rows = int(str(row.get("numRows") or 0))
+            if _DATE_RE.fullmatch(name) and rows > 0 and row.get("minTimestamp") is not None:
                 out[name] = int(str(row.get("diskSize") or 0))
         return out
 
@@ -208,6 +211,8 @@ class QuestDbRetentionHotStore:
         sizes = await self._sizes(stream)
         out: list[HotDayInfo] = []
         for start in await self._parts.closed_days(stream, before_us):
+            if day_name(start) not in sizes:
+                continue  # dropped/empty partition still listed by QuestDB
             rng = TimeRange(start_us=start, end_us=start + US_PER_DAY)
             counts = await self._parts.row_counts(stream, rng)
             out.append(HotDayInfo(start, counts, sizes.get(day_name(start), 0)))
@@ -221,8 +226,10 @@ class QuestDbRetentionHotStore:
             self._table(stream),
         )
         if not rows:
+            self._last_wal: dict[str, object] = {}
             return True
         row = rows[0]
+        self._last_wal = dict(row)
         if str(row.get("suspended")).lower() in ("true", "t", "1"):
             raise RuntimeError("questdb WAL apply suspended for the table")
         return int(str(row.get("writerTxn"))) >= int(str(row.get("sequencerTxn")))
@@ -239,7 +246,12 @@ class QuestDbRetentionHotStore:
                 if await self._applied(stream) and name not in await self._sizes(stream):
                     return True
                 await asyncio.sleep(self._poll_s)
-        raise TimeoutError("partition drop not applied")
+        present = name in await self._sizes(stream)
+        wal = getattr(self, "_last_wal", {})
+        raise TimeoutError(
+            f"partition drop not applied: partition={name} still_listed={present} "
+            f"writerTxn={wal.get('writerTxn')} sequencerTxn={wal.get('sequencerTxn')}"
+        )
 
 
 class FileRetentionCheckpoint:

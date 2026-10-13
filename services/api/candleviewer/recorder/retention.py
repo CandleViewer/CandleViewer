@@ -648,7 +648,12 @@ class RetentionManager:
                 report.skipped.append(blocker)
                 retention_protected_total.labels(reason=blocker.reason).inc()
                 logger().info(
-                    "retention_skipped", reason=blocker.reason, stream=item.stream, part=item.key
+                    "retention_skipped",
+                    reason=blocker.reason,
+                    info=blocker.info,
+                    tier=item.tier,
+                    stream=item.stream,
+                    part=item.key,
                 )
                 if blocker.reason == "not_archived":
                     await self._events.emit("WARNING", "retention.not_archived", item.detail())
@@ -664,8 +669,17 @@ class RetentionManager:
             try:
                 await self._delete(item)
             except (OSError, TimeoutError, ValueError, RuntimeError) as exc:
-                report.failed.append((item, type(exc).__name__))
-                logger().error("retention_delete_failed", error=type(exc).__name__)
+                # Report why the item is held: error class + its (path-free) message.
+                why = f"{type(exc).__name__}: {str(exc)[:200]}"
+                report.failed.append((item, why))
+                logger().error(
+                    "retention_delete_failed",
+                    error=type(exc).__name__,
+                    reason=why,
+                    tier=item.tier,
+                    stream=item.stream,
+                    partition=item.key,
+                )
                 await self._events.emit(
                     "WARNING",
                     "retention.delete_failed",
