@@ -87,7 +87,8 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
   decision text above says 60 min idle; the code is stricter.
 - **Lockout** (`auth/login_service.py`): 5 failures, 15 min.
 - **Step-up** (`auth/step_up.py`): action classes `keys`, `users`, `live_enablement`, `killswitch`,
-  `risk_caps`; 5 min grace, none for `live_enablement` and `killswitch`; 3 wrong codes make the
+  `risk_caps`; a request needs password **and** TOTP code (D-2); a wrong password also counts toward
+  login lockout; 5 min grace, none for `live_enablement` and `killswitch`; 3 wrong password/code attempts make the
   session read-only for 5 min.
 - **Rotation points that exist**: refresh (new session row, old marked `rotated`, reuse revokes the
   whole family), and the session minted on MFA completion. **Not present**: rotation on role change
@@ -96,10 +97,12 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
 - **Session cache**: the decision text mentions a short-lived in-process cache with explicit
   invalidation. The review found no such cache in `auth/`; every request reads the session
   (`authenticate_access_token`). Revocation reaches live sockets through `ws/revocation.py`.
-  Role changes push a `permission_change` to sockets (`api/users.py`).
+  Role changes push a `permission_change` to sockets (`api/users.py`); the frame is undocumented in `23-ws-protocol.md` (divergence tracked in #2297).
 - **Permission vocabulary**: `x-rbac` blocks in `22-api-openapi.yaml` are the source;
   `tools/rbac/generate.py` writes `auth/generated_permissions.py` and the `permissions` list of
-  `auth/rbac_seed.json`; CI `generated-code` runs it with `--check`. Role-to-permission mapping is
+  `auth/rbac_seed.json`; guarded by the contract test
+  `services/api/tests/contract/rbac/test_rbac_generator.py::test_check_passes_against_committed_output`
+  (the CI `generated-code` job covers only `packages/protocol`). Role-to-permission mapping is
   hand-authored in `rbac_seed.json`.
 - **Two-layer authorisation**: deny-by-default plus `x-rbac` (`api/deny_by_default.py`), then
   `auth/scopes.py` (`decide`, `enforce`). The last active Owner cannot be demoted
@@ -109,11 +112,11 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
 
 ### Deviations from the decision or from the security programme
 
-| Id  | Fact                                                                                                                                                          | Status                                                                                                                                                                                                                          |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D-1 | Recovery codes are stored as a keyed HMAC-SHA256 of the normalised code (`auth/recovery_codes.py`; about 138 bits of entropy), not Argon2id as SR-022 states. | **Resolved** — owner decision #1778 AD (2026-10-09): keep HMAC-SHA256 with a server-side pepper; codes are high-entropy random so a slow KDF is unnecessary. SR-022 text amended in `04-security-program.md`.                   |
-| D-2 | Step-up verifies a TOTP code only (`auth/step_up.py`); SR-025 asks for password plus TOTP.                                                                    | **resolved** — owner decision #1778 AE: step-up requires password + TOTP; implemented by #2120 (`POST /auth/step-up` takes a required `password`, verified first on the login hasher and lockout counters, one generic refusal) |
-| F-1 | No CSRF double-submit token. Decision 3 above calls for one. The code relies on `SameSite=Strict`, the Origin allow-list and the bearer-header model.         | open, fix or Owner-signed acceptance (#2090)                                                                                                                                                                                    |
-| F-2 | Access tokens are not bound to IP or user-agent; theft is detected only on refresh-token reuse.                                                               | design decision, pending owner decision                                                                                                                                                                                         |
+| Id  | Fact                                                                                                                                                                               | Status                                                                                                                                                                                                                          |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D-1 | Recovery codes are stored as a keyed HMAC-SHA256 of the normalised code (`auth/recovery_codes.py`; about 138 bits of entropy), not Argon2id as SR-022 states.                      | **Resolved** — owner decision #1778 AD (2026-10-09): keep HMAC-SHA256 with a server-side pepper; codes are high-entropy random so a slow KDF is unnecessary. SR-022 text amended in `04-security-program.md`.                   |
+| D-2 | Step-up verifies a TOTP code only (`auth/step_up.py`); SR-025 asks for password plus TOTP.                                                                                         | **resolved** — owner decision #1778 AE: step-up requires password + TOTP; implemented by #2120 (`POST /auth/step-up` takes a required `password`, verified first on the login hasher and lockout counters, one generic refusal) |
+| F-1 | CSRF double-submit token (Decision 3): resolved. Server and web-client enforcement are implemented; the `SameSite=Strict` cookie and Origin allow-list remain as defence in depth. | contract landed in #2231; server and web-client enforcement merged in #2238 (#2090 closed)                                                                                                                                      |
+| F-2 | Access tokens are not bound to IP or user-agent; theft is detected only on refresh-token reuse.                                                                                    | **Accepted design decision** (Owner, #1778 record 2026-10-09; #2145 closed), see `docs/security/reviews/e09-auth-review.md`                                                                                                     |
 
 Both decision and code remain as stated until the owner decides; this section does not choose.
