@@ -5,13 +5,31 @@ Deterministic replay clock, scrubbing, speed control.
 Public interface only — internal implementation modules are not re-exported.
 Allowed dependencies (CONSTITUTION.md C-3.1): M1, M5, M8, M9, M10.
 
-This module is a conforming EMPTY module scaffolded by E02-T05
-(docs/plan/backlog/all-tickets.json). Real logic lands in the epic that owns
-this module (see docs/plan/20-architecture.md Sec.3 and the module table in
-CONSTITUTION.md Sec.3). Do not add business logic here without a linked
-ticket.
+E26-T02 adds the replay read path: the validated `ReplayRequest`, the in-stream `ReplayGap`
+marker, the storage ports (`ReplayTiers`) and the typed errors; the ordered source that the
+replay clock (E26-T03) and seek engine (E26-T04) consume is built on them.
 """
 
 from __future__ import annotations
 
-__all__: list[str] = []
+from candleviewer.replay.errors import (
+    ReplayError,
+    ReplayMemoryCeilingExceeded,
+    ReplayRequestInvalid,
+    ReplaySourceUnavailable,
+    ReplayTierStraddle,
+)
+from candleviewer.replay.models import ReplayGap, ReplayItem, ReplayRequest, ReplayTiers, SourceTier
+
+__all__ = [
+    "ReplayError",
+    "ReplayGap",
+    "ReplayItem",
+    "ReplayMemoryCeilingExceeded",
+    "ReplayRequest",
+    "ReplayRequestInvalid",
+    "ReplaySourceUnavailable",
+    "ReplayTierStraddle",
+    "ReplayTiers",
+    "SourceTier",
+]
