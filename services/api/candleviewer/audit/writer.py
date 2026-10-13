@@ -33,6 +33,15 @@ Chosen over bounded auto-restart because every failure that escapes the
 retry loop is deterministic (corruption or a poison record) — restarting
 would fail the same way. The WAL is untouched, so `start()` (after the
 cause is fixed) replays everything accepted so far.
+
+Cancellation (#2250): `AuditWal` has no lock of its own, so every
+`_wal_lock` critical section (append, batch read, commit + compaction) runs
+as a tracked task that its caller awaits through `asyncio.shield`. A
+cancelled caller (an `asyncio.timeout` around `emit()`, or `stop()`
+cancelling the flusher) can no longer release the lock while a WAL worker
+thread is still running; before, the next append truncated the in-flight
+frame as a torn tail and `AuditWal._end` drifted past EOF. `stop()` drains
+these tasks before and after it cancels the flusher.
 """
 
 from __future__ import annotations
@@ -40,10 +49,11 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Concatenate
 
 import structlog
 
@@ -102,6 +112,8 @@ class AuditWriter:
         self._repository = repository
         self._wal = AuditWal(_path(wal_path), max_bytes=max_wal_bytes)
         self._wal_lock = asyncio.Lock()
+        #: In-flight `_wal_lock` critical sections (see `_shielded`); `stop()` drains them.
+        self._wal_ops: set[asyncio.Task[Any]] = set()
         self._wake = asyncio.Event()
         self._idle = asyncio.Event()
         self._flush_batch_size = flush_batch_size
@@ -163,6 +175,11 @@ class AuditWriter:
 
     async def stop(self, grace_s: float = 5.0) -> None:
         self._running = False
+        # Appends already handed to a WAL op land before the flusher is
+        # cancelled (#2250). Not bounded by `grace_s`: each op is one WAL call
+        # plus bookkeeping, and a WAL still being written after stop() returns
+        # could be truncated as a torn tail by the next writer on the same file.
+        await self._drain_wal_ops()
         if self._task is None:
             return
         if self._task.done():
@@ -183,6 +200,9 @@ class AuditWriter:
             # (idempotently, by record_id) on the next start().
             pass
         self._task = None
+        # A read or commit + compaction the flusher was inside keeps
+        # `_wal_lock` until its WAL thread returns; wait for it as well.
+        await self._drain_wal_ops()
 
     async def emit(
         self,
@@ -234,8 +254,15 @@ class AuditWriter:
             event_ts=self._clock(),
         )
         record = json.loads(emission.model_dump_json())
+        await self._shielded("audit-wal-append", self._accept, record)
+
+    async def _accept(self, op: _WalOp, record: dict[str, Any]) -> None:
+        """`emit()`'s WAL op: append + bookkeeping under `_wal_lock`, then the
+        fail-closed alarm and the flusher wake-up. Once it holds the lock it
+        runs to the end even if `emit()`'s caller was cancelled."""
         try:
             async with self._wal_lock:
+                op.holding = True
                 await self._append_durably(record)
                 self._pending += 1
                 # Under the lock, so the flusher cannot mark idle after this.
@@ -248,6 +275,42 @@ class AuditWriter:
             logger().critical(reason_text)
             raise AuditUnavailable(reason_text) from exc
         self._wake.set()
+
+    async def _shielded[**P, T](
+        self,
+        name: str,
+        body: Callable[Concatenate[_WalOp, P], Coroutine[Any, Any, T]],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
+    ) -> T:
+        """Run one `_wal_lock` critical section as a tracked task awaited through
+        `asyncio.shield` (#2250).
+
+        `body` sets `op.holding` as soon as it holds `_wal_lock`. If the caller
+        is cancelled after that, it gets `CancelledError` at once, but the task
+        keeps the lock until its WAL thread has returned and its bookkeeping is
+        done; a failure nobody awaits any more is logged. A task still queued
+        for the lock holds nothing and has started no thread, so it is cancelled
+        with its caller: a cancelled `emit()` that never reached the WAL appends
+        nothing and leaves no task behind (C-2.18)."""
+        op = _WalOp()
+        task = spawn(body(op, *args, **kwargs), name=name)
+        self._wal_ops.add(task)
+        task.add_done_callback(self._wal_ops.discard)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if op.holding:
+                task.add_done_callback(_log_abandoned_op)
+            else:
+                task.cancel()
+            raise
+
+    async def _drain_wal_ops(self) -> None:
+        """Wait until no WAL op is in flight (`stop()`)."""
+        while self._wal_ops:
+            await asyncio.wait(set(self._wal_ops))
 
     async def _append_durably(self, record: dict[str, Any]) -> None:
         """Caller holds `_wal_lock`. On `AuditWalFull`, reclaim the committed
@@ -280,11 +343,7 @@ class AuditWriter:
             await self._wake.wait()
             self._wake.clear()
             while True:
-                async with self._wal_lock:
-                    batch = await asyncio.to_thread(self._wal.read_pending, self._flush_batch_size)
-                    self._inflight = bool(batch)
-                    if not batch:
-                        self._idle.set()
+                batch = await self._shielded("audit-wal-read", self._read_batch)
                 if not batch:
                     break
                 for _end_offset, record in batch:
@@ -292,11 +351,27 @@ class AuditWriter:
                     self._written_total += 1
                 # One cursor fsync per batch: a crash mid-batch re-inserts the
                 # already-written prefix, which ON CONFLICT (record_id) ignores.
-                async with self._wal_lock:
-                    await asyncio.to_thread(self._wal.mark_committed, batch[-1][0])
-                    self._pending = max(0, self._pending - len(batch))
-                    self._inflight = False
-                    await asyncio.to_thread(self._wal.compact)
+                await self._shielded("audit-wal-commit", self._commit, batch[-1][0], len(batch))
+
+    async def _read_batch(self, op: _WalOp) -> list[tuple[int, dict[str, Any]]]:
+        """Flusher WAL op: the next uncommitted batch; marks idle when empty."""
+        async with self._wal_lock:
+            op.holding = True
+            batch = await asyncio.to_thread(self._wal.read_pending, self._flush_batch_size)
+            self._inflight = bool(batch)
+            if not batch:
+                self._idle.set()
+            return batch
+
+    async def _commit(self, op: _WalOp, end_offset: int, count: int) -> None:
+        """Flusher WAL op: advance the commit cursor, then compact — both under
+        `_wal_lock`, so no append can land between the copy and the file swap."""
+        async with self._wal_lock:
+            op.holding = True
+            await asyncio.to_thread(self._wal.mark_committed, end_offset)
+            self._pending = max(0, self._pending - count)
+            self._inflight = False
+            await asyncio.to_thread(self._wal.compact)
 
     async def _write_with_retry(self, record: dict[str, Any]) -> None:
         delay = self._retry_initial_delay_s
@@ -329,6 +404,27 @@ class AuditWriterStopped(AuditError):
 class AuditUnavailable(AuditError):
     """Raised by `emit()` when the record could not be made durable (WAL full
     or unwritable). The audited action must be refused (C-2.9 fail-closed)."""
+
+
+@dataclass(slots=True)
+class _WalOp:
+    """One `_wal_lock` critical section (see `AuditWriter._shielded`)."""
+
+    #: Set by the op right after it takes `_wal_lock`; from then on it is never cancelled.
+    holding: bool = False
+
+
+def _log_abandoned_op(task: asyncio.Task[Any]) -> None:
+    """Done-callback of a WAL op whose caller was cancelled: nobody else sees its
+    outcome. `AuditUnavailable` has already alarmed and logged inside the op."""
+    exc = None if task.cancelled() else task.exception()
+    if exc is not None and not isinstance(exc, AuditUnavailable):
+        logger().critical(
+            "audit WAL op failed after its caller was cancelled",
+            op=task.get_name(),
+            error=type(exc).__name__,
+            exc_info=exc,
+        )
 
 
 def _log_task_failure(task: asyncio.Task[None]) -> None:

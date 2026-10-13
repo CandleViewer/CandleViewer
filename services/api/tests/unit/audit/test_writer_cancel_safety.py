@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
+from structlog.testing import capture_logs
 
 from candleviewer.audit import wal as wal_module
 from candleviewer.audit.writer import AuditWriter
@@ -163,8 +164,9 @@ async def test_writer_cancelled_append_survives_next_emit_and_end_matches_file(
     first.cancel()
     with pytest.raises(asyncio.CancelledError):
         await first
+    before = lock.queued  # the flusher's batch read may already have made someone queue
     second = asyncio.create_task(w.emit("auth.login", actor_label="second"))
-    if not await _yield_until(lambda: lock.queued > 0):
+    if not await _yield_until(lambda: lock.queued > before):
         # The writer let the second append run beside the stalled one: let it
         # finish first, exactly as in the issue's reproduction.
         await _thread_event(disk.returned[1])
@@ -235,3 +237,92 @@ async def test_writer_flusher_cancelled_mid_compaction_keeps_lock_until_it_retur
     assert [r["actor_label"] for _, r in w._wal.replay()] == ["late"]
     assert w._wal._end == (tmp_path / "audit.wal").stat().st_size
     await w.stop(1)
+
+
+async def test_writer_emit_cancelled_while_queued_for_lock_appends_nothing(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, slow_disk: SlowDisk
+) -> None:
+    """A caller cancelled before its op took `_wal_lock` holds nothing and started no
+    thread: the op is cancelled with it, so no late append and no task is left behind."""
+    w = _writer(repo, tmp_path, clock)
+    lock = _ObservedLock()
+    w._wal_lock = lock
+    await w.start()
+    disk = slow_disk(w)
+    disk.arm()
+    first = asyncio.create_task(w.emit("auth.login", actor_label="first"))
+    await _thread_event(disk.stalled)
+    before = lock.queued
+    queued = asyncio.create_task(w.emit("auth.login", actor_label="queued"))
+    assert await _yield_until(lambda: lock.queued > before)
+    queued.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await queued
+    disk.release.set()
+    await asyncio.wait_for(first, _WAIT_S)
+    await w.stop(_WAIT_S)
+    assert [r["actor_label"] for r in repo.rows] == ["first"]
+    assert not w._wal_ops
+
+
+async def test_writer_cancelled_emit_whose_append_fails_still_alarms_and_counts(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, slow_disk: SlowDisk
+) -> None:
+    """The op outlives its cancelled caller, so a WAL failure is still surfaced:
+    `AuditUnavailable` bookkeeping and the fail-closed alarm run inside the op."""
+    alarms: list[str] = []
+
+    async def alarm(reason: str) -> None:
+        alarms.append(reason)
+
+    w = AuditWriter(
+        repo, str(tmp_path / "audit.wal"), clock=clock, sleep=repo.retry_sleep, on_alarm=alarm
+    )
+    await w.start()
+    disk = slow_disk(w)
+    disk.arm()
+    disk.fail_after_release = True
+    emit = asyncio.create_task(w.emit("auth.login", actor_label="doomed"))
+    await _thread_event(disk.stalled)
+    emit.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await emit
+    disk.release.set()
+    await w.stop(_WAIT_S)
+    assert alarms == ["audit WAL unavailable: OSError"] and w.refused_total == 1
+    assert repo.rows == [] and not w._wal_lock.locked()
+
+
+async def test_writer_flusher_op_failing_after_cancel_is_logged(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    w = _writer(repo, tmp_path, clock)
+    stalled, release = threading.Event(), threading.Event()
+    mark_committed = w._wal.mark_committed
+
+    def failing_mark_committed(offset: int) -> None:
+        if offset == 0:  # inside compact()
+            stalled.set()
+            release.wait(_WAIT_S)
+            raise OSError("disk gone")
+        mark_committed(offset)
+
+    monkeypatch.setattr(w._wal, "mark_committed", failing_mark_committed)
+    await w.start()
+    with capture_logs() as logs:
+        try:
+            await w.emit("auth.login", actor_label="x")
+            await _thread_event(stalled)
+            flusher = w._task
+            assert flusher is not None
+            flusher.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await flusher
+        finally:
+            release.set()
+        await w.stop(_WAIT_S)
+    failed = [e for e in logs if e["event"] == "audit WAL op failed after its caller was cancelled"]
+    assert [(e["op"], e["error"], e["log_level"]) for e in failed] == [
+        ("audit-wal-commit", "OSError", "critical")
+    ]
+    assert not w._wal_lock.locked() and not w._wal_ops

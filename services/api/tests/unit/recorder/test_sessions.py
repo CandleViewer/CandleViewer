@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.exchange.bybit.public_ws import stream_for_topic
 from candleviewer.recorder.models import RecorderSetChanged
@@ -371,3 +372,16 @@ async def test_crash_recovery_audit_timeout_never_cancels_the_audit_write() -> N
     audit.release.set()
     await asyncio.wait_for(audit.finished.wait(), 5)
     assert audit.records == ["recorder.stop"] and not audit.cancelled
+
+
+async def test_crash_recovery_audit_failing_after_timeout_is_logged() -> None:
+    audit = _StalledAudit(fail=True)
+    with capture_logs() as logs:
+        await _stalled_recovery(audit)
+        audit.release.set()
+        await asyncio.wait_for(audit.finished.wait(), 5)
+        for _ in range(5):  # let the write's done-callbacks run
+            await asyncio.sleep(0)
+    failed = [e for e in logs if e["event"] == "recorder_audit_write_failed"]
+    assert [(e["error"], e["log_level"]) for e in failed] == [("OSError", "error")]
+    assert not audit.cancelled and audit.records == []
