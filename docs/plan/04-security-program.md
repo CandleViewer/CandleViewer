@@ -490,15 +490,15 @@ Scope: the repository itself, `main` branch integrity, branch-protection configu
 (W3-W5) to the gateway as built by E17-S01/S02/T02. Three concerns get dedicated analysis: the bounded 10 s
 unauthenticated window (pre-auth slots are capped only by the auth timeout until #2155), continuous topic
 authorisation (synchronous drop/narrow before any send; snapshot ordering requirement SR-189), and resource
-exhaustion, where every DoS limit is also a performance budget and must not be relaxed in isolation. 47 rows
-(WS-S01..E06), one inherent High (slow consumer); residual Medium on WG1, WG3 and WG8. Controls SR-183..
-SR-191 (§6.18); abuse cases AC-01..AC-28 go to E17-X02 (see RSK-063, RSK-064). Status Draft.
+exhaustion, where every DoS limit is also a performance budget and must not be relaxed in isolation. 49 rows
+(WS-S01..E06, incl. WS-D15/D16), one inherent High (slow consumer); residual Medium on WG1, WG3 and WG8. Controls SR-183..
+SR-193 (§6.18); abuse cases AC-01..AC-30 go to E17-X02 (see RSK-063, RSK-064). Status Approved (2026-10-13).
 
 | T   | STRIDE                 | Threat                                                                                                                       | L   | I   | Risk     | Mitigations                                                                                         | Residual |
 | --- | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --- | --- | -------- | --------------------------------------------------------------------------------------------------- | -------- |
 | WG1 | Spoofing               | Unauthenticated sockets occupy slots during the 10 s auth window                                                             | M   | M   | Medium   | SR-074; 10 s timeout, 3 attempts, rate limit and frame cap before auth; global pre-auth cap (#2155) | Medium   |
 | WG2 | Denial of service      | Slow consumer grows server memory                                                                                            | H   | M   | **High** | SR-073; 8 MiB / 2 000-frame budget and overflow ladder (E17-T03); close 4429                        | Low      |
-| WG3 | Denial of service      | Per-user amplification: 8 sockets x 40 symbols of deep book and heatmap                                                      | M   | M   | Medium   | Subscription/symbol/connection caps, throttles, encode-once (E17-S02/T03); measured by E17-Q03      | Medium   |
+| WG3 | Denial of service      | Per-user amplification: 8 sockets x 40 symbols of deep book and heatmap                                                      | M   | M   | Medium   | SR-073; subscription/symbol/connection caps, throttles, encode-once (E17-S02/T03); measured by E17-Q03; SR-192/SR-193 for per-frame work and snapshot churn      | Medium   |
 | WG4 | Elevation of privilege | Subscription outlives a withdrawn grant or role                                                                              | M   | H   | Medium   | SR-074; re-evaluation on every change, synchronous drop before send; SR-189 snapshot versioning     | Low      |
 | WG5 | Tampering              | Hostile CVWB or inbound JSON body exhausts a decoder                                                                         | M   | M   | Medium   | SR-040, SR-128, SR-155; 256 KiB pre-decode cap; SR-184, SR-185                                      | Low      |
 | WG6 | Information disclosure | Token in URL/log/metric/error; cross-account leak; account-existence oracle                                                  | M   | H   | Medium   | SR-122; first-frame token only; per-account `decide`; one generic `account_scope_denied`            | Low      |
@@ -840,7 +840,7 @@ Requirements arising from §5.12 (Area 11). IDs continue the existing numbering;
 | SR-164 | Every workflow under `.github/workflows/` MUST declare an explicit least-privilege `permissions:` block (no `write-all`, no omitted block defaulting broad); reviewed as part of the mandatory `security-review` label trigger on any workflow change (C-10.2).                                                                                     | ci-gate, manual-review | E01-T07 (guard workflows), E03 (job workflows) |
 | SR-165 | `pull_request_target` combined with checkout of untrusted (fork) PR head content is prohibited outright; a CI check greps `.github/workflows/**` for this pattern and fails the build unless an explicit, security-reviewed exception comment is present naming the mitigating control.                                                             | ci-gate                | E01-T07                                        |
 
-### 6.18 Client WS gateway (SR-183…SR-191)
+### 6.18 Client WS gateway (SR-183…SR-193)
 
 Requirements arising from §5.13 (Area 12, `docs/security/threat-models/E17-ws-gateway.md`). IDs continue the
 existing numbering after SR-182; no existing SR is renumbered. Each names its owner ticket.
@@ -856,6 +856,8 @@ existing numbering after SR-182; no existing SR is renumbered. Each names its ow
 | SR-189 | Principal snapshots applied to WS connections MUST be versioned so an older snapshot never replaces a newer one, including for a connection that completes `auth` during a grant change (E17-S02 follow-up).  | integration, chaos  |
 | SR-190 | Shared upstream references and encode-once fan-out buffers MUST be used only for public topic families; account-scoped frames are filtered and encoded per subscription (E17-S02, E17-T03).                   | unit, integration   |
 | SR-191 | The ASGI server's WebSocket limits — maximum message size, inbound compression, per-connection queue, handshake/keep-alive timeouts — MUST be set explicitly and consistently with the protocol caps (#2176). | integration         |
+| SR-192 | A single WS `sub` frame MUST NOT cause work, reply size or audit writes proportional to its entry count beyond a fixed cap; denial audit records MUST be aggregated per frame (E17-S02, #2292). | unit, load |
+| SR-193 | Every snapshot-rebuild path (client `resync`, `ctl`-forced resnapshot, unsub/sub churn) MUST draw on one per-connection rebuild budget (E17-S02/S03, #2293). | unit, load |
 
 ---
 
