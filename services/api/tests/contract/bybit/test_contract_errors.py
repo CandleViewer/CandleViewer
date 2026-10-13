@@ -8,7 +8,6 @@ from typing import Any
 import httpx
 import pytest
 import respx
-from pydantic import SecretStr
 
 from candleviewer.exchange.base.boundary import exchange_errors_total
 from candleviewer.exchange.base.errors import (
@@ -26,6 +25,7 @@ from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.signer import BybitSigner
 from tests._corpus import http_status, rest
+from tests._signing import CREDENTIAL_ID, fake_capability
 from tests.contract.bybit._support import counter_value
 
 BASE = "https://api-demo.bybit.com"
@@ -160,7 +160,7 @@ async def test_signed_request_error_path_never_logs_credentials(
     respx.get(f"{BASE}/v5/account/wallet-balance").mock(
         return_value=httpx.Response(200, json=rest("rest/error_10018.json"))
     )
-    signer = BybitSigner(api_key="CONTRACT-KEY-1234", api_secret=SecretStr("CONTRACT-SECRET-9"))
+    signer = BybitSigner(fake_capability("CONTRACT-KEY-1234"), CREDENTIAL_ID)
     client = _client(max_retries=0, signer=signer)
     caplog.set_level(logging.DEBUG)
     try:

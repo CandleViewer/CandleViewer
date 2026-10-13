@@ -31,9 +31,14 @@ R7  Any class outside `secrets/` subclassing a class imported from `candleviewer
 R8  Last-hop names pinned: `unwrap_dek`, `wrap_dek`, `open_`, `seal`, `cred_aad`, `dek_aad`,
     `rewrap_all`, `verify_kcv`, `drop_kek`, `flush_cache`, `kek_handle`, `kek_prev_handle`,
     `kek_ack_path` (outside `settings.py`); str literals `/run/credentials…` or `CV_KEK_…`.
-R9  Borrow names outside the exchange adapter; admin metadata outside `admin/`;
+R9  Borrow names (see R10); admin metadata outside `admin/`;
     `mint_borrower` outside `admin/wiring.py`; every M2-defined private name (harvested with
     rglob, no subtraction) plus `_key`, `_cache`, `_items`, `_broker`, on non-self receivers.
+R10 Plaintext stays in `secrets/` (C-2.7, #2339): the plaintext borrow (`with_credentials`,
+    `borrow_handle`) anywhere outside `secrets/`; `.reveal()` (also via getattr/methodcaller)
+    except the exact reviewed site (the key id M2 returns, read for the request header); and
+    in the exchange adapter (`exchange/`) any `hmac` import (stdlib or vendor, any alias) and
+    the credential plaintext holders `SecretStr` / `get_secret_value`. M2 computes the MAC.
 """
 
 from __future__ import annotations
@@ -46,10 +51,12 @@ import candleviewer.secrets as m2
 
 PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 MINT_SITES = {"admin/wiring.py"}
-#: The M4 exchange adapter package (the only allowed borrower), built from parts.
+#: The M4 exchange adapter package (the only signing-capability holder), built from parts.
 _BORROW_SITE = "/".join(("exchange", "by" + "bit")) + "/"
 _ADMIN_SITE = "admin/"
 _AUDIT_SITE = "audit/"
+#: R10: the whole exchange layer (base + venue adapter) holds no credential plaintext.
+_ADAPTER_SITE = "exchange/"
 _SELFISH = frozenset({"self", "cls"})
 
 _INTROSPECTION = frozenset(
@@ -73,6 +80,10 @@ _SETTINGS_ONLY = frozenset({"kek_handle", "kek_prev_handle", "kek_ack_path"})
 #: Pinned regardless of harvesting (incl. names M2 has since removed, so they stay banned).
 _PINNED = frozenset({"_key", "_cache", "_items", "_broker", "_tickets", "_decrypt_and_call"})
 _BORROW = frozenset({"with_credentials", "borrow_handle"})
+#: R10: the plaintext reader (refused outside `secrets/`) and the credential plaintext holders
+#: (refused in the exchange adapter).
+_REVEAL = "reveal"
+_ADAPTER_PLAINTEXT = frozenset({"SecretStr", "get_secret_value"})
 _ADMIN_ONLY = frozenset({"rewrap_deks", "verify_kek_possession"})
 _AUDIT_TARGETS = frozenset({"emit", "writer", "_writer", "_audit_sink", "_audit"})
 _REFLECT = frozenset({"getattr", "setattr", "hasattr", "delattr", "getattr_static"})
@@ -89,6 +100,8 @@ ALLOW: frozenset[tuple[str, str, str]] = frozenset(
         ("statechart/persistence.py", "reflect", "_descent_done"),  # xstate interpreter
         ("statechart/plugins/metrics.py", "reflect", "_timer_handles"),  # xstate interpreter
         ("statechart/plugins/audit.py", "reflect", "_active_state_nodes"),  # xstate interpreter
+        # R10 (#2339): the key id M2 returns, read once for the request's API-key header.
+        (_BORROW_SITE + "signer.py", "reveal", "api_key"),
     }
 )
 
@@ -239,8 +252,12 @@ class _Checker:
                 self.flag(f"{via}{name} (M2 private)")
         if name in _LAST_HOP and not (name in _SETTINGS_ONLY and self.rel == "settings.py"):
             self.flag(f"{via}{name} (M2 last hop)")
-        if name in _BORROW and not self.rel.startswith(_BORROW_SITE):
-            self.flag(f"{via}{name} (borrow outside the exchange adapter)")
+        if name in _BORROW:
+            self.flag(f"{via}{name} (plaintext borrow outside secrets/)")
+        if name == _REVEAL and not self.allowed("reveal", _construct(recv)):
+            self.flag(f"{via}{name} (plaintext read outside secrets/)")
+        if name in _ADAPTER_PLAINTEXT and self.rel.startswith(_ADAPTER_SITE):
+            self.flag(f"{via}{name} (credential plaintext in the exchange adapter)")
         if name in _ADMIN_ONLY and not self.rel.startswith(_ADMIN_SITE):
             self.flag(f"{via}{name} (admin-only metadata)")
         if name == "__dict__" and not selfish:
@@ -310,8 +327,10 @@ class _Checker:
                         if node.attr not in m2.__all__ and node.attr != "secrets":
                             self.flag(f"candleviewer.{dotted} (M2 via the root package)")
             elif isinstance(node, ast.Name):
-                if node.id in _BORROW and not self.rel.startswith(_BORROW_SITE):
+                if node.id in _BORROW:
                     self.flag(f"{node.id}")
+                if node.id in _ADAPTER_PLAINTEXT and self.rel.startswith(_ADAPTER_SITE):
+                    self.flag(f"{node.id} (credential plaintext in the exchange adapter)")
                 if node.id == "mint_borrower" and self.rel not in MINT_SITES:
                     self.flag("mint_borrower")
                 if node.id in _INTROSPECTION:
@@ -345,7 +364,31 @@ class _Checker:
                 if id(node) not in self.docs and node.value.startswith(_STR_PREFIXES):
                     if not (self.rel == "settings.py" and node.value.startswith(_STR_PREFIXES[1:])):
                         self.flag(f"str literal {node.value[:40]!r}")
+            elif isinstance(node, ast.Import | ast.ImportFrom):
+                if self.rel.startswith(_ADAPTER_SITE):
+                    self.adapter_imports(node)
         return self.bad
+
+    def adapter_imports(self, node: ast.Import | ast.ImportFrom) -> None:
+        """R10: the exchange adapter imports no MAC primitive (`hmac`, stdlib or vendor, any
+        alias) and no credential plaintext holder; M2 computes the request MAC (C-2.7)."""
+        if isinstance(node, ast.Import):
+            modules, names = [a.name for a in node.names], []
+        else:
+            modules, names = [node.module or ""], [a.name for a in node.names]
+        if any("hmac" in m.split(".") for m in modules) or "hmac" in names:
+            self.flag("hmac import (request MACs are computed in secrets/)")
+        for name in sorted(_ADAPTER_PLAINTEXT.intersection(names)):
+            self.flag(f"import {name} (credential plaintext in the exchange adapter)")
+
+
+def _construct(recv: ast.expr | None) -> str:
+    """The allow-list construct for a receiver: its last attribute or its name."""
+    if isinstance(recv, ast.Attribute):
+        return recv.attr
+    if isinstance(recv, ast.Name):
+        return recv.id
+    return ""
 
 
 def m2_violations(rel: str, tree: ast.AST) -> list[str]:

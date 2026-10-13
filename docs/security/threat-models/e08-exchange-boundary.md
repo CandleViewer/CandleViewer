@@ -50,12 +50,12 @@ flowchart TB
   end
 
   subgraph VAULT["TB-5/TB-6 · Secrets module (E27, out of scope here)"]
-    SECRETS["Envelope-encrypted key store<br/>plaintext only in exchange/bybit signing call"]
+    SECRETS["Envelope-encrypted key store<br/>plaintext only inside secrets/, which computes the MAC (C-2.7, #2339)"]
   end
 
   subgraph API["TB-3 · docker compose network — FastAPI app"]
     subgraph M4BOX["M4 Bybit adapter (exchange/bybit/)"]
-      SIGN["Request signer<br/>HMAC-SHA256, recv_window"]
+      SIGN["Request signer<br/>string-to-sign, recv_window (MAC computed in M2)"]
       RESTC["RestClient<br/>per-UID token bucket"]
       WSC["ConnectionManager<br/>public + private sockets"]
       NORM["Normalizer<br/>Bybit wire -> internal events"]
@@ -90,7 +90,8 @@ flowchart TB
   DNS -.-> WSPUB
   DNS -.-> WSPRIV
 
-  SECRETS -- "plaintext key, signing only" --> SIGN
+  SIGN -- "string-to-sign (no secret)" --> SECRETS
+  SECRETS -- "hex signature + key id, never the secret" --> SIGN
   SIGN --> RESTC
   RESTLIVE -- "TB-7: signed REST" --> RESTC
   RESTDEMO -- "TB-7: signed REST (orders only)" --> RESTC

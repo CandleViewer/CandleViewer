@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
 from candleviewer.exchange.base.ports import MarketDataPort, TradingPort
 
@@ -29,6 +29,7 @@ from candleviewer.exchange.bybit.service import ExchangeBybitService
 
 # nosemgrep: cv-adapter-isolation reason=X02 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.signer import BybitSigner
+from tests._signing import CREDENTIAL_ID, fake_capability
 
 PKG = Path(__file__).resolve().parents[3] / "candleviewer"
 #: Every module on the public market-data ingestion path (ticket repo paths).
@@ -78,7 +79,7 @@ async def test_relative_paths_stay_on_configured_host() -> None:
 
 async def test_absolute_path_cannot_escape_base_url() -> None:
     rec = _Rec()
-    signer = BybitSigner("DUMMYKEY" + "q" * 10, SecretStr("s" * 24))
+    signer = BybitSigner(fake_capability("DUMMYKEY" + "q" * 10), CREDENTIAL_ID)
     async with BybitRestClient(
         RestClientConfig(base_url="https://api.bybit.com"),
         signer=signer,

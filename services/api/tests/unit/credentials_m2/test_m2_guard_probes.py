@@ -158,6 +158,59 @@ def test_owner_may_use_its_own_private_ctx_field() -> None:
     assert m2_violations("exchange/base/x.py", ast.parse(src))  # exact owner, not 'exchange'
 
 
+#: R10 (#2339, C-2.7): plaintext stays in `secrets/`. Flagged in every module, the adapter too.
+PLAINTEXT_PROBES: dict[str, str] = {
+    "borrow": "out = await borrower.with_credentials(key_id, fn, purpose='sign_rest')",
+    "borrow_handle": "h = broker.borrow_handle('exchange_adapter')",
+    "reveal_attr": "v = signed.api_secret.reveal()",
+    "reveal_name": "v = s.reveal()",
+    "reveal_getattr": "v = getattr(s, 'reveal')()",
+    "reveal_methodcaller": "import operator\nv = operator.methodcaller('reveal')(s)",
+}
+#: R10 in the exchange adapter: no credential plaintext holder and no MAC primitive.
+ADAPTER_PROBES: dict[str, str] = {
+    "secretstr_import": "from pydantic import SecretStr",
+    "secretstr_attr": "import pydantic\nv = pydantic.SecretStr(s)",
+    "secretstr_name": "v = SecretStr(s)",
+    "get_secret_value": "v = s.get_secret_value()",
+    "hmac_import": "import hmac",
+    "hmac_alias": "import hmac as h",
+    "hmac_from": "from hmac import new",
+    "hmac_compare": "from hmac import compare_digest",
+    "crypto_hmac": "from cryptography.hazmat.primitives import hmac",
+    "crypto_hmac_module": "from cryptography.hazmat.primitives.hmac import HMAC",
+}
+_ANYWHERE = ["oms/credential_probe.py", "exchange/bybit/credential_probe.py", "admin/x.py"]
+_ADAPTER = ["exchange/bybit/credential_probe.py", "exchange/base/x.py"]
+
+
+@pytest.mark.parametrize("where", _ANYWHERE)
+@pytest.mark.parametrize("name", sorted(PLAINTEXT_PROBES))
+def test_plaintext_probe_is_flagged_everywhere(name: str, where: str) -> None:
+    assert m2_violations(where, _free(PLAINTEXT_PROBES[name])), name
+    assert m2_violations(where, _method(PLAINTEXT_PROBES[name])), name
+
+
+@pytest.mark.parametrize("where", _ADAPTER)
+@pytest.mark.parametrize("name", sorted(ADAPTER_PROBES))
+def test_adapter_probe_is_flagged_in_the_exchange_adapter(name: str, where: str) -> None:
+    assert m2_violations(where, _free(ADAPTER_PROBES[name])), name
+
+
+@pytest.mark.parametrize("where", ["settings.py", "auth/x.py", "audit/x.py"])
+def test_adapter_rules_stay_inside_the_adapter(where: str) -> None:
+    src = "import hmac\nfrom pydantic import SecretStr\nv = SecretStr(s).get_secret_value()"
+    assert not m2_violations(where, ast.parse(src))
+
+
+def test_reveal_allowed_only_for_the_signer_header_value() -> None:
+    """The one reviewed `.reveal()`: the key id M2 returns, for the request header."""
+    ok = "k = signed.api_key.reveal()"
+    assert not m2_violations("exchange/bybit/signer.py", ast.parse(ok))
+    assert m2_violations("exchange/bybit/rest.py", ast.parse(ok))  # exact file only
+    assert m2_violations("exchange/bybit/signer.py", ast.parse("k = signed.secret.reveal()"))
+
+
 def test_self_own_private_attributes_are_not_flagged() -> None:
     src = "class S:\n    def f(self):\n        return self._broker, self._cache, self.__dict__"
     assert not m2_violations("oms/x.py", ast.parse(src))

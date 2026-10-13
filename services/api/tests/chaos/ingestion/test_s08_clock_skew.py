@@ -11,7 +11,6 @@ boundaries (floor(ts_event / interval)) are unchanged by the host skew.
 from __future__ import annotations
 
 import pytest
-from pydantic import SecretStr
 
 from candleviewer.exchange.base.errors import ClockDriftError
 
@@ -29,6 +28,7 @@ from candleviewer.ingestion.metrics import (
     exchange_clock_drift_ms,
     trade_prints_rejected_total,
 )
+from tests._signing import CREDENTIAL_ID, fake_capability
 from tests.chaos.ingestion._faults import Fault, FaultKind
 from tests.chaos.ingestion._feed import Feeder
 from tests.chaos.ingestion._rig import STUB_BASE_URL, Rig, metric
@@ -41,8 +41,8 @@ BAR_MS = 60_000
 
 
 def _signed(rig: Rig, guard: ClockGuard) -> BybitRestClient:
-    # Fixed test-only vector, never a real credential (C-2.7; E04 test keys).
-    signer = BybitSigner("chaos-test-key", SecretStr("chaos-test-secret"))
+    # Fixed test-only key id; M2 holds the secret and computes the MAC (C-2.7, #2339).
+    signer = BybitSigner(fake_capability("chaos-test-key"), CREDENTIAL_ID)
     return BybitRestClient(
         RestClientConfig(base_url=STUB_BASE_URL),
         signer=signer,

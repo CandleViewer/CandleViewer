@@ -346,17 +346,18 @@ class BybitRestClient:
                 if self._signer is None:
                     raise TypeError("signed request reached _request without a signer")
                 timestamp_ms = await self._clock.now_ms()
-                signature = self._signer.sign(
+                # C-2.7 (#2339): M2 computes the MAC; this client never holds the secret.
+                auth = await self._signer.sign(
                     timestamp_ms=timestamp_ms,
                     recv_window_ms=self._config.recv_window_ms,
                     payload=payload_str,
                 )
                 headers.update(
                     {
-                        "X-BAPI-API-KEY": self._signer.api_key,
+                        "X-BAPI-API-KEY": auth.api_key,
                         "X-BAPI-TIMESTAMP": str(timestamp_ms),
                         "X-BAPI-RECV-WINDOW": str(self._config.recv_window_ms),
-                        "X-BAPI-SIGN": signature,
+                        "X-BAPI-SIGN": auth.signature,
                     }
                 )
             if method.upper() in ("POST", "PUT"):
