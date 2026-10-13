@@ -52,8 +52,9 @@ def test_fit_restarts_at_a_sampling_hole() -> None:
 def test_fit_restarts_at_a_gap_lying_between_two_points() -> None:
     first = _line(10)
     second = _line(10, start=first[-1][0] + STEP, base=10**9)  # level shift across the gap
-    gap = (first[-1][0] + 1, first[-1][0] + 2)
-    assert fit_daily_growth(first + second, hole_us=HOLE, gaps=[gap]) == RATE
+    end = first[-1][0]
+    gaps = [(end + 3, end + 9), (end + 1, end + 5)]  # unsorted, overlapping (two symbols)
+    assert fit_daily_growth(first + second, hole_us=HOLE, gaps=gaps) == RATE
     assert fit_daily_growth(first + second, hole_us=HOLE) != RATE
 
 

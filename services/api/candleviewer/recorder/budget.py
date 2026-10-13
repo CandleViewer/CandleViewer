@@ -66,6 +66,21 @@ class BudgetConfig:
         return int(self.series_step_s + 3 * self.sample_interval_s) * US_PER_S
 
 
+def _merged(gaps: Sequence[tuple[int, int]]) -> list[tuple[int, int]]:
+    out: list[tuple[int, int]] = []
+    for lo, hi in sorted(gaps):
+        if out and lo <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], hi))
+        else:
+            out.append((lo, hi))
+    return out
+
+
+def _terms(n: int, st: int, sy: int, stt: int, sty: int) -> tuple[Fraction, Fraction]:
+    """One run's least-squares numerator and denominator, from exact integer sums."""
+    return Fraction(n * sty - st * sy, n), Fraction(n * stt - st * st, n)
+
+
 def fit_daily_growth(
     points: Sequence[tuple[int, int]],
     *,
@@ -75,31 +90,34 @@ def fit_daily_growth(
 ) -> int | None:
     """Least-squares bytes/day with one intercept per contiguous run, in exact integer sums.
 
-    Points inside a gap `[lo, hi)` are dropped; a run restarts across a gap, at a sampling
-    hole (> `hole_us`) and, with `restart_on_drop`, at every size drop (retention), which
-    makes the slope a write rate. `None` when no run has any time spread."""
-    runs: list[list[tuple[int, int]]] = []
+    One pass over time-ordered points, O(points + gaps). Points inside a gap `[lo, hi)` are
+    dropped; a run restarts across a gap, at a sampling hole (> `hole_us`) and, with
+    `restart_on_drop`, at every size drop (retention), which makes the slope a write rate.
+    `None` when no run has any time spread."""
+    windows, g = _merged(gaps), 0
+    num = den = Fraction(0)
+    n = st = sy = stt = sty = t0 = 0
     prev: tuple[int, int] | None = None
     for t, y in points:
-        if any(lo <= t < hi for lo, hi in gaps):
+        crossed = g
+        while g < len(windows) and windows[g][1] <= t:
+            g += 1
+        if g < len(windows) and windows[g][0] <= t:
             prev = None
             continue
-        if (
-            prev is None
-            or t - prev[0] > hole_us
-            or (restart_on_drop and y < prev[1])
-            or any(lo < t and hi > prev[0] for lo, hi in gaps)
-        ):
-            runs.append([])
-        runs[-1].append((t, y))
+        restart = prev is None or g != crossed or t - prev[0] > hole_us
+        if restart or (restart_on_drop and prev is not None and y < prev[1]):
+            if n:
+                a, b = _terms(n, st, sy, stt, sty)
+                num, den = num + a, den + b
+            n = st = sy = stt = sty = 0
+            t0 = t
+        s = (t - t0) // US_PER_S
+        n, st, sy, stt, sty = n + 1, st + s, sy + y, stt + s * s, sty + s * y
         prev = (t, y)
-    num = den = Fraction(0)
-    for run in runs:
-        n, t0 = len(run), run[0][0]
-        ts = [(t - t0) // US_PER_S for t, _ in run]
-        st, sy = sum(ts), sum(y for _, y in run)
-        num += Fraction(n * sum(t * y for t, (_, y) in zip(ts, run, strict=True)) - st * sy, n)
-        den += Fraction(n * sum(t * t for t in ts) - st * st, n)
+    if n:
+        a, b = _terms(n, st, sy, stt, sty)
+        num, den = num + a, den + b
     return None if den == 0 else round(num / den * 86_400)
 
 
