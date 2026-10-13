@@ -1,9 +1,9 @@
-"""In-process `create_app()` harness for the E09-X02 HTTP abuse cases (#2144).
+"""In-process `create_app()` harness for the E09-X02 HTTP/WS abuse cases (#2144).
 
 Real `AuthService` (login, MFA, sessions, step-up, invites) over the in-memory fakes, a fixed
-clock, a fake identity provider, and an audit writer that refuses an unregistered action exactly
-like `AuditWriter.emit` (`validate_action`), so every asserted audit row is one production would
-write. Loopback client (mesh allow-list), no network, no sleeps.
+clock shared with the WS gateway, a fake identity provider, and an audit writer that refuses an
+unregistered action exactly like `AuditWriter.emit` (`validate_action`), so every asserted audit
+row is one production would write. Loopback client (mesh allow-list), no network, no sleeps.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
+from candleviewer.ws.gateway import make_ws_router
 from tests.csrf_helpers import csrf_headers
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
@@ -181,6 +182,9 @@ def open_stack(monkeypatch: pytest.MonkeyPatch, **create_app_kwargs: Any) -> Ite
     )
     monkeypatch.setattr(appmod, "build_auth_service", lambda *_a, **_k: auth)
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _s: Identity())
+    # The gateway checks token expiry on its wall clock (#2259): share the injected clock.
+    wall = functools.partial(make_ws_router, wall_ms=lambda: int(clock.now.timestamp() * 1000))
+    monkeypatch.setattr(appmod, "make_ws_router", wall)
     resolver = Resolver()
     create_app_kwargs.setdefault("principal_resolver", resolver)
     app = appmod.create_app(auth_clock=clock, **create_app_kwargs)

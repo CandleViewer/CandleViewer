@@ -3,8 +3,10 @@
 - Ticket: E09-X02 (#298). Threat source: `docs/security/threat-models/e09-auth-rbac.md` (E09-X01).
 - Method: white-box, in-process, fixed clock, in-memory fakes, no network. Automated cases live in
   `services/api/tests/security/auth/` and are permanent regressions.
-- **Scope of this PR:** the durable service-level subset only. Rows marked **NOT RUN** have no observed
-  result yet and are NOT claimed as defended; they remain open on #298 (so this PR uses `Refs`).
+- **Scope:** the durable in-process subset: the service-level cases, plus the HTTP, WS and
+  observability cases of #2144 driven through the real `create_app()` stack. Rows marked **NOT RUN**
+  have no observed result and are NOT claimed as defended; the remaining ones need real Postgres
+  roles or a DB-wired stack and are tracked in #2105.
 - Rule ids (verified present in `CONSTITUTION.md`): C-2.9 (audit), C-2.12 and C-12.4 (server-side RBAC),
   C-2.18 (bounded/off-loop work), C-12.6 (redaction), C-13.7 (deterministic tests, no sleeps/network).
 - Verdict key: DEFENDED (attack failed as designed) · DESIGN-DECISION (accepted behaviour, confirm) ·
@@ -80,16 +82,49 @@ Each control was disabled on the scratch worktree and the named case failed, the
 | AC-INV-06     | SR-027 (#2109)    | Legacy invite row stored as `manager`               | Redeem over HTTP                                                                                      | Viewer only; downgrade audited                                                                                                                                               | Viewer; `users.invite_role_downgraded`, `users.invite_redeemed`. Before #2316: 500 (F-3)                       | DEFENDED                                                                  |
 | AC-INV-07     | U12               | Signed-in user Bob holds Alice's invite link        | Redeem with Bob's bearer; also send `username` / `user_id` / `email` claims                           | The invite never attaches to the caller                                                                                                                                      | Claims: 400, not consumed, not audited; Alice's record activated as viewer; Bob untouched                      | DESIGN-DECISION (bearer link, U12 custody)                                |
 | AC-INV-08     | U12               | Another invitee's pending TOTP method               | Confirm Alice's invite with Mallory's method and a valid code                                         | Refused; Alice unaffected                                                                                                                                                    | 422 `invalid_code`; `users.invite_rejected` (`enrollment_invalid`); Alice completes                            | DEFENDED                                                                  |
+| AC-WS-01      | §4.3              | Socket before `auth_ok`                             | `sub` to private `orders` three times before `auth`                                                   | Nothing served; socket closed                                                                                                                                                | `err not_authenticated` x2, then `bye not_authenticated` (4401); nothing subscribed                            | DEFENDED                                                                  |
+| AC-WS-02      | U13               | Captured `auth` frame (bearer access token)         | Replay it on a second socket while the session is live; again after logout                            | Rejected without a live session (U13 text)                                                                                                                                   | Live: `auth_ok` for the victim's session; logout closes both (4401); later replays fail                        | **FINDING F-4** (Architect/Owner: extend F-2 or fix)                      |
+| AC-WS-03      | U32 §9.5          | Manager socket on `orders` for a granted account    | Revoke the grant; re-auth with the same token; subscribe again                                        | Dropped live; not regained                                                                                                                                                   | `permission_change` + `revoked` (`account_scope_changed`); re-sub `account_scope_denied`                       | DEFENDED (re-auth snapshot race: #2172)                                   |
+| AC-WS-04      | §6 registry       | Authenticated socket                                | `sub` with `../admin`, `orders.*`, `book.BTCUSDT.50/../../admin`, control chars, case, 300 chars      | Each refused per topic; nothing attached                                                                                                                                     | All `unknown_topic` / `invalid_topic_format`; `unsub` is a no-op for each                                      | DEFENDED                                                                  |
 
-## NOT RUN (no observed result; open on #298)
+## NOT RUN (no observed result; env-only, tracked in #2105)
 
 | Area            | Cases                                                                                                                                          | Why                                                                    |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| WS attacks      | pre-`auth_ok` subscribe; `auth` frame replay; socket across revocation; topic injection (U13)                                                  | Needs gateway harness; not attempted here                              |
 | Audit attacks   | UPDATE/DELETE as app role, trigger drop, crafted migration, chain verifier, silent-action (U14, U17, U19, U20)                                 | Needs real Postgres roles; integration stack not available to this run |
 | Real DB checks  | Argon2id params from DB row; atomic MFA/recovery consume; lockout owner alert (SR-016)                                                         | Fakes only here                                                        |
 | HTTP RBAC sweep | Every admin/owner route as Manager/Viewer; body/query/path account_id; list probes; self-service `user_id` (D5); role change with live session | Needs full app wiring                                                  |
-| Observability   | Which metric/audit row/alert each attack triggers                                                                                              | Not recorded                                                           |
+
+## Observability per case (#2144)
+
+What each defended attack leaves behind, asserted in-process through `create_app()` (audit rows
+are checked against the audit action registry, as the real writer does). "Scraped" means served on
+the registry Prometheus scrapes; "in-process" series are invisible to Prometheus, so no alert can
+read them. The alert column is asserted against `infra/prometheus/alerts` by
+`test_observability.py::test_obs_alert_rules_read_exactly_the_recorded_signals`.
+
+| Cases                                  | Audit row                                                                                                                                    | Metric                                                                          | Alert                                                                                | Asserted by                                     |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------- |
+| AC-CRED-03/04/05, AC-ENUM-01/02        | `auth.login_failed` (failure) per refused login, identical for unknown and wrong; `auth.account_locked` (denied, warning) per locked attempt | none: `auth_login_failures_total`, `auth_lockouts_total` planned, never emitted | `AuthLoginFailureSpike` / `AuthLockouts` cannot fire; only the absent() guards (O-1) | `test_observability.py::test_obs_credential_*`  |
+| AC-MFA-01..07                          | `auth.mfa_failed` (failure) per refused verify or recovery; the challenge lock has no row of its own                                         | none                                                                            | none                                                                                 | `test_obs_mfa_*`                                |
+| AC-SES-01, 01c, 07                     | `auth.session_fixation_attempt` (denied, warning), per-IP budget                                                                             | `auth_session_fixation_attempts_total{reason}`, scraped                         | none                                                                                 | `test_session_abuse.py::test_ac_ses_01*`        |
+| AC-SES-03                              | `auth.refresh_reuse_detected` (denied, critical)                                                                                             | `auth_refresh_reuse_total`, in-process only                                     | none possible (O-2)                                                                  | `test_obs_refresh_*`                            |
+| AC-SES-05, AC-SES-06                   | none: expiry is the normal refresh trigger; F-2                                                                                              | none                                                                            | none                                                                                 | by design                                       |
+| AC-CSRF-01/02/04, 06..10               | `auth.csrf_refused` (denied, warning), capped                                                                                                | `auth_csrf_refused_total{reason}`, scraped                                      | `CsrfRefusalsHigh` (> 20 in 10 min), `CsrfRefusalAuditUnavailable`                   | `test_obs_csrf_*`, `test_csrf_double_submit.py` |
+| AC-CSRF-05 (IDOR probe)                | none                                                                                                                                         | none                                                                            | none (O-3)                                                                           | `test_obs_csrf_*`                               |
+| AC-AUTHZ-01..07                        | `rbac.denied` (denied, warning; names permission and scope)                                                                                  | none: `authz_denied_total` planned, never emitted                               | `AuthzDeniedSpike` cannot fire (O-1)                                                 | `test_obs_rbac_*`, AC-AUTHZ-07                  |
+| AC-STEP-01..04                         | `auth.step_up_failed` (failure, error; action class)                                                                                         | `auth_step_up_failures_total{action_class}`, in-process only                    | none possible (O-2)                                                                  | `test_obs_step_up_*`                            |
+| AC-INV-01..04                          | `users.invite_rejected` (denied; warning for `redeemed` and `role_tamper`)                                                                   | `users_invites_rejected_total{reason}`, in-process only, not for `role_tamper`  | none possible (O-2)                                                                  | `test_obs_invite_*`                             |
+| AC-INV-05/06                           | `users.invite_refused` / `users.invite_role_downgraded` (warning)                                                                            | none                                                                            | none                                                                                 | `test_invite_http_abuse.py`                     |
+| AC-INV-07 (identity claims), AC-INV-08 | claims: none (O-4); foreign TOTP method: `users.invite_rejected` (`enrollment_invalid`)                                                      | none                                                                            | none                                                                                 | `test_ac_inv_07_*`, `test_ac_inv_08_*`          |
+| AC-WS-01                               | none (no topic reached authorisation)                                                                                                        | `cv_ws_closes_total{reason="not_authenticated"}`, scraped                       | none                                                                                 | `test_ws_abuse.py::test_ac_ws_01_*`             |
+| AC-WS-02                               | live replay: none (F-4); after revocation the third failed `auth` writes `auth.login_failed` (`ws_auth_failed`, warning)                     | `cv_ws_auth_failures_total{reason}`, scraped                                    | none                                                                                 | `test_ac_ws_02_*`                               |
+| AC-WS-03                               | `ws.subscription.revoked`, then `ws.subscribe.denied` (`account_scope_denied`)                                                               | `cv_ws_revoked_total{reason}`, scraped                                          | none                                                                                 | `test_ac_ws_03_*`                               |
+| AC-WS-04                               | `ws.subscribe.denied` only for a name in a private family (`orders.*`)                                                                       | `cv_ws_subscribe_total{topic,result}`, scraped                                  | none                                                                                 | `test_ac_ws_04_*`                               |
+
+No runtime signal by nature: AC-CRED-01/02 (offline hash), AC-ENUM-03 (timing), AC-CSRF-03 (cookie
+flags). AC-MFA-05 shares the `auth.mfa_failed` path. "None" in the alert column is the recorded
+state, not a target: alerting on these signals is a detection-rule decision.
 
 ## Findings
 
@@ -112,4 +147,24 @@ Each control was disabled on the scratch worktree and the named case failed, the
   accept any string, which hid it. Repro: AC-INV-05 / AC-INV-06 against the registry-validating
   writer in `tests/security/auth/_stack.py`. Regression: those cases and
   `tests/unit/audit/test_router_actions_registered.py`. Owner: backend (auth-rbac). Maps to U19.
-- No P0/P1 finding. `docs/plan/32-risk-register.md` and sign-off comment are not done in this PR.
+- **F-4 (design gap, STRIDE: Spoofing, severity Low-Medium; decision pending).** AC-WS-02.
+  - Repro: capture the `auth` frame of a live socket and send it on a second socket: the second
+    socket gets `auth_ok` for the victim's session. Logout or revocation closes every socket of
+    the session (4401); after that the replay fails and the third failure is audited.
+  - Cause: same as F-2. The frame carries the bearer access token, which is not bound to a
+    connection, address or user agent. U13's mitigation text only promises rejection for a frame
+    _without_ a live session, so the behaviour matches its letter but not the threat it names.
+  - Decision needed from the Architect and the Owner: accept it as an extension of F-2, or bind
+    the WS identity to a single-use, short-lived WS ticket minted over REST. Owner: Architect +
+    Owner. Tracking: #298 (QA record); no separate public issue until decided (C-12.13).
+- **O-1..O-4 (observability gaps, STRIDE: Repudiation, severity Low).** Each attack is defended,
+  but the defence is partly invisible (see "Observability per case"):
+  - O-1: `auth_login_failures_total`, `auth_lockouts_total` and `authz_denied_total` are planned
+    and alerted but never emitted, so those alerts cannot fire. Tracking: #2117, #2319.
+  - O-2: session, step-up and invite counters stay on the unscraped process-default registry, so
+    refresh-token reuse (a critical row) has no scrapeable signal. Tracking: #2319.
+  - O-3: an IDOR probe on `DELETE /me/sessions/{id}` leaves no row and no metric. Tracking: #2319.
+  - O-4: identity claims in an invite redemption body are refused (400) with no row; role claims
+    are audited. Tracking: #2319.
+- No P0/P1 finding, and no executed case escalated privilege. `docs/plan/32-risk-register.md` and
+  the sign-off comment are not done here.
