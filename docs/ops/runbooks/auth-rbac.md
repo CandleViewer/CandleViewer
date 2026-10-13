@@ -1,12 +1,12 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292). Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
 
 Conventions: REST paths are shown relative to the API base. `$API` is your API base URL and `$TOKEN` a
-valid access token of the stated role; both come from your own environment, never from this page. No
+valid access token of the stated role (sent as `Authorization: Bearer $TOKEN`); both come from your own environment, never from this page. No
 secret, key material or host address belongs in this file. Paths under `candleviewer/` mean
 `services/api/candleviewer/`. The metrics registry in `observability/metrics_catalogue.py` is the
 source of metric names; some listed there are `planned` (declared, not yet emitted) and are called
@@ -33,18 +33,48 @@ service after the fifth failure. It clears in two ways, both in code:
 Preconditions: you know the user. Do not ask the user to retry during the lock window: a locked
 account refuses even a correct password.
 
-1. Confirm the lock. A login attempt returns `423 Account locked` with a `Retry-After` header (seconds
-   left). The audit log has `auth.account_locked` (severity warning) with the identifier redacted.
-   Query as an Owner (a non-owner sees only its own events):
-   `GET $API/admin/audit?action=auth.account_locked` — expect one entry per refused attempt.
-2. Wait out `Retry-After`. Expect elapsed time of at most 15 minutes. Then the user logs in normally.
-3. Verify: `auth.login` appears for the user, and a fresh login returns `200`.
+1. Confirm the lock. A login attempt returns `423` with a `Retry-After` header (seconds left):
 
-Owner's own account: the same expiry applies. If the Owner has lost the TOTP device, recovery codes
-are the path: `POST /auth/mfa/recovery` with the `mfa_token` from the login step and one code
-(`api/auth.py`, `auth/mfa_service.py::recover`). A code is single use; `auth.recovery_code_used` is
-written, and `auth.recovery_codes_exhausted` when none remain. Re-enrolment is forced when fewer than
-three remain (`auth/recovery_codes.py`, `LOW_CODE_THRESHOLD`).
+   ```bash
+   curl -si -X POST "$API/auth/login" -H 'Content-Type: application/json' \
+     -d '{"identifier":"<user>","password":"<password>"}' | head -n 12
+   ```
+
+   Expected: `HTTP/1.1 423`, `retry-after: <seconds, at most 900>`, problem title `Account locked`.
+   Then query the audit log as an Owner (a non-owner sees only its own events):
+
+   ```bash
+   curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.account_locked"
+   ```
+
+   Expected: `200` with one `auth.account_locked` entry (severity warning, identifier redacted such
+   as `abc***(len=9)`) per refused attempt.
+
+2. Wait out `Retry-After`. Expected elapsed time: at most 15 minutes. Do not attempt a login
+   meanwhile. **Warning:** `failed_login_count` is reset only by a _successful_ login, so a single wrong
+   password after the lock expires re-locks the account for another 15 minutes. Use the correct
+   password on the first attempt.
+3. Verify: repeat the login `curl` above with the correct password. Expected `200` with
+   `{"status":"mfa_required","mfa_token":"...","methods":["totp"],"expires_in":...}`; the user then
+   completes `POST $API/auth/mfa/verify`. Confirm with
+   `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.login"`: expect an
+   `auth.login` entry for the user.
+
+Owner's own account: the same expiry applies. If the Owner has lost the TOTP device,
+`POST $API/auth/mfa/recovery` takes `{"mfa_token":"<from login>","recovery_code":"<code>"}`:
+
+```bash
+curl -s -X POST "$API/auth/mfa/recovery" -H 'Content-Type: application/json' \
+  -d '{"mfa_token":"<mfa_token>","recovery_code":"<code>"}'
+```
+
+Expected `200` `{"status":"authenticated","forced_totp_reenroll":true}`. **BLOCKED — not
+implemented:** this route mints no session, token or cookie (`api/auth.py`), and
+`/auth/mfa/enroll[/confirm]` are `501` stubs (owner #230; gap tracked in the follow-up issue linked
+on #292). So recovery codes do **not** currently get the Owner back in. A code is single use;
+`auth.recovery_code_used` is written, and `auth.recovery_codes_exhausted` when none remain.
+Re-enrolment is forced unconditionally after a recovery (`auth/mfa_service.py`);
+`LOW_CODE_THRESHOLD` is defined but unused.
 
 Not available today:
 
@@ -63,21 +93,52 @@ Preconditions: you are signed in as an Owner. You cannot reset your own TOTP (th
 self-reset). The reset needs a step-up for action class `users`. The target is not you.
 
 1. Preview what the reset affects:
-   `GET $API/users/{userId}/mfa/reset-preview` — Owner only. Expected `200` with
-   `open_position_count`, `positions` (`known` or `unavailable`), `position_source`,
+
+   ```bash
+   curl -s -H "Authorization: Bearer $TOKEN" "$API/users/$USER_ID/mfa/reset-preview"
+   ```
+
+   Expected `200` with `open_position_count`, `positions` (`known` or `unavailable`), `position_source`,
    `requires_acknowledge_unknown_positions`, `message`. Today the position source may be
    `not_deployed`; then positions are reported as unavailable, never as 0.
+
 2. Step up. Call the reset once; it answers `403` naming the `users` action class and starts a
-   challenge. Then `POST $API/auth/step-up` with `{"code": "<your current TOTP code>"}`. Expected
-   `200` with `elevated_until`. Three wrong codes abandon the action and make your session read-only for
-   5 minutes (`403 session_read_only`).
-3. `POST $API/users/{userId}/mfa/reset`. If positions are `unavailable`, the first call returns
-   `409 positions_unknown`; repeat with body `{"acknowledge_unknown_positions": true}` only after
-   you have checked the user's positions another way. Expected `200` with `target_user_id`,
-   `methods_revoked`, `sessions_revoked`. The reply contains no secret.
-4. The user logs in with their password and re-enrols TOTP (`POST /auth/mfa/enroll`, `.../confirm`).
+   challenge. Then step up with **password and code** (required since #2154; omitting `password`
+   returns `422 password is required`):
+
+   ```bash
+   curl -s -X POST "$API/auth/step-up" -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"password":"<your password>","code":"<your current TOTP code>"}'
+   ```
+
+   Expected `200` with `elevated_until` (ISO timestamp). A wrong password or wrong code gives the
+   identical `401` (`Invalid password or code.`, with `failures_remaining`). **A wrong password also
+   increments your login lockout counter**, so five mistakes can lock your own account (see §1).
+   Three failures abandon the action and make your session read-only for 5 minutes
+   (`403 session_read_only`).
+
+3. Reset:
+
+   ```bash
+   curl -s -X POST "$API/users/$USER_ID/mfa/reset" -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' -d '{}'
+   ```
+
+   If positions are `unavailable`, the first call returns `409 positions_unknown`; repeat with
+   `-d '{"acknowledge_unknown_positions": true}'` only after you have checked the user's positions
+   another way. Expected `200` with `target_user_id`, `methods_revoked`, `sessions_revoked`. The reply
+   contains no secret.
+
+4. **BLOCKED — re-enrolment is not possible today.** `reset_totp` revokes every method; a user with
+   no active method gets `501` from `POST /auth/login` (`login_service.py`), and
+   `/auth/mfa/enroll[/confirm]` are `501` stubs (`api/auth.py`, owner #230). After a reset the user
+   cannot log back in until the follow-up fix (session-authenticated enrolment and a no-method
+   login path, tracked on #292) lands. Do not reset a TOTP you cannot afford to leave locked out.
 5. Verify from telemetry: audit action `auth.mfa_reset_by_owner` (severity critical) with the
-   target user; counter `auth_mfa_resets_total` rises by 1 on the API process (`auth/metrics.py`).
+   target user:
+   `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.mfa_reset_by_owner"`;
+   counter `auth_mfa_resets_total` rises by 1 on the API process (`auth/metrics.py`).
 
 Note: `auth.mfa_reset` also exists in the audit vocabulary, but the Owner route writes
 `auth.mfa_reset_by_owner`. Search for that name.
@@ -87,8 +148,7 @@ Expected elapsed time: not measured. E09-X04 did not run a reset drill; this is 
 ## 3. Break-glass for total Owner lockout (SR-023)
 
 **BLOCKED — not implemented.** There is no break-glass CLI, route or script in the repository
-(`docs/security/reviews/e09-auth-review.md` §3, finding R-6). Tracking: Owner item AB on #1778 (no
-owning ticket yet). The drill has not been executed.
+(`docs/security/reviews/e09-auth-review.md` §3, finding R-6). Tracking: Owner item AB on #1778 and the CLI ticket #2119 (E09-S11, open). The drill has not been executed.
 
 Preconditions that any future procedure will need, stated now so nobody burns time: shell access to the
 host that runs the API **and** access to the key-encryption material held by the host keychain
@@ -124,8 +184,9 @@ There is no alert for it.
 
 Preconditions: Owner session (`audit/access.py`: `verify` and `export` are Owner only).
 
-1. **Confirm, read-only.** `POST $API/admin/audit/verify` with `{}` (optional `from_id`, `to_id`).
-   Expected `200` with `verified`, `entries_checked`, `first_bad_id`, `checked_at`. `verified: false`
+1. **Confirm, read-only.**
+   `curl -s -X POST "$API/admin/audit/verify" -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'`
+   (optional `from_id`, `to_id`). Expected `200` with `verified`, `entries_checked`, `first_bad_id`, `checked_at`. `verified: false`
    with a non-null `first_bad_id` is the failure. Run it once more over a range that ends just before
    `first_bad_id` to confirm the earlier chain is intact.
 2. **Preserve evidence before anything else.** Save both responses verbatim. Take a database
@@ -160,7 +221,8 @@ exposition is on the private `/metrics` listener, `metrics_bind` in `settings.py
 
 What read-only disables: the OMS validator refuses order placement while the gate is tripped
 (`oms/validator.py`, `ReadOnlyCheck`). No flag, config or role overrides it. A `system` WS topic
-event carries the reason, which the degraded-mode banner shows.
+event carries the reason. **No degraded-mode banner exists in the web app yet**; read the reason from
+the `system` event or the logs.
 
 Reason codes (`net/binding_check.py`, `net/scheduler.py`):
 
@@ -171,15 +233,15 @@ Reason codes (`net/binding_check.py`, `net/scheduler.py`):
 | `net.binding_check_failed`      | the socket table could not be read (fail-closed)              |
 | `net.self_check_timed_out`      | the check exceeded its time limit                             |
 
-1. Read the gauge on the metrics listener: expect `net_binding_safe 0`. Read the reason code from the
-   banner or the `system` topic event.
+1. Read the gauge on the metrics listener: expect `net_binding_safe 0`, e.g. `curl -s http://127.0.0.1:9108/metrics | grep net_binding_safe`. Read the reason code from the
+   `system` topic event or the API log.
 2. Diagnose on the host: list listening sockets for the API process with your platform's tool
    (for example `ss -ltnp`) and compare with the intended bind. On WSL, a Windows port-proxy rule can
    re-expose a loopback listener; check it (`20-architecture.md`, "WSL hazards").
 3. Fix the bind or the proxy rule, then restart the API process so the boot check runs; or wait for
    the next hourly pass. There is **no command or endpoint to clear the gate**. `ReadOnlyGate.clear`
    accepts only a fresh passing result, and nothing exposes it to an operator.
-4. Verify: `net_binding_safe 1`, and the banner clears via a `system` topic event with reason
+4. Verify: `net_binding_safe 1`, and a `system` topic event clears the state with reason
    `net.binding_safe`. Orders are accepted again.
 
 Stop and escalate if the failing listener is public and you cannot explain it: treat as an exposure
@@ -192,12 +254,13 @@ The permission vocabulary is generated: the single source is the `x-rbac` blocks
 `docs/plan/22-api-openapi.yaml`; `tools/rbac/generate.py` writes
 `candleviewer/auth/generated_permissions.py` and the `permissions` list in
 `candleviewer/auth/rbac_seed.json`. Which role holds which permission is hand-authored in
-`rbac_seed.json` (`roles`, `role_permissions`). Never hand-edit the generated parts; CI
-`generated-code` runs `tools/rbac/generate.py --check`.
+`rbac_seed.json` (`roles`, `role_permissions`). Never hand-edit the generated parts; the guard is the
+contract test `services/api/tests/contract/rbac/test_rbac_generator.py::test_check_passes_against_committed_output`
+(also `python tools/rbac/generate.py --check`); CI `generated-code` covers only `packages/protocol`.
 
 To answer a denial:
 
-1. Find the denial in the audit log: `GET $API/admin/audit?action=rbac.denied` (add `actor_user_id`).
+1. Find the denial in the audit log: `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=rbac.denied"` (add `&actor_user_id=<id>`).
    The entry names the permission and scope (`auth/scopes.py`, `enforce`).
 2. Look up the permission on the route in `22-api-openapi.yaml` (`x-rbac`), then check whether the
    user's role holds it in `rbac_seed.json`.
@@ -257,17 +320,18 @@ repository's secret settings, never from an agent session.
 
 ## Known gaps referenced above
 
-| Gap                                                                       | Reference                                 |
-| ------------------------------------------------------------------------- | ----------------------------------------- |
-| Break-glass CLI (SR-023)                                                  | #1778 item AB, no owning ticket           |
-| `PUT /auth/password` not implemented (no revoke-other-sessions on change) | #2110                                     |
-| Scheduled audit-chain verifier                                            | #2111                                     |
-| Disable-user cascade (SR-029)                                             | #965                                      |
-| Session rotation on role change and step-up                               | #2101                                     |
-| Owner notification on lockout                                             | #2102                                     |
-| Authz/lockout metrics declared but not emitted                            | none yet; listed in the PR as new finding |
+| Gap                                                                       | Reference            |
+| ------------------------------------------------------------------------- | -------------------- |
+| Break-glass CLI (SR-023)                                                  | #1778 item AB, #2119 |
+| `PUT /auth/password` not implemented (no revoke-other-sessions on change) | #2110                |
+| Scheduled audit-chain verifier                                            | #2111                |
+| Disable-user cascade (SR-029)                                             | #965                 |
+| Session rotation on role change and step-up                               | #2101                |
+| Owner notification on lockout                                             | #2102                |
+| Authz/lockout metrics declared but not emitted                            | #2117                |
 
 ## Execution record
 
-Not executed on staging by a non-author: deferred → #1778 item U. Security engineer and Ops review:
-open (needs owner). Nothing in this runbook has been run by anyone other than its author.
+Not executed on staging by a non-author: no staging host exists (#1778 item A); a follow-up issue
+tracks the run. Security review of §3/§5 exists as an agent review on #2115; Ops review is pending
+these corrections.
