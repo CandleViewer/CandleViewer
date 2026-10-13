@@ -426,6 +426,23 @@ class BybitRestClient:
             try:
                 data = json.loads(raw)
             except ValueError as exc:
+                if endpoint_class is not EndpointClass.ORDER:
+                    # Idempotent read: a truncated/non-JSON body (proxy, reset
+                    # mid-body) is a transport fault -> retry like a 5xx (E08-Q03 #6).
+                    # ORDER class keeps UnknownStateError: reconciliation owns it (C-2.10).
+                    bybit_rest_requests_total.labels(endpoint=path, result="malformed_json").inc()
+                    logger().warning(
+                        "bybit_rest_malformed_json",
+                        path=path,
+                        attempt=attempt,
+                        status=response.status_code,
+                    )
+                    if attempt > self._config.max_retries:
+                        raise TransportError(
+                            f"{path} returned a non-JSON body after {attempt} attempts"
+                        ) from exc
+                    await self._backoff(attempt)
+                    continue
                 bybit_rest_requests_total.labels(endpoint=path, result="error").inc()
                 exchange_errors_total.labels(**{"class": UnknownStateError.code.value}).inc()
                 raise UnknownStateError(
