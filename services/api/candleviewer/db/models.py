@@ -1315,6 +1315,7 @@ api_keys = Table(
     Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("revoked_at", TIMESTAMP(timezone=True)),
     CheckConstraint("can_withdraw = false", name="ak_no_withdraw"),
+    CheckConstraint("can_transfer = false", name="ak_no_transfer"),  # revision 0019 (#2240)
     CheckConstraint("enc_alg = 'AES-256-GCM'", name="ak_alg"),
     CheckConstraint("octet_length(enc_nonce) = 12", name="ak_nonce_len"),
     CheckConstraint("key_id_last4 ~ '^[A-Za-z0-9]{4}$'", name="ak_last4"),

@@ -8,4 +8,5 @@ class AccountsError(Exception):
 
 
 class WithdrawPermissionError(AccountsError, ValueError):
-    """Key reports Withdraw permission; problem code `key_withdraw_permission` (C-2.8)."""
+    """Key grants a withdraw or transfer right (C-2.8, SR-030a); problem code
+    `key_withdraw_permission`."""

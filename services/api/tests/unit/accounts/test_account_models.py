@@ -24,8 +24,18 @@ _NOW = datetime(2026, 9, 14, tzinfo=UTC)
 _SECRET = {"secret_enc", "key_id_enc", "enc_nonce", "dek_ref"}
 
 
-def _fixtures() -> list[dict[str, Any]]:
+def _shipped_fixtures() -> list[dict[str, Any]]:
     return json.loads(_FX.read_text())["accounts"]  # type: ignore[no-any-return]
+
+
+def _fixtures() -> list[dict[str, Any]]:
+    """Fixture rows minus the `AccountTransfer` right the synthetic fixture grants, which
+    C-2.8 / SR-030a refuse (#2240); the shipped rows are covered by
+    `test_shipped_fixture_transfer_right_is_refused`."""
+    rows = _shipped_fixtures()
+    for row in rows:
+        row["permission_snapshot"]["permissions"]["Wallet"] = []
+    return rows
 
 
 def _account(row: dict[str, Any]) -> ExchangeAccount:
@@ -73,6 +83,14 @@ def test_snapshot_rejects_withdraw() -> None:
         PermissionSnapshot(**snap)
 
 
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_shipped_fixture_transfer_right_is_refused(index: int) -> None:
+    snap = _shipped_fixtures()[index]["permission_snapshot"]
+    assert snap["permissions"]["Wallet"] == ["AccountTransfer"]
+    with pytest.raises(ValidationError, match="key_withdraw_permission"):
+        PermissionSnapshot(**snap)
+
+
 def test_account_parent_shape_and_utc() -> None:
     row = _fixtures()[1]
     with pytest.raises(ValidationError):
@@ -92,6 +110,15 @@ def test_key_readonly_excl_and_withdraw_flag() -> None:
     with pytest.raises(ValidationError):
         _key(snap, can_withdraw=True)
     assert _key(snap).key_id_masked == "...AbC1"
+
+
+def test_key_transfer_flag_is_pinned_false() -> None:
+    """Transfer rights are refused (C-2.8, SR-030a), so a stored key can never claim one; the
+    `ak_no_transfer` CHECK (migration 0019) pins the column the same way."""
+    snap = _fixtures()[0]["permission_snapshot"]
+    with pytest.raises(ValidationError, match="can_transfer"):
+        _key(snap, can_transfer=True)
+    assert _key(snap).can_transfer is False
 
 
 def test_rotation_validators() -> None:

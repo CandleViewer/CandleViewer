@@ -7,6 +7,7 @@ credential broker's internal row type reads them. `key_id_last4` is the only key
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -15,6 +16,7 @@ from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
+from candleviewer.accounts._permissions import reject_withdraw
 from candleviewer.accounts.errors import WithdrawPermissionError
 
 
@@ -90,7 +92,9 @@ class ExchangeAccount(BaseModel):
 
 
 class PermissionSet(BaseModel):
-    """Exchange-reported `permissions` object; `Withdraw` must be empty (C-2.8)."""
+    """Exchange-reported `permissions` object. Rights are values inside a group
+    (`"Wallet": ["AccountTransfer"]`); `PermissionSnapshot` refuses any withdraw or transfer
+    right (C-2.8, SR-030a)."""
 
     model_config = ConfigDict(frozen=True, extra="allow")
 
@@ -102,6 +106,16 @@ class PermissionSet(BaseModel):
     Exchange: tuple[str, ...] = ()
     NFT: tuple[str, ...] = ()
     Withdraw: tuple[str, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _mapping_only(cls, data: object) -> object:
+        """Only a mapping or a built `PermissionSet` may carry permissions: `from_attributes`
+        reads just the declared groups off an attribute object and drops the rest unchecked, so
+        such input fails closed (C-2.8)."""
+        if isinstance(data, Mapping | PermissionSet):
+            return data
+        raise WithdrawPermissionError("key_withdraw_permission")
 
 
 class PermissionSnapshot(BaseModel):
@@ -118,10 +132,22 @@ class PermissionSnapshot(BaseModel):
     type: int = 1
     expiredAt: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _no_withdraw_raw(cls, data: object) -> object:
+        """C-2.8 / SR-030a on a raw mapping payload, before pydantic coerces anything, so a value
+        JSON cannot carry fails closed; the same rule as migration 0019's `ak_snapshot_shape`."""
+        permissions = data.get("permissions") if isinstance(data, Mapping) else None
+        if isinstance(permissions, Mapping):
+            reject_withdraw(permissions)
+        return data
+
     @model_validator(mode="after")
     def _no_withdraw(self) -> PermissionSnapshot:
-        if self.permissions.Withdraw:
-            raise WithdrawPermissionError("key_withdraw_permission")
+        """The same rule on the validated model, for input the raw check above never sees: a
+        snapshot read with `from_attributes=True` (DTOs, ORM rows). Attribute-object
+        `permissions` are refused earlier, by `PermissionSet._mapping_only`."""
+        reject_withdraw(self.permissions.model_dump())
         return self
 
 
@@ -139,7 +165,8 @@ class ApiKeyMetadata(BaseModel):
     permission_snapshot_at: UtcDatetime
     can_trade: bool = False
     can_withdraw: Literal[False] = False
-    can_transfer: bool = False
+    #: Transfer rights are refused like withdrawal (C-2.8, SR-030a); `ak_no_transfer` pins it.
+    can_transfer: Literal[False] = False
     read_only: bool = False
     status: KeyStatus = KeyStatus.PENDING
     expires_at: OptUtcDatetime = None
