@@ -97,7 +97,7 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
 - **Session cache**: the decision text mentions a short-lived in-process cache with explicit
   invalidation. The review found no such cache in `auth/`; every request reads the session
   (`authenticate_access_token`). Revocation reaches live sockets through `ws/revocation.py`.
-  Role changes push a `permission_change` to sockets (`api/users.py`).
+  Role changes push a `permission_change` to sockets (`api/users.py`); the frame is undocumented in `23-ws-protocol.md` (divergence tracked in #2297).
 - **Permission vocabulary**: `x-rbac` blocks in `22-api-openapi.yaml` are the source;
   `tools/rbac/generate.py` writes `auth/generated_permissions.py` and the `permissions` list of
   `auth/rbac_seed.json`; guarded by the contract test

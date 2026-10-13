@@ -70,8 +70,7 @@ curl -s -X POST "$API/auth/mfa/recovery" -H 'Content-Type: application/json' \
 
 Expected `200` `{"status":"authenticated","forced_totp_reenroll":true}`. **BLOCKED — not
 implemented:** this route mints no session, token or cookie (`api/auth.py`), and
-`/auth/mfa/enroll[/confirm]` are `501` stubs (owner #230; gap tracked in the follow-up issue linked
-on #292). So recovery codes do **not** currently get the Owner back in. A code is single use;
+`/auth/mfa/enroll[/confirm]` are `501` stubs (re-enrolment: #2295; recovery-session gap: #2344). So recovery codes do **not** currently get the Owner back in. A code is single use;
 `auth.recovery_code_used` is written, and `auth.recovery_codes_exhausted` when none remain.
 Re-enrolment is forced unconditionally after a recovery (`auth/mfa_service.py`);
 `LOW_CODE_THRESHOLD` is defined but unused.
@@ -132,9 +131,9 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
 
 4. **BLOCKED — re-enrolment is not possible today.** `reset_totp` revokes every method; a user with
    no active method gets `501` from `POST /auth/login` (`login_service.py`), and
-   `/auth/mfa/enroll[/confirm]` are `501` stubs (`api/auth.py`, owner #230). After a reset the user
-   cannot log back in until the follow-up fix (session-authenticated enrolment and a no-method
-   login path, tracked on #292) lands. Do not reset a TOTP you cannot afford to leave locked out.
+   `/auth/mfa/enroll[/confirm]` are `501` stubs (`api/auth.py`). After a reset the user
+   cannot log back in until #2295 (session-authenticated enrolment and a no-method
+   login path) lands. Do not reset a TOTP you cannot afford to leave locked out.
 5. Verify from telemetry: audit action `auth.mfa_reset_by_owner` (severity critical) with the
    target user:
    `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.mfa_reset_by_owner"`;
@@ -332,6 +331,6 @@ repository's secret settings, never from an agent session.
 
 ## Execution record
 
-Not executed on staging by a non-author: no staging host exists (#1778 item A); a follow-up issue
-tracks the run. Security review of §3/§5 exists as an agent review on #2115; Ops review is pending
-these corrections.
+Not executed on staging by a non-author: no staging host exists (#1778 item A); the run is tracked
+in #2298. Security review of §3/§5 exists as an agent review on #2115; Ops review is recorded on #2343 
+the Ops review covers the runbook as corrected.
