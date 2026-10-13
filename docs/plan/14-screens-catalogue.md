@@ -221,19 +221,22 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 +------------------------------------------+
 | Session expired                          |
 | Sign in again to continue. Your layout   |
-| and unsent ticket inputs are preserved.  |
+| is preserved; unsent ticket inputs are   |
+| preserved while locked; discarded on     |
+| sign-out or expiry.                      |
 | Password [_______]   [ Sign in ]         |
 | [ Sign out instead ]                     |
 +------------------------------------------+
 ```
 
-- **Behaviour:** all WS subscriptions pause; trading controls disable behind the modal; on success subscriptions resume and open-order state is reconciled from `GET /api/v1/orders?status=open`.
+- **Behaviour:** UI frozen; private panels masked; public market data keeps streaming; nothing unsubscribed; trading controls disable behind the modal; on success the UI unfreezes and open-order state is reconciled from `GET /orders?open_only=true` (client never resubmits). An **Emergency stop** path (needs `killswitch:write`; also the kill-switch hotkey) takes the password and opens SCR-072 on unlock; nothing else that changes state is possible while locked.
 - **A11y:** focus trap, `role="alertdialog"`, Escape does **not** dismiss.
-- **Audit:** `auth.session.expired`, `auth.session.reauth`. **Stories:** US-AUTH-007.
-- **Performance:** Modal mounts <=100 ms; all live WS subscriptions are paused (not torn down) while it is open so re-auth resumes without a full resubscribe storm.
+- **Audit:** `auth.idle_locked`, `auth.session_unlocked` (new — #2300), `auth.session_revoked` (absolute expiry). **Stories:** US-AUTH-007.
+- **Performance:** Modal mounts <=100 ms; the UI is frozen with private panels masked while it is open and nothing is unsubscribed, so re-auth resumes without a resubscribe storm.
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-098 SessionTimeoutWarning, CMP-201 PasswordField.
 - **Stories:** US-ONB-004.
-- **Design sign-off acceptance checklist:** [ ] underlying screen state is preserved and visibly frozen, not destroyed [ ] 'sign out instead' escape drawn [ ] expiry-during-order-entry case drawn (draft ticket retained, unarmed) [ ] focus moves to the modal and returns on close
+- **Hi-fi (E09-D06):** idle-lock and absolute-expiry variants drawn over a live workspace (UI frozen; private panels masked; public data streaming; nothing unsubscribed; armed 1-click disarmed and not auto-restored; draft retained on idle lock, discarded on absolute expiry and sign-out). Pre-lock warning is CMP-098 (60 s). Spec: `docs/design/E09/E09-D06.md`.
+- **Design sign-off acceptance checklist:** [ ] underlying screen state is preserved and visibly frozen, not destroyed [ ] 'sign out instead' escape drawn [ ] expiry-during-order-entry case drawn (idle lock: draft retained, unarmed; absolute expiry: not sent, discarded, disarmed) [ ] focus moves to the modal and returns on close
 
 ### SCR-006 — Step-up authentication modal (S)
 
@@ -243,19 +246,21 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 +--------------------------------------------------+
 | Confirm with two-factor                          |
 | Action: Rotate API key for account "sub_002"     |
+| Password: [__________]                           |
 | Enter your authenticator code: [_ _ _ _ _ _]     |
 | Type the account name to confirm: [__________]   |
 |                     [ Cancel ]  [ Confirm ]      |
 +--------------------------------------------------+
 ```
 
-- **Data:** `POST /api/v1/auth/step-up` → short-lived `stepUpToken` (5 min, single scope).
+- **Data:** `POST /auth/step-up` `{password, code, action_class?}` → `{elevated_until, action_class, single_use, step_up_expires_at}`; there is no token, elevation is server-side session state.
 - **Validation:** typed confirmation must match exactly (case-sensitive); Confirm disabled until both fields are valid.
-- **Audit:** `auth.stepup.granted|denied` with the target action key. **Stories:** US-AUTH-008, US-ADMIN-011.
-- **A11y:** Dialog is `role="alertdialog"` with the sensitive action named in the accessible description ('Confirm: rotate API key for Main'); the reason for step-up is text, not an icon; focus starts on the code field and is trapped until resolved; failures are announced via `aria-live="assertive"`.
-- **Performance:** Step-up token issue <=400 ms p95; token TTL and remaining validity are rendered from a server-provided expiry, never a client clock assumption.
+- **Audit:** `auth.step_up_granted|failed|required` with the target action key; `auth.session_readonly_downgrade` on the 3rd failure. **Stories:** US-AUTH-008, US-ADMIN-011.
+- **A11y:** Dialog is `role="alertdialog"` with the sensitive action named in the accessible description ('Confirm: rotate API key for Main'); the reason for step-up is text, not an icon; focus starts on the password field and is trapped until resolved; failures are announced via `aria-live="assertive"`.
+- **Performance:** Step-up elevation <=400 ms p95; there is no token: remaining validity is rendered from the server-provided `step_up_expires_at`, never a client clock assumption.
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-043 Dialog, CMP-201 PasswordField, CMP-204 OtpInput.
 - **Stories:** US-ONB-005.
+- **Hi-fi (E09-D06):** code-only, code+typed confirmation, valid-grace (server expiry), failures 1-2, 3rd-failure read-only downgrade (5 min), no-grace variant for Live enablement / kill-switch disable. Spec: `docs/design/E09/E09-D06.md`.
 - **Design sign-off acceptance checklist:** [ ] the exact action being authorised is restated verbatim in the dialog [ ] remaining-TTL indicator for an already-valid step-up token [ ] failure/lockout state drawn [ ] cancel returns the caller to a safe no-op state
 
 ### SCR-010 — App shell (global chrome)
@@ -2694,11 +2699,12 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 ### SCR-149 — Admin re-authentication gate
 
 - **Type:** Page/Modal shown on first entry to any `/admin/*` route when the admin token is older than 15 minutes. Password + TOTP; explains why ("Admin screens need a fresh confirmation"); on success, admin routes unlock for 15 minutes of activity.
-- **Audit:** `admin.session_elevated`. **Stories:** US-ADMIN-016.
+- **Audit:** `auth.session_unlocked` (new — #2300), `auth.step_up_failed` on a wrong password or code. **Stories:** US-ADMIN-016.
 - **A11y:** `role="alertdialog"` explaining why re-authentication is required and for how long the resulting token is valid; the TOTP field has a visible label and format hint; failures are announced assertively.
 - **Performance:** Token issue <=400 ms; the token's TTL (15 min) is server-issued and the remaining validity is displayed in the admin chrome so the user is never surprised by a mid-task expiry.
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-043 Dialog, CMP-201 PasswordField, CMP-204 OtpInput.
 - **Stories:** US-ONB-005.
+- **Hi-fi (E09-D06):** drawn as a declared variant of the SCR-005/006 chassis (default, verifying, wrong credentials, lockout, expiry during admin edit, unlocked indicator). See `docs/design/E09/E09-D06.md`.
 - **Design sign-off acceptance checklist:** [ ] the reason for the gate and the resulting token's validity window are stated [ ] the countdown/freshness indicator in the admin chrome is drawn [ ] expiry-during-an-admin-edit case drawn (the form's content is preserved, the save is held) [ ] failure and lockout states [ ] cancel returns to the non-admin app, not to a dead end
 
 ---

@@ -834,7 +834,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-098 SessionTimeoutWarning
 - **Tier**: Organism · **Purpose**: warns before auth session/admin re-auth expiry, offers one-click extend.
 - **Props**: `expiresInSec` · `onExtend`.
-- **A11y**: `role="alertdialog"` appearing at a fixed threshold (e.g. 60s remaining), keyboard-operable extend action, never a silent auto-logout without this warning (WCAG 2.2.1).
+- **A11y**: `role="alertdialog"` appearing at a fixed threshold (e.g. 60s remaining), keyboard-operable extend action, never a silent auto-logout without this warning (WCAG 2.2.1). Esc = dismiss, does NOT extend; Extend is an explicit server call (POST /auth/session/extend).
 - **Tokens**: inherits CMP-043.
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe, timing-warning interaction test.
