@@ -2699,7 +2699,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 ### SCR-149 — Admin re-authentication gate
 
 - **Type:** Page/Modal shown on first entry to any `/admin/*` route when the admin token is older than 15 minutes. Password + TOTP; explains why ("Admin screens need a fresh confirmation"); on success, admin routes unlock for 15 minutes of activity.
-- **Audit:** `admin.session_elevated`. **Stories:** US-ADMIN-016.
+- **Audit:** `auth.session_unlocked` (new — #2300), `auth.step_up_failed` on a wrong password or code. **Stories:** US-ADMIN-016.
 - **A11y:** `role="alertdialog"` explaining why re-authentication is required and for how long the resulting token is valid; the TOTP field has a visible label and format hint; failures are announced assertively.
 - **Performance:** Token issue <=400 ms; the token's TTL (15 min) is server-issued and the remaining validity is displayed in the admin chrome so the user is never surprised by a mid-task expiry.
 - **Components:** CMP-001 Button, CMP-027 ErrorState / InlineError, CMP-043 Dialog, CMP-201 PasswordField, CMP-204 OtpInput.
