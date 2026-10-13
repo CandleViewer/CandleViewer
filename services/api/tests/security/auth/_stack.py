@@ -25,7 +25,7 @@ from candleviewer.audit.actions import validate_action
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
-from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.ws.gateway import make_ws_router
@@ -40,6 +40,8 @@ PW = "pw-canary-x02-abuse"  # test-only literal, never a credential
 INVITE_PW = "correct horse battery"  # an invitee's new password (SR-028 policy)
 _PEPPER = "x02-test-pepper"
 T0 = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
+#: The exchange account a WS test's manager holds until the test revokes the grant.
+GRANTED_ACCOUNT = uuid.UUID("00000000-0000-4000-8000-00000000acc1")
 
 
 class Clock:
@@ -71,6 +73,19 @@ class Identity:
 
     async def session_info(self, user_id: str) -> dict[str, Any]:
         return {"permissions": [], "account_scope": []}
+
+
+class Grants:
+    """WS principal source standing in for the identity store: a manager with `orders:read`
+    on `GRANTED_ACCOUNT` until `granted` is cleared."""
+
+    def __init__(self) -> None:
+        self.granted = True
+
+    async def load(self, uid: uuid.UUID) -> PrincipalSnapshot:
+        grants = (AccountGrant(GRANTED_ACCOUNT, True, True, False),) if self.granted else ()
+        perms = frozenset({Permission.MARKETDATA_READ, Permission.ORDERS_READ})
+        return PrincipalSnapshot(uid, frozenset({"manager"}), perms, grants)
 
 
 class Resolver:

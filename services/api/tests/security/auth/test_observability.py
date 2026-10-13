@@ -12,11 +12,9 @@ not desired behaviour: when one is closed, update this file and the catalogue to
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-import pytest
 import yaml
 from prometheus_client import REGISTRY
 
@@ -25,9 +23,8 @@ from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD
 from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP
-from tests.unit.auth.test_invite_service import GOOD_PW
 
-from ._stack import PW, Stack, open_stack
+from ._stack import INVITE_PW, PW, Stack
 
 _ALERT_RULES = Path(__file__).resolve().parents[5] / "infra" / "prometheus" / "alerts"
 _METRIC = re.compile(r"[a-z_][a-z0-9_]*")
@@ -51,12 +48,6 @@ ALERTING: dict[str, set[str]] = {
     "auth_lockouts_total": {"AuthLockouts", "ExpectedMetricMissingAuthLockoutsTotal"},
     "authz_denied_total": {"AuthzDeniedSpike", "ExpectedMetricMissingAuthzDeniedTotal"},
 }
-
-
-@pytest.fixture
-def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
-    with open_stack(monkeypatch) as s:
-        yield s
 
 
 def in_process(name: str, **labels: str) -> float:
@@ -200,7 +191,7 @@ def test_obs_invite_guessing_and_role_tamper_are_audited_metric_in_process_only(
     guessed = "g" * 43
     before = in_process("users_invites_rejected_total", reason="unknown")
     assert stack.client.get(f"/invites/{guessed}").status_code == 404
-    tamper = {"password": GOOD_PW, "role": "owner"}
+    tamper = {"password": INVITE_PW, "role": "owner"}
     assert stack.client.post(f"/invites/{guessed}", json=tamper).status_code == 403
     assert _rows(stack, "users.invite_rejected") == [
         ("unknown", "denied", "info"),

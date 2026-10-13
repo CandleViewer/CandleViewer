@@ -9,43 +9,19 @@ changed here; where a case shows a gap it is recorded as a finding in the catalo
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Any
 
 import pytest
 
-from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from tests.csrf_helpers import csrf_headers
 
-from ._stack import ORIGIN, Stack, open_stack
+from ._stack import GRANTED_ACCOUNT, ORIGIN, Grants, Stack
 
 _JSON = ["cv.v1.json"]
-_ACC = uuid.uuid4()
-_ORDERS = {"ch": "orders", "opts": {"exchange_account_ids": [str(_ACC)]}}
+_ORDERS = {"ch": "orders", "opts": {"exchange_account_ids": [str(GRANTED_ACCOUNT)]}}
 _DEADLINE_S = 5.0
-
-
-class _Grants:
-    """Principal source standing in for the identity store: a manager with `orders:read` on
-    `_ACC` until the grant is revoked."""
-
-    def __init__(self) -> None:
-        self.granted = True
-
-    async def load(self, uid: uuid.UUID) -> PrincipalSnapshot:
-        grants = (AccountGrant(_ACC, True, True, False),) if self.granted else ()
-        perms = frozenset({Permission.MARKETDATA_READ, Permission.ORDERS_READ})
-        return PrincipalSnapshot(uid, frozenset({"manager"}), perms, grants)
-
-
-@pytest.fixture
-def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Stack, _Grants]]:
-    grants = _Grants()
-    with open_stack(monkeypatch, snapshot_loader=grants.load) as stack:
-        yield stack, grants
 
 
 def _connect(stack: Stack) -> Any:
@@ -82,7 +58,7 @@ def _sub(ws: Any, *topics: Any) -> list[dict[str, Any]]:
 
 
 def test_ac_ws_01_private_subscribe_before_auth_ok_is_refused_then_closed(
-    world: tuple[Stack, _Grants],
+    world: tuple[Stack, Grants],
 ) -> None:  # §4.3: nothing is served before auth_ok
     stack, _ = world
     closes = stack.scraped("cv_ws_closes_total", reason="not_authenticated")
@@ -104,7 +80,7 @@ def test_ac_ws_01_private_subscribe_before_auth_ok_is_refused_then_closed(
 
 
 def test_ac_ws_02_auth_frame_replayed_on_second_socket_accepted_while_session_is_live(
-    world: tuple[Stack, _Grants],
+    world: tuple[Stack, Grants],
 ) -> None:  # U13; finding F-3: the replay is bounded by the session, not by the socket
     stack, _ = world
     minted = stack.call(stack.auth.sessions.mint, str(uuid.uuid4()))
@@ -139,7 +115,7 @@ def test_ac_ws_02_auth_frame_replayed_on_second_socket_accepted_while_session_is
 
 
 def test_ac_ws_03_socket_held_across_grant_revocation_loses_and_cannot_regain_the_topic(
-    world: tuple[Stack, _Grants],
+    world: tuple[Stack, Grants],
 ) -> None:  # U32 / §9.5 (the re-auth snapshot race, SR-189, is #2172)
     stack, grants = world
     user = uuid.uuid4()
@@ -169,7 +145,7 @@ def test_ac_ws_03_socket_held_across_grant_revocation_loses_and_cannot_regain_th
 
 
 def test_ac_ws_04_topic_name_injection_never_escapes_the_registry(
-    world: tuple[Stack, _Grants],
+    world: tuple[Stack, Grants],
 ) -> None:  # §6: only catalogued topic names are parsed; nothing else is subscribed
     stack, _ = world
     minted = stack.call(stack.auth.sessions.mint, str(uuid.uuid4()))
