@@ -332,5 +332,4 @@ repository's secret settings, never from an agent session.
 ## Execution record
 
 Not executed on staging by a non-author: no staging host exists (#1778 item A); the run is tracked
-in #2298. Security review of §3/§5 exists as an agent review on #2115; Ops review is recorded on #2343 
-the Ops review covers the runbook as corrected.
+in #2298. Security review of §3/§5 exists as an agent review on #2115; Ops review is recorded on #2343.
