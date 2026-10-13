@@ -689,11 +689,12 @@ the 30-minute canary meanwhile.
 
 ### RSK-060 · A display-only or provisional indicator value reaches a rule or stop offset (metric integrity)
 
-`Risk: R7` · Category **Security** · L 3 · I 5 · **Score 15 — Critical (inherent; provisional until E13-S08 tests land)** · Owner **Security engineer** · Epics E13 · Status **Open**
+`Risk: R7` · Category **Security** · L 3 · I 5 · **Score 15 — Critical (inherent; provisional until the E28-T03/E28-X03 consumer tests and E13-S08 land)** · Owner **Security engineer** · Epics E13 · Status **Open**
 
 - **Description** — Introduced by E13-X01 (`docs/security/threat-models/E13-indicators.md`, IR-11, IR-12, IR-20, IR-45). ATR feeds `sl_offset_unit="atr"` stop sizing and confirmed Zig Zag swings can feed trailing stops; a worker-computed display value or an unconfirmed (repainting) swing used there would size a live stop from a wrong number.
 - **Mitigation** — Registry has no client write path; stop sizing reads only the server kernel via `MetricRegistry.resolve()` on closed bars (SR-E13-11), fail-closed on missing/NaN/stale/parity-flagged ATR (SR-E13-12, IR-45), static risk/oms import check (SR-E13-13, E13-X02); provisional Zig Zag never published (E13-S05); `test_atr_stop_offset_source_is_kernel` (E13-S08); parity pack (E13-Q05); `indicator_parity_mismatch_total` at ERROR. Depends on ADR-0034 (Proposed). Owner acceptance pending.
-- **Residual** — L 2 x I 4 = **8 (Medium)** once the E13-S08 test, the fail-closed ATR rule (IR-45) and the E35/E29 assertions exist. Scored on the inherent risk until then (IR-12 inherent Critical, `E13-indicators.md` §12).
+- **Residual** — L 2 x I 4 = **8 (Medium)** once the E28-T03 tests (`test_atr_stop_offset_source_is_kernel`, `test_atr_unavailable_fails_closed`), the fail-closed ATR rule (IR-45), E13-S08 and the E32-S04/E35 swing assertions exist. Consumers of the TB-8 hand-off are E28-T03, E32-T02, E32-S04 and E30-T01/S03 (E13-X01 §5), not E29/E34.
+- **Accepted sub-risks** — IR-18 (trusted-host edit of `indicator_presets`) and IR-27 (shared kernel memo over public data): Owner accepted as written, #1778 item Y (2026-10-09); expiry 2027-03-25 (GA cut, re-review at E49 quarterly pass, C-12.3). Scored on the inherent risk until then (IR-12 inherent Critical, `E13-indicators.md` §12).
 - **Trigger** — Any non-zero `indicator_parity_mismatch_total` or `indicator_provisional_published_total`; a stop-sizing record without `source=kernel`.
 - **Contingency** — Fall back `sl_offset_unit` to `ticks`/`percent` for affected profiles; disarm structure-based rules; Owner review.
 
