@@ -45,11 +45,9 @@ leg). This PR closes E09-S02 exactly as scoped ("second factor,
 enrolment and recovery codes"); the end-to-end scenario is completed by
 E09-S03, which is already `blocked_by` this story and picks this up next.
 
-Source IP resolution intentionally does not trust `X-Forwarded-For` unless
-the deployment topology has a trusted reverse proxy configured elsewhere
-(out of this ticket's scope, C-2.11); it reads `request.client.host`, which
-is correct for CandleViewer's binding model (`127.0.0.1`/Tailscale — see
-`50-security.md`).
+Audit `actor_ip` is `api.csrf.source_ip`: the address `MeshOnlyMiddleware`
+admitted (trusted-proxy aware), else the socket peer, the same value the
+session router and the CSRF guard record. `X-Forwarded-For` is never read here.
 """
 
 from __future__ import annotations
@@ -57,10 +55,12 @@ from __future__ import annotations
 import uuid
 from typing import Any, Protocol
 
+import structlog
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
 from candleviewer.api.csrf import set_csrf_cookie
+from candleviewer.api.csrf import source_ip as admitted_source_ip
 from candleviewer.api.sessions import (
     REFRESH_COOKIE,
     REFRESH_EXPIRES_IN_S,
@@ -69,6 +69,7 @@ from candleviewer.api.sessions import (
     _set_refresh_cookie,
     _tokens,
 )
+from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
@@ -205,8 +206,14 @@ def _problem(status_code: int, title: str, detail: str) -> JSONResponse:
 
 def _client_ip(request: Request) -> str | None:
     """Peer address for `audit_log.actor_ip` (an `inet` column): `None`, never
-    a placeholder string, when unknown (QA #1658: "unknown" broke the real sink)."""
-    return request.client.host if request.client is not None else None
+    a placeholder string, when unknown (QA #1658: "unknown" broke the real sink).
+    The address MeshOnly admitted, else the socket peer (as the session router)."""
+    return admitted_source_ip(request.scope)
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
 
 
 def _redact_identifier(identifier: str) -> str:
@@ -233,10 +240,13 @@ def make_auth_router(
     SR-041 `__Host-cv_csrf` cookie wherever a session is minted (#2090)."""
     router = APIRouter(tags=["auth"])
 
-    async def _audit_carried_sessions(request: Request, user_id: uuid.UUID) -> None:
+    async def _audit_carried_sessions(request: Request, user_id: uuid.UUID) -> bool:
         """U6/SR-013 (E09-X02 AC2): a session credential carried into the MFA step is never
         adopted (`mint` always issues a new id). One that is not this user's own session,
-        i.e. never issued here or another user's, is counted and audited as an attempt."""
+        i.e. never issued here or another user's, is counted and audited as an attempt.
+
+        Fail closed (C-2.9 write-ahead): `False` when that record cannot be written, so
+        the caller refuses and mints nothing."""
         sessions = auth_service.sessions
         carried = (
             ("refresh_cookie", request.cookies.get(REFRESH_COOKIE)),
@@ -258,16 +268,22 @@ def make_auth_router(
             after: dict[str, Any] = {"vector": vector, "stage": "mfa_verify"}
             if record is not None:
                 after["presented_session_id"] = str(record.id)
-            await audit_service.writer.emit(
-                "auth.session_fixation_attempt",
-                actor_label=str(user_id),
-                actor_user_id=user_id,
-                actor_ip=_client_ip(request),
-                outcome=AuditOutcome.DENIED,
-                severity=Severity.WARNING,
-                reason=reason,
-                after_state=after,
-            )
+            try:
+                await audit_service.writer.emit(
+                    "auth.session_fixation_attempt",
+                    actor_label=str(user_id),
+                    actor_user_id=user_id,
+                    actor_ip=_client_ip(request),
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason=reason,
+                    after_state=after,
+                )
+            except AuditError as exc:
+                auth_session_fixation_attempts_total.labels(reason="audit_failed").inc()
+                _log().error("auth.session_fixation_attempt.audit_failed", error=type(exc).__name__)
+                return False
+        return True
 
     @router.post("/auth/login")
     async def login(request: Request, body: LoginRequest) -> JSONResponse:
@@ -372,7 +388,10 @@ def make_auth_router(
             return JSONResponse(status_code=200, content={"status": "authenticated"})
         # QA #1658: second factor satisfied -> mint the session (ADR-0020),
         # set the `cv_refresh` cookie and return `AuthenticatedResponse`.
-        await _audit_carried_sessions(request, result.user_id)
+        if not await _audit_carried_sessions(request, result.user_id):
+            # Fail closed (C-2.9 write-ahead): the attempt could not be recorded, so nothing is
+            # minted. 401 is this operation's documented refusal (no 503 in its contract).
+            return _problem(401, "MFA verification failed", "audit sink not active")
         source_ip = request.client.host if request.client is not None else None
         minted = await auth_service.sessions.mint(
             str(result.user_id), ip=source_ip, user_agent=request.headers.get("user-agent")

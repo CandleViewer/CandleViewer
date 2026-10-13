@@ -1,22 +1,26 @@
 """Session-fixation signal on the session routes (E09-X02 AC2, #2144, U6/SR-013).
 
 A bearer or refresh token this server never issued is refused with the uniform 401 and is
-counted and audited within a per-IP budget; an expired or revoked token of a real session is
-not an attempt; a failed audit write never changes the 401. Fixed clock, no network.
+counted and audited within per-IP and global budgets through the shielded, in-flight-capped
+writer path; an expired or revoked token of a real session is not an attempt; a slow, failed
+or cancelled audit write never changes the 401. Fixed clock, no network.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from datetime import timedelta
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
+from candleviewer.api.csrf import RefusalAuditTracker
 from candleviewer.api.sessions import REFRESH_COOKIE, make_session_router
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.hashing import Hasher
@@ -27,6 +31,7 @@ from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _ORIGIN = "https://app.example"
 _FORGED = "forged-" + "f" * 40
+_BEARER = {"Authorization": f"Bearer {_FORGED}"}
 
 
 def _count(reason: str) -> float:
@@ -35,13 +40,14 @@ def _count(reason: str) -> float:
 
 
 class _World:
-    def __init__(self, *, budget: int = 20) -> None:
+    def __init__(self, *, budget: int = 20, global_budget: int = 60) -> None:
         self.repo = FakeSessionRepository()
         self.hasher = Hasher(pepper=os.urandom(8).hex())
         self.svc = SessionService(self.repo, self.hasher, clock=lambda: _NOW)
         self.audit = _Audit()
-        app = FastAPI()
-        app.include_router(
+        self.tracker = RefusalAuditTracker()
+        self.app = FastAPI()
+        self.app.include_router(
             make_session_router(
                 _Auth(self.svc),
                 self.audit,
@@ -49,14 +55,18 @@ class _World:
                 allowed_origins=frozenset({_ORIGIN}),
                 csrf=_CSRF_CODEC,
                 fixation_throttle=PerIpLoginThrottle(max_attempts=budget, window_s=60.0),
+                fixation_global_throttle=PerIpLoginThrottle(
+                    max_attempts=global_budget, window_s=60.0
+                ),
+                audit_tracker=self.tracker,
             ),
             prefix="/api/v1",
         )
-        self.client = TestClient(app, base_url=_BASE)
+        self.client = TestClient(self.app, base_url=_BASE)
 
-    def session(self, token: str) -> int:
-        r = self.client.get("/api/v1/auth/session", headers={"Authorization": f"Bearer {token}"})
-        return int(r.status_code)
+    def session(self, token: str, client: TestClient | None = None) -> int:
+        headers = {"Authorization": f"Bearer {token}"}
+        return int((client or self.client).get("/api/v1/auth/session", headers=headers).status_code)
 
     @property
     def rows(self) -> list[dict[str, Any]]:
@@ -74,7 +84,7 @@ def test_never_issued_bearer_is_401_counted_and_audited_without_the_token() -> N
         Severity.WARNING,
     )
     assert row["after_state"] == {"vector": "bearer", "path": "/auth/session"}
-    assert row["actor_user_id"] is None and _FORGED not in repr(w.audit.writer.events)
+    assert row.get("actor_user_id") is None and _FORGED not in repr(w.audit.writer.events)
     assert _count("unknown_token") - before == 1
 
 
@@ -115,3 +125,50 @@ def test_unavailable_audit_sink_keeps_the_uniform_401() -> None:
     w.audit.is_active = False
     assert w.session(_FORGED) == 401
     assert w.rows == [] and _count("audit_unavailable") - before == 1
+
+
+def test_global_budget_caps_audit_rows_across_rotating_source_addresses() -> None:
+    w = _World(global_budget=2)  # per-IP budget (20) never reached: one attempt per address
+    throttled, attempts = _count("audit_throttled"), _count("unknown_token")
+    clients = [TestClient(w.app, base_url=_BASE, client=(f"10.9.0.{i}", 1)) for i in range(3)]
+    assert [w.session(f"{_FORGED}-{i}", c) for i, c in enumerate(clients)] == [401] * 3
+    assert len(w.rows) == 2  # the third address writes nothing
+    assert _count("audit_throttled") - throttled == 1
+    assert _count("unknown_token") - attempts == 3
+
+
+async def test_cancelled_request_does_not_lose_the_fixation_row() -> None:
+    w, entered, release = _World(), asyncio.Event(), asyncio.Event()
+    rows: list[str] = []
+
+    async def slow_emit(action: str, **_kw: Any) -> None:
+        entered.set()
+        await release.wait()
+        rows.append(action)
+
+    w.audit.writer.emit = slow_emit  # type: ignore[method-assign]  # a stalled WAL append
+    transport = httpx.ASGITransport(app=w.app)
+    async with httpx.AsyncClient(transport=transport, base_url=_BASE) as client:
+        request = asyncio.ensure_future(client.get("/api/v1/auth/session", headers=_BEARER))
+        async with asyncio.timeout(5):
+            await entered.wait()
+        request.cancel()  # the client goes away while the write is in flight
+        with pytest.raises(asyncio.CancelledError):
+            await request
+    release.set()
+    assert await w.tracker.drain(5.0) == 0
+    assert rows == ["auth.session_fixation_attempt"]
+
+
+async def test_never_issued_expired_and_revoked_tokens_get_a_byte_identical_401() -> None:
+    w = _World()
+    earlier = SessionService(w.repo, w.hasher, clock=lambda: _NOW - timedelta(minutes=30))
+    expired = await earlier.mint(str(uuid.uuid4()))
+    revoked = await w.svc.mint(str(uuid.uuid4()))
+    await w.svc.revoke(str(revoked.session_id), reason="logout")
+    replies = [
+        w.client.get("/api/v1/auth/session", headers={"Authorization": f"Bearer {token}"})
+        for token in (_FORGED, expired.access_token, revoked.access_token)
+    ]
+    shapes = {(r.status_code, r.headers["content-type"], r.content) for r in replies}
+    assert len(shapes) == 1 and replies[0].status_code == 401  # no oracle

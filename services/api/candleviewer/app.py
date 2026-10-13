@@ -960,6 +960,7 @@ def create_app(
             publish_revocation=_hub_publisher(revocation_hub),
             allowed_origins=resolved.allowed_origin_set,
             csrf=csrf_codec,
+            audit_tracker=csrf_audits,  # one in-flight cap + shutdown drain for refusal audits
         )
     )
     # QA #1648 d1: live WS gateway. Role changes (`PUT /users/{id}/roles`)

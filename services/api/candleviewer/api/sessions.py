@@ -27,12 +27,14 @@ the injected `publish_revocation(session_id, reason)`; the ws gateway
 Session fixation (U6/SR-013, E09-X02 AC2): a bearer or refresh token that was
 never issued here is refused with the same 401 as any other, and counted
 (`auth_session_fixation_attempts_total`) and audited
-(`auth.session_fixation_attempt`, per-IP budget). Expired or revoked tokens of
-real sessions are not attempts and stay silent.
+(`auth.session_fixation_attempt`) within a per-IP and a global budget, through
+the CSRF guard's in-flight-capped, shielded writer path. Expired or revoked
+tokens of real sessions are not attempts and stay silent.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -43,6 +45,8 @@ from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from candleviewer.api.csrf import (
+    AUDIT_TIMEOUT_S,
+    RefusalAuditTracker,
     clear_csrf_cookie,
     csrf_problem,
     set_csrf_cookie,
@@ -192,10 +196,14 @@ def _source_ip(request: Request) -> str | None:
 REFRESH_MAX_PER_WINDOW = 10
 REFRESH_WINDOW_S = 60.0
 #: Presentations of a session credential this server never issued (U6/SR-013, E09-X02
-#: AC2) that are audited per source IP per window; past the budget the 401 is unchanged
-#: and still counted, but writes no audit row (C-2.9 vs C-2.18, as the CSRF guard).
+#: AC2) that are audited per source IP, and for all sources together, per window, with at
+#: most the shared `RefusalAuditTracker` cap in flight. Past any of them the 401 is
+#: unchanged and still counted (`audit_throttled`), with no audit row (C-2.9 vs C-2.18, as
+#: the CSRF guard). The global budget holds when source addresses rotate or are forwarded.
 FIXATION_AUDITS_PER_WINDOW = 20
+FIXATION_AUDITS_GLOBAL_PER_WINDOW = 60
 FIXATION_AUDIT_WINDOW_S = 60.0
+_ALL_SOURCES = "*"
 
 
 def _route_path(request: Request) -> str:
@@ -275,7 +283,12 @@ def make_session_router(
     session_throttle: PerIpLoginThrottle | None = None,
     csrf: CsrfCodec,
     fixation_throttle: PerIpLoginThrottle | None = None,
+    fixation_global_throttle: PerIpLoginThrottle | None = None,
+    audit_tracker: RefusalAuditTracker | None = None,
+    audit_timeout_s: float = AUDIT_TIMEOUT_S,
 ) -> APIRouter:
+    """*audit_tracker*: pass the app's CSRF refusal tracker so both guards share one
+    in-flight cap and one shutdown drain."""
     router = APIRouter(tags=["auth"])
     by_ip = ip_throttle or PerIpLoginThrottle(
         max_attempts=REFRESH_MAX_PER_WINDOW, window_s=REFRESH_WINDOW_S
@@ -286,6 +299,12 @@ def make_session_router(
     by_fixation_ip = fixation_throttle or PerIpLoginThrottle(
         max_attempts=FIXATION_AUDITS_PER_WINDOW, window_s=FIXATION_AUDIT_WINDOW_S
     )
+    by_fixation_all = fixation_global_throttle or PerIpLoginThrottle(
+        max_attempts=FIXATION_AUDITS_GLOBAL_PER_WINDOW,
+        window_s=FIXATION_AUDIT_WINDOW_S,
+        max_tracked_ips=1,
+    )
+    tracker = audit_tracker if audit_tracker is not None else RefusalAuditTracker()
 
     def _audit_ready() -> bool:
         return audit_service is not None and audit_service.is_active
@@ -299,7 +318,6 @@ def make_session_router(
         severity: Severity = Severity.INFO,
         reason: str | None = None,
         session_id: str | uuid.UUID | None = None,
-        after_state: dict[str, Any] | None = None,
     ) -> None:
         if audit_service is None or not audit_service.is_active:
             raise AuditUnavailableError
@@ -312,33 +330,51 @@ def make_session_router(
             outcome=outcome,
             severity=severity,
             reason=reason,
-            after_state=after_state,
         )
 
     async def _fixation_attempt(request: Request, vector: str) -> None:
         """U6/SR-013 (E09-X02 AC2): a session credential this server never issued was
-        presented. The uniform 401 is unchanged (no oracle); the attempt is counted and
-        audited up to the per-IP budget. The token itself is never recorded, and a failed
-        audit write never changes the answer."""
-        auth_session_fixation_attempts_total.labels(reason="unknown_token").inc()
+        presented. The uniform 401 is unchanged (no oracle). The attempt is counted, and
+        audited within the per-IP and global budgets and the tracker's in-flight cap; the
+        write runs shielded, so a cancelled request never cuts it short (as the CSRF
+        guard). The token itself is never recorded; a slow or failed write never changes
+        the answer."""
+        fixation = auth_session_fixation_attempts_total
+        fixation.labels(reason="unknown_token").inc()
         ip = _source_ip(request)
         key = ip or "(unknown)"
-        if by_fixation_ip.is_blocked(key):
-            auth_session_fixation_attempts_total.labels(reason="audit_throttled").inc()
+        if (
+            tracker.full
+            or by_fixation_ip.is_blocked(key)
+            or by_fixation_all.is_blocked(_ALL_SOURCES)
+        ):
+            fixation.labels(reason="audit_throttled").inc()
             return
         by_fixation_ip.record_failure(key)
-        try:
-            await _audit(
+        by_fixation_all.record_failure(_ALL_SOURCES)
+        if audit_service is None or not audit_service.is_active:
+            fixation.labels(reason="audit_unavailable").inc()
+            _log().error("auth.session_fixation_attempt.audit_unavailable", error="inactive")
+            return
+        task = tracker.track(
+            audit_service.writer.emit(
                 "auth.session_fixation_attempt",
-                record=None,
-                ip=ip,
+                actor_label="(unknown)",
+                actor_ip=ip,
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="unknown_token",
                 after_state={"vector": vector, "path": _route_path(request)},
             )
-        except (AuditUnavailableError, AuditError) as exc:
-            auth_session_fixation_attempts_total.labels(reason="audit_unavailable").inc()
+        )
+        try:
+            await asyncio.wait_for(asyncio.shield(task), audit_timeout_s)
+        except TimeoutError:
+            tracker.mark_timed_out(task)  # left to finish; never cancelled mid-append
+            fixation.labels(reason="audit_slow").inc()
+            _log().warning("auth.session_fixation_attempt.audit_slow")
+        except Exception as exc:
+            fixation.labels(reason="audit_unavailable").inc()
             _log().error(
                 "auth.session_fixation_attempt.audit_unavailable", error=type(exc).__name__
             )

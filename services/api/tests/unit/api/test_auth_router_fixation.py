@@ -17,6 +17,7 @@ from prometheus_client import REGISTRY
 from candleviewer.api.auth import make_auth_router
 from candleviewer.api.sessions import REFRESH_COOKIE
 from candleviewer.audit.actions import validate_action
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import InvalidCredentials
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaVerifiedResult
@@ -43,14 +44,17 @@ class _Auth(_FakeAuthService):
 
 
 class _Audit:
-    def __init__(self, *, active: bool = True) -> None:
+    def __init__(self, *, active: bool = True, failing: bool = False) -> None:
         self.is_active = active
+        self.failing = failing
         self.writer = self
         self.rows: list[dict[str, Any]] = []
 
     async def emit(self, action: str, **kw: Any) -> None:
         validate_action(action)  # as the real writer: an unregistered action raises
         if action == "auth.session_fixation_attempt":
+            if self.failing:
+                raise AuditUnavailable("audit WAL unavailable: OSError")
             self.rows.append(kw)
 
 
@@ -111,3 +115,13 @@ def test_without_an_active_audit_sink_the_attempt_is_still_counted() -> None:
     client, _ = _client(audit)
     assert client.post("/auth/mfa/verify", json=_BODY, headers=_PLANTED).status_code == 200
     assert audit.rows == [] and _count("unknown_token") - before == 1
+
+
+async def test_failed_fixation_write_fails_the_mfa_step_closed_without_minting() -> None:
+    audit, before = _Audit(failing=True), _count("audit_failed")
+    client, store = _client(audit)
+    r = client.post("/auth/mfa/verify", json=_BODY, headers=_PLANTED)
+    assert (r.status_code, r.json()["detail"]) == (401, "audit sink not active")
+    assert REFRESH_COOKIE not in r.cookies and "tokens" not in r.json()
+    assert await store.list_sessions(str(_VICTIM)) == ()  # C-2.9 write-ahead: nothing minted
+    assert _count("audit_failed") - before == 1
