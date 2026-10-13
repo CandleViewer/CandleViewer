@@ -30,6 +30,8 @@ SESSION = str(uuid.uuid4())
 BASE_MS = 1_789_132_262_000
 TOKEN_TTL_S = 600
 JSON = ["cv.v1.json"]
+#: §2.5: the TestClient's own origin, allow-listed and sent on every upgrade.
+ORIGIN = "http://testserver"
 _TIMEOUT_S = 5.0
 
 
@@ -70,7 +72,8 @@ class _World:
             self.tokens_seen.append(token)
             if not token.startswith("good-"):
                 raise PermissionError("bad token")
-            user = OTHER if token == "good-other" else USER  # noqa: S105 - fake test token, not a credential
+            # S105: "good-other" is a fake test token, not a credential.
+            user = OTHER if token == "good-other" else USER  # noqa: S105
             exp_ms = self.clock.wall_ms() + TOKEN_TTL_S * 1000
             return SESSION, user, datetime.fromtimestamp(exp_ms / 1000, tz=UTC)
 
@@ -81,6 +84,7 @@ class _World:
                 authenticate=authenticate,
                 registry=self.registry,
                 revocation_hub=self.revocation,
+                allowed_origins=frozenset({ORIGIN}),
                 hub=self.hub,
                 audit=self.audit,
                 clock=self.clock,
@@ -90,7 +94,7 @@ class _World:
                 git_sha="a91f0c3",
             )
         )
-        self.client = TestClient(app)
+        self.client = TestClient(app, headers={"origin": ORIGIN})
 
 
 @pytest.fixture
@@ -130,7 +134,8 @@ def _hello(ws: Any, **p: Any) -> dict[str, Any]:
     return _recv(ws)
 
 
-def _auth(ws: Any, token: str = "good-1", fid: str = "c-2") -> dict[str, Any]:  # noqa: S107 - fake test token
+# S107: "good-1" is a fake test token, not a credential.
+def _auth(ws: Any, token: str = "good-1", fid: str = "c-2") -> dict[str, Any]:  # noqa: S107
     ws.send_json({"t": "auth", "id": fid, "p": {"access_token": token}})
     return _recv(ws)
 
@@ -308,7 +313,7 @@ def test_reauth_in_place_preserves_subscriptions_and_sends_no_snapshot(world: _W
         _auth(ws)
         ws.send_json({"t": "sub", "id": "s", "p": {"topics": [{"ch": "book.BTCUSDT.50"}]}})
         assert _recv(ws)["p"]["results"][0]["ok"] is True
-        (authz, _, _) = world.registry._conns[USER][0]
+        authz, _, _ = world.registry._conns[USER][0]
         before = set(authz.subs)
         _advance(ws, world, 540.0)  # client refreshes 60 s before expiry
         ws.send_json({"t": "auth", "id": "c-9", "p": {"access_token": "good-2"}})

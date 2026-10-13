@@ -102,6 +102,26 @@ The server echoes exactly one. A client offering no recognised subprotocol is cl
 | Configuration CRUD                                         | REST                                                    |
 | Config change notifications (flags, settings, rules armed) | **WS** `system`, `rules`                                |
 
+### 2.5 Origin check on the upgrade (SR-042, SR-183)
+
+The server checks the upgrade request's `Origin` header against the app-origin allow-list before anything else in §2–§4 runs: before subprotocol negotiation (§2.2), before `accept`, and before any frame, auth (§4.3) or store access. The allow-list is the one REST uses, `CV_ALLOWED_ORIGINS` (SR-042). When the list is empty, every upgrade is refused. An `Origin` matches an entry when it is equal to it once a trailing `/` is dropped. Header names are matched case-insensitively.
+
+| Upgrade request                                                                  | Result                         |
+| -------------------------------------------------------------------------------- | ------------------------------ |
+| Exactly one `Origin`, in the allow-list, whatever `Sec-Fetch-Site` says          | Continues to §2.2              |
+| No `Origin` header                                                               | Refused (`origin_missing`)     |
+| More than one `Origin` header                                                    | Refused (`origin_not_allowed`) |
+| `Origin: null` (a sandboxed frame, or a `file:` or `data:` page), even if listed | Refused (`origin_null`)        |
+| `Origin` not in the allow-list, with `Sec-Fetch-Site: cross-site` or `same-site` | Refused (`cross_site`)         |
+| `Origin` not in the allow-list, any other `Sec-Fetch-Site`                       | Refused (`origin_not_allowed`) |
+
+- **The allow-list decides.** A listed origin is admitted even on a `cross-site` or `same-site` fetch, so a listed app origin on another site works: the packaged Electron shell's `app://` origin, or a dev page on another port. A foreign page cannot make a browser send a listed `Origin`, so `Sec-Fetch-Site` adds nothing on top of the list. It only labels the refusal of an unlisted origin: `cross_site` is the cross-site WebSocket hijacking signature, while `origin_not_allowed` on a same-origin fetch usually means the list is missing an app origin.
+- **Refusal.** The server closes with `4403` (reason `origin_forbidden`) before `accept`, the same way an off-mesh source is refused. The ASGI server answers the upgrade request with HTTP `403 Forbidden` and the socket never opens. There is no `bye` (S11 applies once a socket is open), and the close code never reaches the client. A browser only sees a failed connection (close event `1006`), so it backs off as for any other failure (§9.2). Every retry is refused the same way.
+- **No exemption for non-browser clients.** REST accepts a request without `Origin` because the SR-041 token still binds it. The WS upgrade has no second control before `accept`, so here a missing `Origin` is refused. The difference is deliberate (SR-042). The endpoint is same-origin (§2.1), and every supported client is a browser engine, which always sends `Origin` on the upgrade. Any other client MUST send an `Origin` that is already listed for the app: the debugging and third-party clients of §2.2, a future mobile client (the client-agnostic scope note at the top of this document), and the planned k6 WS fan-out load test (C-13.9). Never add a tool-only entry, because `CV_ALLOWED_ORIGINS` also widens the REST CSRF allow-list. A client that cannot send a listed origin needs its own ticketed, token-authenticated path, not an exemption.
+- **Electron.** The packaged shell loads `file://` and would send `null`, which is always refused. Before it opens `/ws`, it must load the UI from a listable origin: an `app://`-style scheme that is in the list, or a same-origin proxy.
+- **Defence in depth.** Authentication is still the first-frame bearer token (§4.3), which a cross-site page cannot read. This check stops a cross-site page from opening a socket at all (cross-site WebSocket hijacking).
+- **Observability.** Each refusal increments `cv_ws_closes_total{reason="origin_forbidden"}`. It also logs one `ws upgrade refused` warning with the bounded cause and the source address MeshOnly admitted, never a header value. That address is not a verified identity: under uvicorn's default `proxy_headers` a loopback peer can set it through `X-Forwarded-For` until #2275. At most 10 such lines are logged per cause per minute; the next refusal logs one `ws upgrade refusals suppressed` line, and the rest of that minute is only counted. Audit: pending #2269 (a bounded `auth.ws_origin_refused` record).
+
 ---
 
 ## 3. Framing: envelope, encodings and the binary format
@@ -390,6 +410,8 @@ Rules:
 | `4403` | forbidden       | Permissions revoked entirely (user disabled). | Return to login; do not retry.               |
 | `4429` | rate limited    | Too many frames or reconnects.                | Back off per `bye.retry_after_ms`.           |
 | `4400` | bad client      | Repeated protocol violations.                 | Surface a bug report; do not hot-loop.       |
+
+A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It is sent before `accept`, so the client gets HTTP `403` and no `bye`.
 
 `bye` is always sent _before_ the close frame so the client has a machine-readable reason:
 
@@ -864,16 +886,16 @@ The server accepts this **only** when it can prove continuity: it holds state co
 
 ### 8.2 Coalescing rules per topic family
 
-| Family                          | Coalescing rule                                                                                                 | Rationale                                                      |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `book`                          | Per price level, last-write-wins; deletes win over earlier updates at the same level.                           | The book is a map; only the current value matters.             |
+| Family                          | Coalescing rule                                                                                                                                               | Rationale                                                      |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `book`                          | Per price level, last-write-wins; deletes win over earlier updates at the same level.                                                                         | The book is a map; only the current value matters.             |
 | `bars`                          | Per bar `(generation, index)`, last-write-wins; a confirmed bar never replaced by an unconfirmed one, except a confirmed update with `amended: true` (below). | The in-progress bar is overwritten many times per second.      |
-| `footprint`                     | Per (bar, price) cell, values summed for the _same_ bar, replaced across bars.                                  | Cells are cumulative within a bar.                             |
-| `heatmap`                       | Per time-bucket column, last-write-wins; whole columns dropped only if the bucket is complete and already sent. | Columns are the atomic render unit.                            |
-| `metrics`                       | Per metric code, last point wins.                                                                               | Scalar time series.                                            |
-| `ticker`, `wallet`, `positions` | Whole-object last-write-wins.                                                                                   | Snapshot-shaped.                                               |
-| `trades`, `liquidations`        | **Append, never merge** — throttling batches them into arrays.                                                  | Every print matters for the tape and CVD.                      |
-| `orders`, `executions`          | **Never coalesced, never throttled.**                                                                           | State-machine transitions and fills must be seen individually. |
+| `footprint`                     | Per (bar, price) cell, values summed for the _same_ bar, replaced across bars.                                                                                | Cells are cumulative within a bar.                             |
+| `heatmap`                       | Per time-bucket column, last-write-wins; whole columns dropped only if the bucket is complete and already sent.                                               | Columns are the atomic render unit.                            |
+| `metrics`                       | Per metric code, last point wins.                                                                                                                             | Scalar time series.                                            |
+| `ticker`, `wallet`, `positions` | Whole-object last-write-wins.                                                                                                                                 | Snapshot-shaped.                                               |
+| `trades`, `liquidations`        | **Append, never merge** — throttling batches them into arrays.                                                                                                | Every print matters for the tape and CVD.                      |
+| `orders`, `executions`          | **Never coalesced, never throttled.**                                                                                                                         | State-machine transitions and fills must be seen individually. |
 
 **Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts when ADR-0033 starts a new generation/epoch. A channel streams one generation at a time; a generation swap arrives as a new snapshot (ADR-0033 client ingestion). Clients key their bar stores the same way.
 
@@ -3251,23 +3273,24 @@ discarded rather than applied out of order.
 | S10 | Emit only error codes from the §10.2 catalogue.                                                      |
 | S11 | Send `bye` before every server-initiated close.                                                      |
 | S12 | Reject unknown option keys rather than ignoring them.                                                |
+| S13 | Refuse the upgrade before `accept` when §2.5 fails; never negotiate, read or authenticate first.     |
 
 **Client MUST:**
 
-| #   | Requirement                                                                        |
-| --- | ---------------------------------------------------------------------------------- |
-| C1  | Send `hello` as the first frame and `auth` before any subscription.                |
-| C2  | Track `s` per topic and resync on any gap without patching around it.              |
-| C3  | Never treat `confirm: false` bars as closed.                                       |
-| C4  | Honour `effective` options rather than assuming its requested values.              |
-| C5  | Discard state on `snap` and on `ctl_ok` with `resnapshot: true`.                   |
-| C6  | Reply `pong` within 10 s of a server `ping`.                                       |
-| C7  | Use full-jitter backoff and not auto-reconnect on `1002`/`4400`/`4403`.            |
-| C8  | Throttle to ≥1 000 ms when the window is hidden; unsubscribe collapsed panes.      |
-| C9  | Decouple rendering from frame arrival (`requestAnimationFrame`).                   |
+| #   | Requirement                                                                                 |
+| --- | ------------------------------------------------------------------------------------------- |
+| C1  | Send `hello` as the first frame and `auth` before any subscription.                         |
+| C2  | Track `s` per topic and resync on any gap without patching around it.                       |
+| C3  | Never treat `confirm: false` bars as closed.                                                |
+| C4  | Honour `effective` options rather than assuming its requested values.                       |
+| C5  | Discard state on `snap` and on `ctl_ok` with `resnapshot: true`.                            |
+| C6  | Reply `pong` within 10 s of a server `ping`.                                                |
+| C7  | Use full-jitter backoff and not auto-reconnect on `1002`/`4400`/`4403`.                     |
+| C8  | Throttle to ≥1 000 ms when the window is hidden; unsubscribe collapsed panes.               |
+| C9  | Decouple rendering from frame arrival (`requestAnimationFrame`).                            |
 | C10 | Validate the binary `magic`/`format_version`; bars bodies must match length exactly (§3.4). |
-| C11 | Render replay data in visually distinct chrome.                                    |
-| C12 | Disable order-entry affordances on `kill_switch.engaged` and on `shutdown_notice`. |
+| C11 | Render replay data in visually distinct chrome.                                             |
+| C12 | Disable order-entry affordances on `kill_switch.engaged` and on `shutdown_notice`.          |
 
 ### 16.2 Limits summary
 
@@ -3328,6 +3351,7 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | E2E (Playwright) | Hidden tab drops throttles; restored tab does not re-snapshot.                                                                                                                                        | C8, §5.4.                                                 |
 | E2E (Playwright) | Kill-switch frame disables the order ticket without a REST round-trip.                                                                                                                                | C12.                                                      |
 | Security         | Token in query string is rejected; expired token closes `4401`.                                                                                                                                       | §4.3.                                                     |
+| Security         | A missing, duplicated, `null` or unlisted `Origin` is refused before `accept` (`4403`, HTTP `403`) and never reaches auth; a listed `Origin` passes whatever `Sec-Fetch-Site` says.                   | §2.5, S13.                                                |
 | Security         | Manager cannot subscribe to another manager's accounts, even by raw frame.                                                                                                                            | §6.3, arch P8.                                            |
 | Security         | Fuzzed binary bodies never panic the server or the client decoder.                                                                                                                                    | C10, S12.                                                 |
 

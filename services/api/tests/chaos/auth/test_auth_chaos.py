@@ -42,6 +42,7 @@ from tests.unit.auth.session_fakes import FakeSessionRepository
 
 pytestmark = [pytest.mark.chaos, pytest.mark.integration]
 _NOW = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
+_ORIGIN = "http://testserver"  # `23-ws-protocol.md` §2.5: allow-listed, sent on every upgrade
 
 
 class _Clock:
@@ -94,9 +95,14 @@ def _gateway(svc: SessionService, hub: RevocationHub, clock: _Clock) -> FastAPI:
             registry=reg,
             revocation_hub=hub,
             wall_ms=lambda: int(clock.now.timestamp() * 1000),
+            allowed_origins=frozenset({_ORIGIN}),
         )
     )
     return app
+
+
+def _client(app: FastAPI) -> TestClient:
+    return TestClient(app, headers={"origin": _ORIGIN})
 
 
 def _auth(ws: Any, token: str, attempts: int = 1) -> dict[str, Any]:
@@ -117,7 +123,7 @@ def test_s1_postgres_outage_fails_closed_at_service_and_gateway_then_recovers() 
     minted = asyncio.run(svc.mint(str(uuid.uuid4())))
     sid = str(minted.session_id)
     app = _gateway(svc, RevocationHub(), clock)
-    with TestClient(app) as client:
+    with _client(app) as client:
         repo.down = True
         with pytest.raises(ConnectionError):
             asyncio.run(svc.require_active(sid))  # fail closed, never a granted session
@@ -192,7 +198,7 @@ def test_s3_gateway_restart_closes_old_sockets_and_requires_reauth_on_new_gatewa
     svc = _service(repo, clock)
     minted = asyncio.run(svc.mint(str(uuid.uuid4())))
     old_hub = RevocationHub()
-    with TestClient(_gateway(svc, old_hub, clock)) as old:
+    with _client(_gateway(svc, old_hub, clock)) as old:
         with old.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
             assert _auth(ws, minted.access_token)["t"] == "auth_ok"
             asyncio.run(svc.revoke(str(minted.session_id), reason="logout"))
@@ -201,7 +207,7 @@ def test_s3_gateway_restart_closes_old_sockets_and_requires_reauth_on_new_gatewa
             bye = ws.receive_json()
             assert bye["t"] == "bye" and bye["p"]["code"] == CLOSE_TOKEN_EXPIRED
     # "Restart": a brand-new gateway + hub. The revoked session must not resume.
-    with TestClient(_gateway(svc, RevocationHub(), clock)) as new:
+    with _client(_gateway(svc, RevocationHub(), clock)) as new:
         with new.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
             assert _auth(ws, minted.access_token, attempts=3)["p"]["reason"] == "auth_failed"
         # an unauthenticated frame on the new gateway gets nothing carried over

@@ -15,7 +15,9 @@ internet, independent of and enforced *before* authentication:
   switch consulted by the OMS validator; cannot be bypassed by any route.
 - `middleware.MeshOnlyMiddleware` — ASGI middleware rejecting off-mesh
   requests with a generic 403 before any credential is evaluated, for both
-  REST and the WS upgrade.
+  REST and the WS upgrade. `middleware.RESOLVED_SOURCE_KEY` names the
+  `scope["state"]` entry holding the address it admitted (not a verified
+  identity; see the middleware docstring and #2275).
 - `audit.AuditSink` — narrow protocol this module emits
   `net.off_mesh_request` events through; a `NullAuditSink` no-op default and
   an `InMemoryAuditSink` test double are provided. The real audit module
@@ -39,6 +41,7 @@ See `docs/plan/backlog/E09-T04` and `20-architecture.md` "WSL hazards".
 from __future__ import annotations
 
 __all__ = [
+    "RESOLVED_SOURCE_KEY",
     "AuditSink",
     "BindingCheckResult",
     "BindingSelfCheck",
@@ -60,7 +63,7 @@ from .binding_check import BindingCheckResult, BindingSelfCheck, apply_self_chec
 from .cidr import CidrAllowList
 from .host_sockets import real_socket_enumerator
 from .metrics import net_binding_safe
-from .middleware import MeshOnlyMiddleware
+from .middleware import RESOLVED_SOURCE_KEY, MeshOnlyMiddleware
 from .read_only_gate import ReadOnlyGate
 from .scheduler import MeshSelfCheckScheduler
 from .system_topic import SystemTopicPublisher, register_system_topic_subscriber

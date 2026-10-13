@@ -3,6 +3,10 @@
 One socket = one `_Connection` with exactly one reader and one writer task,
 both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` TG5):
 
+- **Origin** (§2.5, SR-042/SR-183): checked first, against `CV_ALLOWED_ORIGINS`; the
+  allow-list decides. A missing, duplicated, `null` or unlisted `Origin` is closed `4403`
+  before `accept` (HTTP 403, no `bye`): no negotiation, frame, auth or store access. Each
+  refusal is counted and logged with the source address MeshOnly admitted, with a cap.
 - **Negotiation** (§2.2): the subprotocol is chosen before `accept`; when the
   client offers none we serve -> close `1002` before the handshake completes.
 - **hello -> welcome** (§4.2): any other first frame -> `bye` + `1002`.
@@ -47,6 +51,7 @@ import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.net import RESOLVED_SOURCE_KEY
 from candleviewer.observability.context import spawn
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.lifecycle import (
@@ -55,12 +60,20 @@ from candleviewer.ws.lifecycle import (
     MAX_CONNECTIONS_PER_USER,
     MAX_PROTOCOL_VIOLATIONS,
     MAX_UNAUTHENTICATED_FRAMES,
+    ORIGIN_FORBIDDEN,
+    REFUSAL_LOG_LIMIT,
+    REFUSAL_LOG_WINDOW_S,
     SHUTDOWN_GRACE_MS,
     ConnEvent,
     InboundRateLimiter,
     Lifecycle,
+    OriginRefusal,
+    RefusalLog,
+    RefusalLogLimiter,
     Watchdog,
+    header_values,
     negotiate_subprotocol,
+    origin_refusal,
     welcome_payload,
 )
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
@@ -214,6 +227,18 @@ class GatewayHub:
 def close_reason_label(reason: str) -> str:
     """Bounded `reason` label: a known §13.6 close/bye reason, else "other"."""
     return reason if reason in CLOSE_REASONS else "other"
+
+
+def _source_ip(scope: Mapping[str, Any]) -> str | None:
+    """The address MeshOnly admitted (trusted-proxy aware), else `scope["client"]`.
+
+    Not a verified identity: under uvicorn's default `proxy_headers` a loopback peer can
+    set it through `X-Forwarded-For` (#2275 makes that trust one explicit setting)."""
+    admitted = (scope.get("state") or {}).get(RESOLVED_SOURCE_KEY)
+    if admitted:
+        return str(admitted)
+    client = scope.get("client")
+    return str(client[0]) if client else None
 
 
 class _Connection:
@@ -425,6 +450,9 @@ def make_ws_router(
     authenticate: Authenticate,
     registry: ConnectionRegistry,
     revocation_hub: RevocationHub,
+    # §2.5 allow-list (`Settings.allowed_origin_set`, shared with REST). No default, so no
+    # caller can build a router that skips the check; an empty set refuses every upgrade.
+    allowed_origins: frozenset[str],
     hub: GatewayHub | None = None,
     audit: AuditEmitter | None = None,
     auth_timeout_s: float = AUTH_TIMEOUT_S,
@@ -441,6 +469,26 @@ def make_ws_router(
     router = APIRouter()
     gateway_hub = hub if hub is not None else GatewayHub()
     killed = kill_switch or (lambda: {"engaged": False, "scope": "global"})
+    refusal_log = RefusalLogLimiter()
+
+    def log_refusal(cause: OriginRefusal, scope: Mapping[str, Any]) -> None:
+        """§2.5: a capped warning per refused upgrade; never a header value."""
+        verdict = refusal_log.admit(cause, clock())
+        if verdict is RefusalLog.LINE:
+            _log().warning(
+                "ws upgrade refused",
+                reason=ORIGIN_FORBIDDEN,
+                check=cause.value,
+                source_ip=_source_ip(scope),
+            )
+        elif verdict is RefusalLog.SUMMARY:
+            _log().warning(
+                "ws upgrade refusals suppressed",
+                reason=ORIGIN_FORBIDDEN,
+                check=cause.value,
+                limit=REFUSAL_LOG_LIMIT,
+                window_s=REFUSAL_LOG_WINDOW_S,
+            )
 
     async def audit_auth_failure(conn: _Connection) -> None:
         """`warning` audit entry for the 3rd failed `auth` (§4.3). Never
@@ -684,6 +732,19 @@ def make_ws_router(
 
     @router.websocket(WS_PATH)
     async def ws_endpoint(ws: WebSocket) -> None:
+        # §2.5 (SR-042, SR-183): first of all - before negotiation, `accept`, any frame,
+        # auth or store access. Closing before `accept` refuses the upgrade (HTTP 403).
+        raw_headers = ws.scope.get("headers") or ()
+        refused = origin_refusal(
+            header_values(raw_headers, b"origin"),
+            header_values(raw_headers, b"sec-fetch-site"),
+            allowed_origins,
+        )
+        if refused is not None:
+            cv_ws_closes_total.labels(reason=ORIGIN_FORBIDDEN).inc()
+            log_refusal(refused, ws.scope)
+            await ws.close(code=int(CLOSE_REASONS[ORIGIN_FORBIDDEN][0]))
+            return
         # §4.3: a token in the URL query string is never read; it is ignored.
         encoding = negotiate_subprotocol(ws.scope.get("subprotocols") or ())
         if encoding is None:

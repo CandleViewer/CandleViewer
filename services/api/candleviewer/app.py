@@ -938,6 +938,7 @@ def create_app(
             authenticate=ws_authenticate or _session_authenticator(ctx),
             registry=ws_registry,
             revocation_hub=revocation_hub,
+            allowed_origins=resolved.allowed_origin_set,  # SR-042/SR-183 upgrade check (#2239)
             hub=ws_hub,
             audit=_LazyAuditEmitter(ctx.audit),
             auth_timeout_s=resolved.ws_auth_timeout_s,

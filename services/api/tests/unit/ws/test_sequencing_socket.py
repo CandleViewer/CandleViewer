@@ -17,7 +17,7 @@ from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
 from candleviewer.ws.upstream import UpstreamRefs
 from tests.unit.ws._seq_support import Book, Clock, Source, principal, validate
-from tests.unit.ws.test_lifecycle_socket import JSON, _recv
+from tests.unit.ws.test_lifecycle_socket import JSON, ORIGIN, _recv
 
 #: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
 _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
@@ -53,11 +53,12 @@ class _World:
                 authenticate=authenticate,
                 registry=registry,
                 revocation_hub=RevocationHub(),
+                allowed_origins=frozenset({ORIGIN}),
                 clock=self.clock,
                 tick_s=0.005,
             )
         )
-        self.client = TestClient(app)
+        self.client = TestClient(app, headers={"origin": ORIGIN})
 
 
 def _rx(ws: Any) -> dict[str, Any]:
