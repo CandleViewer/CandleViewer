@@ -13,6 +13,7 @@ import inspect
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -85,9 +86,9 @@ class _Spy:
         self.tokens: list[str] = []
         self.resolved: list[uuid.UUID] = []
 
-    async def authenticate(self, token: str) -> tuple[str, uuid.UUID]:
+    async def authenticate(self, token: str) -> tuple[str, uuid.UUID, datetime]:
         self.tokens.append(token)
-        return "sess-1", USER
+        return "sess-1", USER, datetime(2100, 1, 1, tzinfo=UTC)
 
     async def resolve(self, uid: uuid.UUID) -> PrincipalSnapshot:
         self.resolved.append(uid)

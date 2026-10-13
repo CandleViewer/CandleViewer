@@ -66,7 +66,7 @@ from candleviewer.auth.metrics import auth_csrf_refused_total
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_service import is_live_session
 from candleviewer.auth.throttle import PerIpLoginThrottle
-from candleviewer.net.middleware import RESOLVED_SOURCE_KEY
+from candleviewer.net import RESOLVED_SOURCE_KEY
 from candleviewer.observability.context import spawn
 
 CSRF_ERROR_CODE = "csrf_token_invalid"

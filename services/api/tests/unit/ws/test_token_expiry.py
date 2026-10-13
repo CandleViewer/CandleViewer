@@ -29,6 +29,7 @@ from candleviewer.auth.models import MintedSession
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
+from candleviewer.settings import Settings
 from candleviewer.ws import gateway
 from candleviewer.ws.metrics import (
     AUTH_FAILURE_REASONS,
@@ -44,6 +45,7 @@ _T0 = datetime(2026, 10, 12, 9, 0, tzinfo=UTC)
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _JSON = ["cv.v1.json"]
 _USER = uuid.uuid4()
+_ORIGIN = "http://testserver"  # §2.5: allow-listed and sent on every upgrade
 
 
 def _ms(at: datetime) -> int:
@@ -100,8 +102,8 @@ def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Stack]:
             gateway.make_ws_router, clock=clock.monotonic, wall_ms=clock.wall_ms, tick_s=0.005
         ),
     )
-    app = app_module.create_app()
-    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+    app = app_module.create_app(Settings(allowed_origins=_ORIGIN))
+    with TestClient(app, client=("127.0.0.1", 50000), headers={"origin": _ORIGIN}) as client:
         assert client.portal is not None
         client.portal.call(auth.start, app.state.app_context)
         yield _Stack(client, clock, auth)
@@ -263,10 +265,11 @@ def _bare_gateway(result: Any, clock: _Clock, *, tick_s: float = 0.005, audit: A
             clock=clock.monotonic,
             wall_ms=clock.wall_ms,
             tick_s=tick_s,
+            allowed_origins=frozenset({_ORIGIN}),
         )
     )
     gate = _Gate(app)
-    return _Bare(TestClient(gate), hub, revocation, gate)
+    return _Bare(TestClient(gate, headers={"origin": _ORIGIN}), hub, revocation, gate)
 
 
 def _failures(reason: str) -> float:

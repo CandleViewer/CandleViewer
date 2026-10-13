@@ -32,8 +32,8 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService
-from candleviewer.ws.gateway import make_ws_router
 from candleviewer.settings import Settings
+from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, RevocationHub
 from tests.unit.auth.auth_fakes import FakeUserRepository
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
