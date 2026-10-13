@@ -176,7 +176,7 @@ omit = [
   "candleviewer/oms/*",
   "candleviewer/paper/*",
   "candleviewer/recorder/service.py",  # policy/models/errors: E16-T02, counted
-  "candleviewer/replay/*",
+  "candleviewer/replay/service.py",  # read path (models/errors/source): E26-T02, counted
   "candleviewer/risk/*",
   # candleviewer/rules/ir/* is implemented by E35-T01 and counted in the floor.
   "candleviewer/rules/errors.py",
