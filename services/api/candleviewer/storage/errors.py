@@ -98,6 +98,14 @@ class UnknownIlpTable(IlpRowError, KeyError):
     code = "STORAGE_ILP_UNKNOWN_TABLE"
 
 
+class StorageRecordInvalid(StorageError, ValueError):
+    """A stored market-data row cannot become a `RecordedEvent` (E26-T02): a required column
+    is missing or non-finite, or the stream is not replayable. Raised, never skipped, so a
+    replay cannot silently lose a recorded event. The message names the column, not values."""
+
+    code = "STORAGE_RECORD_INVALID"
+
+
 #: Frozen mapping from exception class to its stable code, asserted by a
 #: unit test so a future rename cannot silently change a log/system_events
 #: value (ticket "Scope / Deliverables").
@@ -114,4 +122,5 @@ ERROR_CODES: dict[type[StorageError], str] = {
     MissingDesignatedTimestamp: MissingDesignatedTimestamp.code,
     InvalidSymbol: InvalidSymbol.code,
     UnknownIlpTable: UnknownIlpTable.code,
+    StorageRecordInvalid: StorageRecordInvalid.code,
 }
