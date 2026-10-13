@@ -1,7 +1,7 @@
 # E17 — STRIDE threat model: Client WS protocol and gateway
 
 - Ticket: E17-X01 (issue #381). Owner: Security engineer (CODEOWNER). Status: **Approved** (2026-10-13;
-  review log in §10). Accepted residual risks (§10) are owner-accepted per #1778 (2026-10-12).
+  review log in §10). Accepted residuals WS-I04 and WS-R04 are owner-accepted per #1778 (2026-10-12). WS-D15/WS-D16 are Open, tracked in #2292/#2293; residual Medium until merged (2026-10-13).
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per element and per flow
   (C-12.1). Format mirrors `E13-indicators.md`. Reuses the E09 auth/RBAC model (`e09-auth-rbac.md`, U-rows);
   those threats are **referenced, not duplicated**. Upstream Bybit connection security is E08's model.
