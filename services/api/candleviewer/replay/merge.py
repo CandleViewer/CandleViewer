@@ -1,7 +1,7 @@
-"""The ordered k-way merge of one replay's recorded streams (E26-T02).
+"""The ordered, gap-aware k-way merge of one replay's recorded streams (E26-T02).
 
 **Order** (C-2.15; `24-internal-schemas.md` Sec.13.7): ascending
-`(ts_us, rank, seq, stream ordinal, symbol ordinal, tiebreak)`. `rank` puts a control marker
+`(ts_us, rank, seq, stream ordinal, symbol ordinal, tiebreak)`. `rank` puts a gap marker
 before the market events of its instant; `seq` is the stored exchange sequence; the stream
 ordinal is the `stream_kind` enum order; the symbol ordinal is the sorted-symbol position;
 `tiebreak` is the rest of the stream's dedup key. Every component is stored data and the key
@@ -12,7 +12,7 @@ storage order served them, never the heap's incidental behaviour.
 window starts at `window_us` (ADR-0035: 30 s), doubles while the stream is sparse, and halves
 and is re-read when a read hits the cursor's row cap. Each window is sorted and duplicate rows
 are dropped, keeping the one read last (the cold tier may hold a re-exported part twice, 21
-Sec.5.3). A heap then interleaves the cursors.
+Sec.5.3). A heap then interleaves the cursors and the gap markers.
 
 **Tiers.** A session reads one tier, never both (ADR-0035 decision 4): `questdb` or `parquet`,
 or for `auto` the one the cold manifests pick (roll-off manifests a partition before it may drop
@@ -20,6 +20,9 @@ the hot day, 21 Sec.5.3): Parquet if every cursor's range is manifested whole, Q
 of it is, else `ReplayTierStraddle` before any event. A QuestDB session re-checks the manifests
 after every read, so a span archived mid-session ends it with a typed error, never a hole. An
 explicit tier is an operator override: no coverage checks, so a span it lacks reads empty.
+
+**Gaps.** `recording_gaps` rows that intersect the window (requested streams only) become
+`ReplayGap` markers at `max(gap_start, start)`, carrying the stored bounds and cause.
 
 **Memory.** The cursors share `budget_bytes`: each read is capped at its cursor's share in rows,
 so a stream too dense for even a 1 µs window raises `ReplayMemoryCeilingExceeded` instead of
@@ -40,10 +43,11 @@ import structlog
 from candleviewer.observability.metrics import Counter, Histogram
 from candleviewer.replay.errors import (
     ReplayMemoryCeilingExceeded,
+    ReplayRequestInvalid,
     ReplaySourceUnavailable,
     ReplayTierStraddle,
 )
-from candleviewer.replay.models import ReplayItem, ReplayRequest, ReplayTiers
+from candleviewer.replay.models import ReplayGap, ReplayItem, ReplayRequest, ReplayTiers
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
@@ -51,6 +55,7 @@ from candleviewer.storage.repositories.recorded import (
     RecordedBookSnapshot,
     RecordedEvent,
     Tiebreak,
+    order_key,
 )
 
 Tier = Literal["questdb", "parquet"]
@@ -61,15 +66,21 @@ type _Entry = tuple[_Key, ReplayItem, int]
 replay_events_read_total = Counter(
     "replay_events_read_total", "Recorded events replay sources read.", ["stream", "tier"]
 )
+replay_gap_warnings_total = Counter(
+    "replay_gap_warnings_total", "ReplayGap markers replay sources emitted."
+)
 replay_source_read_seconds = Histogram(
     "replay_source_read_seconds", "Replay storage read latency.", ["tier"]
 )
 
 #: Tie-break ordinal of each recorded stream: the `stream_kind` enum order (21 Sec.1.2).
 STREAM_ORDINAL: Final[dict[StreamKind, int]] = {s: i for i, s in enumerate(REPLAYABLE_STREAMS)}
+#: How far before a seek target the anchor lookup searches (60x the 60 s snapshot cadence).
+ANCHOR_LOOKBACK_US: Final = 3_600 * US_PER_SECOND
 DEFAULT_WINDOW_US: Final = 30 * US_PER_SECOND
 DEFAULT_MAX_WINDOW_US: Final = 3_600 * US_PER_SECOND
 DEFAULT_IO_TIMEOUT_S: Final = 30.0
+_RANK_GAP: Final = 0
 _RANK_EVENT: Final = 1
 #: Order-of-magnitude bytes per buffered event (E26-K01 measured ~0.4 KB/event) and per
 #: snapshot level (two Decimals and a tuple).
@@ -108,7 +119,7 @@ class _Input:
 
     @property
     def more(self) -> bool:
-        """Whether storage still holds entries past `buf` (an input loaded whole has none)."""
+        """Whether storage still holds entries past `buf` (gap markers are loaded whole)."""
         return False
 
 
@@ -189,7 +200,7 @@ class _Cursor(_Input):
 
 
 class RecordedMerge:
-    """Every `(symbol, stream)` cursor of one request, merged into one order.
+    """Every `(symbol, stream)` cursor of one request, merged with its gap markers.
 
     Single pass: `batches()` may be iterated once; a seek builds a new merge from the target."""
 
@@ -235,7 +246,8 @@ class RecordedMerge:
         """The merged items in order, cut into batches of at most `max_events` items or about
         `max_bytes` estimated bytes, whichever binds first."""
         await self.tier()  # refuse a straddling `auto` session before reading any event
-        inputs: list[_Input] = list(self._cursors)
+        inputs: list[_Input] = [*self._cursors, _Input(await self._gap_markers())]
+        marker_index = len(inputs) - 1
         heap: list[tuple[_Key, int]] = []
         for index, source in enumerate(inputs):
             await self._fill(source)
@@ -251,6 +263,8 @@ class RecordedMerge:
             source.pos += 1
             batch.append(item)
             size += item_bytes
+            if index == marker_index:
+                replay_gap_warnings_total.inc()
             if source.pos >= len(source.buf) and source.more:
                 await self._fill(source)
             if source.pos < len(source.buf):
@@ -352,3 +366,49 @@ class RecordedMerge:
                 tier=tier, symbol=symbol, stream=stream, reason=exc.code
             ) from exc
         return result
+
+    async def _gap_markers(self) -> list[_Entry]:
+        start_us, end_us = self._request.start_us, self._request.end_us
+        window = TimeRange(start_us=start_us, end_us=end_us)
+        wanted = {cursor.stream for cursor in self._cursors}
+        markers: dict[_Key, ReplayGap] = {}
+        for symbol_ord, symbol in enumerate(self._symbols):
+            read = self._tiers.gaps.recording_gaps(symbol, window)
+            gaps = await self._guarded(read, tier="recording_gaps", symbol=symbol, stream=None)
+            for gap in gaps:
+                if gap.symbol != symbol or gap.stream not in wanted:
+                    continue
+                if gap.start_us >= end_us or gap.end_us <= start_us:
+                    continue
+                at_us = max(gap.start_us, start_us)
+                tiebreak: Tiebreak = (gap.start_us, gap.end_us, gap.cause)
+                key = (at_us, _RANK_GAP, 0, STREAM_ORDINAL[gap.stream], symbol_ord, tiebreak)
+                markers[key] = ReplayGap(
+                    at_us, symbol, gap.stream, gap.start_us, gap.end_us, gap.cause
+                )
+        return [(key, marker, _EVENT_BYTES) for key, marker in sorted(markers.items())]
+
+    async def anchor_at(self, symbol: str, at_us: int) -> RecordedEvent | None:
+        """Seek anchor (E26-T04): the latest `orderbook_snapshot` of `symbol` at the replay's
+        depth with `at_us - ANCHOR_LOOKBACK_US <= ts_us <= at_us`. It is one row, not a stream:
+        under `auto` both tiers are asked and the latest by `order_key` wins (a row both hold
+        maps identically), so the answer never depends on how far roll-off has got."""
+        req = self._request
+        if symbol not in req.symbols:
+            raise ReplayRequestInvalid("symbol is not part of this replay")
+        if not req.start_us <= at_us <= req.end_us:
+            raise ReplayRequestInvalid("anchor instant is outside the replay window")
+        tiers: tuple[Tier, ...] = ("questdb", "parquet")
+        if req.source_tier != "auto":
+            tiers = (req.source_tier,)
+        found: list[RecordedEvent] = []
+        for tier in tiers:
+            reader = self._tiers.hot if tier == "questdb" else self._tiers.cold
+            lookup = reader.snapshot_at(
+                symbol, req.depth, at_us, not_before_us=at_us - ANCHOR_LOOKBACK_US
+            )
+            stream = StreamKind.ORDERBOOK_SNAPSHOT
+            hit = await self._guarded(lookup, tier=tier, symbol=symbol, stream=stream)
+            if hit is not None:
+                found.append(hit)
+        return max(found, key=order_key, default=None)

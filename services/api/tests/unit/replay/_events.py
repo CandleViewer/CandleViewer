@@ -20,9 +20,11 @@ from candleviewer.storage.repositories.recorded import (
     RecordedBookDelta,
     RecordedBookSnapshot,
     RecordedEvent,
+    RecordedGap,
     RecordedStreamReader,
     RecordedTicker,
     RecordedTrade,
+    RecordingGapReader,
 )
 from candleviewer.storage.testing import (
     InMemoryRecordedTier,
@@ -81,6 +83,17 @@ def ticker(offset_us: int, *, symbol: str = SYM) -> RecordedEvent:
     return RecordedEvent(T0 + offset_us, 0, symbol, StreamKind.TICKERS, (), payload)
 
 
+def gap(
+    start_us: int,
+    end_us: int,
+    *,
+    stream: StreamKind = StreamKind.TRADES,
+    symbol: str = SYM,
+    cause: str = "ws_disconnect",
+) -> RecordedGap:
+    return RecordedGap(symbol, stream, T0 + start_us, T0 + end_us, cause)
+
+
 def request(
     *,
     start_us: int = 0,
@@ -112,18 +125,19 @@ class Harness:
         cold: Iterable[RecordedEvent] = (),
         hot: Iterable[RecordedEvent] = (),
         archived: bool = False,
+        gaps: Iterable[RecordedGap] = (),
         req: ReplayRequest | None = None,
     ) -> None:
         self.cold = InMemoryRecordedTier(cold)
         self.hot = InMemoryRecordedTier(hot)
         self.coverage = StaticArchiveCoverage()
-        self.gaps = StaticGapReader()
+        self.gaps = StaticGapReader(gaps)
         self.tiers = ReplayTiers(
             hot=self.hot, cold=self.cold, coverage=self.coverage, gaps=self.gaps
         )
         self.req = req or request()
         if archived:
-            self.archive(0, self.req.end_us - T0)
+            self.archive(self.req.start_us - T0, self.req.end_us - T0)
 
     def archive(
         self, start_us: int, end_us: int, *, streams: Iterable[StreamKind] | None = None
@@ -141,12 +155,13 @@ class Harness:
         hot: RecordedStreamReader | None = None,
         cold: RecordedStreamReader | None = None,
         coverage: ArchiveCoverage | None = None,
+        gaps: RecordingGapReader | None = None,
     ) -> Harness:
         self.tiers = ReplayTiers(
             hot=hot or self.hot,
             cold=cold or self.cold,
             coverage=coverage or self.coverage,
-            gaps=self.gaps,
+            gaps=gaps or self.gaps,
         )
         return self
 
