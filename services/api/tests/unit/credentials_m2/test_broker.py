@@ -18,8 +18,8 @@ from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.store import InMemoryCredentialStore
 from tests.unit.credentials_m2._helpers import (
     _borrow,
-    _h,
     _store,
+    _with,
 )
 from tests.unit.credentials_m2._vectors import (
     API_KEY,
@@ -52,7 +52,7 @@ async def test_borrowed_secret_invalidated_after_borrow(broker: CredentialBroker
     async def fn(k: Secret[str], s: Secret[str]) -> None:
         kept.extend([k, s])
 
-    await _h(broker).with_credentials(meta.key_id, fn, purpose="sign_rest")
+    await _with(broker, meta.key_id, fn)
     gc.collect()
     for s in kept:
         with pytest.raises(RuntimeError):
@@ -68,7 +68,7 @@ async def test_borrowed_secret_invalidated_even_if_fn_raises(broker: CredentialB
         raise LookupError("boom")
 
     with pytest.raises(LookupError):
-        await _h(broker).with_credentials(meta.key_id, fn, purpose="sign_rest")
+        await _with(broker, meta.key_id, fn)
     with pytest.raises(RuntimeError):
         kept[0].reveal()
 

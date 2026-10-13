@@ -1,9 +1,9 @@
-"""Credential broker (E27-T02): store / scoped borrow / destroy / KEK re-wrap.
+"""Credential broker (E27-T02): store / sign / destroy / KEK re-wrap.
 
 Plaintext keys and unwrapped DEKs exist only in memory inside this module, only between the
-decrypt and the end of the caller's callback. Every action is audited *before* it acts
-(C-2.9), with an actor bound at wiring time; every await has a timeout; failures are typed,
-fail closed and carry no key material (C-12.6).
+decrypt and the end of the request MAC; they never leave M2 (C-2.7, #2339). Every action is
+audited *before* it acts (C-2.9), with an actor bound at wiring time; every await has a timeout;
+failures are typed, fail closed and carry no key material (C-12.6).
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from candleviewer.secrets.errors import (
 )
 from candleviewer.secrets.models import CredentialRow, StoredCredential
 from candleviewer.secrets.secret import Secret
+from candleviewer.secrets.signing import RequestSignature, SigningMessage, check_message, mac_hex
 from candleviewer.secrets.store import AuditSink, CredentialStore
 
 Clock = Callable[[], float]
@@ -274,7 +275,9 @@ class CredentialBroker:
         caller_module: str,
         purpose: str,
     ) -> T:
-        """The only path that hands plaintext credentials to a caller. (Two internal
+        """The single audited decrypt path. Its only production caller is `_sign`, which
+        uses the secret for the request MAC inside M2 and returns no plaintext secret (C-2.7,
+        #2339). (Two internal
         decrypts exist and never leave M2: `_dek_for` returns an unwrapped DEK to this method,
         and `_rotation._rewrap_one` opens `secret_enc` to verify a re-wrap, zeroes it, and is
         covered by the run-level rotation audit.) Caller check, env-namespaced
@@ -339,6 +342,21 @@ class CredentialBroker:
         finally:
             m.credential_borrow_total.labels(stage=caller_module, result=result).inc()
 
+    async def _sign(
+        self, key_id: UUID, message: SigningMessage, caller_module: str, purpose: str
+    ) -> RequestSignature:
+        """M2-side request signing (C-2.7, #2339): the secret is used for the MAC here and
+        never leaves M2. The result holds the hex MAC and the key id the caller's request
+        header needs. A malformed message is refused before the borrow (no decrypt, no audit).
+        """
+        parts = check_message(message)
+
+        async def mac(k: Secret[str], s: Secret[str]) -> RequestSignature:
+            key_id_plain = k.reveal()
+            return RequestSignature(Secret(key_id_plain), mac_hex(key_id_plain, s.reveal(), parts))
+
+        return await self._borrow(key_id, mac, caller_module, purpose)
+
     async def destroy(self, key_id: UUID, *, actor: tuple[str, str, str | None] = _SYSTEM) -> None:
         """Fence first (in-flight borrows refuse at their post-audit re-check), then audit,
         flush and revoke. A failure keeps the key fenced for this process (fail closed) and
@@ -374,7 +392,8 @@ class CredentialBroker:
 
 @final
 class BorrowHandle:
-    """A borrow capability bound to one caller module at wiring time."""
+    """A signing capability bound to one caller module at wiring time. It yields a MAC and the
+    key id, never plaintext secrets (C-2.7, #2339)."""
 
     def __init_subclass__(cls, **kw: Any) -> None:
         _m2_only(cls)
@@ -387,13 +406,8 @@ class BorrowHandle:
             raise ValueError("caller not permitted to borrow credentials")
         self._broker, self._caller = broker, caller_module
 
-    async def with_credentials[T](
-        self,
-        key_id: UUID,
-        fn: Callable[[Secret[str], Secret[str]], Awaitable[T]],
-        *,
-        purpose: Purpose,
-    ) -> T:
-        """Scoped borrow: plaintext lives only for the duration of `fn`; the `Secret`s passed
-        to `fn` are invalidated when it returns."""
-        return await self._broker._borrow(key_id, fn, self._caller, purpose)
+    async def sign(
+        self, key_id: UUID, message: SigningMessage, *, purpose: Purpose
+    ) -> RequestSignature:
+        """M2 signs `message` with the credential's API secret (see `CredentialBroker._sign`)."""
+        return await self._broker._sign(key_id, message, self._caller, purpose)

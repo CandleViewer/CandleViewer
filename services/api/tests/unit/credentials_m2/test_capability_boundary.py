@@ -135,8 +135,8 @@ def test_guard_fails_planted_probe_file_on_disk(tmp_path: Path) -> None:
 
 
 async def test_borrower_exposes_no_broker_resolver() -> None:
-    """The one borrow capability holds a closure only: no `_resolve`/`_broker` attribute, and
-    the exchange adapter keeps it private."""
+    """The one signing capability holds a closure only: no `_resolve`/`_broker` attribute, no
+    plaintext-yielding member (#2339: `sign` only), and the exchange adapter keeps it private."""
     from candleviewer.app import build_app_context
     from candleviewer.secrets import CredentialBorrower
     from candleviewer.settings import Settings
@@ -145,7 +145,7 @@ async def test_borrower_exposes_no_broker_resolver() -> None:
     borrower = ctx.exchange_bybit._credentials
     assert isinstance(borrower, CredentialBorrower)
     public = {n for n in dir(borrower) if not n.startswith("__")}
-    assert public == {"with_credentials", "_CredentialBorrower__borrow"}
+    assert public == {"sign", "_CredentialBorrower__borrow"}
     assert not hasattr(borrower, "_resolve") and not hasattr(borrower, "_broker")
     assert not hasattr(ctx.exchange_bybit, "credentials")
 

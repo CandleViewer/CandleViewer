@@ -176,7 +176,7 @@ async def test_fake_storage_backend_wiring_fails_closed(env: Environment) -> Non
     in live the gate latches (`no_credential_store`), in demo M2 reports STOPPED."""
     from candleviewer.app import build_app_context
     from candleviewer.observability.health import HealthStatus
-    from candleviewer.secrets import KekUnavailable, Secret
+    from candleviewer.secrets import API_KEY_ID, KekUnavailable
 
     s = Settings(environment=env, storage_backend="fake", kek_source="none")
     from candleviewer.app import _build_audit, _build_secrets
@@ -188,11 +188,8 @@ async def test_fake_storage_backend_wiring_fails_closed(env: Environment) -> Non
     borrower = ctx.exchange_bybit._credentials
     assert borrower is not None
 
-    async def fn(k: Secret[str], v: Secret[str]) -> None:
-        raise AssertionError("must not run")
-
     with pytest.raises(KekUnavailable):
-        await borrower.with_credentials(uuid.uuid4(), fn, purpose="sign_rest")
+        await borrower.sign(uuid.uuid4(), (API_KEY_ID,), purpose="sign_rest")
     if env is Environment.LIVE:
         assert ctx.oms_read_only_gate.is_read_only
         assert ctx.secrets.health().status is HealthStatus.DEGRADED

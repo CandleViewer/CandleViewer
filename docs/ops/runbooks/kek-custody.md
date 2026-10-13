@@ -36,9 +36,11 @@ compose rule (`tests/unit/credentials_m2/test_compose_kek.py`).
   `RLIMIT_CORE=0` and `PR_SET_DUMPABLE=0` itself before loading the KEK and reads both back; in
   `live`, if either did not take effect it degrades with reason `process_hardening_failed`.
 - Accepted residual (SR-009): Python creates immutable copies of key material (`bytes` passed to
-  the AES/HMAC primitives, decoded `str` handed to the signing callback) that cannot be zeroed.
-  Zeroisation covers M2's own `bytearray` buffers only (KEK, cached DEKs, decrypted plaintext);
-  the DEK cache TTL is capped at 300 s and the borrowed `Secret`s are invalidated after the call.
+  the AES/HMAC primitives, the decoded `str` M2 uses for the request MAC) that cannot be zeroed.
+  These copies never leave `secrets/` (C-2.7, #2339): the exchange adapter gets only the hex
+  signature and the key id. Zeroisation covers M2's own `bytearray` buffers only (KEK, cached
+  DEKs, decrypted plaintext); the DEK cache TTL is capped at 300 s and the internal `Secret`s are
+  invalidated after each signing call.
 - `kernel.yama.ptrace_scope >= 1`; no `SYS_PTRACE` capability on the container.
 - Swap off or encrypted.
 - WSL: `/etc/wsl.conf` `[interop] enabled=false`, `appendWindowsPath=false`.
