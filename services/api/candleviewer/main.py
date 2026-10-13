@@ -149,6 +149,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if bars_runtime is not None:
             await bars_runtime.stop()  # set before writer; both before storage stops
         await ctx.mesh_self_check.stop()
+        csrf_audits = getattr(app.state, "csrf_refusal_audits", None)
+        if csrf_audits is not None:
+            # #2090: let in-flight CSRF-refusal audits land (bounded) before audit stops.
+            left = await csrf_audits.drain()
+            if left:
+                logger().warning("shutdown with %d CSRF-refusal audit(s) still in flight", left)
         await supervisor.stop_all()
 
 

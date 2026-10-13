@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.app import create_app
 from candleviewer.auth.scopes import PrincipalSnapshot
+from tests.csrf_helpers import arm_csrf, wire_fake_sessions
 
 MGR = uuid.uuid4()
 OTHER = uuid.uuid4()
@@ -60,7 +61,8 @@ class _Writer:
 def _client(store: _Store, w: _Writer) -> TestClient:
     app = create_app(principal_resolver=_Resolver(), onboarding_store=store)
     app.state.app_context.audit._writer = w
-    return TestClient(app, client=("127.0.0.1", 50000))
+    wire_fake_sessions(app, "mgr", "other")
+    return arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
 
 
 H = {"Authorization": "Bearer mgr"}
@@ -93,7 +95,8 @@ def test_new_manager_to_completion_dismiss_persist_and_tamper() -> None:
     assert forged.status_code == 403
     assert w.calls[-1]["action"] == "onboarding.checklist_tamper_rejected"
     assert OTHER not in store.dismissed and MGR not in store.dismissed
-    assert c.post("/onboarding/checklist/dismiss", headers={}).status_code == 401
+    anon = c.post("/onboarding/checklist/dismiss", headers={})  # SR-041: no session -> CSRF 403
+    assert anon.status_code == 403 and anon.json()["code"] == "csrf_token_invalid"
 
     # Completion is reachable; dismiss persists across a rebuilt app.
     # Unshipped steps keep the card incomplete: it cannot be dismissed yet.

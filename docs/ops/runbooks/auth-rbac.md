@@ -14,12 +14,12 @@ out where relevant.
 
 Quick facts the procedures rely on:
 
-| Fact | Value | Source |
-|---|---|---|
-| Lockout | 5 failed logins lock the account for 15 min; login returns `423` with `Retry-After` | `auth/login_service.py` (`LOCKOUT_THRESHOLD`, `LOCKOUT_DURATION`), `api/auth.py` |
-| Step-up grace | 5 min per action class; `live_enablement` and `killswitch` always need a fresh code | `auth/step_up.py` (`GRACE_WINDOW`, `NO_GRACE_ACTION_CLASSES`) |
-| Step-up failures | 3 invalid codes abandon the action and make the session read-only for 5 min | `auth/step_up.py` (`FAILURE_CAP`, `READONLY_WINDOW`) |
-| Session lifetime | 12 h absolute, 12 min access token, idle lock 15 min default (5–60 min) | `auth/session_service.py` |
+| Fact             | Value                                                                               | Source                                                                           |
+| ---------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Lockout          | 5 failed logins lock the account for 15 min; login returns `423` with `Retry-After` | `auth/login_service.py` (`LOCKOUT_THRESHOLD`, `LOCKOUT_DURATION`), `api/auth.py` |
+| Step-up grace    | 5 min per action class; `live_enablement` and `killswitch` always need a fresh code | `auth/step_up.py` (`GRACE_WINDOW`, `NO_GRACE_ACTION_CLASSES`)                    |
+| Step-up failures | 3 invalid codes abandon the action and make the session read-only for 5 min         | `auth/step_up.py` (`FAILURE_CAP`, `READONLY_WINDOW`)                             |
+| Session lifetime | 12 h absolute, 12 min access token, idle lock 15 min default (5–60 min)             | `auth/session_service.py`                                                        |
 
 ## 1. Unlock a locked account (SR-016)
 
@@ -164,12 +164,12 @@ event carries the reason, which the degraded-mode banner shows.
 
 Reason codes (`net/binding_check.py`, `net/scheduler.py`):
 
-| Code | Meaning |
-|---|---|
-| `net.public_binding_detected` | a listener is bound to `0.0.0.0` or `::` |
+| Code                            | Meaning                                                       |
+| ------------------------------- | ------------------------------------------------------------- |
+| `net.public_binding_detected`   | a listener is bound to `0.0.0.0` or `::`                      |
 | `net.off_mesh_binding_detected` | a listener is bound outside the loopback/mesh CIDR allow-list |
-| `net.binding_check_failed` | the socket table could not be read (fail-closed) |
-| `net.self_check_timed_out` | the check exceeded its time limit |
+| `net.binding_check_failed`      | the socket table could not be read (fail-closed)              |
+| `net.self_check_timed_out`      | the check exceeded its time limit                             |
 
 1. Read the gauge on the metrics listener: expect `net_binding_safe 0`. Read the reason code from the
    banner or the `system` topic event.
@@ -231,21 +231,41 @@ repository's secret settings, never from an agent session.
   (`settings.py`). **Do not rotate these casually.** Changing the pepper invalidates every stored
   password hash; changing the recovery HMAC key invalidates every unused recovery code. No migration or
   re-key tool exists for either. Treat as BLOCKED — not implemented; escalate to the Owner.
+- **CSRF key (`auth_csrf_key_hex`, SR-041, #2090).** Dedicated 32-byte hex key for the
+  `__Host-cv_csrf` token MAC; required on live or `storage_backend=real`. Rotate: set the old value
+  as `auth_csrf_previous_key_hex` (verify-only) and a new `auth_csrf_key_hex`, restart, then drop the
+  previous key after one refresh lifetime (12 h). A dropped or changed key only forces clients to
+  re-fetch the cookie via `GET /auth/session`; no data is lost. Startup refuses a CSRF key (current
+  or previous) equal to the TOTP or recovery key. Alerts: `CsrfRefusalsHigh`,
+  `CsrfRefusalAuditUnavailable` (`docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh`).
+- **SR-042 origins (`CV_ALLOWED_ORIGINS`).** The CSRF guard refuses any state-changing request
+  whose `Origin` is not in this exact list, or that carries `Sec-Fetch-Site: cross-site` or
+  `same-site`. `null` and wildcards are never accepted. Empty (the default) refuses every browser
+  write, which is the production fail-closed state. Set it before rollout to each origin the web app
+  is served from, scheme + host + port, comma separated, e.g.
+  `CV_ALLOWED_ORIGINS=https://candleviewer.<tailnet>.ts.net`. The dev compose override
+  (`infra/compose/docker-compose.dev.yml`) defaults it to the Vite dev and preview origins
+  (`http://127.0.0.1:5173`, `http://localhost:5173`, `:4173`).
+- **Electron desktop shell.** In dev (`CV_DEV_SERVER_URL`) the renderer runs on the Vite origin
+  above and works unchanged. The packaged shell loads `file://…/index.html`, so its requests carry
+  `Origin: null` and are refused by design (never allow-list `null`), and the backend's
+  `__Host-cv_csrf` cookie is not readable from a `file://` page. Packaged-Electron writes need a
+  privileged custom scheme or a main-process proxy, which is not part of #2090 (see the PR).
 - **Unit and contract tests** use in-process fakes and keys generated inside the test process; there
   is no shared credential to rotate.
 - **Secret scanning.** If a fixture secret leaks, follow `SECURITY.md` and rotate immediately.
 
 ## Known gaps referenced above
 
-| Gap | Reference |
-|---|---|
-| Break-glass CLI (SR-023) | #1778 item AB, no owning ticket |
-| `PUT /auth/password` not implemented (no revoke-other-sessions on change) | #2110 |
-| Scheduled audit-chain verifier | #2111 |
-| Disable-user cascade (SR-029) | #965 |
-| Session rotation on role change and step-up | #2101 |
-| Owner notification on lockout | #2102 |
-| Authz/lockout metrics declared but not emitted | none yet; listed in the PR as new finding |
+| Gap                                                                       | Reference                                 |
+| ------------------------------------------------------------------------- | ----------------------------------------- |
+| Break-glass CLI (SR-023)                                                  | #1778 item AB, no owning ticket           |
+| `PUT /auth/password` not implemented (no revoke-other-sessions on change) | #2110                                     |
+| Scheduled audit-chain verifier                                            | #2111                                     |
+| Disable-user cascade (SR-029)                                             | #965                                      |
+| Session rotation on role change and step-up                               | #2101                                     |
+| Owner notification on lockout                                             | #2102                                     |
+| Authz/lockout metrics declared but not emitted                            | none yet; listed in the PR as new finding |
 
 ## Execution record
 

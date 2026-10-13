@@ -1,0 +1,30 @@
+# #2090 (SR-041): a burst of CSRF refusals means a cross-site attack in progress, a
+# broken client (token not sent / not rotated) or a key mismatch across processes.
+# Refusals are already audited (auth.csrf_refused); this makes them visible.
+groups:
+  - name: auth-csrf
+    rules:
+      - alert: CsrfRefusalsHigh
+        expr: sum(increase(auth_csrf_refused_total{reason!~"audit_unavailable|audit_slow|audit_throttled"}[10m])) > 20
+        for: 5m
+        labels:
+          severity: ticket
+          component: auth
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh"
+          summary: "State-changing requests refused by the SR-041 CSRF guard"
+          description: >-
+            More than 20 CSRF refusals in 10 minutes. Check auth.csrf_refused audit
+            rows by reason and source IP; see docs/ops/runbooks/auth-rbac.md (CSRF).
+      - alert: CsrfRefusalAuditUnavailable
+        expr: increase(auth_csrf_refused_total{reason="audit_unavailable"}[15m]) > 0
+        labels:
+          severity: ticket
+          component: auth
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh"
+          summary: "CSRF refusals could not be audited (C-2.9)"
+          description: >-
+            The guard refused requests but the audit write failed. Requests stayed
+            refused; the audit trail has gaps. Check the audit WAL. (Slow writes are
+            counted separately as audit_slow and still land.)

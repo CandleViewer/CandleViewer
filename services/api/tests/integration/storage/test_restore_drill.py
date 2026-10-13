@@ -153,6 +153,7 @@ def _settings(dsn: str, tmp: Path) -> Settings:
         pg_dsn=SecretStr(dsn),
         auth_totp_key_hex=SecretStr("33" * 32),
         auth_recovery_hmac_key_hex=SecretStr("44" * 32),
+        auth_csrf_key_hex=SecretStr("55" * 32),
         auth_pepper=SecretStr("drill-pepper"),
         audit_wal_path=str(tmp / "restored-audit.wal"),
     )

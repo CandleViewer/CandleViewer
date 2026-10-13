@@ -1,7 +1,9 @@
 """E09-X02 CSRF / cookie-flag abuse cases (AC-CSRF-*) against the real session router.
 
-Finding F-1 (design gap, see abuse-cases doc): the repo has no double-submit CSRF token in
-`auth/`; the implemented controls are SameSite=Strict + Origin allow-list on cookie refresh.
+These exercise the session router on its own (no `CsrfMiddleware` mounted), i.e. the
+SameSite=Strict + Origin allow-list controls that stay in place as additional defences. The
+SR-041 double-submit token (finding F-1, #2090) is covered end to end through `create_app()` in
+`test_csrf_double_submit.py`.
 """
 
 from __future__ import annotations
@@ -40,16 +42,16 @@ async def test_ac_csrf_02_empty_allowlist_refuses_every_origin() -> None:
 async def test_ac_csrf_03_refresh_cookie_flags_not_downgradable() -> None:  # SR-012
     env = _Env(origins=frozenset({_ORIGIN}))
     m = await env.mint(uuid.uuid4())
-    env.client.cookies.clear()
+    env.client.cookies.delete(REFRESH_COOKIE, path="/api/v1/auth")  # keep the SR-041 pair
     r = env.client.post(
         "/api/v1/auth/refresh",
         cookies={REFRESH_COOKIE: m.refresh_token},
         headers={"Origin": _ORIGIN, "X-Forwarded-Proto": "http"},
     )
     assert r.status_code == 200
-    cookie = r.headers["set-cookie"].lower()
+    cookie = next(h for h in r.headers.get_list("set-cookie") if h.startswith(REFRESH_COOKIE))
     for flag in ("httponly", "secure", "samesite=strict"):
-        assert flag in cookie
+        assert flag in cookie.lower()
 
 
 async def test_ac_csrf_04_state_changing_routes_require_bearer_not_cookie() -> None:

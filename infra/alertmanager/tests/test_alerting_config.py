@@ -86,8 +86,23 @@ def test_required_rules_present() -> None:
         "SyntheticAlert",
         "AuditChainVerificationFailed",
         "EgressIpChanged",
+        "CsrfRefusalsHigh",  # #2090 SR-041
+        "CsrfRefusalAuditUnavailable",
     }
     assert required <= names
+
+
+def test_csrf_refusal_alerts_watch_the_bounded_metric() -> None:
+    """#2090: the CSRF alerts use the closed-label counter, never a per-path series."""
+    rules = {r["alert"]: r for r in _rules()}
+    for name in ("CsrfRefusalsHigh", "CsrfRefusalAuditUnavailable"):
+        assert "auth_csrf_refused_total" in rules[name]["expr"]
+        assert rules[name]["labels"]["severity"] == "ticket"
+        assert rules[name]["labels"]["component"] == "auth"
+    high = rules["CsrfRefusalsHigh"]["expr"]
+    for bookkeeping in ("audit_unavailable", "audit_slow", "audit_throttled"):
+        assert bookkeeping in high  # excluded: only real refusal reasons drive the alert
+    assert 'reason="audit_unavailable"' in rules["CsrfRefusalAuditUnavailable"]["expr"]
 
 
 def test_oms_unknown_orders_for_60s() -> None:

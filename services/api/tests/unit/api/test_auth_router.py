@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.auth import make_auth_router
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     AccountDisabled,
     AccountLocked,
@@ -28,6 +29,8 @@ from candleviewer.auth.models import (
     MfaVerifyRequest,
     MintedSession,
 )
+
+_CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
 
 
 class _FakeLoginService:
@@ -153,7 +156,7 @@ class _FakeIdentity:
 
 def _app(outcome: object, *, active: bool = True) -> FastAPI:
     app = FastAPI()
-    app.include_router(make_auth_router(_FakeAuthService(outcome, active=active)))
+    app.include_router(make_auth_router(_FakeAuthService(outcome, active=active), csrf=_CSRF_CODEC))
     return app
 
 
@@ -167,6 +170,7 @@ def _mfa_app(
                 InvalidCredentials("n/a"), mfa_outcome=mfa_outcome, mfa_active=mfa_active
             ),
             audit_service=audit_service,  # type: ignore[arg-type]
+            csrf=_CSRF_CODEC,
         )
     )
     return app
@@ -251,7 +255,9 @@ def test_account_locked_emits_auth_account_locked_audit_action_with_warning_seve
     audit_service = _RecordingAuditService()
     app = FastAPI()
     app.include_router(
-        make_auth_router(_FakeAuthService(AccountLocked(600)), audit_service=audit_service)
+        make_auth_router(
+            _FakeAuthService(AccountLocked(600)), audit_service=audit_service, csrf=_CSRF_CODEC
+        )
     )
     client = TestClient(app)
 
@@ -390,6 +396,7 @@ def test_mfa_verify_with_session_backend_mints_session_and_sets_cookie() -> None
             auth,
             audit_service=audit_service,
             identity=_FakeIdentity(),
+            csrf=_CSRF_CODEC,
         )
     )
     response = TestClient(app).post(

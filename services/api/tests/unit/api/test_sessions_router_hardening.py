@@ -9,7 +9,8 @@ from typing import Any
 
 from candleviewer.audit.models import Severity
 from candleviewer.settings import Settings
-from tests.unit.api.test_sessions_router import REFRESH_COOKIE, _Env, _h, _Writer
+from tests.csrf_helpers import arm_csrf
+from tests.unit.api.test_sessions_router import _CSRF_CODEC, REFRESH_COOKIE, _Env, _h, _Writer
 
 
 class _FlakyAudit:
@@ -27,7 +28,7 @@ class _FlakyAudit:
 
 
 def _refresh(env: _Env, token: str) -> Any:
-    env.client.cookies.clear()  # never replay the rotated cookie
+    env.client.cookies.delete(REFRESH_COOKIE, path="/api/v1/auth")  # never replay the rotated one
     return env.client.post("/api/v1/auth/refresh", json={"refresh_token": token})
 
 
@@ -119,15 +120,20 @@ async def test_logout_audit_record_precedes_revocation() -> None:
 
 async def test_refresh_n_plus_one_within_window_is_429_with_retry_after() -> None:
     env = _Env(throttle_max=3)
-    tokens = [(await env.mint(uuid.uuid4())).refresh_token for _ in range(4)]
-    for t in tokens[:3]:
-        assert _refresh(env, t).status_code == 200
+    minted = [await env.mint(uuid.uuid4()) for _ in range(4)]
+
+    def refresh_as(m: Any) -> Any:  # each client holds its own session's SR-041 token
+        arm_csrf(env.client, _CSRF_CODEC, m.session_id)
+        return _refresh(env, m.refresh_token)
+
+    for m in minted[:3]:
+        assert refresh_as(m).status_code == 200
     env.t = 15.0
-    r = _refresh(env, tokens[3])
+    r = refresh_as(minted[3])
     assert r.status_code == 429
     assert r.headers["retry-after"] == "45"
     env.t = 61.0  # window elapsed; the refused attempt burned no token
-    assert _refresh(env, tokens[3]).status_code == 200
+    assert refresh_as(minted[3]).status_code == 200
 
 
 async def test_refresh_per_session_budget_is_429() -> None:

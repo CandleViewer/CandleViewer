@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 import yaml
+from fastapi.testclient import TestClient
 
 from candleviewer.api.deny_by_default import (
     DECLARED_WS_ROUTES,
@@ -38,6 +39,7 @@ from tests.contract.rbac.rbac_harness import (
 with MATRIX_PATH.open(encoding="utf-8") as _fh:
     _MATRIX: dict[str, Any] = yaml.safe_load(_fh)
 _OPS: dict[str, dict[str, Any]] = _MATRIX["operations"]
+_ROW_INDEX: dict[str, int] = {k: i for i, k in enumerate(_OPS)}
 _TOPICS: dict[str, dict[str, Any]] = _MATRIX["topics"]
 _OUTCOMES = {"allow", "401", "403"}
 _TOPIC_OUTCOMES = {"sub_ok", "not_authenticated", "forbidden", "account_scope_denied"}
@@ -78,10 +80,8 @@ def test_matrix_covers_every_contract_operation_and_has_no_orphan_rows() -> None
 def test_every_served_route_has_a_row_and_every_row_state_matches_the_app(world: World) -> None:
     served = _served_ops(world)
     undeclared = sorted(served - set(_OPS))
-    assert not undeclared, (
-        "app serves routes with no matrix row; add rows (all 5 actors) for: "
-        + ", ".join(undeclared)
-    )
+    missing_rows = "app serves routes with no matrix row; add rows (all 5 actors) for: "
+    assert not undeclared, missing_rows + ", ".join(undeclared)
     now_mounted = sorted(k for k, r in _OPS.items() if r["state"] == "not_mounted" and k in served)
     assert not now_mounted, (
         "rows marked not_mounted are now served; change state to `executed` and fill in the "
@@ -114,10 +114,9 @@ def test_matrix_permissions_and_scope_agree_with_the_contract() -> None:
 
 def test_topic_matrix_is_total_over_the_ws_registry_and_agrees_with_it() -> None:
     registry = set(TOPIC_PERMISSIONS) | {"system"}
-    assert not (registry - set(_TOPICS)), (
-        "WS topic families with no matrix row; add all 5 actors for: "
-        + ", ".join(sorted(registry - set(_TOPICS)))
-    )
+    missing_topics = ", ".join(sorted(registry - set(_TOPICS)))
+    topic_msg = f"WS topic families with no matrix row; add all 5 actors: {missing_topics}"
+    assert not missing_topics, topic_msg
     assert not (set(_TOPICS) - registry), "orphan topic rows: " + ", ".join(
         sorted(set(_TOPICS) - registry)
     )
@@ -181,6 +180,35 @@ def _classify(status: int) -> str:
     return {401: "401", 403: "403"}.get(status, "allow")
 
 
+def _is_csrf_refusal(resp: Any) -> bool:
+    if resp.status_code != 403:
+        return False
+    try:
+        return bool(resp.json().get("code") == "csrf_token_invalid")
+    except ValueError:
+        return False
+
+
+def _anon_client_ip(key: str) -> tuple[str, int]:
+    """One loopback source per matrix row for the unauthenticated actor, so the
+    guard's per-IP refusal throttle (anti audit-flood, #2090) never turns a cell
+    into a 429; the throttle itself is covered by test_csrf_double_submit.py."""
+    return (f"127.0.{_ROW_INDEX[key] // 250}.{_ROW_INDEX[key] % 250 + 1}", 50000)
+
+
+def _observe(method: str, actor: str, resp: Any) -> str:
+    """SR-041 (#2090): an unsafe call with no session is refused by the CSRF guard before
+    any route runs (contract: a session-unbound token is 403 `csrf_token_invalid`), which
+    is stricter than the matrix's reviewed `401`, so that exact refusal satisfies it.
+    A CSRF refusal never counts as an RBAC outcome for any other cell: every
+    authenticated cell carries a session-bound token, so one here means the harness
+    stopped exercising RBAC."""
+    if _is_csrf_refusal(resp):
+        unsafe_anon = actor == "unauthenticated" and method not in ("GET", "HEAD", "OPTIONS")
+        return "401" if unsafe_anon else "csrf_token_invalid"
+    return _classify(resp.status_code)
+
+
 @pytest.mark.parametrize(("key", "actor"), _cells())
 def test_cell_outcome_matches_matrix(world: World, key: str, actor: str) -> None:
     row = _OPS[key]
@@ -188,24 +216,25 @@ def test_cell_outcome_matches_matrix(world: World, key: str, actor: str) -> None
     req = row.get("request", {})
     started = time.perf_counter()
     body = req.get("json")
-    resp = world.client.request(
+    client = world.client
+    if actor == "unauthenticated":
+        client = TestClient(world.app, client=_anon_client_ip(key), raise_server_exceptions=False)
+    resp = client.request(
         method,
         fill_path(path, req.get("path")),
         params=req.get("params"),
         json=body if body is not None else ({} if method in ("POST", "PUT", "PATCH") else None),
         headers={**bearer(actor), **req.get("headers", {})},
     )
-    observed = _classify(resp.status_code)
+    observed = _observe(method, actor, resp)
     pending = actor in row.get("pending", {})
     record_cell(_group(key), key, actor, "xfail" if pending else "pass", started)
     # 501/503 after authorisation = backend not wired in the CI app (authz still passed); any
     # other 5xx is an unhandled error and fails the cell.
-    assert resp.status_code not in range(500, 600) or resp.status_code in (501, 503), (
-        f"{key} as {actor}: unhandled server error {resp.status_code}"
-    )
-    assert observed == row["outcomes"][actor], (
-        f"{key} as {actor}: expected {row['outcomes'][actor]}, got {resp.status_code}"
-    )
+    unhandled = resp.status_code in range(500, 600) and resp.status_code not in (501, 503)
+    assert not unhandled, f"{key} as {actor}: unhandled server error {resp.status_code}"
+    cell_msg = f"{key} as {actor}: expected {row['outcomes'][actor]}, got {resp.status_code}"
+    assert observed == row["outcomes"][actor], cell_msg
 
 
 def test_not_executable_rows_still_refuse_the_unauthenticated_caller_or_say_why(
@@ -217,10 +246,17 @@ def test_not_executable_rows_still_refuse_the_unauthenticated_caller_or_say_why(
         if row["state"] != "not_executable":
             continue
         method, path = key.split(" ", 1)
-        resp = world.client.request(
-            method, fill_path(path), json={} if method in ("POST", "PUT", "PATCH") else None
+        client = TestClient(world.app, client=_anon_client_ip(key), raise_server_exceptions=False)
+        resp = client.request(
+            method,
+            fill_path(path),
+            json={} if method in ("POST", "PUT", "PATCH") else None,
+            headers=bearer("unauthenticated"),  # well-formed SR-041 pair, no session
         )
-        assert resp.status_code in (401, 422, 501, 503), f"{key}: {resp.status_code}"
+        refused = resp.status_code in (401, 422, 501, 503) or (
+            method != "GET" and _is_csrf_refusal(resp)  # SR-041: no session, unsafe method
+        )
+        assert refused, f"{key}: {resp.status_code}"
         assert resp.status_code < 200 or resp.status_code >= 300, f"{key}: unauthenticated 2xx"
 
 

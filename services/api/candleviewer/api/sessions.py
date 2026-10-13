@@ -8,7 +8,8 @@ emission here (`auth` may not import `audit`). Authentication is the opaque
 bearer access token of ADR-0020 (hashed at rest, constant-time compared);
 the `cv_refresh` cookie is `HttpOnly; Secure; SameSite=Strict;
 Path=/api/v1/auth` and cookie-authenticated refreshes get an Origin check
-(CSRF, ticket Security notes).
+(SR-042). The SR-041 `__Host-cv_csrf` token is enforced by `api.csrf.CsrfMiddleware`
+and rotated here on refresh, re-issued by `GET /auth/session`, expired on logout.
 
 **Identity seam (not invented here):** `SessionInfo`/`AuthenticatedResponse`
 need `user`, `permissions` and `account_scope`, which come from the RBAC
@@ -31,16 +32,27 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol
 
+import structlog
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from candleviewer.api.csrf import (
+    clear_csrf_cookie,
+    csrf_problem,
+    set_csrf_cookie,
+    source_ip,
+    verify_refresh_csrf,
+)
+from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerdict
 from candleviewer.auth.errors import (
     RefreshReuseDetected,
     SessionIdleLocked,
     SessionNotFound,
     SessionRevoked,
 )
+from candleviewer.auth.metrics import auth_csrf_refused_total
 from candleviewer.auth.models import (
     MintedSession,
     RefreshOutcome,
@@ -154,8 +166,13 @@ def _bearer(request: Request) -> str | None:
     return value.strip() or None if scheme.lower() == "bearer" else None
 
 
+def _log() -> Any:
+    return structlog.get_logger(__name__)
+
+
 def _source_ip(request: Request) -> str | None:
-    return request.client.host if request.client is not None else None
+    """The address MeshOnly admitted (trusted-proxy aware), else the socket peer."""
+    return source_ip(request.scope)
 
 
 # `/auth/refresh` budget (reuses the E09-S01 sliding-window throttle, one
@@ -237,6 +254,7 @@ def make_session_router(
     allowed_origins: frozenset[str] = frozenset(),
     ip_throttle: PerIpLoginThrottle | None = None,
     session_throttle: PerIpLoginThrottle | None = None,
+    csrf: CsrfCodec,
 ) -> APIRouter:
     router = APIRouter(tags=["auth"])
     by_ip = ip_throttle or PerIpLoginThrottle(
@@ -339,10 +357,38 @@ def make_session_router(
         if by_session.is_blocked(session_key):
             return _throttled(by_session.retry_after_s(session_key))
         by_session.record_failure(session_key)
+        reuse = presented_record.revoked_reason == "rotated"
+        if not reuse:
+            # SR-041: validate against the exact session this refresh would rotate,
+            # after the throttles and before any audit write or state change. A
+            # rotated-out token skips this and goes straight to reuse detection: that
+            # branch only revokes (never mints), and `cv_refresh` is HttpOnly +
+            # SameSite=Strict, so it is not CSRF-reachable.
+            refusal = verify_refresh_csrf(
+                csrf,
+                request.headers.get(CSRF_HEADER),
+                request.cookies.get(CSRF_COOKIE),
+                str(presented_record.id),
+            )
+            if refusal is not None:
+                auth_csrf_refused_total.labels(reason=refusal.value).inc()
+                try:
+                    await _audit(
+                        "auth.csrf_refused",
+                        record=presented_record,
+                        ip=ip,
+                        outcome=AuditOutcome.DENIED,
+                        severity=Severity.WARNING,
+                        reason=refusal.value,
+                    )
+                except (AuditUnavailableError, AuditError) as exc:
+                    # Refused regardless (fail closed): a 403, never a 500 (#2238 r3).
+                    auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
+                    _log().error("auth.csrf_refused.audit_unavailable", error=type(exc).__name__)
+                return csrf_problem(refusal)
         # C-2.9 write-ahead: the audit record is written before `refresh()`
         # rotates or revokes anything; if the sink is down we refuse (503)
         # with no state change.
-        reuse = presented_record.revoked_reason == "rotated"
         try:
             if reuse:
                 await _audit(
@@ -391,6 +437,8 @@ def make_session_router(
             },
         )
         _set_refresh_cookie(response, minted.refresh_token, max_age=REFRESH_EXPIRES_IN_S)
+        # SR-041: validated above, rotated with the session
+        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=REFRESH_EXPIRES_IN_S)
         return response
 
     @router.get("/auth/session")
@@ -406,7 +454,7 @@ def make_session_router(
             )
         info = await identity.session_info(str(record.user_id))
 
-        return JSONResponse(
+        response = JSONResponse(
             {
                 **info,
                 "user": await identity.user(str(record.user_id)),
@@ -422,6 +470,11 @@ def make_session_router(
                 },
             }
         )
+        # SR-041 recovery path: re-issue when absent or not verifying.
+        present = request.cookies.get(CSRF_COOKIE)
+        if not present or csrf.verify(present, str(record.id)) is not CsrfVerdict.OK:
+            set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=REFRESH_EXPIRES_IN_S)
+        return response
 
     @router.get("/auth/sessions")
     async def list_sessions(
@@ -506,6 +559,7 @@ def make_session_router(
             await _propagate(r.id, "session_revoked")
         response = Response(status_code=204)
         _clear_refresh_cookie(response)
+        clear_csrf_cookie(response)
         return response
 
     @router.delete("/me/sessions/{sessionId}")
@@ -540,8 +594,9 @@ def make_session_router(
         if revoked is not None:
             await _propagate(revoked.id, "session_revoked")
         response = Response(status_code=204)
-        if session_id == record.id:
+        if session_id == record.id:  # only the caller's own session ends its cookies
             _clear_refresh_cookie(response)
+            clear_csrf_cookie(response)
         return response
 
     return router

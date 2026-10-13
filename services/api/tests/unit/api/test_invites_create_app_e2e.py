@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer import app as app_module
 from candleviewer.app import create_app
+from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import INVITE_TTL
@@ -28,6 +29,7 @@ from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
+from tests.csrf_helpers import csrf_headers
 from tests.unit.api.test_step_up_router import _T0, _Clock
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
@@ -73,6 +75,7 @@ class _World:
         self.resolver = _Resolver()
         self.seeds: dict[str, bytes] = {}
         self.client: TestClient
+        self.codec: CsrfCodec
         self.auth: AuthService
 
     def code(self, token: str) -> str:
@@ -86,8 +89,12 @@ class _World:
         )
 
 
+#: access token -> SR-041 header/cookie pair bound to that token's session.
+_CSRF: dict[str, dict[str, str]] = {}
+
+
 def _h(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"Bearer {token}", **_CSRF.get(token, {})}
 
 
 async def _login(w: _World, role: str, perms: frozenset[Permission]) -> str:
@@ -107,6 +114,7 @@ async def _login(w: _World, role: str, perms: frozenset[Permission]) -> str:
     w.users.add(make_user(password_hash=await w.hasher.hash(_PW)).model_copy(update={"id": uid}))
     minted = await w.auth.sessions.mint(str(uid))
     token = minted.access_token
+    _CSRF[token] = csrf_headers(w.codec, minted.session_id)
     w.seeds[token] = seed
     w.resolver.by_token[token] = PrincipalSnapshot(
         user_id=uid, roles=frozenset({role}), permissions=perms
@@ -132,6 +140,7 @@ async def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     ctx = app.state.app_context
     await w.auth.start(ctx)
     ctx.audit._writer = w.audit  # the lazy emitter resolves `audit.writer` per call
+    w.codec = app.state.csrf_codec
     w.client = TestClient(app, client=("127.0.0.1", 50000))
     return w
 

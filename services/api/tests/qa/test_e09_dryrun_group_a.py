@@ -31,12 +31,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from candleviewer.api.auth import make_auth_router
+from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import AccountDisabled, AccountLocked
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, MfaMethodKind
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+
+_CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
 
 
 class _FakeLoginService:
@@ -71,7 +74,7 @@ class _FakeAuthService:
 
 def _client(outcome: object, *, active: bool = True) -> TestClient:
     app = FastAPI()
-    app.include_router(make_auth_router(_FakeAuthService(outcome, active=active)))
+    app.include_router(make_auth_router(_FakeAuthService(outcome, active=active), csrf=_CSRF_CODEC))
     return TestClient(app)
 
 
@@ -134,7 +137,7 @@ def test_e09_tc_a07_unknown_user_and_wrong_password_are_indistinguishable() -> N
     )
 
     app = FastAPI()
-    app.include_router(make_auth_router(_RealAuthService(login_service)))
+    app.include_router(make_auth_router(_RealAuthService(login_service), csrf=_CSRF_CODEC))
     client = TestClient(app)
 
     unknown_response = client.post(

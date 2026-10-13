@@ -6,7 +6,13 @@ Labels are closed sets (revocation `reason` is normalised by
 
 from __future__ import annotations
 
-from candleviewer.observability.metrics import Counter, Gauge, Histogram
+from candleviewer.observability.metrics import (
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    ReexportCollector,
+)
 
 auth_sessions_active = Gauge(
     "auth_sessions_active", "Live (unrevoked) sessions minted by this process."
@@ -29,6 +35,13 @@ auth_step_up_failures_total = Counter(
 )
 auth_readonly_downgrades_total = Counter(
     "auth_readonly_downgrades_total", "Sessions downgraded to read-only after repeated failures."
+)
+auth_csrf_refused_total = Counter(
+    "auth_csrf_refused_total",
+    "State-changing requests refused by the SR-041/SR-042 CSRF guard, by reason.",
+    # closed set: missing | mismatch | bad_mac | wrong_session | cross_origin (refusals)
+    #             | audit_unavailable | audit_slow | audit_throttled (audit bookkeeping)
+    ["reason"],
 )
 auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets performed.")
 auth_revocation_latency_seconds = Histogram(
@@ -71,3 +84,13 @@ users_invites_rejected_total = Counter(
 users_invites_pending = Gauge(
     "users_invites_pending", "Open (unconsumed, unrevoked) invites seen by this process."
 )
+
+
+#: Series re-exported onto the scraped app registry (#2090): module-level counters
+#: land on the library default registry, which Prometheus never scrapes.
+AUTH_EXPORTED_NAMES: frozenset[str] = frozenset({"auth_csrf_refused_total"})
+
+
+def export_auth_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
+    """Serve the auth series on `registry` (the scraped one) with `env`."""
+    return ReexportCollector(registry, names=AUTH_EXPORTED_NAMES, const_labels={"env": env})

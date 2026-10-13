@@ -70,3 +70,5 @@ class PerIpLoginThrottle:
         cutoff = self._clock() - self._window_s
         while bucket and bucket[0] < cutoff:
             bucket.popleft()
+        if not bucket:
+            del self._attempts[source_ip]  # an emptied window frees its slot (#2238)

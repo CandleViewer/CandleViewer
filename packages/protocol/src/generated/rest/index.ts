@@ -7332,9 +7332,10 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`). `detail` never echoes token or cookie values; clients re-read the cookie and retry once. */
+    /** @description SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`) up to a per-session / per-source budget; beyond it the response is identical but carries `Retry-After` and writes no audit record. `detail` never echoes token or cookie values; clients re-read the cookie and retry once. */
     CsrfTokenInvalid: {
       headers: {
+        "Retry-After": components["headers"]["RetryAfter"];
         [name: string]: unknown;
       };
       content: {

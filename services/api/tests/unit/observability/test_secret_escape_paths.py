@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from candleviewer.app import create_app
 from candleviewer.audit.redact import redact
 from candleviewer.observability.logging import RedactionFilter
+from tests.csrf_helpers import arm_csrf, wire_fake_sessions
 
 SECRET = "ZxCvBnMqWeRtYuIoPaSdFgHjKl"  # noqa: S105 - synthetic canary
 
@@ -40,7 +41,14 @@ def _client() -> TestClient:
                 raise
         return {"qty": p.qty}
 
-    return TestClient(app, raise_server_exceptions=False, client=("127.0.0.1", 50000))
+    wire_fake_sessions(app, "t")
+    client = TestClient(
+        app,
+        raise_server_exceptions=False,
+        client=("127.0.0.1", 50000),
+        headers={"Authorization": "Bearer t"},
+    )
+    return arm_csrf(client, app.state.csrf_codec)
 
 
 def test_validation_error_response_does_not_echo_secret() -> None:

@@ -25,6 +25,7 @@ from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
 import candleviewer.app as appmod
+from candleviewer.auth.csrf import CSRF_COOKIE
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
 from candleviewer.auth.service import AuthService
@@ -99,6 +100,13 @@ def _leaks(texts: list[str], literals: dict[str, str]) -> list[str]:
         hits += [f"shape:{p.pattern[:20]}" for p in shapes if p.search(text)]
         hits += [name for name, val in literals.items() if val and val in text]
     return hits
+
+
+def _csrf(response: Any) -> str:
+    """The `__Host-cv_csrf` value the server just set (what the web client reads)."""
+    token = response.cookies.get(CSRF_COOKIE)
+    assert token, "server did not set the SR-041 cookie"
+    return str(token)
 
 
 @pytest.fixture
@@ -193,21 +201,36 @@ def test_login_mfa_refresh_stepup_never_log_a_credential(
         refresh_cookie = r.cookies.get("cv_refresh")
         assert access and refresh_cookie
         literals.update(access_token=access, refresh_cookie=refresh_cookie)
+        csrf1 = _csrf(r)
+        literals["csrf_token_1"] = csrf1
+        # SR-041 refusal path (tampered MAC) must not log the token either
+        tampered = csrf1[:-2] + ("AA" if not csrf1.endswith("AA") else "BB")
+        literals["csrf_tampered"] = tampered
+        r = client.post("/auth/logout", headers={"Authorization": f"Bearer {access}",
+                        "X-CSRF-Token": tampered}, cookies={CSRF_COOKIE: tampered})  # fmt: skip
+        assert r.status_code == 403 and r.json()["code"] == "csrf_token_invalid"
+        assert tampered not in r.text and csrf1 not in r.text
         # 3. refresh (cookie path with Origin = CSRF guard, then body path)
-        r = client.post("/auth/refresh", headers={"Origin": _ORIGIN},
+        r = client.post("/auth/refresh", headers={"Origin": _ORIGIN, "X-CSRF-Token": csrf1},
                         cookies={"cv_refresh": refresh_cookie})  # fmt: skip
         assert r.status_code == 200, r.text
         access2 = r.json()["tokens"]["access_token"]
         refresh2 = r.cookies.get("cv_refresh")
         assert refresh2 and refresh2 != refresh_cookie
         literals.update(access_token_2=access2, refresh_cookie_2=refresh2)
-        r = client.post("/auth/refresh", json={"refresh_token": refresh2})
+        csrf2 = _csrf(r)
+        assert csrf2 != csrf1  # rotated with the session
+        literals["csrf_token_2"] = csrf2
+        r = client.post("/auth/refresh", json={"refresh_token": refresh2},
+                        headers={"X-CSRF-Token": csrf2})  # fmt: skip
         assert r.status_code == 200, r.text
         access3 = r.json()["tokens"]["access_token"]
         refresh3 = r.json()["tokens"]["refresh_token"]
         literals.update(access_token_3=access3, refresh_token_3=refresh3)
+        literals["csrf_token_3"] = _csrf(r)
         # a replayed (rotated) refresh token exercises the reuse-detection log path
-        r = client.post("/auth/refresh", json={"refresh_token": refresh2})
+        r = client.post("/auth/refresh", json={"refresh_token": refresh2},
+                        headers={"X-CSRF-Token": csrf2}, cookies={CSRF_COOKIE: csrf2})  # fmt: skip
         assert r.status_code == 401
         # 4. step-up needs a live session: mint one afresh via a second login + a new TOTP step
         clock.now += timedelta(seconds=60)
@@ -222,19 +245,21 @@ def test_login_mfa_refresh_stepup_never_log_a_credential(
         assert r.status_code == 200, r.text
         access4 = r.json()["tokens"]["access_token"]
         literals["access_token_4"] = access4
+        csrf4 = _csrf(r)
+        literals["csrf_token_4"] = csrf4
         clock.now += timedelta(seconds=60)
         totp3 = code()
         literals["totp_code_3"] = totp3
         r = client.post(
             "/auth/step-up",
-            headers={"Authorization": f"Bearer {access4}"},
+            headers={"Authorization": f"Bearer {access4}", "X-CSRF-Token": csrf4},
             json={"code": totp3, "password": _PASSWORD, "action_class": "users"},
         )
         assert r.status_code == 200, r.text
         # failing step-up (wrong password) must not echo the attempted secrets either
         r = client.post(
             "/auth/step-up",
-            headers={"Authorization": f"Bearer {access4}"},
+            headers={"Authorization": f"Bearer {access4}", "X-CSRF-Token": csrf4},
             json={
                 "code": "000000",
                 "password": "pw-wrong-7",

@@ -10,6 +10,7 @@
  */
 
 import type { generated } from "@candleviewer/protocol";
+import { apiFetch } from "../http/csrfFetch";
 
 /** Bucket edges in ms; must match `22-api-openapi.yaml` FrontendTelemetry. */
 export const FRAME_EDGES_MS = [4, 8, 12, 16, 20, 33, 50, 100] as const;
@@ -128,7 +129,7 @@ export function fetchTransport(baseUrl = "/api/v1"): Transport {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 5_000);
     try {
-      const res = await fetch(`${baseUrl}${TELEMETRY_PATH}`, {
+      const res = await apiFetch(`${baseUrl}${TELEMETRY_PATH}`, {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },

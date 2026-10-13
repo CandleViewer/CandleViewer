@@ -277,3 +277,46 @@ def test_build_auth_service_non_live_real_empty_pepper_refuses() -> None:
 
     with pytest.raises(ValueError, match="CV_AUTH_PEPPER"):
         build_auth_service(_real_settings(auth_pepper=SecretStr("")))
+
+
+def test_build_csrf_codec_dedicated_key_required_on_real_backend_and_rotatable() -> None:
+    """#2090 (SR-041): `auth_csrf_key_hex` is loaded like the other auth keys."""
+    from pydantic import SecretStr
+
+    from candleviewer.app import build_csrf_codec
+    from candleviewer.auth.csrf import CsrfCodec, CsrfVerdict
+
+    with pytest.raises(ValueError, match="CV_AUTH_CSRF_KEY_HEX"):
+        build_csrf_codec(_real_settings())
+    with pytest.raises(ValueError, match="CV_AUTH_CSRF_KEY_HEX"):
+        build_csrf_codec(_real_settings(auth_csrf_key_hex=SecretStr("aa" * 16)))
+    old = bytes.fromhex("aa" * 32)
+    codec = build_csrf_codec(
+        _real_settings(
+            auth_csrf_key_hex=SecretStr("bb" * 32),
+            auth_csrf_previous_key_hex=SecretStr(old.hex()),
+        )
+    )
+    assert codec.verify(CsrfCodec(old).issue("s"), "s") is CsrfVerdict.OK  # previous verifies
+    # fake backend, no key configured: a process-local key, never a constant
+    a = build_csrf_codec(Settings())
+    b = build_csrf_codec(Settings())
+    assert a.verify(b.issue("s"), "s") is CsrfVerdict.WRONG_SESSION
+
+
+def test_build_csrf_codec_refuses_reusing_the_totp_or_recovery_key() -> None:
+    """Review #2238: the CSRF key must be dedicated (contract), checked at startup."""
+    from pydantic import SecretStr
+
+    from candleviewer.app import build_csrf_codec
+
+    for reused in ("11" * 32, "22" * 32):  # _real_settings' TOTP / recovery keys
+        with pytest.raises(ValueError, match="dedicated"):
+            build_csrf_codec(_real_settings(auth_csrf_key_hex=SecretStr(reused)))
+        with pytest.raises(ValueError, match="dedicated"):
+            build_csrf_codec(
+                _real_settings(
+                    auth_csrf_key_hex=SecretStr("cc" * 32),
+                    auth_csrf_previous_key_hex=SecretStr(reused),
+                )
+            )

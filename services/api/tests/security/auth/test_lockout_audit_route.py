@@ -16,10 +16,13 @@ import httpx
 from fastapi import FastAPI
 
 from candleviewer.api.auth import make_auth_router
+from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, LoginService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+
+_CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _BODY = {"identifier": "basiltt", "password": "wrong-password"}
@@ -58,7 +61,7 @@ async def _client() -> tuple[httpx.AsyncClient, _Audit, FakeUserRepository]:
     )
     audit = _Audit()
     app = FastAPI()
-    app.include_router(make_auth_router(_Auth(login), audit), prefix="")  # type: ignore[arg-type]
+    app.include_router(make_auth_router(_Auth(login), audit, csrf=_CSRF_CODEC), prefix="")  # type: ignore[arg-type]
     transport = httpx.ASGITransport(app=app)
     return httpx.AsyncClient(transport=transport, base_url="http://t"), audit, repo
 

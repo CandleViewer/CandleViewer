@@ -1314,6 +1314,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E09",
     ),
     _s(
+        "auth_csrf_refused_total",
+        "counter",
+        "refusals",
+        ("reason",),
+        "State-changing requests refused by the SR-041/SR-042 CSRF guard, by bounded reason.",
+        "CsrfRefusalsHigh (>20/10m) / CsrfRefusalAuditUnavailable (ticket)",
+        _L,
+        "E09",
+        max_series=12,
+        exported=True,
+    ),
+    _s(
         "authz_denied_total",
         "counter",
         "denials",

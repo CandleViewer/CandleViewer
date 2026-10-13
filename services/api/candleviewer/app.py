@@ -60,6 +60,7 @@ from candleviewer.api import (
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
 from candleviewer.api.deny_by_default import (
     assert_app_routes_declared,
     declared_operations,
@@ -80,6 +81,8 @@ from candleviewer.api.step_up import make_read_only_guard, make_step_up_router
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.users import SnapshotResolver, UserRoleStore, make_users_router
+from candleviewer.auth.csrf import CsrfCodec
+from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.models import (
     InviteRecord,
     MfaChallengeRecord,
@@ -361,6 +364,44 @@ def build_auth_service(
         clock=clock,
         invite_repository=SqlAlchemyInviteRepository(relational, _record_factory(InviteRecord)),
     )
+
+
+def build_csrf_codec(settings: Settings) -> CsrfCodec:
+    """#2090 (SR-041): the dedicated CSRF HMAC key, loaded exactly like the
+    other auth keys (`_decode_key`, 32-byte hex). Required on live or the real
+    backend, and it must differ from the TOTP / recovery keys. Otherwise (fake
+    backend, dev/CI) a process-local random key is used, with a warning: tokens
+    then die with the process, which only forces a cookie re-issue via
+    `GET /auth/session`."""
+    current = settings.auth_csrf_key_hex
+    if current is None and (
+        settings.environment is Environment.LIVE or settings.storage_backend == "real"
+    ):
+        raise ValueError(
+            "CV_AUTH_CSRF_KEY_HEX is required (live or storage_backend=real); "
+            "refusing to start auth (SR-041)"
+        )
+    key = _decode_key("CV_AUTH_CSRF_KEY_HEX", current)
+    previous = _decode_key("CV_AUTH_CSRF_PREVIOUS_KEY_HEX", settings.auth_csrf_previous_key_hex)
+    others = {
+        k
+        for k in (
+            _decode_key("CV_AUTH_TOTP_KEY_HEX", settings.auth_totp_key_hex),
+            _decode_key("CV_AUTH_RECOVERY_HMAC_KEY_HEX", settings.auth_recovery_hmac_key_hex),
+        )
+        if k is not None
+    }
+    if {k for k in (key, previous) if k is not None} & others:
+        raise ValueError(
+            "CV_AUTH_CSRF_KEY_HEX / CV_AUTH_CSRF_PREVIOUS_KEY_HEX must be a dedicated key, "
+            "not the TOTP or recovery key (SR-041)"
+        )
+    if key is None:
+        structlog.get_logger(__name__).warning(
+            "auth.csrf_key_ephemeral", detail="CV_AUTH_CSRF_KEY_HEX unset; process-local key"
+        )
+        key = os.urandom(32)
+    return CsrfCodec(key, (previous,) if previous is not None else ())
 
 
 def build_identity_provider(settings: Settings) -> SqlAlchemyIdentityProvider | None:
@@ -791,14 +832,6 @@ def create_app(
     )
     identity = build_identity_provider(resolved)
     app.state.identity_provider = identity
-    # E04-T02: outermost (added last) so every request - even a mesh rejection -
-    # gets a correlation id and the X-Correlation-Id response header.
-    app.add_middleware(
-        MeshOnlyMiddleware,
-        allow_list=CidrAllowList(list(resolved.mesh_cidrs)),
-        trusted_proxy_header=resolved.mesh_trusted_proxy_header,
-        trusted_proxy_address=resolved.mesh_trusted_proxy_address,
-    )
     overrides = LogLevelOverrides()
     app.state.log_level_overrides = overrides
     # `principal_resolver=None` -> fails closed with 501 until E09-S03 (as /admin/audit).
@@ -852,7 +885,12 @@ def create_app(
             environment=resolved.environment.value,
         )
     )
-    app.include_router(make_auth_router(ctx.auth, ctx.audit, identity=identity))
+    csrf_codec = build_csrf_codec(resolved)
+    app.state.csrf_codec = csrf_codec
+    # In-flight CSRF-refusal audits; drained (bounded) at shutdown before audit stops.
+    csrf_audits = RefusalAuditTracker()
+    app.state.csrf_refusal_audits = csrf_audits
+    app.include_router(make_auth_router(ctx.auth, ctx.audit, identity=identity, csrf=csrf_codec))
     # E09-S03: session routes; revocation is pushed to sockets via the hub
     # (4401). Identity provider is E09-T03, so refresh/session return 501 and
     # every route answers 503 until a session repository is wired.
@@ -865,6 +903,7 @@ def create_app(
             identity=identity,
             publish_revocation=_hub_publisher(revocation_hub),
             allowed_origins=resolved.allowed_origin_set,
+            csrf=csrf_codec,
         )
     )
     # QA #1648 d1: live WS gateway. Role changes (`PUT /users/{id}/roles`)
@@ -958,6 +997,8 @@ def create_app(
     app.state.cvwb_metrics = export_cvwb_metrics(ctx.metrics, env=resolved.environment.value)
     # #377: every `cv_ws_*` gateway series (lifecycle, subscriptions, sequencing).
     app.state.ws_metrics = export_ws_metrics(ctx.metrics, env=resolved.environment.value)
+    # #2090: auth series (incl. auth_csrf_refused_total) on the scraped registry.
+    app.state.auth_metrics = export_auth_metrics(ctx.metrics, env=resolved.environment.value)
     # E40-T01: alert_deliveries retention purge + alert gauges (lifespan-started).
     _alert_pg = SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "alerts")
     _retention = RetentionSchedule.from_settings(resolved)
@@ -1218,6 +1259,30 @@ def create_app(
     app.include_router(
         make_orderbook_router(lambda: ctx.ingestion.books, principal_resolver=audit_resolver)
     )
+    # Middleware order, outermost first (Starlette: last added = outermost):
+    #   Correlation -> MeshOnly -> Csrf -> read-only/step-up guard -> routes.
+    # #2090 (SR-041/SR-042): CSRF runs inside MeshOnly, so off-mesh traffic never
+    # reaches a session lookup or an audit write, and outside every route-level
+    # guard (read-only/step-up, RBAC): no write reaches them without a valid token.
+    app.add_middleware(
+        CsrfMiddleware,
+        codec=csrf_codec,
+        sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
+        audit=_LazyAuditEmitter(ctx.audit),
+        allowed_origins=resolved.allowed_origin_set,
+        operations=frozenset(declared_operations(spec)),
+        clock=auth_clock or (lambda: datetime.now(UTC)),
+        tracker=csrf_audits,
+    )
+    # E09-T04: rejects off-mesh requests before any credential is evaluated.
+    app.add_middleware(
+        MeshOnlyMiddleware,
+        allow_list=CidrAllowList(list(resolved.mesh_cidrs)),
+        trusted_proxy_header=resolved.mesh_trusted_proxy_header,
+        trusted_proxy_address=resolved.mesh_trusted_proxy_address,
+    )
+    # E04-T02: outermost (added last) so every request - even a mesh rejection -
+    # gets a correlation id and the X-Correlation-Id response header.
     app.add_middleware(CorrelationMiddleware)
     # E09-T03 / #1648: a served route without an RBAC declaration fails the build.
     assert_app_routes_declared(app, spec)

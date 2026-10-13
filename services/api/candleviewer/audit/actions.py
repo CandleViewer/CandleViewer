@@ -37,6 +37,7 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.session_revoked",
         "auth.idle_locked",
         "auth.refresh_reuse_detected",
+        "auth.csrf_refused",
         "auth.mfa_enroll",
         "auth.mfa_reset",
         "auth.step_up_granted",

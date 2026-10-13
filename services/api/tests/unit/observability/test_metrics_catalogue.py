@@ -32,7 +32,7 @@ _UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|m
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "65d7379afcea1c6c53f1e72ccfab85bef9d8ed1d76a8657fc43b1de2ca5216a3"
+GOLDEN_CATALOGUE_SHA256 = "e8aeafd64929e7ea1da62f51398c2c45dcce5a796558bb82ce535275edcd2e98"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -170,15 +170,15 @@ def test_cardinality_check_logs_breached_metrics() -> None:
 def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     """E12-T03: the bars series are `live` via `export_bars_metrics`, not `register_r0`."""
     import candleviewer.bars.builder_set  # noqa: F401 - owns metric families (via its imports)
+    from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
     from candleviewer.ws.metrics import CV_WS_NAMES
     from candleviewer.ws.metrics import EXPORTED_NAMES as CVWB_NAMES
 
-    exported = (
-        {s.name for s in live_specs() if s.exported} - CVWB_NAMES - RECORDER_NAMES - CV_WS_NAMES
-    )
+    others = CVWB_NAMES | RECORDER_NAMES | CV_WS_NAMES | AUTH_EXPORTED_NAMES
+    exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
     register_r0(m)

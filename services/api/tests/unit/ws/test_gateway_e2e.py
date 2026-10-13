@@ -17,6 +17,7 @@ from candleviewer.auth.errors import SessionNotFound, StepUpRequired
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from tests.csrf_helpers import arm_csrf
 
 ADMIN = uuid.uuid4()
 MGR = uuid.uuid4()
@@ -86,11 +87,20 @@ class _StepUp:
         return None
 
 
+_ADMIN_SID = uuid.uuid4()
+
+
 class _Sessions:
-    async def authenticate_access_token(self, token: str) -> Any:
+    async def peek_access_token(self, token: str) -> Any:  # SR-041 sid binding (#2090)
+        try:
+            return await self.authenticate_access_token(token)
+        except SessionNotFound:
+            return None
+
+    async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
         if token != "admin-token":  # noqa: S105
             raise SessionNotFound("x")
-        return SimpleNamespace(id=uuid.uuid4(), user_id=ADMIN)
+        return SimpleNamespace(id=_ADMIN_SID, user_id=ADMIN)
 
 
 async def _authenticate(presented: str) -> tuple[str, uuid.UUID]:
@@ -116,6 +126,7 @@ def env() -> tuple[TestClient, _World]:
     client = TestClient(
         app, client=("127.0.0.1", 50000), headers={"Authorization": "Bearer admin-token"}
     )
+    arm_csrf(client, app.state.csrf_codec, _ADMIN_SID)  # SR-041: the admin session's token
     return client, w
 
 

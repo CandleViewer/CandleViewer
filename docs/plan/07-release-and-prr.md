@@ -1195,6 +1195,27 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 sed -n 1,40p services/api/candleviewer/observability/redaction.py
 ```
 
+<a id="alert-csrfrefusalshigh"></a>
+
+### CsrfRefusalsHigh / CsrfRefusalAuditUnavailable
+
+| Element               | Detail                                                                                                                                                                                                                                                                                                                           |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | More than 20 SR-041 CSRF refusals in 10 min (`auth_csrf_refused_total`), or a refusal whose `auth.csrf_refused` audit write failed (`reason="audit_unavailable"`). Ticket.                                                                                                                                                       |
+| 2. User impact        | Refused writes return `403 csrf_token_invalid` (over the per-IP refusal budget the reply is the same 403 + `Retry-After`, but no audit row is written; `reason="audit_throttled"` counts those). Legitimate users see failed saves only if their client is broken.                                                               |
+| 3. What is still safe | Refusals fail closed: nothing was changed by a refused request. Off-mesh traffic never reaches the guard (MeshOnly runs first).                                                                                                                                                                                                  |
+| 5. Remediation        | Group `auth.csrf_refused` rows by `reason` and `actor_ip`. `cross_origin`/`missing` from one IP: a cross-site attempt; block it. `wrong_session` across users after a deploy: check `CV_AUTH_CSRF_KEY_HEX` matches on every process (rotation: `docs/ops/runbooks/auth-rbac.md`). `audit_unavailable`: fix the audit sink (WAL). |
+| 6. Escalation         | Security reviewer; Owner if a cross-site campaign is confirmed (`SECURITY.md`).                                                                                                                                                                                                                                                  |
+| 7. Verify recovery    | `increase(auth_csrf_refused_total[10m])` back under the threshold; no new `audit_unavailable`.                                                                                                                                                                                                                                   |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: few or no refusals, none `audit_unavailable`.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (reason) (increase(auth_csrf_refused_total[1h]))'
+curl -s "http://${CV_METRICS_BIND:-127.0.0.1:9108}/metrics" | grep '^auth_csrf_refused_total'  # the private metrics listener, not the API port
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep 'auth.csrf_refused' | tail -20
+```
+
 <a id="observability-stack-is-down"></a>
 
 ### Observability stack is down

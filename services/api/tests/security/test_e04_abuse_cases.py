@@ -37,6 +37,7 @@ from candleviewer.observability.telemetry import (
     SessionRateLimiter,
     TelemetrySink,
 )
+from tests.csrf_helpers import arm_csrf, wire_fake_sessions
 
 # Secret-shaped values are assembled at runtime so no literal sits in the repo.
 FAKE_KEY = "AKIA" + "Zq9Xw3Lm" + "Pv7Rt2Yb" + "Nc4Hd"
@@ -64,7 +65,9 @@ def world() -> TestClient:
         roles=frozenset({"manager"}),
         permissions=frozenset({Permission.AUDIT_READ}),
     )
-    return TestClient(create_app(principal_resolver=res), client=("127.0.0.1", 50000))
+    app = create_app(principal_resolver=res)
+    wire_fake_sessions(app, "mgr")
+    return arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec)
 
 
 @pytest.fixture
@@ -105,7 +108,8 @@ def test_case1_unauthenticated_and_manager_denied(
 ) -> None:
     kw: dict[str, Any] = {"json": body} if body is not None else {}
     anon = getattr(world, method)(path, **kw)
-    assert anon.status_code in (401, 501), anon.text  # 501 = fail-closed, never 2xx
+    # 501 = fail-closed, never 2xx; an unsafe call with no session is refused by SR-041 first
+    assert anon.status_code in ((401, 501) if method == "get" else (403,)), anon.text
     mgr = getattr(world, method)(path, headers={"Authorization": "Bearer mgr"}, **kw)
     assert mgr.status_code in (403, 501), mgr.text
     assert "postgres" not in mgr.text and "parquet" not in mgr.text
@@ -281,7 +285,8 @@ def test_case6_unauthenticated_telemetry_is_401() -> None:
 
 
 def test_case6_real_app_telemetry_not_open_without_principal(world: TestClient) -> None:
-    assert world.post("/telemetry/frontend", content=b"{}").status_code in (401, 501)
+    r = world.post("/telemetry/frontend", content=b"{}")  # no principal, no session
+    assert r.status_code == 403 and r.json()["code"] == "csrf_token_invalid"
 
 
 def test_case6_oversized_body_rejected_bounded_and_counted() -> None:
