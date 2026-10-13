@@ -62,8 +62,10 @@ from fastapi.responses import JSONResponse
 
 from candleviewer.api.csrf import set_csrf_cookie
 from candleviewer.api.sessions import (
+    REFRESH_COOKIE,
     REFRESH_EXPIRES_IN_S,
     IdentityProvider,
+    _bearer,
     _set_refresh_cookie,
     _tokens,
 )
@@ -80,6 +82,7 @@ from candleviewer.auth.errors import (
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
 )
+from candleviewer.auth.metrics import auth_session_fixation_attempts_total
 from candleviewer.auth.models import (
     LoginRequest,
     MfaChallengeResult,
@@ -91,6 +94,7 @@ from candleviewer.auth.models import (
     MfaVerifiedResult,
     MfaVerifyRequest,
     MintedSession,
+    SessionRecord,
 )
 
 
@@ -122,6 +126,10 @@ class SessionMinterLike(Protocol):
     async def mint(
         self, user_id: str, *, ip: str | None = None, user_agent: str | None = None
     ) -> MintedSession: ...
+
+    async def peek_refresh(self, raw_refresh_token: str) -> SessionRecord | None: ...
+
+    async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None: ...
 
 
 class AuthServiceLike(Protocol):
@@ -158,6 +166,7 @@ class AuditWriterLike(Protocol):
         severity: Severity = Severity.INFO,
         actor_user_id: str | uuid.UUID | None = None,
         session_id: str | uuid.UUID | None = None,
+        reason: str | None = None,
         after_state: dict[str, Any] | None = None,
     ) -> None: ...
 
@@ -223,6 +232,42 @@ def make_auth_router(
     """Bind `/auth/login` to a concrete `AuthService` instance. *csrf* issues the
     SR-041 `__Host-cv_csrf` cookie wherever a session is minted (#2090)."""
     router = APIRouter(tags=["auth"])
+
+    async def _audit_carried_sessions(request: Request, user_id: uuid.UUID) -> None:
+        """U6/SR-013 (E09-X02 AC2): a session credential carried into the MFA step is never
+        adopted (`mint` always issues a new id). One that is not this user's own session,
+        i.e. never issued here or another user's, is counted and audited as an attempt."""
+        sessions = auth_service.sessions
+        carried = (
+            ("refresh_cookie", request.cookies.get(REFRESH_COOKIE)),
+            ("bearer", _bearer(request)),
+        )
+        for vector, raw in carried:
+            if not raw:
+                continue
+            if vector == "refresh_cookie":
+                record = await sessions.peek_refresh(raw)
+            else:
+                record = await sessions.peek_access_token(raw)
+            if record is not None and record.user_id == user_id:
+                continue  # a stale or parallel session of the same user: a re-login
+            reason = "unknown_token" if record is None else "foreign_session"
+            auth_session_fixation_attempts_total.labels(reason=reason).inc()
+            if audit_service is None or not audit_service.is_active:
+                continue
+            after: dict[str, Any] = {"vector": vector, "stage": "mfa_verify"}
+            if record is not None:
+                after["presented_session_id"] = str(record.id)
+            await audit_service.writer.emit(
+                "auth.session_fixation_attempt",
+                actor_label=str(user_id),
+                actor_user_id=user_id,
+                actor_ip=_client_ip(request),
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason=reason,
+                after_state=after,
+            )
 
     @router.post("/auth/login")
     async def login(request: Request, body: LoginRequest) -> JSONResponse:
@@ -327,6 +372,7 @@ def make_auth_router(
             return JSONResponse(status_code=200, content={"status": "authenticated"})
         # QA #1658: second factor satisfied -> mint the session (ADR-0020),
         # set the `cv_refresh` cookie and return `AuthenticatedResponse`.
+        await _audit_carried_sessions(request, result.user_id)
         source_ip = request.client.host if request.client is not None else None
         minted = await auth_service.sessions.mint(
             str(result.user_id), ip=source_ip, user_agent=request.headers.get("user-agent")

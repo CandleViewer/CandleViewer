@@ -1,0 +1,48 @@
+"""Every audit action the auth, session, invite and WS edges emit is registered (#2144).
+
+`AuditWriter.emit` refuses an action outside `AUDIT_ACTIONS`, which turns an audited refusal
+into a 500 with no row: that happened to `users.invite_refused` and
+`users.invite_role_downgraded`. Router fakes accept any string, so this reads the literal action
+arguments of the emit calls straight from the source.
+"""
+
+from __future__ import annotations
+
+import ast
+import re
+from pathlib import Path
+
+import pytest
+
+import candleviewer
+from candleviewer.audit.actions import AUDIT_ACTIONS
+
+_ROOT = Path(candleviewer.__file__).parent
+_MODULES = (
+    "api/auth api/csrf api/invites api/sessions api/step_up api/users ws/gateway ws/permissions"
+)
+_EMITTERS = frozenset({"emit", "_audit", "_audit_owner"})
+_ACTION = re.compile(r"^[a-z0-9_]+([.][a-z0-9_]+){1,3}$")
+
+
+def _emitted(source: str) -> set[str]:
+    found: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name not in _EMITTERS:
+            continue
+        for arg in node.args[:2]:  # `emit(action, ...)` or `_audit(service, action, ...)`
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                if _ACTION.match(arg.value):
+                    found.add(arg.value)
+    return found
+
+
+@pytest.mark.parametrize("module", _MODULES.split())
+def test_every_literal_audit_action_emitted_is_registered(module: str) -> None:
+    emitted = _emitted((_ROOT / f"{module}.py").read_text(encoding="utf-8"))
+    assert emitted, f"{module}: no literal audit action found; is the scan out of date?"
+    assert emitted - AUDIT_ACTIONS == set()
