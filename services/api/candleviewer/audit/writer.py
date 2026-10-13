@@ -227,7 +227,10 @@ class AuditWriter:
 
         Raises `AuditWriterStopped` if not running, `UnknownAuditAction` for
         an unregistered action, and `AuditUnavailable` if the record could
-        not be made durable — the caller must then refuse the action."""
+        not be made durable — the caller must then refuse the action.
+        Cancelling the caller never interrupts an append that has started:
+        that record is still accepted. Cancelled while still queued for
+        `_wal_lock`, nothing is appended (see `_shielded`)."""
         if self._failure is not None:
             self._refused_total += 1
             raise AuditUnavailable(f"audit flusher failed: {type(self._failure).__name__}")
