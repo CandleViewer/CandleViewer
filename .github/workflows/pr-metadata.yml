@@ -13,8 +13,8 @@ name: pr-metadata
 # commitlint.config.cjs, scripts/check_rule_refs.py, .gitattributes and CODEOWNERS are taken from a
 # worktree of current origin/main (this job's own fetch; the event base.sha is never trusted), so a
 # PR cannot rewrite the gate that judges it; the head CONSTITUTION.md is read via `git show` as
-# data only. A bootstrap branch (PR #2256 only, while main has no checker) runs the PR copy; delete
-# it right after merge (#2281). Changing the gate's own files needs `large-pr-approved` (PR-SIZE-006).
+# data only. There is no fallback: if the checker is not a regular file on origin/main the job fails
+# and never runs PR code. Changing the gate's own files needs `large-pr-approved` (PR-SIZE-006).
 # REMAINING GAP: under `pull_request` this workflow file is itself PR-controlled, so editing
 # pr-metadata.yml is still a bypass; only the C-10.2 workflow security review catches it.
 
@@ -61,10 +61,6 @@ jobs:
           if [ "$ENTRY" = "100644" ] || [ "$ENTRY" = "100755" ]; then
             git worktree add --detach "$RUNNER_TEMP/gate" "$GATE"
             GATE_SHA="$GATE" python -I "$RUNNER_TEMP/gate/tools/ci/check_pr_metadata.py" --repo-root "$RUNNER_TEMP/gate"
-          elif [ "$PR_NUMBER" = "2256" ] && [ -z "$(git log -1 --format=%H "$GATE" -- tools/ci/check_pr_metadata.py)" ]; then
-            # BOOTSTRAP (delete this branch right after #2256 merges; tracked in #2281).
-            echo "::warning title=pr-metadata::bootstrap: main has no checker yet, running the PR copy (#2256 only)"
-            GATE_SHA="$GATE" python -I tools/ci/check_pr_metadata.py --repo-root .
           else
             echo "::error title=pr-metadata::main has no valid tools/ci/check_pr_metadata.py (entry='$ENTRY'); refusing to run PR code"
             exit 1

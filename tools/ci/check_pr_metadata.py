@@ -9,8 +9,8 @@ Trust model. The workflow runs THIS file from a worktree of current origin/main 
 see .github/workflows/pr-metadata.yml; the event's base.sha is never trusted, it is stale for any
 PR opened before a merge), so a PR cannot rewrite the checker, its commitlint.config.cjs,
 scripts/check_rule_refs.py, .gitattributes or CODEOWNERS that judge it. The PR's CONSTITUTION.md is
-read through `git show` as data only. The workflow has a bootstrap branch (PR #2256 only, while the
-checker has no history on main) that runs the PR copy; it must be deleted right after merge (#2281).
+read through `git show` as data only. The workflow has no fallback: if this file is not a regular file
+on origin/main the job fails and never runs PR code.
 REMAINING GAPS (not fixable inside this script): under `pull_request` the workflow YAML itself is
 PR-controlled, so editing pr-metadata.yml is still a bypass that only the C-10.2 workflow security
 review catches; and every agent session currently acts as the repo owner account, so label
