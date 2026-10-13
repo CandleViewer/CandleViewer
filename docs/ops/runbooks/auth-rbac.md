@@ -73,7 +73,7 @@ implemented:** this route mints no session, token or cookie (`api/auth.py`), and
 `/auth/mfa/enroll[/confirm]` are `501` stubs (re-enrolment: #2295; recovery-session gap: #2344). So recovery codes do **not** currently get the Owner back in. A code is single use;
 `auth.recovery_code_used` is written, and `auth.recovery_codes_exhausted` when none remain.
 Re-enrolment is forced unconditionally after a recovery (`auth/mfa_service.py`);
-`LOW_CODE_THRESHOLD` is defined but unused.
+`LOW_CODE_THRESHOLD` is defined but unused (#2296).
 
 Not available today:
 
@@ -220,7 +220,7 @@ exposition is on the private `/metrics` listener, `metrics_bind` in `settings.py
 
 What read-only disables: the OMS validator refuses order placement while the gate is tripped
 (`oms/validator.py`, `ReadOnlyCheck`). No flag, config or role overrides it. A `system` WS topic
-event carries the reason. **No degraded-mode banner exists in the web app yet**; read the reason from
+event carries the reason. **No degraded-mode banner exists in the web app yet (#2299)**; read the reason from
 the `system` event or the logs.
 
 Reason codes (`net/binding_check.py`, `net/scheduler.py`):
