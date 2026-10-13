@@ -10,16 +10,22 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   body, never the URL. Verified by the injected E09 `authenticate`; the
   `PrincipalSnapshot` is resolved by the `ConnectionRegistry` (the same RBAC
   source REST uses); the socket is registered with the `RevocationHub`.
+  The identity ends at the token's expiry as `authenticate` reports it (the
+  first refusal on time grounds); an already-expired token is refused like
+  any failed `auth`. Revocation is pushed through the `RevocationHub`; the
+  idle lock intentionally does not end the socket (E09-S03; #2259).
   Three failures -> `bye auth_failed` + `4401` + a `warning` audit entry.
 - **In-place re-auth** (§4.1): a later `auth` re-validates and swaps the
   principal without touching subscriptions.
-- **Heartbeats / deadlines** (§9.1): the writer polls a `Watchdog` on the
-  injected clock (auth timeout, token expiry, unsolicited `ping`, heartbeat
+- **Heartbeats / deadlines** (§9.1): the writer checks a `Watchdog` before
+  every dequeue and every send, not only when idle, on the injected clocks
+  (auth timeout, token expiry on both clocks, unsolicited `ping`, heartbeat
   timeout), so tests drive time instead of sleeping.
 - **Inbound limits**: size checked before decoding (`1009`); 30/s and 300/min
   excluding `pong` (`client_rate_limited`, then `4429`).
 - Every server-initiated close goes through `_Connection.close_with`, which
-  queues `bye` ahead of the close frame (requirement S11).
+  queues `bye` ahead of the close frame (requirement S11). Token expiry and
+  revocation seal the close: anything still queued is dropped, `bye` next.
 
 Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
 close), rate-limiter window, `MAX_CONNECTIONS_PER_USER` per user (oldest idle
@@ -34,7 +40,7 @@ import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Protocol
 
 import structlog
@@ -83,16 +89,35 @@ OUTBOUND_QUEUE_MAX: Final = 1024
 WATCHDOG_TICK_S: Final = 0.05
 #: Upper bound for the writer to flush `bye` + close once the reader stopped.
 CLOSE_FLUSH_TIMEOUT_S: Final = 2.0
-#: Token lifetime assumed when `authenticate` reports no expiry (E09
-#: ACCESS_TOKEN_TTL is 12 min); measured from the successful `auth`.
-DEFAULT_TOKEN_TTL_S: Final = 12 * 60.0
 
-#: (raw access token) -> (session_id, user_id) or (session_id, user_id,
-#: token expires_at); raises on any invalid token.
-AuthResult = tuple[str, uuid.UUID] | tuple[str, uuid.UUID, datetime]
+#: (raw access token) -> (session_id, user_id, token expires_at); raises on any
+#: invalid token. The expiry is mandatory and timezone-aware: the first instant
+#: the session service refuses the token on time grounds (E09
+#: `access_token_expires_at`). The gateway never assumes a default lifetime.
+AuthResult = tuple[str, uuid.UUID, datetime]
 Authenticate = Callable[[str], Awaitable[AuthResult]]
 Clock = Callable[[], float]
 WallClockMs = Callable[[], int]
+
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+_ONE_MS: Final = timedelta(milliseconds=1)
+
+
+class AuthenticatorContractError(RuntimeError):
+    """The injected `authenticate` returned no timezone-aware token expiry. That
+    is a server fault, not a client auth failure: the socket closes `1011` and
+    nothing is served (fail closed, #2259)."""
+
+
+def _token_expiry_ms(result: AuthResult) -> int:
+    """The token expiry of an `authenticate` result as epoch ms. It is floored,
+    so it is never later than the real expiry."""
+    expires_at = result[2] if len(result) == 3 else None
+    if not isinstance(expires_at, datetime) or expires_at.utcoffset() is None:
+        raise AuthenticatorContractError(
+            "authenticate must return (session_id, user_id, timezone-aware expires_at)"
+        )
+    return (expires_at - _EPOCH) // _ONE_MS
 
 
 class AuditEmitter(Protocol):
@@ -226,8 +251,22 @@ class _Connection:
         self.violations = 0
         self.rate_strikes = 0
         self.closing = False
+        #: Set by a sealed close (token expiry, revocation): the identity is over,
+        #: so nothing but `bye_frame` may still be sent (#2259 review).
+        self.sealed = False
+        self.bye_frame: dict[str, Any] | None = None
         self.close_code: int | None = None
+        #: The token's real expiry (epoch ms), also checked on the wall clock.
+        self.token_expires_at_ms: int | None = None
         self.opened_at = now
+
+    def due(self) -> str | None:
+        """The watchdog verdict now. Token expiry fires on whichever clock gets
+        there first: the monotonic deadline set at `auth`, or the wall clock,
+        which an NTP step or a resume moves on its own (#2259 review)."""
+        if self.token_expires_at_ms is not None and self.wall_ms() >= self.token_expires_at_ms:
+            return "token_expired"
+        return self.watchdog.due(self.clock())
 
     # -- outbound -----------------------------------------------------------
 
@@ -257,12 +296,30 @@ class _Connection:
         *,
         retry_after_ms: int | None = None,
         bye: dict[str, Any] | None = None,
+        seal: bool = False,
     ) -> None:
         """The ONE server-initiated close path: `bye`, then the close frame (S11).
 
-        May exceed the `push` bound by exactly these items so a full queue
-        can still be closed; every later push is dropped."""
+        `seal=True` is for closes that end the identity (token expiry,
+        revocation): every frame still queued is dropped and the `bye` is the
+        next frame sent, even if another close is already under way (#2259
+        review). Otherwise the `bye` follows the frames already queued. May
+        exceed the `push` bound by exactly these items so a full queue can
+        still be closed; every later push is dropped."""
         if self.closing:
+            if seal and not self.sealed:
+                # An identity-ending event during a close already under way.
+                dropped = self._seal()
+                label = str(bye["p"].get("reason", reason)) if bye is not None else reason
+                cv_ws_closes_total.labels(reason=close_reason_label(label)).inc()
+                _log().info(
+                    "ws close sealed",
+                    connection_id=self.connection_id,
+                    reason=reason,
+                    dropped=dropped,
+                    user_id=str(self.user_id) if self.user_id else None,
+                    session_id=self.session_id,
+                )
             return
         self.closing = True
         frame = bye or lifecycle_bye(reason, now_ms=self.wall_ms(), retry_after_ms=retry_after_ms)
@@ -271,6 +328,8 @@ class _Connection:
         cv_ws_closes_total.labels(reason=close_reason_label(bye_reason)).inc()
         if self.lifecycle.can(ConnEvent.CLOSE):
             self.lifecycle.fire(ConnEvent.CLOSE)
+        dropped = self._seal() if seal else 0
+        self.bye_frame = frame
         for item in (frame, _CLOSE, code):
             self.outbound.put_nowait(item)
         _log().info(
@@ -278,14 +337,32 @@ class _Connection:
             connection_id=self.connection_id,
             reason=reason,
             code=code,
+            dropped=dropped,
             user_id=str(self.user_id) if self.user_id else None,
             session_id=self.session_id,
         )
 
+    def _seal(self) -> int:
+        """End the identity: drop every queued frame except a pending close
+        (`bye`, the close sentinel, its code). Returns how many were dropped."""
+        self.sealed = True
+        kept: list[Any] = []
+        dropped = 0
+        while not self.outbound.empty():
+            item = self.outbound.get_nowait()
+            if item is self.bye_frame or item is _CLOSE or isinstance(item, int):
+                kept.append(item)
+            else:
+                dropped += 1
+        for item in kept:
+            self.outbound.put_nowait(item)
+        return dropped
+
     async def closer(self, frame: dict[str, Any], code: int) -> None:
-        """`RevocationHub` / registry eviction hook -> same close path."""
+        """`RevocationHub` / registry hook: the session or user is gone, so the
+        close is sealed (nothing still queued for it is delivered)."""
         del code  # carried inside the bye frame
-        self.close_with(str(frame["p"]["reason"]), bye=frame)
+        self.close_with(str(frame["p"]["reason"]), bye=frame, seal=True)
 
     async def evict(self) -> None:
         self.close_with("slow_consumer")
@@ -397,29 +474,40 @@ def make_ws_router(
                 raise ValueError("missing access_token")
             result = await authenticate(token)
             session_id, user_id = result[0], result[1]
+            expires_ms = _token_expiry_ms(result)
             if reauth and user_id != conn.user_id:
                 failure = "user_mismatch"
                 raise PermissionError("re-auth must keep the same user")
             principal = await registry.resolve(user_id)
+            now, now_ms = conn.clock(), conn.wall_ms()
+            if expires_ms <= now_ms:
+                failure = "token_expired"  # never `auth_ok` an identity that is already dead
+                raise PermissionError("access token already expired")
+        except AuthenticatorContractError:
+            raise  # a server fault, not a failed auth: the handler closes 1011
         except Exception:
+            # C-2.9: count the failure and audit the 3rd one even when the socket
+            # began closing while this auth was in flight.
             cv_ws_auth_failures_total.labels(reason=failure).inc()
             conn.auth_failures += 1
+            third = conn.auth_failures >= MAX_AUTH_FAILURES
+            if third:
+                await audit_auth_failure(conn)
+            if conn.closing:
+                return  # already closing: no lifecycle step, no err, no second close
             if reauth:
                 conn.lifecycle.fire(ConnEvent.REAUTH_FAILED)
-            if conn.auth_failures >= MAX_AUTH_FAILURES:
-                await audit_auth_failure(conn)
+            if third:
                 conn.close_with("auth_failed")
             else:
                 conn.push(build_ws_error("auth_failed", id=_str_or_none(frame.get("id"))))
             return
+        if conn.closing:
+            return  # closed (expiry, revocation) while this auth was in flight: no auth_ok
         conn.auth_failures = 0
-        now, now_ms = conn.clock(), conn.wall_ms()
-        if len(result) == 3:
-            expires_ms = int(result[2].timestamp() * 1000)
-        else:
-            expires_ms = now_ms + int(DEFAULT_TOKEN_TTL_S * 1000)
         conn.watchdog.auth_deadline = None
-        conn.watchdog.token_expires_at = now + max(0, expires_ms - now_ms) / 1000
+        conn.watchdog.token_expires_at = now + (expires_ms - now_ms) / 1000
+        conn.token_expires_at_ms = expires_ms  # the same instant on the wall clock
         if conn.session_id != session_id:
             if conn.session_id is not None:
                 revocation_hub.unregister(conn.session_id, conn.closer)
@@ -556,26 +644,31 @@ def make_ws_router(
                 return
             await dispatch(conn, frame)
 
+    def watch(conn: _Connection) -> bool:
+        """Apply the watchdog; True when an unsolicited `ping` is due. Runs
+        before every dequeue and every send, not only on an idle tick, so a
+        socket fed faster than `tick_s` still expires (#2259 review)."""
+        due = conn.due()
+        if due == "token_expired":
+            conn.close_with(due, seal=True)  # also seals a close already under way
+        elif due == "ping":
+            return not conn.closing
+        elif due is not None:
+            conn.close_with(due)
+        return False
+
     async def writer(conn: _Connection) -> None:
         pings = 0
         while True:
+            if watch(conn):
+                pings += 1
+                now_ms = conn.wall_ms()
+                conn.push(
+                    {"t": "ping", "id": f"s-hb-{pings}", "ts": now_ms, "p": {"server_ms": now_ms}}
+                )
             try:
                 item = await asyncio.wait_for(conn.outbound.get(), timeout=tick_s)
             except TimeoutError:
-                due = conn.watchdog.due(conn.clock())
-                if due == "ping" and not conn.closing:
-                    pings += 1
-                    now_ms = conn.wall_ms()
-                    conn.push(
-                        {
-                            "t": "ping",
-                            "id": f"s-hb-{pings}",
-                            "ts": now_ms,
-                            "p": {"server_ms": now_ms},
-                        }
-                    )
-                elif due is not None and due != "ping":
-                    conn.close_with(due)
                 continue
             if item is _CLOSE:
                 code = await conn.outbound.get()
@@ -583,6 +676,9 @@ def make_ws_router(
                 with contextlib.suppress(Exception):
                     await conn.ws.close(code=code)
                 return
+            watch(conn)  # the dequeue may have waited a tick; a ping is queued only above
+            if conn.sealed and item is not conn.bye_frame:
+                continue  # the identity ended while this frame was queued: never send it
             await conn.ws.send_text(json.dumps(item, separators=(",", ":")))
             conn.watchdog.last_outbound = conn.clock()
 

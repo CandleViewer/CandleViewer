@@ -92,6 +92,7 @@ from candleviewer.auth.models import (
 )
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
+from candleviewer.auth.session_service import access_token_expires_at
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import export_bars_metrics
 from candleviewer.bars.reader import BarReader, tape_time_bar_reader
@@ -563,12 +564,14 @@ def _now_ms() -> int:
 
 
 def _session_authenticator(ctx: AppContext) -> Authenticate:
-    """Opaque bearer token -> (session_id, user_id) via the session service;
-    raises (fail closed) while no session repository is wired."""
+    """Opaque bearer token -> (session_id, user_id, token expiry) via the session
+    service. The expiry is the first instant the service refuses the token on
+    time grounds; the gateway ends the socket's identity there (#2259). Raises
+    (fail closed) while no session repository is wired."""
 
-    async def _authenticate(token: str) -> tuple[str, uuid.UUID]:
+    async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
         record = await ctx.auth.sessions.authenticate_access_token(token)
-        return str(record.id), record.user_id
+        return str(record.id), record.user_id, access_token_expires_at(record)
 
     return _authenticate
 

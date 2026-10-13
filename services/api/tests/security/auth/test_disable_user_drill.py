@@ -12,6 +12,7 @@ returns. Every WS read has a hard deadline so a missing `bye` fails fast instead
 
 from __future__ import annotations
 
+import functools
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +23,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from candleviewer import app as app_module
 from candleviewer.app import create_app
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import SessionNotFound, SessionRevoked
@@ -30,6 +32,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService
+from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, RevocationHub
 from tests.unit.auth.auth_fakes import FakeUserRepository
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
@@ -56,9 +59,18 @@ async def _snapshot(uid: uuid.UUID) -> PrincipalSnapshot:
 
 
 class _Env:
-    def __init__(self) -> None:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.clock = _Clock()
         self.repo = FakeSessionRepository()
+        # The gateway checks the token's real expiry (#2259) on its wall clock: give it the
+        # injected clock, so both sides of that comparison share one time base.
+        monkeypatch.setattr(
+            app_module,
+            "make_ws_router",
+            functools.partial(
+                make_ws_router, wall_ms=lambda: int(self.clock.now.timestamp() * 1000)
+            ),
+        )
         self.app = create_app(snapshot_loader=_snapshot, auth_clock=self.clock)
         auth: Any = self.app.state.app_context.auth
         self.sessions = SessionService(
@@ -97,8 +109,8 @@ class _Env:
 
 
 @pytest.fixture
-def env() -> Any:
-    e = _Env()
+def env(monkeypatch: pytest.MonkeyPatch) -> Any:
+    e = _Env(monkeypatch)
     with e.client:
         yield e
         e.run(e.step_up.stop)

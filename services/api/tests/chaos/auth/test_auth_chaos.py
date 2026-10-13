@@ -28,7 +28,11 @@ from candleviewer.auth.errors import SessionNotFound, SessionRevoked
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.scopes import PrincipalSnapshot
-from candleviewer.auth.session_service import ABSOLUTE_LIFETIME, SessionService
+from candleviewer.auth.session_service import (
+    ABSOLUTE_LIFETIME,
+    SessionService,
+    access_token_expires_at,
+)
 from candleviewer.auth.totp import generate_code, time_step_for, verify_code
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry
@@ -76,14 +80,22 @@ async def _resolve(uid: uuid.UUID) -> PrincipalSnapshot:
     return PrincipalSnapshot(uid, frozenset({"viewer"}), frozenset({Permission.MARKETDATA_READ}))
 
 
-def _gateway(svc: SessionService, hub: RevocationHub) -> FastAPI:
-    async def authenticate(token: str) -> tuple[str, uuid.UUID]:
+def _gateway(svc: SessionService, hub: RevocationHub, clock: _Clock) -> FastAPI:
+    async def authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
         rec = await svc.authenticate_access_token(token)  # real service; raises on bad/revoked
-        return str(rec.id), uuid.UUID(str(rec.user_id))
+        return str(rec.id), uuid.UUID(str(rec.user_id)), access_token_expires_at(rec)
 
     app = FastAPI()
     reg = ConnectionRegistry(_resolve, lambda: 1)
-    app.include_router(make_ws_router(authenticate=authenticate, registry=reg, revocation_hub=hub))
+    # The token's real expiry is read on the session service's clock (#2259).
+    app.include_router(
+        make_ws_router(
+            authenticate=authenticate,
+            registry=reg,
+            revocation_hub=hub,
+            wall_ms=lambda: int(clock.now.timestamp() * 1000),
+        )
+    )
     return app
 
 
@@ -100,11 +112,11 @@ def _auth(ws: Any, token: str, attempts: int = 1) -> dict[str, Any]:
 
 def test_s1_postgres_outage_fails_closed_at_service_and_gateway_then_recovers() -> None:
     # C-13.6 #10. Real SessionService + real WS gateway over a downable storage seam.
-    repo = _DownableRepo()
-    svc = _service(repo)
+    repo, clock = _DownableRepo(), _Clock()
+    svc = _service(repo, clock)
     minted = asyncio.run(svc.mint(str(uuid.uuid4())))
     sid = str(minted.session_id)
-    app = _gateway(svc, RevocationHub())
+    app = _gateway(svc, RevocationHub(), clock)
     with TestClient(app) as client:
         repo.down = True
         with pytest.raises(ConnectionError):
@@ -180,7 +192,7 @@ def test_s3_gateway_restart_closes_old_sockets_and_requires_reauth_on_new_gatewa
     svc = _service(repo, clock)
     minted = asyncio.run(svc.mint(str(uuid.uuid4())))
     old_hub = RevocationHub()
-    with TestClient(_gateway(svc, old_hub)) as old:
+    with TestClient(_gateway(svc, old_hub, clock)) as old:
         with old.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
             assert _auth(ws, minted.access_token)["t"] == "auth_ok"
             asyncio.run(svc.revoke(str(minted.session_id), reason="logout"))
@@ -189,7 +201,7 @@ def test_s3_gateway_restart_closes_old_sockets_and_requires_reauth_on_new_gatewa
             bye = ws.receive_json()
             assert bye["t"] == "bye" and bye["p"]["code"] == CLOSE_TOKEN_EXPIRED
     # "Restart": a brand-new gateway + hub. The revoked session must not resume.
-    with TestClient(_gateway(svc, RevocationHub())) as new:
+    with TestClient(_gateway(svc, RevocationHub(), clock)) as new:
         with new.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
             assert _auth(ws, minted.access_token, attempts=3)["p"]["reason"] == "auth_failed"
         # an unauthenticated frame on the new gateway gets nothing carried over

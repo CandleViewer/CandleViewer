@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -19,16 +20,18 @@ from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, han
 from candleviewer.ws.revocation import RevocationHub
 
 USER = uuid.uuid4()
+#: Far-future token expiry: this module does not test expiry (test_token_expiry.py does).
+_EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
 
 
 async def _resolve(uid: uuid.UUID) -> PrincipalSnapshot:
     return PrincipalSnapshot(uid, frozenset({"viewer"}), frozenset({Permission.MARKETDATA_READ}))
 
 
-async def _authenticate(presented: str) -> tuple[str, uuid.UUID]:
+async def _authenticate(presented: str) -> tuple[str, uuid.UUID, datetime]:
     if presented != "ok":
         raise PermissionError("bad token")
-    return "sess", USER
+    return "sess", USER, _EXPIRES
 
 
 def _client(**kw: Any) -> TestClient:
