@@ -23,6 +23,12 @@ work owned elsewhere; this module does not touch `app.py`.
 Revocation propagation (`23-ws-protocol.md` §9.5): every revoke path calls
 the injected `publish_revocation(session_id, reason)`; the ws gateway
 (`candleviewer.ws.revocation`) closes the matching socket with `4401`.
+
+Session fixation (U6/SR-013, E09-X02 AC2): a bearer or refresh token that was
+never issued here is refused with the same 401 as any other, and counted
+(`auth_session_fixation_attempts_total`) and audited
+(`auth.session_fixation_attempt`, per-IP budget). Expired or revoked tokens of
+real sessions are not attempts and stay silent.
 """
 
 from __future__ import annotations
@@ -52,7 +58,7 @@ from candleviewer.auth.errors import (
     SessionNotFound,
     SessionRevoked,
 )
-from candleviewer.auth.metrics import auth_csrf_refused_total
+from candleviewer.auth.metrics import auth_csrf_refused_total, auth_session_fixation_attempts_total
 from candleviewer.auth.models import (
     MintedSession,
     RefreshOutcome,
@@ -85,6 +91,8 @@ class SessionServiceLike(Protocol):
     async def authenticate_access_token(
         self, raw_access_token: str, *, touch: bool = False, allow_locked: bool = False
     ) -> SessionRecord: ...
+
+    async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None: ...
 
     async def revoke(self, session_id: str, *, reason: str) -> SessionRecord | None: ...
 
@@ -183,6 +191,17 @@ def _source_ip(request: Request) -> str | None:
 # retries and multiple tabs while bounding token-guessing and rotation storms.
 REFRESH_MAX_PER_WINDOW = 10
 REFRESH_WINDOW_S = 60.0
+#: Presentations of a session credential this server never issued (U6/SR-013, E09-X02
+#: AC2) that are audited per source IP per window; past the budget the 401 is unchanged
+#: and still counted, but writes no audit row (C-2.9 vs C-2.18, as the CSRF guard).
+FIXATION_AUDITS_PER_WINDOW = 20
+FIXATION_AUDIT_WINDOW_S = 60.0
+
+
+def _route_path(request: Request) -> str:
+    """Bounded audit field: the matched route template, never the raw request path."""
+    path = getattr(request.scope.get("route"), "path", None)
+    return path if isinstance(path, str) else "(unmatched)"
 
 
 def _origin_ok(request: Request, allowed: frozenset[str]) -> bool:
@@ -255,6 +274,7 @@ def make_session_router(
     ip_throttle: PerIpLoginThrottle | None = None,
     session_throttle: PerIpLoginThrottle | None = None,
     csrf: CsrfCodec,
+    fixation_throttle: PerIpLoginThrottle | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["auth"])
     by_ip = ip_throttle or PerIpLoginThrottle(
@@ -262,6 +282,9 @@ def make_session_router(
     )
     by_session = session_throttle or PerIpLoginThrottle(
         max_attempts=REFRESH_MAX_PER_WINDOW, window_s=REFRESH_WINDOW_S
+    )
+    by_fixation_ip = fixation_throttle or PerIpLoginThrottle(
+        max_attempts=FIXATION_AUDITS_PER_WINDOW, window_s=FIXATION_AUDIT_WINDOW_S
     )
 
     def _audit_ready() -> bool:
@@ -276,6 +299,7 @@ def make_session_router(
         severity: Severity = Severity.INFO,
         reason: str | None = None,
         session_id: str | uuid.UUID | None = None,
+        after_state: dict[str, Any] | None = None,
     ) -> None:
         if audit_service is None or not audit_service.is_active:
             raise AuditUnavailableError
@@ -288,7 +312,36 @@ def make_session_router(
             outcome=outcome,
             severity=severity,
             reason=reason,
+            after_state=after_state,
         )
+
+    async def _fixation_attempt(request: Request, vector: str) -> None:
+        """U6/SR-013 (E09-X02 AC2): a session credential this server never issued was
+        presented. The uniform 401 is unchanged (no oracle); the attempt is counted and
+        audited up to the per-IP budget. The token itself is never recorded, and a failed
+        audit write never changes the answer."""
+        auth_session_fixation_attempts_total.labels(reason="unknown_token").inc()
+        ip = _source_ip(request)
+        key = ip or "(unknown)"
+        if by_fixation_ip.is_blocked(key):
+            auth_session_fixation_attempts_total.labels(reason="audit_throttled").inc()
+            return
+        by_fixation_ip.record_failure(key)
+        try:
+            await _audit(
+                "auth.session_fixation_attempt",
+                record=None,
+                ip=ip,
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason="unknown_token",
+                after_state={"vector": vector, "path": _route_path(request)},
+            )
+        except (AuditUnavailableError, AuditError) as exc:
+            auth_session_fixation_attempts_total.labels(reason="audit_unavailable").inc()
+            _log().error(
+                "auth.session_fixation_attempt.audit_unavailable", error=type(exc).__name__
+            )
 
     async def _propagate(session_id: str | uuid.UUID, reason: str) -> None:
         if publish_revocation is not None:
@@ -313,9 +366,13 @@ def make_session_router(
             return await auth_service.sessions.authenticate_access_token(
                 token, touch=not allow_locked, allow_locked=allow_locked
             )
-        except (SessionNotFound, SessionRevoked):
+        except SessionNotFound:
+            # Unknown and expired handles share this error. Only a handle this server never
+            # issued is an attempt; an expired one is the client's normal refresh trigger.
+            if await auth_service.sessions.peek_access_token(token) is None:
+                await _fixation_attempt(request, "bearer")
             return None
-        except SessionIdleLocked:
+        except (SessionRevoked, SessionIdleLocked):
             return None
 
     @router.post("/auth/refresh")
@@ -352,6 +409,7 @@ def make_session_router(
         by_ip.record_failure(ip_key)  # counts every attempt, not only failures
         presented_record = await auth_service.sessions.peek_refresh(presented)
         if presented_record is None:
+            await _fixation_attempt(request, "refresh_cookie" if cookie_token else "refresh_body")
             return _unauthorized("refresh_token_invalid")
         session_key = str(presented_record.id)
         if by_session.is_blocked(session_key):

@@ -38,6 +38,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.idle_locked",
         "auth.refresh_reuse_detected",
         "auth.csrf_refused",
+        # E09-X02 AC2 (#2144, U6/SR-013): a session credential this server never issued, or
+        # another user's, presented to the session routes or carried into the MFA step.
+        "auth.session_fixation_attempt",
         "auth.mfa_enroll",
         "auth.mfa_reset",
         "auth.step_up_granted",
@@ -61,6 +64,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "users.invite_rejected",
         "users.invite_reissued",
         "users.invite_revoked",
+        # SR-027 (#2124/#2109): a pre-elevated invite request and a legacy-role downgrade.
+        # Emitted by api/invites.py; unregistered, the real writer refused them (500, no row).
+        "users.invite_refused",
+        "users.invite_role_downgraded",
         "users.disable",
         "roles.grant",
         "roles.revoke",

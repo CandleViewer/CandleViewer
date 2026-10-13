@@ -1326,6 +1326,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_session_fixation_attempts_total",
+        "counter",
+        "attempts",
+        ("reason",),
+        "Session credentials never issued here (or another user's) presented, by bounded reason.",
+        "none yet (detection rules: E09-X03); audited as auth.session_fixation_attempt",
+        _L,
+        "E09",
+        max_series=8,
+        exported=True,
+    ),
+    _s(
         "authz_denied_total",
         "counter",
         "denials",
