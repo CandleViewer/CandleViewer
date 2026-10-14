@@ -1,9 +1,10 @@
 """Integration: `SqlAlchemyAuditRepository.query_page` per-shape statements on Postgres 16.
 
 Covers the repository-level AC: the caller's scope applied in the SQL (an `actor_user_id`
-naming another user is narrowed, never widened), and each filter shape against real types
-(uuid, inet, enums, text[], timestamptz, full text) with `to` exclusive. Rows go in
-through the repository's own `insert` (the single audit writer path).
+naming another user is narrowed, never widened), each filter shape against real types
+(uuid, inet, enums, text[], timestamptz, full text), `to` exclusive, and keyset paging over
+`(event_ts DESC, id DESC)` that returns every pre-existing row exactly once while rows
+append. Rows go in through the repository's own `insert` (the single audit writer path).
 
 Not run locally (no docker); exercised by the CI integration job (testcontainers).
 """
@@ -131,3 +132,30 @@ async def test_each_filter_shape_matches_its_predicate(repo: SqlAlchemyAuditRepo
     assert await got(q="BTCUSDT label") == await got(q="btcusdt")  # every term, any case
     assert await got(q="btcusdt ethusdt") == []
     assert await got(q='"label 7"') == ["obj-7"]  # the subject label is searched too
+
+
+async def test_keyset_paging_returns_each_row_once_while_rows_append(
+    repo: SqlAlchemyAuditRepository,
+) -> None:
+    before = {r["object_id"] for r in await _seed(repo, "it_paging", 25)}
+    seen: list[str] = []
+    keys: list[tuple[datetime, int]] = []
+    after: tuple[datetime, int] | None = None
+    extra = 100
+    while True:
+        page = await _page(repo, "it_paging", after=after, limit=4)
+        seen += [r["object_id"] for r in page]
+        keys += [(r["event_ts"], r["id"]) for r in page]
+        for minutes in (500, 2):  # a new head, and a late row older than the position
+            await repo.insert(_row("it_paging", extra, event_ts=_late(minutes)))
+            extra += 1
+        if len(page) < 4:
+            break
+        after = keys[-1]
+    old = [s for s in seen if s in before]
+    assert sorted(old) == sorted(before) and len(old) == len(set(old))
+    assert keys == sorted(keys, reverse=True)
+
+
+def _late(minutes: int) -> str:
+    return (_T0 + timedelta(minutes=minutes, seconds=30)).isoformat()

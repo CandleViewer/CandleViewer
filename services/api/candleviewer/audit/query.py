@@ -18,10 +18,12 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from candleviewer.audit.cursor import AuditCursor, encode_cursor
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
     AuditEntry,
     AuditPage,
+    AuditPageMeta,
     AuditQueryRequest,
     ExportResult,
     VerifyResult,
@@ -95,7 +97,7 @@ class AuditQueryService:
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
         q: str | None = None,
-        cursor: int | None = None,
+        after: AuditCursor | None = None,
         limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
         ip: str | None = None,
         timeout_ms: int | None = None,
@@ -109,7 +111,9 @@ class AuditQueryService:
 
         `restrict_to_actor` has no default: the caller states the scope it
         resolved (`None` only for the Owner's raw view, else the caller's own
-        user id), and the repository applies it in the SQL of every page."""
+        user id), and the repository applies it in the SQL of every page.
+        `after` is the decoded cursor; `meta.next_cursor` names the last
+        entry returned when more entries follow."""
         req = AuditQueryRequest.model_validate(
             {
                 "actor_user_id": actor_user_id,
@@ -122,7 +126,6 @@ class AuditQueryService:
                 "from_ts": from_ts,
                 "to_ts": to_ts,
                 "q": q,
-                "cursor": cursor,
                 "limit": limit,
             }
         )
@@ -139,7 +142,7 @@ class AuditQueryService:
             q=req.q,
             from_ts=req.from_ts,
             to_ts=req.to_ts,
-            cursor=req.cursor,
+            after=None if after is None else (after.ts, after.id),
             limit=limit + 1,
             timeout_ms=timeout_ms,
         )
@@ -163,13 +166,12 @@ class AuditQueryService:
             )
             for row in rows
         ]
-        next_cursor = str(items[-1].id) if has_more and items else None
+        last = items[-1] if has_more and items else None
+        next_cursor = None if last is None else encode_cursor(AuditCursor(last.ts, last.id))
         return AuditPage(
             items=items,
             chain_verified=True,
-            next_cursor=next_cursor,
-            has_more=has_more,
-            count=len(items),
+            meta=AuditPageMeta(next_cursor=next_cursor, has_more=has_more, count=len(items)),
         )
 
     async def verify(

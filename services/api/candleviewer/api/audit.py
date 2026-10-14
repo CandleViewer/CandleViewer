@@ -55,6 +55,7 @@ from candleviewer.audit.access import (
     authorize,
     redact_entry_for_view,
 )
+from candleviewer.audit.cursor import AuditCursor, InvalidAuditCursor, decode_cursor
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
     AuditExportRequest,
@@ -109,7 +110,7 @@ class AuditQueryServiceLike(Protocol):
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
         q: str | None = None,
-        cursor: int | None = None,
+        after: AuditCursor | None = None,
         limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
         ip: str | None = None,
         timeout_ms: int | None = None,
@@ -233,7 +234,7 @@ def _recorded_filters(req: AuditQueryRequest, actor_user_id: str | None) -> dict
     are kept only as a digest and their length, so text typed into them, control
     characters included, never reaches the append-only log verbatim."""
     narrowed = req.model_copy(update={"actor_user_id": actor_user_id})
-    dumped = narrowed.model_dump(mode="json", exclude={"cursor", "limit"}, exclude_none=True)
+    dumped = narrowed.model_dump(mode="json", exclude={"limit"}, exclude_none=True)
     for name in ("q", "subject_id"):
         text = dumped.pop(name, None)
         if text is not None:
@@ -322,7 +323,7 @@ def make_audit_router(
         # silently ignored and the lower time bound dropped.
         from_: Annotated[datetime | None, Query(alias="from")] = None,
         to: datetime | None = None,
-        cursor: int | None = None,
+        cursor: str | None = None,
         limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
         ip: str | None = None,
         subject_id: str | None = None,
@@ -340,6 +341,10 @@ def make_audit_router(
             # the payload, so filtering on them would reveal them one query at a time.
             return await _refuse(emitter, principal, f"filter_not_permitted:{hidden[0]}")
         try:
+            after = None if cursor is None else decode_cursor(cursor)
+        except InvalidAuditCursor as exc:
+            return _problem(400, "Invalid cursor", str(exc), code="invalid_cursor")
+        try:
             req = AuditQueryRequest.model_validate(
                 {
                     "actor_user_id": actor_user_id,
@@ -352,13 +357,12 @@ def make_audit_router(
                     "from_ts": from_,
                     "to_ts": to,
                     "q": q,
-                    "cursor": cursor,
                     "limit": limit,
                 }
             )
         except ValidationError as exc:
             return _invalid(exc, AuditQueryRequest)
-        filters = req.model_dump(exclude={"cursor"})
+        filters = req.model_dump()
         try:
             lease = query_limiter.acquire(actor.key)
         except AuditQueryRefused as exc:
@@ -382,9 +386,7 @@ def make_audit_router(
             recorded = _recorded_filters(req, filters["actor_user_id"])
             plan = record_budget.plan_read(actor, filters_digest(recorded))
             try:
-                return await _run_query(
-                    service, principal, view, filters, req.cursor, plan, recorded
-                )
+                return await _run_query(service, principal, view, filters, after, plan, recorded)
             finally:
                 plan.release()  # a read that served nothing gives its reservation back
         finally:
@@ -428,7 +430,7 @@ def make_audit_router(
         principal: AuditPrincipal,
         view: AuditView,
         filters: dict[str, Any],
-        cursor: int | None,
+        after: AuditCursor | None,
         plan: ReadReservation,
         recorded: dict[str, Any],
     ) -> JSONResponse:
@@ -441,7 +443,7 @@ def make_audit_router(
         restrict = None if view is AuditView.RAW else key
         try:
             page = await service.query.query(
-                **filters, restrict_to_actor=restrict, cursor=cursor, timeout_ms=query_timeout_ms
+                **filters, restrict_to_actor=restrict, after=after, timeout_ms=query_timeout_ms
             )
         except ValidationError as exc:
             return _invalid(exc, AuditQueryRequest)
