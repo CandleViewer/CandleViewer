@@ -96,12 +96,19 @@ info:
     `unauthenticated`, and changes nothing; an expired access token is still `unauthenticated`.
     `POST /auth/refresh` answers a locked session the same way instead of
     `refresh_token_invalid`, and rotates nothing. The client then shows the unlock screen
-    (SCR-005), not sign-in. Activity is explicit: `GET /auth/session` is read-only and never
-    moves the idle deadline, and neither does client-side input or WS traffic.
-    `POST /auth/session/extend` moves it but is refused once locked; only `POST /auth/unlock`
-    lifts a lock. `session_revoked` is answered only by `POST /auth/unlock`; every other
-    operation keeps the uniform `unauthenticated` for a revoked or expired session, so no other
-    route works as a session oracle.
+    (SCR-005), not sign-in.
+
+    Activity is explicit. Only `POST /auth/session/extend` and a successful `POST /auth/unlock`
+    record activity (`REQUEST` on B16 re-stamps `last_seen_at`), so only they move
+    `session.idle_deadline`. No other operation moves it, whatever it reads or writes, and
+    neither does client-side input or WS traffic. `POST /auth/refresh` is not activity: the
+    rotated session inherits `last_seen_at` (as it inherits `expires_at`), so
+    `session.idle_deadline` is unchanged and a client that refreshes on the
+    `23-ws-protocol.md` section 4.3 schedule still locks on time. `GET /auth/session` is
+    read-only. Extend is refused once locked; only `POST /auth/unlock` lifts a lock.
+    `session_revoked` is answered only by `POST /auth/unlock`; every other operation keeps the
+    uniform `unauthenticated` for a revoked or expired session, so no other route works as a
+    session oracle.
 
     ### RBAC
     Roles `owner` | `manager` | `viewer` map to permission codes (`orders:write`,
@@ -871,7 +878,9 @@ paths:
         revokes the **entire session family** and returns `refresh_token_invalid` (reuse
         detection), logging a `critical` audit entry. A token whose session is idle-locked gets
         `401 session_idle_locked`: nothing is rotated or revoked, and the same token refreshes
-        again after `POST /auth/unlock`.
+        again after `POST /auth/unlock`. Refresh is not activity: the rotated session inherits
+        `last_seen_at` as well as `expires_at`, so `session.idle_deadline` is unchanged (see
+        "Idle lock"); only `POST /auth/session/extend` and `POST /auth/unlock` move it.
       security:
         - refreshCookie: []
         - {}
@@ -1007,11 +1016,12 @@ paths:
       operationId: authExtendSession
       summary: Record activity and move the idle deadline (CMP-098 Extend)
       description: |
-        The explicit activity call behind the CMP-098 "Extend" control. It re-stamps
-        `last_seen_at` (`REQUEST` on B16) and returns the new `session.idle_deadline` with
-        `server_time`. It never moves `expires_at` (the 12 h absolute lifetime). Once the session
-        is idle-locked it is refused with `401 session_idle_locked`, so Extend can never lift a
-        lock: only `POST /auth/unlock` does.
+        The explicit activity call behind the CMP-098 "Extend" control; with a successful
+        `POST /auth/unlock` it is the only operation that records activity (see "Idle lock").
+        It re-stamps `last_seen_at` (`REQUEST` on B16) and returns the new
+        `session.idle_deadline` with `server_time`. It never moves `expires_at` (the 12 h
+        absolute lifetime). Once the session is idle-locked it is refused with
+        `401 session_idle_locked`, so Extend can never lift a lock: only `POST /auth/unlock` does.
       x-rbac: { permissions: [], scope: self }
       x-idempotency: ignored
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -1034,18 +1044,26 @@ paths:
         session is inside its 12 h absolute lifetime (US-ONB-004, E09-S03). On success
         `last_seen_at` is re-stamped (`REQUEST` on B16), `session.idle_deadline` moves forward,
         `session.locked` is `false`, and the body is the same `SessionInfo` as
-        `GET /auth/session`. A session that is not locked gets the same password check and `200`.
+        `GET /auth/session`.
+
+        The password is checked only while the session is idle-locked. A live session that is
+        not locked gets `409 conflict`: no password is checked, no failure is counted, no
+        activity is recorded and nothing is audited; the client re-reads `GET /auth/session`.
+        Unlock is therefore never a password check on an unlocked session.
 
         The access token identifies the session. While the session is idle-locked, this
         operation also accepts the token after its 12-minute lifetime, because a lock routinely
         outlasts it and `POST /auth/refresh` is refused while locked. Such a client calls
         `POST /auth/refresh` after unlocking to get a fresh access token. Every other operation
-        keeps refusing an expired access token.
+        keeps refusing an expired access token, and so does this one for a session that is not
+        locked.
 
         * A wrong password is `401 unlock_invalid`, with the same generic `detail` every time.
         * The fifth consecutive wrong password (`MAX_UNLOCK_ATTEMPTS`) revokes the session:
           `401 session_revoked` with `revoked_reason: unlock_attempts_exceeded`, and its sockets
           get the revocation frame (#2272). Every later unlock is `401 session_revoked`.
+          Failures are counted per session; a locked session cannot rotate, so refreshing
+          cannot reset the count.
         * If the absolute lifetime elapsed while locked, the answer is `401 session_revoked`
           with `revoked_reason: expired`; the client falls back to a full sign-in (SCR-001).
 
@@ -1072,7 +1090,8 @@ paths:
           description: >
             `unlock_invalid` (wrong password); `session_revoked` (revoked, by the fifth wrong
             password or otherwise, or past its absolute lifetime: sign in again); or
-            `unauthenticated` (unknown access token).
+            `unauthenticated` (unknown access token, or an expired one on a session that is not
+            locked).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -1099,6 +1118,24 @@ paths:
                       revoked_reason: expired,
                     }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "409":
+          description: >
+            `conflict`: the session is live but not idle-locked. No password was checked and
+            nothing changed or was audited; re-read `GET /auth/session`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                notLocked:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/conflict",
+                      title: "Concurrent modification or state conflict",
+                      status: 409,
+                      detail: "The session is not locked.",
+                      instance: "urn:cv:req:0193f2bb-1115",
+                      code: conflict,
+                    }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -10579,7 +10616,9 @@ components:
           format: date-time
           description: >
             When the idle lock engages unless activity is recorded first
-            (`last_seen_at + idle_timeout_s`). Once `locked`, the moment it locked.
+            (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and
+            `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once
+            `locked`, the moment it locked.
         idle_timeout_s:
           type: integer
           minimum: 300

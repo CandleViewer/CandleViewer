@@ -433,6 +433,14 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "POST /auth/session/extend": {
+      "reason": "idle-lock contract (slice 1/2); the route ships in slice 2/2 of the same ticket",
+      "ticket": "#2300"
+    },
+    "POST /auth/unlock": {
+      "reason": "idle-lock contract (slice 1/2); the route ships in slice 2/2 of the same ticket",
+      "ticket": "#2300"
+    },
     "POST /chart-templates": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"

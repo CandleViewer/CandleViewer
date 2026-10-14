@@ -763,7 +763,9 @@ export interface paths {
      *     revokes the **entire session family** and returns `refresh_token_invalid` (reuse
      *     detection), logging a `critical` audit entry. A token whose session is idle-locked gets
      *     `401 session_idle_locked`: nothing is rotated or revoked, and the same token refreshes
-     *     again after `POST /auth/unlock`.
+     *     again after `POST /auth/unlock`. Refresh is not activity: the rotated session inherits
+     *     `last_seen_at` as well as `expires_at`, so `session.idle_deadline` is unchanged (see
+     *     "Idle lock"); only `POST /auth/session/extend` and `POST /auth/unlock` move it.
      */
     post: operations["authRefresh"];
     delete?: never;
@@ -809,11 +811,12 @@ export interface paths {
     put?: never;
     /**
      * Record activity and move the idle deadline (CMP-098 Extend)
-     * @description The explicit activity call behind the CMP-098 "Extend" control. It re-stamps
-     *     `last_seen_at` (`REQUEST` on B16) and returns the new `session.idle_deadline` with
-     *     `server_time`. It never moves `expires_at` (the 12 h absolute lifetime). Once the session
-     *     is idle-locked it is refused with `401 session_idle_locked`, so Extend can never lift a
-     *     lock: only `POST /auth/unlock` does.
+     * @description The explicit activity call behind the CMP-098 "Extend" control; with a successful
+     *     `POST /auth/unlock` it is the only operation that records activity (see "Idle lock").
+     *     It re-stamps `last_seen_at` (`REQUEST` on B16) and returns the new
+     *     `session.idle_deadline` with `server_time`. It never moves `expires_at` (the 12 h
+     *     absolute lifetime). Once the session is idle-locked it is refused with
+     *     `401 session_idle_locked`, so Extend can never lift a lock: only `POST /auth/unlock` does.
      */
     post: operations["authExtendSession"];
     delete?: never;
@@ -874,18 +877,26 @@ export interface paths {
      *     session is inside its 12 h absolute lifetime (US-ONB-004, E09-S03). On success
      *     `last_seen_at` is re-stamped (`REQUEST` on B16), `session.idle_deadline` moves forward,
      *     `session.locked` is `false`, and the body is the same `SessionInfo` as
-     *     `GET /auth/session`. A session that is not locked gets the same password check and `200`.
+     *     `GET /auth/session`.
+     *
+     *     The password is checked only while the session is idle-locked. A live session that is
+     *     not locked gets `409 conflict`: no password is checked, no failure is counted, no
+     *     activity is recorded and nothing is audited; the client re-reads `GET /auth/session`.
+     *     Unlock is therefore never a password check on an unlocked session.
      *
      *     The access token identifies the session. While the session is idle-locked, this
      *     operation also accepts the token after its 12-minute lifetime, because a lock routinely
      *     outlasts it and `POST /auth/refresh` is refused while locked. Such a client calls
      *     `POST /auth/refresh` after unlocking to get a fresh access token. Every other operation
-     *     keeps refusing an expired access token.
+     *     keeps refusing an expired access token, and so does this one for a session that is not
+     *     locked.
      *
      *     * A wrong password is `401 unlock_invalid`, with the same generic `detail` every time.
      *     * The fifth consecutive wrong password (`MAX_UNLOCK_ATTEMPTS`) revokes the session:
      *       `401 session_revoked` with `revoked_reason: unlock_attempts_exceeded`, and its sockets
      *       get the revocation frame (#2272). Every later unlock is `401 session_revoked`.
+     *       Failures are counted per session; a locked session cannot rotate, so refreshing
+     *       cannot reset the count.
      *     * If the absolute lifetime elapsed while locked, the answer is `401 session_revoked`
      *       with `revoked_reason: expired`; the client falls back to a full sign-in (SCR-001).
      *
@@ -7316,7 +7327,7 @@ export interface components {
       id: string;
       /**
        * Format: date-time
-       * @description When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Once `locked`, the moment it locked.
+       * @description When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked.
        */
       idle_deadline: string;
       /** @description Idle timeout of this session in seconds (per user, 5 to 60 minutes). */
@@ -9798,7 +9809,7 @@ export interface operations {
           "application/json": components["schemas"]["SessionInfo"];
         };
       };
-      /** @description `unlock_invalid` (wrong password); `session_revoked` (revoked, by the fifth wrong password or otherwise, or past its absolute lifetime: sign in again); or `unauthenticated` (unknown access token). */
+      /** @description `unlock_invalid` (wrong password); `session_revoked` (revoked, by the fifth wrong password or otherwise, or past its absolute lifetime: sign in again); or `unauthenticated` (unknown access token, or an expired one on a session that is not locked). */
       401: {
         headers: {
           [name: string]: unknown;
@@ -9808,6 +9819,15 @@ export interface operations {
         };
       };
       403: components["responses"]["CsrfTokenInvalid"];
+      /** @description `conflict`: the session is live but not idle-locked. No password was checked and nothing changed or was audited; re-read `GET /auth/session`. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];

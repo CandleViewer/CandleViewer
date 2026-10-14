@@ -2,6 +2,8 @@
 
 Pins `POST /auth/unlock`, `POST /auth/session/extend`, the three new 401 codes and the
 `SessionInfo.session` deadlines that SCR-005 and CMP-098 build on; routes ship in slice 2/2.
+Also pins two rules from the PR #2389 review: only extend and unlock record activity (refresh
+carries `last_seen_at` over), and unlock checks a password only while the session is locked.
 """
 
 from __future__ import annotations
@@ -51,6 +53,17 @@ def _conforms(spec: dict[str, Any], value: Any, pointer: str) -> None:
     ).validate(value)
 
 
+def _flat(text: str) -> str:
+    """Collapse YAML line wrapping so prose pins survive a re-wrap."""
+    return " ".join(text.split())
+
+
+def _idle_lock_section(spec: dict[str, Any]) -> str:
+    text: str = spec["info"]["description"]
+    start = text.index("### Idle lock")
+    return _flat(text[start : text.index("\n### ", start)])
+
+
 @pytest.mark.parametrize("code", ["session_idle_locked", "unlock_invalid", "session_revoked"])
 def test_error_registry_idle_lock_code_is_rest_only_401_not_retryable(
     spec: dict[str, Any], code: str
@@ -78,12 +91,30 @@ def test_unlock_contract_answers_session_info_or_a_named_refusal(spec: dict[str,
     op = _op(spec, "post", "/auth/unlock")
     ok = op["responses"]["200"]["content"]["application/json"]["schema"]
     assert ok == {"$ref": "#/components/schemas/SessionInfo"}
-    assert {"401", "403", "422", "429", "503"} <= set(op["responses"])
+    assert {"401", "403", "409", "422", "429", "503"} <= set(op["responses"])
     assert "x-rate-limit" in op  # throttled like login
     refusals = _examples(op["responses"]["401"])
     assert {e["code"] for e in refusals.values()} >= {"unlock_invalid", "session_revoked"}
     for example in refusals.values():
         _conforms(spec, example, "/components/schemas/Problem")
+
+
+def test_unlock_contract_checks_the_password_only_while_locked(spec: dict[str, Any]) -> None:
+    # PR #2389 review: a password check on a live, unlocked session is an oracle whose
+    # per-session failure count a refresh resets (it mints a new session id). Only a locked
+    # session, which cannot refresh, gets a password check; any other live session is a 409.
+    op = _op(spec, "post", "/auth/unlock")
+    not_locked = _examples(op["responses"]["409"])
+    assert [e["code"] for e in not_locked.values()] == ["conflict"]
+    for example in not_locked.values():
+        _conforms(spec, example, "/components/schemas/Problem")
+    assert {e["code"]: e["status"] for e in spec["x-error-codes"]}["conflict"] == 409
+    description = _flat(op["description"])
+    assert "The password is checked only while the session is idle-locked." in description
+    assert "not locked gets `409 conflict`: no password is checked, no failure is counted" in (
+        description
+    )
+    assert "a locked session cannot rotate, so refreshing cannot reset the count" in description
 
 
 def test_unlock_contract_session_revoked_carries_the_reason(spec: dict[str, Any]) -> None:
@@ -111,6 +142,31 @@ def test_extend_contract_returns_the_server_truth_deadline(spec: dict[str, Any])
     response = _schema(spec, "SessionExtendResponse")
     assert set(response["required"]) == {"session", "server_time"}
     assert response["properties"]["session"] == {"$ref": "#/components/schemas/SessionState"}
+
+
+def test_idle_lock_activity_is_recorded_only_by_extend_and_unlock(spec: dict[str, Any]) -> None:
+    # PR #2389 review (ruling rule 5e): every implicit activity source is a background call
+    # that can keep an unattended terminal unlocked, so the contract names exactly two.
+    section = _idle_lock_section(spec)
+    only = "Only `POST /auth/session/extend` and a successful `POST /auth/unlock` record activity"
+    assert only in section
+    assert "No other operation moves it, whatever it reads or writes" in section
+    for method, path in (("post", "/auth/session/extend"), ("post", "/auth/unlock")):
+        assert method in spec["paths"][path]
+    extend = _flat(_op(spec, "post", "/auth/session/extend")["description"])
+    assert "it is the only operation that records activity" in extend
+
+
+def test_refresh_contract_carries_the_idle_deadline_over(spec: dict[str, Any]) -> None:
+    # PR #2389 review: clients refresh about every 11 min (23-ws-protocol.md section 4.3), so a
+    # refresh that re-stamped activity would stop the default 15 min lock from ever engaging.
+    inherits = "the rotated session inherits `last_seen_at`"
+    assert f"`POST /auth/refresh` is not activity: {inherits}" in _idle_lock_section(spec)
+    refresh = _flat(_op(spec, "post", "/auth/refresh")["description"])
+    assert f"Refresh is not activity: {inherits}" in refresh
+    assert "`session.idle_deadline` is unchanged" in refresh
+    deadline = _schema(spec, "SessionState")["properties"]["idle_deadline"]["description"]
+    assert "`POST /auth/refresh` carries it over unchanged" in _flat(deadline)
 
 
 def test_session_info_requires_the_session_state(spec: dict[str, Any]) -> None:
