@@ -10,10 +10,13 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from candleviewer.api.audit import make_audit_router
+from candleviewer.api.audit_limiter import AuditQueryLimiter
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import (
     AuditEntry,
@@ -24,6 +27,8 @@ from candleviewer.audit.models import (
     Severity,
     VerifyResult,
 )
+from candleviewer.settings import Settings
+from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadFailed
 
 
 class _FakeQuery:
@@ -402,3 +407,103 @@ def test_owner_query_sees_all_events_raw() -> None:
     assert [i["id"] for i in items] == [1, 2]
     assert items[1]["detail"] == {"symbol": "BTCUSDT", "environment": "live"}
     assert items[1]["ip"] == "100.84.12.9"
+
+
+# ---- #2392 "Limits": per-user limiter, time budget, store errors ---------------------------
+
+
+class _Clock:
+    now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _limited(
+    principal: AuditPrincipal,
+    service: _FakeAuditService | None = None,
+    *,
+    limiter: AuditQueryLimiter | None = None,
+) -> tuple[TestClient, _FakeAuditService]:
+    svc = service or _FakeAuditService()
+    app = FastAPI()
+    app.include_router(
+        make_audit_router(svc, _FakeResolver(principal), limiter=limiter, query_timeout_ms=1234)
+    )
+    return TestClient(app), svc
+
+
+def test_rate_and_concurrency_limits_return_429_with_retry_after() -> None:
+    clock = _Clock()
+    lim = AuditQueryLimiter(rate_per_minute=2, max_concurrent=1, clock=clock)
+    client, svc = _limited(_owner(), limiter=lim)
+    assert client.get("/admin/audit").status_code == 200
+    assert client.get("/admin/audit").status_code == 200
+    r = client.get("/admin/audit")
+    assert r.status_code == 429 and int(r.headers["Retry-After"]) >= 1
+    assert len(svc.query_service.query_calls) == 2
+    clock.now += 61
+    held = lim.acquire(next(iter(lim._users)))
+    assert client.get("/admin/audit").status_code == 429  # concurrency slot taken
+    held.release()
+    assert client.get("/admin/audit").status_code == 200
+
+
+def test_lease_released_when_query_raises() -> None:
+    lim = AuditQueryLimiter(max_concurrent=1)
+    svc = _FakeAuditService()
+
+    async def boom(**_: Any) -> AuditPage:
+        raise RuntimeError("x")
+
+    svc.query_service.query = boom  # type: ignore[method-assign,assignment]  # test double
+    client, _ = _limited(_owner(), svc, limiter=lim)
+    client = TestClient(client.app, raise_server_exceptions=False)
+    assert client.get("/admin/audit").status_code == 500
+    assert all(s.inflight == 0 for s in lim._users.values())
+
+
+@pytest.mark.parametrize("error", [TimeoutError(), AuditReadFailed("08006")])
+def test_timeout_or_store_error_is_503_and_releases_the_lease(error: Exception) -> None:
+    lim = AuditQueryLimiter(max_concurrent=1)
+    svc = _FakeAuditService()
+
+    async def fail(**kw: Any) -> AuditPage:
+        assert kw["timeout_ms"] == 1234
+        raise error
+
+    svc.query_service.query = fail  # type: ignore[method-assign,assignment]  # test double
+    client, _ = _limited(_owner(), svc, limiter=lim)
+    r = client.get("/admin/audit")
+    assert (r.status_code, r.json()["code"], r.headers["Retry-After"]) == (
+        503,
+        "store_unavailable",
+        "1",
+    )
+    assert all(s.inflight == 0 for s in lim._users.values())
+
+
+def test_validation_limits_and_ip() -> None:
+    client, svc = _limited(_owner())
+    assert client.get("/admin/audit", params={"limit": 501}).status_code == 422
+    assert client.get("/admin/audit", params={"limit": 0}).status_code == 422
+    assert client.get("/admin/audit", params={"ip": "10.0.0.0/8"}).status_code == 422
+    assert client.get("/admin/audit", params={"ip": "nope"}).status_code == 422
+    assert client.get("/admin/audit", params={"ip": "fe80::1%eth0"}).status_code == 422
+    assert client.get("/admin/audit", params={"ip": "::1"}).status_code == 200
+    assert svc.query_service.query_calls[-1]["limit"] == 100
+
+
+def test_manager_ip_filter_is_refused_with_403_and_recorded() -> None:
+    client, svc = _limited(_manager_with_read())
+    r = client.get("/admin/audit", params={"ip": "10.0.0.1"})
+    assert (r.status_code, r.json()["code"]) == (403, "forbidden")
+    [(action, kw)] = svc.writer_service.emitted
+    assert (action, kw["reason"]) == ("admin.audit_denied", "filter_not_permitted:ip")
+    assert svc.query_service.query_calls == []
+
+
+def test_query_timeout_setting_is_capped_at_30_seconds() -> None:
+    assert Settings(audit_query_timeout_ms=30_000).audit_query_timeout_ms == 30_000
+    with pytest.raises(ValidationError):
+        Settings(audit_query_timeout_ms=30_001)

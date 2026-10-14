@@ -49,8 +49,11 @@ from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
     AUDIT_QUERY_MAX_LIMIT,
     AuditExportRequest,
+    AuditOutcome,
     AuditVerifyRequest,
+    Severity,
 )
+from candleviewer.storage.errors import StorageTierUnavailable
 
 
 class _Emitter(Protocol):
@@ -140,7 +143,7 @@ def _problem(
     retry_after_s: int | None = None,
 ) -> JSONResponse:
     content: dict[str, Any] = {
-        "type": "about:blank",
+        "type": f"https://candleviewer.local/errors/{code}" if code else "about:blank",
         "title": title,
         "status": status_code,
         "detail": detail,
@@ -153,6 +156,10 @@ def _problem(
     if retry_after_s is not None:
         response.headers["Retry-After"] = str(retry_after_s)
     return response
+
+
+def _unavailable(detail: str) -> JSONResponse:
+    return _problem(503, "Service unavailable", detail, code="store_unavailable", retry_after_s=1)
 
 
 def make_audit_router(
@@ -223,6 +230,10 @@ def make_audit_router(
             service, principal, view = await _authorize_or_raise(request, "query")
         except _HttpProblem as problem:
             return problem.response
+        if view is AuditView.OWN_REDACTED and ip is not None:
+            # Contract: `ip` is Owner only. The redacted projection hides it, so filtering
+            # on it would reveal it one query at a time.
+            return await _refuse(service.writer, principal, "filter_not_permitted:ip")
         if limit < 1 or limit > AUDIT_QUERY_MAX_LIMIT:
             return _problem(
                 422,
@@ -278,6 +289,23 @@ def make_audit_router(
         finally:
             lease.release()
 
+    async def _refuse(
+        writer: AuditWriterLike, principal: AuditPrincipal, reason: str
+    ) -> JSONResponse:
+        await writer.emit(
+            "admin.audit_denied",
+            actor_label=principal.username,
+            actor_user_id=principal.user_id,
+            actor_ip=principal.ip,
+            session_id=principal.session_id,
+            object_kind="audit_log",
+            outcome=AuditOutcome.DENIED,
+            severity=Severity.WARNING,
+            reason=reason,
+            request_id=principal.request_id,
+        )
+        return _problem(403, "Forbidden", "filter not permitted for this caller", code="forbidden")
+
     async def _run_query(
         service: AuditServiceLike,
         key: str,
@@ -290,13 +318,10 @@ def make_audit_router(
         except ValidationError as exc:
             return _problem(400, "Bad request", str(exc))
         except TimeoutError:
-            return _problem(
-                503,
-                "Service unavailable",
-                "audit query exceeded its time budget",
-                code="store_unavailable",
-                retry_after_s=1,
-            )
+            return _unavailable("audit query exceeded its time budget")
+        except StorageTierUnavailable:
+            # The store error carries only its SQLSTATE; it is logged where it is raised.
+            return _unavailable("audit store unavailable")
         if view is AuditView.OWN_REDACTED:
             items = [
                 redact_entry_for_view(e, view) for e in page.items if str(e.actor_user_id) == key
