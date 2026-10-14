@@ -3787,7 +3787,12 @@ class DrawingInput(BaseModel):
         ),
     ] = None
     geometry: DrawingGeometry
-    style: Annotated[DrawingStyle | None, Field(validate_default=True)] = {}
+    style: Annotated[
+        DrawingStyle | None,
+        Field(
+            description="Optional; omitted means no style overrides (stored as `{}`, returned as `{}`)."
+        ),
+    ] = None
     label: Annotated[
         str | None,
         Field(

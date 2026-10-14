@@ -4796,8 +4796,8 @@ export interface components {
       layout_id: string | null;
       /** @default false */
       locked: boolean;
-      /** @default {} */
-      style: components["schemas"]["DrawingStyle"];
+      /** @description Optional; omitted means no style overrides (stored as `{}`, returned as `{}`). */
+      style?: components["schemas"]["DrawingStyle"];
       /** @description Symbol. Additionally limited to at most 20 characters in total (the storage domain `symbol_code`); longer values are `422`. Generators do not carry a `maxLength` next to the `Symbol` pattern, so the server enforces it. */
       symbol: components["schemas"]["Symbol"];
       tool: components["schemas"]["DrawingTool"];

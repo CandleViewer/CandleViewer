@@ -12467,7 +12467,7 @@ components:
         style:
           allOf:
             - $ref: "#/components/schemas/DrawingStyle"
-          default: {}
+          description: "Optional; omitted means no style overrides (stored as `{}`, returned as `{}`)."
         label:
           type: ["string", "null"]
           default: null
