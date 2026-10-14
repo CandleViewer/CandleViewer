@@ -1680,15 +1680,11 @@ export interface paths {
     };
     /**
      * Built-in layout presets
-     * @description A static, built-in catalogue served from the code (no database rows, nothing user-scoped):
-     *     each entry carries a complete `LayoutInput` the client can send to `createLayout` after
-     *     filling in symbols ("Keep current symbols", SCR-022). User-saved presets are ordinary
-     *     layouts with a `hotkey_slot` and are listed by `listLayouts`. Entries keep their `id` for
-     *     the life of the catalogue; new entries are additive. Preview thumbnails are static client
-     *     assets keyed by `id`; the API never serves markup.
-     *
-     *     `limit` is 1..500 (default 100); `cursor` is opaque and valid for one hour
-     *     (`400 invalid_cursor` otherwise).
+     * @description Static built-in catalogue served from the code (no rows, nothing user-scoped). Each entry
+     *     carries a complete `LayoutInput` for `createLayout`, symbols left for the client to fill
+     *     ("Keep current symbols", SCR-022). User-saved presets are layouts with a `hotkey_slot`
+     *     (`listLayouts`). Ids are stable and new entries are additive. Thumbnails are static client
+     *     assets keyed by `id`; the API never serves markup. `cursor` as on `listWorkspaces`.
      */
     get: operations["listLayoutPresets"];
     put?: never;
@@ -3815,32 +3811,23 @@ export interface paths {
     };
     /**
      * List the caller's workspaces
-     * @description The caller's live (not soft-deleted) workspaces, ordered by `sort_order` then `id`
-     *     ascending. A user holds at most 32 live workspaces, so the default page returns them all.
-     *     `layout_count` counts live layouts.
-     *
-     *     `limit` is 1..500 (default 100). `cursor` is opaque, bound to this listing and valid for
+     * @description The caller's live workspaces ordered by `sort_order`, then `id`. A user holds at most 32, so
+     *     the default page returns them all. `cursor` is opaque, bound to this listing and valid for
      *     one hour; a malformed, foreign or expired cursor returns `400 invalid_cursor`.
      */
     get: operations["listWorkspaces"];
     put?: never;
     /**
      * Create a workspace
-     * @description The server mints a UUIDv7 `id`. `name` must be unique (case-insensitive) among the
-     *     caller's live workspaces, otherwise `409 conflict` with `errors[0].rule = name_taken`. A
-     *     user holds at most 32 live workspaces; one more is `409 conflict`, rule `limit_reached`.
+     * @description The server mints a UUIDv7 `id`. `409 conflict`: rule `name_taken` (names are unique per
+     *     user, case-insensitive, among live workspaces) or `limit_reached` (32 live workspaces).
+     *     `is_default: true` clears the previous default in the same transaction (its token changes);
+     *     `false` touches no other workspace, and a user may have no default.
      *
-     *     `is_default: true` makes this the caller's only default workspace: a previous default is
-     *     cleared in the same transaction, and its `updated_at` token changes. With
-     *     `is_default: false` no other workspace is touched; a user may have no default.
-     *
-     *     The body is limited to 4 KiB; a larger body is refused with `413` (`payload_too_large`).
-     *     The `ETag` response header carries the `updated_at` token for later `If-Match` use.
-     *
-     *     `Idempotency-Key`: the same key with the same body replays the stored 2xx response with
-     *     `Idempotency-Replayed: true`; the same key with a different body is
-     *     `409 idempotency_key_reuse`. Replay storage is best-effort and bounded; correctness never
-     *     depends on it.
+     *     Bodies over 4 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries
+     *     the `updated_at` token for `If-Match`. `Idempotency-Key`: the same key and body replay the
+     *     stored 2xx response with `Idempotency-Replayed: true`; the same key with another body is
+     *     `409 idempotency_key_reuse`. Replay storage is best-effort and bounded.
      */
     post: operations["createWorkspace"];
     delete?: never;
@@ -3860,40 +3847,31 @@ export interface paths {
     };
     /**
      * Get a workspace with its layouts
-     * @description Restore is one request per workspace: the workspace metadata plus every live layout with
-     *     all of its panes, layouts ordered by `id` ascending and panes by `slot_index`. A workspace
-     *     that is missing, soft-deleted or owned by another user returns the same `404`.
-     *
-     *     There is no `ETag` on this response: the workspace token (`updated_at`) versions the
-     *     workspace metadata only, and each layout carries its own token.
+     * @description Restore in one request: the workspace plus every live layout with all of its panes (layouts
+     *     by `id`, panes by `slot_index`). Missing, soft-deleted or another user's: the same `404`. No
+     *     `ETag`: the workspace token versions its metadata only, and each layout carries its own.
      */
     get: operations["getWorkspace"];
     /**
      * Replace a workspace's metadata
-     * @description Full replacement of the writable workspace fields (`WorkspaceInput`); an omitted field
-     *     takes its default. Layouts are not touched and do not change this token. A workspace that
-     *     is missing, soft-deleted or owned by another user returns the same `404`. Name uniqueness,
-     *     the single-default switch and the 4 KiB body limit are as on `createWorkspace`.
-     *
-     *     `If-Match` is optional: the quoted `updated_at` token (a `W/` prefix or the bare token is
-     *     also accepted). When the body changes nothing, the call returns `200` with the unchanged
-     *     token and writes nothing, even if `If-Match` is stale (the change is already applied,
-     *     RFC 9110 §13.1.1). Otherwise a stale or unparseable `If-Match` returns
-     *     `412 version_conflict` and nothing is written; when absent the last write wins.
+     * @description Full replacement of `WorkspaceInput` (an omitted field takes its default); layouts are
+     *     untouched and do not change this token. Missing, soft-deleted or another user's: the same
+     *     `404`. `409` and the 4 KiB limit as on `createWorkspace`. `If-Match` is optional (the
+     *     quoted, `W/`-prefixed or bare `updated_at` token; absent = last write wins). A body that
+     *     changes nothing returns `200` with the unchanged token and writes nothing, even with a stale
+     *     `If-Match` (the change is already applied, RFC 9110 §13.1.1); otherwise a stale or
+     *     unparseable `If-Match` is `412 version_conflict` and nothing is written.
      */
     put: operations["updateWorkspace"];
     post?: never;
     /**
      * Delete a workspace and its layouts
-     * @description Soft delete, in one transaction: the workspace, its live layouts and the drawings scoped
-     *     to those layouts are marked deleted with the same timestamp, and retention purges them
-     *     later. Deleting the caller's **last** live workspace is refused with `409 conflict`,
-     *     `errors[0].rule = last_workspace` ("You need at least one workspace.", SCR-025), and
-     *     nothing changes. Deleting the default workspace leaves the caller without a default. No
-     *     precondition. A workspace that is missing, already deleted or owned by another user
-     *     returns the same `404`.
-     *
-     *     `Idempotency-Key` behaves as on `createWorkspace` (a replay returns the stored `204`).
+     * @description Soft delete in one transaction: the workspace, its live layouts and their drawings get the
+     *     same `deleted_at`; retention purges them later. Deleting the caller's **last** live
+     *     workspace is `409 conflict` with `errors[0].rule = last_workspace` ("You need at least one
+     *     workspace.", SCR-025), and nothing changes. Deleting the default leaves no default. No
+     *     precondition. Missing, already deleted or another user's: the same `404`. `Idempotency-Key`
+     *     as on `createWorkspace` (a replay returns the stored `204`).
      */
     delete: operations["deleteWorkspace"];
     options?: never;
@@ -3934,40 +3912,28 @@ export interface paths {
     };
     /**
      * List layouts in a workspace
-     * @description The live layouts of one of the caller's live workspaces, each with all of its panes,
-     *     ordered by `id` ascending (panes by `slot_index`). A workspace that is missing,
-     *     soft-deleted or owned by another user returns the same `404`. A workspace holds at most
-     *     32 live layouts. `limit` is 1..500 (default 100); `cursor` is opaque, bound to this
-     *     workspace's listing and valid for one hour (`400 invalid_cursor` otherwise).
+     * @description Live layouts (with all panes) of one of the caller's live workspaces, ordered by `id` (panes
+     *     by `slot_index`); at most 32. Missing, soft-deleted or another user's workspace: the same
+     *     `404`. `cursor` as on `listWorkspaces`, bound to this workspace.
      */
     get: operations["listLayouts"];
     put?: never;
     /**
      * Create a layout (pane grid)
-     * @description A layout is a grid of up to 16 panes (`slot_index` 0..15), persisted verbatim so the
-     *     Electron shell can restore the exact arrangement on launch. The server mints a UUIDv7
-     *     `id`; the panes are validated as a whole and written in the same transaction.
+     * @description A layout is a grid of up to 16 panes, persisted verbatim so the Electron shell restores the
+     *     exact arrangement. The server mints a UUIDv7 `id`; the pane set is validated as a whole and
+     *     written in the same transaction.
      *
-     *     Validation (`422 validation_failed`, up to 20 `errors[]`; a pane error names the pane by
-     *     array position, e.g. `panes.2.slot_index`): `slot_index` unique within the body (rule
-     *     `duplicate_slot`); `pane_kind`, `scale_mode` and `grid_preset` from their enums;
-     *     `grid_spec` required when `grid_preset` is `custom` (rule `grid_spec_required`) and
-     *     `null` otherwise (rule `grid_spec_not_allowed`), its tree checked as `LayoutGridSpec`
-     *     describes; account panes (`positions`, `journal`, `watchlist`, `alerts`) carry no
-     *     `symbol` and no `interval_code` (rule `property_not_allowed_for_kind`); `pane_config` at
-     *     most 4096 bytes (rule `pane_config_too_large`); a non-null `chart_template_id` or a
-     *     non-empty `indicator_preset_ids` is refused (rules `chart_template_not_found`,
-     *     `indicator_preset_not_found`) until those tables ship.
+     *     `422 validation_failed` lists up to 20 `errors[]`, naming a pane by array position (e.g.
+     *     `panes.2.slot_index`): rule `duplicate_slot`, the enums, the tree rules of `LayoutGridSpec`
+     *     (plus `grid_spec_required` for `custom` and `grid_spec_not_allowed` otherwise) and the pane
+     *     rules of `PaneKind`, `PaneConfig` and `LayoutPaneInput`. `409 conflict`: rule `name_taken`,
+     *     `hotkey_slot_taken` or `limit_reached` (32 live layouts). `is_default: true` clears the
+     *     previous default layout in the same transaction. A workspace that is missing, soft-deleted
+     *     or another user's returns the same `404`.
      *
-     *     `409 conflict`: `name` taken among the workspace's live layouts (rule `name_taken`),
-     *     `hotkey_slot` held by another live layout of the workspace (rule `hotkey_slot_taken`),
-     *     or 32 live layouts already (rule `limit_reached`). `is_default: true` clears the
-     *     workspace's previous default layout in the same transaction (its token changes). A
-     *     workspace that is missing, soft-deleted or owned by another user returns the same `404`.
-     *
-     *     The body is limited to 128 KiB; a larger body is refused with `413`
-     *     (`payload_too_large`). The `ETag` response header carries the `updated_at` token.
-     *     `Idempotency-Key` behaves as on `createWorkspace`.
+     *     Bodies over 128 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries
+     *     the `updated_at` token. `Idempotency-Key` behaves as on `createWorkspace`.
      */
     post: operations["createLayout"];
     delete?: never;
@@ -3988,39 +3954,30 @@ export interface paths {
     };
     /**
      * Get a layout
-     * @description The layout with all of its panes (ordered by `slot_index`). The layout must be live and
-     *     belong to the named workspace, which must be one of the caller's live workspaces;
-     *     otherwise (missing, soft-deleted, another user's, or in another workspace) the same
-     *     `404`. The `ETag` header carries the `updated_at` token.
+     * @description The layout with all of its panes (by `slot_index`). It must be live and belong to the named
+     *     workspace, one of the caller's live workspaces; otherwise the same `404`. The `ETag` header
+     *     carries the `updated_at` token.
      */
     get: operations["getLayout"];
     /**
      * Replace a layout
-     * @description Called on pane rearrangement with a 2-second debounce. `If-Match` prevents a stale tab
-     *     from clobbering a newer arrangement made in another window.
+     * @description Called on pane rearrangement with a 2-second debounce. `If-Match` prevents a stale tab from
+     *     clobbering a newer arrangement made in another window.
      *
-     *     Full replacement of the layout **and its whole pane set** in one transaction: the body is
-     *     validated as on `createLayout` before anything is written, the stored panes are replaced,
-     *     and partial application is impossible. The `updated_at` token versions the aggregate, so
-     *     a pane-only change also changes it.
-     *
-     *     `If-Match` is optional: the quoted `updated_at` token (a `W/` prefix or the bare token is
-     *     also accepted). When the body changes nothing, the call returns `200` with the unchanged
-     *     token and writes nothing, even if `If-Match` is stale (the change is already applied,
-     *     RFC 9110 §13.1.1). Otherwise a stale or unparseable `If-Match` returns
-     *     `412 version_conflict`, the stored layout is unchanged, and the client re-reads it with
-     *     `getLayout`. When absent the last write wins. Same `404` and `409` rules as `getLayout`
-     *     and `createLayout`; the 128 KiB body limit applies.
+     *     Full replacement of the layout **and its whole pane set** in one transaction, validated as
+     *     on `createLayout` before anything is written; partial application is impossible. The
+     *     `updated_at` token versions the aggregate, so a pane-only change also changes it.
+     *     `If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`; after a
+     *     `412` the stored layout is unchanged and the client re-reads it with `getLayout`. `404` as
+     *     on `getLayout`; `409`, `422` and the 128 KiB limit as on `createLayout`.
      */
     put: operations["updateLayout"];
     post?: never;
     /**
      * Delete a layout
-     * @description Soft delete, in one transaction: the layout and the drawings scoped to it are marked
-     *     deleted with the same timestamp; retention purges them later. No precondition. A
-     *     workspace may be left with no layouts. Deleting the default layout leaves the workspace
-     *     without a default. Same `404` rule as `getLayout`. `Idempotency-Key` behaves as on
-     *     `createWorkspace`.
+     * @description Soft delete in one transaction: the layout and its drawings get the same `deleted_at`;
+     *     retention purges them later. No precondition. A workspace may be left with no layouts or no
+     *     default. `404` as on `getLayout`; `Idempotency-Key` as on `createWorkspace`.
      */
     delete: operations["deleteLayout"];
     options?: never;
@@ -5609,10 +5566,10 @@ export interface components {
       | components["schemas"]["LayoutGridTabset"]
       | components["schemas"]["LayoutGridLeaf"];
     /**
-     * @description Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset
-     *     stores only its name: `grid_spec` is `null`, and a pane's `slot_index` is its cell in
-     *     row-major reading order (a slot beyond the preset's cells is placed by the client, e.g.
-     *     floating). `custom` stores the dock tree in `grid_spec`. **Open-ended for readers.**
+     * @description Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset stores
+     *     only its name: `grid_spec` is `null`, and a pane's `slot_index` is its cell in row-major
+     *     reading order (a slot beyond the preset's cells is placed by the client, e.g. floating).
+     *     `custom` stores the dock tree in `grid_spec`. **Open-ended for readers.**
      * @enum {string}
      */
     LayoutGridPreset: "1x1" | "2x1" | "1x2" | "2x2" | "1+3" | "3x3" | "custom";
@@ -5621,10 +5578,10 @@ export interface components {
      *     boundary (`422`, field paths under `grid_spec`): depth at most 6 counting the root as 1
      *     (rule `tree_too_deep`); at most 64 nodes (rule `tree_too_large`); every leaf names the
      *     `slot_index` of a pane in the same body (rule `unknown_slot`) and no slot appears twice
-     *     (rule `duplicate_leaf`); a split's `sizes` has one entry per child (rule
-     *     `sizes_mismatch`), each in (0, 1], summing to 1 within 1e-6 (rule `sizes_sum`); a
-     *     tabset's `active` indexes one of its children (rule `active_out_of_range`). Panes that
-     *     no leaf names are kept (floating or minimised, placed by the client).
+     *     (rule `duplicate_leaf`); a split's `sizes` has one entry per child (rule `sizes_mismatch`),
+     *     each in (0, 1], summing to 1 within 1e-6 (rule `sizes_sum`); a tabset's `active` indexes one
+     *     of its children (rule `active_out_of_range`). Panes that no leaf names are kept (floating or
+     *     minimised, placed by the client).
      */
     LayoutGridSpec: {
       root: components["schemas"]["LayoutGridNode"];
@@ -6182,11 +6139,10 @@ export interface components {
       total?: number | null;
     };
     /**
-     * @description Per-pane view state that has no column of its own, so a pane cannot become an arbitrary
-     *     blob store: closed (unknown keys are refused, C-6.3; a later story adds a key
-     *     additively), at most 4096 bytes as compact UTF-8 JSON (`422` rule
-     *     `pane_config_too_large`), and never holds credentials, account ids or user ids. Omitted
-     *     means `{}`.
+     * @description Per-pane view state that has no column of its own, so a pane cannot become an arbitrary blob
+     *     store: closed (unknown keys are refused, C-6.3; a later story adds a key additively), at
+     *     most 4096 bytes as compact UTF-8 JSON (`422` rule `pane_config_too_large`), and never holds
+     *     credentials, account ids or user ids. Omitted means `{}`.
      */
     PaneConfig: {
       /** @description Kind-specific flat settings (for example DOM depth, tape filters, CVD anchor, visible range), at most 32 keys. Every key must match `^[a-z][a-z0-9_]{0,31}$` (`422` rule `invalid_setting_key`); the server enforces this because generators cannot express key patterns. Omitted means `{}`. */
@@ -6208,14 +6164,13 @@ export interface components {
      */
     PaneIntervalCode: string;
     /**
-     * @description Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:**
-     *     clients must tolerate values they do not know, so adding a kind is an additive change
-     *     (C-6.3); writers must send a listed value. Market panes (`chart`, `dom`, `tape`,
-     *     `profile`, `cvd`, `oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`;
-     *     account panes (`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry
-     *     neither (rule `property_not_allowed_for_kind`). A footprint is a `chart` pane with a
-     *     footprint chart template, a heatmap lives in the `dom` pane, and orders live in the
-     *     `positions` pane.
+     * @description Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients
+     *     must tolerate values they do not know, so adding a kind is an additive change (C-6.3);
+     *     writers must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,
+     *     `oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes
+     *     (`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule
+     *     `property_not_allowed_for_kind`). A footprint is a `chart` pane with a footprint chart
+     *     template, a heatmap lives in the `dom` pane, and orders live in the `positions` pane.
      * @enum {string}
      */
     PaneKind:
@@ -7783,10 +7738,10 @@ export interface components {
     };
     /**
      * @description Design-system icon token for the workspace (a token name, never a URL or markup).
-     *     **Open-ended for readers:** clients must tolerate values they do not know, so adding a
-     *     token is an additive change (C-6.3). Writers must send a listed value; the server keeps
-     *     the same allow-list. `workspace.default` is the only token until the design-system icon
-     *     registry (CMP-019) publishes workspace icons.
+     *     **Open-ended for readers:** clients must tolerate values they do not know, so adding a token
+     *     is an additive change (C-6.3). Writers must send a listed value; the server keeps the same
+     *     allow-list. `workspace.default` is the only token until the design-system icon registry
+     *     (CMP-019) publishes workspace icons.
      * @enum {string}
      */
     WorkspaceIconToken: "workspace.default";

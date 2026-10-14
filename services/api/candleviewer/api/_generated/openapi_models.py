@@ -3541,7 +3541,7 @@ class WorkspaceInput(BaseModel):
     icon_token: Annotated[
         Literal["workspace.default"] | None,
         Field(
-            description="Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a\ntoken is an additive change (C-6.3). Writers must send a listed value; the server keeps\nthe same allow-list. `workspace.default` is the only token until the design-system icon\nregistry (CMP-019) publishes workspace icons.\n"
+            description="Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a token\nis an additive change (C-6.3). Writers must send a listed value; the server keeps the same\nallow-list. `workspace.default` is the only token until the design-system icon registry\n(CMP-019) publishes workspace icons.\n"
         ),
     ] = "workspace.default"
     sort_order: Annotated[
@@ -3561,7 +3561,7 @@ class Workspace(BaseModel):
     icon_token: Annotated[
         Literal["workspace.default"],
         Field(
-            description="Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a\ntoken is an additive change (C-6.3). Writers must send a listed value; the server keeps\nthe same allow-list. `workspace.default` is the only token until the design-system icon\nregistry (CMP-019) publishes workspace icons.\n"
+            description="Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a token\nis an additive change (C-6.3). Writers must send a listed value; the server keeps the same\nallow-list. `workspace.default` is the only token until the design-system icon registry\n(CMP-019) publishes workspace icons.\n"
         ),
     ]
     sort_order: Annotated[int, Field(ge=0, le=32767)]
@@ -3654,7 +3654,7 @@ class LayoutPaneInput(BaseModel):
             "alerts",
         ],
         Field(
-            description="Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:**\nclients must tolerate values they do not know, so adding a kind is an additive change\n(C-6.3); writers must send a listed value. Market panes (`chart`, `dom`, `tape`,\n`profile`, `cvd`, `oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`;\naccount panes (`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry\nneither (rule `property_not_allowed_for_kind`). A footprint is a `chart` pane with a\nfootprint chart template, a heatmap lives in the `dom` pane, and orders live in the\n`positions` pane.\n"
+            description="Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). A footprint is a `chart` pane with a footprint chart\ntemplate, a heatmap lives in the `dom` pane, and orders live in the `positions` pane.\n"
         ),
     ]
     symbol: Annotated[
@@ -3708,7 +3708,7 @@ class LayoutPane(BaseModel):
             "alerts",
         ],
         Field(
-            description="Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:**\nclients must tolerate values they do not know, so adding a kind is an additive change\n(C-6.3); writers must send a listed value. Market panes (`chart`, `dom`, `tape`,\n`profile`, `cvd`, `oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`;\naccount panes (`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry\nneither (rule `property_not_allowed_for_kind`). A footprint is a `chart` pane with a\nfootprint chart template, a heatmap lives in the `dom` pane, and orders live in the\n`positions` pane.\n"
+            description="Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). A footprint is a `chart` pane with a footprint chart\ntemplate, a heatmap lives in the `dom` pane, and orders live in the `positions` pane.\n"
         ),
     ]
     symbol: Symbol | None
@@ -5525,7 +5525,7 @@ class WorkspaceDetail(BaseModel):
     icon_token: Annotated[
         Literal["workspace.default"],
         Field(
-            description="Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a\ntoken is an additive change (C-6.3). Writers must send a listed value; the server keeps\nthe same allow-list. `workspace.default` is the only token until the design-system icon\nregistry (CMP-019) publishes workspace icons.\n"
+            description="Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a token\nis an additive change (C-6.3). Writers must send a listed value; the server keeps the same\nallow-list. `workspace.default` is the only token until the design-system icon registry\n(CMP-019) publishes workspace icons.\n"
         ),
     ]
     sort_order: Annotated[int, Field(ge=0, le=32767)]
@@ -5580,7 +5580,7 @@ class LayoutInput(BaseModel):
     grid_preset: Annotated[
         Literal["1x1", "2x1", "1x2", "2x2", "1+3", "3x3", "custom"] | None,
         Field(
-            description="Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset\nstores only its name: `grid_spec` is `null`, and a pane's `slot_index` is its cell in\nrow-major reading order (a slot beyond the preset's cells is placed by the client, e.g.\nfloating). `custom` stores the dock tree in `grid_spec`. **Open-ended for readers.**\n"
+            description="Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset stores\nonly its name: `grid_spec` is `null`, and a pane's `slot_index` is its cell in row-major\nreading order (a slot beyond the preset's cells is placed by the client, e.g. floating).\n`custom` stores the dock tree in `grid_spec`. **Open-ended for readers.**\n"
         ),
     ] = "1x1"
     grid_spec: Annotated[
@@ -5624,7 +5624,7 @@ class Layout(BaseModel):
     grid_preset: Annotated[
         Literal["1x1", "2x1", "1x2", "2x2", "1+3", "3x3", "custom"],
         Field(
-            description="Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset\nstores only its name: `grid_spec` is `null`, and a pane's `slot_index` is its cell in\nrow-major reading order (a slot beyond the preset's cells is placed by the client, e.g.\nfloating). `custom` stores the dock tree in `grid_spec`. **Open-ended for readers.**\n"
+            description="Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset stores\nonly its name: `grid_spec` is `null`, and a pane's `slot_index` is its cell in row-major\nreading order (a slot beyond the preset's cells is placed by the client, e.g. floating).\n`custom` stores the dock tree in `grid_spec`. **Open-ended for readers.**\n"
         ),
     ]
     grid_spec: LayoutGridSpec | None
