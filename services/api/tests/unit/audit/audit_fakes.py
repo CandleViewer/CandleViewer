@@ -91,9 +91,9 @@ class FakeAuditRepository:
         self.rows.append(row)
 
     async def query_page(self, **kw: Any) -> list[dict[str, Any]]:
-        """As `SqlAlchemyAuditRepository.query_page`: AND-ed filters, `id DESC` below
-        `cursor`, `to_ts` exclusive, a set `restrict_to_actor` replacing `actor_user_id`,
-        and `q` as every term in the document."""
+        """As `SqlAlchemyAuditRepository.query_page`: AND-ed filters, newest first by
+        `(event_ts, id)`, `after` exclusive, `to_ts` exclusive, a set `restrict_to_actor`
+        replacing `actor_user_id`, and `q` as every term in the document."""
         self.page_calls.append(kw)
         restrict = kw["restrict_to_actor"]
         exact = {
@@ -104,7 +104,7 @@ class FakeAuditRepository:
             "severity": kw["severity"],
             "outcome": kw["outcome"],
         }
-        out = sorted(self.rows, key=lambda r: -r["id"])
+        out = sorted(self.rows, key=lambda r: (_ts(r), r["id"]), reverse=True)
         for column, want in exact.items():
             if want is not None:
                 out = [r for r in out if r[column] is not None and str(r[column]) == want]
@@ -116,8 +116,8 @@ class FakeAuditRepository:
             out = [r for r in out if _ts(r) < kw["to_ts"]]
         if kw["q"] is not None:
             out = [r for r in out if all(t.lower() in _doc(r) for t in kw["q"].split())]
-        if kw["cursor"] is not None:
-            out = [r for r in out if r["id"] < kw["cursor"]]
+        if kw["after"] is not None:
+            out = [r for r in out if (_ts(r), r["id"]) < kw["after"]]
         return [{**r, "event_ts": _ts(r)} for r in out[: kw["limit"]]]
 
     async def fetch_entry_hash(self, entry_id: int) -> str | None:

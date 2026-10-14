@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from candleviewer.audit.checkpoint import run_checkpoint
+from candleviewer.audit.cursor import decode_cursor
 from candleviewer.audit.errors import AuditChainBroken
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.query import AuditQueryService
@@ -21,8 +23,8 @@ from candleviewer.audit.query import AuditQueryService
 _ME, _OTHER = str(uuid.UUID(int=1)), str(uuid.UUID(int=2))
 
 
-async def _seed(repo: FakeAuditRepository, n: int, clock: FakeClock) -> None:
-    for i in range(n):
+async def _seed(repo: FakeAuditRepository, n: int, clock: FakeClock, first: int = 0) -> None:
+    for i in range(first, first + n):
         await repo.insert(
             {
                 "record_id": f"00000000-0000-4000-8000-{i:012d}",
@@ -43,11 +45,51 @@ async def test_query_cursor_pagination_walks_newest_first(
     await _seed(repo, 7, clock)
     svc = AuditQueryService(repo)
     page1 = await svc.query(restrict_to_actor=None, limit=3)
-    assert [e.id for e in page1.items] == [7, 6, 5] and page1.has_more
-    assert page1.next_cursor == "5" and page1.count == 3
-    page3 = await svc.query(restrict_to_actor=None, limit=3, cursor=2)
-    assert [e.id for e in page3.items] == [1] and not page3.has_more
-    assert page3.next_cursor is None
+    assert [e.id for e in page1.items] == [7, 6, 5] and page1.meta.has_more
+    assert page1.meta.count == 3 and page1.meta.next_cursor is not None
+    position = decode_cursor(page1.meta.next_cursor)
+    assert (position.ts, position.id) == (page1.items[-1].ts, 5)
+    page2 = await svc.query(restrict_to_actor=None, limit=3, after=position)
+    assert [e.id for e in page2.items] == [4, 3, 2] and page2.meta.has_more
+    last = await svc.query(
+        restrict_to_actor=None, limit=3, after=decode_cursor(page2.meta.next_cursor or "")
+    )
+    assert [e.id for e in last.items] == [1] and not last.meta.has_more
+    assert last.meta.next_cursor is None
+    assert repo.page_calls[-1]["after"] == (page2.items[-1].ts, 2)
+
+
+async def test_query_orders_by_event_time_then_id(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Order is `(ts DESC, id DESC)`, not id: a row replayed late with an older `ts`
+    (WAL replay, clock skew) sorts by its time, and equal times by id."""
+    await _seed(repo, 3, clock)
+    repo.rows[2]["event_ts"] = repo.rows[0]["event_ts"]  # id 3 shares id 1's time
+    page = await AuditQueryService(repo).query(restrict_to_actor=None)
+    assert [e.id for e in page.items] == [2, 3, 1]
+
+
+async def test_query_paging_is_stable_while_entries_append(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Every entry present when paging starts comes back exactly once, whatever is
+    written between pages (newer, or older by `ts`)."""
+    await _seed(repo, 20, clock)
+    before = {r["id"] for r in repo.rows}
+    svc, seen, after, i = AuditQueryService(repo), [], None, 100
+    while True:
+        page = await svc.query(restrict_to_actor=None, limit=3, after=after)
+        seen += [e.id for e in page.items]
+        await _seed(repo, 1, clock, first=i)  # a new head
+        clock.now -= timedelta(seconds=1)  # and a late replay, older than every entry
+        await _seed(repo, 1, clock, first=i + 1)
+        clock.now, i = clock.now + timedelta(seconds=1), i + 2
+        if page.meta.next_cursor is None:
+            break
+        after = decode_cursor(page.meta.next_cursor)
+    old = [s for s in seen if s in before]
+    assert sorted(old) == sorted(before) and len(old) == len(set(old))
 
 
 async def test_query_passes_the_resolved_scope_to_the_repository(
@@ -73,7 +115,7 @@ async def test_query_filters_by_subject_id_ip_and_full_text(
     found = await svc.query(restrict_to_actor=None, q="breakout btc")
     assert [e.id for e in found.items] == [2]
     assert (await svc.query(restrict_to_actor=None, q="breakout eth")).items == []
-    assert (await svc.query(restrict_to_actor=None, q="  ")).count == 6  # blank: no search
+    assert (await svc.query(restrict_to_actor=None, q="  ")).meta.count == 6  # blank: no search
     assert repo.page_calls[-1]["q"] is None
 
 
