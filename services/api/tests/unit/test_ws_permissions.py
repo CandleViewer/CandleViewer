@@ -146,3 +146,27 @@ def test_registry_without_connections_is_noop() -> None:
         raise AssertionError("must not resolve")
 
     asyncio.run(ConnectionRegistry(resolve, lambda: 0).roles_changed(uuid.uuid4()))
+
+
+def test_permission_change_frame_validates_against_section_13_schema() -> None:
+    """#2297: the `apply_snapshot` frame is documented (23-ws-protocol §9.5/§13.4)."""
+    import json
+    from pathlib import Path
+
+    from jsonschema import Draft202012Validator
+    from referencing import Registry, Resource
+
+    bundle = Path(__file__).resolve().parents[4] / "docs" / "plan" / "ws-schema.json"
+    schemas: dict[str, Any] = json.loads(bundle.read_text(encoding="utf-8"))["schemas"]
+    registry: Registry[Any] = Registry().with_resources(
+        (sid, Resource.from_contents(body)) for sid, body in schemas.items()
+    )
+    conn = ConnectionAuthz(_snap("manager", MGR))
+    frame = conn.apply_snapshot(_snap("viewer", VIEWER), 1)[0]
+    assert frame["t"] == "permission_change"
+    for sid, doc in (
+        ("cv://ws/v1/envelope.schema.json", frame),
+        ("cv://ws/v1/permission_change.schema.json", frame["p"]),
+    ):
+        validator = Draft202012Validator(schemas[sid], registry=registry)
+        assert not list(validator.iter_errors(doc))
