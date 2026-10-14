@@ -86,6 +86,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         for t in (
             getattr(app.state, "alert_purge_task", None),
             getattr(app.state, "alert_gauge_task", None),
+            getattr(app.state, "drawings_purge_task", None),
         )
         if t is not None
     ]
