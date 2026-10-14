@@ -17,7 +17,13 @@ import pytest
 from candleviewer.secrets import KEY_ID_SLOT, CredentialUnavailable, RequestSignature, Secret
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.service import mint_borrower
-from candleviewer.secrets.signing import check_message, mac_hex
+from candleviewer.secrets.signing import (
+    MAX_KEY_ID_SLOTS,
+    MAX_MESSAGE_BYTES,
+    MAX_MESSAGE_PARTS,
+    check_message,
+    mac_hex,
+)
 from candleviewer.secrets.store import InMemoryCredentialStore
 from tests.unit.credentials_m2._helpers import _h, _Spy, _store
 from tests.unit.credentials_m2._service_fakes import _boot, _Src, _store_one
@@ -58,6 +64,42 @@ def test_check_message_refuses_malformed_messages(bad: Any) -> None:
 
 def test_check_message_accepts_bytes_and_the_slot() -> None:
     assert check_message(MSG) is MSG
+
+
+def test_message_bounds_fit_bybit_v5_with_room() -> None:
+    """REST string-to-sign: four parts, one key-id slot; WS auth: no slot (#2350 review)."""
+    assert (MAX_MESSAGE_BYTES, MAX_MESSAGE_PARTS, MAX_KEY_ID_SLOTS) == (65536, 16, 1)
+
+
+@pytest.mark.parametrize(
+    "ok",
+    [(b"x" * 65536, KEY_ID_SLOT), (b"",) * 16, (b"GET/realtime", b"1700000005000")],
+    ids=["64KiB-one-slot", "16-parts", "ws-auth-no-slot"],
+)
+def test_check_message_accepts_messages_at_the_bounds(ok: Any) -> None:
+    assert check_message(ok) is ok
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [(b"x" * 65536, b"y"), (b"",) * 17, (KEY_ID_SLOT, b"-", KEY_ID_SLOT)],
+    ids=["one-byte-over-64KiB", "17-parts", "two-slots"],
+)
+def test_check_message_refuses_messages_over_the_bounds(bad: Any) -> None:
+    with pytest.raises(TypeError):
+        check_message(bad)
+
+
+async def test_message_over_the_bounds_is_refused_before_any_borrow(
+    broker: CredentialBroker, audit: AuditLog, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    meta = await _store(broker)
+    spy = _Spy(monkeypatch)
+    for bad in ((b"x" * 65537,), (KEY_ID_SLOT, KEY_ID_SLOT), (b"",) * 17):
+        with pytest.raises(TypeError):
+            await _h(broker).sign(meta.key_id, bad, purpose="sign_rest")
+    assert audit.actions() == ["security.credential_stored"]  # nothing borrowed, nothing audited
+    assert spy.bufs == []  # nothing decrypted
 
 
 async def test_sign_returns_only_the_mac_and_the_key_id(

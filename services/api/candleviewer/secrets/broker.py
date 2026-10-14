@@ -355,7 +355,8 @@ class CredentialBroker:
     ) -> RequestSignature:
         """M2-side request signing (C-2.7, #2339): the secret is used for the MAC here and
         never leaves M2. The result holds the hex MAC and the key id the caller's request
-        header needs. A malformed message is refused before the borrow (no decrypt, no audit).
+        header needs. A message `check_message` refuses (shape or bounds: size, parts, slots) is
+        refused before the borrow (no decrypt, no audit).
         """
         parts = check_message(message)
 
