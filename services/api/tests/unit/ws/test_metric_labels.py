@@ -67,10 +67,9 @@ async def test_upstream_gauge_symbol_label_bounded_with_other() -> None:
     assert not [k for k in _series() if k[1] == "book"]
 
 
-def test_zz_polluter_leaves_stray_book_series() -> None:
-    """Simulates an earlier test that leaks a series (#2360); the fixture must clean it."""
+def test_autouse_fixture_clears_leaked_series() -> None:
+    """Leak a series, run the fixture's cleanup, assert empty (#2360); order-independent."""
     cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book").set(1)
-
-
-def test_zzz_gauge_starts_empty_despite_earlier_pollution() -> None:
+    assert ("ZZSTRAYUSDT", "book") in _series()
+    cv_ws_upstream_consumers_in_use.clear()  # same call the fixture makes
     assert _series() == {}
