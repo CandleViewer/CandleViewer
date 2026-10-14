@@ -1,0 +1,66 @@
+<!doctype html><meta charset=utf-8><body><div id=out>RUNNING</div>
+<div style="position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden"><table id=t><tbody id=b></tbody></table></div>
+<script>
+// Throwaway prototype for E06-D03: visually-hidden table, windowed bar data, per-frame sync.
+const COLS=7, TOTAL=100000;
+const bars=new Array(TOTAL);let s=1;const rnd=()=>(s=(s*1664525+1013904223)>>>0)/4294967296;
+for(let i=0;i<TOTAL;i++){const o=64000+rnd()*200;bars[i]={t:i*60,o,h:o+rnd()*50,l:o-rnd()*50,c:o+rnd()*40-20,v:Math.round(rnd()*500),d:Math.round(rnd()*200-100)};}
+function mk(rows){const b=document.getElementById('b');b.textContent='';const tr=[];for(let r=0;r<rows;r++){const row=document.createElement('tr');row.setAttribute('aria-rowindex',r+1);for(let c=0;c<COLS;c++){const td=document.createElement(c?'td':'th');td.appendChild(document.createTextNode(''));row.appendChild(td);}b.appendChild(row);tr.push(row);}return tr;}
+function cells(bar){return[bar.t,bar.o.toFixed(1),bar.h.toFixed(1),bar.l.toFixed(1),bar.c.toFixed(1),bar.v,bar.d];}
+let cache;
+// strategies: naive = rewrite every cell; diff = write only cells whose string changed; 
+function sync(rows,first,mode,dirtyOnly){
+  for(let r=0;r<rows.length;r++){
+    if(dirtyOnly&&!dirtyOnly(r))continue;
+    const v=cells(bars[first+r]);const tds=rows[r].children;
+    for(let c=0;c<COLS;c++){const str=String(v[c]);
+      if(mode==='naive'){tds[c].firstChild.data=str;}
+      else{ const k=r*COLS+c; if(cache[k]!==str){cache[k]=str;tds[c].firstChild.data=str;} }}
+  }
+}
+const p95=a=>{a=[...a].sort((x,y)=>x-y);return a[Math.floor(a.length*0.95)]};
+const med=a=>{a=[...a].sort((x,y)=>x-y);return a[a.length>>1]};
+function run(cfg){return new Promise(res=>{
+  const rows=mk(cfg.rows);cache=new Array(cfg.rows*COLS).fill('');let first=1000,frame=0,t0=performance.now(),samples=[],last=t0,ft=[];
+  sync(rows,first,'diff');
+  // storm: 20 msg/s -> last row changes every 50 ms
+  let lastStorm=t0;
+  function f(now){
+    ft.push(now-last);last=now;
+    if(now-t0>=cfg.ms){res({cfg,p95:p95(samples),med:med(samples),max:Math.max(...samples),n:samples.length,frameP95:p95(ft)});return;}
+    frame++;
+    let dirty=null,did=false;
+    const a=performance.now();
+    if(cfg.scn==='static'){ if(cfg.mode==='naive') sync(rows,first,'naive'); else sync(rows,first,'diff'); }
+    else if(cfg.scn==='pan'){ first=1000+Math.floor((now-t0)/1000*cfg.barsPerSec); // pan ~ barsPerSec bars/s
+      if(cfg.coalesceHz){ const per=1000/cfg.coalesceHz; if(now-(cfg._lc||0)>=per){cfg._lc=now;sync(rows,first,cfg.mode);} else {/*cursor row only*/ sync(rows,first,cfg.mode,r=>r===(cfg.rows>>1));} }
+      else if(cfg.slice){ // time-sliced: refresh a rolling slice of rows per frame + cursor row
+        const n=Math.ceil(cfg.rows/cfg.slice); const st=(frame%cfg.slice)*n; sync(rows,first,cfg.mode,r=>(r>=st&&r<st+n)||r===(cfg.rows>>1)); }
+      else sync(rows,first,cfg.mode); }
+    else if(cfg.scn==='storm'){ if(now-lastStorm>=50){lastStorm=now;bars[first+cfg.rows-1].c+=0.5;bars[first+cfg.rows-1].v+=1;}
+      sync(rows,first,cfg.mode); }
+    void document.getElementById("t").offsetHeight; /* force style+layout so cost is not deferred */ samples.push(performance.now()-a);
+    requestAnimationFrame(f);
+  }
+  requestAnimationFrame(f);
+});}
+(async()=>{
+  const MS=+(new URLSearchParams(location.search).get('ms')||20000), REPS=+(new URLSearchParams(location.search).get('reps')||3);
+  const cfgs=[
+   {name:'200r naive static',scn:'static',rows:200,mode:'naive'},
+   {name:'200r diff static',scn:'static',rows:200,mode:'diff'},
+   {name:'200r naive pan 30 bars/s',scn:'pan',rows:200,mode:'naive',barsPerSec:30},
+   {name:'200r diff pan 30 bars/s',scn:'pan',rows:200,mode:'diff',barsPerSec:30},
+   {name:'200r diff pan 30 bars/s, coalesce 4Hz+cursor row',scn:'pan',rows:200,mode:'diff',barsPerSec:30,coalesceHz:4},
+   {name:'60r diff pan 30 bars/s',scn:'pan',rows:60,mode:'diff',barsPerSec:30},
+   {name:'200r naive storm 20msg/s',scn:'storm',rows:200,mode:'naive'},
+   {name:'200r diff storm 20msg/s',scn:'storm',rows:200,mode:'diff'},
+  ];
+  const only=new URLSearchParams(location.search).get('only');
+  cfgs.push({name:'200r diff pan 30 bars/s, time-sliced 8 frames+cursor row',scn:'pan',rows:200,mode:'diff',barsPerSec:30,slice:8},{name:'200r diff pan 30 bars/s, time-sliced 16 frames+cursor row',scn:'pan',rows:200,mode:'diff',barsPerSec:30,slice:16},{name:'60r diff pan 30 bars/s, time-sliced 8 frames+cursor row',scn:'pan',rows:60,mode:'diff',barsPerSec:30,slice:8});
+  const out=[];
+  for(const c of cfgs){if(only&&!c.name.includes(only))continue;const r=[];for(let i=0;i<REPS;i++){r.push(await run({...c,ms:MS,_lc:0}));}
+    out.push({name:c.name,p95_per_rep:r.map(x=>+x.p95.toFixed(3)),median_of_p95:+med(r.map(x=>x.p95)).toFixed(3),med_ms:+med(r.map(x=>x.med)).toFixed(3),max_ms:+Math.max(...r.map(x=>x.max)).toFixed(2),frames:r[0].n,frameP95:+med(r.map(x=>x.frameP95)).toFixed(1)});}
+  document.getElementById('out').textContent='RESULT'+JSON.stringify({ua:navigator.userAgent,cores:navigator.hardwareConcurrency,ms:MS,reps:REPS,out});
+})();
+</script>
