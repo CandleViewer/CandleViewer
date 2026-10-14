@@ -16,11 +16,14 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import sqlalchemy as sa
 
+from candleviewer.domain.sql_names import EPOCH, ts_us_from_row
+from candleviewer.storage.models import TimeRange
+from candleviewer.storage.repositories.recorded import STREAM_BY_DB_KIND, RecordedGap
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -355,6 +358,21 @@ class SqlAlchemyRecorderRepository:
 
     async def gaps_in(self, symbol: str, lo: datetime, hi: datetime) -> list[dict[str, Any]]:
         return await self._all(_GAPS_IN, {"symbol": symbol, "lo": lo, "hi": hi})
+
+    async def recording_gaps(self, symbol: str, rng: TimeRange) -> list[RecordedGap]:
+        """`RecordingGapReader` (E26-T02): gaps of `symbol`, any stream, intersecting `rng`."""
+        lo = EPOCH + timedelta(microseconds=rng.start_us)
+        hi = EPOCH + timedelta(microseconds=rng.end_us)
+        return [
+            RecordedGap(
+                symbol=symbol,
+                stream=STREAM_BY_DB_KIND[str(row["stream"])],
+                start_us=ts_us_from_row(row["gap_start"]),
+                end_us=ts_us_from_row(row["gap_end"]),
+                cause=str(row["cause"]),
+            )
+            for row in await self.gaps_in(symbol, lo, hi)
+        ]
 
     async def earliest_first_event(self, symbol: str) -> datetime | None:
         rows = await self._all(_EARLIEST, {"symbol": symbol})
