@@ -55,9 +55,27 @@ _QUERY_PAGE_SQL = sa.text(
     "OR outcome = CAST(:outcome AS audit_outcome)) "
     "AND (CAST(:from_ts AS timestamptz) IS NULL OR event_ts >= CAST(:from_ts AS timestamptz)) "
     "AND (CAST(:to_ts AS timestamptz) IS NULL OR event_ts <= CAST(:to_ts AS timestamptz)) "
+    "AND (CAST(:ip AS inet) IS NULL OR actor_ip = CAST(:ip AS inet)) "
     "AND (CAST(:cursor AS bigint) IS NULL OR id < CAST(:cursor AS bigint)) "
     "ORDER BY id DESC LIMIT :limit"
 )
+
+_SET_TIMEOUT_SQL = sa.text("SELECT set_config('statement_timeout', :v, true)")
+
+#: SQLSTATE 57014 `query_canceled`: raised when `statement_timeout` fires.
+_QUERY_CANCELED = "57014"
+
+
+def _sqlstate(exc: sa.exc.DBAPIError) -> str | None:
+    orig: object = exc.orig
+    for attr in ("sqlstate", "pgcode"):
+        code = getattr(orig, attr, None)
+        if isinstance(code, str):
+            return code
+    cause = getattr(orig, "__cause__", None)
+    code = getattr(cause, "sqlstate", None)
+    return code if isinstance(code, str) else None
+
 
 _VERIFY_BATCH_SQL = sa.text(
     "SELECT id, prev_hash, entry_hash, actor_user_id::text AS actor_user_id, actor_label, "
@@ -134,6 +152,8 @@ class SqlAlchemyAuditRepository:
         to_ts: datetime | None,
         cursor: int | None,
         limit: int,
+        ip: str | None = None,
+        timeout_ms: int | None = None,
     ) -> list[dict[str, Any]]:
         params: dict[str, Any] = {
             "actor_user_id": actor_user_id,
@@ -145,10 +165,19 @@ class SqlAlchemyAuditRepository:
             "to_ts": to_ts,
             "cursor": cursor,
             "limit": limit,
+            "ip": ip,
         }
-        async with self._relational.unit_of_work() as uow:
-            result = await uow.session.execute(_QUERY_PAGE_SQL, params)
-            return [dict(row._mapping) for row in result]
+        try:
+            async with self._relational.unit_of_work() as uow:
+                if timeout_ms is not None:
+                    # SET takes no bind parameters; set_config(..., true) is `SET LOCAL`.
+                    await uow.session.execute(_SET_TIMEOUT_SQL, {"v": f"{int(timeout_ms)}ms"})
+                result = await uow.session.execute(_QUERY_PAGE_SQL, params)
+                return [dict(row._mapping) for row in result]
+        except sa.exc.DBAPIError as exc:
+            if _sqlstate(exc) == _QUERY_CANCELED:
+                raise TimeoutError("audit read exceeded its time budget") from exc
+            raise
 
     async def fetch_entry_hash(self, entry_id: int) -> str | None:
         async with self._relational.unit_of_work() as uow:

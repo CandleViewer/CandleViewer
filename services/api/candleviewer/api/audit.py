@@ -29,6 +29,7 @@ for a given request, that is a normal 401 per the resolver's own contract
 
 from __future__ import annotations
 
+import ipaddress
 from datetime import datetime
 from typing import Annotated, Any, Protocol
 
@@ -36,6 +37,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditQueryRefused
 from candleviewer.audit.access import (
     AuditAccessDenied,
     AuditPrincipal,
@@ -43,7 +45,12 @@ from candleviewer.audit.access import (
     authorize,
     redact_entry_for_view,
 )
-from candleviewer.audit.models import AUDIT_QUERY_MAX_LIMIT, AuditExportRequest, AuditVerifyRequest
+from candleviewer.audit.models import (
+    AUDIT_QUERY_DEFAULT_LIMIT,
+    AUDIT_QUERY_MAX_LIMIT,
+    AuditExportRequest,
+    AuditVerifyRequest,
+)
 
 
 class _Emitter(Protocol):
@@ -82,7 +89,9 @@ class AuditQueryServiceLike(Protocol):
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
         cursor: int | None = None,
-        limit: int = 50,
+        limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
+        ip: str | None = None,
+        timeout_ms: int | None = None,
     ) -> Any: ...
 
     async def verify(
@@ -122,17 +131,36 @@ class PrincipalResolver(Protocol):
     async def resolve(self, request: Request) -> AuditPrincipal | None: ...
 
 
-def _problem(status_code: int, title: str, detail: str) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={"type": "about:blank", "title": title, "status": status_code, "detail": detail},
-        media_type="application/problem+json",
+def _problem(
+    status_code: int,
+    title: str,
+    detail: str,
+    *,
+    code: str | None = None,
+    retry_after_s: int | None = None,
+) -> JSONResponse:
+    content: dict[str, Any] = {
+        "type": "about:blank",
+        "title": title,
+        "status": status_code,
+        "detail": detail,
+    }
+    if code is not None:
+        content["code"] = code
+    response = JSONResponse(
+        status_code=status_code, content=content, media_type="application/problem+json"
     )
+    if retry_after_s is not None:
+        response.headers["Retry-After"] = str(retry_after_s)
+    return response
 
 
 def make_audit_router(
     audit_service: AuditServiceLike | None,
     principal_resolver: PrincipalResolver | None = None,
+    *,
+    limiter: AuditQueryLimiter | None = None,
+    query_timeout_ms: int = 4000,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
 
@@ -143,6 +171,7 @@ def make_audit_router(
     adjacent: the router itself never touches a datastore or the network).
     """
     router = APIRouter(prefix="/admin/audit", tags=["admin"])
+    query_limiter = limiter if limiter is not None else AuditQueryLimiter()
 
     class _HttpProblem(Exception):
         def __init__(self, response: JSONResponse) -> None:
@@ -187,7 +216,8 @@ def make_audit_router(
         from_: Annotated[datetime | None, Query(alias="from")] = None,
         to: datetime | None = None,
         cursor: int | None = None,
-        limit: int = 50,
+        limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
+        ip: str | None = None,
     ) -> JSONResponse:
         try:
             service, principal, view = await _authorize_or_raise(request, "query")
@@ -195,30 +225,79 @@ def make_audit_router(
             return problem.response
         if limit < 1 or limit > AUDIT_QUERY_MAX_LIMIT:
             return _problem(
-                400, "Bad request", f"limit must be between 1 and {AUDIT_QUERY_MAX_LIMIT}"
+                422,
+                "Unprocessable entity",
+                f"limit must be between 1 and {AUDIT_QUERY_MAX_LIMIT}",
+                code="validation_failed",
             )
+        if ip is not None:
+            try:
+                ipaddress.ip_address(ip)
+            except ValueError:
+                return _problem(
+                    422,
+                    "Unprocessable entity",
+                    "ip must be a single IP address",
+                    code="validation_failed",
+                )
+        key = str(principal.user_id)
         if view is AuditView.OWN_REDACTED:
             # SR-067: a non-owner reads only its own events; the filter is
             # forced server-side, whatever `actor_user_id` the caller sent.
-            actor_user_id = str(principal.user_id)
+            actor_user_id = key
         try:
-            page = await service.query.query(
-                actor_user_id=actor_user_id,
-                actions=action,
-                subject_type=subject_type,
-                severity=severity,
-                outcome=outcome,
-                from_ts=from_,
-                to_ts=to,
-                cursor=cursor,
-                limit=limit,
+            lease = query_limiter.acquire(key)
+        except AuditQueryRefused as exc:
+            return _problem(
+                429,
+                "Too many requests",
+                "audit query limit reached",
+                code="rate_limited",
+                retry_after_s=exc.retry_after_s,
             )
+        try:
+            return await _run_query(
+                service,
+                key,
+                view,
+                {
+                    "actor_user_id": actor_user_id,
+                    "actions": action,
+                    "subject_type": subject_type,
+                    "severity": severity,
+                    "outcome": outcome,
+                    "from_ts": from_,
+                    "to_ts": to,
+                    "ip": ip,
+                    "limit": limit,
+                },
+                cursor,
+            )
+        finally:
+            lease.release()
+
+    async def _run_query(
+        service: AuditServiceLike,
+        key: str,
+        view: AuditView,
+        filters: dict[str, Any],
+        cursor: int | None,
+    ) -> JSONResponse:
+        try:
+            page = await service.query.query(**filters, cursor=cursor, timeout_ms=query_timeout_ms)
         except ValidationError as exc:
             return _problem(400, "Bad request", str(exc))
+        except TimeoutError:
+            return _problem(
+                503,
+                "Service unavailable",
+                "audit query exceeded its time budget",
+                code="store_unavailable",
+                retry_after_s=1,
+            )
         if view is AuditView.OWN_REDACTED:
-            own = str(principal.user_id)
             items = [
-                redact_entry_for_view(e, view) for e in page.items if str(e.actor_user_id) == own
+                redact_entry_for_view(e, view) for e in page.items if str(e.actor_user_id) == key
             ]
             page = page.model_copy(update={"items": items, "count": len(items)})
         return JSONResponse(status_code=200, content=_jsonable(page))
