@@ -13,7 +13,7 @@ import asyncio
 import contextlib
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import asyncpg
@@ -158,16 +158,21 @@ class LazyPgWire:
         return self._failures >= self._degraded_after
 
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
+        return [dict(r) for r in await self.fetch_records(sql, *params)]
+
+    async def fetch_records(self, sql: str, *params: object) -> list[Mapping[str, object]]:
+        """`fetch` without the per-row `dict` copy: the driver's read-only records, for a
+        caller that maps them off the event loop (E26-T02, C-2.17)."""
         async with self._lock:
             if self._conn is None:
                 await self._open()
             try:
                 async with asyncio.timeout(self._query_timeout_s):
-                    rows = await self._conn.fetch(sql, *params)
+                    rows: list[Mapping[str, object]] = await self._conn.fetch(sql, *params)
             except BaseException:  # incl. CancelledError: never reuse a half-used connection
                 await self._discard()
                 raise
-            return [dict(r) for r in rows]
+            return rows
 
     async def _open(self) -> None:
         now = self._clock()
