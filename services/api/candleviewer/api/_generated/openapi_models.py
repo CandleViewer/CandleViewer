@@ -3743,9 +3743,9 @@ class DrawingInput(BaseModel):
     symbol: Annotated[
         str,
         Field(
-            description="Symbol. Additionally limited to at most 20 characters in total (the storage domain `symbol_code`); longer values are `422`. Generators do not carry a `maxLength` next to the `Symbol` pattern, so the server enforces it.",
-            examples=["BTCUSDT", "ETHUSDT", "SOLUSDT"],
-            pattern="^[A-Z0-9]{2,20}USDT$",
+            description="Bybit USDT linear perpetual symbol, at most 20 characters (the DB symbol_code domain).",
+            examples=["BTCUSDT", "ETHUSDT"],
+            pattern="^[A-Z0-9]{2,16}USDT$",
         ),
     ]
     tool: Annotated[
@@ -3807,9 +3807,6 @@ class DrawingInput(BaseModel):
 
 
 class Drawing(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
     id: UUID
     owner_user_id: UUID
     symbol: Annotated[
@@ -3863,7 +3860,7 @@ class Drawing(BaseModel):
     updated_at: Annotated[
         AwareDatetime,
         Field(
-            description="Concurrency token (also the `ETag`). Always serialised `YYYY-MM-DDTHH:MM:SS.ffffffZ` (6 fractional digits) and strictly increasing on every write."
+            description="Concurrency token (also the `ETag`). Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing on every write. Echo it exactly as received; never re-serialise it through a client date type."
         ),
     ]
 
@@ -3889,7 +3886,11 @@ class DrawingBatchUpdateOp(BaseModel):
     op: Literal["update"]
     id: UUID
     if_match: Annotated[
-        AwareDatetime, Field(description="`updated_at` token of the version being replaced.")
+        str,
+        Field(
+            description="`updated_at` of the version being replaced: echo it exactly as received (6 fractional digits plus `Z`); never re-serialise it through a client date type. A token that does not match is a 422 on `operations.N.if_match`.",
+            pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$",
+        ),
     ]
     drawing: DrawingInput
 
@@ -3901,7 +3902,11 @@ class DrawingBatchDeleteOp(BaseModel):
     op: Literal["delete"]
     id: UUID
     if_match: Annotated[
-        AwareDatetime, Field(description="`updated_at` token of the version being deleted.")
+        str,
+        Field(
+            description="`updated_at` of the version being deleted: echo it exactly as received (6 fractional digits plus `Z`); never re-serialise it through a client date type. A token that does not match is a 422 on `operations.N.if_match`.",
+            pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$",
+        ),
     ]
 
 
@@ -3925,9 +3930,6 @@ class DrawingBatchRequest(BaseModel):
 
 
 class DrawingBatchResult(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
     created: list[Drawing]
     updated: list[Drawing]
     deleted: list[UUID]

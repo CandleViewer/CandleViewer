@@ -938,6 +938,9 @@ export interface paths {
      *     `Idempotency-Key`: the same key with the same body replays the stored 2xx response with
      *     `Idempotency-Replayed: true`; the same key with a different body is `409 idempotency_key_reuse`.
      *     Replay storage is best-effort and bounded; correctness never depends on it.
+     *     The replay cache is in memory and bounded: a retry after the entry was evicted, or after a
+     *     server restart, creates a **duplicate** drawing. Clients that need retry-safe creation
+     *     should use `batchUpsertDrawings` with a client-chosen `id` (a repeat is `409 id_unavailable`).
      */
     post: operations["createDrawing"];
     delete?: never;
@@ -1005,7 +1008,7 @@ export interface paths {
      *       another user (indistinguishable by design);
      *     - `version_conflict` — the operation's `if_match` is stale;
      *     - `id_unavailable` — a `create` id is already used by any row of any owner in any state
-     *       (ids are never reused; re-create under a new id).
+     *       (an id stays unavailable until its row is purged, 90 days after deletion; re-create under a new id).
      *
      *     `create.id` is optional (client UUIDv7 recommended); `update` and `delete` require `if_match`,
      *     the `updated_at` token of the version being replaced or removed. The result lists the
@@ -4691,6 +4694,7 @@ export interface components {
       false_positive_modes: string[];
       inputs: string[];
     };
+    /** @description Response object. Readers must ignore unknown properties (C-6.3). */
     Drawing: {
       /** Format: date-time */
       created_at: string;
@@ -4708,7 +4712,7 @@ export interface components {
       tool: components["schemas"]["DrawingTool"];
       /**
        * Format: date-time
-       * @description Concurrency token (also the `ETag`). Always serialised `YYYY-MM-DDTHH:MM:SS.ffffffZ` (6 fractional digits) and strictly increasing on every write.
+       * @description Concurrency token (also the `ETag`). Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing on every write. Echo it exactly as received; never re-serialise it through a client date type.
        */
       updated_at: string;
       visible: boolean;
@@ -4730,10 +4734,7 @@ export interface components {
     DrawingBatchDeleteOp: {
       /** Format: uuid */
       id: string;
-      /**
-       * Format: date-time
-       * @description `updated_at` token of the version being deleted.
-       */
+      /** @description `updated_at` of the version being deleted: echo it exactly as received (6 fractional digits plus `Z`); never re-serialise it through a client date type. A token that does not match is a 422 on `operations.N.if_match`. */
       if_match: string;
       /**
        * @description discriminator enum property added by openapi-typescript
@@ -4749,6 +4750,7 @@ export interface components {
         | components["schemas"]["DrawingBatchDeleteOp"]
       )[];
     };
+    /** @description Response object. Readers must ignore unknown properties (C-6.3). */
     DrawingBatchResult: {
       created: components["schemas"]["Drawing"][];
       deleted: string[];
@@ -4758,10 +4760,7 @@ export interface components {
       drawing: components["schemas"]["DrawingInput"];
       /** Format: uuid */
       id: string;
-      /**
-       * Format: date-time
-       * @description `updated_at` token of the version being replaced.
-       */
+      /** @description `updated_at` of the version being replaced: echo it exactly as received (6 fractional digits plus `Z`); never re-serialise it through a client date type. A token that does not match is a 422 on `operations.N.if_match`. */
       if_match: string;
       /**
        * @description discriminator enum property added by openapi-typescript
@@ -4769,7 +4768,17 @@ export interface components {
        */
       op: "update";
     };
-    /** @description Chart-space geometry (time + price, never pixels). Per-tool point counts and key rules: see `DrawingTool`. */
+    /**
+     * @description Chart-space geometry (time + price, never pixels). Per-tool point counts and key rules: see `DrawingTool`.
+     *
+     *     Observable validation (all `422 validation_failed` unless stated): JSON nesting depth must
+     *     be at most 16; `NaN` and `Infinity` are rejected; a string that cannot be encoded as UTF-8
+     *     (a lone surrogate) is rule `invalid_unicode`. `text` is sanitised on write, before the length
+     *     check: U+0000-U+001F except LF (U+000A, kept in `text` only), U+007F-U+009F, U+2028, U+2029,
+     *     U+061C, U+200E, U+200F, U+202A-U+202E and U+2066-U+2069 are removed; nothing else is altered
+     *     (no trim, no normalisation). Text that is empty after sanitising is rule `text_required`.
+     *     Reads return the sanitised text, so it may differ from what was sent.
+     */
     DrawingGeometry: {
       /** @description Standard-deviation bands (`anchored_vwap` only). */
       bands?: (1 | 2 | 3)[];
@@ -4781,6 +4790,12 @@ export interface components {
       /** @description Text content (`text` and `callout` only), 1..1000 code points after control-character stripping (LF is kept). */
       text?: string;
     };
+    /**
+     * @description Write payload. Strings are sanitised on write exactly as described on `DrawingGeometry`
+     *     (for `label` LF is removed too; an empty result is rule `string_too_short`), and a read
+     *     returns the sanitised value. The nesting-depth, `NaN`/`Infinity` and `invalid_unicode`
+     *     rules there apply to the whole body.
+     */
     DrawingInput: {
       geometry: components["schemas"]["DrawingGeometry"];
       /**
@@ -4798,8 +4813,12 @@ export interface components {
       locked: boolean;
       /** @description Optional; omitted means no style overrides (stored as `{}`, returned as `{}`). */
       style?: components["schemas"]["DrawingStyle"];
-      /** @description Symbol. Additionally limited to at most 20 characters in total (the storage domain `symbol_code`); longer values are `422`. Generators do not carry a `maxLength` next to the `Symbol` pattern, so the server enforces it. */
-      symbol: components["schemas"]["Symbol"];
+      /**
+       * @description Bybit USDT linear perpetual symbol, at most 20 characters (the DB symbol_code domain).
+       * @example BTCUSDT
+       * @example ETHUSDT
+       */
+      symbol: string;
       tool: components["schemas"]["DrawingTool"];
       /** @default true */
       visible: boolean;
@@ -9523,6 +9542,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createDrawing: {
@@ -9565,6 +9585,7 @@ export interface operations {
       409: components["responses"]["Conflict"];
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateDrawing: {
@@ -9609,6 +9630,7 @@ export interface operations {
       412: components["responses"]["PreconditionFailed"];
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteDrawing: {
@@ -9641,6 +9663,8 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   batchUpsertDrawings: {
@@ -9679,9 +9703,18 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
-      409: components["responses"]["Conflict"];
+      /** @description The batch was rolled back. `errors[0].field` names the failing operation and `rule` is `target_unavailable`, `version_conflict` or `id_unavailable`; a reused `Idempotency-Key` with a different body is `idempotency_key_reuse`. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listExchangeAccounts: {
