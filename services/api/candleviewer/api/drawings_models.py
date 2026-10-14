@@ -475,15 +475,29 @@ class BatchIn(BaseModel):
 
 
 # --- error formatting -----------------------------------------------------------------------
+_MAX_SEGMENT: Final = 64
+_MAX_MESSAGE: Final = 200
+_TAG_MESSAGE: Final = "op must be one of create, update, delete"
+
+
+def _clip(value: str, limit: int) -> str:
+    """Sanitise (no newline) then cut to ``limit`` code points, marking the cut with an ellipsis."""
+    clean = sanitize_text(value, allow_newline=False)
+    return clean if len(clean) <= limit else clean[:limit] + "\u2026"
+
+
 def format_errors(
     exc: ValidationError, *, limit: int = 20, prefix: str = ""
 ) -> list[dict[str, str]]:
     """Map a ValidationError to the API's ``errors[]`` entries (``field``, ``rule``, ``message``).
 
-    WHY: the problem+json body must be bounded (``limit``), must not echo client input, and
-    must use dot-joined field paths. pydantic puts the discriminated-union tag (``create``/
-    ``update``/``delete``) into ``loc`` right after the list index; it is an internal detail,
-    so it is dropped to give ``operations.3.drawing.tool``.
+    WHY: the problem+json body must be bounded (``limit``) and must not reflect client input.
+    Client-chosen text can reach an error in two places: an unknown key becomes a path segment,
+    and pydantic's discriminator messages quote the offending ``op`` value. So each string
+    segment is sanitised and cut to 64 code points, union-tag errors use a fixed message, and
+    every message is sanitised and cut to 200. pydantic also puts the discriminator tag
+    (``create``/``update``/``delete``) into ``loc`` after the list index; it is internal, so it
+    is dropped to give ``operations.3.drawing.tool``.
     """
     out: list[dict[str, str]] = []
     for err in exc.errors(include_url=False, include_context=False, include_input=False)[:limit]:
@@ -491,7 +505,9 @@ def format_errors(
         prev: object = None
         for tok in err["loc"]:
             if not (isinstance(prev, int) and tok in _TAGS):
-                parts.append(str(tok))
+                parts.append(_clip(tok, _MAX_SEGMENT) if isinstance(tok, str) else str(tok))
             prev = tok
-        out.append({"field": ".".join(parts), "rule": err["type"], "message": err["msg"]})
+        rule = err["type"]
+        msg = _TAG_MESSAGE if rule in ("union_tag_invalid", "union_tag_not_found") else err["msg"]
+        out.append({"field": ".".join(parts), "rule": rule, "message": _clip(msg, _MAX_MESSAGE)})
     return out
