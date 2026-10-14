@@ -1,9 +1,11 @@
 """Credential broker (E27-T02): store / sign / destroy / KEK re-wrap.
 
 Plaintext keys and unwrapped DEKs exist only in memory inside this module, only between the
-decrypt and the end of the request MAC; they never leave M2 (C-2.7, #2339). Every action is
-audited *before* it acts (C-2.9), with an actor bound at wiring time; every await has a timeout;
-failures are typed, fail closed and carry no key material (C-12.6).
+decrypt and the end of the request MAC; they never leave M2 (C-2.7, #2339), not even in a
+traceback: a failed MAC leaves as a typed `signing_failed` with nothing chained, after the failed
+call's frames are cleared. Every action is audited *before* it acts (C-2.9), with an actor bound
+at wiring time; every await has a timeout; failures are typed, fail closed and carry no key
+material (C-12.6).
 """
 
 from __future__ import annotations
@@ -29,7 +31,13 @@ from candleviewer.secrets.errors import (
 )
 from candleviewer.secrets.models import CredentialRow, StoredCredential
 from candleviewer.secrets.secret import Secret
-from candleviewer.secrets.signing import RequestSignature, SigningMessage, check_message, mac_hex
+from candleviewer.secrets.signing import (
+    RequestSignature,
+    SigningMessage,
+    check_message,
+    mac_hex,
+    scrub_frames,
+)
 from candleviewer.secrets.store import AuditSink, CredentialStore
 
 Clock = Callable[[], float]
@@ -352,8 +360,16 @@ class CredentialBroker:
         parts = check_message(message)
 
         async def mac(k: Secret[str], s: Secret[str]) -> RequestSignature:
-            key_id_plain = k.reveal()
-            return RequestSignature(Secret(key_id_plain), mac_hex(key_id_plain, s.reveal(), parts))
+            # No plaintext is bound to a name here: a traceback keeps this frame, and its `k`/`s`
+            # are wrappers `_borrow` invalidates. Any failure leaves as a typed `signing_failed`
+            # with nothing chained (the frames below hold plaintext and are cleared) (C-12.6).
+            try:
+                return RequestSignature(Secret(k.reveal()), mac_hex(k, s, parts))
+            except BaseException as exc:
+                scrub_frames(exc)
+                if not isinstance(exc, Exception):
+                    raise  # KeyboardInterrupt, CancelledError: not the MAC's doing; propagate
+            raise CredentialUnavailable("signing_failed")
 
         return await self._borrow(key_id, mac, caller_module, purpose)
 

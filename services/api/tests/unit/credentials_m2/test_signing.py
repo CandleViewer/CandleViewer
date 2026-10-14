@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from candleviewer.secrets import KEY_ID_SLOT, CredentialUnavailable, RequestSignature
+from candleviewer.secrets import KEY_ID_SLOT, CredentialUnavailable, RequestSignature, Secret
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.service import mint_borrower
 from candleviewer.secrets.signing import check_message, mac_hex
@@ -36,13 +36,14 @@ _SECRETS_PKG = Path(__file__).resolve().parents[3] / "candleviewer" / "secrets"
 
 def test_mac_matches_rfc4231_test_case_2() -> None:
     material, data = RFC4231_TC2
-    assert mac_hex("unused", material, (data,)) == RFC4231_TC2_MAC
+    assert mac_hex(Secret("unused"), Secret(material), (data,)) == RFC4231_TC2_MAC
 
 
 def test_key_id_is_spliced_at_every_slot() -> None:
-    spliced = mac_hex("K1", "m", (KEY_ID_SLOT, b"-", KEY_ID_SLOT, b"-"))
-    assert spliced == mac_hex("unused", "m", (b"K1-K1-",))
-    assert mac_hex("K1", "m", (b"x",)) == mac_hex("K2", "m", (b"x",))  # no slot: id unused
+    k1, k2, m = Secret("K1"), Secret("K2"), Secret("m")
+    spliced = mac_hex(k1, m, (KEY_ID_SLOT, b"-", KEY_ID_SLOT, b"-"))
+    assert spliced == mac_hex(Secret("unused"), m, (b"K1-K1-",))
+    assert mac_hex(k1, m, (b"x",)) == mac_hex(k2, m, (b"x",))  # no slot: id unused
 
 
 @pytest.mark.parametrize(

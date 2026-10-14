@@ -38,8 +38,10 @@ compose rule (`tests/unit/credentials_m2/test_compose_kek.py`).
 - Accepted residual (SR-009): Python creates immutable copies of key material (`bytes` passed to
   the AES/HMAC primitives, the decoded `str` M2 uses for the request MAC) that cannot be zeroed.
   These copies never leave `secrets/` (C-2.7, #2339): the exchange adapter gets only the hex
-  signature and the key id. Zeroisation covers M2's own `bytearray` buffers only (KEK, cached
-  DEKs, decrypted plaintext); the DEK cache TTL is capped at 300 s and the internal `Secret`s are
+  signature and the key id. They do not leave in a traceback either: a failed MAC is raised as
+  `CredentialUnavailable("signing_failed")` with nothing chained, after the failed call's frames
+  are cleared. Zeroisation covers M2's own `bytearray` buffers only (KEK, cached DEKs, decrypted
+  plaintext); the DEK cache TTL is capped at 300 s and the internal `Secret` wrappers are
   invalidated after each signing call.
 - `kernel.yama.ptrace_scope >= 1`; no `SYS_PTRACE` capability on the container.
 - Swap off or encrypted.
