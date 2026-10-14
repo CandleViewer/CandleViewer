@@ -6,12 +6,26 @@ from typing import Any
 
 import pytest
 from _workspaces_api_env import (
+    MISSING,
+    USER_A,
+    USER_B,
     WORKSPACE_KEYS,
     Env,
     FakeWorkspaceRepo,
     contract_valid,
     wire,
 )
+from fastapi.testclient import TestClient
+from sqlalchemy.exc import (
+    DataError,
+    DBAPIError,
+    IntegrityError,
+    InterfaceError,
+    OperationalError,
+    ProgrammingError,
+)
+from sqlalchemy.exc import TimeoutError as PoolTimeout
+from structlog.testing import capture_logs
 
 from candleviewer.api.workspaces import make_workspaces_router
 from candleviewer.api.workspaces_models import DEFAULT_ICON
@@ -269,3 +283,96 @@ def test_workspace_detail_round_trips_four_panes_in_slot_order(env: Env) -> None
         got["layouts"][0]["grid_spec"] is None
         and "etag" not in env.c.get(f"/workspaces/{w['id']}").headers
     )
+
+
+def test_deleted_workspace_is_404_and_unaudited_for_everyone() -> None:
+    env = Env()
+    w = env.create("Mine")
+    env.create("Spare")
+    assert env.c.delete(f"/workspaces/{w['id']}").status_code == 204
+    for user in (USER_A, USER_B):
+        env.as_user(user)
+        assert env.c.get(f"/workspaces/{w['id']}").status_code == 404
+    assert env.audit.denied() == []
+
+
+def test_a_foreign_probe_that_races_a_delete_is_still_404() -> None:
+    env = Env()
+    w = env.create("Mine")
+    env.create("Spare")
+    env.as_user(USER_B)
+    real = env.repo.exists_for_other_owner
+
+    async def gone(*a: Any, **k: Any) -> bool:
+        env.repo.deleted.add(w["id"])
+        return await real(*a, **k)
+
+    env.repo.exists_for_other_owner = gone  # type: ignore[method-assign]  # race injection
+    assert env.c.get(f"/workspaces/{w['id']}").status_code == 404
+    assert env.audit.denied() == []  # deleted between the read and the probe: not "live"
+
+
+def test_two_if_match_lines_are_unparseable_so_412_unless_no_op(env: Env) -> None:
+    w = env.create()
+    url, tok = f"/workspaces/{w['id']}", f'"{w["updated_at"]}"'
+    two = [("If-Match", tok), ("If-Match", tok)]  # each alone would match
+    r = env.c.put(url, json=wire({"name": "B"}), headers=two)
+    assert r.status_code == 412 and env.repo.rows[w["id"]].name == "Scalping"
+    same = env.c.put(url, json=wire({"name": "Scalping"}), headers=two)
+    assert same.status_code == 200 and same.json() == w
+    assert env.c.put(url, json=wire({"name": "B"}), headers={"If-Match": tok}).status_code == 200
+
+
+def _driver(kind: type[Exception], **attrs: Any) -> Exception:
+    """A SQLAlchemy error as a driver raises it; the text carries bound parameters."""
+    exc = kind("SELECT secret FROM t WHERE x=:x", {"x": "SECRET-PARAM"}, Exception("conn"))
+    for key, value in attrs.items():
+        setattr(exc, key, value)
+    return exc
+
+
+class _Fake(Exception):
+    """A foreign class that only looks like a DBAPIError by name."""
+
+
+OUTAGES = [
+    ("operational", _driver(OperationalError)),
+    ("interface", _driver(InterfaceError)),
+    ("pool_timeout", PoolTimeout("QueuePool limit of size 5 reached")),
+    ("invalidated", _driver(DBAPIError, connection_invalidated=True)),
+]
+BUGS = [
+    ("integrity", _driver(IntegrityError)),
+    ("data", _driver(DataError)),
+    ("programming", _driver(ProgrammingError)),
+    ("dbapi_valid_connection", _driver(DBAPIError, connection_invalidated=False)),
+    ("dbapi_truthy_string", _driver(DBAPIError, connection_invalidated="yes")),
+    ("lookalike", _Fake("connection_invalidated")),
+]
+
+
+def _failing(env: Env, fault: Exception) -> TestClient:
+    async def boom(*_a: Any, **_k: Any) -> Any:
+        raise fault
+
+    env.repo.soft_delete_workspace = boom  # type: ignore[method-assign]  # fault injection
+    return TestClient(env.c.app, raise_server_exceptions=False)
+
+
+@pytest.mark.parametrize(("name", "fault"), OUTAGES, ids=[n for n, _ in OUTAGES])
+def test_database_outages_are_503_with_retry_after_and_class_name_only(
+    env: Env, name: str, fault: Exception
+) -> None:
+    with capture_logs() as logs:
+        r = _failing(env, fault).delete(f"/workspaces/{MISSING}")
+    assert r.status_code == 503 and r.json()["code"] == "store_unavailable", name
+    assert r.headers["retry-after"] == "5" and r.headers["content-type"].startswith(
+        "application/problem+json")  # fmt: skip
+    assert [e["error"] for e in logs] == [type(fault).__name__]
+    assert "SECRET-PARAM" not in repr(logs) and "SELECT" not in repr(logs)
+    assert "SECRET-PARAM" not in r.text and "SELECT" not in r.text
+
+
+@pytest.mark.parametrize(("name", "fault"), BUGS, ids=[n for n, _ in BUGS])
+def test_database_bugs_stay_500_never_503(env: Env, name: str, fault: Exception) -> None:
+    assert _failing(env, fault).delete(f"/workspaces/{MISSING}").status_code == 500, name

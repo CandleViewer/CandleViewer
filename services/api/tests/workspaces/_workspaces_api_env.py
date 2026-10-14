@@ -46,7 +46,8 @@ def wire(data: dict[str, Any], model: str = "WorkspaceInput") -> dict[str, Any]:
 
 def contract_valid(body: dict[str, Any], model: str = "Workspace") -> None:
     """The response validates against the generated contract schema (C-6.2)."""
-    assert hasattr(openapi_models, model), "workspaces contract not merged"
+    # `Workspace` etc. exist in the pre-contract draft with other keys: key on a closed input type
+    assert hasattr(openapi_models, "WorkspaceInput"), "workspaces contract not merged"
     getattr(openapi_models, model).model_validate(body)
 
 
