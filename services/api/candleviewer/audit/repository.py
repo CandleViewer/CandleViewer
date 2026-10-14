@@ -75,15 +75,21 @@ class AuditRepository(Protocol):
         """Return `entry_hash` for the row with this `id`, or `None`."""
         ...
 
+    async def fetch_anchor_hash(self, before_id: int) -> str | None:
+        """Return `entry_hash` of the greatest id below `before_id`, or `None` when no row
+        is below it. Ids have gaps, so this is the stored predecessor of a range starting
+        at `before_id`, whether or not a row has id `before_id - 1`."""
+        ...
+
     async def fetch_verify_batch(
-        self, *, after_id: int, to_id: int | None, limit: int
-    ) -> list[dict[str, Any]]:
-        """Return up to `limit` rows with `id > after_id` (and `id <= to_id`
-        when given), ordered `id ASC`, with every hashed column rendered to
-        text by Postgres using the
-        exact casts `audit_chain()` uses (`::text`, jsonb `::text`, and the
-        trigger's `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.USOF')` for
-        `event_ts`), `None` for SQL NULL."""
+        self, *, after_id: int, to_id: int, limit: int
+    ) -> list[tuple[Any, ...]]:
+        """Return up to `limit` rows with `after_id < id <= to_id`, ordered `id ASC` (a
+        keyset walk on the primary key), as tuples `(id, prev_hash, entry_hash,
+        *renderings)`. The renderings follow `query.HASHED_FIELDS`, each rendered to text by
+        Postgres with the exact casts `audit_chain()` uses (`::text`, jsonb `::text`, and
+        the trigger's `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.USOF')` for `event_ts`),
+        `None` for SQL NULL."""
         ...
 
     async def read_head(self) -> tuple[int, str] | None:
