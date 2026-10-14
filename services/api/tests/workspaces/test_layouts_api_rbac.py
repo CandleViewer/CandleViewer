@@ -239,3 +239,20 @@ def test_every_unsafe_route_refuses_a_request_without_a_csrf_pair(
     assert r.status_code == 403 and r.json()["code"] == "csrf_token_invalid", r.text
     assert repo.calls == [] and repo.rows == {} and repo.layouts == {}
     assert [w["action"] for w in writer.calls] == ["auth.csrf_refused"]
+
+
+@pytest.mark.parametrize("bad_first", [True, False])
+def test_grid_child_errors_name_the_failing_child_without_union_labels(bad_first: bool) -> None:
+    """S2 stops at the first failing child (FailFast): the path names that child, no `leaf`."""
+    env = Env()
+    ws = env.create("Home")["id"]
+    ok = {"type": "leaf", "slot": 0}
+    bad = {"type": "leaf", "slot": "x"} if bad_first else {"type": "nope"}
+    kids = [bad, ok] if bad_first else [ok, bad]
+    node = {"type": "row", "sizes": [0.5, 0.5], "children": kids}
+    spec = {"version": 1, "root": node}
+    r = env.c.post(f"/workspaces/{ws}/layouts", json={"name": "X", "grid_preset": "custom",
+                                                       "grid_spec": spec, "panes": []})  # fmt: skip
+    assert r.status_code == 422
+    assert [e["field"] for e in r.json()["errors"]] == [
+        "grid_spec.root.children.0.slot" if bad_first else "grid_spec.root.children.1"]  # fmt: skip
