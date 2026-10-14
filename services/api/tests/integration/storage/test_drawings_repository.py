@@ -6,6 +6,7 @@ CI-only (testcontainers; no docker socket locally).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 import statistics
@@ -406,6 +407,20 @@ async def test_batch_stale_update_token_and_never_existed_target(
         await repo.apply_batch(a, [UpdateOp(str(uuid.uuid4()), _T, _f())])
     assert (ghost.value.index, ghost.value.rule) == (0, "target_unavailable")
     assert await repo.get(a, rid) == cur
+
+
+async def test_batch_update_cannot_change_symbol_or_tool(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    a, rid, other = _user(pg_dsn), str(uuid.uuid4()), str(uuid.uuid4())
+    mine = await repo.create(a, rid, _f("BTCUSDT", label="mine"))
+    changed_tool = dataclasses.replace(_f("BTCUSDT"), tool="rectangle")
+    for bad in (_f("ETHUSDT", label="x"), changed_tool):
+        with pytest.raises(BatchOpFailed) as err:
+            await repo.apply_batch(a, [CreateOp(other, _f()), UpdateOp(rid, mine.updated_at, bad)])
+        assert (err.value.index, err.value.rule) == (1, "immutable_field")
+        assert await repo.get(a, other) is None  # whole batch rolled back
+        assert await repo.get(a, rid) == mine  # row (incl. token) unchanged
 
 
 _SEED_USERS = 20
