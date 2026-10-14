@@ -255,3 +255,11 @@ def test_exported_secrets_metrics_served_on_app_registry_with_env() -> None:
         assert EXPORTED_NAMES <= catalogued  # every exported M2 series is catalogued
     finally:
         collector.close()
+
+
+def test_drawings_rows_catalogue_cap_equals_the_closed_tool_set() -> None:
+    """`cv_drawings_rows{tool}` is capped at the closed TOOLS set; app.py uses len(TOOLS)."""
+    from candleviewer.api.drawings_models import TOOLS
+
+    spec = next(s for s in CATALOGUE if s.name == "cv_drawings_rows")
+    assert spec.max_series == len(TOOLS)
