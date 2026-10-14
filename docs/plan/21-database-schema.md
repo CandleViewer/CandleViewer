@@ -1926,10 +1926,9 @@ CREATE INDEX ix_notes_fts     ON notes USING gin (to_tsvector('english', coalesc
 
 #### 3.8.1 `workspaces`, `layouts`, `layout_panes`
 
-Shipped as migration `0022_workspaces` (E15-T01, #402); deviations (same-owner composite FKs
-`layouts.owner_user_id`, `ux_lay_default`, FK-side indexes, no `chart_templates` FK yet, `interval_code`
-grammar `<bar_type>:<param>`) are listed in the migration docstring. `ix_lp_layout` is kept (redundant
-with `ux_lp_slot`, ruling Q4).
+Shipped as `0022_workspaces` (E15-T01, #402); the migration docstring lists every deviation below
+(same-owner composite FKs, `ux_lay_default`, FK-side indexes, no `chart_templates` FK, `interval_code`
+grammar). `ix_lp_layout` is kept although `ux_lp_slot` covers it (ruling Q4).
 
 ```sql
 CREATE TABLE workspaces (
@@ -1942,51 +1941,50 @@ CREATE TABLE workspaces (
   created_at  timestamptz NOT NULL DEFAULT now(),
   updated_at  timestamptz NOT NULL DEFAULT now(),
   deleted_at  timestamptz,
-  CONSTRAINT ux_workspaces_id_user_id UNIQUE (id, user_id)
+  CONSTRAINT ux_workspaces_id_user_id UNIQUE (id, user_id)   -- target of the layouts FK (D27)
 );
 CREATE UNIQUE INDEX ux_ws_name    ON workspaces (user_id, lower(name)) WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX ux_ws_default ON workspaces (user_id) WHERE is_default AND deleted_at IS NULL;
 
 CREATE TABLE layouts (
-  id             uuid PRIMARY KEY,
-  workspace_id   uuid NOT NULL,
-  owner_user_id  uuid NOT NULL,                  -- = workspaces.user_id, written once at insert
-  name           text NOT NULL,
-  grid_preset    text NOT NULL DEFAULT '1x1',    -- 1x1 | 2x1 | 1x2 | 2x2 | 1+3 | 3x3 | custom
-  grid_spec      jsonb NOT NULL DEFAULT '{}'::jsonb,  -- {} unless grid_preset = 'custom'
+  id            uuid PRIMARY KEY,
+  workspace_id  uuid NOT NULL,
+  owner_user_id uuid NOT NULL,                   -- = workspaces.user_id, written once at insert (D27)
+  name          text NOT NULL,
+  grid_preset   text NOT NULL DEFAULT '1x1',     -- 1x1 | 2x1 | 1x2 | 2x2 | 1+3 | 3x3 | custom
+  grid_spec     jsonb NOT NULL DEFAULT '{}'::jsonb,  -- custom CSS-grid description
   crosshair_sync boolean NOT NULL DEFAULT true,
-  level_sync     boolean NOT NULL DEFAULT false,
-  symbol_sync    boolean NOT NULL DEFAULT false,
-  hotkey_slot    smallint,                       -- Ctrl+1..9 binding
-  is_default     boolean NOT NULL DEFAULT false,
-  created_at     timestamptz NOT NULL DEFAULT now(),
-  updated_at     timestamptz NOT NULL DEFAULT now(),
-  deleted_at     timestamptz,
+  level_sync    boolean NOT NULL DEFAULT false,
+  symbol_sync   boolean NOT NULL DEFAULT false,
+  hotkey_slot   smallint,                        -- Ctrl+1..9 binding
+  is_default    boolean NOT NULL DEFAULT false,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  deleted_at    timestamptz,
   CONSTRAINT fk_layouts_workspace_id_workspaces FOREIGN KEY (workspace_id, owner_user_id)
     REFERENCES workspaces (id, user_id) ON DELETE CASCADE,
-  CONSTRAINT ux_layouts_id_owner_user_id UNIQUE (id, owner_user_id),
+  CONSTRAINT ux_layouts_id_owner_user_id UNIQUE (id, owner_user_id),  -- target of the drawings FK
   CONSTRAINT lay_preset CHECK (grid_preset IN ('1x1','2x1','1x2','2x2','1+3','3x3','custom')),
   CONSTRAINT lay_slot   CHECK (hotkey_slot IS NULL OR hotkey_slot BETWEEN 1 AND 9)
 );
-CREATE UNIQUE INDEX ux_lay_name    ON layouts (workspace_id, lower(name)) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX ux_lay_slot    ON layouts (workspace_id, hotkey_slot)
-  WHERE hotkey_slot IS NOT NULL AND deleted_at IS NULL;
+CREATE UNIQUE INDEX ux_lay_name ON layouts (workspace_id, lower(name)) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX ux_lay_slot ON layouts (workspace_id, hotkey_slot) WHERE hotkey_slot IS NOT NULL AND deleted_at IS NULL;
 CREATE UNIQUE INDEX ux_lay_default ON layouts (workspace_id) WHERE is_default AND deleted_at IS NULL;
-CREATE INDEX ix_lay_workspace      ON layouts (workspace_id);
+CREATE INDEX ix_lay_workspace ON layouts (workspace_id);
 
 CREATE TABLE layout_panes (
-  id                   uuid PRIMARY KEY,
-  layout_id            uuid NOT NULL REFERENCES layouts(id) ON DELETE CASCADE,
-  slot_index           smallint NOT NULL,
-  pane_kind            text NOT NULL,   -- chart | dom | tape | profile | cvd | oi | deep_stats | regime | positions | journal | watchlist | alerts
-  symbol               symbol_code,
-  interval_code        text,            -- '<bar_type>:<param>': 'time:1m', 'tick:500', 'volume:1000', 'renko:10'
-  chart_template_id    uuid,            -- FK -> chart_templates(id) ON DELETE SET NULL: added when that table exists (#2411)
+  id                 uuid PRIMARY KEY,
+  layout_id          uuid NOT NULL REFERENCES layouts(id) ON DELETE CASCADE,
+  slot_index         smallint NOT NULL,
+  pane_kind          text NOT NULL,       -- chart | dom | tape | profile | cvd | oi | deep_stats | regime | positions | journal | watchlist | alerts
+  symbol             symbol_code,
+  interval_code      text,                -- '<bar_type>:<param>': 'time:1m', 'tick:500', 'volume:1000', 'renko:10'
+  chart_template_id  uuid,                -- no FK: an FK proves existence only; ownership is an application check; a database guarantee is #2411's design (D27 residual)
   indicator_preset_ids uuid[] NOT NULL DEFAULT '{}',
-  pane_config          jsonb NOT NULL DEFAULT '{}'::jsonb,
-  scale_mode           text NOT NULL DEFAULT 'auto',   -- auto | linked | manual | log
-  created_at           timestamptz NOT NULL DEFAULT now(),
-  updated_at           timestamptz NOT NULL DEFAULT now(),
+  pane_config        jsonb NOT NULL DEFAULT '{}'::jsonb,
+  scale_mode         text NOT NULL DEFAULT 'auto',   -- auto | linked | manual | log
+  created_at         timestamptz NOT NULL DEFAULT now(),
+  updated_at         timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT ux_lp_slot UNIQUE (layout_id, slot_index),
   CONSTRAINT lp_kind  CHECK (pane_kind IN ('chart','dom','tape','profile','cvd','oi','deep_stats','regime','positions','journal','watchlist','alerts')),
   CONSTRAINT lp_slot  CHECK (slot_index BETWEEN 0 AND 15),
@@ -1995,7 +1993,7 @@ CREATE TABLE layout_panes (
 CREATE INDEX ix_lp_layout ON layout_panes (layout_id, slot_index);
 CREATE INDEX ix_lp_symbol ON layout_panes (symbol) WHERE symbol IS NOT NULL;
 
--- drawings.layout_id: same-owner composite FK (NOT VALID, then VALIDATEd)
+-- drawings.layout_id: same-owner composite FK, added with a 5 s lock_timeout (D27)
 ALTER TABLE drawings ADD CONSTRAINT fk_drawings_layout_id_layouts
   FOREIGN KEY (layout_id, owner_user_id) REFERENCES layouts (id, owner_user_id)
   MATCH SIMPLE ON DELETE CASCADE NOT VALID;
@@ -2041,7 +2039,7 @@ CREATE TABLE drawings (
   id            uuid PRIMARY KEY,
   owner_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   symbol        symbol_code NOT NULL,
-  layout_id     uuid,               -- NULL = not layout-scoped; FK to layouts(id) ON DELETE CASCADE is added by E15-T01
+  layout_id     uuid,               -- NULL = not layout-scoped; composite same-owner FK to layouts: see 3.8.1 (0022, D27)
   tool          text NOT NULL,      -- 25 API names, see dr_tool (trendline … anchored_vwap)
   geometry      jsonb NOT NULL,
   style         jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -3109,25 +3107,25 @@ NAMING_CONVENTION = {
 
 ### 9.4 Revision plan for R0–R1
 
-| Revision                      | Contents                                                                                                                                                                                                                                                       |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0001_initial`                | extensions, domains, enums, trigger functions, `users`, `roles`, `permissions`, `role_permissions`, `user_roles`, `sessions`, `sessions_rotation`, `mfa_*`, `recovery_codes` — **landed in E07-T02** as `0001_identity_rbac_sessions_mfa`                      |
-| `0002_rbac_seed`              | seed roles, permissions, role_permissions, bootstrap owner — **landed in E07-T02**                                                                                                                                                                             |
-| `0003_audit_log`              | `audit_log` + hash-chain trigger, `audit_checkpoints` — **landed in E09-T02** (superseded the placeholder `0003_exchange_accounts` slot below; `exchange_accounts`/`user_account_access` remain future work under a later revision number)                     |
-| `0004_instruments`            | `instruments`, `instrument_versions` (§3.3.9) — **landed in E08-S01**                                                                                                                                                                                          |
-| `0006_admin_write_permission` | fix-forward data seed: `admin:write` permission + `owner` grant (added to the spec by #1637; 0001 is immutable, C-5.4) — **landed in E09-T03**                                                                                                                 |
-| `0007_sessions_idle_timeout`  | `sessions.idle_timeout_s` (per-session idle-lock timeout, B16) (fix #1634) — **landed in E09-S03**                                                                                                                                                             |
-| `0009_sessions_step_up_state` | `sessions.step_up_elevations`, `step_up_failures`, `readonly_until` (step-up state on the session row, B16) — **E09-S04**                                                                                                                                      |
-| `0005_api_keys`               | `api_keys`, `api_key_rotations`, withdrawal-off constraint                                                                                                                                                                                                     |
-| `0005_profiles`               | `account_profiles` + ladder trigger                                                                                                                                                                                                                            |
-| `0006_trading_core`           | `trade_groups`, `trade_group_legs`, `orders`, `order_events`, `executions`, `positions`, `position_snapshots`, `wallet_balances`                                                                                                                               |
-| `0007_recorder`               | `recorded_symbols`, `recording_sessions`, `recording_gaps`, `retention_policies`, `replay_sessions`                                                                                                                                                            |
-| `0008_rules`                  | `rules`, `rule_versions`, `rule_runs`, `rule_events`                                                                                                                                                                                                           |
-| `0009_alerts`                 | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                                         |
-| `0010_journal`                | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                                                |
-| `0011_workspace`              | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` landed in E14-T01 as `0021_drawings` (#357); `workspaces`, `layouts`, `layout_panes` landed in E15-T01 as `0022_workspaces` (#402) |
-| `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups`                                                                                                                            |
-| `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                                                  |
+| Revision                      | Contents                                                                                                                                                                                                                                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0001_initial`                | extensions, domains, enums, trigger functions, `users`, `roles`, `permissions`, `role_permissions`, `user_roles`, `sessions`, `sessions_rotation`, `mfa_*`, `recovery_codes` — **landed in E07-T02** as `0001_identity_rbac_sessions_mfa`  |
+| `0002_rbac_seed`              | seed roles, permissions, role_permissions, bootstrap owner — **landed in E07-T02**                                                                                                                                                         |
+| `0003_audit_log`              | `audit_log` + hash-chain trigger, `audit_checkpoints` — **landed in E09-T02** (superseded the placeholder `0003_exchange_accounts` slot below; `exchange_accounts`/`user_account_access` remain future work under a later revision number) |
+| `0004_instruments`            | `instruments`, `instrument_versions` (§3.3.9) — **landed in E08-S01**                                                                                                                                                                      |
+| `0006_admin_write_permission` | fix-forward data seed: `admin:write` permission + `owner` grant (added to the spec by #1637; 0001 is immutable, C-5.4) — **landed in E09-T03**                                                                                             |
+| `0007_sessions_idle_timeout`  | `sessions.idle_timeout_s` (per-session idle-lock timeout, B16) (fix #1634) — **landed in E09-S03**                                                                                                                                         |
+| `0009_sessions_step_up_state` | `sessions.step_up_elevations`, `step_up_failures`, `readonly_until` (step-up state on the session row, B16) — **E09-S04**                                                                                                                  |
+| `0005_api_keys`               | `api_keys`, `api_key_rotations`, withdrawal-off constraint                                                                                                                                                                                 |
+| `0005_profiles`               | `account_profiles` + ladder trigger                                                                                                                                                                                                        |
+| `0006_trading_core`           | `trade_groups`, `trade_group_legs`, `orders`, `order_events`, `executions`, `positions`, `position_snapshots`, `wallet_balances`                                                                                                           |
+| `0007_recorder`               | `recorded_symbols`, `recording_sessions`, `recording_gaps`, `retention_policies`, `replay_sessions`                                                                                                                                        |
+| `0008_rules`                  | `rules`, `rule_versions`, `rule_runs`, `rule_events`                                                                                                                                                                                       |
+| `0009_alerts`                 | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                     |
+| `0010_journal`                | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                            |
+| `0011_workspace`              | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; rest = `0022_workspaces`                                                                    |
+| `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups`                                                                                                        |
+| `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                              |
 
 ---
 
@@ -3410,6 +3408,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `audit_log`                                            | `before_state`, `after_state`           | P1/S mixed | jsonb                                           | Writer redacts any key matching `secret                                                                                                         | password | token | api_key | seed | nonce`to`"[redacted]"` before insert — enforced by a shared serializer and a unit test with a hostile fixture |
 | `notes`                                                | `body`, `title`                         | P1         | plaintext                                       | User content; exported on data-export request                                                                                                   |
 | `drawings`                                             | `label`, `geometry`, `style`            | P0         | text / jsonb                                    | User-authored chart annotations; free text, no credentials or PII intended                                                                      |
+| `workspaces`, `layouts`, `layout_panes`                | `name`, `grid_spec`, `pane_config`      | P0         | text / jsonb                                    | User layout preferences; never logged. Pane settings must never carry credentials or account identifiers                                        |
 | `journal_trades`                                       | all P&L columns                         | P1         | plaintext                                       | Financial personal data                                                                                                                         |
 | `exchange_accounts`                                    | `exchange_uid`, `label`                 | P1         | plaintext                                       | Account identifiers                                                                                                                             |
 | `positions`, `orders`, `executions`, `wallet_balances` | monetary columns                        | P1         | plaintext                                       | Financial personal data; never sent to third parties                                                                                            |
