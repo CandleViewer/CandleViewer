@@ -15,7 +15,6 @@ from hypothesis import strategies as st
 from candleviewer.auth import session_service
 from candleviewer.auth.errors import (
     RefreshReuseDetected,
-    SessionIdleLocked,
     SessionNotFound,
     SessionRevoked,
 )
@@ -133,10 +132,9 @@ async def test_require_active_racing_expiry_revokes_never_accepts() -> None:
     """#2273: the loser of the expiry-revoke race must not accept the session."""
     repo, clock = _YieldingRepository(), _Clock()
     svc = SessionService(repo, Hasher(pepper=os.urandom(16).hex()), clock=clock)
-    m = await svc.mint(str(uuid.uuid4()))
-    rec = await repo.find_by_id(str(m.session_id))
-    assert rec is not None
-    clock.now = rec.expires_at
+    deadline = _NOW + timedelta(minutes=5)
+    m = await svc.mint(str(uuid.uuid4()), expires_at=deadline)
+    clock.now = deadline
     results = await asyncio.gather(
         svc.require_active(str(m.session_id)),
         svc.require_active(str(m.session_id)),
@@ -149,15 +147,20 @@ async def test_require_active_racing_expiry_revokes_never_accepts() -> None:
 @given(offset=st.integers(min_value=-5, max_value=5))
 def test_require_active_never_returns_absolute_expired_session(offset: int) -> None:
     async def run() -> None:
-        svc, repo, clock = _svc()
-        m = await svc.mint(str(uuid.uuid4()))
-        rec = await repo.find_by_id(str(m.session_id))
-        assert rec is not None
-        clock.now = rec.expires_at + timedelta(seconds=offset)
-        try:
-            got = await svc.require_active(str(m.session_id))
-        except (SessionRevoked, SessionIdleLocked):
-            return
-        assert not got.is_absolute_expired(now=clock.now)
+        repo, clock = _YieldingRepository(), _Clock()
+        svc = SessionService(repo, Hasher(pepper=os.urandom(16).hex()), clock=clock)
+        deadline = _NOW + timedelta(minutes=5)
+        m = await svc.mint(str(uuid.uuid4()), expires_at=deadline)
+        clock.now = deadline + timedelta(seconds=offset)
+        results = await asyncio.gather(
+            svc.require_active(str(m.session_id)),
+            svc.require_active(str(m.session_id)),
+            return_exceptions=True,
+        )
+        for r in results:
+            if offset >= 0:
+                assert isinstance(r, SessionRevoked)
+            elif not isinstance(r, BaseException):
+                assert not r.is_absolute_expired(now=clock.now)
 
     asyncio.run(run())
