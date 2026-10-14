@@ -137,6 +137,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "security.credential_destroyed",
         "security.credential_destroy_failed",
         "security.credential_store_failed",
+        # #2339 security review: closes a write-ahead `credential_borrowed` when signing fails.
+        "security.credential_sign_failed",
     }
 )
 

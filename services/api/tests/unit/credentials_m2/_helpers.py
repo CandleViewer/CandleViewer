@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
@@ -29,11 +30,22 @@ def _h(b: CredentialBroker) -> BorrowHandle:
     return b.borrow_handle("exchange_adapter")
 
 
+async def _with[T](
+    b: CredentialBroker,
+    key_id: Any,
+    fn: Callable[[Secret[str], Secret[str]], Awaitable[T]],
+    purpose: str = "sign_rest",
+) -> T:
+    """M2's internal decrypt path, for M2's own round-trip tests. Its only production caller is
+    `_sign`; no capability outside `secrets/` yields plaintext (#2339)."""
+    return await b._borrow(key_id, fn, "exchange_adapter", purpose)
+
+
 async def _borrow(b: CredentialBroker, key_id: Any) -> tuple[str, str]:
     async def fn(k: Secret[str], s: Secret[str]) -> tuple[str, str]:
         return k.reveal(), s.reveal()
 
-    return await _h(b).with_credentials(key_id, fn, purpose="sign_rest")
+    return await _with(b, key_id, fn)
 
 
 class _Spy:

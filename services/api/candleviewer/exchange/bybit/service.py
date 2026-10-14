@@ -45,8 +45,9 @@ class ExchangeBybitService:
 
     def __init__(self, credentials: CredentialBorrower | None = None) -> None:
         self._started = False
-        #: E27-T02: the one caller-bound borrow capability, injected by `admin.wiring`.
-        #: Signing (E08) uses `credentials.with_credentials(...)`; never minted here.
+        #: E27-T02: the one caller-bound signing capability, injected by `admin.wiring`.
+        #: M2 computes the request MAC (`credentials.sign(...)`) and returns the key id,
+        #: never the secret (C-2.7, #2339). Never minted here.
         self._credentials = credentials
 
     #: E08-T06: venue name for the `exchange` metric label (owned here, C-2.2).

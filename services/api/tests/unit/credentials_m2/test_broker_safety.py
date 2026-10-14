@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
@@ -17,6 +18,7 @@ from tests.unit.credentials_m2._helpers import (
     _h,
     _Spy,
     _store,
+    _with,
 )
 from tests.unit.credentials_m2._vectors import (
     ACCOUNT,
@@ -83,11 +85,11 @@ async def test_pending_key_borrowable_only_for_verification(
 ) -> None:
     meta = await _store(broker)
     store.activate(meta.key_id, "pending")
-
-    async def fn(k: Secret[str], s: Secret[str]) -> str:
-        return k.reveal()
-
-    assert await _h(broker).with_credentials(meta.key_id, fn, purpose="key_verify") == API_KEY
+    msg = (KEY_ID_SLOT,)
+    with pytest.raises(CredentialUnavailable):
+        await _h(broker).sign(meta.key_id, msg, purpose="sign_rest")
+    out = await _h(broker).sign(meta.key_id, msg, purpose="key_verify")
+    assert out.api_key.reveal() == API_KEY
 
 
 async def test_rotating_key_is_signable(broker: CredentialBroker, store: Any) -> None:
@@ -112,7 +114,7 @@ async def test_destroy_fences_in_flight_borrow(store: Any) -> None:
     async def fn(k: Secret[str], s: Secret[str]) -> None:
         order.append("plaintext_handed_out")
 
-    borrow = asyncio.create_task(_h(b).with_credentials(meta.key_id, fn, purpose="sign_rest"))
+    borrow = asyncio.create_task(_with(b, meta.key_id, fn))
     await gate.wait()
     await b.destroy(meta.key_id)
     release.set()
@@ -230,7 +232,7 @@ async def test_plaintext_zeroed_on_fn_cancel(monkeypatch: pytest.MonkeyPatch, st
         started.set()
         await asyncio.Event().wait()
 
-    t = asyncio.create_task(_h(b).with_credentials(meta.key_id, fn, purpose="sign_rest"))
+    t = asyncio.create_task(_with(b, meta.key_id, fn))
     await started.wait()
     t.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -371,7 +373,7 @@ async def test_borrow_traceback_frame_locals_hold_no_plaintext(store: Any) -> No
         raise RuntimeError("boom")
 
     with pytest.raises(RuntimeError) as info:
-        await _h(b).with_credentials(meta.key_id, fn, purpose="sign_rest")
+        await _with(b, meta.key_id, fn)
     tb = info.value.__traceback__
     frames = []
     while tb is not None:

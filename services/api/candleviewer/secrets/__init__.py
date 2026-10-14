@@ -1,13 +1,16 @@
-"""secrets module (M2): KEK custody, envelope encryption, scoped credential borrow.
+"""secrets module (M2): KEK custody, envelope encryption, request signing.
 
 Importable only by M4 (the exchange adapter) and M21 (`admin`, metadata only) — C-3.2.
-Plaintext keys and unwrapped DEKs never leave this package except inside a caller-bound
-borrow callback (`CredentialBorrower`, minted once by `admin.wiring` via `mint_borrower`);
-`_kek`, `_envelope`, `_source`, `_metrics` and `broker` are internal.
+Plaintext keys and unwrapped DEKs never leave this package (C-2.7, #2339). M4 holds one
+caller-bound signing capability (`CredentialBorrower`, minted once by `admin.wiring` via
+`mint_borrower`): it sends a message with `KEY_ID_SLOT` where the key id goes and gets back a
+`RequestSignature` (hex MAC + key id), never the secret. `_kek`, `_envelope`, `_source`,
+`_metrics` and `broker` are internal.
 """
 
 from __future__ import annotations
 
+from candleviewer.secrets.broker import Purpose
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
     KekSourceNotPermitted,
@@ -27,9 +30,11 @@ from candleviewer.secrets.service import (
     SecretsService,
     mint_borrower,
 )
+from candleviewer.secrets.signing import KEY_ID_SLOT, RequestSignature
 from candleviewer.secrets.store import AuditSink, CredentialStore, KcvStore
 
 __all__ = [
+    "KEY_ID_SLOT",
     "AuditSink",
     "CredentialBorrower",
     "CredentialStore",
@@ -38,6 +43,8 @@ __all__ = [
     "KekCheckResult",
     "KekSourceNotPermitted",
     "KekUnavailable",
+    "Purpose",
+    "RequestSignature",
     "RewrapReport",
     "Secret",
     "SecretsError",

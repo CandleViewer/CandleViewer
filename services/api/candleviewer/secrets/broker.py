@@ -1,9 +1,11 @@
-"""Credential broker (E27-T02): store / scoped borrow / destroy / KEK re-wrap.
+"""Credential broker (E27-T02): store / sign / destroy / KEK re-wrap.
 
 Plaintext keys and unwrapped DEKs exist only in memory inside this module, only between the
-decrypt and the end of the caller's callback. Every action is audited *before* it acts
-(C-2.9), with an actor bound at wiring time; every await has a timeout; failures are typed,
-fail closed and carry no key material (C-12.6).
+decrypt and the end of the request MAC; they never leave M2 (C-2.7, #2339), not even in a
+traceback: a failed MAC leaves as a typed `signing_failed` with nothing chained, after the failed
+call's frames are cleared. Every action is audited *before* it acts (C-2.9), with an actor bound
+at wiring time; every await has a timeout; failures are typed, fail closed and carry no key
+material (C-12.6).
 """
 
 from __future__ import annotations
@@ -29,6 +31,14 @@ from candleviewer.secrets.errors import (
 )
 from candleviewer.secrets.models import CredentialRow, StoredCredential
 from candleviewer.secrets.secret import Secret
+from candleviewer.secrets.signing import (
+    RequestSignature,
+    SigningMessage,
+    check_message,
+    mac_hex,
+    message_sha256,
+    scrub_frames,
+)
 from candleviewer.secrets.store import AuditSink, CredentialStore
 
 Clock = Callable[[], float]
@@ -43,6 +53,19 @@ _SIGNABLE = frozenset({"active", "rotating"})
 _TOUCH_INTERVAL_S = 60.0
 _IO_TIMEOUT_S = 2.0
 _SYSTEM = ("system", "secrets", None)
+#: Closes a write-ahead `security.credential_borrowed` record when signing fails after it.
+_SIGN_FAILED = "security.credential_sign_failed"
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """Bounded `reason` of a failure-outcome record: M2's own reason code (codes only, never
+    key material, `errors.py`), else the kind of failure."""
+    if isinstance(exc, SecretsError):
+        code = str(exc)
+        return code if code.isascii() and code.isidentifier() else "error"
+    if isinstance(exc, asyncio.CancelledError):
+        return "cancelled"
+    return "error" if isinstance(exc, Exception) else "interrupted"
 
 
 def _m2_only(cls: type) -> None:
@@ -273,8 +296,12 @@ class CredentialBroker:
         fn: Callable[[Secret[str], Secret[str]], Awaitable[T]],
         caller_module: str,
         purpose: str,
+        *,
+        digest: str | None = None,
     ) -> T:
-        """The only path that hands plaintext credentials to a caller. (Two internal
+        """The single audited decrypt path. Its only production caller is `_sign`, which
+        uses the secret for the request MAC inside M2 and returns no plaintext secret (C-2.7,
+        #2339). (Two internal
         decrypts exist and never leave M2: `_dek_for` returns an unwrapped DEK to this method,
         and `_rotation._rewrap_one` opens `secret_enc` to verify a re-wrap, zeroes it, and is
         covered by the run-level rotation audit.) Caller check, env-namespaced
@@ -283,18 +310,23 @@ class CredentialBroker:
         method to call without them. In-process Python cannot make that impossible — a module
         can still reach the KEK by introspection — so the CI guard
         (`test_capability_boundary.py`) is the enforcing control; process isolation of
-        signing is the real fix (#835 residual, follow-up issue)."""
+        signing is the real fix (#835 residual, follow-up issue). The write-ahead record
+        carries `digest` as `message_sha256`; any failure after it (fence, decrypt, MAC,
+        cancellation) appends `security.credential_sign_failed` with a bounded `reason`."""
         if caller_module not in ALLOWED_CALLERS or purpose not in _PURPOSES:
             raise CredentialUnavailable("caller_not_permitted")
+        actor = ("system", caller_module, None)
+        extra = {"caller_module": caller_module, "purpose": purpose}
+        if digest is not None:
+            extra["message_sha256"] = digest
         result = "error"
+        audited: CredentialRow | None = None
         try:
             kek = self._require_kek()
             row = self._check_row(await self._load(key_id), key_id, purpose)
-            fields = self._fields(
-                row, actor=("system", caller_module, None), caller_module=caller_module,
-                purpose=purpose,
-            )  # fmt: skip
+            fields = self._fields(row, actor=actor, **extra)
             await self._audit("security.credential_borrowed", fields)
+            audited = row
             await self._touch(key_id)
             row = self._check_row(row, key_id, purpose)  # fence: destroyed during the awaits?
             attrs = {k: fields[k] for k in ("key_id", "env", "kek_version")}
@@ -336,8 +368,37 @@ class CredentialBroker:
                 k_s = s_s = None
             result = "ok"
             return out
+        except BaseException as exc:
+            if audited is not None:  # close the write-ahead record (C-2.9)
+                reason = _failure_reason(exc)
+                await self._outcome(_SIGN_FAILED, audited, actor, reason=reason, **extra)
+            raise
         finally:
             m.credential_borrow_total.labels(stage=caller_module, result=result).inc()
+
+    async def _sign(
+        self, key_id: UUID, message: SigningMessage, caller_module: str, purpose: str
+    ) -> RequestSignature:
+        """M2-side request signing (C-2.7, #2339): the secret is used for the MAC here and
+        never leaves M2. The result holds the hex MAC and the key id the caller's request
+        header needs. A message `check_message` refuses (shape or bounds: size, parts, slots) is
+        refused before the borrow (no decrypt, no audit).
+        """
+        parts = check_message(message)
+
+        async def mac(k: Secret[str], s: Secret[str]) -> RequestSignature:
+            # No plaintext is bound to a name here: a traceback keeps this frame, and its `k`/`s`
+            # are wrappers `_borrow` invalidates. Any failure leaves as a typed `signing_failed`
+            # with nothing chained (the frames below hold plaintext and are cleared) (C-12.6).
+            try:
+                return RequestSignature(Secret(k.reveal()), mac_hex(k, s, parts))
+            except BaseException as exc:
+                scrub_frames(exc)
+                if not isinstance(exc, Exception):
+                    raise  # KeyboardInterrupt, CancelledError: not the MAC's doing; propagate
+            raise CredentialUnavailable("signing_failed")
+
+        return await self._borrow(key_id, mac, caller_module, purpose, digest=message_sha256(parts))
 
     async def destroy(self, key_id: UUID, *, actor: tuple[str, str, str | None] = _SYSTEM) -> None:
         """Fence first (in-flight borrows refuse at their post-audit re-check), then audit,
@@ -359,11 +420,11 @@ class CredentialBroker:
             self._cache.flush(key_id)
 
     async def _outcome(
-        self, action: str, row: CredentialRow, actor: tuple[str, str, str | None]
+        self, action: str, row: CredentialRow, actor: tuple[str, str, str | None], **extra: str
     ) -> None:
         """Best-effort failure-outcome record; never replaces the original exception."""
         try:
-            await self._audit(action, self._fields(row, actor=actor))
+            await self._audit(action, self._fields(row, actor=actor, **extra))
         except Exception:
             m.credential_outcome_audit_failures_total.inc()
 
@@ -374,7 +435,8 @@ class CredentialBroker:
 
 @final
 class BorrowHandle:
-    """A borrow capability bound to one caller module at wiring time."""
+    """A signing capability bound to one caller module at wiring time. It yields a MAC and the
+    key id, never plaintext secrets (C-2.7, #2339)."""
 
     def __init_subclass__(cls, **kw: Any) -> None:
         _m2_only(cls)
@@ -387,13 +449,8 @@ class BorrowHandle:
             raise ValueError("caller not permitted to borrow credentials")
         self._broker, self._caller = broker, caller_module
 
-    async def with_credentials[T](
-        self,
-        key_id: UUID,
-        fn: Callable[[Secret[str], Secret[str]], Awaitable[T]],
-        *,
-        purpose: Purpose,
-    ) -> T:
-        """Scoped borrow: plaintext lives only for the duration of `fn`; the `Secret`s passed
-        to `fn` are invalidated when it returns."""
-        return await self._broker._borrow(key_id, fn, self._caller, purpose)
+    async def sign(
+        self, key_id: UUID, message: SigningMessage, *, purpose: Purpose
+    ) -> RequestSignature:
+        """M2 signs `message` with the credential's API secret (see `CredentialBroker._sign`)."""
+        return await self._broker._sign(key_id, message, self._caller, purpose)

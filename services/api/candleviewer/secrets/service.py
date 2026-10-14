@@ -8,8 +8,9 @@ policy (no reused/retired/out-of-sequence KEK) and a KCV check without trust-on-
 and a successful `security.kek_loaded` audit. No runtime re-load; recovery is a restart.
 
 Capabilities (C-3.2): `AppContext.secrets` is `SecretsLifecycle` (start/stop/health only);
-`admin` is injected `SecretsMetadata`; the M4 borrow capability is minted once in
+`admin` is injected `SecretsMetadata`; the M4 signing capability is minted once in
 `admin.wiring` (`SecretsBundle.exchange_borrower`) — callers never declare their identity.
+It returns a MAC and the key id, never the API secret (C-2.7, #2339).
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.broker import ALLOWED_CALLERS, Purpose, _m2_only
 from candleviewer.secrets.errors import KekLoadError, KekSourceNotPermitted, KekUnavailable
 from candleviewer.secrets.models import KekCheckResult, RewrapReport
-from candleviewer.secrets.secret import Secret
+from candleviewer.secrets.signing import RequestSignature, SigningMessage
 from candleviewer.secrets.store import AuditSink, CredentialStore, KcvStore
 
 if TYPE_CHECKING:
@@ -90,22 +91,22 @@ class SecretsLifecycle(Protocol):
 
 
 def _sealed_borrower(resolve: Callable[[], RotatingBroker], caller: str) -> CredentialBorrower:
-    """Build a borrower whose broker resolver lives only in a closure (no attribute to reach)."""
+    """Build a signer whose broker resolver lives only in a closure (no attribute to reach)."""
     if caller not in ALLOWED_CALLERS:
         raise ValueError("caller not permitted to borrow credentials")
 
-    async def borrow(
-        key_id: UUID, fn: Callable[[Secret[str], Secret[str]], Awaitable[Any]], purpose: Purpose
-    ) -> Any:
-        return await resolve().borrow_handle(caller).with_credentials(key_id, fn, purpose=purpose)
+    async def sign(key_id: UUID, message: SigningMessage, purpose: Purpose) -> RequestSignature:
+        return await resolve().borrow_handle(caller).sign(key_id, message, purpose=purpose)
 
-    return CredentialBorrower(borrow)
+    return CredentialBorrower(sign)
 
 
 @final
 class CredentialBorrower:
-    """Caller-bound borrow capability, minted once at wiring time for M4. Holds only a
-    closure: no reference to the service or broker is reachable from it (C-3.2)."""
+    """Caller-bound signing capability, minted once at wiring time for M4. M2 computes the
+    request MAC; the capability returns the hex MAC and the key id, never the API secret
+    (C-2.7, #2339). Holds only a closure: no reference to the service or broker is reachable
+    from it (C-3.2)."""
 
     def __init_subclass__(cls, **kw: Any) -> None:
         _m2_only(cls)
@@ -113,18 +114,15 @@ class CredentialBorrower:
 
     __slots__ = ("__borrow",)
 
-    def __init__(self, borrow: Callable[..., Awaitable[Any]]) -> None:
+    def __init__(self, borrow: Callable[..., Awaitable[RequestSignature]]) -> None:
         self.__borrow = borrow
 
-    async def with_credentials[T](
-        self,
-        key_id: UUID,
-        fn: Callable[[Secret[str], Secret[str]], Awaitable[T]],
-        *,
-        purpose: Purpose,
-    ) -> T:
-        out: T = await self.__borrow(key_id, fn, purpose)
-        return out
+    async def sign(
+        self, key_id: UUID, message: SigningMessage, *, purpose: Purpose
+    ) -> RequestSignature:
+        """Sign `message` (byte segments, `KEY_ID_SLOT` where the key id goes) with the
+        credential's API secret inside M2; audited write-ahead as `credential_borrowed`."""
+        return await self.__borrow(key_id, message, purpose)
 
 
 class SecretsLifecycleFacade:
@@ -385,6 +383,6 @@ class SecretsService:
 
 
 def mint_borrower(service: SecretsService, caller_module: str) -> CredentialBorrower:
-    """Wiring-time borrow capability bound to `caller_module`. Called once, in
+    """Wiring-time signing capability bound to `caller_module`. Called once, in
     `admin.wiring.build_secrets_service`; fails closed while degraded."""
     return _sealed_borrower(service._require, caller_module)
