@@ -2,8 +2,9 @@
 
 Pins `POST /auth/unlock`, `POST /auth/session/extend`, the three new 401 codes and the
 `SessionInfo.session` deadlines that SCR-005 and CMP-098 build on; routes ship in slice 2/2.
-Also pins two rules from the PR #2389 review: only extend and unlock record activity (refresh
-carries `last_seen_at` over), and unlock checks a password only while the session is locked.
+Also pins three rules from the PR #2389 reviews: only extend and unlock record activity (refresh
+carries `last_seen_at` over), unlock checks a password only while the session is locked, and a
+locked session's logout ends only that session (`all_sessions: true` is refused).
 """
 
 from __future__ import annotations
@@ -167,6 +168,32 @@ def test_refresh_contract_carries_the_idle_deadline_over(spec: dict[str, Any]) -
     assert "`session.idle_deadline` is unchanged" in refresh
     deadline = _schema(spec, "SessionState")["properties"]["idle_deadline"]["description"]
     assert "`POST /auth/refresh` carries it over unchanged" in _flat(deadline)
+
+
+def test_logout_from_a_locked_session_ends_only_the_calling_session(spec: dict[str, Any]) -> None:
+    # PR #2389 review round 2: logout is allowed while locked only as SCR-005 "Sign out
+    # instead". Revoke-all is a write (#2290 ruling, rule 3b): with a bearer copied from a
+    # locked tab, whoever is at the desk could sign the owner out of every other machine.
+    allowed = (
+        "Only `POST /auth/unlock`, `POST /auth/logout` and `GET /auth/session` are allowed"
+        " while locked, and logout ends only the calling session"
+    )
+    refused = "`all_sessions: true` from a locked session answers `401 session_idle_locked`"
+    section = _idle_lock_section(spec)
+    assert allowed in section
+    assert f"{refused} and revokes nothing" in section
+    op = _op(spec, "post", "/auth/logout")
+    description = _flat(op["description"])
+    assert "Allowed while the session is idle-locked, for the calling session only" in description
+    assert "`all_sessions: true` answers `401 session_idle_locked` and revokes nothing" in (
+        description
+    )
+    assert "no `auth.logout` or `auth.session_revoked` record is written" in description
+    body = op["requestBody"]["content"]["application/json"]["schema"]
+    flag = _flat(body["properties"]["all_sessions"]["description"])
+    assert "Refused from an idle-locked session (`401 session_idle_locked`" in flag
+    # The refusal is the documented idle-lock 401 (`Unauthorized` carries the example).
+    assert op["responses"]["401"] == {"$ref": "#/components/responses/Unauthorized"}
 
 
 def test_session_info_requires_the_session_state(spec: dict[str, Any]) -> None:
