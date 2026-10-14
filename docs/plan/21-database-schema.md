@@ -1926,22 +1926,10 @@ CREATE INDEX ix_notes_fts     ON notes USING gin (to_tsvector('english', coalesc
 
 #### 3.8.1 `workspaces`, `layouts`, `layout_panes`
 
-Shipped as migration `0022_workspaces` (E15-T01, #402). Deviations from the original draft, all
-recorded in the migration docstring:
-
-1. `layouts.owner_user_id` (a copy of `workspaces.user_id`, written once at insert),
-   `ux_workspaces_id_user_id`, `ux_layouts_id_owner_user_id`, and composite parent references
-   (`fk_layouts_workspace_id_workspaces`, `fk_drawings_layout_id_layouts`): the database
-   guarantees same-owner references, so a purge cascade never crosses owners (D27).
-   `drawings.layout_id` gets its FK here (`MATCH SIMPLE`: `layout_id IS NULL` is unchecked),
-   added `NOT VALID` then `VALIDATE`d (C-5.6).
-2. New `ux_lay_default` (one live default layout per workspace), `ix_lay_workspace` and
-   `ix_dr_layout` (FK-side indexes for the purge cascades).
-3. `ix_lp_layout` is kept as drafted although `ux_lp_slot` covers the same columns (ruling Q4,
-   #402); noted for a later cleanup.
-4. `layout_panes.chart_template_id` has no FK yet (`chart_templates` has no owning ticket;
-   0014/0017 precedent, gap issue #2411). `interval_code` is `<bar_type>:<param>`
-   (e.g. `time:1m`, `tick:500`).
+Shipped as migration `0022_workspaces` (E15-T01, #402); deviations (same-owner composite FKs
+`layouts.owner_user_id`, `ux_lay_default`, FK-side indexes, no `chart_templates` FK yet, `interval_code`
+grammar `<bar_type>:<param>`) are listed in the migration docstring. `ix_lp_layout` is kept (redundant
+with `ux_lp_slot`, ruling Q4).
 
 ```sql
 CREATE TABLE workspaces (

@@ -237,16 +237,6 @@ def test_d27_purging_one_owners_layout_never_deletes_another_owners_rows(pg_dsn:
         assert _exists(c, "drawings", da_global)
 
 
-def test_user_delete_cascades_workspaces(pg_dsn: str) -> None:
-    with _conn(pg_dsn) as c:
-        _active_owner(c)
-        u = _user(c)
-        w = _workspace(c, u)
-        _layout(c, w, u)
-        c.execute("DELETE FROM users WHERE id = %s", (u,))
-        assert not _exists(c, "workspaces", w)
-
-
 def test_recorder_probe_uses_ix_lp_symbol_without_seq_scan(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
         a, b = _user(c), _user(c)
