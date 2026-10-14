@@ -331,6 +331,26 @@ def _driver(kind: type[Exception], **attrs: Any) -> Exception:
     return exc
 
 
+class _Driver(Exception):
+    """The asyncpg-style error a DBAPIError wraps: `.sqlstate`, or psycopg's `.pgcode`."""
+
+    def __init__(self, code: str | None, attr: str = "sqlstate") -> None:
+        super().__init__("driver error: SECRET-PARAM")
+        setattr(self, attr, code)
+
+
+def _dbapi(code: str | None, attr: str = "sqlstate", via_cause: bool = False) -> Exception:
+    """A generic DBAPIError on a live connection, as asyncpg timeouts/deadlocks arrive."""
+    inner = _Driver(code, attr)
+    holder = Exception("wrapper")
+    holder.__cause__ = inner
+    exc = DBAPIError(
+        "SELECT secret FROM t WHERE x=:x", {"x": "SECRET-PARAM"}, holder if via_cause else inner
+    )
+    exc.connection_invalidated = False
+    return exc
+
+
 class _Fake(Exception):
     """A foreign class that only looks like a DBAPIError by name."""
 
@@ -345,10 +365,13 @@ BUGS = [
     ("integrity", _driver(IntegrityError)),
     ("data", _driver(DataError)),
     ("programming", _driver(ProgrammingError)),
-    ("dbapi_valid_connection", _driver(DBAPIError, connection_invalidated=False)),
     ("dbapi_truthy_string", _driver(DBAPIError, connection_invalidated="yes")),
     ("lookalike", _Fake("connection_invalidated")),
 ]
+
+
+SQLSTATE_OUTAGE = ["57014", "55P03", "40P01", "40001", "08006", "53300", "58030"]
+SQLSTATE_BUG = ["22P05", "23505", "42601", "42P01", "55000", "XX000", None, "5703"]
 
 
 def _failing(env: Env, fault: Exception) -> TestClient:
@@ -376,3 +399,22 @@ def test_database_outages_are_503_with_retry_after_and_class_name_only(
 @pytest.mark.parametrize(("name", "fault"), BUGS, ids=[n for n, _ in BUGS])
 def test_database_bugs_stay_500_never_503(env: Env, name: str, fault: Exception) -> None:
     assert _failing(env, fault).delete(f"/workspaces/{MISSING}").status_code == 500, name
+
+
+@pytest.mark.parametrize("code", SQLSTATE_OUTAGE)
+@pytest.mark.parametrize("how", ["sqlstate", "pgcode", "cause"])
+def test_generic_dbapi_error_with_an_outage_sqlstate_is_503(env: Env, code: str, how: str) -> None:
+    fault = _dbapi(code, "pgcode" if how == "pgcode" else "sqlstate", via_cause=how == "cause")
+    with capture_logs() as logs:
+        r = _failing(env, fault).delete(f"/workspaces/{MISSING}")
+    assert r.status_code == 503 and r.headers["retry-after"] == "5", code
+    assert [(e["error"], e["sqlstate"]) for e in logs] == [("DBAPIError", code)]
+    assert "SECRET-PARAM" not in repr(logs) and "SECRET-PARAM" not in r.text
+
+
+@pytest.mark.parametrize("code", SQLSTATE_BUG)
+def test_generic_dbapi_error_with_a_bug_or_unknown_sqlstate_stays_500(
+    env: Env, code: str | None
+) -> None:
+    r = _failing(env, _dbapi(code)).delete(f"/workspaces/{MISSING}")
+    assert r.status_code == 500, code
