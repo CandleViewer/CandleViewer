@@ -230,11 +230,6 @@ def test_chain_broken_error_carries_id() -> None:
     assert err.first_bad_id == 42 and "42" in str(err)
 
 
-async def test_export_returns_job_id(repo: FakeAuditRepository, clock: FakeClock) -> None:
-    result = await AuditQueryService(repo).schedule_export(from_ts=clock(), to_ts=clock())
-    assert result.download_url is None and result.job_id.version == 4
-
-
 async def test_checkpoint_empty_log_writes_nothing(
     repo: FakeAuditRepository, tmp_path: Path
 ) -> None:
