@@ -232,6 +232,8 @@ def make_audit_router(
             )
         if ip is not None:
             try:
+                if "%" in ip:
+                    raise ValueError("scope id")
                 ipaddress.ip_address(ip)
             except ValueError:
                 return _problem(

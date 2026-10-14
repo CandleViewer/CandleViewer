@@ -89,5 +89,6 @@ def test_validation_limits_and_ip() -> None:
     assert client.get("/admin/audit", params={"limit": 0}).status_code == 422
     assert client.get("/admin/audit", params={"ip": "10.0.0.0/8"}).status_code == 422
     assert client.get("/admin/audit", params={"ip": "nope"}).status_code == 422
+    assert client.get("/admin/audit", params={"ip": "fe80::1%eth0"}).status_code == 422
     assert client.get("/admin/audit", params={"ip": "::1"}).status_code == 200
     assert svc.query_service.query_calls[-1]["limit"] == 100
