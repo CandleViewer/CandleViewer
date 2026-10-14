@@ -174,24 +174,79 @@ def test_verify_audit_chain_returns_200_for_authorized_caller() -> None:
 _EXPORT_BODY = {"from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z"}
 
 
-def test_export_owner_gets_501_not_implemented_without_job_or_record() -> None:
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
+def _real_owner() -> AuditPrincipal:
+    return AuditPrincipal(
+        user_id=uuid.uuid4(),
+        username="owner",
+        permissions=frozenset({"audit:export"}),
+        is_owner=True,
+    )
+
+
+def _non_owner_with_export() -> AuditPrincipal:
+    return AuditPrincipal(
+        user_id=uuid.uuid4(),
+        username="manager",
+        permissions=frozenset({"audit:read", "audit:export"}),
+        is_owner=False,
+    )
+
+
+_OWNER_SHAPES = pytest.mark.parametrize(
+    "principal", [_real_owner, _owner], ids=["is_owner_explicit_permission", "wildcard"]
+)
+
+
+@_OWNER_SHAPES
+def test_export_owner_gets_501_with_not_implemented_type(principal: Any) -> None:
+    client = TestClient(_app(_FakeAuditService(), _FakeResolver(principal())))
     response = client.post("/admin/audit/export", json=_EXPORT_BODY)
     assert response.status_code == 501
-    body = response.json()
-    assert body["type"].endswith("/errors/not_implemented")
-    assert "job_id" not in body and "job_id" not in response.text
+    assert response.json()["type"].endswith("/errors/not_implemented")
+
+
+@_OWNER_SHAPES
+def test_export_owner_501_body_has_no_job_id(principal: Any) -> None:
+    client = TestClient(_app(_FakeAuditService(), _FakeResolver(principal())))
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert "job_id" not in response.text
+
+
+@_OWNER_SHAPES
+def test_export_owner_501_writes_no_audit_record(principal: Any) -> None:
+    service = _FakeAuditService()
+    TestClient(_app(service, _FakeResolver(principal()))).post(
+        "/admin/audit/export", json=_EXPORT_BODY
+    )
     assert service.writer_service.emitted == []
 
 
 @pytest.mark.parametrize(
-    "principal", [_manager_with_read, _manager, _viewer_no_export], ids=["read", "noread", "viewer"]
+    "principal",
+    [_manager_with_read, _manager, _viewer_no_export, _non_owner_with_export],
+    ids=["read", "noread", "viewer", "non_owner_with_export"],
 )
 def test_export_non_owner_gets_403_with_one_denied_record(principal: Any) -> None:
     service = _FakeAuditService()
     client = TestClient(_app(service, _FakeResolver(principal())))
     assert client.post("/admin/audit/export", json=_EXPORT_BODY).status_code == 403
+    assert _actions(service) == ["admin.audit_denied"]
+
+
+def test_export_non_owner_holding_export_is_denied_as_owner_only() -> None:
+    service = _FakeAuditService()
+    client = TestClient(_app(service, _FakeResolver(_non_owner_with_export())))
+    client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert service.writer_service.emitted[0][1]["reason"] == "owner_only"
+
+
+def test_export_non_owner_malformed_body_is_403_not_422() -> None:
+    service = _FakeAuditService()
+    client = TestClient(_app(service, _FakeResolver(_manager_with_read())))
+    response = client.post(
+        "/admin/audit/export", content=b"{not json", headers={"content-type": "application/json"}
+    )
+    assert response.status_code == 403
     assert _actions(service) == ["admin.audit_denied"]
 
 
@@ -649,6 +704,16 @@ def test_refusal_carries_retry_after_only_over_the_cap() -> None:
     clock.now += 3600
     client.get("/admin/audit")
     assert svc.writer_service.emitted[-1][1]["after_state"] == {"suppressed": 1}
+
+
+@pytest.mark.parametrize("cause", ["writer", "inflight_cap"])
+def test_export_denial_record_that_cannot_be_written_is_503_not_403(cause: str) -> None:
+    svc = _FakeAuditService()
+    svc.writer_service.fail = cause == "writer"
+    budget = AuditRecordBudget(inflight_cap=0 if cause == "inflight_cap" else 64)
+    client, _ = _budgeted(_non_owner_with_export(), svc, budget=budget)
+    r = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
 
 
 @pytest.mark.parametrize("cause", ["writer", "inflight_cap"])
