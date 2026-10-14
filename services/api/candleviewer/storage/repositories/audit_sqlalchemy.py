@@ -10,15 +10,33 @@ neither module imports the other.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 from typing import Any
 
 import sqlalchemy as sa
+import structlog
 
+from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
+
+class AuditReadFailed(StorageTierUnavailable):
+    """An audit read failed in the database. Carries only the SQLSTATE, never the
+    statement or its bound parameters (the filters can hold an IP address)."""
+
+    def __init__(self, sqlstate: str | None) -> None:
+        super().__init__(f"audit read failed (sqlstate {sqlstate or 'unknown'})")
+        self.sqlstate = sqlstate
+
 
 _ADVISORY_LOCK_SQL = sa.text("SELECT pg_advisory_xact_lock(hashtext('audit_log'))")
 
@@ -167,17 +185,30 @@ class SqlAlchemyAuditRepository:
             "limit": limit,
             "ip": ip,
         }
+        # The budget covers the whole call, connection checkout included: a pool wait
+        # would otherwise run to the pool's own 30 s timeout.
+        budget = asyncio.timeout(None if timeout_ms is None else timeout_ms / 1000)
         try:
-            async with self._relational.unit_of_work() as uow:
-                if timeout_ms is not None:
-                    # SET takes no bind parameters; set_config(..., true) is `SET LOCAL`.
-                    await uow.session.execute(_SET_TIMEOUT_SQL, {"v": f"{int(timeout_ms)}ms"})
-                result = await uow.session.execute(_QUERY_PAGE_SQL, params)
-                return [dict(row._mapping) for row in result]
-        except sa.exc.DBAPIError as exc:
-            if _sqlstate(exc) == _QUERY_CANCELED:
-                raise TimeoutError("audit read exceeded its time budget") from exc
-            raise
+            async with budget:
+                async with self._relational.unit_of_work() as uow:
+                    if timeout_ms is not None:
+                        # SET takes no bind parameters; set_config(..., true) is `SET LOCAL`.
+                        await uow.session.execute(_SET_TIMEOUT_SQL, {"v": f"{int(timeout_ms)}ms"})
+                    result = await uow.session.execute(_QUERY_PAGE_SQL, params)
+                    return [dict(row._mapping) for row in result]
+        except TimeoutError:
+            cause = "budget"
+        except sa.exc.TimeoutError:
+            cause = "pool"
+        except (sa.exc.SQLAlchemyError, OSError) as exc:
+            state = _sqlstate(exc) if isinstance(exc, sa.exc.DBAPIError) else None
+            if state != _QUERY_CANCELED and not budget.expired():
+                # Class and SQLSTATE only: the exception text carries the bound filters.
+                _log().warning("audit.read.failed", error=type(exc).__name__, sqlstate=state)
+                raise AuditReadFailed(state) from None
+            cause = "statement_timeout"
+        _log().warning("audit.read.timeout", cause=cause, budget_ms=timeout_ms)
+        raise TimeoutError("audit read exceeded its time budget")
 
     async def fetch_entry_hash(self, entry_id: int) -> str | None:
         async with self._relational.unit_of_work() as uow:
