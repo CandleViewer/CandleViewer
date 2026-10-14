@@ -3820,14 +3820,17 @@ export interface paths {
     /**
      * Create a workspace
      * @description The server mints a UUIDv7 `id`. `409 conflict`: rule `name_taken` (names are unique per
-     *     user, case-insensitive, among live workspaces) or `limit_reached` (32 live workspaces).
-     *     `is_default: true` clears the previous default in the same transaction (its token changes);
-     *     `false` touches no other workspace, and a user may have no default.
+     *     user, case-insensitive, among live workspaces), `limit_reached` (32 live workspaces) or
+     *     `concurrent_update` (a racing write; retry). `is_default: true` clears the previous default
+     *     in the same transaction (its token changes); `false` touches no other workspace, and a user
+     *     may have no default.
      *
      *     Bodies over 4 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries
-     *     the `updated_at` token for `If-Match`. `Idempotency-Key`: the same key and body replay the
-     *     stored 2xx response with `Idempotency-Replayed: true`; the same key with another body is
-     *     `409 idempotency_key_reuse`. Replay storage is best-effort and bounded.
+     *     the `updated_at` token for `If-Match`. `Idempotency-Key` is accepted, never required
+     *     (`x-idempotency: optional`): the same key and request replay the stored 2xx response with
+     *     `Idempotency-Replayed: true`. The replay fingerprint covers the method, path and body, so
+     *     the same key with another request is `409 idempotency_key_reuse`. Replay storage is in
+     *     memory, best-effort and bounded; correctness never depends on it.
      */
     post: operations["createWorkspace"];
     delete?: never;
@@ -3855,12 +3858,19 @@ export interface paths {
     /**
      * Replace a workspace's metadata
      * @description Full replacement of `WorkspaceInput` (an omitted field takes its default); layouts are
-     *     untouched and do not change this token. Missing, soft-deleted or another user's: the same
-     *     `404`. `409` and the 4 KiB limit as on `createWorkspace`. `If-Match` is optional (the
-     *     quoted, `W/`-prefixed or bare `updated_at` token; absent = last write wins). A body that
-     *     changes nothing returns `200` with the unchanged token and writes nothing, even with a stale
-     *     `If-Match` (the change is already applied, RFC 9110 §13.1.1); otherwise a stale or
-     *     unparseable `If-Match` is `412 version_conflict` and nothing is written.
+     *     untouched and do not change this token. `409` and the 4 KiB limit as on `createWorkspace`.
+     *
+     *     `ETag` is the quoted token, `"<updated_at>"`, a strong validator. `If-Match` is optional
+     *     (absent: the last write wins) and takes that value; a `W/` prefix or the bare token is
+     *     accepted on input only, as leniency. Any other value, including `*` and a list of tags, is
+     *     unparseable.
+     *
+     *     Evaluation order for every operation in this group (steps that do not apply are skipped):
+     *     `401`; `403` (permission, CSRF); `413`; `422` (path, headers, body); `404` (missing,
+     *     soft-deleted or another user's, identical); no-op `200` (the body changes nothing: unchanged
+     *     token, no write, even when `If-Match` is stale or unparseable, as the change is already
+     *     applied, RFC 9110 §13.1.1); `412 version_conflict` (stale or unparseable `If-Match`, nothing
+     *     written); `409`; the write. `503 store_unavailable` when storage fails.
      */
     put: operations["updateWorkspace"];
     post?: never;
@@ -3927,10 +3937,11 @@ export interface paths {
      *     `422 validation_failed` lists up to 20 `errors[]`, naming a pane by array position (e.g.
      *     `panes.2.slot_index`): rule `duplicate_slot`, the enums, the tree rules of `LayoutGridSpec`
      *     (plus `grid_spec_required` for `custom` and `grid_spec_not_allowed` otherwise) and the pane
-     *     rules of `PaneKind`, `PaneConfig` and `LayoutPaneInput`. `409 conflict`: rule `name_taken`,
-     *     `hotkey_slot_taken` or `limit_reached` (32 live layouts). `is_default: true` clears the
-     *     previous default layout in the same transaction. A workspace that is missing, soft-deleted
-     *     or another user's returns the same `404`.
+     *     rules of `PaneKind`, `PaneConfig`, `PaneIntervalCode` and `LayoutPaneInput`. `409 conflict`:
+     *     rule `name_taken`, `hotkey_slot_taken`, `limit_reached` (32 live layouts) or
+     *     `concurrent_update`. `is_default: true` clears the previous default layout in the same
+     *     transaction. A workspace that is missing, soft-deleted or another user's returns the same
+     *     `404`.
      *
      *     Bodies over 128 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries
      *     the `updated_at` token. `Idempotency-Key` behaves as on `createWorkspace`.
@@ -5529,6 +5540,7 @@ export interface components {
       meta: components["schemas"]["DataMeta"];
       symbol: components["schemas"]["Symbol"];
     };
+    /** @description Response object. Readers must ignore unknown properties (C-6.3). */
     Layout: {
       /** Format: date-time */
       created_at: string;
@@ -5546,7 +5558,7 @@ export interface components {
       symbol_sync: boolean;
       /**
        * Format: date-time
-       * @description Concurrency token (also the `ETag`) of the whole layout aggregate, panes included: every write changes it, including a pane-only change and a default switch made by another layout. Always serialised `YYYY-MM-DDTHH:MM:SS.ffffffZ` (6 fractional digits) and strictly increasing.
+       * @description Concurrency token (also the `ETag`) of the whole layout aggregate, panes included: every write changes it, including a pane-only change and a default switch made by another layout. Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing. Echo it exactly as received; never re-serialise it through a client date type.
        */
       updated_at: string;
       /** Format: uuid */
@@ -5567,9 +5579,10 @@ export interface components {
       | components["schemas"]["LayoutGridLeaf"];
     /**
      * @description Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset stores
-     *     only its name: `grid_spec` is `null`, and a pane's `slot_index` is its cell in row-major
-     *     reading order (a slot beyond the preset's cells is placed by the client, e.g. floating).
-     *     `custom` stores the dock tree in `grid_spec`. **Open-ended for readers.**
+     *     only its name and fixed cell proportions: `grid_spec` is `null`, and a pane's `slot_index`
+     *     is its cell in row-major reading order (a slot beyond the preset's cells is placed by the
+     *     client, e.g. floating). Any other arrangement, including a named grid whose divider was
+     *     dragged, is saved as `custom` with its tree in `grid_spec`. **Open-ended for readers.**
      * @enum {string}
      */
     LayoutGridPreset: "1x1" | "2x1" | "1x2" | "2x2" | "1+3" | "3x3" | "custom";
@@ -5614,7 +5627,7 @@ export interface components {
        */
       type: "tabset";
     };
-    /** @description Writable layout fields plus the complete pane set. `PUT` is a full replacement: an omitted field takes its default and the stored panes are replaced. */
+    /** @description Writable layout fields plus the complete pane set. `PUT` is a full replacement: an omitted field takes its default, an explicit `null` on a non-nullable field is refused, and the stored panes are replaced. Observable validation (depth, `NaN`/`Infinity`, `invalid_unicode`, `name` sanitising and rules) is as on `WorkspaceInput`. */
     LayoutInput: {
       /**
        * @description Layout default for crosshair sync between panes of one sync group.
@@ -5645,6 +5658,7 @@ export interface components {
       level_sync: boolean;
       /** @description 1..40 characters after sanitising, as for workspace names. Unique per workspace, case-insensitive, among live layouts (`409 conflict`, rule `name_taken`). */
       name: string;
+      /** @description In any order: panes are keyed by `slot_index`, and responses sort by it. */
       panes: components["schemas"]["LayoutPaneInput"][];
       /**
        * @description Layout default for symbol sync.
@@ -5652,7 +5666,7 @@ export interface components {
        */
       symbol_sync: boolean;
     };
-    /** @description A stored pane. Panes have no id of their own: they are addressed by `slot_index` and replaced as a set. */
+    /** @description Stored pane (response object). Panes have no id of their own: they are addressed by `slot_index` and replaced as a set. Readers must ignore unknown properties (C-6.3). */
     LayoutPane: {
       /** Format: uuid */
       chart_template_id: string | null;
@@ -5662,7 +5676,7 @@ export interface components {
       pane_kind: components["schemas"]["PaneKind"];
       scale_mode: components["schemas"]["PaneScaleMode"];
       slot_index: number;
-      symbol: components["schemas"]["Symbol"] | null;
+      symbol: string | null;
     };
     LayoutPaneInput: {
       /**
@@ -5685,11 +5699,12 @@ export interface components {
       /** @description Unique within the layout (`422` rule `duplicate_slot`). */
       slot_index: number;
       /**
-       * @description Bound symbol, market panes only. Additionally limited to at most 20 characters (the storage domain `symbol_code`); longer values are `422`. A non-null symbol on a live layout counts as chart-open for auto-recording.
+       * @description Bound symbol, market panes only: a Bybit USDT linear perpetual symbol of at most 20 characters (the DB `symbol_code` domain). It is not checked against the instrument catalogue. A non-null symbol on a live layout counts as chart-open for auto-recording.
        * @default null
        */
-      symbol: components["schemas"]["Symbol"] | null;
+      symbol: string | null;
     };
+    /** @description Response object. Readers must ignore unknown properties (C-6.3); the embedded `layout` is a closed `LayoutInput`. */
     LayoutPreset: {
       description: string | null;
       /**
@@ -6145,7 +6160,7 @@ export interface components {
      *     credentials, account ids or user ids. Omitted means `{}`.
      */
     PaneConfig: {
-      /** @description Kind-specific flat settings (for example DOM depth, tape filters, CVD anchor, visible range), at most 32 keys. Every key must match `^[a-z][a-z0-9_]{0,31}$` (`422` rule `invalid_setting_key`); the server enforces this because generators cannot express key patterns. Omitted means `{}`. */
+      /** @description Kind-specific flat settings (for example DOM depth, tape filters, CVD anchor, visible range), at most 32 keys. Every key must match `^[a-z][a-z0-9_]{0,31}$` (`422` rule `invalid_setting_key`); the server enforces this because generators cannot express key patterns. Numbers keep their kind (`1` stays `1`, `1.0` stays `1.0`). Omitted means `{}`. */
       settings?: {
         [key: string]: components["schemas"]["PaneSettingValue"];
       };
@@ -6156,7 +6171,7 @@ export interface components {
       sync_group?: "A" | "B" | "C" | null;
     };
     /**
-     * @description `<bar_type>:<param>`, exactly the `bar_type` and `param` of `/market/bars` (and of the WS topic `bars.{symbol}.{bar_type}.{param}`), e.g. `time:1`, `time:D`, `tick:500`, `volume:50`, `renko:atr:14`, `pnf:10:3`.
+     * @description `<bar_type>:<param>`, exactly the `bar_type` and `param` of `/market/bars` (and of the WS topic `bars.{symbol}.{bar_type}.{param}`): `param` at most 24 characters, no leading zeros, e.g. `time:1`, `time:D`, `tick:500`, `volume:0.5`, `renko:atr:14`, `pnf:10:3`. A `volume` or `delta` threshold must also be greater than 0 (`422` rule `interval_not_positive`).
      * @example time:1
      * @example time:240
      * @example tick:500
@@ -6169,8 +6184,10 @@ export interface components {
      *     writers must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,
      *     `oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes
      *     (`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule
-     *     `property_not_allowed_for_kind`). A footprint is a `chart` pane with a footprint chart
-     *     template, a heatmap lives in the `dom` pane, and orders live in the `positions` pane.
+     *     `property_not_allowed_for_kind`). A heatmap lives in the `dom` pane and orders in the
+     *     `positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is
+     *     marked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`
+     *     settings.
      * @enum {string}
      */
     PaneKind:
@@ -7685,6 +7702,7 @@ export interface components {
       name: string;
       symbols: components["schemas"]["Symbol"][];
     };
+    /** @description Response object. Readers must ignore unknown properties (C-6.3). */
     Workspace: {
       /** Format: date-time */
       created_at: string;
@@ -7698,7 +7716,7 @@ export interface components {
       sort_order: number;
       /**
        * Format: date-time
-       * @description Concurrency token (also the `ETag`) for the workspace metadata only; layout writes do not change it. Always serialised `YYYY-MM-DDTHH:MM:SS.ffffffZ` (6 fractional digits) and strictly increasing on every write.
+       * @description Concurrency token (also the `ETag`) for the workspace metadata only; layout writes do not change it. Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing on every write. Echo it exactly as received; never re-serialise it through a client date type.
        */
       updated_at: string;
       /** Format: uuid */
@@ -7715,26 +7733,10 @@ export interface components {
       schema_version: string;
       workspace: components["schemas"]["WorkspaceInput"];
     };
-    /** @description `Workspace` plus every live layout with its panes: restore is one request per workspace. */
-    WorkspaceDetail: {
-      /** Format: date-time */
-      created_at: string;
-      icon_token: components["schemas"]["WorkspaceIconToken"];
-      /** Format: uuid */
-      id: string;
-      is_default: boolean;
-      layout_count: number;
+    /** @description Response object: `Workspace` plus every live layout with its panes, so restore is one request per workspace. Readers must ignore unknown properties (C-6.3). */
+    WorkspaceDetail: components["schemas"]["Workspace"] & {
       /** @description Live layouts ordered by `id` ascending. */
       layouts: components["schemas"]["Layout"][];
-      name: string;
-      sort_order: number;
-      /**
-       * Format: date-time
-       * @description Workspace metadata token, as on `Workspace`.
-       */
-      updated_at: string;
-      /** Format: uuid */
-      user_id: string;
     };
     /**
      * @description Design-system icon token for the workspace (a token name, never a URL or markup).
@@ -7745,7 +7747,18 @@ export interface components {
      * @enum {string}
      */
     WorkspaceIconToken: "workspace.default";
-    /** @description Writable workspace fields. `PUT` is a full replacement: an omitted field takes its default. */
+    /**
+     * @description Writable workspace fields. `PUT` is a full replacement: an omitted field takes its default,
+     *     and an explicit `null` is refused (`422`).
+     *
+     *     Observable validation (all `422 validation_failed`): JSON nesting depth must be at most 16;
+     *     `NaN` and `Infinity` are rejected; a string that cannot be encoded as UTF-8 (a lone
+     *     surrogate) is rule `invalid_unicode`. `name` is sanitised on write, before the length check:
+     *     U+0000-U+001F, U+007F-U+009F, U+2028, U+2029, U+061C, U+200E, U+200F, U+202A-U+202E and
+     *     U+2066-U+2069 are removed, then surrounding whitespace is trimmed; nothing else is altered.
+     *     Empty after sanitising is rule `string_too_short`, over 40 is `string_too_long`. Reads
+     *     return the sanitised name.
+     */
     WorkspaceInput: {
       /** @default workspace.default */
       icon_token: components["schemas"]["WorkspaceIconToken"];
@@ -7754,7 +7767,7 @@ export interface components {
        * @default false
        */
       is_default: boolean;
-      /** @description 1..40 characters after sanitising: C0/C1 control characters, U+2028/U+2029 and bidi controls are stripped, then surrounding whitespace is trimmed (SCR-020). Unique per user, case-insensitive, among live workspaces (`409 conflict`, rule `name_taken`). */
+      /** @description 1..40 characters after sanitising (above), SCR-020. Unique per user, case-insensitive, among live workspaces (`409 conflict`, rule `name_taken`). */
       name: string;
       /**
        * @description Client-defined tab order; ties break by `id`.
@@ -15314,6 +15327,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createWorkspace: {
@@ -15355,6 +15369,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getWorkspace: {
@@ -15380,6 +15395,8 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateWorkspace: {
@@ -15424,6 +15441,7 @@ export interface operations {
       409: components["responses"]["Conflict"];
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteWorkspace: {
@@ -15468,6 +15486,8 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   exportWorkspace: {
@@ -15533,6 +15553,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   createLayout: {
@@ -15585,6 +15606,7 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getLayout: {
@@ -15612,6 +15634,8 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   updateLayout: {
@@ -15657,6 +15681,7 @@ export interface operations {
       409: components["responses"]["Conflict"];
       412: components["responses"]["PreconditionFailed"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   deleteLayout: {
@@ -15694,6 +15719,8 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
 }
