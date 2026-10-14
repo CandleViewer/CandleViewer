@@ -65,6 +65,12 @@ def test_idor_matrix_on_layouts(method: str, actor: str, target: str) -> None:
             "layout", lay)  # fmt: skip
     missing = env.c.request(method, path.rsplit("/", 1)[0] + f"/{MISSING}", json=_body(method))
     assert missing.status_code == 404 and missing.content == r.content  # byte-identical
+    assert _headers(missing) == _headers(r)
+
+
+def _headers(r: Any) -> dict[str, str]:
+    """Response headers without the per-request correlation id."""
+    return {k: v for k, v in r.headers.items() if k not in ("x-request-id", "x-correlation-id")}
 
 
 def test_a_foreign_workspace_with_a_missing_layout_audits_the_workspace_once() -> None:
@@ -205,4 +211,31 @@ def test_create_app_serves_workspaces_and_layouts_behind_csrf(
     assert c.get(url, headers=h).json()["items"] == [lay.json()]
     assert c.get(f"{url}/{lay.json()['id']}", headers=h).json() == lay.json()
     assert c.delete(f"{url}/{lay.json()['id']}", headers=h).status_code == 204
+    assert [w["action"] for w in writer.calls] == ["auth.csrf_refused"]
+
+
+UNSAFE = [
+    ("POST", "/workspaces", {"name": "A"}, "WorkspaceInput"),
+    ("PUT", f"/workspaces/{MISSING}", {"name": "A"}, "WorkspaceInput"),
+    ("DELETE", f"/workspaces/{MISSING}", None, ""),
+    ("POST", f"/workspaces/{MISSING}/layouts", LAYOUT, "LayoutInput"),
+    ("PUT", f"/workspaces/{MISSING}/layouts/{MISSING}", LAYOUT, "LayoutInput"),
+    ("DELETE", f"/workspaces/{MISSING}/layouts/{MISSING}", None, ""),
+]
+
+
+@pytest.mark.parametrize(("method", "path", "body", "model"), UNSAFE)
+def test_every_unsafe_route_refuses_a_request_without_a_csrf_pair(
+    monkeypatch: pytest.MonkeyPatch, method: str, path: str, body: Any, model: str
+) -> None:
+    monkeypatch.setattr(appmod, "build_identity_provider", lambda _settings: fakes.Identity())
+    app = appmod.create_app()
+    app.state.app_context.auth._sessions = fakes.Sessions()
+    writer = app.state.app_context.audit._writer = fakes.Audit()
+    app.state.workspaces_repository = repo = fakes.FakeWorkspaceRepo()
+    c = TestClient(app, client=("127.0.0.1", 50000))
+    r = c.request(method, path, json=body and wire(body, model),
+                  headers={"Authorization": "Bearer tok-a"})  # fmt: skip
+    assert r.status_code == 403 and r.json()["code"] == "csrf_token_invalid", r.text
+    assert repo.calls == [] and repo.rows == {} and repo.layouts == {}
     assert [w["action"] for w in writer.calls] == ["auth.csrf_refused"]
