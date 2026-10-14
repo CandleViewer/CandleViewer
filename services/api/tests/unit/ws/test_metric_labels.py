@@ -67,9 +67,12 @@ async def test_upstream_gauge_symbol_label_bounded_with_other() -> None:
     assert not [k for k in _series() if k[1] == "book"]
 
 
-def test_autouse_fixture_clears_leaked_series() -> None:
-    """Leak a series, run the fixture's cleanup, assert empty (#2360); order-independent."""
-    cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book").set(1)
-    assert ("ZZSTRAYUSDT", "book") in _series()
-    cv_ws_upstream_consumers_in_use.clear()  # same call the fixture makes
+def test_autouse_fixture_clears_leaked_series(request: pytest.FixtureRequest) -> None:
+    """Collection-time leak must be gone at test start; fails without the autouse fixture."""
+    assert "_clean_upstream_gauge" in request.fixturenames
+    assert ("ZZSTRAYUSDT", "book") not in _series()
     assert _series() == {}
+
+
+# Leak at collection time, outside any fixture, so only the autouse fixture can remove it (#2360).
+cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book").set(1)
