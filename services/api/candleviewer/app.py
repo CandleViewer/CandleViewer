@@ -1299,7 +1299,7 @@ def create_app(
             "cv_drawings_purged_total", "Soft-deleted drawings hard-purged after 90 days."
         ),
         rows=metrics_facade.gauge(
-            "cv_drawings_rows", "Live drawings by tool.", ("tool",), max_series=25
+            "cv_drawings_rows", "Live drawings by tool.", ("tool",), max_series=len(TOOLS)
         ),
     )
     # `drawings` has no forbid-delete trigger, so the app DSN may purge.
