@@ -36,7 +36,7 @@ class SigningSlot(enum.Enum):
 KEY_ID_SLOT: Final = SigningSlot.KEY_ID
 
 #: Bounds on a signing message, so the capability is no general-purpose HMAC oracle (#2350
-#: review). The Bybit v5 REST string-to-sign has four parts and one key-id slot; WS auth has none.
+#: review). The adapter's REST string-to-sign has four parts and one key-id slot; WS auth has none.
 MAX_MESSAGE_BYTES: Final = 64 * 1024
 MAX_MESSAGE_PARTS: Final = 16
 MAX_KEY_ID_SLOTS: Final = 1

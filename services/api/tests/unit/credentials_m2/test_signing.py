@@ -66,8 +66,8 @@ def test_check_message_accepts_bytes_and_the_slot() -> None:
     assert check_message(MSG) is MSG
 
 
-def test_message_bounds_fit_bybit_v5_with_room() -> None:
-    """REST string-to-sign: four parts, one key-id slot; WS auth: no slot (#2350 review)."""
+def test_message_bounds_fit_the_adapter_messages_with_room() -> None:
+    """The adapter's REST string-to-sign: four parts, one key-id slot; WS auth: no slot."""
     assert (MAX_MESSAGE_BYTES, MAX_MESSAGE_PARTS, MAX_KEY_ID_SLOTS) == (65536, 16, 1)
 
 
