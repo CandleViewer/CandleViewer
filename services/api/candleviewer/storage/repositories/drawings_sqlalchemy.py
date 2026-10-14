@@ -1,10 +1,10 @@
 """Postgres drawings repository (migration `0021_drawings`, E14-T01).
 
 Static, parameterised `sa.text` only. Every statement is filtered by
-`owner_user_id = CAST(:owner AS uuid)` (C-12.4 data-layer re-check) except two:
-`exists_for_other_owner` (its whole purpose) and `purge_deleted` (retention job, no caller
-identity). Every UPDATE bumps `updated_at` strictly monotonically so the token never repeats,
-even inside one clock tick.
+`owner_user_id = CAST(:owner AS uuid)` (C-12.4 data-layer re-check) except three:
+`exists_for_other_owner` (its whole purpose), `purge_deleted` (retention job, no caller identity)
+and `count_live_by_tool` (the rows gauge, all owners). Every UPDATE bumps `updated_at` strictly
+monotonically so the token never repeats, even inside one clock tick.
 
 The batch snapshot is owner-scoped too, so it locks and sees only the caller's own rows (live or
 soft-deleted): a batch naming a foreign id never takes a lock on, or waits for, another user's row.
@@ -113,9 +113,12 @@ _PURGE = sa.text(
     "DELETE FROM drawings WHERE id IN (SELECT id FROM drawings WHERE deleted_at IS NOT NULL "
     "AND deleted_at < now() - make_interval(days => CAST(:days AS integer)) LIMIT :limit)"
 )
+_COUNT_LIVE = sa.text(
+    "SELECT tool, count(*) AS n FROM drawings WHERE deleted_at IS NULL GROUP BY tool"
+)
 
 #: Statements allowed to omit the owner filter (see module docstring); tested.
-UNSCOPED = frozenset({"_EXISTS_OTHER", "_PURGE"})
+UNSCOPED = frozenset({"_EXISTS_OTHER", "_PURGE", "_COUNT_LIVE"})
 
 #: Upper bound for one purge call so a single transaction stays short.
 MAX_PURGE_BATCH = 10_000
@@ -305,6 +308,12 @@ class SqlAlchemyDrawingRepository:
             res = await uow.session.execute(_PURGE, {"days": older_than_days, "limit": limit})
             await uow.commit()
         return int(getattr(res, "rowcount", 0))
+
+    async def count_live_by_tool(self) -> dict[str, int]:
+        """Live rows per tool across all owners (metrics only; like the purge, owner-agnostic)."""
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_COUNT_LIVE)).all()
+        return {str(tool): int(n) for tool, n in rows}
 
 
 __all__ = ["DRAWING_COLUMNS", "MAX_PURGE_BATCH", "SqlAlchemyDrawingRepository"]

@@ -575,3 +575,21 @@ async def test_list_uses_ix_dr_user_symbol_and_p99_under_5ms(pg_dsn: str) -> Non
     p99 = statistics.quantiles(server_ms, n=100)[98]
     print(f"drawings list server-side p99 = {p99:.3f} ms over {len(server_ms)} runs")
     assert p99 < 5.0, f"server-side p99 {p99:.3f} ms"
+
+
+async def test_count_live_by_tool_counts_only_live_rows_of_every_owner(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    """Deltas, not absolutes: other tests share the module database (C-13.7)."""
+    a, b = _user(pg_dsn), _user(pg_dsn)
+    before = await repo.count_live_by_tool()
+    gone = str(uuid.uuid4())
+    for owner in (a, b):
+        await repo.create(owner, str(uuid.uuid4()), _f())
+    await repo.create(a, str(uuid.uuid4()), dataclasses.replace(_f(), tool="rectangle"))
+    await repo.create(a, gone, _f())
+    await repo.soft_delete(a, gone)  # a soft-deleted row is not counted
+    after = await repo.count_live_by_tool()
+    assert after.get("trendline", 0) - before.get("trendline", 0) == 2
+    assert after.get("rectangle", 0) - before.get("rectangle", 0) == 1
+    assert all(isinstance(k, str) and isinstance(v, int) for k, v in after.items())

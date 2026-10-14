@@ -73,6 +73,7 @@ from candleviewer.api.deny_by_default import (
     make_deny_undeclared_dependency,
 )
 from candleviewer.api.drawings import make_drawings_router
+from candleviewer.api.drawings_models import TOOLS
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.invites import make_invites_router
@@ -1297,6 +1298,9 @@ def create_app(
         purged=metrics_facade.counter(
             "cv_drawings_purged_total", "Soft-deleted drawings hard-purged after 90 days."
         ),
+        rows=metrics_facade.gauge(
+            "cv_drawings_rows", "Live drawings by tool.", ("tool",), max_series=25
+        ),
     )
     # `drawings` has no forbid-delete trigger, so the app DSN may purge.
     app.state.drawings_purge_task = DrawingsPurgeTask(
@@ -1305,6 +1309,8 @@ def create_app(
         ),
         _retention,
         app.state.drawings_metrics.purged,
+        app.state.drawings_metrics.rows,
+        TOOLS,
     )
     # E09-S06: server-evaluated first-run checklist. Steps whose owning epic
     # has not shipped (E27 api_key/demo, E39 profile limits) have no probe and
