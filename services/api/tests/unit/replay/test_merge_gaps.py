@@ -8,7 +8,7 @@ The gap read is bounded like every other read: more rows than the ceiling are re
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 import pytest
 from prometheus_client import REGISTRY
@@ -227,7 +227,9 @@ async def test_rows_differing_in_stream_end_or_cause_are_reported_separately() -
 class _LaxGaps(StaticGapReader):
     """A reader that ignores its window and symbol: the merge must re-check both itself."""
 
-    async def recording_gaps(self, symbol: str, rng: TimeRange, *, limit: int) -> list[RecordedGap]:
+    async def recording_gaps(
+        self, symbol: str, rng: TimeRange, *, streams: Collection[StreamKind], limit: int
+    ) -> list[RecordedGap]:
         self.limits.append(limit)
         return list(self._gaps)[:limit]
 
@@ -260,14 +262,18 @@ class _BrokenGaps(StaticGapReader):
         super().__init__()
         self._bad = bad
 
-    async def recording_gaps(self, symbol: str, rng: TimeRange, *, limit: int) -> list[RecordedGap]:
+    async def recording_gaps(
+        self, symbol: str, rng: TimeRange, *, streams: Collection[StreamKind], limit: int
+    ) -> list[RecordedGap]:
         if symbol == self._bad:
             raise StorageTierUnavailable("postgres unreachable at /var/lib/cv/pg")
-        return await super().recording_gaps(symbol, rng, limit=limit)
+        return await super().recording_gaps(symbol, rng, streams=streams, limit=limit)
 
 
 class _StuckGaps(StaticGapReader):
-    async def recording_gaps(self, symbol: str, rng: TimeRange, *, limit: int) -> list[RecordedGap]:
+    async def recording_gaps(
+        self, symbol: str, rng: TimeRange, *, streams: Collection[StreamKind], limit: int
+    ) -> list[RecordedGap]:
         await asyncio.Event().wait()  # never answers
         return []
 
@@ -309,6 +315,28 @@ async def test_each_symbols_gap_read_asks_for_the_window_and_one_row_past_the_ce
     window = TimeRange(start_us=req.start_us, end_us=req.end_us)
     assert harness.gaps.limits == [CEILING + 1, CEILING + 1]
     assert harness.gaps.windows == [window, window]
+
+
+async def test_each_symbols_gap_read_asks_for_the_requested_streams_only() -> None:
+    req = request(start_us=START, end_us=END, symbols=(SYM, ETH), streams=(TRADES, DELTAS))
+    harness = Harness(req=req)
+
+    await harness.read_all()
+
+    assert harness.gaps.stream_sets == [frozenset({TRADES, DELTAS})] * 2
+
+
+async def test_gap_rows_of_streams_the_replay_does_not_read_never_count_toward_the_ceiling() -> (
+    None
+):
+    """The ceiling bounds what the replay reports: a busy unrequested stream cannot refuse it."""
+    unread = [gap(START + i, START + i + 1, stream=TICKERS) for i in range(CEILING + 1)]
+    read = gap(12 * SECOND, 13 * SECOND)
+    harness = Harness(gaps=[*unread, read], req=request(start_us=START, end_us=END))
+
+    got = markers(await harness.read_all())
+
+    assert [(g.stream, g.gap_start_us) for g in got] == [(TRADES, read.start_us)]
 
 
 def dense_gaps(count: int, *, symbol: str = SYM) -> list[RecordedGap]:
@@ -368,7 +396,9 @@ async def test_a_symbol_with_more_gap_rows_than_the_ceiling_is_refused_whole(sym
 class _OverReturningGaps(StaticGapReader):
     """A reader that ignores `limit` and hands back every row it holds."""
 
-    async def recording_gaps(self, symbol: str, rng: TimeRange, *, limit: int) -> list[RecordedGap]:
+    async def recording_gaps(
+        self, symbol: str, rng: TimeRange, *, streams: Collection[StreamKind], limit: int
+    ) -> list[RecordedGap]:
         self.limits.append(limit)
         return list(self._gaps)
 

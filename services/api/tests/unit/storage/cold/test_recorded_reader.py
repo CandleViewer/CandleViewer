@@ -34,6 +34,7 @@ from candleviewer.storage.cold.recorded_reader import (
 from candleviewer.storage.cold.scrub import verify_partition
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
+    ManifestCoverage,
     RecordedEvent,
     RecordedQueryRejected,
     RecordedStreamReader,
@@ -387,13 +388,33 @@ async def test_a_part_added_after_the_first_read_is_verified_before_it_is_served
         await reader.read(SYMBOL, StreamKind.TRADES, FIRST_HOUR, depth=200, limit=10)
 
 
+async def test_coverage_is_what_the_manifests_name_clipped_to_the_range(tmp_path: Path) -> None:
+    reader = ParquetRecordedReader(await _export(tmp_path / "cold", generated_rows()))
+    around = TimeRange(start_us=H0 - HOUR, end_us=H0 + 3 * HOUR)
+    inside = TimeRange(start_us=H0 + 60_000_000, end_us=H0 + 120_000_000)
+
+    assert await reader.archived(SYMBOL, StreamKind.TRADES, around) == [FIRST_HOUR]
+    assert await reader.archived(SYMBOL, StreamKind.ORDERBOOK_DELTA, inside) == [inside]
+    assert await reader.archived(SYMBOL, StreamKind.TICKERS, around) == []
+    assert await reader.archived("ETHUSDT", StreamKind.TRADES, around) == []
+
+
+async def test_a_coverage_lookup_the_registry_refuses_is_typed(tmp_path: Path) -> None:
+    reader = ParquetRecordedReader(await _export(tmp_path / "cold", generated_rows()))
+
+    with pytest.raises(ColdReplayReadError):
+        await reader.archived("../../etc", StreamKind.TRADES, FIRST_HOUR)
+
+
 def test_the_cold_reader_is_addressed_by_stream_id_never_by_path(tmp_path: Path) -> None:
     """SR-097 / ticket AC 5: the public surface takes a registry, never a filesystem path."""
-    assert isinstance(ParquetRecordedReader(DatasetRegistry(tmp_path)), RecordedStreamReader)
+    reader = ParquetRecordedReader(DatasetRegistry(tmp_path))
+    assert isinstance(reader, RecordedStreamReader) and isinstance(reader, ManifestCoverage)
     for member in (
         ParquetRecordedReader.__init__,
         ParquetRecordedReader.read,
         ParquetRecordedReader.snapshot_at,
+        ParquetRecordedReader.archived,
     ):
         for name, param in inspect.signature(member).parameters.items():
             assert "path" not in name and "path" not in str(param.annotation).lower()
@@ -916,6 +937,46 @@ async def test_duckdb_opens_the_resolved_part_path_never_the_link(
 
     assert len(got) == len(rows_in(generated_rows()[StreamKind.TRADES], FIRST_HOUR))
     assert opened and _all_resolved(opened) and all("relocated" in f for f in opened)
+
+
+async def _tied(root: Path, update_ids: list[int]) -> ParquetRecordedReader:
+    """Snapshots of one depth at one instant, one per book epoch, in a real cold partition."""
+    snaps: list[dict[str, object]] = [
+        {
+            "ts": H0 + 60_000_000,
+            "symbol": SYMBOL,
+            "depth": 200,
+            "epoch_id": epoch,
+            "update_id": update_id,
+            "cross_seq": None,
+            "bids": '[["65000.0","1.5"]]',
+            "asks": '[["65000.5","2"]]',
+        }
+        for epoch, update_id in enumerate(update_ids)
+    ]
+    registry = DatasetRegistry(root)
+    registry.ensure_tree()
+    exporter = ColdExporter(registry, MemHotSource({StreamKind.ORDERBOOK_SNAPSHOT: snaps}))
+    await exporter.export_partition(SYMBOL, StreamKind.ORDERBOOK_SNAPSHOT, FIRST_HOUR)
+    return ParquetRecordedReader(registry)
+
+
+async def test_snapshots_sharing_the_latest_instant_resolve_by_the_order_key(
+    tmp_path: Path,
+) -> None:
+    """Same row whichever tier answers (24 Sec.13.7): never the part or row order of a tie."""
+    reader = await _tied(tmp_path / "cold", [9, 3])
+
+    anchor = await reader.snapshot_at(SYMBOL, 200, H0 + 120_000_000, not_before_us=H0)
+
+    assert anchor is not None and anchor.seq == 9
+
+
+async def test_an_anchor_tie_wider_than_the_lookup_is_refused_not_guessed(tmp_path: Path) -> None:
+    reader = await _tied(tmp_path / "cold", list(range(16)))
+
+    with pytest.raises(ColdReplayReadError):
+        await reader.snapshot_at(SYMBOL, 200, H0 + 120_000_000, not_before_us=H0)
 
 
 async def test_an_unreadable_partition_listing_is_a_typed_error(

@@ -1,4 +1,4 @@
-"""`RecordedStreamReader` over the Parquet cold tier via DuckDB (E26-T02).
+"""`RecordedStreamReader` and `ManifestCoverage` over the Parquet cold tier via DuckDB (E26-T02).
 
 Partitions are resolved only through `DatasetRegistry`, from `(StreamKind, symbol, time)`. A
 caller never supplies a path (SR-097). Every file a manifest names must be a `part-NNNN.parquet`
@@ -10,6 +10,8 @@ verified (manifest SHA-256 and row count, `verify_partition`) the first time it 
 whenever a file's size, mtime or ctime changes (ctime: a rewrite that restores size and mtime
 still shows). A failure fails the read with a typed error, never a silently partial window, and
 a window spanning more partitions than one read may open is refused before any is listed.
+`archived` reports the manifests' coverage, which `source_tier="auto"` routes on: roll-off
+writes a manifest before it may drop the hot day (21 Sec.5.3).
 
 DuckDB runs on the reader's own pool of `max_concurrency` threads, under a semaphore with as
 many slots (C-2.18), with a memory limit; the worker opens and closes its connection, so the
@@ -57,7 +59,9 @@ from candleviewer.storage.repositories.recorded import (
     BOOK_STREAMS,
     RecordedEvent,
     RecordedQueryRejected,
+    covered_parts,
     event_from_row,
+    order_key,
 )
 
 _US_PER_HOUR: Final = 3_600_000_000
@@ -74,10 +78,13 @@ _RANGE_SQL: Final = _SOURCE + _RANGE + "ORDER BY ts, filename, file_row_number L
 _BOOK_RANGE_SQL: Final = (
     _SOURCE + _RANGE + "AND depth = $depth ORDER BY ts, filename, file_row_number LIMIT $n"
 )
+#: The anchor lookup reads the newest 16 snapshots, newest copy first, and orders those sharing
+#: the latest instant by `order_key`, as the hot tier does (24 Sec.13.7).
+_ANCHOR_ROWS: Final = 16
 _ANCHOR_SQL: Final = (
     _SOURCE + "WHERE depth = $depth AND ts >= make_timestamptz($lo::BIGINT) "
     "AND ts <= make_timestamptz($hi::BIGINT) "
-    "ORDER BY ts DESC, filename DESC, file_row_number DESC LIMIT 1"
+    "ORDER BY ts DESC, filename DESC, file_row_number DESC LIMIT 16"
 )
 #: Below the replay merge's 30 s storage deadline, so a slow scan fails here, typed, first.
 DEFAULT_TIMEOUT_S: Final = 20.0
@@ -272,8 +279,8 @@ def _retrieve(job: asyncio.Future[list[RecordedEvent]]) -> None:
 
 
 class ParquetRecordedReader:
-    """Cold-tier `RecordedStreamReader`: Parquet partitions under `CV_COLD_ROOT`, via DuckDB.
-    Its owner calls `shutdown()` when the process stops."""
+    """Cold-tier `RecordedStreamReader` and `ManifestCoverage`: Parquet partitions under
+    `CV_COLD_ROOT`, via DuckDB. Its owner calls `shutdown()` when the process stops."""
 
     def __init__(
         self,
@@ -329,7 +336,25 @@ class ParquetRecordedReader:
             "depth": depth,
         }
         found = await self._query(_ANCHOR_SQL, params, stream)
-        return found[0] if found else None
+        if len(found) == _ANCHOR_ROWS and found[0].ts_us == found[-1].ts_us:
+            raise ColdReplayReadError(
+                "more snapshots share one instant than an anchor lookup reads"
+            )
+        return max(found, key=order_key, default=None)  # the first maximal: the newest copy
+
+    async def archived(self, symbol: str, stream: StreamKind, rng: TimeRange) -> list[TimeRange]:
+        """`ManifestCoverage`: the spans of `rng` the manifests' entries cover."""
+        with _typed_listing():
+            spans = await asyncio.to_thread(self._manifested, symbol, stream, rng)
+        return covered_parts(spans, rng)
+
+    def _manifested(self, symbol: str, stream: StreamKind, rng: TimeRange) -> list[tuple[int, int]]:
+        """Worker thread: the time range of every manifest entry of the partitions of `rng`."""
+        spans: list[tuple[int, int]] = []
+        for paths in self._partitions(symbol, stream, rng.start_us, rng.end_us):
+            entries = ManifestStore(paths.manifests_dir).read(paths.partition_dir, paths.root)
+            spans += [(e.range_start_us, e.range_end_us) for e in entries]
+        return spans
 
     async def _files(self, symbol: str, stream: StreamKind, lo_us: int, hi_us: int) -> list[str]:
         with _typed_listing():

@@ -11,17 +11,20 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import psycopg
 import pytest
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.storage.models import StreamKind, TimeRange
+from candleviewer.storage.repositories.recorded import STREAM_BY_DB_KIND, RecordedGap
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from candleviewer.storage.testing import StaticGapReader
 
 pytestmark = pytest.mark.integration
 
@@ -187,3 +190,59 @@ async def test_e16_t04_session_gap_coverage_round_trip(
         "SELECT state::text, end_reason FROM recording_sessions WHERE id = %s", (sid,)
     ).fetchone()
     assert row == ("stopped", "process_restart")
+
+
+async def test_replay_gap_read_answers_like_the_fake_over_the_same_rows(
+    dsns: tuple[str, str], conn: psycopg.Connection
+) -> None:
+    """E26-T02 conformance: on real Postgres, `recording_gaps` keeps the half-open window, the
+    asked streams and symbol only, and the earliest `limit` by start, as `StaticGapReader` does."""
+    repo = SqlAlchemyRecorderRepository(SqlAlchemyRelationalRepository(dsns[1]))
+    sid = await repo.open_session(
+        recorded_symbol_id=_add(conn, "BTCUSDT"),
+        symbol="BTCUSDT",
+        streams=["trades", "tickers", "funding"],
+        orderbook_depth=200,
+        ws_endpoint="wss://example.invalid",
+    )
+    base = datetime(2026, 10, 1, tzinfo=UTC)
+    stored = [  # (symbol, Postgres stream, start s, end s): window [10 s, 20 s)
+        ("BTCUSDT", "trades", 12, 13),
+        ("BTCUSDT", "trades", 5, 10),  # ends at the window start
+        ("BTCUSDT", "trades", 20, 25),  # starts at the window end
+        ("BTCUSDT", "trades", 19, 30),
+        ("BTCUSDT", "trades", 8, 11),
+        ("BTCUSDT", "tickers", 14, 15),  # a stream not asked for
+        ("BTCUSDT", "funding", 11, 12),
+        ("ETHUSDT", "trades", 12, 13),  # another symbol
+    ]
+    for symbol, stream, lo, hi in stored:
+        await repo.record_gap(
+            session_id=sid,
+            symbol=symbol,
+            stream=stream,
+            gap_start=base + timedelta(seconds=lo),
+            gap_end=base + timedelta(seconds=hi),
+            cause="ws_disconnect",
+        )
+
+    def us(seconds: int) -> int:
+        return (base + timedelta(seconds=seconds) - datetime(1970, 1, 1, tzinfo=UTC)) // (
+            timedelta(microseconds=1)
+        )
+
+    fake = StaticGapReader(
+        RecordedGap(symbol, STREAM_BY_DB_KIND[stream], us(lo), us(hi), "ws_disconnect")
+        for symbol, stream, lo, hi in stored
+    )
+    window = TimeRange(start_us=us(10), end_us=us(20))
+    asked = (StreamKind.TRADES, StreamKind.FUNDING_RATES)
+
+    for limit in (10, 2):
+        got = await repo.recording_gaps("BTCUSDT", window, streams=asked, limit=limit)
+        want = await fake.recording_gaps("BTCUSDT", window, streams=asked, limit=limit)
+        assert got == want
+    assert [(g.stream, g.start_us) for g in got] == [
+        (StreamKind.TRADES, us(8)),
+        (StreamKind.FUNDING_RATES, us(11)),
+    ]

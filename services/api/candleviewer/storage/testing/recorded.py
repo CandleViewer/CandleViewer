@@ -10,7 +10,7 @@ give.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
@@ -97,24 +97,32 @@ class StaticManifestCoverage:
 
 class StaticGapReader:
     """`RecordingGapReader` over a fixed `recording_gaps` list: the half-open intersections of
-    one symbol, the earliest `limit` by start (storage order on equal starts). A `limit` below 1
-    is refused like `read`'s; `limits` and `windows` record the `limit` and the range of every
-    accepted read."""
+    one symbol in the asked streams, the earliest `limit` by start (storage order on equal
+    starts). A `limit` below 1 is refused like `read`'s; `limits`, `windows` and `stream_sets`
+    record the `limit`, the range and the streams of every accepted read."""
 
     def __init__(self, gaps: Iterable[RecordedGap] = ()) -> None:
         self._gaps = list(gaps)
         self.limits: list[int] = []
         self.windows: list[TimeRange] = []
+        self.stream_sets: list[frozenset[StreamKind]] = []
 
-    async def recording_gaps(self, symbol: str, rng: TimeRange, *, limit: int) -> list[RecordedGap]:
+    async def recording_gaps(
+        self, symbol: str, rng: TimeRange, *, streams: Collection[StreamKind], limit: int
+    ) -> list[RecordedGap]:
         if isinstance(limit, bool) or limit < 1:
             raise RecordedQueryRejected("limit must be an int >= 1")
+        wanted = frozenset(streams)
         self.limits.append(limit)
         self.windows.append(rng)
+        self.stream_sets.append(wanted)
         hits = [
             g
             for g in self._gaps
-            if g.symbol == symbol and g.start_us < rng.end_us and g.end_us > rng.start_us
+            if g.symbol == symbol
+            and g.stream in wanted
+            and g.start_us < rng.end_us
+            and g.end_us > rng.start_us
         ]
         hits.sort(key=lambda g: g.start_us)
         return hits[:limit]
