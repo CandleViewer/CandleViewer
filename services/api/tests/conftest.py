@@ -18,6 +18,7 @@ import pytest
 # has a side effect of registering the fixture with pytest; do not remove
 # even though `_cv_network_guard` looks unused to a linter.
 from tests._ci_network_guard import _cv_network_guard  # noqa: F401
+from tests._duckdb_guard import _cv_no_duckdb_install  # noqa: F401
 from tests._hypothesis_profiles import load_active_profile
 
 load_active_profile()
