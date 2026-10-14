@@ -135,3 +135,8 @@ def test_updates_bump_the_token_monotonically(name: str) -> None:
 def test_list_uses_the_index_friendly_shape() -> None:
     text = str(_STATEMENTS["_LIST"])
     assert "symbol = :symbol" in text and "ORDER BY id LIMIT :limit" in text
+
+
+@pytest.mark.parametrize("name", ["_INSERT", "_GET", "_LIST", "_UPDATE"])
+def test_literal_column_lists_match_the_allow_list(name: str) -> None:
+    assert mod.DRAWING_COLUMNS in str(_STATEMENTS[name])

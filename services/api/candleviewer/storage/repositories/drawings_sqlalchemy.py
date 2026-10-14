@@ -39,19 +39,23 @@ DRAWING_COLUMNS = (
     "id::text AS id, owner_user_id::text AS owner_user_id, symbol, layout_id::text AS layout_id, "
     "tool, geometry, style, label, locked, visible, z_index, created_at, updated_at"
 )
-_OWNER = "owner_user_id = CAST(:owner AS uuid)"
-_BUMP = "updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond')"
-
+# Literal SQL only (no interpolation), repeating the column list like `alerts_sqlalchemy.py`;
+# a unit test pins every copy to DRAWING_COLUMNS.
 _INSERT = sa.text(
-    "INSERT INTO drawings (id, owner_user_id, symbol, layout_id, tool, geometry, style, label, "  # noqa: S608 -- only static module constants are interpolated
+    "INSERT INTO drawings (id, owner_user_id, symbol, layout_id, tool, geometry, style, label, "
     "locked, visible, z_index, anchor_start, anchor_end) VALUES (CAST(:id AS uuid), "
     "CAST(:owner AS uuid), :symbol, CAST(:layout AS uuid), :tool, CAST(:geometry AS jsonb), "
     "CAST(:style AS jsonb), :label, :locked, :visible, :z_index, :anchor_start, :anchor_end) "
-    f"RETURNING {DRAWING_COLUMNS}"
+    "RETURNING "
+    "id::text AS id, owner_user_id::text AS owner_user_id, symbol, layout_id::text AS layout_id, "
+    "tool, geometry, style, label, locked, visible, z_index, created_at, updated_at"
 )
 _GET = sa.text(
-    f"SELECT {DRAWING_COLUMNS} FROM drawings WHERE id = CAST(:id AS uuid) "  # noqa: S608 -- only static module constants are interpolated
-    f"AND {_OWNER} AND deleted_at IS NULL"
+    "SELECT "
+    "id::text AS id, owner_user_id::text AS owner_user_id, symbol, layout_id::text AS layout_id, "
+    "tool, geometry, style, label, locked, visible, z_index, created_at, updated_at"
+    " FROM drawings WHERE id = CAST(:id AS uuid) "
+    "AND owner_user_id = CAST(:owner AS uuid) AND deleted_at IS NULL"
 )
 _EXISTS_OTHER = sa.text(
     "SELECT 1 FROM drawings WHERE id = CAST(:id AS uuid) "
@@ -59,27 +63,34 @@ _EXISTS_OTHER = sa.text(
 )
 # Query-28 shape: owner + symbol equality (ix_dr_user_symbol), keyset on id.
 _LIST = sa.text(
-    f"SELECT {DRAWING_COLUMNS} FROM drawings WHERE {_OWNER} AND symbol = :symbol "  # noqa: S608 -- only static module constants are interpolated
+    "SELECT "
+    "id::text AS id, owner_user_id::text AS owner_user_id, symbol, layout_id::text AS layout_id, "
+    "tool, geometry, style, label, locked, visible, z_index, created_at, updated_at"
+    " FROM drawings WHERE owner_user_id = CAST(:owner AS uuid) AND symbol = :symbol "
     "AND deleted_at IS NULL "
     "AND (CAST(:layout AS uuid) IS NULL OR layout_id = CAST(:layout AS uuid)) "
     "AND (CAST(:after_id AS uuid) IS NULL OR id > CAST(:after_id AS uuid)) "
     "ORDER BY id LIMIT :limit"
 )
-_SET_FIELDS = (
+_UPDATE = sa.text(
+    "UPDATE drawings SET "
     "symbol = :symbol, layout_id = CAST(:layout AS uuid), tool = :tool, "
     "geometry = CAST(:geometry AS jsonb), style = CAST(:style AS jsonb), label = :label, "
     "locked = :locked, visible = :visible, z_index = :z_index, "
-    f"anchor_start = :anchor_start, anchor_end = :anchor_end, {_BUMP}"
-)
-_UPDATE = sa.text(
-    f"UPDATE drawings SET {_SET_FIELDS} WHERE id = CAST(:id AS uuid) AND {_OWNER} "  # noqa: S608 -- only static module constants are interpolated
+    "anchor_start = :anchor_start, anchor_end = :anchor_end, "
+    "updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond') "
+    "WHERE id = CAST(:id AS uuid) AND owner_user_id = CAST(:owner AS uuid) "
     "AND deleted_at IS NULL "
     "AND (CAST(:if_match AS timestamptz) IS NULL OR updated_at = CAST(:if_match AS timestamptz)) "
-    f"RETURNING {DRAWING_COLUMNS}"
+    "RETURNING "
+    "id::text AS id, owner_user_id::text AS owner_user_id, symbol, layout_id::text AS layout_id, "
+    "tool, geometry, style, label, locked, visible, z_index, created_at, updated_at"
 )
 _SOFT_DELETE = sa.text(
-    f"UPDATE drawings SET deleted_at = now(), {_BUMP} "  # noqa: S608 -- only static module constants are interpolated
-    f"WHERE id = CAST(:id AS uuid) AND {_OWNER} AND deleted_at IS NULL"
+    "UPDATE drawings SET deleted_at = now(), "
+    "updated_at = greatest(clock_timestamp(), updated_at + interval '1 microsecond') "
+    "WHERE id = CAST(:id AS uuid) AND owner_user_id = CAST(:owner AS uuid) "
+    "AND deleted_at IS NULL"
 )
 _SNAPSHOT = sa.text(
     "SELECT id::text AS id, owner_user_id::text AS owner_user_id, deleted_at, updated_at "
