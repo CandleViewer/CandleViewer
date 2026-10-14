@@ -46,3 +46,10 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
     assert (bud._tracked, bud._inflight_cap) == (71, 29)
     flush = app.state.audit_budget_flush
     assert flush._budget is bud and flush._interval_s == 19.0  # one budget, ticked by the task
+
+
+def test_real_audit_backend_caps_reads_with_the_global_setting() -> None:
+    svc = app_mod._build_audit(
+        Settings(storage_backend="real", audit_query_global_max_concurrent=3)
+    )
+    assert svc._repository._read_slots == 3  # constructed only; nothing connects

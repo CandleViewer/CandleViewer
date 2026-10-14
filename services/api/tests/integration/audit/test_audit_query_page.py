@@ -2,9 +2,10 @@
 
 Covers the repository-level AC: the caller's scope applied in the SQL (an `actor_user_id`
 naming another user is narrowed, never widened), each filter shape against real types
-(uuid, inet, enums, text[], timestamptz, full text), `to` exclusive, and keyset paging over
+(uuid, inet, enums, text[], timestamptz, full text), `to` exclusive, keyset paging over
 `(event_ts DESC, id DESC)` that returns every pre-existing row exactly once while rows
-append. Rows go in through the repository's own `insert` (the single audit writer path).
+append, and the page's `chain_verified` agreeing with the `audit_chain()` trigger. Rows go
+in through the repository's own `insert` (the single audit writer path).
 
 Not run locally (no docker); exercised by the CI integration job (testcontainers).
 """
@@ -25,7 +26,11 @@ import psycopg
 import pytest
 from testcontainers.postgres import PostgresContainer
 
-from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.audit.query import AuditQueryService
+from candleviewer.storage.repositories.audit_sqlalchemy import (
+    CHAIN_FIELD_MAX_CHARS,
+    SqlAlchemyAuditRepository,
+)
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -159,3 +164,27 @@ async def test_keyset_paging_returns_each_row_once_while_rows_append(
 
 def _late(minutes: int) -> str:
     return (_T0 + timedelta(minutes=minutes, seconds=30)).isoformat()
+
+
+async def test_page_chain_check_agrees_with_the_trigger(
+    repo: SqlAlchemyAuditRepository, pg_dsn: str
+) -> None:
+    await _seed(repo, "it_chain", 6)
+    svc = AuditQueryService(repo)
+    try:
+        page = await svc.query(restrict_to_actor=None, subject_type="it_chain")
+        assert page.chain_verified and page.meta.count == 6
+        blob = {"blob": "x" * CHAIN_FIELD_MAX_CHARS}  # its rendering is over the cap
+        await repo.insert(_row("it_chain_big", 0, after_state=blob))
+        big = await svc.query(restrict_to_actor=None, subject_type="it_chain_big")
+        assert big.meta.count == 1 and not big.chain_verified  # unverified, never verified
+        victim = page.items[2].id
+        with psycopg.connect(pg_dsn.replace("+asyncpg", ""), autocommit=True) as conn:
+            conn.execute("ALTER TABLE audit_log DISABLE TRIGGER trg_audit_append")
+            conn.execute("UPDATE audit_log SET reason = 'forged' WHERE id = %s", (victim,))
+            conn.execute("ALTER TABLE audit_log ENABLE TRIGGER trg_audit_append")
+        assert not (await svc.query(restrict_to_actor=None, subject_type="it_chain")).chain_verified
+        newer = await svc.query(restrict_to_actor=None, subject_type="it_chain", limit=2)
+        assert newer.chain_verified  # the rows above the altered one still check out
+    finally:
+        svc.close()

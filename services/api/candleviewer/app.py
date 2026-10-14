@@ -429,7 +429,8 @@ def _build_audit(settings: Settings) -> AuditHandle:
         return build_audit_service()
     return build_audit_service(
         SqlAlchemyAuditRepository(
-            SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "audit")
+            SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "audit"),
+            read_slots=settings.audit_query_global_max_concurrent,
         )
     )
 

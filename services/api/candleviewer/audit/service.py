@@ -74,6 +74,8 @@ class AuditService:
         if self._writer is not None:
             await self._writer.stop(grace_s)
             self._writer = None
+        if self._query is not None:
+            self._query.close()
         self._query = None
         self._started = False
 

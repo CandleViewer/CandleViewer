@@ -215,6 +215,10 @@ class Settings(BaseSettings):
     audit_query_max_concurrent: int = Field(default=2, ge=1)
     # Capped at the relational pool's own 30 s statement timeout.
     audit_query_timeout_ms: int = Field(default=4000, ge=1, le=30_000)
+    # Audit page reads in flight in the process; past it a read is 503 at once. At most the
+    # audit pool's 10 base connections, so the audit writer always has connections left.
+    # One slot is kept for the Owner, so at least 2: one for the Owner, one for others.
+    audit_query_global_max_concurrent: int = Field(default=4, ge=2, le=10)
     # Per-user audit record budget (same contract). The owner has a separate, larger cap.
     audit_record_budget_per_hour: int = Field(default=120, ge=1)
     audit_record_budget_owner_per_hour: int = Field(default=600, ge=1)

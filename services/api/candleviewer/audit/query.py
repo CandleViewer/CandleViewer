@@ -13,12 +13,14 @@ breaking the link, ticket AC "Tampering is detected and located").
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from candleviewer.audit.cursor import AuditCursor, encode_cursor
+from candleviewer.audit.hashing import ChainHasher
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
     AuditEntry,
@@ -73,14 +75,45 @@ def _canonical_hash(prev_hash: str, row: dict[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _page_chain_verified(rows: list[dict[str, Any]]) -> bool:
+    """Design §5 on a page: every row's hashed fields recompute to its `entry_hash`, and its
+    `prev_hash` is the `entry_hash` of the row before it in the chain (genesis for the
+    first), whether or not that row is on the page. A row whose canonical form was not
+    fetched in full (`chain` is `None`, over the render caps) is unverified, never
+    verified. This proves the returned rows, not the rest of the chain (`verify` does).
+
+    So `False` means either that a row or a link does not check out, or that the page was
+    not fully checked because a rendering or the page is over the render caps. It is not by
+    itself evidence of tampering: a client should offer `verify` over the range rather
+    than report one. On a Manager's page (only its own entries), a `False` from the caps
+    also tells it that a hashed field it cannot see renders to more than 16 Ki
+    characters, or the page to more than 4 Mi: one bit of size, accepted in the security
+    review of the query slice, as nothing depends on the content of hidden fields."""
+    for row in rows:
+        chain = row["chain"]
+        if chain is None:
+            return False
+        expected_prev = chain["chain_prev_hash"] or _GENESIS_HASH
+        if row["prev_hash"] != expected_prev:
+            return False
+        if _canonical_hash(expected_prev, chain) != row["entry_hash"]:
+            return False
+    return True
+
+
 class AuditQueryService:
     """Backs the three `/admin/audit*` endpoints. Constructed with the same
     `RelationalRepository` the `AuditWriter` uses — read-only queries only,
     never an INSERT/UPDATE/DELETE (the DB grants forbid the latter two
-    anyway)."""
+    anyway). A page's chain check runs on `hasher`, a bounded executor of its
+    own; `close()` shuts it down."""
 
-    def __init__(self, repository: AuditRepository) -> None:
+    def __init__(self, repository: AuditRepository, hasher: ChainHasher | None = None) -> None:
         self._repository = repository
+        self._hasher = hasher if hasher is not None else ChainHasher()
+
+    def close(self) -> None:
+        self._hasher.shutdown()
 
     async def query(
         self,
@@ -99,6 +132,7 @@ class AuditQueryService:
         limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
         ip: str | None = None,
         timeout_ms: int | None = None,
+        owner: bool = False,
     ) -> AuditPage:
         """`limit` is validated to 1..500 by `AuditQueryRequest`
         (`extra="forbid"`); out-of-range values raise `ValidationError`
@@ -111,7 +145,8 @@ class AuditQueryService:
         resolved (`None` only for the Owner's raw view, else the caller's own
         user id), and the repository applies it in the SQL of every page.
         `after` is the decoded cursor; `meta.next_cursor` names the last
-        entry returned when more entries follow."""
+        entry returned when more entries follow. `owner` (the principal's
+        `is_owner`, SR-017) lets the read use the slot kept for the Owner."""
         req = AuditQueryRequest.model_validate(
             {
                 "actor_user_id": actor_user_id,
@@ -143,10 +178,14 @@ class AuditQueryService:
             after=None if after is None else (after.ts, after.id),
             limit=limit + 1,
             timeout_ms=timeout_ms,
+            owner=owner,
         )
 
         has_more = len(rows) > limit
         rows = rows[:limit]
+        # On the full rows, before any projection, and off the event loop. A refusal
+        # (`ChainHasherBusy`) or cancellation serves nothing.
+        chain_verified = await self._hasher.run(functools.partial(_page_chain_verified, rows))
         items = [
             AuditEntry(
                 id=row["id"],
@@ -168,7 +207,7 @@ class AuditQueryService:
         next_cursor = None if last is None else encode_cursor(AuditCursor(last.ts, last.id))
         return AuditPage(
             items=items,
-            chain_verified=True,
+            chain_verified=chain_verified,
             meta=AuditPageMeta(next_cursor=next_cursor, has_more=has_more, count=len(items)),
         )
 
