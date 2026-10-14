@@ -5,7 +5,8 @@ runs per request through `auth.scopes.enforce()`, each denial audited as `rbac.d
 `workspaces:read` to list, `workspaces:write` to write. `scope: self`: every statement is filtered
 by the caller; a missing, deleted or foreign drawing is the same 404, and a foreign live id on
 PUT/DELETE is also audited (`object_kind="drawing"`). Drawing writes are not audited (not a C-2.9
-action). Bodies are read raw so byte and depth caps run before pydantic; no content is logged.
+action). Bodies are read raw so byte, depth and batch-size caps run before pydantic; no content is
+logged.
 """
 
 import base64
@@ -25,8 +26,14 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from candleviewer.api.drawings_models import (
+    MAX_BATCH_BODY_BYTES,
+    MAX_BATCH_OPS,
     MAX_JSON_DEPTH,
     MAX_SINGLE_BODY_BYTES,
+    BatchCreateIn,
+    BatchDeleteIn,
+    BatchIn,
+    BatchUpdateIn,
     DrawingIn,
     format_errors,
 )
@@ -35,15 +42,21 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.ingestion.ticker_stream import uuid7
+from candleviewer.observability.metrics import BoundedMetric
 from candleviewer.observability.redaction import redact_structure
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.drawings import (
+    BatchOp,
+    BatchOpFailed,
+    CreateOp,
+    DeleteOp,
     DrawingFields,
     DrawingIdUnavailableError,
     DrawingNotFoundError,
     DrawingRepository,
     DrawingRow,
     DrawingVersionConflictError,
+    UpdateOp,
     format_token,
 )
 from candleviewer.ws.limits import json_depth_exceeds
@@ -65,10 +78,25 @@ _MAX_CURSOR: Final = 512
 _TOKEN: Final = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z")
 _PERMISSIONS: Final = {p.value: p for p in Permission}
 _LENGTH: Final = re.compile(r"[0-9]{1,19}")
+_BATCH_RULES: Final = {
+    "target_unavailable": "The target drawing is missing, deleted or not yours.",
+    "version_conflict": "The drawing was changed by another session; reload and retry.",
+    "id_unavailable": "This id is already used; create the drawing under a new id.",
+}
 
 
 class _Emitter(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
+
+
+class DrawingsMetricsLike(Protocol):
+    """C4's `DrawingsMetrics` (`app.state.drawings_metrics`); the router records these two."""
+
+    @property
+    def batch_ops(self) -> BoundedMetric: ...  # cv_drawings_batch_ops (histogram)
+
+    @property
+    def conflicts(self) -> BoundedMetric: ...  # cv_drawings_conflicts_total{rule}
 
 
 class _Resolver(Protocol):
@@ -184,6 +212,26 @@ def _parse[M: BaseModel](model: type[M], text: str) -> M:
         raise _invalid(format_errors(exc)) from None
 
 
+def _count_ops(text: str) -> None:
+    """413 past `MAX_BATCH_OPS` operations, counted before any per-operation validation."""
+    try:
+        decoded = json.loads(text)
+    except ValueError:
+        return  # not JSON: the model reports it as a 422
+    ops = decoded.get("operations") if isinstance(decoded, dict) else None
+    if isinstance(ops, list) and len(ops) > MAX_BATCH_OPS:
+        msg = f"Batch carries {len(ops)} operations; the maximum is {MAX_BATCH_OPS}."
+        raise _Problem("payload_too_large", msg)
+
+
+def _op(op: BatchCreateIn | BatchUpdateIn | BatchDeleteIn, new_id: Callable[[], UUID]) -> BatchOp:
+    if isinstance(op, BatchCreateIn):
+        return CreateOp(str(op.id or new_id()), _fields(op.drawing))
+    if isinstance(op, BatchUpdateIn):
+        return UpdateOp(str(op.id), op.if_match, _fields(op.drawing))
+    return DeleteOp(str(op.id), op.if_match)
+
+
 def _drawing_id(raw: str) -> str:
     """Canonical lowercase uuid; anything else violates the `DrawingId` parameter (422)."""
     try:
@@ -278,12 +326,18 @@ def make_drawings_router(
     *,
     clock: Callable[[], float] = time.time,
     new_id: Callable[[], UUID] = _new_id,
+    metrics: DrawingsMetricsLike | None = None,
 ) -> APIRouter:
     """`audit` is mandatory (a denial must leave its `rbac.denied` record). No resolver (no
-    identity store: nothing can verify a session) fails closed with 401; no store with 503."""
+    identity store: nothing can verify a session) fails closed with 401; no store with 503.
+    `metrics` (C4) records batch sizes and conflicts by rule; `None` records nothing."""
     if audit is None:
         raise TypeError("make_drawings_router: an audit emitter is required")
     router = APIRouter(tags=["workspaces"], route_class=_ProblemRoute)
+
+    def conflict(rule: str) -> None:
+        if metrics is not None:
+            metrics.conflicts.labels(rule).inc()
 
     async def caller(request: Request, permission: Permission) -> AuditPrincipal:
         got: object = None if principal_resolver is None else principal_resolver.resolve(request)
@@ -361,6 +415,7 @@ def make_drawings_router(
         try:
             row = await store().create(owner, str(new_id()), _fields(body))
         except DrawingIdUnavailableError:
+            conflict("id_unavailable")
             raise _Problem("conflict", "Id collision; retry the request.") from None
         _log().info("drawing_created", user_id=owner, symbol=row.symbol, op_count=1)
         return _respond(row, 201)
@@ -378,6 +433,7 @@ def make_drawings_router(
         if row is None:
             raise await not_found(principal, did)
         if if_match is not None and if_match != row.updated_at:
+            conflict("version_conflict")
             raise _stale()  # the store re-checks atomically
         moved = [f for f in ("symbol", "tool") if getattr(body, f) != getattr(row, f)]
         if moved:
@@ -385,6 +441,7 @@ def make_drawings_router(
         try:
             new = await store().update(owner, did, _fields(body), if_match=if_match)
         except DrawingVersionConflictError:
+            conflict("version_conflict")
             raise _stale() from None
         except DrawingNotFoundError:
             raise _not_found() from None
@@ -402,7 +459,39 @@ def make_drawings_router(
         _log().info("drawing_deleted", user_id=owner, op_count=1)
         return Response(status_code=204)
 
+    @router.post("/drawings/batch")
+    async def batch_drawings(request: Request) -> Response:
+        owner = str((await caller(request, Permission.WORKSPACES_WRITE)).user_id)
+        text = _text(await _read_capped(request, MAX_BATCH_BODY_BYTES))
+        _count_ops(text)
+        body = _parse(BatchIn, text)
+        await no_layouts(owner, [
+            (f"operations.{i}.drawing.layout_id", op.drawing.layout_id)
+            for i, op in enumerate(body.operations) if not isinstance(op, BatchDeleteIn)
+        ])  # fmt: skip
+        ops = [_op(op, new_id) for op in body.operations]
+        if metrics is not None:
+            metrics.batch_ops.child().observe(len(ops))
+        try:
+            res = await store().apply_batch(owner, ops)
+        except BatchOpFailed as exc:
+            field = f"operations.{exc.index}"
+            if exc.rule == "immutable_field":  # as on PUT; checked under the row lock (C2)
+                msg = "symbol and tool cannot change"
+                raise _invalid([_rule(f"{field}.drawing", exc.rule, msg)]) from None
+            conflict(exc.rule)
+            _log().info("drawings_batch_conflict", user_id=owner, op_count=len(ops), rule=exc.rule)
+            msg = _BATCH_RULES.get(exc.rule, "This operation cannot be applied.")
+            errs = [_rule(field, exc.rule, msg)]
+            raise _Problem("conflict", "The batch was rolled back.", errors=errs) from None
+        _log().info("drawings_batch_applied", user_id=owner, op_count=len(ops))
+        created, updated = [_dump(r) for r in res.created], [_dump(r) for r in res.updated]
+        out = {"created": created, "updated": updated, "deleted": list(res.deleted)}
+        return JSONResponse(out)
+
     return router
 
 
-__all__ = ["CURSOR_TTL_S", "decode_cursor", "encode_cursor", "make_drawings_router"]
+__all__ = [
+    "CURSOR_TTL_S", "DrawingsMetricsLike", "decode_cursor", "encode_cursor", "make_drawings_router",
+]  # fmt: skip
