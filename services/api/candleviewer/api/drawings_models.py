@@ -1,4 +1,4 @@
-"""Request validation primitives for ``/drawings`` (E14-T01, #357).
+"""Request validation for the ``/drawings`` API (E14-T01, #357; decision record on the ticket).
 
 WHY this is its own pure module: the router, the repository and the OpenAPI contract all have to
 agree on exactly one definition of "a valid drawing". Keeping the rules here, with no I/O, no
@@ -17,8 +17,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Annotated, Any, Final, Literal, get_args
+from uuid import UUID
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -26,9 +28,11 @@ from pydantic import (
     StrictFloat,
     StrictInt,
     StrictStr,
+    ValidationError,
     field_validator,
+    model_validator,
 )
-from pydantic_core import PydanticCustomError
+from pydantic_core import InitErrorDetails, PydanticCustomError
 
 Tool = Literal[
     "trendline",
@@ -96,7 +100,18 @@ POINT_COUNTS: Final[dict[str, tuple[int, int]]] = {
     "polyline": (2, 100),
 }
 
+MAX_BATCH_OPS: Final = 200
+MAX_SINGLE_BODY_BYTES: Final = 64 * 1024
+MAX_BATCH_BODY_BYTES: Final = 1024 * 1024
+MAX_JSON_DEPTH: Final = 16
+
+_TEXT_TOOLS: Final = frozenset({"text", "callout"})
+_LEVEL_TOOLS: Final = frozenset({"fib_retracement", "fib_extension", "fib_timezone"})
+_BAND_TOOLS: Final = frozenset({"anchored_vwap"})
 _MAX_TEXT: Final = 1000
+_MAX_LABEL: Final = 120
+_TAGS: Final = frozenset({"create", "update", "delete"})
+
 _CFG: Final = ConfigDict(frozen=True, extra="forbid")
 
 # --- sanitising -----------------------------------------------------------------------------
@@ -147,6 +162,17 @@ def _no_null(value: object) -> object:
     if value is None:
         raise PydanticCustomError("null_not_allowed", "Value must be omitted rather than null")
     return value
+
+
+def _fail(errors: Iterable[tuple[tuple[str | int, ...], str, str]], title: str) -> None:
+    """Raise one ValidationError carrying several rule-named line errors."""
+    raise ValidationError.from_exception_data(
+        title,
+        [
+            InitErrorDetails(type=PydanticCustomError(rule, msg), loc=loc, input=None)
+            for loc, rule, msg in errors
+        ],
+    )
 
 
 # --- points ---------------------------------------------------------------------------------
@@ -275,3 +301,197 @@ class DrawingStyleIn(BaseModel):
     @classmethod
     def _no_null_style(cls, v: object) -> object:
         return _no_null(v)  # only fill_colour may be an explicit null (= "no fill")
+
+
+# --- drawing --------------------------------------------------------------------------------
+class DrawingIn(BaseModel):
+    """A full drawing as sent on create/update (PUT is full replacement)."""
+
+    model_config = _CFG
+    symbol: Annotated[StrictStr, Field(pattern=r"^[A-Z0-9]{2,20}USDT$", max_length=20)]
+    tool: Tool
+    layout_id: UUID | None = None
+    geometry: DrawingGeometryIn
+    style: DrawingStyleIn = Field(default_factory=DrawingStyleIn)
+    label: StrictStr | None = None
+    locked: StrictBool = False
+    visible: StrictBool = True
+    z_index: Annotated[StrictInt, Field(ge=-32768, le=32767)] = 0
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _clean_label(cls, v: object) -> object:
+        return _clean(v, allow_newline=False)
+
+    @field_validator("label", mode="after")
+    @classmethod
+    def _label_length(cls, v: str | None) -> str | None:
+        if v is not None and not v:
+            raise PydanticCustomError(
+                "string_too_short", "Label must be at least 1 character after sanitising"
+            )
+        if v is not None and len(v) > _MAX_LABEL:
+            raise PydanticCustomError(
+                "string_too_long", "Label must be at most {n} characters", {"n": _MAX_LABEL}
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _tool_rules(self) -> DrawingIn:
+        """Cross-field rules: point count and tool-specific keys depend on ``tool``."""
+        geo, tool = self.geometry, self.tool
+        errs: list[tuple[tuple[str | int, ...], str, str]] = []
+        lo, hi = POINT_COUNTS[tool]
+        if not lo <= len(geo.points) <= hi:
+            want = f"exactly {lo}" if lo == hi else f"{lo} to {hi}"
+            errs.append((("geometry", "points"), "tool_point_count", f"{tool} needs {want} points"))
+        if tool in _TEXT_TOOLS:
+            if geo.text is None:
+                errs.append((("geometry", "text"), "text_required", f"{tool} requires text"))
+        elif geo.text is not None:
+            errs.append(_not_allowed("text", tool))
+        if geo.levels is not None and tool not in _LEVEL_TOOLS:
+            errs.append(_not_allowed("levels", tool))
+        if geo.bands is not None and tool not in _BAND_TOOLS:
+            errs.append(_not_allowed("bands", tool))
+        if errs:
+            _fail(errs, "DrawingIn")
+        return self
+
+    def db_values(self) -> dict[str, Any]:
+        """Column values for the repository's ``DrawingFields`` (keys are exactly those fields).
+
+        ``geometry`` holds only the keys the client sent, with ``p``/``t`` as the original
+        strings, so reads return precisely what was written (no float round-trip of prices).
+        """
+        geo = self.geometry
+        geometry: dict[str, Any] = {"points": [{"t": p.t, "p": p.p} for p in geo.points]}
+        for key in ("extend_left", "extend_right", "text"):
+            if getattr(geo, key) is not None:
+                geometry[key] = getattr(geo, key)
+        if geo.levels is not None:
+            geometry["levels"] = list(geo.levels)
+        if geo.bands is not None:
+            geometry["bands"] = list(geo.bands)
+        start, end = anchors(geo.points)
+        return {
+            "symbol": self.symbol,
+            "layout_id": self.layout_id,
+            "tool": self.tool,
+            "geometry": geometry,
+            "style": self.style.model_dump(exclude_unset=True),
+            "label": self.label,
+            "locked": self.locked,
+            "visible": self.visible,
+            "z_index": self.z_index,
+            "anchor_start": start,
+            "anchor_end": end,
+        }
+
+
+def _not_allowed(key: str, tool: str) -> tuple[tuple[str | int, ...], str, str]:
+    return (
+        ("geometry", key),
+        "property_not_allowed_for_tool",
+        f"{key} is not allowed for {tool}",
+    )
+
+
+# --- batch ----------------------------------------------------------------------------------
+def _require_str(v: object) -> object:
+    """``if_match`` must be a JSON string (pydantic would otherwise accept unix-epoch numbers)."""
+    if not isinstance(v, str):
+        raise PydanticCustomError("string_type", "Input should be a string")
+    return v
+
+
+class BatchCreateIn(BaseModel):
+    """Create op; the id is optional (the server mints one when absent)."""
+
+    model_config = _CFG
+    op: Literal["create"]
+    id: UUID | None = None
+    drawing: DrawingIn
+
+
+class BatchUpdateIn(BaseModel):
+    """Update op: full replacement guarded by the previous ``updated_at`` token."""
+
+    model_config = _CFG
+    op: Literal["update"]
+    id: UUID
+    if_match: AwareDatetime
+    drawing: DrawingIn
+
+    _str_only = field_validator("if_match", mode="before")(staticmethod(_require_str))
+
+
+class BatchDeleteIn(BaseModel):
+    """Delete op, guarded by the previous ``updated_at`` token."""
+
+    model_config = _CFG
+    op: Literal["delete"]
+    id: UUID
+    if_match: AwareDatetime
+
+    _str_only = field_validator("if_match", mode="before")(staticmethod(_require_str))
+
+
+type BatchOp = Annotated[BatchCreateIn | BatchUpdateIn | BatchDeleteIn, Field(discriminator="op")]
+
+
+class BatchIn(BaseModel):
+    """``POST /drawings/batch`` body: 1..200 ops, each id used at most once."""
+
+    model_config = _CFG
+    operations: tuple[BatchOp, ...]
+
+    @field_validator("operations", mode="after")
+    @classmethod
+    def _count(cls, v: tuple[Any, ...]) -> tuple[Any, ...]:
+        """1..200 ops (after-validator so one bad op is not also reported as 'too short')."""
+        if not v:
+            raise PydanticCustomError("too_short", "At least 1 operation is required")
+        if len(v) > MAX_BATCH_OPS:
+            raise PydanticCustomError(
+                "too_long", "At most {n} operations are allowed", {"n": MAX_BATCH_OPS}
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _unique_ids(self) -> BatchIn:
+        """An id may appear once per batch: two ops on one row have no defined order of effect."""
+        seen: set[UUID] = set()
+        errs: list[tuple[tuple[str | int, ...], str, str]] = []
+        for i, op in enumerate(self.operations):
+            if op.id is None:
+                continue
+            if op.id in seen:
+                errs.append((("operations", i, "id"), "duplicate_id", "Id used more than once"))
+            seen.add(op.id)
+        if errs:
+            _fail(errs, "BatchIn")
+        return self
+
+
+# --- error formatting -----------------------------------------------------------------------
+def format_errors(
+    exc: ValidationError, *, limit: int = 20, prefix: str = ""
+) -> list[dict[str, str]]:
+    """Map a ValidationError to the API's ``errors[]`` entries (``field``, ``rule``, ``message``).
+
+    WHY: the problem+json body must be bounded (``limit``), must not echo client input, and
+    must use dot-joined field paths. pydantic puts the discriminated-union tag (``create``/
+    ``update``/``delete``) into ``loc`` right after the list index; it is an internal detail,
+    so it is dropped to give ``operations.3.drawing.tool``.
+    """
+    out: list[dict[str, str]] = []
+    for err in exc.errors(include_url=False, include_context=False, include_input=False)[:limit]:
+        parts: list[str] = [prefix] if prefix else []
+        prev: object = None
+        for tok in err["loc"]:
+            if not (isinstance(prev, int) and tok in _TAGS):
+                parts.append(str(tok))
+            prev = tok
+        out.append({"field": ".".join(parts), "rule": err["type"], "message": err["msg"]})
+    return out
