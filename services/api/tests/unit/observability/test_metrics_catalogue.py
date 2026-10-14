@@ -32,7 +32,7 @@ _UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|m
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "8de548ba7470a01b1bad1b878a6694d74b9fde2ea3c100e9584ec9e6c1e2cd9e"
+GOLDEN_CATALOGUE_SHA256 = "2abcb975a2b207b8e9883066967dea66eeb1a5b82b566829515225078c175bd9"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -263,3 +263,16 @@ def test_drawings_rows_catalogue_cap_equals_the_closed_tool_set() -> None:
 
     spec = next(s for s in CATALOGUE if s.name == "cv_drawings_rows")
     assert spec.max_series == len(TOOLS)
+
+
+def test_workspaces_catalogue_caps_equal_the_closed_label_sets() -> None:
+    """The E15-T01 label sets are closed; app.py derives each cap from the same constants."""
+    from candleviewer.api.workspaces import OPERATIONS
+    from candleviewer.storage.retention.workspaces_tasks import KINDS, USER_BUCKETS
+
+    caps = {s.name: s.max_series for s in CATALOGUE}
+    assert caps["cv_workspace_users"] == len(USER_BUCKETS)
+    assert caps["cv_workspaces_purged_total"] == caps["cv_workspace_conflicts_total"] == len(KINDS)
+    assert caps["cv_workspace_request_seconds"] == len(OPERATIONS)
+    panes = next(s for s in CATALOGUE if s.name == "cv_layout_panes")
+    assert panes.buckets == (0, 1, 2, 4, 8, 12, 16)

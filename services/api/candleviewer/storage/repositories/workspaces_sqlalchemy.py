@@ -229,11 +229,17 @@ _PURGE_WORKSPACES = sa.text(
     "AND deleted_at < now() - make_interval(days => CAST(:days AS integer)) "
     "ORDER BY deleted_at LIMIT :limit)"
 )
+_USERS_BY_BUCKET = sa.text(
+    "SELECT CASE WHEN n = 1 THEN '1' WHEN n <= 4 THEN '2-4' WHEN n <= 8 THEN '5-8' "
+    "WHEN n <= 16 THEN '9-16' ELSE '17-32' END AS bucket, count(*) AS users "
+    "FROM (SELECT count(*) AS n FROM workspaces WHERE deleted_at IS NULL GROUP BY user_id) t "
+    "GROUP BY 1"
+)
 
 #: Statements allowed to omit the `owner = :owner` filter (see module docstring); tested.
 UNSCOPED = frozenset(
     {"_EXISTS_OTHER_WS", "_EXISTS_OTHER_LAY", "_CHART_OPEN", "_CHART_SYMBOLS", "_PURGE_LAYOUTS",
-     "_PURGE_WORKSPACES"}
+     "_PURGE_WORKSPACES", "_USERS_BY_BUCKET"}
 )  # fmt: skip
 
 
@@ -495,6 +501,11 @@ class SqlAlchemyWorkspaceRepository:
 
     # ---- retention -----------------------------------------------------------------------
     async def purge_deleted(self, older_than_days: int, limit: int) -> int:
+        layouts, workspaces = await self.purge_deleted_counts(older_than_days, limit)
+        return layouts + workspaces
+
+    async def purge_deleted_counts(self, older_than_days: int, limit: int) -> tuple[int, int]:
+        """`(layouts, workspaces)` hard-deleted; `limit` applies to each statement (S6 metrics)."""
         if older_than_days < 1 or not 1 <= limit <= MAX_PURGE_BATCH:
             raise ValueError("purge needs older_than_days >= 1 and 1 <= limit <= MAX_PURGE_BATCH")
         params = {"days": older_than_days, "limit": limit}
@@ -502,7 +513,13 @@ class SqlAlchemyWorkspaceRepository:
             layouts = await uow.session.execute(_PURGE_LAYOUTS, params)
             workspaces = await uow.session.execute(_PURGE_WORKSPACES, params)
             await uow.commit()
-        return int(getattr(layouts, "rowcount", 0)) + int(getattr(workspaces, "rowcount", 0))
+        return int(getattr(layouts, "rowcount", 0)), int(getattr(workspaces, "rowcount", 0))
+
+    async def count_users_by_workspace_bucket(self) -> dict[str, int]:
+        """Users per live-workspace-count bucket, all owners (gauge sample; static SQL)."""
+        async with self._relational.unit_of_work() as uow:
+            res = await uow.session.execute(_USERS_BY_BUCKET)
+            return {str(r["bucket"]): int(r["users"]) for r in res.mappings()}
 
 
 __all__ = ["MAX_PURGE_BATCH", "UNSCOPED", "SqlAlchemyWorkspaceRepository"]

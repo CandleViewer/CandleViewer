@@ -25,7 +25,7 @@ def test_the_statement_set_is_pinned() -> None:
         "_DRAWINGS_SOFT_DELETE", "_WS_LIVE", "_LAY_COUNT", "_LAY_LOCK", "_LAY_CLEAR_DEFAULT",
         "_LAY_INSERT", "_LAY_UPDATE", "_LAY_GET", "_LAY_LIST", "_PANES", "_PANES_DELETE",
         "_PANES_INSERT", "_IS_LIVE_LAYOUT", "_EXISTS_OTHER_WS", "_EXISTS_OTHER_LAY",
-        "_CHART_OPEN", "_CHART_SYMBOLS", "_PURGE_LAYOUTS", "_PURGE_WORKSPACES",
+        "_CHART_OPEN", "_CHART_SYMBOLS", "_PURGE_LAYOUTS", "_PURGE_WORKSPACES", "_USERS_BY_BUCKET",
     }  # fmt: skip
 
 
@@ -38,10 +38,10 @@ def test_every_statement_is_owner_scoped_except_the_unscoped_ones(name: str) -> 
         assert any(m in text for m in _OWNER_MARKERS), text
 
 
-def test_unscoped_statements_are_exactly_the_documented_six() -> None:
+def test_unscoped_statements_are_exactly_the_documented_seven() -> None:
     assert mod.UNSCOPED == {
         "_EXISTS_OTHER_WS", "_EXISTS_OTHER_LAY", "_CHART_OPEN", "_CHART_SYMBOLS",
-        "_PURGE_LAYOUTS", "_PURGE_WORKSPACES",
+        "_PURGE_LAYOUTS", "_PURGE_WORKSPACES", "_USERS_BY_BUCKET",
     }  # fmt: skip
     assert set(mod.UNSCOPED) <= set(_STATEMENTS)
 

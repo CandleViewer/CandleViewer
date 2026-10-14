@@ -75,3 +75,13 @@ class RetentionSchedule:
         if not self.enabled:
             return {}
         return {"drawings_purge": self.retention_cron}
+
+    def workspaces_jobs(self) -> dict[str, str]:
+        """Soft-deleted `workspaces`/`layouts` purge (E15-T01): 90 d, empty when off.
+
+        The value is the retention cron for reference only: the task is a fixed 24 h
+        interval loop (`WorkspacesPurgeTask`), not cron-driven, like `drawings_jobs()`.
+        """
+        if not self.enabled:
+            return {}
+        return {"workspaces_purge": self.retention_cron}

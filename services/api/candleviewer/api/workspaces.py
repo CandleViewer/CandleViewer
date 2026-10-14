@@ -38,6 +38,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.ingestion.ticker_stream import uuid7
+from candleviewer.observability.metrics import BoundedMetric
 from candleviewer.observability.redaction import redact_structure
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.workspaces import (
@@ -189,6 +190,27 @@ class _ProblemRoute(APIRoute):
                 ).response()
 
         return handler
+
+
+#: The closed `cv_workspace_request_seconds{operation}` set: the router's handler names.
+OPERATIONS: Final = (
+    "list_workspaces", "get_workspace", "create_workspace", "update_workspace",
+    "delete_workspace", "list_layout_presets", "list_layouts", "create_layout", "get_layout",
+    "update_layout", "delete_layout",
+)  # fmt: skip
+
+
+class WorkspacesMetricsLike(Protocol):
+    """`WorkspacesMetrics` (`app.state.workspaces_metrics`); the router records these three."""
+
+    @property
+    def conflicts(self) -> BoundedMetric: ...  # cv_workspace_conflicts_total{resource}
+
+    @property
+    def layout_panes(self) -> BoundedMetric: ...  # cv_layout_panes (histogram)
+
+    @property
+    def request_seconds(self) -> BoundedMetric: ...  # cv_workspace_request_seconds{operation}
 
 
 def _log() -> Any:
@@ -452,12 +474,42 @@ def make_workspaces_router(
     *,
     clock: Callable[[], float] = time.time,
     new_id: Callable[[], UUID] = _new_id,
+    metrics: WorkspacesMetricsLike | None = None,
+    timer: Callable[[], float] = time.perf_counter,
 ) -> APIRouter:
     """`audit` is mandatory (a denial must leave its `rbac.denied` record). No resolver (no
-    identity store: nothing can verify a session) fails closed with 401; no store with 503."""
+    identity store: nothing can verify a session) fails closed with 401; no store with 503.
+    `metrics` records 412s, panes per changed layout write and per-operation duration
+    (stands in for `http_request_duration_seconds` until platform gap #2421); `None` records
+    nothing."""
     if audit is None:
         raise TypeError("make_workspaces_router: an audit emitter is required")
-    router = APIRouter(tags=["workspaces"], route_class=_ProblemRoute)
+
+    class _TimedRoute(_ProblemRoute):
+        def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+            inner = super().get_route_handler()
+            op = self.name
+
+            async def handler(request: Request) -> Response:
+                started = timer()
+                try:
+                    return await inner(request)
+                finally:
+                    if metrics is not None and op in OPERATIONS:
+                        metrics.request_seconds.labels(op).observe(timer() - started)
+
+            return handler
+
+    router = APIRouter(tags=["workspaces"], route_class=_TimedRoute)
+
+    def stale(kind: _Kind) -> _Problem:
+        if metrics is not None:
+            metrics.conflicts.labels(kind).inc()
+        return _stale(kind)
+
+    def panes_written(count: int) -> None:
+        if metrics is not None:
+            metrics.layout_panes.child().observe(count)
 
     async def caller(request: Request, permission: Permission) -> AuditPrincipal:
         got: object = None if principal_resolver is None else principal_resolver.resolve(request)
@@ -560,7 +612,7 @@ def make_workspaces_router(
         except WorkspaceNotFoundError:
             raise await not_found(principal, "workspace", wid, "write") from None
         except WorkspaceVersionConflictError:
-            raise _stale("workspace") from None
+            raise stale("workspace") from None
         except WorkspaceConflictError as exc:
             raise _conflict(exc) from None
         _log().info("workspace_updated", user_id=owner, workspace_id=wid, changed=done.changed)
@@ -652,6 +704,7 @@ def make_workspaces_router(
             raise await miss(principal, wid, None, "write") from None
         except WorkspaceConflictError as exc:
             raise _conflict(exc) from None
+        panes_written(len(row.panes))
         _log().info("layout_created", user_id=owner, workspace_id=wid, layout_id=row.id,
                     pane_count=len(row.panes))  # fmt: skip
         return _respond(_dump_layout(row), row.token, 201)
@@ -689,9 +742,11 @@ def make_workspaces_router(
         except WorkspaceNotFoundError:
             raise await miss(principal, wid, lid, "write") from None
         except WorkspaceVersionConflictError:
-            raise _stale("layout") from None
+            raise stale("layout") from None
         except WorkspaceConflictError as exc:
             raise _conflict(exc) from None
+        if done.changed:
+            panes_written(len(done.row.panes))
         _log().info("layout_updated", user_id=owner, workspace_id=wid, layout_id=lid,
                     pane_count=len(done.row.panes), changed=done.changed)  # fmt: skip
         return _respond(_dump_layout(done.row), done.row.token)
@@ -724,4 +779,11 @@ def _idempotency_key(request: Request) -> None:
         _uuid("Idempotency-Key", raw)
 
 
-__all__ = ["CURSOR_TTL_S", "decode_cursor", "encode_cursor", "make_workspaces_router"]
+__all__ = [
+    "CURSOR_TTL_S",
+    "OPERATIONS",
+    "WorkspacesMetricsLike",
+    "decode_cursor",
+    "encode_cursor",
+    "make_workspaces_router",
+]
