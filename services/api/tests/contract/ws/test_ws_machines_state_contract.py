@@ -154,24 +154,49 @@ _SCOPES = {
     "user": {"alert", "replay", "session"},
     "none": {"recording", "book", "live_gate", "kill_switch"},
 }
-#: §6.4 rules the publisher must implement, pinned as text so they cannot quietly change.
-_RULES = (
-    "Each registry entry carries the immutable scope in the column above.",
-    "binds it when it builds the machine and again when it restores one.",
-    "An entry of a scoped kind that has no scope is refused to every role",
-    "reads the in-memory registry entry synchronously, never through an awaited lookup",
-    "stays self-scoped for every role, Owner included",
-    "Every RBAC change (§9.5) re-applies the whole row to each live subscription",
-    "records the full `ch` and one internal reason",
-)
 
 
-def test_scope_column_and_binding_rules_are_normative() -> None:
+def test_scope_column_binds_each_kind_to_its_scope_class() -> None:
     assert {k: {_kind(r) for r in KINDS if _scope(r) == k} for k in _SCOPES} == _SCOPES
-    for rule in _RULES:
-        assert rule in _S64, rule
+
+
+#: Rules the publisher must implement, pinned as text so they cannot quietly change (security
+#: review of #2438, rounds 2 and 3). All are §6.4 sentences except the §15.10 one.
+_RULES = {
+    "scope_is_immutable": "Each registry entry carries the immutable scope in the column above.",
+    "scope_bound": "builds the machine and again when it restores one.",
+    "scope_missing_refused": "An entry of a scoped kind that has no scope is refused to every role",
+    "scope_missing_counted": "The publisher counts and logs each such entry when it is published",
+    "scope_missing_metric": "`cv_machine_ws_scope_missing_total{entity_kind}` counts each payload",
+    "synchronous": "entry synchronously, never through an awaited lookup",
+    "self_kinds_include_owner": "stays self-scoped for every role, Owner included",
+    "role_change": "Every RBAC change (§9.5) re-applies the whole row",
+    "audit_reason_column": "one internal reason, in the `reason` column only",
+    "audit_fields_identical": "`outcome` and `severity` are identical for every reason",
+    "audit_server_side": "The reason stays server-side; the client sees only the codes above.",
+    "audit_no_tombstones": "so no tombstone of a removed entity is kept",
+    "pending_woken": "until the first publish on its topic wakes it",
+    "pending_never_retried": "subscription is never retried on inbound frames.",
+    "no_lease": "never takes an upstream or bar lease and never triggers auto-record",
+    "symbol_cap": "A `recording:` or `book:` entity counts toward the 40-symbol cap",
+    "registry_bound": "it is bounded by the live interpreters it mirrors",
+    "resubscribe_consistent": "`resubscribe_allowed` is `true` for an unscoped kind",
+    "schema_closes_per_kind": "the schema below closes `context_summary` per `machine_kind`",
+}
+
+
+@pytest.mark.parametrize("rule", sorted(_RULES))
+def test_rule_is_normative_text(rule: str) -> None:
+    section = _section("### 15.10 ", "## 16. ") if rule == "schema_closes_per_kind" else _S64
+    assert _RULES[rule] in section
+
+
+def test_check_order_is_permission_then_role_then_registry() -> None:
     steps = ["1. **Permission.**", "2. **Role.**", "3. **Registry and scope.**"]
-    assert sorted(steps, key=_S64.index) == steps  # the §6.4 check order
+    assert sorted(steps, key=_S64.index) == steps
+
+
+def test_unscoped_kinds_in_the_pending_rule_match_the_scope_column() -> None:
     unscoped = re.search(r"For an unscoped kind \(([^)]*)\), an entity with no entry is not", _S64)
     assert unscoped and set(_codes(unscoped.group(1))) == _SCOPES["none"]
 
