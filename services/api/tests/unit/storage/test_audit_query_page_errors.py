@@ -91,12 +91,13 @@ async def _page(rel: _Rel, timeout_ms: int | None = 50) -> list[dict[str, Any]]:
 
 async def test_query_page_sets_the_statement_timeout_then_reads() -> None:
     rel = _Rel()
-    assert await _page(rel) == [{"id": 1}]
+    assert await _page(rel) == [{"id": 1, "chain": {"id": 1}}]
     assert "set_config" in rel.statements[0] and "force_custom_plan" in rel.statements[0]
     assert "ORDER BY audit_log.event_ts DESC, audit_log.id DESC" in rel.statements[1]
+    assert "chain_prev_hash" in rel.statements[2]  # the page's chain material, same transaction
     unbounded = _Rel()
-    assert await _page(unbounded, timeout_ms=None) == [{"id": 1}]
-    assert len(unbounded.statements) == 1 and "set_config" not in unbounded.statements[0]
+    assert await _page(unbounded, timeout_ms=None) == [{"id": 1, "chain": {"id": 1}}]
+    assert not any("set_config" in s for s in unbounded.statements)
 
 
 @pytest.mark.parametrize(

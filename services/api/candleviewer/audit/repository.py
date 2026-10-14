@@ -46,6 +46,7 @@ class AuditRepository(Protocol):
         after: tuple[datetime, int] | None,
         limit: int,
         timeout_ms: int | None = None,
+        owner: bool = False,
     ) -> list[dict[str, Any]]:
         """Up to `limit` rows matching every supplied filter (AND), newest first by
         `(event_ts DESC, id DESC)`, starting strictly after the `after` position
@@ -57,10 +58,17 @@ class AuditRepository(Protocol):
         actor's rows are returned and `actor_user_id` is ignored (narrowed, never widened).
         It is `None` only for the Owner's view.
 
+        Each row also carries `chain`, the material for the page's chain check: the
+        renderings `_canonical_hash` reads and `chain_prev_hash` (the `entry_hash` of the row
+        before it by id, `None` for the first). `chain` is `None` when the form was not
+        fetched in full (a capped rendering, or past the page's cap).
+
         `timeout_ms` bounds the whole call, connection checkout included, and the
         statement (`statement_timeout`, transaction-local); an overrun raises the builtin
         `TimeoutError`. Any other database failure raises a storage error that carries only
-        the SQLSTATE, never the bound filters."""
+        the SQLSTATE, never the bound filters, as does a read refused because every read
+        slot of the process is in use. One slot is kept for the Owner's reads (`owner`, the
+        principal's `is_owner`, SR-017), so other users' reads can never take them all."""
         ...
 
     async def fetch_entry_hash(self, entry_id: int) -> str | None:

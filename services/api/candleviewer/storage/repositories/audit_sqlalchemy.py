@@ -11,6 +11,7 @@ neither module imports the other.
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import uuid
 from datetime import datetime
@@ -38,6 +39,26 @@ class AuditReadFailed(StorageTierUnavailable):
     def __init__(self, sqlstate: str | None) -> None:
         super().__init__(f"audit read failed (sqlstate {sqlstate or 'unknown'})")
         self.sqlstate = sqlstate
+
+
+class AuditReadBusy(StorageTierUnavailable):
+    """Every audit read slot is in use. The read fails closed at once (503) instead of
+    queueing for the connection pool that the audit writer also uses."""
+
+    def __init__(self) -> None:
+        super().__init__("audit read capacity reached")
+
+
+#: Audit page reads in flight per process (`audit_query_global_max_concurrent`); fewer than
+#: the pool's 10 base connections, so reads never take the connections the writer needs.
+#: One slot is kept for the Owner: other reads together hold at most `read_slots - 1`.
+DEFAULT_READ_SLOTS = 4
+#: Caps on what is fetched for a page's chain check. A rendering longer than
+#: `CHAIN_FIELD_MAX_CHARS` is cut by Postgres, and fetching stops once a page has used
+#: `CHAIN_PAGE_MAX_CHARS`; such rows get no canonical form and are never counted as verified.
+CHAIN_FIELD_MAX_CHARS = 16_384
+CHAIN_PAGE_MAX_CHARS = 4 * 1024 * 1024
+_CHAIN_CHUNK = 50
 
 
 _ADVISORY_LOCK_SQL = sa.text("SELECT pg_advisory_xact_lock(hashtext('audit_log'))")
@@ -126,6 +147,23 @@ _VERIFY_BATCH_SQL = sa.text(
     "ORDER BY id ASC LIMIT :limit"
 )
 
+#: For given rows, by id: the renderings the trigger hashed (as `_VERIFY_BATCH_SQL`, each cut
+#: at `:n` characters so a long one is never fetched whole) and the `entry_hash` of the
+#: row before it in the chain (by id; none for the first).
+_CHAIN_ROWS_SQL = sa.text(
+    "SELECT id, left(actor_user_id::text, :n) AS actor_user_id, "
+    "left(actor_label, :n) AS actor_label, left(actor_ip::text, :n) AS actor_ip, "
+    "left(session_id::text, :n) AS session_id, left(action, :n) AS action, "
+    "left(object_kind, :n) AS object_kind, left(object_id, :n) AS object_id, "
+    "left(outcome::text, :n) AS outcome, left(severity::text, :n) AS severity, "
+    "left(reason, :n) AS reason, left(before_state::text, :n) AS before_state, "
+    "left(after_state::text, :n) AS after_state, left(request_id::text, :n) AS request_id, "
+    "left(env::text, :n) AS env, "
+    "left(to_char(event_ts AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.USOF'), :n) AS event_ts, "
+    "(SELECT p.entry_hash FROM audit_log p WHERE p.id < a.id ORDER BY p.id DESC LIMIT 1) "
+    "AS chain_prev_hash FROM audit_log a WHERE id = ANY(CAST(:ids AS bigint[])) ORDER BY id DESC"
+)
+
 _INSERT_CHECKPOINT_SQL = sa.text("""
     INSERT INTO audit_checkpoints (id, head_id, head_hash, row_count, signed_by)
     VALUES (:id, :head_id, :head_hash, :row_count, :signed_by)
@@ -191,6 +229,30 @@ def _page_statement(
     return sa.select(t).where(*where).order_by(*order).limit(limit)
 
 
+_CHAIN_KEYS = frozenset({"id", "chain_prev_hash"})
+
+
+async def _attach_chain(session: Any, rows: list[dict[str, Any]]) -> None:
+    """Set `row["chain"]` on each row: its renderings (the keys `_canonical_hash` reads) and
+    `chain_prev_hash`, fetched in chunks by id. It is `None` when the form is incomplete: a
+    rendering over `CHAIN_FIELD_MAX_CHARS`, or a row past `CHAIN_PAGE_MAX_CHARS` for the page,
+    where fetching stops. The caller counts an incomplete form as unverified."""
+    chains: dict[int, dict[str, Any] | None] = {}
+    left = CHAIN_PAGE_MAX_CHARS
+    for chunk in itertools.batched(sorted((r["id"] for r in rows), reverse=True), _CHAIN_CHUNK):
+        if left < 0:
+            break
+        params = {"ids": list(chunk), "n": CHAIN_FIELD_MAX_CHARS + 1}
+        for found in await session.execute(_CHAIN_ROWS_SQL, params):
+            chain = dict(found._mapping)
+            texts = [v for k, v in chain.items() if k not in _CHAIN_KEYS and v is not None]
+            left -= sum(len(v) for v in texts)
+            complete = left >= 0 and all(len(v) <= CHAIN_FIELD_MAX_CHARS for v in texts)
+            chains[chain["id"]] = chain if complete else None
+    for row in rows:
+        row["chain"] = chains.get(row["id"])
+
+
 class SqlAlchemyAuditRepository:
     """Backs `AuditWriter`/`AuditQueryService`/`checkpoint.run_checkpoint`.
 
@@ -199,8 +261,15 @@ class SqlAlchemyAuditRepository:
     The composition root constructs it and injects it into `AuditService`.
     """
 
-    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
+    def __init__(
+        self, relational: SqlAlchemyRelationalRepository, *, read_slots: int = DEFAULT_READ_SLOTS
+    ) -> None:
+        if read_slots < 2:  # the Owner's slot, and at least one for everyone else
+            raise ValueError("read_slots must be at least 2")
         self._relational = relational
+        self._read_slots = read_slots
+        self._reads = 0
+        self._shared_reads = 0  # reads that are not the Owner's
 
     async def insert(self, record: dict[str, Any]) -> None:
         async with self._relational.unit_of_work() as uow:
@@ -246,6 +315,7 @@ class SqlAlchemyAuditRepository:
         after: tuple[datetime, int] | None,
         limit: int,
         timeout_ms: int | None = None,
+        owner: bool = False,
     ) -> list[dict[str, Any]]:
         statement = _page_statement(
             restrict_to_actor=restrict_to_actor,
@@ -262,6 +332,12 @@ class SqlAlchemyAuditRepository:
             after=after,
             limit=limit,
         )
+        shared = 0 if owner else 1
+        if self._reads >= self._read_slots or self._shared_reads + shared >= self._read_slots:
+            _log().warning("audit.read.busy", slots=self._read_slots, owner=owner)
+            raise AuditReadBusy
+        self._reads += 1
+        self._shared_reads += shared
         # The budget covers the whole call, connection checkout included: a pool wait
         # would otherwise run to the pool's own 30 s timeout.
         budget = asyncio.timeout(None if timeout_ms is None else timeout_ms / 1000)
@@ -273,7 +349,9 @@ class SqlAlchemyAuditRepository:
                         # SET takes no bind parameters; set_config(..., true) is `SET LOCAL`.
                         await uow.session.execute(_SET_TIMEOUT_SQL, {"v": f"{int(timeout_ms)}ms"})
                     result = await uow.session.execute(statement)
-                    return [dict(row._mapping) for row in result]
+                    rows = [dict(row._mapping) for row in result]
+                    await _attach_chain(uow.session, rows)
+                    return rows
         except TimeoutError:
             cause = "budget"
         except sa.exc.TimeoutError:
@@ -283,6 +361,9 @@ class SqlAlchemyAuditRepository:
             if state == _QUERY_CANCELED or budget.expired():
                 cause = "statement_timeout"
             error = type(exc).__name__
+        finally:
+            self._reads -= 1
+            self._shared_reads -= shared
         # Raised after the handlers and `from None`: the database error, whose text carries
         # the statement and the bound filters, stays in no exception chain (C-12.6). The log
         # lines carry the cause, or the class and SQLSTATE, only.

@@ -56,6 +56,7 @@ from candleviewer.audit.access import (
     redact_entry_for_view,
 )
 from candleviewer.audit.cursor import AuditCursor, InvalidAuditCursor, decode_cursor
+from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
     AuditExportRequest,
@@ -114,6 +115,7 @@ class AuditQueryServiceLike(Protocol):
         limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
         ip: str | None = None,
         timeout_ms: int | None = None,
+        owner: bool = False,
     ) -> Any: ...
 
     async def verify(
@@ -443,14 +445,22 @@ def make_audit_router(
         restrict = None if view is AuditView.RAW else key
         try:
             page = await service.query.query(
-                **filters, restrict_to_actor=restrict, after=after, timeout_ms=query_timeout_ms
+                **filters,
+                restrict_to_actor=restrict,
+                after=after,
+                timeout_ms=query_timeout_ms,
+                # The read slot kept for the Owner follows `is_owner` only (SR-017).
+                owner=principal.is_owner,
             )
         except ValidationError as exc:
             return _invalid(exc, AuditQueryRequest)
         except TimeoutError:
             return _unavailable("audit query exceeded its time budget")
+        except ChainHasherBusy:
+            return _unavailable("audit read capacity reached")
         except StorageTierUnavailable:
-            # The store error carries only its SQLSTATE; it is logged where it is raised.
+            # The store error carries only its SQLSTATE (or that every read slot is in
+            # use); it is logged where it is raised.
             return _unavailable("audit store unavailable")
         if restrict is not None:
             if any(str(e.actor_user_id) != restrict for e in page.items):

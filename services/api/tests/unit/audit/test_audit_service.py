@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from audit_fakes import FakeAuditRepository
 
+from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.service import AuditService
 from candleviewer.observability.health import HealthStatus
 
@@ -48,3 +49,12 @@ async def test_service_start_refuses_a_second_writer_on_the_same_wal(tmp_path: P
     await svc.stop(1)
     await svc.start(_ctx(tmp_path))  # allowed again after stop()
     await svc.stop(1)
+
+
+async def test_stop_shuts_the_chain_hasher_down(tmp_path: Path) -> None:
+    svc = AuditService(FakeAuditRepository())
+    await svc.start(_ctx(tmp_path))
+    query = svc.query
+    await svc.stop(1)
+    with pytest.raises(ChainHasherBusy):
+        await query.query(restrict_to_actor=None)
