@@ -252,11 +252,48 @@ def _text(raw: bytes) -> str:
     return text
 
 
+_GRID_LABELS: Final = frozenset({"row", "column", "tabset", "leaf"})
+_GRID_TAG_MESSAGE: Final = "type must be one of row, column, tabset, leaf"
+
+
+def _clean_path(field: str) -> str:
+    """Drop pydantic's union-branch labels from a grid_spec field path, by position only: a
+    node label follows `root` or a `children` index."""
+    segs, out, i = field.split("."), [], 0
+    while i < len(segs):
+        seg = segs[i]
+        out.append(seg)
+        after_node = seg == "root" or (seg.isdigit() and i > 0 and segs[i - 1] == "children")
+        if (
+            segs[:1] == ["grid_spec"]
+            and after_node
+            and segs[i + 1 : i + 2]
+            and (segs[i + 1] in _GRID_LABELS)
+        ):
+            i += 1  # skip the label
+        i += 1
+    return ".".join(out)
+
+
+def _format(exc: ValidationError) -> list[dict[str, str]]:
+    """`format_errors` with workspaces wording: the drawings union message ("op must be one of
+    create, update, delete") and pydantic's union-branch labels never reach the client."""
+    cleaned: list[dict[str, str]] = []
+    for err in format_errors(exc, limit=20):
+        field = _clean_path(err["field"])
+        if err["rule"] in ("union_tag_invalid", "union_tag_not_found") and field.startswith(
+            "grid_spec"
+        ):
+            err = err | {"message": _GRID_TAG_MESSAGE}
+        cleaned.append(err | {"field": field})
+    return cleaned[:20]
+
+
 def _parse[M: BaseModel](model: type[M], text: str) -> M:
     try:
         return model.model_validate_json(text)
     except ValidationError as exc:
-        raise _invalid(format_errors(exc)) from None
+        raise _invalid(_format(exc)) from None
 
 
 def _uuid(name: str, raw: str) -> str:

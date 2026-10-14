@@ -281,3 +281,33 @@ def test_layout_logs_carry_counts_and_ids_never_content(env: Env, ws: str) -> No
     assert {"layout_created", "layout_updated", "layout_deleted"} <= set(events)
     assert events["layout_created"]["pane_count"] == 4
     assert "SECRET" not in repr(logs) and "BTCUSDT" not in repr(logs)
+
+
+def _errors(env: Env, ws: str, **body: Any) -> list[dict[str, str]]:
+    r = env.c.post(f"/workspaces/{ws}/layouts", json={"name": "X", "panes": [], **body})
+    assert r.status_code == 422, r.text
+    return list(r.json()["errors"])
+
+
+@pytest.mark.parametrize("root", [{"type": "bogus"}, {"children": []}])
+def test_bad_grid_node_type_uses_workspaces_wording(
+    env: Env, ws: str, root: dict[str, Any]
+) -> None:
+    errs = _errors(env, ws, grid_preset="custom", grid_spec={"version": 1, "root": root})
+    assert [(e["field"], e["message"]) for e in errs] == [
+        ("grid_spec.root", "type must be one of row, column, tabset, leaf")]  # fmt: skip
+
+
+def test_union_branch_labels_never_reach_field_paths(env: Env, ws: str) -> None:
+    node = {
+        "type": "row",
+        "sizes": [0.5, 0.5],
+        "children": [{"type": "leaf", "slot": 0}, {"type": "nope"}],
+    }
+    errs = _errors(env, ws, grid_preset="custom", grid_spec={"version": 1, "root": node})
+    assert [e["field"] for e in errs] == ["grid_spec.root.children.1"]
+    cfg = {"settings": {"int": {"x": 1}, "row": [1, {}]}}  # keys named like union labels
+    errs = _errors(env, ws, panes=[{"slot_index": 0, "pane_kind": "chart", "pane_config": cfg}])
+    assert [e["field"] for e in errs] == ["panes.0.pane_config.settings.int",
+                                          "panes.0.pane_config.settings.row.1"]  # fmt: skip
+    assert {e["rule"] for e in errs} == {"setting_value_type"}
