@@ -336,6 +336,8 @@ _BOOK_SIDES: Final = frozenset({"bid", "ask"})
 def _decimal(value: object, column: str) -> Decimal | None:
     """`None`, NaN and infinities read as missing; a non-numeric value is invalid. A float
     converts through `float.__repr__`, never a subclass's `repr` (`np.float64(0.1)`)."""
+    if type(value) is float:  # the DOUBLE fast path: both tiers return plain floats
+        return Decimal(repr(value)) if math.isfinite(value) else None
     if value is None:
         return None
     if isinstance(value, bool):
@@ -366,6 +368,8 @@ def _req_decimal(row: _Row, column: str) -> Decimal:
 
 def _opt_int(row: _Row, column: str) -> int | None:
     value = row.get(column)
+    if type(value) is int:
+        return value
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int | str):
@@ -585,5 +589,6 @@ def event_from_row(stream: StreamKind, row: Mapping[str, object]) -> RecordedEve
     if mapper is None:
         raise StorageRecordInvalid(f"stream {stream.value!r} is not replayable")
     seq, tiebreak, payload = mapper(row)
-    ts_us = _req_ts(row, "ts")
+    ts = row.get("ts")
+    ts_us = ts if type(ts) is int else _req_ts(row, "ts")  # the cold tier selects epoch µs
     return RecordedEvent(ts_us, seq, _req_str(row, "symbol"), stream, tiebreak, payload)

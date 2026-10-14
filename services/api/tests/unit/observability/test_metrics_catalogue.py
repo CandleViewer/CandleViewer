@@ -322,6 +322,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.net.metrics import NET_EXPORTED_NAMES
     from candleviewer.observability.audit_query_metrics import EXPORTED_NAMES as AUDIT_NAMES
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
+    from candleviewer.replay.metrics import EXPORTED_NAMES as REPLAY_NAMES
     from candleviewer.secrets.metrics import EXPORTED_NAMES as SECRETS_NAMES
     from candleviewer.ws.metrics import CV_WS_NAMES
     from candleviewer.ws.metrics import EXPORTED_NAMES as CVWB_NAMES
@@ -339,6 +340,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     others |= AUDIT_NAMES
     others |= BACKUP_NAMES
     others |= LIFECYCLE_NAMES | LANE_NAMES
+    others |= REPLAY_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
@@ -416,6 +418,25 @@ def test_exported_recorder_metrics_served_with_env() -> None:
         recorder_rows_total.labels(stream="trades").inc()
         text = generate_latest(m.registry).decode()
         assert 'recorder_rows_total{env="demo",stream="trades"}' in text
+        for name in EXPORTED_NAMES:
+            assert f"# HELP {name} " in text, name
+    finally:
+        collector.close()
+
+
+def test_exported_replay_metrics_served_with_env() -> None:
+    """E26-T02: the replay read-path series are `live`, served via `export_replay_metrics`."""
+    from candleviewer.replay.merge import replay_events_read_total
+    from candleviewer.replay.metrics import EXPORTED_NAMES, export_replay_metrics
+
+    assert EXPORTED_NAMES <= {s.name for s in live_specs() if s.exported}
+    m = Metrics("demo")
+    register_r0(m)
+    collector = export_replay_metrics(m.registry, env="demo")
+    try:
+        replay_events_read_total.labels(stream="trades", tier="parquet").inc(0)
+        text = generate_latest(m.registry).decode()
+        assert 'replay_events_read_total{env="demo",stream="trades",tier="parquet"}' in text
         for name in EXPORTED_NAMES:
             assert f"# HELP {name} " in text, name
     finally:

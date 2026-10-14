@@ -69,7 +69,7 @@ rules:
       #   `class`), its anomaly reasons, or {held, stopped}; {open, held, stopped}.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(action|bucket|cause|class|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from_source|kind|method|operation|outcome|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|step|stream|symbol|table|to_source|tool|topic|transport|trigger_mode|version)$).*$"
+          regex: "^(?!(action|bucket|cause|class|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from_source|kind|method|operation|outcome|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|step|stream|symbol|table|tier|to_source|tool|topic|transport|trigger_mode|version)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"

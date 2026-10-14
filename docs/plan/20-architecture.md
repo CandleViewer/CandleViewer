@@ -1432,6 +1432,10 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | OMS | `bybit_clock_drift_ms` | gauge | alert > 1500 ms |
 | Rules | `rule_evaluations_total`, `rule_fires_total{rule_id}`, `rule_autodisarm_total` | counter | rule-storm detection |
 | Recorder | `recorder_rows_total{stream}`, `recorder_bytes_written_total{symbol,stream}`, `recorder_spill_bytes`, `recorder_write_backlog_rows`, `recorder_flush_duration_seconds`, `disk_used_ratio`, `disk_free_bytes`, `recorder_disk_pressure_level`, `recorder_bytes_per_day{symbol}`, `recorder_projected_full_timestamp`, `recorder_disk_budget_last_sample_timestamp_seconds`, `recorder_disk_budget_breakdown_age_seconds` | counter/gauge/histogram | disk ratio > 0.8 (page > 0.95); pressure level > 0 for 24 h, last sample > 5 min old (page); spill > 0 for 5 min (warning); backlog p95 > 0; flush p95 > 50 ms (E16-T03, E16-T07) |
+| Replay | `replay_events_read_total{stream,tier}` | counter | recorded events replay sources read (E26-T02); throughput, no alert |
+| Replay | `replay_gap_warnings_total` | counter | `ReplayGap` markers replay sources emitted (E26-T02); informational: the replayed range has recording gaps |
+| Replay | `replay_source_read_seconds{tier}` | histogram | replay storage read latency (E26-T02); warning when p95 > 1 s |
+| Replay | `replay_readahead_depth` | gauge | events buffered ahead of replay consumers, all sessions (E26-T02); bounded by `ReadAheadConfig`, flat while a consumer is paused |
 | Feature flags | `cv_feature_flag_evaluations_total{flag}`, `cv_feature_flag_unreadable_overrides_total{flag}` | counter | unreadable overrides > 0 (E42-T03) |
 | Feature flags | `cv_feature_flag_changes_total{flag,result}` | counter | conflict or refusal spikes show in `result` (E42-T03) |
 | Feature flags | `cv_flag_push_latency_seconds` | histogram | committed flag write -> last session frame queued; budget 2 s (E42-T03) |

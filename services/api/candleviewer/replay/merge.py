@@ -21,11 +21,14 @@ unreported. A table that size is built in steps that yield to the event loop (C-
 table that cannot be read fails the replay rather than hide its holes.
 
 **Reading.** One cursor per `(symbol, stream)` reads `[start, end)` in adaptive windows, the
-last one clipped to `end`. A window starts at `window_us` (ADR-0035: 30 s), doubles while the
-stream is sparse (up to `max_window_us`), and halves and is re-read when a read hits the
-cursor's row cap. Each window is sorted and duplicate rows are dropped, keeping the copy read
-last: readers return a re-exported cold part's copies oldest first (21 Sec.5.3). A heap then
-interleaves the cursors and the gap markers.
+last one clipped to `end`. A window starts at `window_us` (ADR-0035: 30 s) and doubles while
+the stream is sparse (up to `max_window_us`). A read that hits the cursor's row cap returns the
+earliest rows (the reader contract), so every instant before the last one it returned is
+complete: those rows are kept, and the next read starts at that last instant, read again whole,
+in a window shrunk to the span that filled the cap. Nothing is lost. Each window is sorted and
+duplicate rows are dropped, keeping the copy read last: readers return a re-exported cold
+part's copies oldest first (21 Sec.5.3). A heap then interleaves the cursors and the gap
+markers.
 
 **Tiers.** A session reads one tier, never both (ADR-0035 decision 4, refined: a partly
 archived range is refused, not read hot): `questdb` or `parquet`, or for `auto` the one the
@@ -215,12 +218,9 @@ class _Cursor:
         """The next read: `width` from where the last one ended, clipped to the replay end."""
         return self._next_us, min(self._end_us, self._next_us + self._width)
 
-    def shrink(self, span_us: int) -> bool:
-        """Halve the window after a truncated read; `False` once it is down to 1 µs."""
-        if span_us <= 1:
-            return False
-        self._width = span_us // 2
-        return True
+    def fit(self, span_us: int) -> None:
+        """After a capped read: the next window spans what filled the cap (at least 1 µs)."""
+        self._width = max(1, span_us)
 
     def load(self, hi_us: int, events: Sequence[RecordedEvent], max_width_us: int) -> int:
         """Install the window ending at `hi_us`, merge-sorted with the last duplicate kept, and
@@ -382,13 +382,17 @@ class RecordedMerge:
                 held.release()  # a pass that fails or is closed frees whatever it still holds
 
     async def _fill(self, cursor: _Cursor) -> None:
-        """Read windows until `cursor` has an entry or its range is exhausted. Terminates: a
-        window is at least 1 µs wide, so each pass either moves past it or halves it."""
+        """Read windows until `cursor` has an entry or its range is exhausted. Terminates: a read
+        under the cap moves past its window, and a capped one keeps every instant before the
+        last it returned, so it moves past at least one instant."""
         while cursor.pos >= len(cursor.buf) and cursor.more:
             lo_us, hi_us = cursor.window()
             events = await self._read_window(cursor, lo_us, hi_us)
             if len(events) > cursor.row_cap:
-                if not cursor.shrink(hi_us - lo_us):
+                # The earliest rows came back: every instant before the last one is complete.
+                last_us = max(event.ts_us for event in events)
+                events = [event for event in events if event.ts_us < last_us]
+                if not events:  # one instant alone exceeds the cap
                     # The row ceiling is named when it, not the byte share, set the cap.
                     by_rows = cursor.row_cap == DEFAULT_MAX_ROWS_PER_READ
                     raise ReplayMemoryCeilingExceeded(
@@ -397,7 +401,8 @@ class RecordedMerge:
                         stream=cursor.stream,
                         max_rows=DEFAULT_MAX_ROWS_PER_READ if by_rows else None,
                     )
-                continue
+                cursor.fit(last_us - lo_us)
+                hi_us = last_us
             dropped = cursor.load(hi_us, events, self._max_window_us)
             if dropped and not cursor.dup_warned:
                 cursor.dup_warned = True
