@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import pytest
@@ -260,21 +261,25 @@ def test_real_connection_has_autoload_off_and_missing_extension_is_typed(tmp_pat
     seen: list[object] = []
     real = duckdb.connect
 
+    class _Spy:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def close(self) -> None:
+            row = self._inner.execute("SELECT current_setting('autoload_known_extensions')")
+            seen.append(row.fetchone())
+            self._inner.close()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
     def connect(path: str) -> object:
-        con = real(path, config={"extension_directory": str(ext_dir)})
-        seen.append(con)
-        return con
+        return _Spy(real(path, config={"extension_directory": str(ext_dir)}))
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(duckdb_views.duckdb, "connect", connect)
         with pytest.raises(PostgresExtensionUnavailable):
             build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn=_OK_DSN)
     assert not any(ext_dir.iterdir())
-
-
-def test_guard_rejects_install_in_unit_tests() -> None:
-    con = duckdb.connect(":memory:")
-    for stmt in ("INSTALL postgres", "force install postgres", "FORCE INSTALL httpfs"):
-        with pytest.raises(AssertionError, match="network"):
-            con.execute(stmt)
-    assert con.execute("SELECT 1").fetchone() == (1,)
+    assert seen
+    assert all(row == (False,) for row in seen)

@@ -20,7 +20,5 @@ def test_guard_blocks_install_and_fails_load_offline() -> None:
 
 
 def test_default_connection_install_fails_locally() -> None:
-    import duckdb
-
     with pytest.raises(duckdb.Error):
         duckdb.execute("INSTALL httpfs")

@@ -1,5 +1,8 @@
-"""Suite-wide DuckDB guard (C-13.5, #2194): extension repos point at a missing local dir so any
-implicit/explicit INSTALL/LOAD/ATTACH autoinstall fails locally with zero egress."""
+"""Suite-wide DuckDB guard (C-13.5, #2194): connections made via duckdb.connect (and the default
+connection) get extension repos pointed at a missing local dir, and `execute("INSTALL ...")` is
+rejected. Scope: not covered are sql()/cursor()/install_extension() with an explicit repository
+(FROM core) - those can still reach the network; OS-level egress blocking is a follow-up.
+The INSTALL regex is a best-effort heuristic (newline-only separators / literals with ';')."""
 
 from __future__ import annotations
 
@@ -9,6 +12,8 @@ from typing import Any
 
 import duckdb
 import pytest
+
+from candleviewer.storage.sql_identifiers import sql_string_literal
 
 
 class ExtensionDownloadInUnitTest(AssertionError):
@@ -57,7 +62,7 @@ def _cv_no_duckdb_install(tmp_path_factory: pytest.TempPathFactory) -> Iterator[
         else duckdb.default_connection
     )
     for k, v in settings.items():
-        default.execute(f"SET {k}='{v}'")
+        default.execute(" ".join(("SET", k, "=", sql_string_literal(v))))
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(duckdb, "connect", guarded)
         yield
