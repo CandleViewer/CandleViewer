@@ -32,7 +32,10 @@ class WorkspaceNotFoundError(Exception):
 
 
 class WorkspaceVersionConflictError(Exception):
-    """`if_match` no longer equals the stored `updated_at` token (HTTP 412)."""
+    """`if_match` no longer equals the stored `updated_at` token (HTTP 412).
+
+    The single argument is the id of the workspace or layout whose token was stale.
+    """
 
 
 class WorkspaceConflictError(Exception):
