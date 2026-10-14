@@ -83,7 +83,7 @@ async def _page(rel: _Rel, timeout_ms: int | None = 50) -> list[dict[str, Any]]:
         q=None,
         from_ts=None,
         to_ts=None,
-        cursor=None,
+        after=None,
         limit=10,
         timeout_ms=timeout_ms,
     )
@@ -93,7 +93,7 @@ async def test_query_page_sets_the_statement_timeout_then_reads() -> None:
     rel = _Rel()
     assert await _page(rel) == [{"id": 1}]
     assert "set_config" in rel.statements[0] and "force_custom_plan" in rel.statements[0]
-    assert "ORDER BY audit_log.id DESC" in rel.statements[1]
+    assert "ORDER BY audit_log.event_ts DESC, audit_log.id DESC" in rel.statements[1]
     unbounded = _Rel()
     assert await _page(unbounded, timeout_ms=None) == [{"id": 1}]
     assert len(unbounded.statements) == 1 and "set_config" not in unbounded.statements[0]

@@ -106,7 +106,8 @@ class AuditQueryRequest(BaseModel):
     must be tz-aware UTC; `to_ts` is exclusive, so `from_ts < to_ts` (PR #1608
     review finding 3: previously a naive datetime was accepted silently).
     The other filters follow the contract's parameter rules and are kept in
-    canonical form, so only canonical values are queried or recorded."""
+    canonical form, so only canonical values are queried or recorded. Paging
+    (the cursor) is not a filter and is not part of this model."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -120,7 +121,6 @@ class AuditQueryRequest(BaseModel):
     from_ts: datetime | None = None
     to_ts: datetime | None = None
     q: str | None = Field(default=None, max_length=200)
-    cursor: int | None = Field(default=None, ge=1)
     limit: int = Field(default=AUDIT_QUERY_DEFAULT_LIMIT, ge=1, le=AUDIT_QUERY_MAX_LIMIT)
 
     @field_validator("subject_id", "q")
@@ -190,14 +190,22 @@ class AuditQueryRequest(BaseModel):
         return value
 
 
+class AuditPageMeta(BaseModel):
+    """Contract `PageMeta`: `next_cursor` is null on the last page."""
+
+    model_config = ConfigDict(frozen=True)
+
+    next_cursor: str | None = None
+    has_more: bool = False
+    count: int = 0
+
+
 class AuditPage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     items: list[AuditEntry]
     chain_verified: bool
-    next_cursor: str | None = None
-    has_more: bool = False
-    count: int = 0
+    meta: AuditPageMeta = Field(default_factory=AuditPageMeta)
 
 
 class VerifyResult(BaseModel):

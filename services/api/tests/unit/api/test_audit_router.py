@@ -27,10 +27,12 @@ from candleviewer.api.audit_budget import (
 )
 from candleviewer.api.audit_limiter import AuditQueryLimiter
 from candleviewer.audit.access import AuditPrincipal
+from candleviewer.audit.cursor import AuditCursor, encode_cursor
 from candleviewer.audit.models import (
     AuditEntry,
     AuditOutcome,
     AuditPage,
+    AuditPageMeta,
     AuditQueryRequest,
     ExportResult,
     Severity,
@@ -38,6 +40,8 @@ from candleviewer.audit.models import (
 )
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadFailed
+
+_TS = datetime(2026, 10, 1, 12, 0, 0, 123456, tzinfo=UTC)
 
 
 class _FakeQuery:
@@ -50,7 +54,7 @@ class _FakeQuery:
         # Mirrors `AuditQueryService.query`'s own validation (QA defect
         # #1596 review): a naive datetime or `from_ts > to_ts` must raise
         # `ValidationError`, not be accepted silently by the fake.
-        paging = ("timeout_ms", "restrict_to_actor")
+        paging = ("timeout_ms", "restrict_to_actor", "after")
         AuditQueryRequest.model_validate({k: v for k, v in kwargs.items() if k not in paging})
         self.query_calls.append(kwargs)
         return AuditPage(items=[], chain_verified=True)
@@ -858,7 +862,46 @@ async def test_manager_with_audit_read_bounded_record_count_over_two_hours() -> 
     assert pages + budget._users[str(me.user_id)].pending_pages() == served > 0
 
 
-# ---- #2392 filters and scope: subject_id, q, the caller's scope ----------------------------
+# ---- #2392 paging and filters: cursor, scope, subject_id, q, meta ------------------------
+
+
+def test_malformed_cursor_is_400_invalid_cursor_and_runs_nothing() -> None:
+    client, svc = _budgeted(_owner())
+    for bad in ("<script>", "a" * 513, encode_cursor(AuditCursor(_TS, 5)) + "x"):
+        r = client.get("/admin/audit", params={"cursor": bad})
+        assert (r.status_code, r.json()["code"]) == (400, "invalid_cursor")
+        assert "script" not in r.text and "aaaa" not in r.text
+    assert svc.query_service.query_calls == [] and svc.writer_service.emitted == []
+
+
+def test_cursor_position_reaches_the_service_and_meta_carries_the_next_one() -> None:
+    owner = _owner()
+    svc = _service_with([_entry(i, owner.user_id) for i in (3, 2)])
+    nxt = encode_cursor(AuditCursor(_TS, 2))
+
+    async def page(**kwargs: Any) -> AuditPage:
+        svc.query_service.query_calls.append(kwargs)
+        meta = AuditPageMeta(next_cursor=nxt, has_more=True, count=2)
+        return AuditPage(items=svc.query_service.items, chain_verified=True, meta=meta)
+
+    svc.query_service.query = page  # type: ignore[method-assign]  # test double
+    r = _budgeted(owner, svc)[0].get("/admin/audit", params={"cursor": nxt, "limit": 2})
+    assert r.json()["meta"] == {"next_cursor": nxt, "has_more": True, "count": 2}
+    assert "next_cursor" not in r.json()  # contract: paging metadata lives in `meta`
+    assert svc.query_service.query_calls[0]["after"] == AuditCursor(_TS, 2)
+
+
+def test_scope_is_applied_again_on_every_page() -> None:
+    """The cursor carries no scope: a Manager's scope comes from its principal on every
+    page, whatever cursor or `actor_user_id` it sends."""
+    me = _manager_with_read()
+    client, svc = _budgeted(me, _service_with([_entry(1, me.user_id)]))
+    nxt = encode_cursor(AuditCursor(_TS, 9))
+    for params in ({}, {"cursor": nxt}, {"cursor": nxt, "actor_user_id": str(uuid.uuid4())}):
+        assert client.get("/admin/audit", params=params).status_code == 200
+    calls = svc.query_service.query_calls
+    assert [c["restrict_to_actor"] for c in calls] == [str(me.user_id)] * 3
+    assert [c["after"] for c in calls] == [None, AuditCursor(_TS, 9), AuditCursor(_TS, 9)]
 
 
 def test_manager_q_filter_is_refused_with_403_and_recorded() -> None:

@@ -152,13 +152,14 @@ def _page_statement(
     q: str | None,
     from_ts: datetime | None,
     to_ts: datetime | None,
-    cursor: int | None,
+    after: tuple[datetime, int] | None,
     limit: int,
 ) -> sa.Select[Any]:
     """One statement per combination of present filters, each a bound parameter (no
     string-built SQL, Semgrep/Bandit B608), and no `IS NULL OR` placeholder, so every shape
-    gets its own plan. A set `restrict_to_actor` replaces `actor_user_id`, so a narrowed
-    caller can never widen its rows."""
+    gets its own plan. Ordered `(event_ts DESC, id DESC)`, the order every audit index
+    ends in; `after` resumes strictly after that position. A set `restrict_to_actor`
+    replaces `actor_user_id`, so a narrowed caller can never widen its rows."""
     t = _AUDIT
     actor = restrict_to_actor if restrict_to_actor is not None else actor_user_id
     where: list[sa.ColumnElement[bool]] = []
@@ -183,9 +184,11 @@ def _page_statement(
     if q is not None:
         query = sa.func.websearch_to_tsquery(_FTS_CONFIG, sa.bindparam("q", q, sa.Text))
         where.append(_FTS_DOCUMENT.op("@@")(query))
-    if cursor is not None:
-        where.append(t.c.id < cursor)
-    return sa.select(t).where(*where).order_by(t.c.id.desc()).limit(limit)
+    if after is not None:
+        ts, last_id = after
+        where += [t.c.event_ts <= ts, sa.or_(t.c.event_ts < ts, t.c.id < last_id)]
+    order = (t.c.event_ts.desc(), t.c.id.desc())
+    return sa.select(t).where(*where).order_by(*order).limit(limit)
 
 
 class SqlAlchemyAuditRepository:
@@ -240,7 +243,7 @@ class SqlAlchemyAuditRepository:
         q: str | None,
         from_ts: datetime | None,
         to_ts: datetime | None,
-        cursor: int | None,
+        after: tuple[datetime, int] | None,
         limit: int,
         timeout_ms: int | None = None,
     ) -> list[dict[str, Any]]:
@@ -256,7 +259,7 @@ class SqlAlchemyAuditRepository:
             q=q,
             from_ts=from_ts,
             to_ts=to_ts,
-            cursor=cursor,
+            after=after,
             limit=limit,
         )
         # The budget covers the whole call, connection checkout included: a pool wait

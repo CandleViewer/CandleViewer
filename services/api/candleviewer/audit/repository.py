@@ -43,14 +43,15 @@ class AuditRepository(Protocol):
         q: str | None,
         from_ts: datetime | None,
         to_ts: datetime | None,
-        cursor: int | None,
+        after: tuple[datetime, int] | None,
         limit: int,
         timeout_ms: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Up to `limit` rows matching every supplied filter (AND), ordered by `id DESC`,
-        most recent first, below `cursor` when given. `from_ts` is inclusive and `to_ts`
-        exclusive. `q` is a full-text search (every term must match). `subject_type` is the
-        `object_kind` column and `subject_id` the `object_id` column.
+        """Up to `limit` rows matching every supplied filter (AND), newest first by
+        `(event_ts DESC, id DESC)`, starting strictly after the `after` position
+        `(event_ts, id)`. `from_ts` is inclusive and `to_ts` exclusive. `q` is a full-text
+        search (every term must match). `subject_type` is the `object_kind` column and
+        `subject_id` the `object_id` column.
 
         `restrict_to_actor` has no default, so no caller can forget it: when set, only that
         actor's rows are returned and `actor_user_id` is ignored (narrowed, never widened).
