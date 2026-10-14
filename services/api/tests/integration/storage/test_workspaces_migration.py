@@ -58,20 +58,6 @@ def _user(c: Conn) -> str:
     return uid
 
 
-def _active_owner(c: Conn) -> None:
-    """Keep one active owner so `trg_owner_floor_fn` allows deleting other users."""
-    uid = str(uuid.uuid4())
-    c.execute(
-        "INSERT INTO users (id, email, username, display_name, password_hash, status) "
-        "VALUES (%s, %s, %s, 'o', '$argon2id$x', 'active')",
-        (uid, f"{uid}@example.test", f"o{uid[:12]}"),
-    )
-    c.execute(
-        "INSERT INTO user_roles (user_id, role_id) SELECT %s, id FROM roles WHERE name = 'owner'",
-        (uid,),
-    )
-
-
 def _workspace(c: Conn, user: str, name: str | None = None, **cols: object) -> str:
     wid = str(uuid.uuid4())
     c.execute(
@@ -204,6 +190,18 @@ def test_d27_drawing_cannot_reference_another_owners_layout(pg_dsn: str) -> None
         assert exc.value.diag.constraint_name == "fk_drawings_layout_id_layouts"
 
 
+def test_d27_no_action_refuses_re_owning_a_workspace_or_re_pointing_a_drawing(pg_dsn: str) -> None:
+    with _conn(pg_dsn) as c:
+        a, b = _user(c), _user(c)
+        wa = _workspace(c, a)
+        la, lb = _layout(c, wa, a), _layout(c, _workspace(c, b), b)
+        with pytest.raises(pgerr.ForeignKeyViolation):
+            c.execute("UPDATE workspaces SET user_id = %s WHERE id = %s", (b, wa))
+        da = _drawing(c, a, la)
+        with pytest.raises(pgerr.ForeignKeyViolation):
+            c.execute("UPDATE drawings SET layout_id = %s WHERE id = %s", (lb, da))
+
+
 def test_d27_symbol_global_and_same_owner_drawings_are_accepted(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
         a = _user(c)
@@ -214,7 +212,6 @@ def test_d27_symbol_global_and_same_owner_drawings_are_accepted(pg_dsn: str) -> 
 
 def test_d27_purging_one_owners_layout_never_deletes_another_owners_rows(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
-        _active_owner(c)
         a, b = _user(c), _user(c)
         wa, wb = _workspace(c, a), _workspace(c, b)
         la, lb = _layout(c, wa, a), _layout(c, wb, b)

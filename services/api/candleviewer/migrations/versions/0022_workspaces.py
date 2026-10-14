@@ -16,20 +16,23 @@ recorded in Sec.3.8.1):
   the database guarantees workspace.user = layout.owner = drawing.owner
   (D27, #357 residual R5). `MATCH SIMPLE` leaves `layout_id IS NULL` drawings
   unchecked.
-* `drawings.layout_id` FK is added here (E14-T01 left the column bare). It is
-  added `NOT VALID` and then `VALIDATE`d (C-5.6: no long lock on `drawings`).
+* `drawings.layout_id` FK is added here (E14-T01 left the column bare), under a
+  5 s `lock_timeout` (0019 pattern, C-5.6). `env.py` runs all pending revisions in
+  one transaction, so NOT VALID gives no lock relief; the window is short because
+  `drawings` is small and the guard proves every `layout_id` is NULL.
 * `ux_lay_default` (one live default layout per workspace), `ix_lay_workspace`
   and `ix_dr_layout` (FK-side indexes for the purge cascades) are new.
 * `ix_lp_layout` is kept exactly as Sec.3.8.1 even though `ux_lp_slot`
   (`UNIQUE (layout_id, slot_index)`) covers the same columns (ruling Q4,
   #402); the redundancy is noted for a later cleanup.
 * `layout_panes.chart_template_id` has NO foreign key: `chart_templates` does
-  not exist and no ticket creates it yet (0014/0017 precedent, ruling Q2,
-  gap issue #2411). The API refuses non-null ids until the FK lands.
+  not exist yet (0014/0017 precedent, ruling Q2, gap #2411). An FK proves
+  existence only; ownership is an application check; a database guarantee is
+  #2411's design (D27 residual). The API refuses non-null ids until then.
 * `layout_panes.interval_code` carries `<bar_type>:<param>` (spec D4), no CHECK.
 * No triggers: the repository sets `updated_at` (D12). No GRANTs (default
   privileges give cv_app DML). No seed.
-* Downgrade refuses while `workspaces`, `layouts` or `layout_panes` hold rows.
+* Downgrade locks the three tables, then refuses while any holds rows.
 """
 
 from __future__ import annotations
@@ -46,8 +49,10 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.execute(_TABLES_SQL)
+    op.execute("SET LOCAL lock_timeout = '5s';")
     op.execute(_DRAWINGS_FK_SQL)
     op.execute("ALTER TABLE drawings VALIDATE CONSTRAINT fk_drawings_layout_id_layouts")
+    op.execute("SET LOCAL lock_timeout = DEFAULT;")
 
 
 def downgrade() -> None:
@@ -134,6 +139,7 @@ CREATE INDEX ix_dr_layout ON drawings (layout_id) WHERE layout_id IS NOT NULL;
 """
 
 _DOWNGRADE_SQL = """
+LOCK TABLE workspaces, layouts, layout_panes IN SHARE MODE;
 DO $BODY$
 BEGIN
   IF EXISTS (SELECT 1 FROM workspaces)

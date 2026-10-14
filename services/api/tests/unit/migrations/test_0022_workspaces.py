@@ -77,12 +77,17 @@ def test_drawings_fk_is_added_not_valid_then_validated() -> None:
     assert "MATCH SIMPLE ON DELETE CASCADE NOT VALID" in sql
     assert "VALIDATE CONSTRAINT fk_drawings_layout_id_layouts" in sql
     assert sql.index("NOT VALID") < sql.index("VALIDATE CONSTRAINT")
+    assert sql.index("lock_timeout = '5s'") < sql.index("ADD CONSTRAINT fk_drawings")
+    assert sql.index("VALIDATE CONSTRAINT") < sql.index("lock_timeout = DEFAULT")
     assert "CREATE INDEX ix_dr_layout ON drawings (layout_id) WHERE layout_id IS NOT NULL" in sql
 
 
 def test_downgrade_refuses_populated_and_drops_in_reverse_order() -> None:
     sql = _render("downgrade", "0022_workspaces:0021_drawings")
     assert "downgrade refused" in sql
+    assert sql.index("LOCK TABLE workspaces, layouts, layout_panes IN SHARE MODE") < sql.index(
+        "downgrade refused"
+    )
     order = [
         sql.index(s)
         for s in (
