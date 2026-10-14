@@ -4319,7 +4319,10 @@ class Detail(BaseModel):
 
 class AuditEntry(BaseModel):
     id: Annotated[
-        int, Field(description="Chain position (`audit_log.id`); increasing, not contiguous.")
+        int,
+        Field(
+            description="Chain position (`audit_log.id`); increasing, not contiguous. Informational."
+        ),
     ]
     ts: Annotated[
         AwareDatetime,
@@ -4333,15 +4336,20 @@ class AuditEntry(BaseModel):
     subject_type: Annotated[str | None, Field(description="Recorded subject kind (`object_kind`).")]
     subject_id: str | None
     subject_label: Annotated[
-        str | None, Field(description="Human name of the subject at the time.")
+        str | None, Field(description="Human name of the subject at the time. Informational.")
     ] = None
     outcome: Literal["success", "failure", "denied"]
     severity: Literal["debug", "info", "warning", "error", "critical"]
-    reason: Annotated[str | None, Field(description="Denial reason or failure code.")] = None
+    reason: Annotated[
+        str | None,
+        Field(
+            description="Stable machine-readable code for a denial or failure, for example `owner_only` or `missing_permission:audit:read`; never prose."
+        ),
+    ] = None
     environment: Literal["live", "demo", "testnet"] | None = None
     session_id: UUID | None = None
     ip: Annotated[str | None, Field(description="Actor IP address (PII).")] = None
-    user_agent: str | None = None
+    user_agent: Annotated[str | None, Field(description="Informational.")] = None
     request_id: Annotated[
         str | None, Field(description="Id of the request that produced the entry.")
     ] = None
@@ -4352,15 +4360,15 @@ class AuditEntry(BaseModel):
         ),
     ]
     entry_hash: Annotated[
-        str,
+        str | None,
         Field(
-            description="SHA-256 (hex) over this entry's canonical serialisation and `prev_hash`."
+            description="SHA-256 (hex) over the hashed fields and `prev_hash`; null for a Manager."
         ),
     ]
     prev_hash: Annotated[
         str | None,
         Field(
-            description="`entry_hash` of the previous entry in the chain; 64 zeros for the first entry."
+            description="`entry_hash` of the previous entry (64 zeros for the first); null for a Manager."
         ),
     ]
 
@@ -4517,7 +4525,7 @@ class AuditExportResult(BaseModel):
     download_url: Annotated[
         str,
         Field(
-            description="Relative API URL of the artefact. Owner only (`audit:export`); every download is re-authorised and audited."
+            description="Relative API URL of the artefact. It carries no credential: fetching it is an authenticated `GET`, allowed only to the requesting user with a live `audit_export` step-up, and audited before any byte is sent (see `exportAuditLog`)."
         ),
     ]
     sha256: Annotated[
@@ -4532,15 +4540,26 @@ class AuditExportResult(BaseModel):
         Field(
             description="Base64 of the 64-byte Ed25519 signature.",
             json_schema_extra={"contentEncoding": "base64"},
+            pattern="^[A-Za-z0-9+/]{86}==$",
         ),
     ]
     signature_alg: Literal["ed25519"]
     key_id: Annotated[
-        str, Field(description="Signing key identifier: key version and public-key fingerprint.")
+        str,
+        Field(
+            description="Signing key: key version and the first 16 hex of the public key's SHA-256.",
+            pattern="^cv-audit-export-v[0-9]+:[0-9a-f]{16}$",
+        ),
     ]
     compressed: bool
     size_bytes: Annotated[int, Field(ge=0)]
-    row_count: Annotated[int, Field(ge=0)]
+    row_count: Annotated[
+        int,
+        Field(
+            description="Entry lines in the file: the whole span, including entries flagged as outside the window. The header line is not counted.",
+            ge=0,
+        ),
+    ]
     from_: Annotated[AwareDatetime, Field(alias="from", description="Requested inclusive start.")]
     to: Annotated[AwareDatetime, Field(description="Requested exclusive end.")]
     first_id: int | None = None
@@ -5651,7 +5670,7 @@ class Job(BaseModel):
     result: Annotated[
         AuditExportResult | dict[str, Any] | None,
         Field(
-            description="Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult`; other kinds carry their own object."
+            description="Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then` below); other kinds carry their own object."
         ),
     ] = None
     error: str | None = None
