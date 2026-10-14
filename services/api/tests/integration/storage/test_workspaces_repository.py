@@ -18,9 +18,11 @@ from pathlib import Path
 import psycopg
 import pytest
 import pytest_asyncio
+from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.storage.repositories import workspaces_sqlalchemy as mod
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -97,6 +99,10 @@ def _lay(
     )  # fmt: skip
 
 
+def _lay_with(*panes: PaneFields) -> LayoutFields:
+    return LayoutFields("L", "2x2", None, True, False, False, None, False, panes)
+
+
 @pytest_asyncio.fixture
 async def repo(pg_dsn: str) -> AsyncIterator[SqlAlchemyWorkspaceRepository]:
     rel = SqlAlchemyRelationalRepository(pg_dsn, "workspaces-it")
@@ -151,10 +157,30 @@ async def test_noop_put_with_stale_token_returns_unchanged_without_writing(
 ) -> None:
     a = _user(pg_dsn)
     wid, lid = await _new_ws(repo, a), str(uuid.uuid4())
-    made = await repo.create_layout(a, wid, lid, _lay("L"))
+    pane = _pane(0, pane_config={"settings": {"n": 1, "x": 1.5, "on": True}})
+    made = await repo.create_layout(a, wid, lid, _lay_with(pane))
+    same = _lay_with(_pane(0, pane_config={"settings": {"on": True, "x": 1.5, "n": 1}}))
     stale = made.updated_at - timedelta(seconds=5)
-    res = await repo.replace_layout(a, wid, lid, made.to_fields(), if_match=stale)
+    res = await repo.replace_layout(a, wid, lid, same, if_match=stale)
     assert not res.changed and res.row.updated_at == made.updated_at
+
+
+@pytest.mark.parametrize(("old", "new"), [(1, True), (1, 1.0), (True, 1), (0, False)])
+async def test_number_kind_change_in_pane_config_is_written_not_a_noop(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str, old: object, new: object
+) -> None:
+    a = _user(pg_dsn)
+    wid, lid = await _new_ws(repo, a), str(uuid.uuid4())
+    made = await repo.create_layout(
+        a, wid, lid, _lay_with(_pane(0, pane_config={"settings": {"n": old}}))
+    )
+    res = await repo.replace_layout(
+        a, wid, lid, _lay_with(_pane(0, pane_config={"settings": {"n": new}})), if_match=None
+    )
+    assert res.changed and res.row.updated_at > made.updated_at
+    stored = await repo.get_layout(a, wid, lid)
+    assert stored is not None
+    assert json.dumps(stored.panes[0].pane_config) == json.dumps({"settings": {"n": new}})
 
 
 async def test_stale_token_raises_412_and_keeps_the_layout(
@@ -389,3 +415,129 @@ async def test_limits_are_enforced_under_the_lock(
     with pytest.raises(WorkspaceConflictError) as lay:
         await repo.create_layout(a, wid, str(uuid.uuid4()), _lay(None, 0))
     assert lay.value.rule == "limit_reached"
+
+
+async def test_update_workspace_with_stale_token_raises_412_and_keeps_it(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    a, wid = _user(pg_dsn), str(uuid.uuid4())
+    made = await repo.create_workspace(a, wid, _ws("W"))
+    stale = made.updated_at - timedelta(seconds=1)
+    with pytest.raises(WorkspaceVersionConflictError):
+        await repo.update_workspace(
+            a, wid, WorkspaceFields("X", False, "workspace.default", 0), if_match=stale
+        )
+    assert (await repo.get_workspace_detail(a, wid)) is not None
+    fresh = await repo.update_workspace(
+        a, wid, WorkspaceFields("X", False, "workspace.default", 0), if_match=made.updated_at
+    )
+    assert fresh.changed and fresh.row.name == "X"
+
+
+async def test_cursor_paging_walks_workspaces_and_layouts_without_gaps(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    a = _user(pg_dsn)
+    wids = [await _new_ws(repo, a) for _ in range(5)]
+    seen, after = [], None
+    while True:
+        page = await repo.list_workspaces(a, after=after, limit=2)
+        seen += [w.id for w in page]
+        if len(page) < 2:
+            break
+        after = (page[-1].sort_order, page[-1].id)
+    assert sorted(seen) == sorted(wids) and len(seen) == 5
+    lids = sorted(str(uuid.uuid4()) for _ in range(5))
+    for lid in lids:
+        await repo.create_layout(a, wids[0], lid, _lay(None, 1))
+    got: list[str] = []
+    last: str | None = None
+    while True:
+        lay_page = await repo.list_layouts(a, wids[0], after_id=last, limit=2) or []
+        got += [lay.id for lay in lay_page]
+        if len(lay_page) < 2:
+            break
+        last = lay_page[-1].id
+    assert got == lids
+
+
+async def test_get_workspace_detail_runs_exactly_three_statements(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    a = _user(pg_dsn)
+    wid = await _new_ws(repo, a)
+    for _ in range(4):
+        await repo.create_layout(a, wid, str(uuid.uuid4()), _lay(None, 8))
+    engine = repo._relational._engine.sync_engine
+    seen: list[str] = []
+
+    def count(conn: object, cursor: object, statement: str, *rest: object) -> None:
+        if (
+            statement.lstrip().upper().startswith(("SELECT", "WITH"))
+            and "set_config" not in statement
+        ):
+            seen.append(statement)
+
+    event.listen(engine, "before_cursor_execute", count)
+    try:
+        detail = await repo.get_workspace_detail(a, wid)
+    finally:
+        event.remove(engine, "before_cursor_execute", count)
+    assert detail is not None and len(detail.layouts) == 4 and len(detail.layouts[0].panes) == 8
+    assert len(seen) == 3, seen
+
+
+async def test_recorder_probe_statements_use_ix_lp_symbol_at_scale(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    a, b = _user(pg_dsn), _user(pg_dsn)
+    wa, wb = await _new_ws(repo, a), await _new_ws(repo, b)
+    with _sync(pg_dsn) as c:
+        for owner, wid in ((a, wa), (b, wb)):
+            c.execute(
+                "INSERT INTO layouts (id, workspace_id, owner_user_id, name) "
+                "SELECT gen_random_uuid(), %s, %s, 'ac7-' || %s || '-' || g "
+                "FROM generate_series(1, 500) g",
+                (wid, owner, owner[:8]),
+            )
+        c.execute(
+            "INSERT INTO layout_panes (id, layout_id, slot_index, pane_kind, symbol) "
+            "SELECT gen_random_uuid(), l.id, s, 'chart', "
+            "'AC7S' || (abs(hashtext(l.id::text || s::text)) % 200) || 'USDT' "
+            "FROM layouts l CROSS JOIN generate_series(0, 15) s WHERE l.name LIKE 'ac7-%'"
+        )
+        c.execute("UPDATE layout_panes SET symbol = 'AC7S0USDT' WHERE symbol = 'BTCUSDT'")
+    three = [str(uuid.uuid4()) for _ in range(3)]
+    fresh = {a: await _new_ws(repo, a), b: await _new_ws(repo, b)}  # bulk rows filled wa/wb's cap
+    for i, lid in enumerate(three):
+        owner = a if i < 2 else b
+        wid = fresh[owner]
+        pane = _pane(0, symbol="BTCUSDT", pane_kind="chart", interval_code="time:1m")
+        await repo.create_layout(
+            owner,
+            wid,
+            lid,
+            LayoutFields(f"btc-{i}", "1x1", None, True, False, False, None, False, (pane,)),
+        )
+    with _sync(pg_dsn) as c:
+        c.execute("ANALYZE layouts")
+        c.execute("ANALYZE layout_panes")
+        n = c.execute("SELECT count(*) FROM layouts WHERE name LIKE 'ac7-%'").fetchone()
+        assert n is not None and isinstance(n[0], int) and n[0] >= 1000
+        rows = c.execute(
+            "SELECT lp.layout_id::text, lp.slot_index FROM layout_panes lp JOIN layouts l "
+            "ON l.id = lp.layout_id WHERE lp.symbol = 'BTCUSDT' AND l.deleted_at IS NULL"
+        ).fetchall()
+        assert sorted(str(r[0]) for r in rows) == sorted(three)
+        probe = str(mod._CHART_OPEN)
+        plan = c.execute(
+            "EXPLAIN (FORMAT JSON) " + probe.replace(":symbol", "'BTCUSDT'")
+        ).fetchone()
+        assert plan is not None
+        text = json.dumps(plan[0])
+        assert '"Index Name": "ix_lp_symbol"' in text, text
+        assert '"Node Type": "Seq Scan"' not in text, text
+        print("AC7_PLAN_JSON=" + text)
+    assert await repo.is_chart_open("BTCUSDT")
+    assert "BTCUSDT" in await repo.chart_open_symbols()
+    assert not await repo.is_chart_open("NOPEUSDT")
