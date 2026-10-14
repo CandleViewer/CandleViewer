@@ -1357,7 +1357,10 @@ def create_app(
     )
     app.include_router(
         make_drawings_router(
-            lambda: app.state.drawings_repository, audit_resolver, _LazyAuditEmitter(ctx.audit)
+            lambda: app.state.drawings_repository,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
+            metrics=app.state.drawings_metrics,
         )
     )
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).
