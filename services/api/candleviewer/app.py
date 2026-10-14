@@ -156,6 +156,7 @@ from candleviewer.net import (
     register_system_topic_subscriber,
 )
 from candleviewer.net.system_topic import client_notice
+from candleviewer.observability.audit_query_metrics import export_audit_query_metrics
 from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.observability.health_metrics import bind_health_metrics
 from candleviewer.observability.health_probes import HealthRegistry
@@ -1086,6 +1087,10 @@ def create_app(
     app.state.ws_metrics = export_ws_metrics(ctx.metrics, env=resolved.environment.value)
     # #2090: auth series (incl. auth_csrf_refused_total) on the scraped registry.
     app.state.auth_metrics = export_auth_metrics(ctx.metrics, env=resolved.environment.value)
+    # E42-T02: audit page time by filter class, and reads over their time budget.
+    app.state.audit_query_metrics = export_audit_query_metrics(
+        ctx.metrics, env=resolved.environment.value
+    )
     # E40-T01: alert_deliveries retention purge + alert gauges (lifespan-started).
     _alert_pg = SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "alerts")
     _retention = RetentionSchedule.from_settings(resolved)

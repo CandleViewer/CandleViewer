@@ -17,6 +17,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from pydantic import ValidationError
 
 from candleviewer.api.audit import make_audit_router
@@ -41,6 +42,7 @@ from candleviewer.audit.models import (
     VerifyResult,
 )
 from candleviewer.audit.query import AuditQueryService
+from candleviewer.observability.audit_query_metrics import FILTER_CLASSES
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadBusy, AuditReadFailed
 
@@ -417,6 +419,7 @@ def test_manager_query_sees_only_own_events_redacted() -> None:
     assert [i["id"] for i in items] == [1]
     assert items[0]["detail"] == {} and items[0]["ip"] is None
     assert items[0]["user_agent"] is None
+    assert items[0]["entry_hash"] is None and items[0]["prev_hash"] is None  # #2392
     [call] = service.query_service.query_calls
     assert call["actor_user_id"] == call["restrict_to_actor"] == str(me.user_id)
 
@@ -429,6 +432,7 @@ def test_owner_query_sees_all_events_raw() -> None:
     assert [i["id"] for i in items] == [1, 2]
     assert items[1]["detail"] == {"symbol": "BTCUSDT", "environment": "live"}
     assert items[1]["ip"] == "100.84.12.9"
+    assert items[1]["entry_hash"] == "h2"  # the Owner keeps both hashes
     assert service.query_service.query_calls[0]["restrict_to_actor"] is None
 
 
@@ -1029,3 +1033,28 @@ async def test_the_users_slot_is_held_until_the_page_is_hashed() -> None:
     finally:
         release.set()
         hasher.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("principal", "params", "label"),
+    [
+        (_owner, {}, "none"),
+        (_owner, {"q": "x", "ip": "10.0.0.1"}, "q"),
+        (_owner, {"ip": "10.0.0.1", "outcome": "denied"}, "ip"),
+        (_owner, {"action": "orders.submit", "outcome": "denied"}, "action"),
+        (_owner, {"subject_id": "o-1"}, "object"),
+        (_owner, {"severity": "error", "outcome": "denied"}, "severity"),
+        (_owner, {"outcome": "denied"}, "outcome"),
+        (_owner, {"to": "2026-01-01T00:00:00Z"}, "range"),
+        (_manager_with_read, {}, "actor"),
+        (_manager_with_read, {"action": "orders.submit"}, "actor_action"),
+    ],
+)
+def test_served_page_time_is_observed_under_a_closed_filter_class(
+    principal: Any, params: dict[str, Any], label: str
+) -> None:
+    name, labels = "cv_audit_query_duration_seconds_count", {"filter_class": label}
+    before = REGISTRY.get_sample_value(name, labels) or 0
+    assert _budgeted(principal())[0].get("/admin/audit", params=params).status_code == 200
+    assert REGISTRY.get_sample_value(name, labels) == before + 1
+    assert label in FILTER_CLASSES

@@ -4,9 +4,11 @@ Grants follow `docs/plan/04-security-program.md` §7.2.1 / §7.2.2 rows 49,
 49a, 50 and SR-067 (mirrored in `22-api-openapi.yaml` `x-rbac`):
 
 * `query` (`audit:read`): Owner sees every entry raw; a Manager holding
-  `audit:read` sees only entries it is the actor of, with payload, IP and
-  user-agent removed (`AuditView.OWN_REDACTED`); a Viewer holds no
-  `audit:read` and is refused.
+  `audit:read` sees only entries it is the actor of, with payload, IP,
+  user-agent and both hashes removed (`AuditView.OWN_REDACTED`); a Viewer
+  holds no `audit:read` and is refused. Viewer stays at 403 as decided on
+  #2083; C-12.4's "Viewer (read-only, including audit)" is open for the
+  owner's decision on #2428 (design D7), and nothing here widens it.
 * `verify` (`audit:read`, row 49a): Owner only.
 * `export` (`audit:export`, row 50): Owner only (step-up enforced upstream).
 
@@ -127,7 +129,10 @@ async def authorize(principal: AuditPrincipal, operation: str, emitter: _Emitter
 
 #: SR-067 allow-list: the only `AuditEntry` fields a non-owner projection keeps.
 #: Anything not named here (payload, IP, user-agent, any field added later) is
-#: dropped or nulled by default.
+#: dropped or nulled by default. Both hashes are withheld too (contract #2392):
+#: with the hashed fields known, `entry_hash` would let a caller confirm guesses
+#: about the fields the projection hides, and `prev_hash` links to the hash of
+#: the entry before it.
 OWN_REDACTED_FIELDS: frozenset[str] = frozenset(
     {
         "id",
@@ -140,8 +145,6 @@ OWN_REDACTED_FIELDS: frozenset[str] = frozenset(
         "outcome",
         "severity",
         "request_id",
-        "entry_hash",
-        "prev_hash",
     }
 )
 

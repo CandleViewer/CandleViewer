@@ -32,7 +32,7 @@ _UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|m
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "2a6eea4d4e7d7006b7729cb3f455e4c0e4f003929837629c6f9cad90a6b0588b"
+GOLDEN_CATALOGUE_SHA256 = "1dfc3ac02f610bf422557b60ce028dac3a9329b2dd6c8014d99a76c33ba7ade4"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -173,12 +173,14 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
+    from candleviewer.observability.audit_query_metrics import EXPORTED_NAMES as AUDIT_NAMES
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
     from candleviewer.secrets.metrics import EXPORTED_NAMES as SECRETS_NAMES
     from candleviewer.ws.metrics import CV_WS_NAMES
     from candleviewer.ws.metrics import EXPORTED_NAMES as CVWB_NAMES
 
     others = CVWB_NAMES | RECORDER_NAMES | CV_WS_NAMES | AUTH_EXPORTED_NAMES | SECRETS_NAMES
+    others |= AUDIT_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
@@ -253,5 +255,26 @@ def test_exported_secrets_metrics_served_on_app_registry_with_env() -> None:
         assert 'cv_kek_load_failures_total{env="demo",reason="kek_unavailable"}' in text
         catalogued = {s.name for s in live_specs() if s.exported}
         assert EXPORTED_NAMES <= catalogued  # every exported M2 series is catalogued
+    finally:
+        collector.close()
+
+
+def test_exported_audit_query_metrics_served_with_env_and_closed_labels() -> None:
+    """E42-T02: the audit read-path series are catalogued, served with `env`, and labelled
+    only by closed sets."""
+    from candleviewer.observability import audit_query_metrics as aq
+
+    assert aq.EXPORTED_NAMES <= {s.name for s in live_specs() if s.exported}
+    spec = {s.name: s for s in CATALOGUE}["cv_audit_query_duration_seconds"]
+    assert spec.max_series == len(aq.FILTER_CLASSES)
+    m = Metrics("demo")
+    collector = aq.export_audit_query_metrics(m.registry, env="demo")
+    try:
+        aq.cv_audit_query_timeouts_total.labels("pool").inc(0)
+        aq.cv_audit_query_duration_seconds.labels("none").observe(0)
+        text = generate_latest(m.registry).decode()
+        for name in aq.EXPORTED_NAMES:
+            assert f"# HELP {name} " in text, name
+        assert 'cv_audit_query_timeouts_total{cause="pool",env="demo"}' in text
     finally:
         collector.close()

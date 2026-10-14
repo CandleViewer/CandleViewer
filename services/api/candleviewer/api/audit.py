@@ -30,6 +30,7 @@ for a given request, that is a normal 401 per the resolver's own contract
 from __future__ import annotations
 
 import hashlib
+import time
 from datetime import datetime
 from typing import Annotated, Any, Protocol
 
@@ -65,6 +66,7 @@ from candleviewer.audit.models import (
     AuditVerifyRequest,
     Severity,
 )
+from candleviewer.observability.audit_query_metrics import cv_audit_query_duration_seconds
 from candleviewer.storage.errors import StorageTierUnavailable
 
 
@@ -245,6 +247,28 @@ def _recorded_filters(req: AuditQueryRequest, actor_user_id: str | None) -> dict
     return {_PARAM_NAMES.get(k, k): v for k, v in dumped.items()}
 
 
+def _filter_class(filters: dict[str, Any], restrict: str | None) -> str:
+    """The closed `filter_class` label (`FILTER_CLASSES`): which filters shaped the page,
+    never their values."""
+    if filters["q"] is not None or filters["ip"] is not None:
+        return "q" if filters["q"] is not None else "ip"
+    if restrict is not None or filters["actor_user_id"] is not None:
+        return "actor_action" if filters["actions"] else "actor"
+    for name, columns in _CLASS_COLUMNS:
+        if any(filters[c] is not None for c in columns):
+            return name
+    return "none"
+
+
+_CLASS_COLUMNS = (
+    ("action", ("actions",)),
+    ("object", ("subject_type", "subject_id")),
+    ("severity", ("severity",)),
+    ("outcome", ("outcome",)),
+    ("range", ("from_ts", "to_ts")),
+)
+
+
 def make_audit_router(
     audit_service: AuditServiceLike | None,
     principal_resolver: PrincipalResolver | None = None,
@@ -265,6 +289,10 @@ def make_audit_router(
     over the user's cap is counted instead, which makes a read `429` and leaves a
     refusal unchanged but for `Retry-After`; a due record that cannot be written makes
     the call `503` with nothing returned (C-2.9).
+
+    A Viewer holds no `audit:read` and gets `403` on every route here, as decided on
+    #2083. Whether C-12.4's "Viewer (read-only, including audit)" should change that is
+    the owner's decision on #2428 (design D7); nothing in this router grants it.
     """
     router = APIRouter(prefix="/admin/audit", tags=["admin"])
     query_limiter = limiter if limiter is not None else AuditQueryLimiter()
@@ -443,6 +471,7 @@ def make_audit_router(
             return _unavailable()
         # Fail closed: any view but the Owner's raw one is scoped to the caller's own entries.
         restrict = None if view is AuditView.RAW else key
+        started = time.perf_counter()
         try:
             page = await service.query.query(
                 **filters,
@@ -462,6 +491,8 @@ def make_audit_router(
             # The store error carries only its SQLSTATE (or that every read slot is in
             # use); it is logged where it is raised.
             return _unavailable("audit store unavailable")
+        elapsed = time.perf_counter() - started
+        cv_audit_query_duration_seconds.labels(_filter_class(filters, restrict)).observe(elapsed)
         if restrict is not None:
             if any(str(e.actor_user_id) != restrict for e in page.items):
                 # The scope is applied in the SQL; a row outside it is never served.
