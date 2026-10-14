@@ -171,16 +171,16 @@ test directory). Result is the first failing tests.
 - CI wiring as a required check on `contracts` and `integration`: **not done here** (workflow files are out of scope for this PR).
 - Cross-references: E17-Q02 (chaos), E17-Q03 (load), E17-Q04 (E2E, C1–C12), E17-X02 (adversarial security), E26 (replay end).
 
-F1-F6 are pinned by one `xfail(strict=True)` test each (`test_*_xfail_fN_*`); the marker must be removed when the gateway is fixed. F7 is a known gap, deliberately not xfailed.
+F1-F6 are pinned by one `xfail(strict=True)` test each (`test_*_xfail_fN_*`); the marker must be removed when the gateway is fixed. F7 is pinned by the single strict xfail `test_s13_xfail_f7_msgpack_only_offer_negotiates_cv_v1_msgpack` (#377).
 
 ## 11. Delivery in stacked parts
 
-| Part      | Files                                                        | Requirements          |
-| --------- | ------------------------------------------------------------ | --------------------- |
-| 1 (#2393) | `_support.py`, `_harness.py`, `conftest.py`, `test_ws_s1.py` | S1; xfails F2, F4, F6 |
-| 2 (#2401) | `test_ws_s2_s9.py`                                           | S2-S9; xfails F5, F3  |
-| 3 (#2402) | `test_ws_s10_s13.py`                                         | S10-S13; xfail F1     |
-| 4 (#2403) | `test_ws_contract.py`                                        | §16.4 rows            |
+| Part      | Files                                                        | Requirements                       |
+| --------- | ------------------------------------------------------------ | ---------------------------------- |
+| 1 (#2393) | `_support.py`, `_harness.py`, `conftest.py`, `test_ws_s1.py` | S1; xfails F2, F4, F6              |
+| 2 (#2401) | `test_ws_s2_s9.py`                                           | S2-S9; xfails F5, F3, #2409, #2410 |
+| 3 (#2402) | `test_ws_s10_s13.py`                                         | S10-S13; xfails F1, F7             |
+| 4 (#2403) | `test_ws_contract.py`                                        | §16.4 rows                         |
 
 Sections 1-5 and 9 describe the suite once all parts have landed.
 
@@ -194,14 +194,12 @@ Sections 1-5 and 9 describe the suite once all parts have landed.
 - **Outbound frames.** The harness validates frames it SENDS against §13 (`sub.schema.json` etc.) unless a test passes
   `conform=False` for a deliberately invalid one. `sub` entries use the `{ch, opts}` object form; the schema does not allow bare strings.
 - **F7 / msgpack.** The `cv.v1.msgpack` subprotocol is the preferred transport (§2.2) and its codec is not on `main` (Agent B's msgpack subprotocol work, #377,
-  is the owner). The AC "runs under both subprotocols" therefore stays open; no xfail is committed for it.
+  is the owner). The AC "runs under both subprotocols" therefore stays open; the single pin is `test_s13_xfail_f7_…` (reason `#377: cv.v1.msgpack codec not implemented (F7)`).
 
 ## 13. Known gaps in S6 and S8 coverage (reported, not hidden)
 
-- **S6 ladder (§8.4 steps 1-2).** The gateway does not implement the coalescable-topic branch: flooding `trades` past the budget
-  closes the socket with `bye slow_consumer` after 1 024 frames, with no `snap reason:backpressure`. The contract case is NOT committed
-  as an xfail yet; it is reported to the coordinator for an issue. The `orders` branch (step 3) is asserted. Also the gateway bound is 1 024
-  frames, not the spec's 2 000 (§16.2).
+- **S6 ladder (§8.4 steps 1-2), #2409.** The gateway does not implement the coalescable-topic branch: flooding `trades` past the budget closes the socket with `bye slow_consumer` after 1 024 frames, with no `snap reason:backpressure`. Pinned by `test_s6_xfail_coalescable_overflow_gets_backpressure_snap_and_no_close`. The `orders` branch (step 3) is asserted.
+- **S6 bound, #2410.** The gateway bound is 1 024 frames, not the spec's 2 000 (§16.2); pinned by `test_s6_xfail_coalescable_topic_is_not_cut_below_the_spec_budget`.
 - **S8** is asserted for `heatmap` (structured and binary) and `metrics` (structured `estimated` per series). Other families have no
   heuristic fields in §14.
-- **Not in this suite (cross-referenced):** §16.4 coalescer and book-delta unit rows belong to E17-T03 and E17-S03; F7 msgpack runs to the codec work.
+- **Not in this suite (cross-referenced):** §16.4 coalescer and book-delta unit rows belong to E17-T03 and E17-S03; F7 msgpack runs to the codec work (#377); pinned by `test_s13_xfail_f7_msgpack_only_offer_negotiates_cv_v1_msgpack`.

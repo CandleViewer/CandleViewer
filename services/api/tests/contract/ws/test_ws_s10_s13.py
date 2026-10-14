@@ -4,6 +4,10 @@ Every test drives the REAL gateway (`make_ws_router`, `ConnectionRegistry`, `Seq
 `TopicEmitter`) through a socket and validates every received frame against the §13-§15 schemas
 (`_harness.validate_frame`). Test names start `test_sN_` so the coverage matrix in
 `conftest.py` can report which requirements ran.
+
+Every test in this module is negative-path (it sends deliberately invalid client frames), so
+`connect()` below defaults to `conform=False`: outbound frames are NOT pre-validated against §13
+here. The positive-path modules keep the validating default.
 """
 
 from __future__ import annotations
@@ -361,3 +365,11 @@ def test_s10_xfail_f1_err_frame_validates_against_the_error_schema() -> None:
     with connect(World()) as c:
         c.send({"t": "bogus"})
         c.recv()  # validated: common#/$defs/error requires `message`
+
+
+@pytest.mark.xfail(strict=True, reason="#377: cv.v1.msgpack codec not implemented (F7)")
+def test_s13_xfail_f7_msgpack_only_offer_negotiates_cv_v1_msgpack() -> None:
+    """The single F7 pin (§2.2): the preferred subprotocol must be served."""
+    w = World()
+    with w.client, w.client.websocket_connect("/ws", subprotocols=["cv.v1.msgpack"]) as ws:
+        assert ws.accepted_subprotocol == "cv.v1.msgpack"
