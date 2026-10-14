@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -16,11 +17,16 @@ from candleviewer.api.drawings import make_drawings_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import SessionNotFound
 from candleviewer.storage.repositories.drawings import (
+    BatchOp,
+    BatchOpFailed,
+    BatchResult,
+    CreateOp,
     DrawingFields,
     DrawingIdUnavailableError,
     DrawingNotFoundError,
     DrawingRow,
     DrawingVersionConflictError,
+    UpdateOp,
 )
 
 USER_A = uuid.UUID("00000000-0000-4000-8000-00000000000a")
@@ -32,6 +38,7 @@ PERMS = {USER_A: {"workspaces:read", "workspaces:write"},
          USER_B: {"workspaces:read", "workspaces:write"}, VIEWER: {"workspaces:read"}}  # fmt: skip
 #: `Drawing` is open for readers (C-6.3), so its exact key set is pinned here: no internal column
 #: (`deleted_at`, `alert_id`, `interval_scope`, `anchor_*`) may ever leak into a response.
+BATCH = "DrawingBatchRequest"  # generated model name for `wire(..., BATCH)`
 DRAWING_KEYS = frozenset(("id owner_user_id symbol tool layout_id geometry style label locked "
                           "visible z_index created_at updated_at").split())  # fmt: skip
 T0 = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
@@ -57,16 +64,20 @@ def wire(data: dict[str, Any], model: str = "DrawingInput") -> dict[str, Any]:
 
 
 class FakeDrawingRepo:
-    """The `DrawingRepository` semantics in memory: owner-scoped, soft delete, strict tokens."""
+    """The `DrawingRepository` semantics in memory: owner-scoped, soft delete, strict tokens,
+    and an all-or-nothing `apply_batch` with the SQL implementation's first-failure rules."""
 
     def __init__(self) -> None:
         self.rows: dict[str, DrawingRow] = {}
         self.deleted: dict[str, datetime] = {}
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.fail: Exception | None = None  # raised by every call (store outage)
         self.tick = 0
 
     def _call(self, name: str, **kw: Any) -> None:
         self.calls.append((name, kw))
+        if self.fail is not None:
+            raise self.fail
 
     def _live(self, owner: str, drawing_id: str) -> DrawingRow | None:
         row = self.rows.get(drawing_id)
@@ -131,6 +142,35 @@ class FakeDrawingRepo:
             self._delete(row)
         return row is not None
 
+    async def apply_batch(self, owner: str, ops: Sequence[BatchOp]) -> BatchResult:
+        self._call("apply_batch", owner=owner, op_count=len(ops))
+        saved, created, updated, deleted = (dict(self.rows), dict(self.deleted)), [], [], []
+        try:
+            for i, op in enumerate(ops):
+                row = self.rows.get(op.id)  # any owner, any state (the SQL snapshot)
+                if isinstance(op, CreateOp):
+                    if row is not None:
+                        raise BatchOpFailed(i, "id_unavailable")
+                    created.append(self._put(owner, op.id, op.fields, T0))
+                elif row is None or row.owner_user_id != owner or op.id in self.deleted:
+                    raise BatchOpFailed(i, "target_unavailable")
+                elif row.updated_at != op.if_match:
+                    raise BatchOpFailed(i, "version_conflict")
+                elif isinstance(op, UpdateOp):
+                    if (op.fields.symbol, op.fields.tool) != (row.symbol, row.tool):
+                        raise BatchOpFailed(i, "immutable_field")  # same order as the SQL repo
+                    updated.append(self._put(owner, op.id, op.fields, row.created_at))
+                else:
+                    self._delete(row)
+                    deleted.append(op.id)
+        except BatchOpFailed:
+            self.rows, self.deleted = saved  # rolled back: nothing of the batch survives
+            raise
+        return BatchResult(tuple(created), tuple(updated), tuple(deleted))
+
+    async def purge_deleted(self, older_than_days: int, limit: int) -> int:
+        return 0  # the retention job is slice C4; the router never purges
+
 
 class Audit:
     def __init__(self) -> None:
@@ -146,22 +186,27 @@ class Audit:
 class Env:
     """Router-only app with a fake repository; `user` is the caller (None = no session)."""
 
-    def __init__(self, *, wired: bool = True) -> None:
+    def __init__(self, *, wired: bool = True, metrics: Any = None) -> None:
         self.repo, self.audit = FakeDrawingRepo(), Audit()
         self.user: uuid.UUID | None = USER_A
+        self.repo_up, self.now = True, T0.timestamp()  # store reachable; the router's clock
+        self.grants: set[str] | None = None  # replaces PERMS[user] ("*", unknown codes, downgrade)
+        self.owner = False  # the owner flag the session resolver derives
         env = self
 
         class _Resolver:  # async, like the session-backed `SessionAuditPrincipalResolver`
             async def resolve(self, _request: Request) -> AuditPrincipal | None:
                 if env.user is None:
                     return None
-                perms = frozenset(PERMS[env.user])
-                return AuditPrincipal(env.user, "u", perms, session_id=SID, ip="10.0.0.9")
+                perms = frozenset(PERMS[env.user] if env.grants is None else env.grants)
+                return AuditPrincipal(env.user, "u", perms, session_id=SID, ip="10.0.0.9",
+                                      is_owner=env.owner)  # fmt: skip
 
         app = FastAPI()
-        app.include_router(
-            make_drawings_router(lambda: self.repo, _Resolver() if wired else None, self.audit)
-        )
+        app.include_router(make_drawings_router(
+            lambda: self.repo if self.repo_up else None, _Resolver() if wired else None,
+            self.audit, clock=lambda: self.now, metrics=metrics,
+        ))  # fmt: skip
         self.c = TestClient(app)
 
     def create(self, **over: Any) -> dict[str, Any]:

@@ -7,7 +7,7 @@ from typing import Any
 
 import _drawings_api_env as fakes
 import pytest
-from _drawings_api_env import TRENDLINE, USER_A, USER_B, VIEWER, Env, wire
+from _drawings_api_env import BATCH, TRENDLINE, USER_A, USER_B, VIEWER, Env, wire
 from fastapi.testclient import TestClient
 
 import candleviewer.app as appmod
@@ -18,16 +18,22 @@ IDOR: dict[str, tuple[int, int, int]] = {
     "read:list": (200, 200, 200),
     "write:create": (201, 201, 403),
     "write:put": (200, 404, 403),
+    "write:batch_update": (200, 409, 403),
     "delete:delete": (204, 404, 403),
+    "delete:batch_delete": (200, 409, 403),
 }
 
 
 def _request(op: str, d: dict[str, Any]) -> tuple[str, str, Any]:
+    update = {"op": "update", "id": d["id"], "if_match": d["updated_at"], "drawing": TRENDLINE}
+    delete = {"op": "delete", "id": d["id"], "if_match": d["updated_at"]}
     return {
         "read:list": ("GET", "/drawings?symbol=BTCUSDT", None),
         "write:create": ("POST", "/drawings", wire(TRENDLINE)),
         "write:put": ("PUT", f"/drawings/{d['id']}", wire(TRENDLINE)),
+        "write:batch_update": ("POST", "/drawings/batch", wire({"operations": [update]}, BATCH)),
         "delete:delete": ("DELETE", f"/drawings/{d['id']}", None),
+        "delete:batch_delete": ("POST", "/drawings/batch", wire({"operations": [delete]}, BATCH)),
     }[op]
 
 
@@ -70,3 +76,24 @@ def test_production_create_app_resolves_callers_from_the_session(
     assert c.get(url, headers=ok).json()["items"] == []  # 200: resolved through the session
     for headers in ({}, {"Authorization": "Bearer x"}):  # no / unknown bearer: no session
         assert c.get(url, headers=headers).status_code == 401
+
+
+@pytest.mark.parametrize("owner", [False, True])
+@pytest.mark.parametrize("grants", [{"*"}, {"workspaces:*"}, {"workspaces"},
+                                    {"WORKSPACES:READ", "Workspaces:Write"}])  # fmt: skip
+def test_wildcard_unknown_and_case_variant_codes_grant_nothing(
+    grants: set[str], owner: bool
+) -> None:
+    env = Env()
+    env.grants, env.owner = grants, owner  # the decision point knows exact codes only
+    assert env.c.get("/drawings?symbol=BTCUSDT").status_code == 403
+    assert env.c.post("/drawings", json=wire(TRENDLINE)).status_code == 403
+    assert [c["reason"].split(":", 1)[0] for c in env.audit.denied()] == ["missing_permission"] * 2
+    assert env.repo.calls == []
+
+
+def test_owner_with_explicit_codes_is_allowed() -> None:
+    env = Env()
+    env.grants, env.owner = {"workspaces:read", "workspaces:write"}, True  # as seeded (0001 :348)
+    assert env.c.post("/drawings", json=wire(TRENDLINE)).status_code == 201
+    assert len(env.listed()) == 1 and env.audit.denied() == []
