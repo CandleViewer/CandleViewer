@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
+import pytest
+
 from candleviewer.ws.gateway import close_reason_label
 from candleviewer.ws.lifecycle import CLOSE_REASONS
 from candleviewer.ws.upstream import (
@@ -10,6 +14,14 @@ from candleviewer.ws.upstream import (
     UpstreamRefs,
     cv_ws_upstream_consumers_in_use,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clean_upstream_gauge() -> Iterator[None]:
+    """The gauge is module-global; isolate every test from series leaked by others (#2360)."""
+    cv_ws_upstream_consumers_in_use.clear()
+    yield
+    cv_ws_upstream_consumers_in_use.clear()
 
 
 def _series() -> dict[tuple[str, str], float]:
@@ -53,3 +65,12 @@ async def test_upstream_gauge_symbol_label_bounded_with_other() -> None:
         refs.release((s, "book", ()), "c1", now=0.0)
     await refs.sweep(now=5.0)
     assert not [k for k in _series() if k[1] == "book"]
+
+
+def test_zz_polluter_leaves_stray_book_series() -> None:
+    """Simulates an earlier test that leaks a series (#2360); the fixture must clean it."""
+    cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book").set(1)
+
+
+def test_zzz_gauge_starts_empty_despite_earlier_pollution() -> None:
+    assert _series() == {}
