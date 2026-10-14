@@ -11,7 +11,7 @@ from datetime import timedelta
 import pytest
 
 from candleviewer.auth.errors import SessionReadOnly, StepUpCodeInvalid, StepUpRequired
-from candleviewer.auth.session_chart import SessionChartError
+from candleviewer.auth.session_chart import SessionChart, SessionChartError
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.statechart.bindings import b16_session
 from tests.conftest import RecordingAuditSink
@@ -140,3 +140,49 @@ async def test_audit_sink_missing_fails_loud_after_enforcement() -> None:
         await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
     # Enforcement already happened and persisted (sync code enforces, C-2.21).
     assert "keys" in sessions.sessions["s1"].step_up_elevations
+
+
+async def test_locked_row_is_recorded_as_idle_lock_before_the_next_event(
+    b16_audit: RecordingAuditSink,
+) -> None:
+    """#2301 / INV-B16-e: the idle deadline is evaluated on access. The chart
+    records the lock once (dropping elevation), ignores activity, and an unlock
+    recorded against the still-locked row lands in `auth.idle_locked`."""
+    svc, clock, seed, user, sessions = await _setup()
+    await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
+    sid = _sid(svc, sessions)
+    clock.now += timedelta(minutes=16)  # past the default 15-minute idle timeout
+    row = sessions.sessions["s1"]
+    assert row.is_idle_locked(now=clock.now)
+    for _ in range(2):
+        await svc.chart.record(row, clock.now, "REQUEST")
+    assert svc.chart.in_state(sid, "idle_locked") and svc.chart.in_state(sid, "normal")
+    assert b16_audit.actions()[-3:] == [
+        "auth.idle_locked",
+        "auth.request_ignored",
+        "auth.request_ignored",
+    ]
+    await svc.chart.record(row, clock.now, "UNLOCK_OK")
+    assert svc.chart.in_state(sid, "active")
+    assert b16_audit.actions()[-1] == "auth.session_unlocked"
+    assert b16_audit.actions().count("auth.idle_locked") == 1
+
+
+async def test_chart_rebuilt_for_a_locked_row_comes_back_locked_without_elevation(
+    b16_audit: RecordingAuditSink,
+) -> None:
+    """Snapshot note (#2301): no lock state is persisted; the row re-evaluates it."""
+    svc, clock, seed, user, sessions = await _setup()
+    await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
+    row = sessions.sessions["s1"].model_copy(
+        update={"last_seen_at": clock.now - timedelta(minutes=16)}
+    )
+    assert row.is_idle_locked(now=clock.now) and row.step_up_elevations["keys"] > clock.now
+    chart = SessionChart()
+    try:
+        await chart.record(row, clock.now, "REQUEST", replay=True)
+        assert chart.in_state(str(row.id), "idle_locked")
+        assert not chart.in_state(str(row.id), "elevated")
+        assert b16_audit.actions()[-1] == "auth.idle_locked"
+    finally:
+        await chart.stop()

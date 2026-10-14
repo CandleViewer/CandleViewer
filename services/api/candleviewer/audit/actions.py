@@ -42,6 +42,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.session_unlocked",
         "auth.unlock_failed",
         "auth.session_extended",
+        # #2301: written by the B16 chart's idle-lock arms (unlock, failed unlock,
+        # activity ignored while locked or an unlock outside a lock).
+        "auth.request_ignored",
         "auth.refresh_reuse_detected",
         "auth.csrf_refused",
         # E09-X02 AC2 (#2144, U6/SR-013): a session credential this server never issued, or

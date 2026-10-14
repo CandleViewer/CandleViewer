@@ -152,10 +152,16 @@ class SessionChart:
         """Send *event* to the session's chart, after enforcement already ran.
 
         `before` (the elevation view prior to the event) rides on the payload
-        so the audit action can write before/after state (C-12.8)."""
+        so the audit action can write before/after state (C-12.8). An idle
+        lock the row shows but the chart has not seen yet is recorded first
+        (INV-B16-e, #2301): an unlock is recorded against the still-locked row."""
         interp = await self._get(record, now)
+        sid = str(record.id)
+        if record.is_idle_locked(now=now) and self.in_state(sid, "active"):
+            before = b16_session.elevation_view(dict(interp.context))
+            await self._send(sid, "IDLE_DEADLINE", before=before)
         before = b16_session.elevation_view(dict(interp.context))
-        await self._send(str(record.id), event, before=before, **payload)
+        await self._send(sid, event, before=before, **payload)
 
     async def revoke(self, record: SessionRecord, now: datetime, reason: str) -> None:
         """Session revoked by sync code: record `REVOKE`, then drop the chart."""
