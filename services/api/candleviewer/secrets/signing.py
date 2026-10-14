@@ -5,12 +5,9 @@ segments and marks where the credential's key id (the API key its request header
 with `KEY_ID_SLOT`. M2 splices the key id in and computes HMAC-SHA256 with the API secret, so the
 secret is plaintext only inside `secrets/`. The caller gets the lowercase hex MAC and the key id
 (as a `Secret`, for its request header), never the secret. The message is plain data, so an
-out-of-process signer can serve the same call (#2279). It is bounded (size, parts, key-id slots),
-so the capability is not a general-purpose HMAC oracle keyed by the secret.
-
-A failed MAC does not carry plaintext out in a traceback either (C-12.6): it is raised as
-`CredentialUnavailable("signing_failed")` with nothing chained, after the failed call's frames
-are cleared, and no signing frame binds plaintext to a name.
+out-of-process signer can serve the same call (#2279). It is bounded, so the capability is no
+general-purpose HMAC oracle. A failed MAC leaves as a typed `signing_failed` with nothing chained
+and the failed call's frames cleared, so no traceback carries plaintext out (C-12.6).
 """
 
 from __future__ import annotations
@@ -66,11 +63,7 @@ def check_message(message: object) -> SigningMessage:
         or sum(part is KEY_ID_SLOT for part in message) > MAX_KEY_ID_SLOTS
         or sum(len(part) for part in message if type(part) is bytes) > MAX_MESSAGE_BYTES
     ):
-        raise TypeError(
-            f"signing message must be a non-empty tuple of at most {MAX_MESSAGE_PARTS} bytes "
-            f"parts and KEY_ID_SLOT markers: at most {MAX_KEY_ID_SLOTS} KEY_ID_SLOT and "
-            f"{MAX_MESSAGE_BYTES} bytes"
-        )
+        raise TypeError("signing message: a bounded, non-empty tuple of bytes and KEY_ID_SLOT")
     return message
 
 

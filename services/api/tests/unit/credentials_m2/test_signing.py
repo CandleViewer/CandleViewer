@@ -17,13 +17,7 @@ import pytest
 from candleviewer.secrets import KEY_ID_SLOT, CredentialUnavailable, RequestSignature, Secret
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.service import mint_borrower
-from candleviewer.secrets.signing import (
-    MAX_KEY_ID_SLOTS,
-    MAX_MESSAGE_BYTES,
-    MAX_MESSAGE_PARTS,
-    check_message,
-    mac_hex,
-)
+from candleviewer.secrets.signing import check_message, mac_hex
 from candleviewer.secrets.store import InMemoryCredentialStore
 from tests.unit.credentials_m2._helpers import _h, _Spy, _store
 from tests.unit.credentials_m2._service_fakes import _boot, _Src, _store_one
@@ -66,40 +60,25 @@ def test_check_message_accepts_bytes_and_the_slot() -> None:
     assert check_message(MSG) is MSG
 
 
-def test_message_bounds_fit_the_adapter_messages_with_room() -> None:
-    """The adapter's REST string-to-sign: four parts, one key-id slot; WS auth: no slot."""
-    assert (MAX_MESSAGE_BYTES, MAX_MESSAGE_PARTS, MAX_KEY_ID_SLOTS) == (65536, 16, 1)
-
-
 @pytest.mark.parametrize(
-    "ok",
-    [(b"x" * 65536, KEY_ID_SLOT), (b"",) * 16, (b"GET/realtime", b"1700000005000")],
-    ids=["64KiB-one-slot", "16-parts", "ws-auth-no-slot"],
+    ("message", "ok"),
+    [
+        ((b"x" * 65536, KEY_ID_SLOT), True),
+        ((b"",) * 16, True),
+        ((b"a", b"b"), True),
+        ((b"x" * 65536, b"y"), False),
+        ((b"",) * 17, False),
+        ((KEY_ID_SLOT, b"-", KEY_ID_SLOT), False),
+    ],
+    ids=["64KiB-one-slot", "16-parts", "no-slot", "64KiB-plus-1", "17-parts", "two-slots"],
 )
-def test_check_message_accepts_messages_at_the_bounds(ok: Any) -> None:
-    assert check_message(ok) is ok
-
-
-@pytest.mark.parametrize(
-    "bad",
-    [(b"x" * 65536, b"y"), (b"",) * 17, (KEY_ID_SLOT, b"-", KEY_ID_SLOT)],
-    ids=["one-byte-over-64KiB", "17-parts", "two-slots"],
-)
-def test_check_message_refuses_messages_over_the_bounds(bad: Any) -> None:
-    with pytest.raises(TypeError):
-        check_message(bad)
-
-
-async def test_message_over_the_bounds_is_refused_before_any_borrow(
-    broker: CredentialBroker, audit: AuditLog, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    meta = await _store(broker)
-    spy = _Spy(monkeypatch)
-    for bad in ((b"x" * 65537,), (KEY_ID_SLOT, KEY_ID_SLOT), (b"",) * 17):
+def test_check_message_bounds_size_parts_and_key_id_slots(message: Any, ok: bool) -> None:
+    """Not a general-purpose HMAC oracle (#2350 review): the adapter needs one slot at most."""
+    if ok:
+        assert check_message(message) is message
+    else:
         with pytest.raises(TypeError):
-            await _h(broker).sign(meta.key_id, bad, purpose="sign_rest")
-    assert audit.actions() == ["security.credential_stored"]  # nothing borrowed, nothing audited
-    assert spy.bufs == []  # nothing decrypted
+            check_message(message)
 
 
 async def test_sign_returns_only_the_mac_and_the_key_id(
@@ -121,8 +100,9 @@ async def test_malformed_message_is_refused_before_any_borrow(
 ) -> None:
     meta = await _store(broker)
     spy = _Spy(monkeypatch)
-    with pytest.raises(TypeError):
-        await _h(broker).sign(meta.key_id, [b"x"], purpose="sign_rest")  # type: ignore[arg-type]
+    for bad in ([b"x"], (b"x" * 65537,), (KEY_ID_SLOT, KEY_ID_SLOT)):  # shape, size, slots
+        with pytest.raises(TypeError):
+            await _h(broker).sign(meta.key_id, bad, purpose="sign_rest")  # type: ignore[arg-type]
     assert audit.actions() == ["security.credential_stored"]  # nothing borrowed, nothing audited
     assert spy.bufs == []  # nothing decrypted
 
@@ -156,53 +136,30 @@ async def test_minted_capability_signs_and_exposes_only_sign() -> None:
 
 
 def _borrow_refs(source: str, filename: str) -> set[str]:
-    """`file:function` for every reference to `_borrow` in `source`: any attribute or name
-    `_borrow` (called, aliased, passed or stored) and any str constant with a dotted part
-    `_borrow` (getattr, attrgetter, ...). Not flagged: the `def` itself and bare string
-    statements (docstrings), which cannot reach anything."""
-    found: set[str] = set()
-    scope: list[str] = []
-
-    def hit() -> None:
-        found.add(f"{filename}:{scope[-1] if scope else '<module>'}")
-
-    class Scan(ast.NodeVisitor):
-        def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-            scope.append(node.name)
-            self.generic_visit(node)
-            scope.pop()
-
-        visit_AsyncFunctionDef = visit_FunctionDef
-
-        def visit_Expr(self, node: ast.Expr) -> None:
-            if not (isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
-                self.generic_visit(node)
-
-        def visit_Attribute(self, node: ast.Attribute) -> None:
-            if node.attr == "_borrow":
-                hit()
-            self.generic_visit(node)
-
-        def visit_Name(self, node: ast.Name) -> None:
-            if node.id == "_borrow":
-                hit()
-
-        def visit_Constant(self, node: ast.Constant) -> None:
-            if isinstance(node.value, str) and "_borrow" in node.value.split("."):
-                hit()
-
-    Scan().visit(ast.parse(source))
-    return found
+    """`file:function` (innermost) for every reference to `_borrow`: any attribute or name
+    (called, aliased, passed or stored) and any str constant with a dotted part `_borrow`
+    (getattr, attrgetter). Not flagged: the `def` itself and docstrings."""
+    tree = ast.parse(source)
+    owner: dict[ast.AST, str] = {}
+    for fn in ast.walk(tree):  # breadth first, so an inner function overrides its outer one
+        if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+            owner.update(dict.fromkeys(ast.walk(fn), fn.name))
+    docs = {e.value for e in ast.walk(tree) if isinstance(e, ast.Expr)}
+    return {
+        f"{filename}:{owner.get(n, '<module>')}"
+        for n in ast.walk(tree)
+        if (isinstance(n, ast.Attribute) and n.attr == "_borrow")
+        or (isinstance(n, ast.Name) and n.id == "_borrow")
+        or (isinstance(n, ast.Constant) and n not in docs and "_borrow" in str(n.value).split("."))
+    }
 
 
 def test_decrypt_path_is_used_only_by_sign() -> None:
     """Structural (C-2.7): inside M2 the plaintext decrypt (`_borrow`) has one production
     caller, `_sign`, which uses the secret for the MAC and returns no plaintext secret. Every
     reference counts, not only a direct call, so an alias cannot add a second caller."""
-    refs: set[str] = set()
-    for path in sorted(_SECRETS_PKG.rglob("*.py")):
-        refs |= _borrow_refs(path.read_text(encoding="utf-8"), path.name)
-    assert refs == {"broker.py:_sign"}
+    refs = [_borrow_refs(p.read_text(encoding="utf-8"), p.name) for p in _SECRETS_PKG.rglob("*.py")]
+    assert set().union(*refs) == {"broker.py:_sign"}
 
 
 @pytest.mark.parametrize(
@@ -210,10 +167,8 @@ def test_decrypt_path_is_used_only_by_sign() -> None:
     [
         "async def leak(self, k):\n    b = self._borrow\n    return await b(k)\n",
         "async def leak(self, k):\n    return await getattr(self, '_borrow')(k)\n",
-        "import functools\nasync def leak(self, k):\n"
-        "    return await functools.partial(self._borrow, k)()\n",
-        "import operator\nasync def leak(self, k):\n"
-        "    return await operator.attrgetter('broker._borrow')(self)(k)\n",
+        "async def leak(self, k):\n    return await functools.partial(self._borrow, k)()\n",
+        "async def leak(self, k):\n    return await attrgetter('broker._borrow')(self)(k)\n",
         "class B:\n    async def _borrow(self, k): ...\n    leak = _borrow\n",
     ],
     ids=["alias", "getattr", "partial", "attrgetter", "class-alias"],
