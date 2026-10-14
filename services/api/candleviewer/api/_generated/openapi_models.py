@@ -23,7 +23,6 @@ from pydantic import (
     RootModel,
     SecretStr,
 )
-from typing_extensions import TypeAliasType
 
 
 Decimal = Annotated[
@@ -3598,14 +3597,28 @@ class PaneIntervalCode(RootModel[str]):
     ]
 
 
-PaneSettingValueArray = TypeAliasType(
-    "PaneSettingValueArray", Annotated[list[str | float | bool], Field(max_length=32)]
-)
+class PaneSettingValue1(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            description="A flat setting value: a string of at most 256 characters, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans. Objects are not allowed.",
+            max_length=256,
+        ),
+    ]
 
 
-PaneSettingValueString = TypeAliasType(
-    "PaneSettingValueString", Annotated[str, Field(max_length=256)]
-)
+class PaneSettingValue21(RootModel[str]):
+    root: Annotated[str, Field(max_length=256)]
+
+
+class PaneSettingValue2(RootModel[list[PaneSettingValue21 | int | float | bool]]):
+    root: Annotated[
+        list[PaneSettingValue21 | int | float | bool],
+        Field(
+            description="A flat setting value: a string of at most 256 characters, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans. Objects are not allowed.",
+            max_length=32,
+        ),
+    ]
 
 
 class PaneConfig(BaseModel):
@@ -3619,7 +3632,7 @@ class PaneConfig(BaseModel):
         ),
     ] = None
     settings: Annotated[
-        dict[str, PaneSettingValueString | float | bool | PaneSettingValueArray | None] | None,
+        dict[str, PaneSettingValue1 | int | float | bool | PaneSettingValue2 | None] | None,
         Field(
             description="Kind-specific flat settings (for example DOM depth, tape filters, CVD anchor, visible range), at most 32 keys. Every key must match `^[a-z][a-z0-9_]{0,31}$` (`422` rule `invalid_setting_key`); the server enforces this because generators cannot express key patterns. Numbers keep their kind (`1` stays `1`, `1.0` stays `1.0`). Omitted means `{}`.",
             max_length=32,

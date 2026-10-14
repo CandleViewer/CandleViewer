@@ -5589,11 +5589,12 @@ export interface components {
     /**
      * @description Dock tree of a `custom` layout (`row` / `column` / `tabset` / `leaf`), checked at the API
      *     boundary (`422`, field paths under `grid_spec`): depth at most 6 counting the root as 1
-     *     (rule `tree_too_deep`); at most 64 nodes (rule `tree_too_large`); every leaf names the
-     *     `slot_index` of a pane in the same body (rule `unknown_slot`) and no slot appears twice
-     *     (rule `duplicate_leaf`); a split's `sizes` has one entry per child (rule `sizes_mismatch`),
-     *     each in (0, 1], summing to 1 within 1e-6 (rule `sizes_sum`); a tabset's `active` indexes one
-     *     of its children (rule `active_out_of_range`). Panes that no leaf names are kept (floating or
+     *     (rule `tree_too_deep`); at most 64 nodes and at most 16 leaves (rule `tree_too_large`);
+     *     every leaf names the `slot_index` of a pane in the same body (rule `unknown_slot`) and no
+     *     slot appears twice (rule `duplicate_leaf`), so the leaf cap also follows from `panes` having
+     *     at most 16 entries; a split's `sizes` has one entry per child (rule `sizes_mismatch`), each
+     *     in (0, 1], summing to 1 within 1e-6 (rule `sizes_sum`); a tabset's `active` indexes one of
+     *     its children (rule `active_out_of_range`). Panes that no leaf names are kept (floating or
      *     minimised, placed by the client).
      */
     LayoutGridSpec: {
@@ -6208,7 +6209,7 @@ export interface components {
      * @enum {string}
      */
     PaneScaleMode: "auto" | "linked" | "manual" | "log";
-    /** @description A flat setting value: a string, a finite number, a boolean, `null`, or an array of at most 32 strings, numbers or booleans. Objects are not allowed. Every string, also inside an array, is at most 256 characters; the server enforces the limit inside arrays (`422`) because generators cannot carry it there. */
+    /** @description A flat setting value: a string of at most 256 characters, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans. Objects are not allowed. */
     PaneSettingValue: string | number | boolean | null | (string | number | boolean)[];
     PlaceOrderRequest: {
       algo?: components["schemas"]["AlgoSpec"];

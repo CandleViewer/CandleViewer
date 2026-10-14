@@ -12531,11 +12531,12 @@ components:
       description: |
         Dock tree of a `custom` layout (`row` / `column` / `tabset` / `leaf`), checked at the API
         boundary (`422`, field paths under `grid_spec`): depth at most 6 counting the root as 1
-        (rule `tree_too_deep`); at most 64 nodes (rule `tree_too_large`); every leaf names the
-        `slot_index` of a pane in the same body (rule `unknown_slot`) and no slot appears twice
-        (rule `duplicate_leaf`); a split's `sizes` has one entry per child (rule `sizes_mismatch`),
-        each in (0, 1], summing to 1 within 1e-6 (rule `sizes_sum`); a tabset's `active` indexes one
-        of its children (rule `active_out_of_range`). Panes that no leaf names are kept (floating or
+        (rule `tree_too_deep`); at most 64 nodes and at most 16 leaves (rule `tree_too_large`);
+        every leaf names the `slot_index` of a pane in the same body (rule `unknown_slot`) and no
+        slot appears twice (rule `duplicate_leaf`), so the leaf cap also follows from `panes` having
+        at most 16 entries; a split's `sizes` has one entry per child (rule `sizes_mismatch`), each
+        in (0, 1], summing to 1 within 1e-6 (rule `sizes_sum`); a tabset's `active` indexes one of
+        its children (rule `active_out_of_range`). Panes that no leaf names are kept (floating or
         minimised, placed by the client).
       properties:
         version: { type: integer, enum: [1], description: "Tree format version." }
@@ -12637,11 +12638,21 @@ components:
       description: "`<bar_type>:<param>`, exactly the `bar_type` and `param` of `/market/bars` (and of the WS topic `bars.{symbol}.{bar_type}.{param}`): `param` at most 24 characters, no leading zeros, e.g. `time:1`, `time:D`, `tick:500`, `volume:0.5`, `renko:atr:14`, `pnf:10:3`. A `volume` or `delta` threshold must also be greater than 0 (`422` rule `interval_not_positive`)."
       examples: ["time:1", "time:240", "tick:500", "renko:atr:14"]
     PaneSettingValue:
-      description: "A flat setting value: a string, a finite number, a boolean, `null`, or an array of at most 32 strings, numbers or booleans. Objects are not allowed. Every string, also inside an array, is at most 256 characters; the server enforces the limit inside arrays (`422`) because generators cannot carry it there."
-      type: [string, number, boolean, "null", array]
-      maxLength: 256
-      maxItems: 32
-      items: { type: [string, number, boolean] }
+      description: "A flat setting value: a string of at most 256 characters, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans. Objects are not allowed."
+      anyOf:
+        - { type: string, maxLength: 256 }
+        - { type: integer }
+        - { type: number }
+        - { type: boolean }
+        - { type: "null" }
+        - type: array
+          maxItems: 32
+          items:
+            anyOf:
+              - { type: string, maxLength: 256 }
+              - { type: integer }
+              - { type: number }
+              - { type: boolean }
     PaneConfig:
       type: object
       additionalProperties: false
