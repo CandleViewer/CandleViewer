@@ -63,14 +63,23 @@ _RETRY_AFTER_S: Final = 5
 #: storage driver (ADR-0003), so they are recognised by class identity, not imported; the
 #: repository does not translate them (S3). Integrity/Programming/Data errors are bugs: 500.
 _OUTAGE_CLASSES: Final = frozenset(
-    {"sqlalchemy.exc.OperationalError", "sqlalchemy.exc.InterfaceError"}
+    {
+        "sqlalchemy.exc.OperationalError",
+        "sqlalchemy.exc.InterfaceError",
+        "sqlalchemy.exc.TimeoutError",  # pool checkout timeout
+    }
 )
+_DBAPI_ERROR: Final = "sqlalchemy.exc.DBAPIError"
 
 
 def _is_outage(exc: Exception) -> bool:
     if isinstance(exc, OSError | StorageTierUnavailable):
         return True
-    return any(f"{c.__module__}.{c.__qualname__}" in _OUTAGE_CLASSES for c in type(exc).__mro__)
+    names = {f"{c.__module__}.{c.__qualname__}" for c in type(exc).__mro__}
+    if names & _OUTAGE_CLASSES:
+        return True
+    # a generic DBAPIError is an outage only when the driver says the connection is gone
+    return _DBAPI_ERROR in names and getattr(exc, "connection_invalidated", False) is True
 
 
 _NEVER_MATCHES: Final = datetime(1, 1, 1, tzinfo=UTC)
@@ -217,13 +226,16 @@ def _uuid(name: str, raw: str) -> str:
         raise _invalid([_rule(name, "uuid_parsing", f"{name} must be a UUID.")]) from None
 
 
-def _if_match(raw: str | None) -> datetime | None:
+def _if_match(request: Request) -> datetime | None:
     """`If-Match`: the exact `updated_at` token, quoted, `W/`-prefixed or bare; absent -> None
     (last write wins). Anything else, `*` and tag lists included, can never match: 412 unless
     the repository finds the body a no-op first (D13)."""
-    if raw is None:
+    lines = request.headers.getlist("if-match")
+    if not lines:
         return None
-    value = raw.strip().removeprefix("W/")
+    if len(lines) > 1:  # two header lines: ambiguous, so unparseable (never matches)
+        return _NEVER_MATCHES
+    value = lines[0].strip().removeprefix("W/")
     if len(value) >= 2 and value[0] == value[-1] == '"':
         value = value[1:-1]
     if _TOKEN.fullmatch(value) is None:
@@ -374,7 +386,7 @@ def make_workspaces_router(
                 owner,
                 wid,
                 _workspace_fields(body),
-                if_match=_if_match(request.headers.get("if-match")),
+                if_match=_if_match(request),
             )
         except WorkspaceNotFoundError:
             raise await not_found(principal, "workspace", wid, "write") from None
