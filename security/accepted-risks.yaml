@@ -81,15 +81,6 @@ entries:
     approver: "basiltt"
     expires: "2027-03-25"
     ticket: "https://github.com/basiltt/CandleViewer/issues/1978"
-  # E08-X02 (r4): Bybit v5 mandates HMAC-SHA256 request signing; CodeQL's password-hashing
-  # heuristic misclassifies the SecretStr-derived key. approval = owner CODEOWNER security-review merge
-  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/exchange/bybit/signer.py:49"
-    tool: codeql
-    severity: HIGH
-    reason: "HMAC-SHA256 request signing mandated by the Bybit v5 API (24-internal-schemas §14.3); keyed MAC of a request, not password storage — CodeQL's password-hashing heuristic misclassifies the SecretStr-derived key; surfaced by the E08-X02 leakage probe constructing BybitSigner with a constant named API_SECRET"
-    approver: "basiltt"
-    expires: "2027-03-25"
-    ticket: "https://github.com/basiltt/CandleViewer/issues/290"
   # E43-T05-B1: EX-05 (http-cache-semantics) was cleared by a pnpm override to 4.3.0 (#1857) and
   # removed. EX-06 (braces) has no patched release upstream (2026-10-03); dev/build-time only
   # (lint-staged), not shipped in the runtime.
