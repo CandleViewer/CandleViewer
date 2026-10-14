@@ -396,3 +396,55 @@ async def test_writer_op_task_cancelled_mid_compaction_keeps_later_ack_durable(
     assert [r["actor_label"] for _, r in w._wal.replay()] == ["late"], "acknowledged record lost"
     assert w._wal._end == (tmp_path / "audit.wal").stat().st_size
     await w.stop(_WAIT_S)
+
+
+async def _audit_own_shutdown(w: AuditWriter, disk: _SlowDisk, parked: asyncio.Event) -> None:
+    """Parks until cancelled, then audits its own shutdown (as a session handler would),
+    while `asyncio.run`'s teardown is still cancelling every other task."""
+    try:
+        parked.set()
+        await asyncio.Event().wait()
+    finally:
+        lock_dropped = await _yield_until(lambda: not w._wal_lock.locked())
+        cleanup = asyncio.create_task(w.emit("auth.logout", actor_label="cleanup"))
+        if lock_dropped:  # the regression: this append now runs beside the parked one
+            await _thread_event(disk.returned[1])
+        disk.release.set()
+        await cleanup
+
+
+def test_writer_asyncio_run_teardown_mid_append_truncates_nothing(
+    tmp_path: Path, slow_disk: SlowDisk
+) -> None:
+    """#2250 round 3: `asyncio.run` teardown cancels every Task at once. Were the WAL
+    thread awaited through a Task (`spawn(run_in_thread(...))`, `asyncio.to_thread`),
+    teardown would cancel that Task as well, drop `_wal_lock` while the append's thread
+    is parked, and a shutdown audit would truncate the in-flight frame. The thread
+    future must stay the plain executor Future (`thread_future`)."""
+    path = tmp_path / "audit.wal"
+    writers: list[AuditWriter] = []
+    tasks: list[asyncio.Task[None]] = []
+
+    async def main() -> None:
+        repo = FakeAuditRepository()
+        w = AuditWriter(repo, str(path), clock=FakeClock(), sleep=repo.retry_sleep)
+        writers.append(w)
+        await w.start()
+        disk = slow_disk(w)
+        disk.arm()
+        tasks.append(asyncio.create_task(w.emit("auth.login", actor_label="first")))
+        await _thread_event(disk.stalled)
+        parked = asyncio.Event()
+        tasks.append(asyncio.create_task(_audit_own_shutdown(w, disk, parked)))
+        await parked.wait()
+        # Returning leaves the parked append, the flusher and the handler to teardown.
+
+    with capture_logs() as logs:
+        asyncio.run(main())
+    assert any(e["event"].startswith("audit WAL op cancelled while its worker") for e in logs)
+    wal, size = writers[0]._wal, path.stat().st_size
+    assert wal.torn_tail_truncations == 0, "teardown let an append truncate the in-flight frame"
+    assert wal._end == size
+    reopened = wal_module.AuditWal(path)
+    assert reopened.torn_tail_truncations == 0 and reopened._end == size
+    assert [r["actor_label"] for _, r in reopened.replay()] == ["first", "cleanup"]

@@ -47,8 +47,6 @@ these tasks before and after it cancels the flusher.
 from __future__ import annotations
 
 import asyncio
-import contextvars
-import functools
 import json
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
@@ -65,7 +63,7 @@ from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, 
 from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.wal import AuditWal, AuditWalFull
-from candleviewer.observability.context import spawn
+from candleviewer.observability.context import spawn, thread_future
 
 
 def logger() -> Any:
@@ -93,12 +91,13 @@ async def _uninterruptible[T](fn: Callable[..., T], /, *args: Any) -> T:
     the awaiting task is cancelled (#2250 review).
 
     The caller holds `_wal_lock`: releasing it while the thread still runs would let
-    a second append truncate the in-flight frame. A plain executor future is not a
-    Task, so event-loop teardown cannot cancel it; a cancellation of *this* task is
-    absorbed until the thread returns, then re-raised."""
-    loop = asyncio.get_running_loop()
-    ctx = contextvars.copy_context()
-    fut = loop.run_in_executor(None, functools.partial(ctx.run, fn, *args))
+    a second append truncate the in-flight frame. `thread_future` returns the plain
+    executor future, not a Task, so event-loop teardown cannot cancel it; never wrap
+    the call in a Task (`spawn(run_in_thread(...))`, `asyncio.to_thread`), because
+    teardown would cancel that Task and with it the future, while the thread runs.
+    A cancellation of *this* task is absorbed until the thread returns, then
+    re-raised."""
+    fut = thread_future(fn, *args)
     cancelled = False
     while True:
         try:

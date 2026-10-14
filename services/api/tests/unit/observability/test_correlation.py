@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import uuid
@@ -19,6 +20,7 @@ from candleviewer.observability.context import (
     get_context,
     run_in_thread,
     spawn,
+    thread_future,
 )
 from candleviewer.observability.correlation import (
     CorrelationMiddleware,
@@ -115,6 +117,16 @@ async def test_executor_offload_inherits_context() -> None:
     with bind_context(request_id="r9"):
         got = await run_in_thread(get_context)
     assert got == {"request_id": "r9"}
+
+
+async def test_thread_future_inherits_context_and_is_a_plain_future() -> None:
+    """#2250: event-loop teardown cancels every Task, so the audit WAL's lock holder
+    needs the executor's own Future: it must never come back wrapped in a Task."""
+    with bind_context(request_id="r8", user_id="u8"):
+        fut = thread_future(get_context)
+    assert isinstance(fut, asyncio.Future)
+    assert not isinstance(fut, asyncio.Task)
+    assert await fut == {"request_id": "r8", "user_id": "u8"}
 
 
 def test_ws_hooks_bind_conn_and_frame() -> None:
