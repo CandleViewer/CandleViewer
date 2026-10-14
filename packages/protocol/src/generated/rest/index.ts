@@ -912,14 +912,33 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * List drawings for a symbol
+     * List the caller's drawings for a symbol
      * @description Drawings are stored in **chart space** (time + price), never pixels, so they survive
-     *     zoom, bar-type changes and DPI changes. `bar_type_binding` optionally pins a drawing to
-     *     one bar construction (e.g. a footprint-anchored box).
+     *     zoom, bar-type changes and DPI changes. Only the caller's live (not soft-deleted) drawings
+     *     are returned, ordered by `id` ascending, so a cursor walk is stable.
+     *
+     *     `symbol` is required. Without `layout_id` the result holds the caller's drawings on that
+     *     symbol in **both** scopes (symbol-global and layout-scoped). With `layout_id` the result is
+     *     narrowed to that layout, and the call returns `404` when the id is not one of the caller's
+     *     live layouts (always the case until layouts ship, E15-T01).
+     *
+     *     `limit` is 1..500 (default 100). `cursor` is opaque, bound to the `symbol`/`layout_id`
+     *     scope it was issued for and valid for one hour; a malformed, mismatched or expired cursor
+     *     returns `400 invalid_cursor`.
      */
     get: operations["listDrawings"];
     put?: never;
-    /** Create a drawing */
+    /**
+     * Create a drawing
+     * @description The server mints a UUIDv7 `id`. The body is limited to 64 KiB (`413 payload_too_large`).
+     *     A non-null `layout_id` must name one of the caller's live layouts, otherwise
+     *     `422` rule `layout_not_found` (every non-null value until layouts ship, E15-T01).
+     *     The `ETag` response header carries the `updated_at` token for later `If-Match` use.
+     *
+     *     `Idempotency-Key`: the same key with the same body replays the stored 2xx response with
+     *     `Idempotency-Replayed: true`; the same key with a different body is `409 idempotency_key_reuse`.
+     *     Replay storage is best-effort and bounded; correctness never depends on it.
+     */
     post: operations["createDrawing"];
     delete?: never;
     options?: never;
@@ -937,10 +956,23 @@ export interface paths {
       cookie?: never;
     };
     get?: never;
-    /** Replace a drawing */
+    /**
+     * Replace a drawing
+     * @description Full replacement. `symbol` and `tool` are immutable (`422` rule `immutable_field`). The body
+     *     is limited to 64 KiB (`413 payload_too_large`).
+     *
+     *     `If-Match` is optional: the quoted `updated_at` token (a `W/` prefix or the bare token is
+     *     also accepted). A stale or unparseable value returns `412 version_conflict`; when absent the
+     *     last write wins. A drawing that is missing, soft-deleted or owned by another user returns
+     *     the same `404`.
+     */
     put: operations["updateDrawing"];
     post?: never;
-    /** Delete a drawing */
+    /**
+     * Delete a drawing
+     * @description Soft delete (the row is purged by retention later). No precondition. A drawing that is
+     *     missing, already deleted or owned by another user returns the same `404`.
+     */
     delete: operations["deleteDrawing"];
     options?: never;
     head?: never;
@@ -958,7 +990,28 @@ export interface paths {
     put?: never;
     /**
      * Create/update/delete many drawings in one call
-     * @description The chart engine batches drawing mutations during a drag with a 500 ms debounce, so a single call carries all affected shapes. Operations are applied in order and the whole batch is transactional.
+     * @description The chart engine batches drawing mutations during a drag with a 500 ms debounce, so a single
+     *     call carries all affected shapes.
+     *
+     *     Processing order: (1) the body is limited to 1 MiB and `operations` to 200 items, otherwise
+     *     `413 payload_too_large`, checked before per-operation validation; (2) the whole body is
+     *     validated (`422`, up to 20 field errors such as `operations.3.drawing.tool`; each `id` may
+     *     appear at most once per batch, else rule `duplicate_id`); (3) the operations are applied in
+     *     order inside **one transaction**. The first operation that cannot be applied rolls the
+     *     whole batch back and returns `409 conflict` with `errors[0] = {field: "operations.<i>", rule, message}`,
+     *     where `rule` is one of:
+     *
+     *     - `target_unavailable` — an `update`/`delete` target is missing, soft-deleted or owned by
+     *       another user (indistinguishable by design);
+     *     - `version_conflict` — the operation's `if_match` is stale;
+     *     - `id_unavailable` — a `create` id is already used by any row of any owner in any state
+     *       (ids are never reused; re-create under a new id).
+     *
+     *     `create.id` is optional (client UUIDv7 recommended); `update` and `delete` require `if_match`,
+     *     the `updated_at` token of the version being replaced or removed. The result lists the
+     *     created, updated and deleted ids in operation order.
+     *
+     *     `Idempotency-Key` behaves as on `createDrawing`.
      */
     post: operations["batchUpsertDrawings"];
     delete?: never;
@@ -4638,77 +4691,190 @@ export interface components {
       false_positive_modes: string[];
       inputs: string[];
     };
-    Drawing: components["schemas"]["DrawingInput"] & {
+    Drawing: {
       /** Format: date-time */
-      created_at?: string;
+      created_at: string;
+      geometry: components["schemas"]["DrawingGeometry"];
       /** Format: uuid */
+      id: string;
+      label: string | null;
+      /** Format: uuid */
+      layout_id: string | null;
+      locked: boolean;
+      /** Format: uuid */
+      owner_user_id: string;
+      style: components["schemas"]["DrawingStyle"];
+      symbol: components["schemas"]["Symbol"];
+      tool: components["schemas"]["DrawingTool"];
+      /**
+       * Format: date-time
+       * @description Concurrency token (also the `ETag`). Always serialised `YYYY-MM-DDTHH:MM:SS.ffffffZ` (6 fractional digits) and strictly increasing on every write.
+       */
+      updated_at: string;
+      visible: boolean;
+      z_index: number;
+    };
+    DrawingBatchCreateOp: {
+      drawing: components["schemas"]["DrawingInput"];
+      /**
+       * Format: uuid
+       * @description Optional client-chosen id (UUIDv7 recommended); taken ids are `409 id_unavailable`.
+       */
       id?: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "create";
+    };
+    DrawingBatchDeleteOp: {
       /** Format: uuid */
-      owner_user_id?: string;
-      /** Format: date-time */
-      updated_at?: string;
+      id: string;
+      /**
+       * Format: date-time
+       * @description `updated_at` token of the version being deleted.
+       */
+      if_match: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "delete";
+    };
+    DrawingBatchRequest: {
+      /** @description Applied in order. More than 200 items is `413 payload_too_large`. */
+      operations: (
+        | components["schemas"]["DrawingBatchCreateOp"]
+        | components["schemas"]["DrawingBatchUpdateOp"]
+        | components["schemas"]["DrawingBatchDeleteOp"]
+      )[];
+    };
+    DrawingBatchResult: {
+      created: components["schemas"]["Drawing"][];
+      deleted: string[];
+      updated: components["schemas"]["Drawing"][];
+    };
+    DrawingBatchUpdateOp: {
+      drawing: components["schemas"]["DrawingInput"];
+      /** Format: uuid */
+      id: string;
+      /**
+       * Format: date-time
+       * @description `updated_at` token of the version being replaced.
+       */
+      if_match: string;
+      /**
+       * @description discriminator enum property added by openapi-typescript
+       * @enum {string}
+       */
+      op: "update";
+    };
+    /** @description Chart-space geometry (time + price, never pixels). Per-tool point counts and key rules: see `DrawingTool`. */
+    DrawingGeometry: {
+      /** @description Standard-deviation bands (`anchored_vwap` only). */
+      bands?: (1 | 2 | 3)[];
+      extend_left?: boolean;
+      extend_right?: boolean;
+      /** @description Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`. */
+      levels?: number[];
+      points: components["schemas"]["DrawingPoint"][];
+      /** @description Text content (`text` and `callout` only), 1..1000 code points after control-character stripping (LF is kept). */
+      text?: string;
     };
     DrawingInput: {
-      /** @description `{bar_type}:{param}` when the drawing is pinned to one bar construction. */
-      bar_type_binding?: string | null;
-      /** @description Chart-space geometry; points are `{t, p}` (time + price), never pixels. */
-      geometry: {
-        extend_left?: boolean;
-        extend_right?: boolean;
-        levels?: number[];
-        points?: {
-          p?: components["schemas"]["Decimal"];
-          /** Format: date-time */
-          t?: string;
-        }[];
-        text?: string;
-      } & {
-        [key: string]: unknown;
-      };
-      /** Format: uuid */
-      layout_id?: string | null;
+      geometry: components["schemas"]["DrawingGeometry"];
+      /**
+       * @description Display label, 1..120 code points after control-character stripping.
+       * @default null
+       */
+      label: string | null;
+      /**
+       * Format: uuid
+       * @description Layout scope. A non-null value must be one of the caller's live layouts, else 422 rule `layout_not_found`; every non-null value is refused until layouts ship (E15-T01).
+       * @default null
+       */
+      layout_id: string | null;
       /** @default false */
       locked: boolean;
-      style?: {
-        colour?: string;
-        /** @enum {string} */
-        dash?: "solid" | "dashed" | "dotted";
-        fill_colour?: string | null;
-        fill_opacity?: number;
-        font_size?: number;
-        label?: string | null;
-        width?: number;
-      };
+      /** @default {} */
+      style: components["schemas"]["DrawingStyle"];
+      /** @description Symbol. Additionally limited to at most 20 characters in total (the storage domain `symbol_code`); longer values are `422`. Generators do not carry a `maxLength` next to the `Symbol` pattern, so the server enforces it. */
       symbol: components["schemas"]["Symbol"];
-      /** @enum {string} */
-      tool:
-        | "trendline"
-        | "horizontal_line"
-        | "vertical_line"
-        | "ray"
-        | "extended_line"
-        | "parallel_channel"
-        | "rectangle"
-        | "ellipse"
-        | "triangle"
-        | "fib_retracement"
-        | "fib_extension"
-        | "fib_timezone"
-        | "pitchfork"
-        | "gann_fan"
-        | "text"
-        | "arrow"
-        | "callout"
-        | "measure"
-        | "long_position"
-        | "short_position"
-        | "price_range"
-        | "date_range"
-        | "brush"
-        | "polyline";
+      tool: components["schemas"]["DrawingTool"];
       /** @default true */
       visible: boolean;
+      /** @default 0 */
+      z_index: number;
     };
+    DrawingPoint: {
+      /**
+       * @description Chart-space price coordinate as a decimal string; may be negative. Stored and returned verbatim, never converted to a float.
+       * @example 61200.00
+       * @example -12.5
+       */
+      p: string;
+      /**
+       * @description RFC 3339 UTC instant with `Z`, at most millisecond precision, years 2000-2099.
+       * @example 2026-09-13T12:00:00Z
+       * @example 2026-09-13T12:00:00.250Z
+       */
+      t: string;
+    };
+    DrawingStyle: {
+      colour?: string;
+      /** @enum {string} */
+      dash?: "solid" | "dashed" | "dotted";
+      fill_colour?: string | null;
+      fill_opacity?: number;
+      font_size?: number;
+      width?: number;
+    };
+    /**
+     * @description Drawing tool. **Open-ended for readers:** clients must tolerate values they do not know, so
+     *     adding a tool is an additive change (C-6.3). Writers must send one of the listed values.
+     *
+     *     Required point count per tool (`geometry.points`):
+     *
+     *     - exactly 1: `horizontal_line`, `vertical_line`, `text`, `anchored_vwap`
+     *     - exactly 2: `trendline`, `ray`, `extended_line`, `rectangle`, `ellipse`, `fib_retracement`,
+     *       `fib_timezone`, `gann_fan`, `arrow`, `callout`, `measure`, `price_range`, `date_range`
+     *     - exactly 3: `parallel_channel`, `triangle`, `fib_extension`, `pitchfork`, `long_position`,
+     *       `short_position`
+     *     - 2..500: `brush`; 2..100: `polyline`
+     *
+     *     Tool-specific `geometry` keys (any other combination is `422` rule `property_not_allowed_for_tool`):
+     *     `text` is required for `text` and `callout` (rule `text_required`) and forbidden elsewhere;
+     *     `levels` only for `fib_retracement`, `fib_extension`, `fib_timezone`; `bands` only for
+     *     `anchored_vwap`; `extend_left` / `extend_right` are allowed on every tool.
+     *     A horizontal ray is a `horizontal_line` with `extend_left: false` and `extend_right: true`.
+     * @enum {string}
+     */
+    DrawingTool:
+      | "trendline"
+      | "horizontal_line"
+      | "vertical_line"
+      | "ray"
+      | "extended_line"
+      | "parallel_channel"
+      | "rectangle"
+      | "ellipse"
+      | "triangle"
+      | "fib_retracement"
+      | "fib_extension"
+      | "fib_timezone"
+      | "pitchfork"
+      | "gann_fan"
+      | "text"
+      | "arrow"
+      | "callout"
+      | "measure"
+      | "long_position"
+      | "short_position"
+      | "price_range"
+      | "date_range"
+      | "brush"
+      | "polyline"
+      | "anchored_vwap";
     EffectiveLimits: {
       accounts?: {
         daily_loss_cap_usd?: components["schemas"]["Decimal"];
@@ -7369,6 +7535,15 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
+    /** @description The request body or the number of batch operations exceeds the operation's ceiling (`payload_too_large`). Checked before per-item validation. */
+    PayloadTooLarge: {
+      headers: {
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["Problem"];
+      };
+    };
     /** @description ETag precondition failed. */
     PreconditionFailed: {
       headers: {
@@ -9312,7 +9487,7 @@ export interface operations {
       query: {
         /** @description Opaque forward cursor from `meta.next_cursor`. Cursors expire after 1 hour. */
         cursor?: components["parameters"]["Cursor"];
-        /** @description Restrict to drawings scoped to one pane/layout instead of the symbol globally. */
+        /** @description Narrow to one layout. Must be one of the caller's live layouts, otherwise 404. */
         layout_id?: string;
         /** @description Page size. */
         limit?: components["parameters"]["Limit"];
@@ -9335,15 +9510,27 @@ export interface operations {
           };
         };
       };
+      /** @description Malformed request. For this operation `code: invalid_cursor` signals a malformed, scope-mismatched or expired `cursor`. */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   createDrawing: {
     parameters: {
       query?: never;
       header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -9365,13 +9552,18 @@ export interface operations {
       /** @description Created. */
       201: {
         headers: {
+          ETag: components["headers"]["ETag"];
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
           "application/json": components["schemas"]["Drawing"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
@@ -9379,6 +9571,8 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -9402,14 +9596,19 @@ export interface operations {
       /** @description Replaced. */
       200: {
         headers: {
+          ETag: components["headers"]["ETag"];
           [name: string]: unknown;
         };
         content: {
           "application/json": components["schemas"]["Drawing"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      412: components["responses"]["PreconditionFailed"];
+      413: components["responses"]["PayloadTooLarge"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   deleteDrawing: {
@@ -9464,35 +9663,24 @@ export interface operations {
     };
     requestBody: {
       content: {
-        "application/json": {
-          operations: {
-            drawing?: components["schemas"]["DrawingInput"];
-            /**
-             * Format: uuid
-             * @description Required for update/delete.
-             */
-            id?: string;
-            /** @enum {string} */
-            op: "create" | "update" | "delete";
-          }[];
-        };
+        "application/json": components["schemas"]["DrawingBatchRequest"];
       };
     };
     responses: {
       /** @description Batch applied. */
       200: {
         headers: {
+          "Idempotency-Replayed": components["headers"]["IdempotencyReplayed"];
           [name: string]: unknown;
         };
         content: {
-          "application/json": {
-            created?: components["schemas"]["Drawing"][];
-            deleted?: string[];
-            updated?: components["schemas"]["Drawing"][];
-          };
+          "application/json": components["schemas"]["DrawingBatchResult"];
         };
       };
-      403: components["responses"]["CsrfTokenInvalid"];
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      413: components["responses"]["PayloadTooLarge"];
       422: components["responses"]["UnprocessableEntity"];
     };
   };
