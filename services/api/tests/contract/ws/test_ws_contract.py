@@ -16,7 +16,7 @@ import importlib.util
 import json
 import math
 import sys
-from typing import Any
+from typing import Any, Protocol, cast
 
 import pytest
 import yaml
@@ -365,6 +365,13 @@ def test_integration_replay_subscribe_and_seek_emit_the_documented_series() -> N
         assert {f["ch"]: f["s"] for f in seek} == {"trades.BTCUSDT": 5, "ticker.BTCUSDT": 2}
 
 
+class _ReplayHub(Protocol):
+    """The hook E26-T05 (#628) is expected to add to `SequencingHub`; typed here so no `noqa` or
+    `getattr` is needed. Until it lands, attribute access raises `AttributeError` (the xfail)."""
+
+    def replay_finished(self, replay_session_id: str) -> int: ...
+
+
 @pytest.mark.xfail(
     strict=True,
     reason="E26-T05: replay clock not yet implemented; no code ends a replay session on a "
@@ -378,7 +385,8 @@ def test_integration_replay_finish_emits_revoked_replay_session_ended_per_topic(
         c.send({"t": "sub", "id": "r", "p": {"topics": topics, "replay_session_id": RS}})
         c.next_of("sub_ok")
         c.drain(2)
-        w.call(getattr(w.hub, "replay_finished"), RS)  # noqa: B009 - E26 hook, absent today
+        finish = cast(_ReplayHub, w.hub).replay_finished  # E26-T05 (#628) adds it; absent today
+        w.call(finish, RS)
         revoked = c.drain(2)
         assert {f["ch"] for f in revoked} == {"trades.BTCUSDT", "ticker.BTCUSDT"}
         assert {f["p"]["reason"] for f in revoked} == {"replay_session_ended"}
