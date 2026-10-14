@@ -85,6 +85,7 @@ from candleviewer.api.step_up import make_read_only_guard, make_step_up_router
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.users import SnapshotResolver, UserRoleStore, make_users_router
+from candleviewer.api.workspaces import make_workspaces_router
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.models import (
@@ -227,6 +228,7 @@ from candleviewer.storage.repositories.sessions_sqlalchemy import (
     SqlAlchemySessionRepository,
 )
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
+from candleviewer.storage.repositories.workspaces_sqlalchemy import SqlAlchemyWorkspaceRepository
 from candleviewer.storage.retention.alert_tasks import AlertDeliveriesPurgeTask, AlertGaugeTask
 from candleviewer.storage.retention.drawings_tasks import DrawingsMetrics, DrawingsPurgeTask
 from candleviewer.storage.retention.kline_boundary import (
@@ -1367,6 +1369,21 @@ def create_app(
             audit_resolver,
             _LazyAuditEmitter(ctx.audit),
             metrics=app.state.drawings_metrics,
+        )
+    )
+    # E15-T01: owner-scoped /workspaces; callers from the session (`audit_resolver`, as for
+    # /admin/audit; None without an identity store -> 401), RBAC via `auth.scopes.enforce`.
+    # Postgres on the real backend only: the fake backend answers 503 without any I/O.
+    app.state.workspaces_repository = (
+        SqlAlchemyWorkspaceRepository(
+            SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "workspaces")
+        )
+        if resolved.storage_backend == "real"
+        else None
+    )
+    app.include_router(
+        make_workspaces_router(
+            lambda: app.state.workspaces_repository, audit_resolver, _LazyAuditEmitter(ctx.audit)
         )
     )
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).
