@@ -215,3 +215,8 @@ def test_immutable_field_is_a_known_batch_rule() -> None:
 def test_snapshot_selects_symbol_and_tool_for_the_immutability_check() -> None:
     text = str(_STATEMENTS["_SNAPSHOT"])
     assert "symbol" in text and "tool" in text
+
+
+def test_batch_op_failed_rejects_an_unknown_rule() -> None:
+    with pytest.raises(ValueError, match="unknown batch rule"):
+        BatchOpFailed(0, "made_up")
