@@ -707,6 +707,33 @@ documentation alone.
   that lands SR-E27-03, SR-E27-04 (contract text), SR-E27-07, SR-E27-08, SR-E27-10 and the SR-E27-11 decision in
   `22-api-openapi.yaml`, so the four consuming tickets rebase onto one shape (C-6.1).
 
+### 10.3 Existing follow-up issues this model relies on
+
+| Issue | Scope                                                                                                                                                    | Rows                                   |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| #2151 | FU-1 host drill: KEK non-visibility, unattended reboot, restore                                                                                          | KV-S03, KV-S04, KV-D02, KV-I08, KV-I01 |
+| #2152 | E09 TOTP and recovery-code keys under the KEK                                                                                                            | KV-I01                                 |
+| #2240 | Recorded, redacted key-info fixture; `can_trade` and `can_transfer` derived at insert                                                                    | KV-E05, KV-T07                         |
+| #2266 | KEK rotation entry point, transactional per-row audit, `kek_rotation_resumed`, stranded rows                                                             | KV-T08, KV-D05, KV-E08                 |
+| #2267 | Deferred E27-T02 findings: trace bypass (item 5), leak tests (6), borrow re-check (8), audit latency (4), actor (15)                                     | KV-I02, KV-I03, KV-T03, KV-D04, KV-R02 |
+| #2270 | Allow-list at the M2 key gate                                                                                                                            | KV-E05, KV-T07                         |
+| #2279 | Process isolation of signing; the fix for KV-I09                                                                                                         | KV-I09, KV-E11, KV-R01                 |
+| #2284 | Host launcher and WSL/VPS handoff                                                                                                                        | KV-S03, KV-S04, KV-D02                 |
+| #2285 | Align SR-002 with ADR-0009 Amendment 1; requested extension: SR-005 mask, SR-030 stored-disabled, SR-031 cadence, SR-032 scope (C-12.2), ADR-0009 item 4 | KV-I07, KV-E06, KV-E12, KV-S08         |
+| #2331 | Map the degraded latch to 403 on order routes                                                                                                            | KV-D02                                 |
+| #2333 | `exchange_accounts.env` immutable                                                                                                                        | KV-T04                                 |
+| #2336 | Write-once ciphertext                                                                                                                                    | KV-T02                                 |
+| #2338 | Per-environment KEK lineage                                                                                                                              | KV-E04, KV-I01                         |
+| #2352 | M4 signs through M2; the guard refuses plaintext                                                                                                         | KV-I16                                 |
+| #2374 | Scrub frames on a failed DEK unwrap                                                                                                                      | KV-I02                                 |
+| #2386 | Remove `CV_BYBIT_API_KEY` and `CV_BYBIT_API_SECRET`                                                                                                      | KV-I17                                 |
+| #2416 | P-1: align R4 exit criterion #2 with SR-033                                                                                                              | KV-T05                                 |
+| #2417 | P-2: contract-first `exchange-accounts` alignment                                                                                                        | KV-E05, KV-S08, KV-I07, KV-I05, KV-D03 |
+| #848  | E29-T05 private streams; requested: session teardown on revoke (SR-E27-17), no-intent detection (SR-E27-19)                                              | KV-E13, KV-E11                         |
+| #913  | E29-T04 submission pipeline; requested: the key comes only from the scope-checked account (SR-E27-21)                                                    | KV-E14                                 |
+| #916  | E29-T08 OMS alert set; requested: page on `oms_untracked_orders` (SR-E27-19)                                                                             | KV-E11                                 |
+| #1274 | E45-T02 reconciliation triggers on start-up, on reconnect and every 30 s: the backstop for no-intent detection (SR-E27-19)                               | KV-E11                                 |
+
 ## 11. Findings, residual risks, review and sign-off
 
 ### 11.1 Findings register
