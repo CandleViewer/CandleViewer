@@ -155,16 +155,73 @@ async def test_minted_capability_signs_and_exposes_only_sign() -> None:
     assert out.api_key.reveal() == "ABCD1234" and out.signature == SERVICE_MAC
 
 
+def _borrow_refs(source: str, filename: str) -> set[str]:
+    """`file:function` for every reference to `_borrow` in `source`: any attribute or name
+    `_borrow` (called, aliased, passed or stored) and any str constant with a dotted part
+    `_borrow` (getattr, attrgetter, ...). Not flagged: the `def` itself and bare string
+    statements (docstrings), which cannot reach anything."""
+    found: set[str] = set()
+    scope: list[str] = []
+
+    def hit() -> None:
+        found.add(f"{filename}:{scope[-1] if scope else '<module>'}")
+
+    class Scan(ast.NodeVisitor):
+        def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+            scope.append(node.name)
+            self.generic_visit(node)
+            scope.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Expr(self, node: ast.Expr) -> None:
+            if not (isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+                self.generic_visit(node)
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            if node.attr == "_borrow":
+                hit()
+            self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> None:
+            if node.id == "_borrow":
+                hit()
+
+        def visit_Constant(self, node: ast.Constant) -> None:
+            if isinstance(node.value, str) and "_borrow" in node.value.split("."):
+                hit()
+
+    Scan().visit(ast.parse(source))
+    return found
+
+
 def test_decrypt_path_is_used_only_by_sign() -> None:
     """Structural (C-2.7): inside M2 the plaintext decrypt (`_borrow`) has one production
-    caller, `_sign`, which uses the secret for the MAC and returns no plaintext secret."""
-    callers: set[str] = set()
+    caller, `_sign`, which uses the secret for the MAC and returns no plaintext secret. Every
+    reference counts, not only a direct call, so an alias cannot add a second caller."""
+    refs: set[str] = set()
     for path in sorted(_SECRETS_PKG.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for fn in ast.walk(tree):
-            if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
-                for n in ast.walk(fn):
-                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
-                        if n.func.attr == "_borrow":
-                            callers.add(f"{path.name}:{fn.name}")
-    assert callers == {"broker.py:_sign"}
+        refs |= _borrow_refs(path.read_text(encoding="utf-8"), path.name)
+    assert refs == {"broker.py:_sign"}
+
+
+@pytest.mark.parametrize(
+    "probe",
+    [
+        "async def leak(self, k):\n    b = self._borrow\n    return await b(k)\n",
+        "async def leak(self, k):\n    return await getattr(self, '_borrow')(k)\n",
+        "import functools\nasync def leak(self, k):\n"
+        "    return await functools.partial(self._borrow, k)()\n",
+        "import operator\nasync def leak(self, k):\n"
+        "    return await operator.attrgetter('broker._borrow')(self)(k)\n",
+        "class B:\n    async def _borrow(self, k): ...\n    leak = _borrow\n",
+    ],
+    ids=["alias", "getattr", "partial", "attrgetter", "class-alias"],
+)
+def test_decrypt_path_scan_flags_every_reference_form(probe: str) -> None:
+    assert _borrow_refs(probe, "probe.py")
+
+
+def test_decrypt_path_scan_ignores_the_definition_and_docstrings() -> None:
+    probe = 'class B:\n    async def _borrow(self, k):\n        """Not self._borrow."""\n'
+    assert _borrow_refs(probe, "probe.py") == set()
