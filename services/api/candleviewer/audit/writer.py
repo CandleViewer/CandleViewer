@@ -43,7 +43,9 @@ thread is still running; before, the next append truncated the in-flight
 frame as a torn tail and `AuditWal._end` drifted past EOF. A cancel of an
 op task itself (event-loop teardown) is deferred until its WAL call has
 returned and its bookkeeping is done (`_uninterruptible`). `stop()` drains
-these tasks before and after it cancels the flusher.
+these tasks before and after it cancels the flusher. It runs as one owned
+shutdown task shared by every caller: a cancelled caller (a supervisor's
+timeout) returns at once while the shutdown still completes.
 """
 
 from __future__ import annotations
@@ -120,6 +122,10 @@ async def _uninterruptible[T](op: _WalOp, fn: Callable[..., T], /, *args: Any) -
     return fut.result()
 
 
+#: Upper bound on the `on_alarm` callback (a slow pager must not stall a WAL op).
+_ALARM_TIMEOUT_S = 2.0
+
+
 class AuditWriter:
     """Owns the WAL and the single flusher task.
 
@@ -157,11 +163,14 @@ class AuditWriter:
         self._clock = clock
         self._sleep = sleep
         self._task: asyncio.Task[None] | None = None
+        #: The one shutdown run behind `stop()`, shared by every caller (see `stop`).
+        self._stopping: asyncio.Task[None] | None = None
         self._running = False
         self._pending = 0
         self._written_total = 0
         self._write_errors_total = 0
         self._refused_total = 0
+        self._drain_overruns_total = 0
         self._inflight = False
         self._max_insert_attempts = max_insert_attempts
         self._failure: BaseException | None = None
@@ -174,6 +183,11 @@ class AuditWriter:
     def refused_total(self) -> int:
         """`emit()` calls refused with `AuditUnavailable` (WAL full/unwritable)."""
         return self._refused_total
+
+    @property
+    def drain_overruns_total(self) -> int:
+        """`stop()` drain intervals that expired with a WAL op still running (hung disk)."""
+        return self._drain_overruns_total
 
     @property
     def write_errors_total(self) -> int:
@@ -192,11 +206,19 @@ class AuditWriter:
     async def start(self) -> None:
         """Start the flusher. It replays WAL backlog from a previous run
         first, inside the task, so `start()` never blocks on Postgres.
-        Also the recovery path after a fail-closed flusher death."""
+        Also the recovery path after a fail-closed flusher death. Raises
+        `RuntimeError` while a `stop()` is still shutting the writer down."""
+        if self._stopping is not None:
+            if not self._stopping.done():
+                raise RuntimeError("AuditWriter.start(): stop() is still in progress")
+            self._stopping = None  # finished: the next stop() runs a new shutdown
         if self._task is not None and not self._task.done():
             return
         self._failure = None
         self._running = True
+        # An op abandoned by a previous stop() may have read a batch with no commit
+        # to clear this; a stale flag would refuse the emergency compaction (#2250).
+        self._inflight = False
         self._idle.clear()
         self._wake.set()
         self._task = spawn(self._supervised(), name="audit-writer")
@@ -208,35 +230,44 @@ class AuditWriter:
             await self._idle.wait()
 
     async def stop(self, grace_s: float = 5.0) -> None:
+        """Stop accepting `emit()`, drain in-flight WAL ops, give the flusher up to
+        `grace_s` to empty the WAL into Postgres, then cancel it.
+
+        The shutdown runs once, in an owned task that repeated and concurrent calls
+        share (the first call's `grace_s` applies). Callers await it through
+        `asyncio.shield`: a cancelled caller gets `CancelledError` at once and does
+        not wait for it, so a timeout around `stop()` (`Supervisor._stop_each` in
+        `app.py`) still moves on to the next module, while the shutdown itself runs
+        to the end and always cancels the flusher. A failure of the shutdown reaches
+        the callers still waiting and is logged at critical in any case."""
+        if self._stopping is None:
+            self._stopping = spawn(self._stop(grace_s), name="audit-writer-stop")
+            self._stopping.add_done_callback(_log_task_failure)
+        await asyncio.shield(self._stopping)
+
+    async def _stop(self, grace_s: float) -> None:
+        """The shutdown behind `stop()`; at most one runs at a time."""
         self._running = False
         # Appends already handed to a WAL op land before the flusher is
-        # cancelled (#2250). Not bounded by `grace_s`: each op is one WAL call
-        # plus bookkeeping, and a WAL still being written after stop() returns
-        # could be truncated as a torn tail by the next writer on the same file.
-        await self._drain_wal_ops()
-        if self._task is None:
-            return
-        if self._task.done():
-            # Flusher already died (fail-closed; `failure` holds the cause and
-            # the alarm has fired). Nothing to drain; the WAL keeps the backlog.
-            self._task = None
-            return
-        try:
-            await self.flush(grace_s)
-        except TimeoutError:
-            logger().warning("AuditWriter.stop: WAL not drained within %.1fs", grace_s)
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            # Expected: we cancelled it. Every record emit() accepted is
-            # already fsync'd in the WAL; unflushed ones are replayed
-            # (idempotently, by record_id) on the next start().
-            pass
+        # cancelled (#2250); see `_drain_wal_ops` for why this is unbounded.
+        await self._drain_wal_ops(grace_s)
+        task = self._task
+        if task is not None and not task.done():
+            try:
+                await self.flush(grace_s)
+            except TimeoutError:
+                logger().warning("AuditWriter.stop: WAL not drained within %.1fs", grace_s)
+            task.cancel()
+            # Raises only if this shutdown is itself cancelled, never with the flusher's
+            # outcome: cancelled as asked, or dead first (fail-closed, already logged).
+            await asyncio.wait({task})
+        # Every record emit() accepted is fsync'd in the WAL; whatever the flusher did
+        # not commit is replayed (idempotently, by record_id) on the next start(). A
+        # flusher that died earlier keeps its cause in `failure` (the alarm has fired).
         self._task = None
         # A read or commit + compaction the flusher was inside keeps
         # `_wal_lock` until its WAL thread returns; wait for it as well.
-        await self._drain_wal_ops()
+        await self._drain_wal_ops(grace_s)
 
     async def emit(
         self,
@@ -308,12 +339,24 @@ class AuditWriter:
         except (AuditWalFull, OSError) as exc:
             self._refused_total += 1
             reason_text = f"audit WAL unavailable: {type(exc).__name__}"
-            if self._on_alarm is not None:
-                await self._on_alarm(reason_text)
             logger().critical(reason_text)
+            await self._alarm(reason_text)
             raise AuditUnavailable(reason_text) from exc
         self._wake.set()
         op.raise_if_cancelled()
+
+    async def _alarm(self, reason_text: str) -> None:
+        """Fire the fail-closed alarm without letting a slow or broken callback hold
+        up the WAL op (and so `stop()`'s drain): bounded, errors logged, never raised."""
+        if self._on_alarm is None:
+            return
+        try:
+            async with asyncio.timeout(_ALARM_TIMEOUT_S):
+                await self._on_alarm(reason_text)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # an alarm sink failure must not mask the refusal
+            logger().error("audit alarm callback failed", error=type(exc).__name__)
 
     async def _shielded[**P, T](
         self,
@@ -346,10 +389,20 @@ class AuditWriter:
                 task.cancel()
             raise
 
-    async def _drain_wal_ops(self) -> None:
-        """Wait until no WAL op is in flight (`stop()`)."""
+    async def _drain_wal_ops(self, grace_s: float = 5.0) -> None:
+        """Wait until no WAL op is in flight (`stop()`). Deliberately unbounded: a WAL
+        call still running when stop() returns could be truncated as a torn tail by the
+        next writer on the same file. A hung disk is made visible instead: each
+        `grace_s` that passes logs at critical and counts `drain_overruns_total`."""
         while self._wal_ops:
-            await asyncio.wait(set(self._wal_ops))
+            _done, pending = await asyncio.wait(set(self._wal_ops), timeout=grace_s)
+            if pending:
+                self._drain_overruns_total += 1
+                logger().critical(
+                    "AuditWriter.stop: WAL op still running after grace; waiting",
+                    pending=len(pending),
+                    grace_s=grace_s,
+                )
 
     async def _append_durably(self, op: _WalOp, record: dict[str, Any]) -> None:
         """Caller holds `_wal_lock`. On `AuditWalFull`, reclaim the committed
@@ -373,8 +426,7 @@ class AuditWriter:
             self._running = False
             reason_text = f"audit flusher died: {type(exc).__name__}; emit() now fails closed"
             logger().critical(reason_text)
-            if self._on_alarm is not None:
-                await self._on_alarm(reason_text)
+            await self._alarm(reason_text)
             raise
 
     async def _run(self) -> None:
@@ -484,8 +536,10 @@ def _log_abandoned_op(task: asyncio.Task[Any]) -> None:
 
 
 def _log_task_failure(task: asyncio.Task[None]) -> None:
+    """Done-callback of the flusher and of the shared shutdown task: logs, and so
+    retrieves, an exception even when nobody awaits the task any more."""
     if not task.cancelled() and task.exception() is not None:
-        logger().critical("audit writer task died", exc_info=task.exception())
+        logger().critical("audit writer task died", task=task.get_name(), exc_info=task.exception())
 
 
 def _path(raw: str) -> Path:

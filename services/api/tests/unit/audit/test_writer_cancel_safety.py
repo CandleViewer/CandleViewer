@@ -556,3 +556,252 @@ def test_writer_asyncio_run_teardown_mid_append_truncates_nothing(
     reopened = wal_module.AuditWal(path)
     assert reopened.torn_tail_truncations == 0 and reopened._end == size
     assert [r["actor_label"] for _, r in reopened.replay()] == ["first", "cleanup"]
+
+
+async def test_writer_stop_drain_overrun_is_logged_and_counted_but_keeps_waiting(
+    repo: FakeAuditRepository,
+    tmp_path: Path,
+    clock: FakeClock,
+    slow_disk: SlowDisk,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2250 review: the drain stays unbounded (no torn tail for the next writer) but a
+    hung disk is visible: each expired interval logs critical and counts an overrun."""
+    from candleviewer.audit import writer as writer_module
+
+    w = _writer(repo, tmp_path, clock)
+    await w.start()
+    disk = slow_disk(w)
+    disk.arm()
+    emit = asyncio.create_task(w.emit("auth.login", actor_label="slow"))
+    await _thread_event(disk.stalled)
+    overrun = asyncio.Event()
+    real_critical = writer_module.logger().critical
+
+    class _Spy:
+        def critical(self, event: str, **kw: Any) -> None:
+            real_critical(event, **kw)
+            if event.startswith("AuditWriter.stop: WAL op still running"):
+                overrun.set()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(writer_module.logger(), name)
+
+    monkeypatch.setattr(writer_module, "logger", lambda: _Spy())
+    with capture_logs() as logs:
+        stopping = asyncio.create_task(w.stop(0.01))
+        await asyncio.wait_for(overrun.wait(), _WAIT_S)  # event-driven, no polling sleep
+        assert w.drain_overruns_total >= 1
+        assert not stopping.done(), "stop() returned while a WAL op was still running"
+        disk.release.set()
+        await asyncio.wait_for(stopping, _WAIT_S)
+    await emit
+    del logs  # the spy proved the critical log; capture_logs kept the run quiet
+    assert w._wal._end == (tmp_path / "audit.wal").stat().st_size
+
+
+async def test_writer_stop_cancelled_still_finishes_shutdown(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, slow_disk: SlowDisk
+) -> None:
+    """#2250 review: cancelling stop() itself must not skip the flusher cancel. Round 3:
+    nor may it hold the cancelled caller; the shared shutdown finishes on its own."""
+    w = _writer(repo, tmp_path, clock)
+    await w.start()
+    disk = slow_disk(w)
+    disk.arm()
+    emit = asyncio.create_task(w.emit("auth.login", actor_label="x"))
+    await _thread_event(disk.stalled)
+    flusher = w._task
+    assert flusher is not None
+    stopping = asyncio.create_task(w.stop(_WAIT_S))
+    assert await _yield_until(lambda: not w._running)  # the shutdown has begun
+    stopping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await stopping
+    assert not disk.returned[0].is_set() and not flusher.done(), "stop() waited for the shutdown"
+    shutdown = w._stopping
+    assert shutdown is not None and not shutdown.done()
+    disk.release.set()
+    await asyncio.wait_for(asyncio.shield(shutdown), _WAIT_S)
+    assert flusher.done() and w._task is None and not w._wal_ops
+    await emit
+
+
+async def test_writer_stop_under_supervisor_timeout_does_not_wait_for_hung_wal_op(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, slow_disk: SlowDisk
+) -> None:
+    """#2250 round 3: `Supervisor._stop_each` (app.py) bounds each module's stop() with
+    `asyncio.timeout(grace + 1.0)` so that one hung module never keeps a later one
+    (secrets zeroing the KEK) from stopping. With a WAL op hung in its thread the
+    timeout must end stop() on time; the shutdown completes once the thread returns."""
+    grace = 0.05
+    w = _writer(repo, tmp_path, clock)
+    await w.start()
+    disk = slow_disk(w)
+    disk.arm()
+    emit = asyncio.create_task(w.emit("auth.login", actor_label="x"))
+    await _thread_event(disk.stalled)
+    flusher = w._task
+    assert flusher is not None
+    loop = asyncio.get_running_loop()
+    with capture_logs():  # the drain logs an overrun every `grace` meanwhile
+        started = loop.time()
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(grace + 1.0):  # the shape of `_stop_each`
+                await w.stop(grace)
+        elapsed = loop.time() - started
+        assert elapsed < grace + 3.0, f"stop() held the supervisor for {elapsed:.2f}s"
+        shutdown = w._stopping
+        assert shutdown is not None and not shutdown.done()
+        assert not disk.returned[0].is_set() and not flusher.done()
+        disk.release.set()
+        await asyncio.wait_for(w.stop(_WAIT_S), _WAIT_S)  # a repeat call shares it
+    assert w._stopping is shutdown and shutdown.done()
+    assert flusher.done() and w._task is None and not w._wal_ops
+    await emit  # accepted: the append finished after the timeout
+    assert w._wal._end == (tmp_path / "audit.wal").stat().st_size
+
+
+async def test_writer_overlapping_stops_share_one_shutdown(
+    repo: FakeAuditRepository,
+    tmp_path: Path,
+    clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2250 round 3: overlapping stop() calls with different grace values, the first
+    one cancelled twice (the review's repro), share one shutdown: no call finds `_task`
+    cleared under it (AttributeError), and the first call's grace applies."""
+    repo.down = True  # the flush wait uses up its grace, so the shutdown stays in flight
+    w = _writer(repo, tmp_path, clock)
+    await w.start()
+    await w.emit("auth.login", actor_label="kept")
+    runs: list[float] = []
+    real_stop = w._stop
+
+    async def counted_stop(grace_s: float) -> None:
+        runs.append(grace_s)
+        await real_stop(grace_s)
+
+    monkeypatch.setattr(w, "_stop", counted_stop)
+    first = asyncio.create_task(w.stop(0.05))
+    assert await _yield_until(lambda: bool(runs))
+    for _ in range(2):
+        first.cancel()
+        await asyncio.sleep(0)
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    second = asyncio.create_task(w.stop(0.3))
+    third = asyncio.create_task(w.stop(0.2))
+    await asyncio.wait_for(asyncio.gather(second, third), _WAIT_S)
+    assert runs == [0.05]
+    assert w._task is None and not w._wal_ops
+    assert [r["actor_label"] for _, r in w._wal.replay()] == ["kept"]  # replayed next start
+
+
+async def test_writer_start_refused_while_stopping_then_restart_is_stoppable(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, slow_disk: SlowDisk
+) -> None:
+    """#2250 round 3: no second flusher beside a shutdown still draining a WAL op; once
+    that shutdown is done, start() works and the next stop() runs a new shutdown."""
+    w = _writer(repo, tmp_path, clock)
+    await w.start()
+    disk = slow_disk(w)
+    disk.arm()
+    emit = asyncio.create_task(w.emit("auth.login", actor_label="x"))
+    await _thread_event(disk.stalled)
+    stopping = asyncio.create_task(w.stop(_WAIT_S))
+    assert await _yield_until(lambda: not w._running)  # the shutdown has begun
+    with pytest.raises(RuntimeError, match="still in progress"):
+        await w.start()
+    disk.release.set()
+    await asyncio.wait_for(stopping, _WAIT_S)
+    await emit
+    await w.start()
+    flusher = w._task
+    assert flusher is not None and not flusher.done()
+    await w.stop(1)
+    assert flusher.done() and w._task is None
+
+
+async def test_writer_failed_shutdown_is_logged_and_reaches_waiting_caller(
+    repo: FakeAuditRepository,
+    tmp_path: Path,
+    clock: FakeClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2250 round 3: a failure of the shared shutdown task is logged at critical (so it
+    is retrieved even with every caller gone) and still raised to a caller that waits."""
+    w = _writer(repo, tmp_path, clock)
+    await w.start()
+    flusher = w._task
+    assert flusher is not None
+    gate = asyncio.Event()
+
+    async def broken_drain(grace_s: float = 5.0) -> None:
+        await gate.wait()
+        raise RuntimeError("drain bug")
+
+    monkeypatch.setattr(w, "_drain_wal_ops", broken_drain)
+    cancelled = asyncio.create_task(w.stop(1))
+    waiting = asyncio.create_task(w.stop(2))
+    assert await _yield_until(lambda: not w._running)  # the shutdown has begun
+    cancelled.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(cancelled, _WAIT_S)
+    with capture_logs() as logs:
+        gate.set()
+        with pytest.raises(RuntimeError, match="drain bug"):
+            await waiting
+    died = [e for e in logs if e["event"] == "audit writer task died"]
+    assert [(e["task"], e["log_level"]) for e in died] == [("audit-writer-stop", "critical")]
+    flusher.cancel()  # the broken shutdown never got to it
+    await asyncio.wait({flusher})
+
+
+async def test_writer_slow_alarm_is_bounded_and_failing_alarm_is_logged(
+    repo: FakeAuditRepository,
+    tmp_path: Path,
+    clock: FakeClock,
+    slow_disk: SlowDisk,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2250 review: the fail-closed alarm cannot hold up the WAL op (and stop()'s drain)."""
+    from candleviewer.audit import writer as writer_module
+
+    monkeypatch.setattr(writer_module, "_ALARM_TIMEOUT_S", 0.0)
+    hang = asyncio.Event()
+
+    async def hanging_alarm(reason: str) -> None:
+        await hang.wait()
+
+    w = AuditWriter(
+        repo,
+        str(tmp_path / "audit.wal"),
+        clock=clock,
+        sleep=repo.retry_sleep,
+        on_alarm=hanging_alarm,
+    )
+    await w.start()
+    disk = slow_disk(w)
+    disk.arm()
+    disk.fail_after_release = True
+    disk.release.set()
+    with capture_logs() as logs:
+        with pytest.raises(writer_module.AuditUnavailable):
+            await asyncio.wait_for(w.emit("auth.login", actor_label="doomed"), _WAIT_S)
+    assert any(e["event"] == "audit alarm callback failed" for e in logs)
+    assert w.refused_total == 1  # refused promptly despite the hanging alarm callback
+    await w.stop(_WAIT_S)
+    assert not w._wal_lock.locked() and not w._wal_ops
+
+
+async def test_writer_start_resets_stale_inflight_flag(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock
+) -> None:
+    """#2250 review: a stale `_inflight` from an abandoned read would refuse the
+    emergency compaction after a restart on the same writer."""
+    w = _writer(repo, tmp_path, clock)
+    w._inflight = True
+    await w.start()
+    assert w._inflight is False
+    await w.stop(1)

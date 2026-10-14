@@ -57,6 +57,9 @@ class AuditService:
         (M10's `SqlAlchemyAuditRepository` once the real relational backend
         is wired); otherwise stays the no-op scaffold. `audit` never imports
         a storage driver (ADR-0003 import-linter contract)."""
+        if self._writer is not None:
+            # Two writers on one WAL file would truncate each other's in-flight frames.
+            raise RuntimeError("AuditService.start(): a writer is already running; stop() first")
         if self._repository is not None:
             from candleviewer.audit.query import AuditQueryService
             from candleviewer.audit.writer import AuditWriter

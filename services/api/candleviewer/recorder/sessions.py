@@ -125,7 +125,12 @@ class SessionStore(Protocol):
 
 class SessionAudit(Protocol):
     """Subset of `AuditWriter.emit` (same shape as `recorder.policy.AuditSink`; injected —
-    M11 may not import `audit`, C-3.3)."""
+    M11 may not import `audit`, C-3.3).
+
+    The sink MUST be cancellation-safe, as `AuditWriter` is (#2250): `_audit_restart`
+    bounds `emit` with `asyncio.timeout`, so a cancelled emit must neither corrupt the
+    sink nor be lost half-written. It may still land after the timeout, and the retry on
+    the next start then audits the close again: over-audit, never under-audit (C-2.9)."""
 
     async def emit(
         self,
@@ -376,7 +381,10 @@ class SessionManager:
     async def _audit_restart(self, symbol: str, sid: str, lo: int, hi: int) -> None:
         """C-2.9 write-ahead: the `recorder.stop` audit precedes the gap row and the close; an
         audit failure raises, so recovery stops with the session still open (retried on the
-        next start) — never an unaudited close."""
+        next start) - never an unaudited close. The sink is cancellation-safe (#2250): a
+        timeout cancels an emit still queued for the WAL (nothing is appended), while one
+        already appending finishes inside the sink. So a timeout leaves at most one in-flight
+        record - over-audit, never under-audit - and no orphan task here."""
         if self._audit is None:
             return
         async with asyncio.timeout(self._cfg.store_timeout_s):
