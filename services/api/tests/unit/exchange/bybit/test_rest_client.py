@@ -11,7 +11,6 @@ import logging
 import httpx
 import pytest
 import respx
-from pydantic import SecretStr
 
 from candleviewer.exchange.base.errors import (
     ClockDriftError,
@@ -23,7 +22,9 @@ from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.exchange.bybit.signer import BybitSigner
+from candleviewer.secrets import CredentialBorrower, CredentialUnavailable
 from tests._corpus import http_status, rest
+from tests._signing import CREDENTIAL_ID, fake_capability
 
 BASE_URL = "https://api-demo.bybit.com"
 
@@ -62,7 +63,7 @@ async def test_signed_request_sends_bapi_headers() -> None:
     route = respx.get(f"{BASE_URL}/v5/account/wallet-balance").mock(
         return_value=httpx.Response(200, json={"retCode": 0, "retMsg": "OK", "result": {}})
     )
-    signer = BybitSigner(api_key="test-key", api_secret=SecretStr("test-secret"))
+    signer = BybitSigner(fake_capability("test-key"), CREDENTIAL_ID)
     client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
     try:
         await client.signed_request(
@@ -78,6 +79,27 @@ async def test_signed_request_sends_bapi_headers() -> None:
     assert sent.headers["X-BAPI-API-KEY"] == "test-key"
     assert "X-BAPI-SIGN" in sent.headers
     assert sent.headers["X-BAPI-RECV-WINDOW"] == "5000"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_m2_signing_refusal_sends_nothing() -> None:
+    """C-2.7 (#2339), fail closed: if M2 refuses to sign, no request is sent unsigned."""
+    route = respx.get(f"{BASE_URL}/v5/account/wallet-balance").mock(
+        return_value=httpx.Response(200, json={"retCode": 0, "retMsg": "OK", "result": {}})
+    )
+
+    async def refuse(key_id: object, message: object, purpose: str) -> object:
+        raise CredentialUnavailable("credential_unavailable")
+
+    signer = BybitSigner(CredentialBorrower(refuse), CREDENTIAL_ID)
+    client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
+    try:
+        with pytest.raises(CredentialUnavailable):
+            await client.signed_request("GET", "/v5/account/wallet-balance")
+    finally:
+        await client.aclose()
+    assert route.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -196,21 +218,22 @@ async def test_5xx_retries_then_raises_transport_error_when_exhausted() -> None:
 @pytest.mark.asyncio
 @respx.mock
 async def test_secrets_never_appear_in_debug_logs(caplog: pytest.LogCaptureFixture) -> None:
-    """Ticket scenario "Secrets never reach a log or a fixture"."""
-    respx.get(f"{BASE_URL}/v5/account/wallet-balance").mock(
+    """Ticket scenario "Secrets never reach a log or a fixture". The API secret never reaches
+    M4 at all (#2339); the key id and the signature stay out of the request log."""
+    route = respx.get(f"{BASE_URL}/v5/account/wallet-balance").mock(
         return_value=httpx.Response(200, json={"retCode": 0, "retMsg": "OK", "result": {}})
     )
-    signer = BybitSigner(api_key="visible-key", api_secret=SecretStr("super-secret-value"))
+    signer = BybitSigner(fake_capability("visible-key"), CREDENTIAL_ID)
     client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
     caplog.set_level(logging.DEBUG)
     try:
         await client.signed_request("GET", "/v5/account/wallet-balance")
     finally:
         await client.aclose()
-    log_text = caplog.text
-    assert "super-secret-value" not in log_text
-    for record in caplog.records:
-        assert "super-secret-value" not in repr(record.__dict__)
+    for value in ("visible-key", route.calls.last.request.headers["X-BAPI-SIGN"]):
+        assert value not in caplog.text
+        for record in caplog.records:
+            assert value not in repr(record.__dict__)
 
 
 @pytest.mark.asyncio
@@ -246,7 +269,7 @@ async def test_signed_get_signs_the_wire_encoded_query_string() -> None:
     route = respx.get(f"{BASE_URL}/v5/market/kline").mock(
         return_value=httpx.Response(200, json={"retCode": 0, "retMsg": "OK", "result": {}})
     )
-    signer = BybitSigner(api_key="k", api_secret=SecretStr("s"))
+    signer = BybitSigner(fake_capability("k"), CREDENTIAL_ID)
     client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
     try:
         await client.signed_request(
@@ -259,12 +282,13 @@ async def test_signed_get_signs_the_wire_encoded_query_string() -> None:
     assert sent_request.url.query.decode() == expected_query
     # The signature must have been computed over that same encoded string,
     # not the raw `k=v` join — recompute and compare against the sent header.
-    expected_signature = signer.sign(
+    expected = await signer.sign(
         timestamp_ms=int(sent_request.headers["X-BAPI-TIMESTAMP"]),
         recv_window_ms=int(sent_request.headers["X-BAPI-RECV-WINDOW"]),
         payload=expected_query,
     )
-    assert sent_request.headers["X-BAPI-SIGN"] == expected_signature
+    assert sent_request.headers["X-BAPI-SIGN"] == expected.signature
+    assert sent_request.headers["X-BAPI-API-KEY"] == expected.api_key == "k"
 
 
 @pytest.mark.asyncio
@@ -308,7 +332,7 @@ async def test_4xx_with_mapped_ret_code_raises_mapped_error() -> None:
     respx.get(f"{BASE_URL}/v5/account/wallet-balance").mock(
         return_value=httpx.Response(401, json={"retCode": 10003, "retMsg": "invalid key"})
     )
-    signer = BybitSigner(api_key="k", api_secret=SecretStr("s"))
+    signer = BybitSigner(fake_capability("k"), CREDENTIAL_ID)
     client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
     try:
         with pytest.raises(Exception) as exc_info:
@@ -339,7 +363,7 @@ async def test_non_json_body_raises_unknown_state_error() -> None:
 async def test_order_class_post_without_order_link_id_is_rejected() -> None:
     """C-2.10: signed POSTs are retried automatically, which is only safe
     for order placement when every attempt reuses the same `orderLinkId`."""
-    signer = BybitSigner(api_key="k", api_secret=SecretStr("s"))
+    signer = BybitSigner(fake_capability("k"), CREDENTIAL_ID)
     client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
     try:
         with pytest.raises(ValueError):
@@ -359,7 +383,7 @@ async def test_order_class_post_with_order_link_id_is_accepted() -> None:
     respx.post(f"{BASE_URL}/v5/order/create").mock(
         return_value=httpx.Response(200, json={"retCode": 0, "retMsg": "OK", "result": {}})
     )
-    signer = BybitSigner(api_key="k", api_secret=SecretStr("s"))
+    signer = BybitSigner(fake_capability("k"), CREDENTIAL_ID)
     client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
     try:
         result = await client.signed_request(

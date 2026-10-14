@@ -22,7 +22,6 @@ import httpx
 import pytest
 import structlog
 from prometheus_client import REGISTRY, generate_latest
-from pydantic import SecretStr
 
 from candleviewer.exchange.base.errors import ExchangeError
 
@@ -38,6 +37,7 @@ from candleviewer.exchange.bybit.rest import BybitRestClient
 # nosemgrep: cv-adapter-isolation reason=X02 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.signer import BybitSigner
 from tests._corpus import rest
+from tests._signing import CREDENTIAL_ID, fake_capability
 
 _REPO = Path(__file__).resolve().parents[5]
 if str(_REPO) not in sys.path:
@@ -124,7 +124,7 @@ async def _drive(kind: str) -> str:
     client = BybitRestClient(
         RestClientConfig(base_url="https://api-demo.bybit.com", max_retries=1),
         uid=UID,
-        signer=BybitSigner(API_KEY, SecretStr(API_SECRET)),
+        signer=BybitSigner(fake_capability(API_KEY), CREDENTIAL_ID),
         governor=TokenBucketGovernor(clock=lambda: now[0], sleep=_advance),
         transport=httpx.MockTransport(_responder(kind)),
         sleep=_no_sleep,
@@ -163,12 +163,13 @@ def test_scan_detects_planted_token() -> None:
 
 
 def test_signer_repr_never_contains_secret() -> None:
-    assert API_SECRET not in repr(BybitSigner(API_KEY, SecretStr(API_SECRET)))
+    # #2339: the signer holds no secret at all; M2 computes the MAC (C-2.7).
+    assert API_SECRET not in repr(BybitSigner(fake_capability(API_KEY), CREDENTIAL_ID))
 
 
-@pytest.mark.xfail(strict=True, reason="#1895 BybitSigner repr prints the full API key")
 def test_signer_repr_masks_api_key() -> None:
-    assert scan(repr(BybitSigner(API_KEY, SecretStr(API_SECRET)))) == []
+    # #1895: fixed by #2339, the signer holds a capability and a credential id, not the key.
+    assert scan(repr(BybitSigner(fake_capability(API_KEY), CREDENTIAL_ID))) == []
 
 
 def test_metric_labels_carry_no_uid() -> None:

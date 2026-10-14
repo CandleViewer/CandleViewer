@@ -89,3 +89,25 @@ Refines Design §1; does not reverse it. Detail: `docs/plan/spikes/e27-kek.md`.
 - KEK types are private to `secrets`; other modules get metadata-only calls (C-3.2).
 - Break-glass (#2119) lives in `candleviewer.admin`, proves KEK possession through `secrets`, and in
   `live` also requires an unused Owner recovery code; it audits before acting.
+
+## Amendment 2 (2026-10-13, #2339; decision owner-delegated per #1778)
+
+Supersedes Design §3's "plaintext keys exist only inside the exchange adapter". It conforms to
+C-2.7: credentials are plaintext only inside `secrets` (M2), at the moment of request signing.
+- The exchange adapter builds its venue's string-to-sign as byte segments and marks where the key
+  id goes (`KEY_ID_SLOT`). It owns that format (C-2.2).
+- M2's capability `CredentialBorrower.sign(key_id, message, purpose=...)` decrypts, splices the
+  key id in and computes HMAC-SHA256 inside M2. It returns the lowercase hex signature and the key
+  id (`Secret[str]`, for the request header). It never returns the API secret.
+- The plaintext-yielding borrow (`with_credentials`) is removed. Each signing call keeps the single
+  audited path: caller check, status and env fence, write-ahead `security.credential_borrowed`.
+  That record carries `message_sha256`, the digest of the message before the key id is spliced
+  in. A failure after it appends `security.credential_sign_failed` (#2350 security review).
+- The message is bounded: at most 64 KiB, 16 parts and one `KEY_ID_SLOT`. A refused message is
+  refused before any decrypt or audit. A failed MAC leaves M2 as a typed `signing_failed` with
+  nothing chained, after the failed call's frames are cleared, so no traceback carries plaintext.
+- The message is plain data, so the out-of-process signer (#2279) can serve the same call.
+- Enforcement: the M2 AST guard (`tests/unit/credentials_m2/_m2_guard.py`, rule R10) refuses
+  the plaintext borrow and `.reveal()` outside `secrets/` (one reviewed site: the returned key id
+  for the header). In `exchange/` it also refuses any `hmac` import, `SecretStr` and
+  `get_secret_value`.

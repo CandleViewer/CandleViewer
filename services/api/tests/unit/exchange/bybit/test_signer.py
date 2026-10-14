@@ -1,61 +1,82 @@
-"""Signer unit tests (ticket scenario "Signature matches the specification").
+"""`BybitSigner` (#2339, C-2.7): this module builds the string-to-sign; M2 computes the MAC.
 
-The vector below is derived directly from `docs/plan/24-internal-schemas.md`
-§14.3's documented formula: `HMAC-SHA256(timestamp + api_key + recv_window +
-(queryString | jsonBody))`, hex-encoded — computed independently in this
-test (not copied from the implementation) so a regression in `signer.py`
-is caught.
+Vectors are the Bybit v5 "Integration Guidance" worked examples recorded in
+`docs/research/06-bybit-api.md` ("Confirmed worked example from the live docs"): the doc's
+`XXXXXXXXXX` placeholder is the key id and, in the end-to-end case, also the synthetic secret.
+The expected MACs are fixed values (HMAC-SHA256, lowercase hex). No real key is used anywhere.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
+import dataclasses
 
-from pydantic import SecretStr
+import pytest
 
-from candleviewer.exchange.bybit.signer import BybitSigner
+from candleviewer.exchange.bybit.signer import BybitSignature, BybitSigner
+from candleviewer.secrets import Secret, mint_borrower
+from candleviewer.secrets.store import InMemoryCredentialStore
+from tests._signing import CREDENTIAL_ID, Call, fake_capability, stand_in_signature
+from tests.unit.credentials_m2._service_fakes import _boot, _Src
+from tests.unit.credentials_m2._vectors import ACCOUNT, KEK_V1, SNAPSHOT
 
-
-def test_sign_get_matches_independently_computed_hmac() -> None:
-    signer = BybitSigner(api_key="test-key", api_secret=SecretStr("test-secret"))
-    timestamp_ms = 1700000000000
-    recv_window_ms = 5000
-    query = "category=linear&symbol=BTCUSDT"
-
-    actual = signer.sign(timestamp_ms=timestamp_ms, recv_window_ms=recv_window_ms, payload=query)
-
-    message = f"{timestamp_ms}test-key{recv_window_ms}{query}"
-    expected = hmac.new(b"test-secret", message.encode("utf-8"), hashlib.sha256).hexdigest()
-    assert actual == expected
-
-
-def test_sign_post_body_uses_raw_json_string() -> None:
-    signer = BybitSigner(api_key="k", api_secret=SecretStr("s"))
-    body = '{"symbol":"BTCUSDT","qty":"1"}'
-
-    actual = signer.sign(timestamp_ms=1, recv_window_ms=5000, payload=body)
-
-    message = f"1k5000{body}"
-    expected = hmac.new(b"s", message.encode("utf-8"), hashlib.sha256).hexdigest()
-    assert actual == expected
+DOC_KEY_ID = "XXXXXXXXXX"
+DOC_GET = (1658384314791, "category=option&symbol=BTC-29JUL22-25000-C")
+DOC_GET_STRING = b"1658384314791XXXXXXXXXX5000category=option&symbol=BTC-29JUL22-25000-C"
+DOC_POST = (1658385579423, '{"category":"option"}')
+DOC_POST_STRING = b'1658385579423XXXXXXXXXX5000{"category":"option"}'
+#: HMAC-SHA256 of each string-to-sign with the doc placeholder as the (synthetic) secret.
+DOC_GET_MAC = "c00720f96c5934ca7057ac28ae65b823f83b8b67a8fe784e7795ca0fa3c148ec"
+DOC_POST_MAC = "ff137e622dc52629f41b52ea614eab59502e2b0663f153c528cb570379c469b7"
+CASES = [(*DOC_GET, DOC_GET_MAC), (*DOC_POST, DOC_POST_MAC)]
+STRINGS = [(*DOC_GET, DOC_GET_STRING), (*DOC_POST, DOC_POST_STRING)]
 
 
-def test_verify_uses_constant_time_comparison() -> None:
-    assert BybitSigner.verify(expected_hex="abc", actual_hex="abc") is True
-    assert BybitSigner.verify(expected_hex="abc", actual_hex="abd") is False
+@pytest.mark.parametrize(("ts", "payload", "string_to_sign"), STRINGS, ids=["get", "post"])
+async def test_string_to_sign_is_the_documented_example(
+    ts: int, payload: str, string_to_sign: bytes
+) -> None:
+    calls: list[Call] = []
+    signer = BybitSigner(fake_capability(DOC_KEY_ID, calls), CREDENTIAL_ID)
+    out = await signer.sign(timestamp_ms=ts, recv_window_ms=5000, payload=payload)
+    assert calls == [(CREDENTIAL_ID, string_to_sign, "sign_rest")]
+    assert out == BybitSignature(DOC_KEY_ID, stand_in_signature(string_to_sign))
 
 
-def test_repr_never_exposes_the_secret() -> None:
-    signer = BybitSigner(api_key="visible-key", api_secret=SecretStr("super-secret-value"))
-    rendered = repr(signer)
-    assert "super-secret-value" not in rendered
-    assert "visible-key" in rendered
-    assert "redacted" in rendered
+@pytest.mark.parametrize(("ts", "payload", "mac"), CASES, ids=["get", "post"])
+async def test_m2_computes_the_documented_signature_end_to_end(
+    ts: int, payload: str, mac: str
+) -> None:
+    """Real composition: started `SecretsService` -> minted capability -> `BybitSigner`."""
+    svc = await _boot(InMemoryCredentialStore(), _Src(KEK_V1, 1))
+    broker = svc._require()
+    meta = await broker.store(
+        "demo", ACCOUNT, "doc", Secret(DOC_KEY_ID), Secret(DOC_KEY_ID), SNAPSHOT
+    )
+    broker._store.activate(meta.key_id)  # type: ignore[attr-defined]  # in-memory fake helper
+    signer = BybitSigner(mint_borrower(svc, "exchange_adapter"), meta.key_id)
+    out = await signer.sign(timestamp_ms=ts, recv_window_ms=5000, payload=payload)
+    assert out == BybitSignature(api_key=DOC_KEY_ID, signature=mac)
 
 
-def test_str_of_secretstr_never_exposes_value() -> None:
-    # Guards against a caller accidentally formatting the secret directly.
-    secret = SecretStr("super-secret-value")
-    assert "super-secret-value" not in str(secret)
-    assert "super-secret-value" not in repr(secret)
+async def test_purpose_is_passed_to_m2() -> None:
+    calls: list[Call] = []
+    cap = fake_capability("k", calls)
+    await BybitSigner(cap, CREDENTIAL_ID).sign(timestamp_ms=1, recv_window_ms=5000, payload="")
+    await BybitSigner(cap, CREDENTIAL_ID, purpose="key_verify").sign(
+        timestamp_ms=1, recv_window_ms=5000, payload=""
+    )
+    assert [c[2] for c in calls] == ["sign_rest", "key_verify"]
+
+
+def test_signer_holds_no_credential_material() -> None:
+    """C-2.7: the signer keeps a capability and a credential id, never a key or a secret."""
+    signer = BybitSigner(fake_capability("visible-key"), CREDENTIAL_ID)
+    assert set(BybitSigner.__slots__) == {"_credentials", "_credential_id", "_purpose"}
+    assert "visible-key" not in repr(signer) and str(CREDENTIAL_ID) in repr(signer)
+
+
+def test_signature_repr_hides_key_id_and_mac() -> None:
+    """#1895: neither the key id nor the MAC is rendered by `repr`."""
+    out = BybitSignature(api_key="visible-key", signature="ab" * 32)
+    assert "visible-key" not in repr(out) and "ab" * 32 not in repr(out)
+    assert [f.name for f in dataclasses.fields(out)] == ["api_key", "signature"]

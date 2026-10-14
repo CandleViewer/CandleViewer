@@ -8,12 +8,12 @@ import httpx
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from pydantic import SecretStr
 
 from candleviewer.exchange.base.errors import ExchangeError
 from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.rest import BybitRestClient, RestPathRejected, validate_rest_path
 from candleviewer.exchange.bybit.signer import BybitSigner
+from tests._signing import CREDENTIAL_ID, fake_capability
 
 BASE = "https://api.bybit.com"
 BAD = [
@@ -40,7 +40,7 @@ def _client(hosts: list[str]) -> BybitRestClient:
         hosts.append(req.url.host)
         return httpx.Response(200, json={"retCode": 0, "retMsg": "OK", "result": {}})
 
-    signer = BybitSigner("DUMMYKEY" + "q" * 10, SecretStr("s" * 24))
+    signer = BybitSigner(fake_capability("DUMMYKEY" + "q" * 10), CREDENTIAL_ID)
     return BybitRestClient(
         RestClientConfig(base_url=BASE), signer=signer, transport=httpx.MockTransport(handler)
     )

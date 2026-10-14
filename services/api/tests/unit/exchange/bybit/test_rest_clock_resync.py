@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 
 import httpx
 import pytest
-from pydantic import SecretStr
 
 from candleviewer.exchange.base.errors import ClockDriftError
 from candleviewer.exchange.bybit import rest as rest_module
@@ -18,6 +17,7 @@ from candleviewer.exchange.bybit.signer import BybitSigner
 from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.ingestion.metrics import clock_resync_triggered_total
 from tests._corpus import rest
+from tests._signing import CREDENTIAL_ID, fake_capability
 
 BASE_URL = "https://api-demo.bybit.com"
 PATH = "/v5/account/wallet-balance"
@@ -38,7 +38,7 @@ def _client(
 ) -> BybitRestClient:
     return BybitRestClient(
         RestClientConfig(base_url=BASE_URL, max_retries=max_retries),
-        signer=BybitSigner("K", SecretStr("S")),
+        signer=BybitSigner(fake_capability("K"), CREDENTIAL_ID),
         governor=TokenBucketGovernor(default_capacity=1000.0, default_refill_per_s=1000.0),
         clock_offset_ms_provider=offset_ms,
         transport=handler,
