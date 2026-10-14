@@ -6157,10 +6157,10 @@ export interface components {
       total?: number | null;
     };
     /**
-     * @description Per-pane view state that has no column of its own, so a pane cannot become an arbitrary blob
-     *     store: closed (unknown keys are refused, C-6.3; a later story adds a key additively), at
-     *     most 4096 bytes as compact UTF-8 JSON (`422` rule `pane_config_too_large`), and never holds
-     *     credentials, account ids or user ids. Omitted means `{}`.
+     * @description Per-pane view state with no column of its own, so a pane cannot become a blob store: closed
+     *     (unknown keys are refused, C-6.3; later stories add keys additively), at most 4096 bytes of
+     *     canonical compact UTF-8 JSON measured after sanitising (`422` rule `pane_config_too_large`),
+     *     and never holds credentials, account ids or user ids. Omitted means `{}`.
      */
     PaneConfig: {
       /** @description Kind-specific flat settings (for example DOM depth, tape filters, CVD anchor, visible range), at most 32 keys. Every key must match `^[a-z][a-z0-9_]{0,31}$` (`422` rule `invalid_setting_key`); the server enforces this because generators cannot express key patterns. Numbers keep their kind (`1` stays `1`, `1.0` stays `1.0`). Omitted means `{}`. */
@@ -6211,7 +6211,7 @@ export interface components {
      * @enum {string}
      */
     PaneScaleMode: "auto" | "linked" | "manual" | "log";
-    /** @description A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised exactly like `WorkspaceInput.name` (the strip set shared with `DrawingGeometry`, then trimming; an empty result is kept); a lone surrogate is rule `invalid_unicode`. Numbers lie within ±1e15, so they read back with the same kind and digits; `-0.0` is stored as `0.0`. */
+    /** @description A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`. */
     PaneSettingValue: string | number | boolean | null | (string | number | boolean)[];
     PlaceOrderRequest: {
       algo?: components["schemas"]["AlgoSpec"];

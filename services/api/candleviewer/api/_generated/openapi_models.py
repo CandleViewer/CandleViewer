@@ -3601,7 +3601,7 @@ class PaneSettingValue1(RootModel[str]):
     root: Annotated[
         str,
         Field(
-            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised exactly like `WorkspaceInput.name` (the strip set shared with `DrawingGeometry`, then trimming; an empty result is kept); a lone surrogate is rule `invalid_unicode`. Numbers lie within ±1e15, so they read back with the same kind and digits; `-0.0` is stored as `0.0`.",
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
             max_length=256,
         ),
     ]
@@ -3611,7 +3611,7 @@ class PaneSettingValue2(RootModel[int]):
     root: Annotated[
         int,
         Field(
-            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised exactly like `WorkspaceInput.name` (the strip set shared with `DrawingGeometry`, then trimming; an empty result is kept); a lone surrogate is rule `invalid_unicode`. Numbers lie within ±1e15, so they read back with the same kind and digits; `-0.0` is stored as `0.0`.",
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
             ge=-1000000000000000,
             le=1000000000000000,
         ),
@@ -3622,7 +3622,7 @@ class PaneSettingValue3(RootModel[float]):
     root: Annotated[
         float,
         Field(
-            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised exactly like `WorkspaceInput.name` (the strip set shared with `DrawingGeometry`, then trimming; an empty result is kept); a lone surrogate is rule `invalid_unicode`. Numbers lie within ±1e15, so they read back with the same kind and digits; `-0.0` is stored as `0.0`.",
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
             ge=-1000000000000000.0,
             le=1000000000000000.0,
         ),
@@ -3647,7 +3647,7 @@ class PaneSettingValue4(
     root: Annotated[
         list[PaneSettingValue41 | PaneSettingValue42 | PaneSettingValue43 | bool],
         Field(
-            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised exactly like `WorkspaceInput.name` (the strip set shared with `DrawingGeometry`, then trimming; an empty result is kept); a lone surrogate is rule `invalid_unicode`. Numbers lie within ±1e15, so they read back with the same kind and digits; `-0.0` is stored as `0.0`.",
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
             max_length=32,
         ),
     ]
