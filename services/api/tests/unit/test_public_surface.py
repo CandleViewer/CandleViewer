@@ -126,7 +126,7 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
     "M14": {"Validator", "ReadOnlyCheck", "OrderPlacementRefused"},
     # E27-T02: metadata-only results and capability Protocols `admin` consumes (C-3.2), the
     # caller-bound borrow capability minted at wiring time for M4, and the `Secret` wrapper.
-    # #2339: the capability signs inside M2 (C-2.7); M4 gets the `API_KEY_ID` marker, the
+    # #2339: the capability signs inside M2 (C-2.7); M4 gets the `KEY_ID_SLOT` marker, the
     # `Purpose` values and the `RequestSignature` result (hex MAC + key id, never the secret).
     # No key/DEK type and no broker is exported.
     "M2": {
@@ -142,7 +142,7 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "SecretsLifecycle",
         "CredentialBorrower",
         "mint_borrower",
-        "API_KEY_ID",
+        "KEY_ID_SLOT",
         "Purpose",
         "RequestSignature",
         "export_secrets_metrics",

@@ -9,7 +9,7 @@ from typing import Any
 
 from candleviewer.net.binding_check import BindingCheckResult
 from candleviewer.net.read_only_gate import ReadOnlyGate
-from candleviewer.secrets import API_KEY_ID
+from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.secrets._source import KekSources
 from candleviewer.secrets.errors import KekLoadError
@@ -83,7 +83,7 @@ async def _store_one(svc: SecretsService) -> Any:
 async def _borrow(svc: SecretsService, key_id: Any) -> str:
     """Sign through the minted capability; returns the key id M2 hands back (never the secret)."""
     borrower = mint_borrower(svc, "exchange_adapter")
-    out = await borrower.sign(key_id, (API_KEY_ID,), purpose="sign_rest")
+    out = await borrower.sign(key_id, (KEY_ID_SLOT,), purpose="sign_rest")
     return out.api_key.reveal()
 
 

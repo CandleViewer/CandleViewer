@@ -3,7 +3,7 @@
 Importable only by M4 (the exchange adapter) and M21 (`admin`, metadata only) — C-3.2.
 Plaintext keys and unwrapped DEKs never leave this package (C-2.7, #2339). M4 holds one
 caller-bound signing capability (`CredentialBorrower`, minted once by `admin.wiring` via
-`mint_borrower`): it sends a message with `API_KEY_ID` where the key id goes and gets back a
+`mint_borrower`): it sends a message with `KEY_ID_SLOT` where the key id goes and gets back a
 `RequestSignature` (hex MAC + key id), never the secret. `_kek`, `_envelope`, `_source`,
 `_metrics` and `broker` are internal.
 """
@@ -30,11 +30,11 @@ from candleviewer.secrets.service import (
     SecretsService,
     mint_borrower,
 )
-from candleviewer.secrets.signing import API_KEY_ID, RequestSignature
+from candleviewer.secrets.signing import KEY_ID_SLOT, RequestSignature
 from candleviewer.secrets.store import AuditSink, CredentialStore, KcvStore
 
 __all__ = [
-    "API_KEY_ID",
+    "KEY_ID_SLOT",
     "AuditSink",
     "CredentialBorrower",
     "CredentialStore",

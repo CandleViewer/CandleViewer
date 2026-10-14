@@ -1,6 +1,6 @@
 """M2-side request signing (#2339, C-2.7): the API secret is used only inside `secrets/`.
 
-The exchange adapter sends a message (byte segments plus `API_KEY_ID`); M2 splices the key id in,
+The exchange adapter sends a message (byte segments plus `KEY_ID_SLOT`); M2 splices the key id in,
 computes HMAC-SHA256 with the API secret and returns only the hex MAC and the key id. Fixed vectors
 only: RFC 4231 test case 2 and known answers over the synthetic M2 vectors (never a real key).
 """
@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from candleviewer.secrets import API_KEY_ID, CredentialUnavailable, RequestSignature
+from candleviewer.secrets import KEY_ID_SLOT, CredentialUnavailable, RequestSignature
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.service import mint_borrower
 from candleviewer.secrets.signing import check_message, mac_hex
@@ -23,7 +23,7 @@ from tests.unit.credentials_m2._helpers import _h, _Spy, _store
 from tests.unit.credentials_m2._service_fakes import _boot, _Src, _store_one
 from tests.unit.credentials_m2._vectors import API_KEY, API_SECRET, KEK_V1, AuditLog, kek
 
-MSG = (b"1700000000000", API_KEY_ID, b"5000", b"category=linear")
+MSG = (b"1700000000000", KEY_ID_SLOT, b"5000", b"category=linear")
 #: HMAC-SHA256 of MSG with the `_vectors` key id spliced in, keyed with the `_vectors` secret.
 STORED_MAC = "81c6a542a4b8fd34eb4b302bba6ff87d48a986d190365f9eebcb17b55fec2a5f"
 #: The same message for the `_service_fakes` credential (key id "ABCD1234", secret "s").
@@ -40,14 +40,14 @@ def test_mac_matches_rfc4231_test_case_2() -> None:
 
 
 def test_key_id_is_spliced_at_every_slot() -> None:
-    spliced = mac_hex("K1", "m", (API_KEY_ID, b"-", API_KEY_ID, b"-"))
+    spliced = mac_hex("K1", "m", (KEY_ID_SLOT, b"-", KEY_ID_SLOT, b"-"))
     assert spliced == mac_hex("unused", "m", (b"K1-K1-",))
     assert mac_hex("K1", "m", (b"x",)) == mac_hex("K2", "m", (b"x",))  # no slot: id unused
 
 
 @pytest.mark.parametrize(
     "bad",
-    [(), [b"x"], (b"x", "y"), (bytearray(b"x"),), ("api_key_id",), (b"x", None), b"x", None],
+    [(), [b"x"], (b"x", "y"), (bytearray(b"x"),), ("key_id",), (b"x", None), b"x", None],
     ids=repr,
 )
 def test_check_message_refuses_malformed_messages(bad: Any) -> None:

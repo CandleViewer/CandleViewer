@@ -21,7 +21,7 @@ import psycopg
 import pytest
 from testcontainers.postgres import PostgresContainer
 
-from candleviewer.secrets import API_KEY_ID
+from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.secrets._rotation import RotatingBroker as CredentialBroker
 from candleviewer.secrets.errors import CredentialUnavailable
@@ -109,7 +109,7 @@ def _activate(dsn: str, ids: list[UUID], status: str = "active") -> None:
 async def _borrow(b: CredentialBroker, key_id: UUID) -> str:
     """Sign through the exchange-adapter handle (#2339); returns the key id M2 hands back."""
     h = b.borrow_handle("exchange_adapter")
-    out = await h.sign(key_id, (API_KEY_ID,), purpose="sign_rest")
+    out = await h.sign(key_id, (KEY_ID_SLOT,), purpose="sign_rest")
     return out.api_key.reveal()
 
 

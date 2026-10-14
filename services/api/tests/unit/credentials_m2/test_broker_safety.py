@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from candleviewer.secrets import API_KEY_ID
+from candleviewer.secrets import KEY_ID_SLOT
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
@@ -85,7 +85,7 @@ async def test_pending_key_borrowable_only_for_verification(
 ) -> None:
     meta = await _store(broker)
     store.activate(meta.key_id, "pending")
-    msg = (API_KEY_ID,)
+    msg = (KEY_ID_SLOT,)
     with pytest.raises(CredentialUnavailable):
         await _h(broker).sign(meta.key_id, msg, purpose="sign_rest")
     out = await _h(broker).sign(meta.key_id, msg, purpose="key_verify")

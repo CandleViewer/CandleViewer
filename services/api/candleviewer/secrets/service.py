@@ -120,7 +120,7 @@ class CredentialBorrower:
     async def sign(
         self, key_id: UUID, message: SigningMessage, *, purpose: Purpose
     ) -> RequestSignature:
-        """Sign `message` (byte segments, `API_KEY_ID` where the key id goes) with the
+        """Sign `message` (byte segments, `KEY_ID_SLOT` where the key id goes) with the
         credential's API secret inside M2; audited write-ahead as `credential_borrowed`."""
         return await self.__borrow(key_id, message, purpose)
 
