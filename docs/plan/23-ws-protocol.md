@@ -690,7 +690,8 @@ All private topics are **account-scoped**: the server intersects the requested `
 > `GET /v1/alerts/deliveries` and `GET /v1/notifications`.
 
 Payload: [`AlertUpdate`](#157-alertupdate); `message` is the delivery `body`, falling back to `title`.
-Permission `alerts:read`, own alerts only (§6.3). Desktop-channel outcomes are reported over REST via
+Throttle and coalescing reuse the §6.2 defaults (250 ms per connection); no new values are
+introduced, and deliveries are discrete records, so none are coalesced away. Permission `alerts:read`, own alerts only (§6.3). Desktop-channel outcomes are reported over REST via
 `POST /v1/alerts/deliveries/{deliveryId}/desktop-outcome`, not over this socket.
 
 ### 6.3 Topic → permission matrix

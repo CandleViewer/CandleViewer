@@ -5531,6 +5531,8 @@ paths:
         `permission` carries the OS notification permission state observed by the shell
         (e.g. `granted`, `denied`, `default`). Body is closed (`extra: forbid`): unknown
         properties are rejected with 422. Only the delivery's owner may report (`scope: self`).
+        A delivery not owned by the caller returns **404** (never 403), so its existence does not leak;
+        cross-account reads and reports are refused identically.
       x-rbac: { permissions: [alerts:write], scope: self }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -5544,7 +5546,10 @@ paths:
               additionalProperties: false
               properties:
                 outcome: { type: string, enum: [shown, blocked, failed] }
-                permission: { type: string, maxLength: 32 }
+                permission:
+                  type: string
+                  enum: [granted, denied, default, unsupported]
+                  description: OS notification permission observed by the shell; recorded in audit.
       responses:
         "204": { description: Outcome recorded. }
         "401": { $ref: "#/components/responses/Unauthorized" }
@@ -13826,6 +13831,7 @@ components:
 
     Notification:
       type: object
+      x-cv-uuid5-namespace: "2def8b5c-e7e2-4686-af54-02c04b8c6a78"
       required: [id, kind, severity, created_at, title]
       properties:
         id:
@@ -13833,7 +13839,8 @@ components:
           format: uuid
           description: >
             Deterministic: uuid5(namespace, source_table + source_id), so the same source row always
-            maps to the same notification id.
+            maps to the same notification id The namespace is the fixed constant
+            `x-cv-uuid5-namespace` below (24-internal-schemas.md §1.6).
         kind: { type: string, enum: [alert, rule, order, risk, system] }
         severity: { $ref: "#/components/schemas/Severity" }
         title: { type: string }
