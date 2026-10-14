@@ -112,8 +112,23 @@ def test_symbol_domain_rejects_over_20_chars(pg_dsn: str) -> None:
             _drawing(c, owner, symbol="A" * 21)
 
 
+def _active_owner(c: Conn) -> None:
+    """Keep one active owner so `trg_owner_floor_fn` allows deleting other users."""
+    uid = str(uuid.uuid4())
+    c.execute(
+        "INSERT INTO users (id, email, username, display_name, password_hash, status) "
+        "VALUES (%s, %s, %s, 'o', '$argon2id$x', 'active')",
+        (uid, f"{uid}@example.test", f"o{uid[:12]}"),
+    )
+    c.execute(
+        "INSERT INTO user_roles (user_id, role_id) SELECT %s, id FROM roles WHERE name = 'owner'",
+        (uid,),
+    )
+
+
 def test_user_delete_cascades_drawings(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
+        _active_owner(c)
         owner = _user(c)
         did = _drawing(c, owner)
         c.execute("DELETE FROM users WHERE id = %s", (owner,))
@@ -140,7 +155,7 @@ def test_user_symbol_index_serves_the_list_query(pg_dsn: str) -> None:
         owner = _user(c)
         c.execute(
             "INSERT INTO drawings (id, owner_user_id, symbol, tool, geometry) "
-            "SELECT gen_random_uuid(), u.id, 'S' || (g % 200) || 'USDT', 'trendline', %s::jsonb "
+            "SELECT gen_random_uuid(), u.id, 'S' || (g %% 200) || 'USDT', 'trendline', %s::jsonb "
             "FROM generate_series(1, 20000) g CROSS JOIN LATERAL "
             "(SELECT id FROM users ORDER BY id LIMIT 1) u",
             (_GEOM,),
@@ -150,20 +165,24 @@ def test_user_symbol_index_serves_the_list_query(pg_dsn: str) -> None:
             other = _user(c)
             c.execute(
                 "INSERT INTO drawings (id, owner_user_id, symbol, tool, geometry) "
-                "SELECT gen_random_uuid(), %s, 'S' || (g % 200) || 'USDT', 'trendline', %s::jsonb "
+                "SELECT gen_random_uuid(), %s, 'S' || (g %% 200) || 'USDT', 'trendline', %s::jsonb "
                 "FROM generate_series(1, 700) g",
                 (other, _GEOM),
             )
         _drawing(c, owner, symbol="BTCUSDT")
         c.execute("ANALYZE drawings")
-        plan = "\n".join(
-            str(r[0])
-            for r in c.execute(
-                "EXPLAIN SELECT id FROM drawings "
-                "WHERE owner_user_id = %s AND symbol = %s AND deleted_at IS NULL",
-                (owner, "BTCUSDT"),
-            ).fetchall()
-        )
+        # enable_seqscan=off keeps the assertion deterministic: it proves the index CAN serve
+        # the list-query shape, independent of planner cost heuristics.
+        with c.transaction():
+            c.execute("SET LOCAL enable_seqscan = off")
+            plan = "\n".join(
+                str(r[0])
+                for r in c.execute(
+                    "EXPLAIN SELECT id FROM drawings "
+                    "WHERE owner_user_id = %s AND symbol = %s AND deleted_at IS NULL",
+                    (owner, "BTCUSDT"),
+                ).fetchall()
+            )
         assert "ix_dr_user_symbol" in plan, plan
 
 
