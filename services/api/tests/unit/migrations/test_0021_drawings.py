@@ -40,7 +40,12 @@ def test_model_constraint_and_index_names_match_sql() -> None:
         if c.__class__.__name__ == "CheckConstraint"
     }
     assert checks == {"ck_drawings_dr_tool", "ck_drawings_dr_geom"}
-    assert {ix.name for ix in models.drawings.indexes} == {"ix_dr_user_symbol", "ix_dr_range"}
+    # ix_dr_layout comes from 0022_workspaces (E15-T01).
+    assert {ix.name for ix in models.drawings.indexes} == {
+        "ix_dr_user_symbol",
+        "ix_dr_range",
+        "ix_dr_layout",
+    }
 
 
 def test_upgrade_sql_has_table_constraints_and_indexes() -> None:

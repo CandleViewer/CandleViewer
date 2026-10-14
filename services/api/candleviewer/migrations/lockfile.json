@@ -101,6 +101,11 @@
       "path": "services/api/candleviewer/migrations/versions/0021_drawings.py",
       "sha256": "15c97a51f701ef743d6554debe81a81b56d7e4759fa2cb9c9297d9ab04497fc0",
       "down_revision": "0020_kek_versions"
+    },
+    "0022_workspaces": {
+      "path": "services/api/candleviewer/migrations/versions/0022_workspaces.py",
+      "sha256": "de791f5a3895b366776bd363e025c8328fa43cd48339c5992e2bdf585af6485a",
+      "down_revision": "0021_drawings"
     }
   }
 }
