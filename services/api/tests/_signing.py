@@ -1,9 +1,10 @@
 """Test double for the M2 signing capability the exchange adapter holds (#2339, C-2.7).
 
-The adapter never sees an API secret, so this double has none either. It splices the key id into
-the message exactly where `KEY_ID_SLOT` marks it, records the call, and returns a deterministic
-stand-in signature (64 hex chars, not a MAC). The real HMAC-SHA256 is tested against M2 with fixed
-vectors in `tests/unit/credentials_m2/test_signing.py` and end to end in the signer's own tests.
+The adapter never sees an API secret, so this double has none either. It refuses what M2 refuses
+(`check_message`: shape and bounds), splices the key id into the message exactly where
+`KEY_ID_SLOT` marks it, records the call, and returns a deterministic stand-in signature (64 hex
+chars, not a MAC). The real HMAC-SHA256 is tested against M2 with fixed vectors in
+`tests/unit/credentials_m2/test_signing.py` and end to end in the signer's own tests.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from candleviewer.secrets import KEY_ID_SLOT, CredentialBorrower, RequestSignature, Secret
+from candleviewer.secrets.signing import check_message
 
 #: The `api_keys.id` every double signs for.
 CREDENTIAL_ID = UUID("00000000-0000-4000-8000-0000000000c1")
@@ -47,7 +49,7 @@ def fake_capability(
     async def sign(
         credential_id: UUID, message: Sequence[object], purpose: str
     ) -> RequestSignature:
-        data = assemble(key_id, message)
+        data = assemble(key_id, check_message(message))
         if calls is not None:
             calls.append((credential_id, data, purpose))
         return RequestSignature(Secret(key_id), stand_in_signature(data))

@@ -101,6 +101,11 @@ C-2.7: credentials are plaintext only inside `secrets` (M2), at the moment of re
   id (`Secret[str]`, for the request header). It never returns the API secret.
 - The plaintext-yielding borrow (`with_credentials`) is removed. Each signing call keeps the single
   audited path: caller check, status and env fence, write-ahead `security.credential_borrowed`.
+  That record carries `message_sha256`, the digest of the message before the key id is spliced
+  in. A failure after it appends `security.credential_sign_failed` (#2350 security review).
+- The message is bounded: at most 64 KiB, 16 parts and one `KEY_ID_SLOT`. A refused message is
+  refused before any decrypt or audit. A failed MAC leaves M2 as a typed `signing_failed` with
+  nothing chained, after the failed call's frames are cleared, so no traceback carries plaintext.
 - The message is plain data, so the out-of-process signer (#2279) can serve the same call.
 - Enforcement: the M2 AST guard (`tests/unit/credentials_m2/_m2_guard.py`, rule R10) refuses
   the plaintext borrow and `.reveal()` outside `secrets/` (one reviewed site: the returned key id
