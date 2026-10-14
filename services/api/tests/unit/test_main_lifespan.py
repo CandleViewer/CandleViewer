@@ -124,3 +124,23 @@ async def test_lifespan_leaves_read_only_mode_on_when_boot_check_trips_the_gate(
 
     async with _lifespan(app):
         assert ctx.oms_read_only_gate.is_read_only is True
+
+
+async def test_lifespan_runs_the_audit_budget_flush_and_drains_it_before_audit_stops() -> None:
+    app = FastAPI()
+    ctx = _fake_ctx()
+    app.state.app_context = ctx
+    seen: list[str] = []
+
+    class _Flush:
+        def start(self) -> None:
+            seen.append("start")
+
+        async def stop(self) -> int:
+            seen.append(f"stop, audit stopped={ctx.audit.stopped}")
+            return 0
+
+    app.state.audit_budget_flush = _Flush()
+    async with _lifespan(app):
+        assert seen == ["start"]
+    assert seen == ["start", "stop, audit stopped=False"] and ctx.audit.stopped

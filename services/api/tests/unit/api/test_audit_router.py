@@ -6,16 +6,19 @@ these routes existed on `create_app()`'s FastAPI instance."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from candleviewer.api.audit import make_audit_router
+from candleviewer.api.audit_budget import FLUSH_REASON, SUMMARY_REASON, AuditRecordBudget
 from candleviewer.api.audit_limiter import AuditQueryLimiter
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import (
@@ -57,11 +60,16 @@ class _FakeQuery:
 
 
 class _FakeWriter:
-    def __init__(self) -> None:
+    def __init__(self, clock: Any = None) -> None:
         self.emitted: list[tuple[str, dict[str, Any]]] = []
+        self.at: list[float] = []  # the fake clock at each record, when one is given
+        self.clock, self.fail = clock, False
 
     async def emit(self, action: str, **kwargs: Any) -> None:
+        if self.fail:
+            raise RuntimeError("audit down")
         self.emitted.append((action, kwargs))
+        self.at.append(self.clock() if self.clock is not None else 0.0)
 
 
 class _FakeAuditService:
@@ -572,3 +580,245 @@ def test_unknown_body_key_is_not_echoed() -> None:
         {"field": "(unknown)", "rule": "extra_forbidden"}
     ]
     assert "img" not in r.text
+
+
+# ---- #2392 "Audit budget": read and refusal records on /admin/audit* -----------------------
+
+
+def _budgeted(
+    principal: AuditPrincipal,
+    service: _FakeAuditService | None = None,
+    *,
+    budget: AuditRecordBudget | None = None,
+    limiter: AuditQueryLimiter | None = None,
+) -> tuple[TestClient, _FakeAuditService]:
+    svc = service or _FakeAuditService()
+    app = FastAPI()
+    app.include_router(
+        make_audit_router(svc, _FakeResolver(principal), limiter=limiter, budget=budget)
+    )
+    return TestClient(app), svc
+
+
+def _actions(svc: _FakeAuditService) -> list[str]:
+    return [a for a, _ in svc.writer_service.emitted]
+
+
+def test_refusals_write_at_most_the_hourly_cap_and_the_owner_still_reads() -> None:
+    budget = AuditRecordBudget(per_hour=120, clock=_Clock())
+    svc = _FakeAuditService()
+    for principal in (_viewer_no_export(), _manager()):
+        svc.writer_service.emitted.clear()
+        client, _ = _budgeted(principal, svc, budget=budget)
+        assert {client.get("/admin/audit").status_code for _ in range(300)} == {403}
+        assert len(svc.writer_service.emitted) == 120
+    assert _budgeted(_owner(), svc, budget=budget)[0].get("/admin/audit").status_code == 200
+
+
+def test_refusal_carries_retry_after_only_over_the_cap() -> None:
+    clock = _Clock()
+    client, svc = _budgeted(_manager(), budget=AuditRecordBudget(per_hour=1, clock=clock))
+    first = client.get("/admin/audit")
+    assert first.status_code == 403 and "Retry-After" not in first.headers
+    over = client.get("/admin/audit")
+    assert (over.status_code, over.headers["Retry-After"]) == (403, "3600")
+    clock.now += 3600
+    client.get("/admin/audit")
+    assert svc.writer_service.emitted[-1][1]["after_state"] == {"suppressed": 1}
+
+
+@pytest.mark.parametrize("cause", ["writer", "inflight_cap"])
+def test_refusal_record_that_cannot_be_written_is_503_not_403(cause: str) -> None:
+    svc = _FakeAuditService()
+    svc.writer_service.fail = cause == "writer"
+    budget = AuditRecordBudget(inflight_cap=0 if cause == "inflight_cap" else 64)
+    for principal, path in ((_manager(), "/admin/audit"), (_manager_with_read(), "/admin/audit")):
+        params = {"ip": "10.0.0.1"} if principal.has("audit:read") else {}
+        r = _budgeted(principal, svc, budget=budget)[0].get(path, params=params)
+        assert (r.status_code, r.json()["code"], r.headers["Retry-After"]) == (
+            503,
+            "store_unavailable",
+            "1",
+        )
+
+
+def test_manager_ip_filter_refusal_is_budgeted() -> None:
+    budget = AuditRecordBudget(per_hour=1, clock=_Clock())
+    client, svc = _budgeted(_manager_with_read(), budget=budget)
+    assert client.get("/admin/audit", params={"ip": "10.0.0.1"}).status_code == 403
+    over = client.get("/admin/audit", params={"ip": "10.0.0.1"})
+    assert (over.status_code, over.headers["Retry-After"]) == (403, "3600")
+    assert len(svc.writer_service.emitted) == 1
+
+
+def test_cross_actor_filter_is_recorded_in_canonical_form_then_narrowed() -> None:
+    me, other = _manager_with_read(), uuid.uuid4()
+    client, svc = _budgeted(me)
+    assert client.get("/admin/audit", params={"actor_user_id": str(other).upper()}).is_success
+    (denied, kw), (read, kw2) = svc.writer_service.emitted
+    assert (denied, kw["reason"], kw["after_state"]) == (
+        "admin.audit_denied",
+        "cross_actor_filter_narrowed",
+        {"requested_actor": str(other)},
+    )
+    assert read == "admin.audit_read"
+    assert kw2["after_state"]["filters"] == {"actor_user_id": str(me.user_id)}
+    assert svc.query_service.query_calls[0]["actor_user_id"] == str(me.user_id)
+    own = {"actor_user_id": str(me.user_id).upper()}  # the caller's own id: not cross-actor
+    assert client.get("/admin/audit", params=own).is_success
+    assert len(svc.writer_service.emitted) == 2  # a continuation of the same filter set
+
+
+@pytest.mark.parametrize(("cause", "status"), [("over_cap", 429), ("writer", 503)])
+def test_cross_actor_attempt_that_cannot_be_recorded_serves_nothing(
+    cause: str, status: int
+) -> None:
+    me = _manager_with_read()
+    svc = _service_with([_entry(1, me.user_id)])
+    svc.writer_service.fail = cause == "writer"
+    budget = AuditRecordBudget(per_hour=1, clock=_Clock())
+    client, _ = _budgeted(me, svc, budget=budget)
+    if cause == "over_cap":
+        assert client.get("/admin/audit").is_success  # uses the one record of the hour
+    r = client.get("/admin/audit", params={"actor_user_id": str(uuid.uuid4())})
+    assert r.status_code == status and "items" not in r.json()
+    assert len(svc.query_service.query_calls) == (cause == "over_cap")
+
+
+def test_one_read_record_per_filter_set_and_continuations_counted() -> None:
+    client, svc = _budgeted(_owner())
+    for _ in range(5):
+        assert client.get("/admin/audit", params={"outcome": "success"}).status_code == 200
+    assert client.get("/admin/audit", params={"outcome": "denied"}).status_code == 200
+    assert _actions(svc) == ["admin.audit_read", "admin.audit_read"]
+    after = svc.writer_service.emitted[-1][1]["after_state"]
+    assert (after["filters"], after["view"], after["returned_count"]) == (
+        {"outcome": "denied"},
+        "raw",
+        0,
+    )
+    assert sorted(p["pages"] for p in after["pages"]) == [1, 4]  # this page; 4 continuations
+
+
+def test_read_over_the_cap_is_429_with_no_data_and_no_record() -> None:
+    budget = AuditRecordBudget(per_hour=1, owner_per_hour=1, clock=_Clock())
+    client, svc = _budgeted(_owner(), budget=budget)
+    assert client.get("/admin/audit", params={"outcome": "success"}).status_code == 200
+    r = client.get("/admin/audit", params={"outcome": "denied"})
+    assert (r.status_code, r.json()["code"], r.headers["Retry-After"]) == (
+        429,
+        "rate_limited",
+        "3600",
+    )
+    assert len(svc.query_service.query_calls) == 1 and len(svc.writer_service.emitted) == 1
+
+
+@pytest.mark.parametrize("cause", ["writer", "inflight_cap"])
+def test_due_read_record_that_cannot_be_written_is_503_without_data(cause: str) -> None:
+    svc = _FakeAuditService()
+    svc.writer_service.fail = cause == "writer"
+    budget = AuditRecordBudget(inflight_cap=0 if cause == "inflight_cap" else 64)
+    r = _budgeted(_owner(), svc, budget=budget)[0].get("/admin/audit")
+    assert r.status_code == 503 and "items" not in r.json()
+    assert len(svc.query_service.query_calls) == (cause == "writer")  # cap: no query at all
+
+
+def test_timeouts_and_validation_errors_do_not_use_up_the_record_cap() -> None:
+    budget = AuditRecordBudget(per_hour=1, owner_per_hour=1, clock=_Clock())
+    svc = _FakeAuditService()
+    state = {"fail": True}
+
+    async def query(**_: Any) -> AuditPage:
+        if state["fail"]:
+            raise TimeoutError
+        return AuditPage(items=[], chain_verified=True, count=0)
+
+    svc.query_service.query = query  # type: ignore[method-assign,assignment]  # test double
+    client, _ = _budgeted(_owner(), svc, budget=budget)
+    assert [client.get("/admin/audit").status_code for _ in range(3)] == [503] * 3
+    assert client.get("/admin/audit", params={"from": "2026-01-01T00:00:00"}).status_code == 422
+    state["fail"] = False
+    assert client.get("/admin/audit").status_code == 200 and _actions(svc) == ["admin.audit_read"]
+
+
+def test_limiter_429_is_counted_and_carried_by_the_next_record() -> None:
+    clock = _Clock()
+    lim = AuditQueryLimiter(rate_per_minute=1, clock=clock)
+    client, svc = _budgeted(_owner(), limiter=lim, budget=AuditRecordBudget(clock=clock))
+    assert client.get("/admin/audit", params={"outcome": "success"}).status_code == 200
+    assert client.get("/admin/audit", params={"outcome": "denied"}).status_code == 429
+    clock.now += 60
+    assert client.get("/admin/audit", params={"outcome": "denied"}).status_code == 200
+    assert svc.writer_service.emitted[-1][1]["after_state"]["suppressed"] == 1
+
+
+async def test_cancellation_releases_the_limiter_lease_and_the_read_reservation() -> None:
+    lim = AuditQueryLimiter(max_concurrent=1, clock=_Clock())
+    budget = AuditRecordBudget(per_hour=1, owner_per_hour=1, clock=_Clock())
+    svc = _FakeAuditService()
+    started = asyncio.Event()
+
+    async def hang(**_: Any) -> AuditPage:
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    svc.query_service.query = hang  # type: ignore[method-assign,assignment]  # test double
+    app = FastAPI()
+    app.include_router(make_audit_router(svc, _FakeResolver(_owner()), limiter=lim, budget=budget))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as ac:
+        call = asyncio.ensure_future(ac.get("/admin/audit"))
+        await started.wait()
+        call.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await call
+    assert all(u.inflight == 0 for u in lim._users.values())
+    user = next(iter(budget._users.values()))
+    assert (user.reserved, user.reading, user.stamps) == (0, 0, [])
+
+
+async def test_manager_with_audit_read_bounded_record_count_over_two_hours() -> None:
+    """Reads, continuations, refusals and cross-actor reads every 5 s for two hours of fake
+    time, with a flush tick every 30 s: in no hour more than 120 capped records plus 12
+    out-of-cap ones, and every served page is recorded or still pending."""
+    clock, me = _Clock(), _manager_with_read()
+    svc = _FakeAuditService()
+    svc.writer_service = _FakeWriter(clock)
+    budget, lim = AuditRecordBudget(clock=clock), AuditQueryLimiter(clock=clock)
+    app = FastAPI()
+    app.include_router(make_audit_router(svc, _FakeResolver(me), limiter=lim, budget=budget))
+    calls = [
+        ("GET", {"subject_type": "kind"}),  # replaced below by a fresh filter set
+        ("GET", {"outcome": "success"}),
+        ("GET", {"outcome": "success"}),
+        ("GET", {"ip": "10.0.0.1"}),
+        ("POST", {}),
+        ("GET", {"actor_user_id": "11111111-1111-4111-8111-111111111111"}),
+    ]
+    served = 0
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as ac:
+        for i in range(1440):
+            clock.now += 5
+            method, params = calls[i % 6]
+            if i % 6 == 0:
+                params = {"subject_type": f"kind_{i % 97}"}
+            if method == "POST":
+                r = await ac.post("/admin/audit/verify", json={})
+            else:
+                r = await ac.get("/admin/audit", params=params)
+            served += r.status_code == 200
+            if i % 6 == 5:
+                await budget.flush_due(svc.writer_service)
+    records = [
+        (at, kw.get("reason") in (FLUSH_REASON, SUMMARY_REASON), kw)
+        for (_, kw), at in zip(svc.writer_service.emitted, svc.writer_service.at, strict=True)
+    ]
+    assert all(kw["actor_user_id"] == me.user_id for _, _, kw in records)
+    for start, _, _ in records:
+        hour = [oob for at, oob, _ in records if start <= at < start + 3600]
+        assert hour.count(False) <= 120 and hour.count(True) <= 12
+    pages = sum(
+        sum(p["pages"] for p in (kw.get("after_state") or {}).get("pages", []))
+        for _, _, kw in records
+    )
+    assert pages + budget._users[str(me.user_id)].pending_pages() == served > 0

@@ -60,6 +60,7 @@ from candleviewer.api import (
     make_trades_router,
 )
 from candleviewer.api.alerts import make_alerts_router
+from candleviewer.api.audit_budget import AuditBudgetFlushTask, AuditRecordBudget
 from candleviewer.api.audit_limiter import AuditQueryLimiter
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.contract_conformance import load_openapi_spec
@@ -1039,6 +1040,16 @@ def create_app(
         if identity is not None
         else None
     )
+    audit_budget = AuditRecordBudget(
+        per_hour=resolved.audit_record_budget_per_hour,
+        owner_per_hour=resolved.audit_record_budget_owner_per_hour,
+        tracked_users=resolved.audit_budget_tracked_users,
+        inflight_cap=resolved.audit_inflight_writes,
+        flush_pages=resolved.audit_read_flush_pages,
+        flush_seconds=resolved.audit_read_flush_seconds,
+    )
+    # Flush cadence and shutdown drain for the budget's counts; the lifespan runs it.
+    app.state.audit_budget_flush = AuditBudgetFlushTask(audit_budget, _LazyAuditEmitter(ctx.audit))
     app.include_router(
         make_audit_router(
             ctx.audit,
@@ -1046,7 +1057,9 @@ def create_app(
             limiter=AuditQueryLimiter(
                 rate_per_minute=resolved.audit_query_rate_per_minute,
                 max_concurrent=resolved.audit_query_max_concurrent,
+                tracked_users=resolved.audit_budget_tracked_users,
             ),
+            budget=audit_budget,
             query_timeout_ms=resolved.audit_query_timeout_ms,
         )
     )
