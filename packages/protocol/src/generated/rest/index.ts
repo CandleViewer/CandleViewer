@@ -578,8 +578,9 @@ export interface paths {
      *     `permission` carries the OS notification permission state observed by the shell
      *     (e.g. `granted`, `denied`, `default`). Body is closed (`extra: forbid`): unknown
      *     properties are rejected with 422. Only the delivery's owner may report (`scope: self`).
-     *     A delivery not owned by the caller returns **404** (never 403), so its existence does not leak;
-     *     cross-account reads and reports are refused identically.
+     *     A caller lacking `alerts:write` receives **403** before any ownership check. For an authorised
+     *     caller, a delivery that is unknown or not owned by the caller returns **404** (never 403), so
+     *     existence is not leaked; cross-account reads and reports are refused identically.
      */
     post: operations["reportAlertDesktopOutcome"];
     delete?: never;
@@ -6003,7 +6004,7 @@ export interface components {
       exchange_account_id?: string | null;
       /**
        * Format: uuid
-       * @description Deterministic: uuid5(namespace, source_table + source_id), so the same source row always maps to the same notification id The namespace is the fixed constant `x-cv-uuid5-namespace` below (24-internal-schemas.md §1.6).
+       * @description Deterministic: uuid5(namespace, source_table + source_id), so the same source row always maps to the same notification id. The namespace is the fixed constant `x-cv-uuid5-namespace` below (24-internal-schemas.md §1.6).
        */
       id: string;
       /** @enum {string} */

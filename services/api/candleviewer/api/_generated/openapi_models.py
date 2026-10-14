@@ -4517,7 +4517,7 @@ class Notification(BaseModel):
     id: Annotated[
         UUID,
         Field(
-            description="Deterministic: uuid5(namespace, source_table + source_id), so the same source row always maps to the same notification id The namespace is the fixed constant `x-cv-uuid5-namespace` below (24-internal-schemas.md §1.6).\n"
+            description="Deterministic: uuid5(namespace, source_table + source_id), so the same source row always maps to the same notification id. The namespace is the fixed constant `x-cv-uuid5-namespace` below (24-internal-schemas.md §1.6).\n"
         ),
     ]
     kind: Literal["alert", "rule", "order", "risk", "system"]
