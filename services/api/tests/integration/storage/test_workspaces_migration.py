@@ -1,7 +1,6 @@
 """Integration: `0022_workspaces` against real Postgres 16 (E15-T01).
 
-Not run locally (no docker socket in WSL); exercised by the integration CI job.
-The SQL was hand-run against a scratch Postgres 16.4 first.
+CI-only (no docker socket in WSL); SQL hand-run on a scratch Postgres 16.4 first.
 """
 
 from __future__ import annotations
