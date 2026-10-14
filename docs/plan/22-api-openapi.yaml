@@ -91,9 +91,13 @@ info:
     A session with no activity passes `session.idle_deadline` (`last_seen_at + idle_timeout_s`)
     and becomes **idle-locked**. It is locked, not revoked: WS frames keep flowing (ADR-0020
     section 4). Only `POST /auth/unlock`, `POST /auth/logout` and `GET /auth/session` are
-    allowed while locked. Every other authenticated operation answers a request from a locked
-    session with `401 session_idle_locked` (problem field `idle_locked_at`) instead of
-    `unauthenticated`, and changes nothing; an expired access token is still `unauthenticated`.
+    allowed while locked, and logout ends only the calling session (SCR-005 "Sign out
+    instead"): `all_sessions: true` from a locked session answers `401 session_idle_locked`
+    and revokes nothing. Whoever is at a locked terminal has not proved who they are, so they
+    must not sign the user out of other sessions (#2290 ruling, rule 3b). Every other
+    authenticated operation answers a request from a locked session with
+    `401 session_idle_locked` (problem field `idle_locked_at`) instead of `unauthenticated`,
+    and changes nothing; an expired access token is still `unauthenticated`.
     `POST /auth/refresh` answers a locked session the same way instead of
     `refresh_token_invalid`, and rotates nothing. The client then shows the unlock screen
     (SCR-005), not sign-in.
@@ -914,7 +918,13 @@ paths:
       tags: [auth]
       operationId: authLogout
       summary: Revoke the current session (or all sessions)
-      description: Allowed while the session is idle-locked (SCR-005 "Sign out instead").
+      description: |
+        Allowed while the session is idle-locked, for the calling session only (SCR-005
+        "Sign out instead"). From a locked session, `all_sessions: true` answers
+        `401 session_idle_locked` and revokes nothing: every session, the calling one included,
+        stays as it was, no cookie is cleared, and no `auth.logout` or `auth.session_revoked`
+        record is written. Signing the user out of every session needs an unlocked session
+        (see "Idle lock").
       x-rbac: { permissions: [], scope: self }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -929,7 +939,9 @@ paths:
                 all_sessions:
                   type: boolean
                   default: false
-                  description: Revoke every session of the current user, not just this one.
+                  description: >
+                    Revoke every session of the current user, not just this one. Refused from
+                    an idle-locked session (`401 session_idle_locked`; nothing is revoked).
       responses:
         "204":
           description: "Session(s) revoked; `cv_refresh` cleared."

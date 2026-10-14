@@ -615,7 +615,12 @@ export interface paths {
     put?: never;
     /**
      * Revoke the current session (or all sessions)
-     * @description Allowed while the session is idle-locked (SCR-005 "Sign out instead").
+     * @description Allowed while the session is idle-locked, for the calling session only (SCR-005
+     *     "Sign out instead"). From a locked session, `all_sessions: true` answers
+     *     `401 session_idle_locked` and revokes nothing: every session, the calling one included,
+     *     stays as it was, no cookie is cleared, and no `auth.logout` or `auth.session_revoked`
+     *     record is written. Signing the user out of every session needs an unlocked session
+     *     (see "Idle lock").
      */
     post: operations["authLogout"];
     delete?: never;
@@ -9378,7 +9383,7 @@ export interface operations {
       content: {
         "application/json": {
           /**
-           * @description Revoke every session of the current user, not just this one.
+           * @description Revoke every session of the current user, not just this one. Refused from an idle-locked session (`401 session_idle_locked`; nothing is revoked).
            * @default false
            */
           all_sessions?: boolean;
