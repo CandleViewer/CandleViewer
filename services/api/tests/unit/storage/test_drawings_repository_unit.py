@@ -202,3 +202,16 @@ def test_pk_collision_reads_the_constraint_from_the_driver_exception_cause() -> 
     assert mod._is_pk_collision(IntegrityError("s", {}, wrapper))
     bare = _Wrapper("dup")  # no constraint anywhere: fail closed
     assert not mod._is_pk_collision(IntegrityError("s", {}, bare))
+
+
+def test_immutable_field_is_a_known_batch_rule() -> None:
+    from candleviewer.storage.repositories.drawings import BATCH_RULES
+
+    assert "immutable_field" in BATCH_RULES
+    assert BatchOpFailed(2, "immutable_field").rule in BATCH_RULES
+    assert "immutable_field" in (mod.__doc__ or "")
+
+
+def test_snapshot_selects_symbol_and_tool_for_the_immutability_check() -> None:
+    text = str(_STATEMENTS["_SNAPSHOT"])
+    assert "symbol" in text and "tool" in text
