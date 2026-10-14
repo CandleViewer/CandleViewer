@@ -15,6 +15,7 @@ from candleviewer.api import workspaces_models as wm
 from candleviewer.api.drawings_models import format_errors
 from candleviewer.api.workspaces_models import (
     LayoutPaneIn,
+    PaneConfigIn,
     WorkspaceIn,
     canonical_json,
 )
@@ -304,6 +305,22 @@ def test_more_than_32_settings_keys_refused_before_values_are_validated() -> Non
         LayoutPaneIn.model_validate(pane(pane_config={"settings": s}))
     assert ei.value.error_count() == 1
     assert ei.value.errors()[0]["type"] == "too_long"
+
+
+def test_pane_config_32_keys_of_32_bad_items_yield_exactly_32_errors() -> None:
+    """Amplification pin at the layer that owns the fix (C-13.7): each array stops at its first
+    bad item, so the worst case is one error per key (before: 32 * 32 * 4 = 4,096)."""
+    s = {f"k{i}": [{}] * 32 for i in range(32)}
+    with pytest.raises(ValidationError) as ei:
+        PaneConfigIn.model_validate({"settings": s})
+    assert ei.value.error_count() == 32
+
+
+def test_pane_config_40_keys_is_a_single_too_long_before_any_value_is_validated() -> None:
+    s = {f"k{i}": [{}] * 32 for i in range(40)}
+    with pytest.raises(ValidationError) as ei:
+        PaneConfigIn.model_validate({"settings": s})
+    assert [(e["loc"], e["type"]) for e in ei.value.errors()] == [(("settings",), "too_long")]
 
 
 def test_array_over_32_items_refused_without_validating_items() -> None:
