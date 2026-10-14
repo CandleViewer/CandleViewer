@@ -137,7 +137,8 @@ def test_oc_10_both_step_up_ok_arms_audit() -> None:
     """Fails if `audit_step_up` is dropped from either the first-grant or the re-entry arm."""
     states = B16["states"]["elevation"]["states"]
     for src in ("normal", "elevated"):
-        assert "audit_step_up" in states[src]["on"]["STEP_UP_OK"]["actions"], src
+        grant = next(a for a in _arms(states[src]["on"]["STEP_UP_OK"]) if a.get("target"))
+        assert "audit_step_up" in grant["actions"], src
 
 
 async def test_oc_10_step_up_while_elevated_writes_audit(

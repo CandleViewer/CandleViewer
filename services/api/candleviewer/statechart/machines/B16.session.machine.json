@@ -1,6 +1,6 @@
 {
   "id": "session",
-  "version": 1,
+  "version": 2,
   "strictConfig": true,
   "maxIterations": 500,
   "actionErrorPolicy": "rollback",
@@ -14,15 +14,21 @@
     "LOGOUT": {
       "target": "#session.elevation.dead"
     },
-    "IDLE_DEADLINE": {
-      "target": "#session.elevation.dead"
-    },
     "ABSOLUTE_DEADLINE": {
       "target": "#session.elevation.dead"
     },
     "REVOKE": {
       "target": "#session.elevation.dead"
-    }
+    },
+    "UNLOCK_FAILED": [
+      {
+        "target": "#session.elevation.dead",
+        "guard": "unlock_attempts_exhausted"
+      },
+      {
+        "actions": []
+      }
+    ]
   },
   "context": {
     "session_id": null,
@@ -35,18 +41,34 @@
     "revoke_reason": null,
     "elevated_classes": {},
     "step_up_failures": 0,
-    "readonly_until_us": null
+    "readonly_until_us": null,
+    "idle_locked": false,
+    "unlock_attempts": 0,
+    "one_click_armed": null
   },
   "states": {
     "auth": {
       "initial": "pending_mfa",
+      "on": {
+        "UNLOCK_OK": {
+          "actions": [
+            "audit_ignored_request"
+          ]
+        },
+        "UNLOCK_FAILED": {
+          "actions": [
+            "audit_ignored_request"
+          ]
+        }
+      },
       "states": {
         "pending_mfa": {
           "on": {
             "MFA_OK": {
               "target": "#session.auth.active",
               "actions": [
-                "mark_mfa_satisfied"
+                "mark_mfa_satisfied",
+                "audit_login"
               ]
             },
             "MFA_FAILED": [
@@ -74,8 +96,7 @@
         },
         "active": {
           "entry": [
-            "stamp_idle_deadline",
-            "audit_login"
+            "stamp_idle_deadline"
           ],
           "on": {
             "REQUEST": {
@@ -86,9 +107,67 @@
               ]
             },
             "IDLE_DEADLINE": {
+              "target": "#session.auth.idle_locked"
+            },
+            "ABSOLUTE_DEADLINE": {
               "target": "#session.auth.revoked",
               "actions": [
-                "set_revoke_idle"
+                "set_revoke_expired"
+              ]
+            },
+            "REVOKE": {
+              "target": "#session.auth.revoked",
+              "actions": [
+                "set_revoke_admin"
+              ]
+            },
+            "LOGOUT": {
+              "target": "#session.auth.revoked",
+              "actions": [
+                "set_revoke_logout"
+              ]
+            }
+          }
+        },
+        "idle_locked": {
+          "tags": [
+            "locked"
+          ],
+          "entry": [
+            "mark_idle_locked",
+            "clear_elevated",
+            "disarm_one_click",
+            "audit_idle_locked"
+          ],
+          "exit": [
+            "clear_idle_locked"
+          ],
+          "on": {
+            "UNLOCK_OK": {
+              "target": "#session.auth.active",
+              "actions": [
+                "stamp_idle_deadline",
+                "audit_session_unlocked"
+              ]
+            },
+            "UNLOCK_FAILED": [
+              {
+                "target": "#session.auth.revoked",
+                "guard": "unlock_attempts_exhausted",
+                "actions": [
+                  "set_revoke_locked"
+                ]
+              },
+              {
+                "actions": [
+                  "bump_unlock_attempts",
+                  "audit_unlock_failed"
+                ]
+              }
+            ],
+            "REQUEST": {
+              "actions": [
+                "audit_ignored_request"
               ]
             },
             "ABSOLUTE_DEADLINE": {
@@ -125,19 +204,32 @@
     },
     "elevation": {
       "initial": "normal",
+      "on": {
+        "IDLE_DEADLINE": {
+          "actions": []
+        }
+      },
       "states": {
         "normal": {
           "tags": [
             "not_elevated"
           ],
           "on": {
-            "STEP_UP_OK": {
-              "target": "#session.elevation.elevated",
-              "actions": [
-                "stamp_elevated_until",
-                "audit_step_up"
-              ]
-            },
+            "STEP_UP_OK": [
+              {
+                "target": "#session.elevation.elevated",
+                "guard": "session_unlocked",
+                "actions": [
+                  "stamp_elevated_until",
+                  "audit_step_up"
+                ]
+              },
+              {
+                "actions": [
+                  "audit_ignored_request"
+                ]
+              }
+            ],
             "STEP_UP_FAILED": [
               {
                 "target": "#session.elevation.readonly_downgrade",
@@ -215,7 +307,13 @@
                   "audit_step_up_required"
                 ]
               }
-            ]
+            ],
+            "IDLE_DEADLINE": {
+              "target": "#session.elevation.normal",
+              "actions": [
+                "clear_elevated"
+              ]
+            }
           }
         },
         "dead": {

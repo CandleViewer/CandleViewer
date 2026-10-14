@@ -1,14 +1,15 @@
 """candleviewer.statechart.bindings.b16_session — guards/actions for B16
-`session` (E09-S03, US-ONB-004/009).
+`session` (E09-S03, US-ONB-004/009; idle lock #2301).
 
 Only `stamp_idle_deadline`/`set_revoke_*`/audit-adjacent actions and the
-`mfa_attempts_exhausted` guard live here; the actual idle/absolute-lifetime
-policy numbers (5-60 min configurable idle, 12 h absolute) are owned by
+guards live here; the actual idle/absolute-lifetime policy numbers (5-60 min
+configurable idle, 12 h absolute) are owned by
 `candleviewer.auth.session_service.SessionService`, which drives this
 machine via `REQUEST`/`IDLE_DEADLINE`/`ABSOLUTE_DEADLINE`/`REVOKE`/`LOGOUT`
 events computed from the `sessions` row — this module never reads a clock
 or a config value itself (CV-C-hot-path: statecharts record, synchronous
-code enforces, C-2.21).
+code enforces, C-2.21). `IDLE_DEADLINE` is the idle LOCK (`auth.idle_locked`,
+lifted only by `UNLOCK_OK`), never a revocation (#2301, ADR-0020 §4).
 
 No service (`SERVICES`) is needed for B16 — every transition here is a
 timer (`after:`, driven by the caller) or an externally-raised event, never
@@ -58,6 +59,8 @@ def elevation_view(context: dict[str, Any]) -> dict[str, Any]:
         "elevated_classes": sorted((context.get("elevated_classes") or {}).keys()),
         "step_up_failures": int(context.get("step_up_failures", 0) or 0),
         "readonly_until_us": context.get("readonly_until_us"),
+        "idle_locked": context.get("idle_locked") is True,
+        "unlock_attempts": int(context.get("unlock_attempts", 0) or 0),
         "revoke_reason": context.get("revoke_reason"),
     }
 
@@ -155,12 +158,6 @@ async def set_revoke_timeout(
     _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
 ) -> None:
     context["revoke_reason"] = "timeout"
-
-
-async def set_revoke_idle(
-    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
-) -> None:
-    context["revoke_reason"] = "idle"
 
 
 async def set_revoke_expired(
@@ -359,13 +356,124 @@ async def audit_readonly_downgrade(
     )
 
 
+# -- #2301: idle lock (`auth.idle_locked`, ADR-0020 §4) ----------------------
+
+#: Mirrors `SessionService.MAX_UNLOCK_ATTEMPTS` (a parity test pins it): the
+#: fifth consecutive wrong unlock password revokes the session.
+UNLOCK_ATTEMPT_CAP = 5
+
+
+class OneClickPublisher(Protocol):
+    """Receives the plain one-click flag on lock entry (C-2.20): the session's
+    arm record, which the OMS validator reads synchronously (C-2.21, #2305).
+    Nothing reads one-click state from this chart."""
+
+    async def publish(self, session_id: str, *, armed: bool) -> None: ...
+
+
+_ONE_CLICK: list[OneClickPublisher] = []
+
+
+def set_one_click_publisher(publisher: OneClickPublisher | None) -> None:
+    """Install (or clear, with `None`) the process-wide one-click publisher."""
+    _ONE_CLICK.clear()
+    if publisher is not None:
+        _ONE_CLICK.append(publisher)
+
+
+def unlock_attempts_exhausted(context: dict[str, Any], event: dict[str, Any]) -> bool:
+    """Guard: this failure is the fifth (`unlock_attempts + 1 >= cap`). Total (A6)."""
+    try:
+        return bool(int(context.get("unlock_attempts", 0)) + 1 >= UNLOCK_ATTEMPT_CAP)
+    except (TypeError, ValueError):
+        return False
+
+
+def session_unlocked(context: dict[str, Any], event: dict[str, Any]) -> bool:
+    """Guard on granting elevation: deny unless the lock flag is explicitly
+    clear (A6, deny-by-default). Elevation never coexists with the lock."""
+    return context.get("idle_locked") is False
+
+
+async def mark_idle_locked(
+    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
+) -> None:
+    context["idle_locked"] = True
+
+
+async def clear_idle_locked(
+    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
+) -> None:
+    """`idle_locked` exit: every lock starts a fresh attempt count."""
+    context["idle_locked"] = False
+    context["unlock_attempts"] = 0
+
+
+async def bump_unlock_attempts(
+    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
+) -> None:
+    context["unlock_attempts"] = int(context.get("unlock_attempts", 0) or 0) + 1
+
+
+async def disarm_one_click(
+    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
+) -> None:
+    """Lock entry disarms one-click; unlock never re-arms it (#2290 rule 2d).
+    Not skipped on replay: a disarm is idempotent and fails safe."""
+    context["one_click_armed"] = False
+    sid, _uid = _identity(context)
+    if _ONE_CLICK and sid is not None:
+        await _ONE_CLICK[0].publish(sid, armed=False)
+
+
+async def audit_idle_locked(
+    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
+) -> None:
+    await _emit(context, event, "auth.idle_locked")
+
+
+async def audit_session_unlocked(
+    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
+) -> None:
+    await _emit(context, event, "auth.session_unlocked")
+
+
+async def audit_unlock_failed(
+    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
+) -> None:
+    remaining = max(UNLOCK_ATTEMPT_CAP - int(context.get("unlock_attempts", 0) or 0), 0)
+    await _emit(
+        context,
+        event,
+        "auth.unlock_failed",
+        outcome="failure",
+        severity="warning",
+        reason=f"remaining={remaining}",
+    )
+
+
+async def audit_ignored_request(
+    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
+) -> None:
+    """Activity on a locked session, or an unlock outside a lock: recorded and
+    consumed, never deferred (a deferred unlock would lift the next lock)."""
+    event_type = getattr(event, "type", None)
+    await _emit(
+        context,
+        event,
+        "auth.request_ignored",
+        outcome="denied",
+        severity="warning",
+        reason=event_type if isinstance(event_type, str) else None,
+    )
+
+
 ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "mark_mfa_satisfied": mark_mfa_satisfied,
     "bump_mfa_attempts": bump_mfa_attempts,
     "audit_mfa_failed": audit_mfa_failed,
     "set_revoke_locked": set_revoke_locked,
     "set_revoke_timeout": set_revoke_timeout,
-    "set_revoke_idle": set_revoke_idle,
     "set_revoke_expired": set_revoke_expired,
     "set_revoke_admin": set_revoke_admin,
     "set_revoke_logout": set_revoke_logout,
@@ -383,12 +491,22 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "audit_step_up_required": audit_step_up_required,
     "audit_grace_used": audit_grace_used,
     "audit_readonly_downgrade": audit_readonly_downgrade,
+    "mark_idle_locked": mark_idle_locked,
+    "clear_idle_locked": clear_idle_locked,
+    "bump_unlock_attempts": bump_unlock_attempts,
+    "disarm_one_click": disarm_one_click,
+    "audit_idle_locked": audit_idle_locked,
+    "audit_session_unlocked": audit_session_unlocked,
+    "audit_unlock_failed": audit_unlock_failed,
+    "audit_ignored_request": audit_ignored_request,
 }
 
 GUARDS: dict[str, Callable[..., bool]] = {
     "mfa_attempts_exhausted": mfa_attempts_exhausted,
     "grace_window_valid": grace_window_valid,
     "step_up_strikes_exhausted": step_up_strikes_exhausted,
+    "unlock_attempts_exhausted": unlock_attempts_exhausted,
+    "session_unlocked": session_unlocked,
 }
 
 SERVICES: dict[str, Callable[..., Awaitable[Any]]] = {}
@@ -415,5 +533,7 @@ register_event_schemas(
         "ELEVATION_DEADLINE": {"type": "object", "additionalProperties": True},
         "ACTION_REQUEST": {"type": "object", "additionalProperties": True},
         "READONLY_EXPIRED": {"type": "object", "additionalProperties": True},
+        "UNLOCK_OK": {"type": "object", "additionalProperties": True},
+        "UNLOCK_FAILED": {"type": "object", "additionalProperties": True},
     }
 )

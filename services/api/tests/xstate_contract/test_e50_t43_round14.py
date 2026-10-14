@@ -32,7 +32,8 @@ from candleviewer.statechart.bindings import b08_position_protection as b08
 from candleviewer.statechart.registry import Registry
 from tests.xstate_contract._harness import Charts, instrument, park, settle, walk
 
-REVOCATION = ("LOGOUT", "IDLE_DEADLINE", "ABSOLUTE_DEADLINE", "REVOKE")
+#: #2301: `IDLE_DEADLINE` is the idle LOCK (`auth.idle_locked`), no longer a revocation.
+REVOCATION = ("LOGOUT", "ABSOLUTE_DEADLINE", "REVOKE")
 B16 = Registry().get("session")
 B18 = Registry().get("kill_switch")
 B8 = Registry().get("position_protection")
