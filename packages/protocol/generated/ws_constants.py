@@ -20,6 +20,7 @@ FRAME_TYPES: tuple[str, ...] = (
     "d",
     "resync",
     "revoked",
+    "permission_change",
     "ping",
     "pong",
     "err",
