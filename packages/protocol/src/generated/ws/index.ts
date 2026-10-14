@@ -698,13 +698,7 @@ export interface LiquidationsSymbolLiquidations {
 }
 
 // Source: cv://ws/v1/machines.schema.json
-/**
- * This interface was referenced by `MachinesEntityState`'s JSON-Schema
- * via the `definition` "chartId".
- */
-export type ChartId = string;
-
-export interface MachinesEntityState {
+export type MachinesEntityState = {
   machine_kind:
     | "order"
     | "trade_group"
@@ -722,17 +716,17 @@ export interface MachinesEntityState {
     | "kill_switch"
     | "reconciliation"
     | "risk_lockout";
-  state: ChartId;
+  state: string;
   /**
    * Parallel charts only: region id -> active top-level state of that region.
    */
   regions?: {
-    [k: string]: ChartId;
+    [k: string]: string;
   };
   /**
    * @maxItems 32
    */
-  tags: ChartId[];
+  tags: string[];
   /**
    * chain_trips latch: order-path commands are refused until acknowledged.
    */
@@ -758,7 +752,7 @@ export interface MachinesEntityState {
     cancel_working?: boolean;
     flatten?: boolean;
   };
-}
+};
 
 // Source: cv://ws/v1/metrics.schema.json
 export interface MetricsSymbol {

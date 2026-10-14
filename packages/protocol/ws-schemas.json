@@ -1320,15 +1320,161 @@
       "type": "object"
     },
     "cv://ws/v1/machines.schema.json": {
-      "$defs": {
-        "chartId": {
-          "pattern": "^[a-z][a-z0-9_]{0,63}$",
-          "type": "string"
-        }
-      },
       "$id": "cv://ws/v1/machines.schema.json",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "order"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": [
+                    "symbol",
+                    "halted_by_kill",
+                    "recon_misses"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "alert"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": [
+                    "severity",
+                    "delivery_attempts",
+                    "storm_count"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "recording"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": [
+                    "symbol",
+                    "gap_count_24h"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "book"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": [
+                    "symbol",
+                    "resync_count"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "session"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": [
+                    "mfa_satisfied",
+                    "step_up_failures"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "kill_switch"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": [
+                    "scope",
+                    "cancel_working",
+                    "flatten"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "context_summary"
+            ]
+          },
+          "then": {
+            "properties": {
+              "machine_kind": {
+                "enum": [
+                  "order",
+                  "alert",
+                  "recording",
+                  "book",
+                  "session",
+                  "kill_switch"
+                ]
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "context_summary": {
           "additionalProperties": false,
@@ -1424,22 +1570,26 @@
         },
         "regions": {
           "additionalProperties": {
-            "$ref": "#/$defs/chartId"
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
           },
           "description": "Parallel charts only: region id -> active top-level state of that region.",
           "maxProperties": 4,
           "minProperties": 2,
           "propertyNames": {
-            "$ref": "#/$defs/chartId"
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
           },
           "type": "object"
         },
         "state": {
-          "$ref": "#/$defs/chartId"
+          "pattern": "^[a-z][a-z0-9_]{0,63}$",
+          "type": "string"
         },
         "tags": {
           "items": {
-            "$ref": "#/$defs/chartId"
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "type": "string"
           },
           "maxItems": 32,
           "type": "array",

@@ -737,41 +737,43 @@ Permissions are checked **at subscribe time and again on every change to the use
 
 ### 6.4 Statechart machine state: `machines.{entity}.state` (E17-T08)
 
-One topic per instance of a catalogue machine (`28-statechart-catalogue.md` B1–B20). It carries the state the machine publishes on state entry (C-2.20). The statechart side feeds it: the plugin's `on_transition` hook (E50-T60), plus the bring-up and latch publishes below. The gateway answers `sub`, `snap`, `resync` and deltas only from what was published; it never imports `statechart/factory.py` or `statechart/persistence.py`, and never holds or queries an `Interpreter`. **Status: contract only.** Until the E17-T08 publisher lands, the server answers `unknown_topic`.
+One topic per instance of a catalogue machine (`28-statechart-catalogue.md` B1–B20). It carries the state the machine publishes on state entry (C-2.20). The statechart side feeds it: the plugin's `on_transition` hook (E50-T60), plus the bring-up and latch publishes below. The gateway answers `sub`, `snap`, `resync` and deltas only from what was published, never imports `statechart/factory.py` or `statechart/persistence.py`, and never holds or queries an `Interpreter`. The publisher slice adds an import-linter `forbidden` contract that keeps `candleviewer.ws` off those two modules, because the existing C-2.20 contract covers only the market-data modules. **Status: contract only.** Until the E17-T08 publisher lands, the server answers `unknown_topic`.
 
 | Topic                     | Options               | Snapshot                            | Default throttle | Payload schema                                   |
 | ------------------------- | --------------------- | ----------------------------------- | ---------------- | ------------------------------------------------ |
 | `machines.{entity}.state` | universal only (§5.1) | The entity's latest published state | 100 ms           | [`MachineStateUpdate`](#1510-machinestateupdate) |
 
-**Entity grammar.** `{entity}` is `{kind}` for a singleton, otherwise `{kind}:{id}`. The kind set is closed. `uuid` means the lowercase canonical form (`0a000000-0000-4000-8000-000000000001`), so each machine has exactly one topic name. `symbol` is the §13 `symbol`, and `depth` is 1, 50, 200 or 500. An unknown kind, or an id that does not fit its kind, is `invalid_topic_format`. The longest topic, `machines.reconciliation:{uuid}.state`, has 66 characters; every topic fits the §13 `topic` pattern and its 120-character limit.
+**Entity grammar.** `{entity}` is `{kind}` for a singleton, otherwise `{kind}:{id}`. The kind set is closed. `uuid` means the lowercase canonical form (`0a000000-0000-4000-8000-000000000001`), so each machine has exactly one topic name, and `symbol` is the §13 `symbol`. An unknown kind, or an id that does not fit its kind, is `invalid_topic_format`. The longest topic, `machines.reconciliation:{uuid}.state`, has 66 characters; every topic fits the §13 `topic` pattern and its 120-character limit. `book:{symbol}` names the B14 machine of the symbol's active book tier: the supervisor keys its machines by environment, symbol and tier depth, but the tier is internal, so a tier change continues on the same topic.
 
-| B     | `{entity}`                    | `machine_kind`                    | Id format     | `context_summary` keys                         |
-| ----- | ----------------------------- | --------------------------------- | ------------- | ---------------------------------------------- |
-| B1    | `order:{order_id}`            | `order`                           | uuid          | `symbol`, `halted_by_kill`, `recon_misses`     |
-| B2    | `trade_group:{group_id}`      | `trade_group`                     | uuid          | —                                              |
-| B3    | `leg:{leg_id}`                | `leg`                             | uuid          | —                                              |
-| B4–B7 | `algo:{algo_id}`              | `oco`, `iceberg`, `twap`, `chase` | uuid          | —                                              |
-| B10   | `alert:{alert_id}`            | `alert`                           | uuid          | `severity`, `delivery_attempts`, `storm_count` |
-| B11   | `recording:{symbol}`          | `recording`                       | symbol        | `symbol`, `gap_count_24h`                      |
-| B12   | `replay:{replay_id}`          | `replay`                          | uuid          | —                                              |
-| B14   | `book:{symbol}:{depth}`       | `book`                            | symbol, depth | `symbol`, `resync_count`                       |
-| B16   | `session:{session_id}`        | `session`                         | uuid          | `mfa_satisfied`, `step_up_failures`            |
-| B17   | `live_gate`                   | `live_gate`                       | singleton     | —                                              |
-| B18   | `kill_switch`                 | `kill_switch`                     | singleton     | `scope`, `cancel_working`, `flatten`           |
-| B19   | `reconciliation:{account_id}` | `reconciliation`                  | uuid          | —                                              |
-| B20   | `risk_lockout:{account_id}`   | `risk_lockout`                    | uuid          | —                                              |
+| B     | `{entity}`                    | `machine_kind`                    | Id format | Scope (bound by the owning module) | `context_summary` keys                         |
+| ----- | ----------------------------- | --------------------------------- | --------- | ---------------------------------- | ---------------------------------------------- |
+| B1    | `order:{order_id}`            | `order`                           | uuid      | the order's account                | `symbol`, `halted_by_kill`, `recon_misses`     |
+| B2    | `trade_group:{group_id}`      | `trade_group`                     | uuid      | every leg's account                | —                                              |
+| B3    | `leg:{leg_id}`                | `leg`                             | uuid      | the leg's account                  | —                                              |
+| B4–B7 | `algo:{algo_id}`              | `oco`, `iceberg`, `twap`, `chase` | uuid      | the run's account                  | —                                              |
+| B10   | `alert:{alert_id}`            | `alert`                           | uuid      | its user (`user_id`)               | `severity`, `delivery_attempts`, `storm_count` |
+| B11   | `recording:{symbol}`          | `recording`                       | symbol    | none                               | `symbol`, `gap_count_24h`                      |
+| B12   | `replay:{replay_id}`          | `replay`                          | uuid      | its user (`user_id`)               | —                                              |
+| B14   | `book:{symbol}`               | `book`                            | symbol    | none                               | `symbol`, `resync_count`                       |
+| B16   | `session:{session_id}`        | `session`                         | uuid      | its user (`user_id`)               | `mfa_satisfied`, `step_up_failures`            |
+| B17   | `live_gate`                   | `live_gate`                       | singleton | none                               | —                                              |
+| B18   | `kill_switch`                 | `kill_switch`                     | singleton | none                               | `scope`, `cancel_working`, `flatten`           |
+| B19   | `reconciliation:{account_id}` | `reconciliation`                  | uuid      | that account                       | —                                              |
+| B20   | `risk_lockout:{account_id}`   | `risk_lockout`                    | uuid      | that account                       | —                                              |
 
 B8 `position_protection`, B9 `rule_instance`, B13 `ws_conn` and B15 `paper_account` have no public id yet (§16.6 W9), so they are not in the grammar.
+
+**Scope binding.** Each registry entry carries the immutable scope in the column above. The owning module takes it from its own record, not from the machine's context (the B4–B7, B10 and B12 contexts hold no account or user), and binds it when it builds the machine and again when it restores one. An entry of a scoped kind that has no scope is refused to every role: `decide()` refuses a missing account to every role, and a user-scoped kind has no wider view (D2 on #414).
 
 **Payload** ([`MachineStateUpdate`](#1510-machinestateupdate); the field list is owned by `24-internal-schemas.md` §17.6). A `snap` and a `d` carry the same whole object. A `d` replaces the previous payload; nothing is merged.
 
 - `state` is the published state: the active direct child of the chart root. The `order` and `session` charts are parallel, so `state` is the active state of their first region (`lifecycle`, `auth`), and `regions` maps every region to its active state. Values are the chart's own state ids (`statechart/machines/*.machine.json`, C-2.19) and change only with `machine_hash`. `state` is never a nested path, and never the owning section's domain enum (`orders.state` and the other domain topics carry those).
 - `tags` is the sorted union of the chart `tags` on every active state, for example `terminal`, `protected`, `naked`, `trading_blocked` or `critical`.
-- `degraded` is the `chain_trips` latch (`29-statechart-adoption-plan.md` §1.3). While it is set, the machine refuses order-path commands until an operator acknowledges it. It is unrelated to the `degraded` chart tag.
+- `degraded` is the `chain_trips` latch (`29-statechart-adoption-plan.md` §1.3). While it is set, the synchronous `ChainTripLatch.admit_command` refuses order-path commands for the machine until an operator acknowledges it (C-2.21). It is unrelated to the `degraded` chart tag.
 - `machine_hash` is the chart's sha256 (`machine_hashes.lock`), so a client can tell when it is reading a chart build it was not built against.
 - `environment` and `updated_at_ms` (the time of the reported change) are always present; `context_summary` is optional.
 
-**`context_summary` redaction.** These rules also bind the context summary of E42-T07. Only the keys listed for the kind above are sent, and a kind with none never sends the field. Values are scalars read from the machine's own context. Never sent:
+**`context_summary` redaction.** These rules also bind the context summary of E42-T07. Only the keys listed for the kind above are sent, and a kind with none never sends the field; §15.10 closes the keys per `machine_kind`. Values are scalars read from the machine's own context. Never sent:
 
 - secrets, keys, signatures or tokens (C-2.7, C-12.6);
 - user ids or names (C-12.4);
@@ -782,48 +784,54 @@ B8 `position_protection`, B9 `rule_instance`, B13 `ws_conn` and B15 `paper_accou
 
 Adding a key is a contract change to this table and to §15.10.
 
-**Snapshot and deltas.** The server keeps each entity's latest payload in a bounded registry that only the publisher writes.
+**Snapshot and deltas.** The server keeps each entity's latest payload in a registry that only the publisher writes.
 
 - An authorised `sub` gets `sub_ok` with `snapshot_pending: true`, then a `snap` from the registry (`meta.reason: initial`).
-- There is never a `snap` without a published state. An entity that is unknown, not yet published or evicted is refused exactly like a foreign one (Authorisation, below); the client subscribes once the entity appears on its domain topic.
+- There is never a `snap` without a published state. For a scoped kind, an entity with no entry (unknown, not yet published or removed) is refused exactly like a foreign one (Authorisation, below); the client subscribes again once the entity appears on its domain topic. For an unscoped kind (`recording`, `book`, `live_gate`, `kill_switch`), an entity with no entry is not refused, because there is no scope to protect: the subscription stays `snapshot_pending` until the first publish (§7.7). A `symbol` that is not a known instrument is `unsupported_symbol`.
 - Every later publish is a `d` on the subscription's own sequence (§7.7). `resync` works as for every topic (§7.4, §7.5).
 - A machine is published when it enters its initial state, on every transition, once at bring-up after a restore (a restore re-runs no entry action, `28` §21.4), and whenever `degraded` changes.
-- The payload whose `tags` contain `terminal` is the entity's last. The entity stays subscribable for 60 s (§16.2); then each live subscription gets `revoked` with `topic_removed` and `resubscribe_allowed: false`. When a supervisor stops a non-terminal machine, its subscriptions are revoked the same way at once.
+- The registry holds one entry per running machine, so the owning supervisors' caps bound it (C-2.18). The payload whose `tags` contain `terminal` is the entity's last; its entry stays for 60 s, and at most 10 000 terminal entries are kept, oldest removed first (§16.2).
+- When an entry is removed (retention expiry, a supervisor stopping its machine, or shutdown), each live subscription to it gets `revoked` with `topic_removed` and `resubscribe_allowed: false`.
 
 **Coalescing and options.** Whole-object last-write-wins, with at most one pending payload per subscription (§8.2). A burst of transitions, such as a chain of `after:` timers, therefore yields one `d` carrying the latest state. Intermediate states are not delivered: this is a state topic, not an event log (history is in `machine_events`, E42-T07).
 
 - Structured only: `encoding: "binary"` is `encoding_unsupported`.
 - Universal options only: any other key, including `exchange_account_ids`, is `invalid_options`.
 - As a private topic it cannot be replayed (`replay_session_id` is `invalid_options`), and its snapshots are never shared between subscriptions.
-- `snapshot: false` is always answered with `snapshot_forced: true`, because no per-entity history is kept.
+- `snapshot: false` needs `from_seq`, as on every topic (otherwise `invalid_options`), and is then always answered with `snapshot_forced: true`, because no per-entity history is kept.
 
-**Authorisation.** Checked per entity at `sub`, and again on every role, permission or grant change and every kill-switch transition (§9.5). The re-check uses the versioned principal snapshot (SR-189), so an older snapshot never re-grants. The entity's scope is recorded with the subscription at `sub`.
+**Authorisation.** Checked per entity at `sub`, in this order; the first step that refuses decides the result.
+
+1. **Permission.** Lacking the kind's read permission is `forbidden`.
+2. **Role.** A `deny_pending_decision` cell (W6–W8) is `forbidden` for every entity of that kind.
+3. **Registry and scope.** The decision reads the in-memory registry entry synchronously, never through an awaited lookup, so it cannot interleave with a §9.5 re-evaluation (SR-189).
+   - Account-scoped kind (B1, B3, B4–B7, B20): an entity with no entry, an entry with no account, or an account outside the caller's grants is `account_scope_denied`, with the §6.2 message.
+   - User-scoped kind (B10, B12, B16): an entity with no entry, an entry with no user, or another user's entity is `forbidden`, Owner included (D2).
+   - B2 and B19 reach this step only for the Owner until W6 and W8 are decided, and then follow the account-scoped results. An unscoped kind has nothing to check here (Snapshot and deltas, above).
 
 The columns use the actors and outcomes of the RBAC matrix (`services/api/tests/contract/rbac/matrix.yaml`). The entity is on account A, which only `manager_with_grant` holds; for `alert`, `replay` and `session`, the entity is the caller's own. An unauthenticated caller always gets `not_authenticated`.
 
-| B     | Kind             | Read rule (the REST read it mirrors)                              | owner    | manager_with_grant | manager_without_grant  | viewer                 | State                 |
-| ----- | ---------------- | ----------------------------------------------------------------- | -------- | ------------------ | ---------------------- | ---------------------- | --------------------- |
-| B1    | `order`          | `orders:read` on its account (`GET /orders/{orderId}`)            | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable            |
-| B2    | `trade_group`    | `orders:read`; a group spans accounts                             | `sub_ok` | `forbidden`        | `forbidden`            | `forbidden`            | `not_executable` (W6) |
-| B3    | `leg`            | `orders:read` on its account (`GET /trade-groups/{tradeGroupId}`) | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable            |
-| B4–B7 | `algo`           | `orders:read` on its account (E33-T02)                            | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable            |
-| B10   | `alert`          | `alerts:read`, own alerts (`GET /alerts/{alertId}`)               | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable            |
-| B11   | `recording`      | `recording:read` (`GET /recording/status`)                        | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable            |
-| B12   | `replay`         | `replay:read`, own sessions (`GET /replay/sessions/{replayId}`)   | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable            |
-| B14   | `book`           | `marketdata:read`, as `book.{symbol}.{depth}`                     | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable            |
-| B16   | `session`        | own sessions, no permission (`GET /me/sessions`)                  | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable            |
-| B17   | `live_gate`      | none defined                                                      | `sub_ok` | `forbidden`        | `forbidden`            | `forbidden`            | `not_executable` (W7) |
-| B18   | `kill_switch`    | `orders:read` (`GET /trading/kill-switch`)                        | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable            |
-| B19   | `reconciliation` | none defined                                                      | `sub_ok` | `forbidden`        | `forbidden`            | `forbidden`            | `not_executable` (W8) |
-| B20   | `risk_lockout`   | `positions:read` on its account (`GET /risk/summary`)             | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable            |
+| B     | Kind             | Read rule (the REST read it mirrors)                              | owner    | manager_with_grant | manager_without_grant  | viewer                 | State                        |
+| ----- | ---------------- | ----------------------------------------------------------------- | -------- | ------------------ | ---------------------- | ---------------------- | ---------------------------- |
+| B1    | `order`          | `orders:read` on its account (`GET /orders/{orderId}`)            | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable                   |
+| B2    | `trade_group`    | `orders:read`; a group spans accounts                             | `sub_ok` | `forbidden`        | `forbidden`            | `forbidden`            | `deny_pending_decision` (W6) |
+| B3    | `leg`            | `orders:read` on its account (`GET /trade-groups/{tradeGroupId}`) | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable                   |
+| B4–B7 | `algo`           | `orders:read` on its account (E33-T02)                            | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable                   |
+| B10   | `alert`          | `alerts:read`, own alerts (`GET /alerts/{alertId}`)               | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B11   | `recording`      | `recording:read` (`GET /recording/status`)                        | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B12   | `replay`         | `replay:read`, own sessions (`GET /replay/sessions/{replayId}`)   | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B14   | `book`           | `marketdata:read`, as `book.{symbol}.{depth}`                     | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B16   | `session`        | own sessions, no permission (`GET /me/sessions`)                  | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B17   | `live_gate`      | none defined                                                      | `sub_ok` | `forbidden`        | `forbidden`            | `forbidden`            | `deny_pending_decision` (W7) |
+| B18   | `kill_switch`    | `orders:read` (`GET /trading/kill-switch`)                        | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B19   | `reconciliation` | none defined                                                      | `sub_ok` | `forbidden`        | `forbidden`            | `forbidden`            | `deny_pending_decision` (W8) |
+| B20   | `risk_lockout`   | `positions:read` on its account (`GET /risk/summary`)             | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable                   |
 
-- **Owner.** The owner may watch every entity. C-12.4 makes the owner full admin, `decide()` grants the owner every account, and the statechart inspector (E42-T07, E42-S08) is an owner surface over every machine. For `alert`, `replay` and `session` this is wider than the REST reads, which are self-scoped for every role.
-- **No existence oracle.** A refusal depends only on the kind and the caller, never on whether the entity exists or whose it is. The server does the same work for an unknown entity as for a foreign one.
-  - Lacking the kind's permission is `forbidden`.
-  - For an account-scoped kind (B1, B3, B4–B7, B19, B20), an entity that is unknown, unpublished, evicted or on an account outside the caller's grants is `account_scope_denied`, with the §6.2 message.
-  - For a self-scoped kind (B10, B12, B16), an unknown entity or another user's is `forbidden`.
-- **`not_executable`.** As in the RBAC matrix, this marks a row that cannot be asserted yet: its rule needs an owner decision (§16.6 W6–W8). Until that decision, every non-owner subscription to the kind is `forbidden`, whatever the entity (deny by default, C-12.4).
-- **On a change.** A subscription whose kind permission is lost gets `revoked` with `permission_revoked`. One whose account is lost gets `account_scope_changed` with `resubscribe_allowed: false`. A disabled user gets `bye` with 4403, and a revoked own session closes with 4401 (§9.5).
+- **Owner.** The Owner may watch every entity of an account-scoped or unscoped kind: C-12.4 makes the Owner full admin, `decide()` grants the Owner every account, and the statechart inspector (E42-T07, E42-S08) is an Owner surface. A user-scoped kind (`alert`, `replay`, `session`) stays self-scoped for every role, Owner included, because it mirrors self-scoped REST reads (D2 on #414).
+- **No existence oracle.** A refusal depends only on the kind and the caller, never on whether the entity exists or whose it is, and the server does the same work for an unknown entity as for a foreign one.
+- **`deny_pending_decision`.** A cell whose rule waits for an owner decision (§16.6 W6–W8). It is not the RBAC matrix's `not_executable` (authorisation unreachable in CI): its cells run and expect `forbidden`. The publisher slice adds this table to the matrix as executed per-kind cells (13 kinds × 5 actors).
+- **On a change.** Every RBAC change (§9.5) re-applies the whole row to each live subscription, not just the permission. A subscription the new principal may no longer hold is revoked with `permission_revoked` (role or permission lost, so a demoted Owner loses `trade_group`, `live_gate` and `reconciliation`) or `account_scope_changed` (account lost), with `resubscribe_allowed: false`. A disabled user gets `bye` with 4403, and a revoked own session closes with 4401.
+- **Audit.** Each refusal (`ws.subscribe.denied`) and revocation (`ws.subscription.revoked`) of a `machines` subscription records the full `ch` and one internal reason: `role`, `unknown`, `foreign`, `unscoped` or `evicted` (C-12.8). The reason stays server-side; the client sees only the codes above.
 
 **Observability.** `cv_machine_ws_publish_total{entity_kind}` counts one per payload the publisher records, not per subscriber frame. `entity_kind` takes only the kind names above. The publisher registers it in the metric catalogue next to E50-T60's `cv_machine_*` families. Subscribe outcomes stay on `cv_ws_subscribe_total{topic="machines",result}`.
 
@@ -3601,20 +3609,20 @@ test, never restated (C-2.19).
         "risk_lockout"
       ]
     },
-    "state": { "$ref": "#/$defs/chartId" },
+    "state": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
     "regions": {
       "type": "object",
       "description": "Parallel charts only: region id -> active top-level state of that region.",
       "minProperties": 2,
       "maxProperties": 4,
-      "propertyNames": { "$ref": "#/$defs/chartId" },
-      "additionalProperties": { "$ref": "#/$defs/chartId" }
+      "propertyNames": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+      "additionalProperties": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }
     },
     "tags": {
       "type": "array",
       "maxItems": 32,
       "uniqueItems": true,
-      "items": { "$ref": "#/$defs/chartId" }
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }
     },
     "degraded": {
       "type": "boolean",
@@ -3645,9 +3653,70 @@ test, never restated (C-2.19).
     }
   },
   "additionalProperties": false,
-  "$defs": {
-    "chartId": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }
-  }
+  "allOf": [
+    {
+      "if": { "properties": { "machine_kind": { "const": "order" } } },
+      "then": {
+        "properties": {
+          "context_summary": {
+            "propertyNames": { "enum": ["symbol", "halted_by_kill", "recon_misses"] }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "machine_kind": { "const": "alert" } } },
+      "then": {
+        "properties": {
+          "context_summary": {
+            "propertyNames": { "enum": ["severity", "delivery_attempts", "storm_count"] }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "machine_kind": { "const": "recording" } } },
+      "then": {
+        "properties": {
+          "context_summary": { "propertyNames": { "enum": ["symbol", "gap_count_24h"] } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "machine_kind": { "const": "book" } } },
+      "then": {
+        "properties": {
+          "context_summary": { "propertyNames": { "enum": ["symbol", "resync_count"] } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "machine_kind": { "const": "session" } } },
+      "then": {
+        "properties": {
+          "context_summary": { "propertyNames": { "enum": ["mfa_satisfied", "step_up_failures"] } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "machine_kind": { "const": "kill_switch" } } },
+      "then": {
+        "properties": {
+          "context_summary": { "propertyNames": { "enum": ["scope", "cancel_working", "flatten"] } }
+        }
+      }
+    },
+    {
+      "if": { "required": ["context_summary"] },
+      "then": {
+        "properties": {
+          "machine_kind": {
+            "enum": ["order", "alert", "recording", "book", "session", "kill_switch"]
+          }
+        }
+      }
+    }
+  ]
 }
 ```
 
@@ -3758,6 +3827,8 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Security         | Manager cannot subscribe to another manager's accounts, even by raw frame.                                                                                                                            | §6.3, arch P8.                                            |
 | Security         | Fuzzed binary bodies never panic the server or the client decoder.                                                                                                                                    | C10, S12.                                                 |
 | Security         | An unknown, unpublished or foreign entity gets the identical refusal; a grant change revokes a `machines` subscription.                                                                               | §6.4 (no existence oracle), S7.                           |
+| Security         | A scoped `machines` entry without its scope is refused to every role; `sub` reads the in-memory entry synchronously; the owning module binds the scope at build and at restore.                       | §6.4 scope binding (fail closed).                         |
+| Security         | Demoting the Owner re-applies every §6.4 row: its `trade_group`, `live_gate` and `reconciliation` subscriptions are revoked with `permission_revoked`.                                                | §6.4 on a change, S7.                                     |
 
 ### 16.5 Validation tooling and the CI contract gate
 

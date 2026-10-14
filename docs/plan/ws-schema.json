@@ -3132,7 +3132,8 @@
           ]
         },
         "state": {
-          "$ref": "#/$defs/chartId"
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
         },
         "regions": {
           "type": "object",
@@ -3140,10 +3141,12 @@
           "minProperties": 2,
           "maxProperties": 4,
           "propertyNames": {
-            "$ref": "#/$defs/chartId"
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
           },
           "additionalProperties": {
-            "$ref": "#/$defs/chartId"
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
           }
         },
         "tags": {
@@ -3151,7 +3154,8 @@
           "maxItems": 32,
           "uniqueItems": true,
           "items": {
-            "$ref": "#/$defs/chartId"
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
           }
         },
         "degraded": {
@@ -3222,12 +3226,128 @@
         }
       },
       "additionalProperties": false,
-      "$defs": {
-        "chartId": {
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "order"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": ["symbol", "halted_by_kill", "recon_misses"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "alert"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": ["severity", "delivery_attempts", "storm_count"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "recording"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": ["symbol", "gap_count_24h"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "book"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": ["symbol", "resync_count"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "session"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": ["mfa_satisfied", "step_up_failures"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "machine_kind": {
+                "const": "kill_switch"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "context_summary": {
+                "propertyNames": {
+                  "enum": ["scope", "cancel_working", "flatten"]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["context_summary"]
+          },
+          "then": {
+            "properties": {
+              "machine_kind": {
+                "enum": ["order", "alert", "recording", "book", "session", "kill_switch"]
+              }
+            }
+          }
         }
-      }
+      ]
     }
   }
 }
