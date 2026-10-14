@@ -22,7 +22,8 @@ discipline). This file records **observations only**; it never moves the pin.
 
 Release notes say new snapshots add `machine_version` and `deadlines`, which touches
 `persistence.py` and the HMAC'd snapshot envelope (`machine_hash`, `minimum_version=3`). That is a
-"snapshot-format change", which ADR-0016 lists as failing a bump unless handled.
+"snapshot-format change", which ADR-0016 (line 307) lists as failing the bump outright; any bump to
+0.11.0 therefore needs an ADR-0016 amendment that addresses the v4 layout explicitly.
 
 ## Re-verification status
 
