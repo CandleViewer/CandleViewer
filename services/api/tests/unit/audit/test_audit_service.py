@@ -37,3 +37,14 @@ async def test_service_with_repository_wires_writer_and_query(tmp_path: Path) ->
     await svc.writer.emit("auth.login", actor_label="a")
     await svc.stop(1)
     assert not svc.is_active
+
+
+async def test_service_start_refuses_a_second_writer_on_the_same_wal(tmp_path: Path) -> None:
+    """#2250 review: two writers on one WAL would truncate each other's in-flight frames."""
+    svc = AuditService(FakeAuditRepository())
+    await svc.start(_ctx(tmp_path))
+    with pytest.raises(RuntimeError, match="already running"):
+        await svc.start(_ctx(tmp_path))
+    await svc.stop(1)
+    await svc.start(_ctx(tmp_path))  # allowed again after stop()
+    await svc.stop(1)
