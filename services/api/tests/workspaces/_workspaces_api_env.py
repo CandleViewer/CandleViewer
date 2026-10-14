@@ -39,15 +39,15 @@ T0 = datetime(2026, 10, 14, 12, 0, tzinfo=UTC)
 
 def wire(data: dict[str, Any], model: str = "WorkspaceInput") -> dict[str, Any]:
     """`data` as a contract-generated client sends it (`exclude_unset`). Needs #2400."""
-    assert hasattr(openapi_models, "WorkspaceInput"), "workspaces contract not merged"
+    assert hasattr(openapi_models, "LayoutGridSpec"), "workspaces contract not merged"
     cls = getattr(openapi_models, model)
     return dict(cls.model_validate(data).model_dump(mode="json", exclude_unset=True))
 
 
 def contract_valid(body: dict[str, Any], model: str = "Workspace") -> None:
     """The response validates against the generated contract schema (C-6.2)."""
-    # `Workspace` etc. exist in the pre-contract draft with other keys: key on a closed input type
-    assert hasattr(openapi_models, "WorkspaceInput"), "workspaces contract not merged"
+    # the pre-contract draft defines WorkspaceInput: key on a type only the new contract has
+    assert hasattr(openapi_models, "LayoutGridSpec"), "workspaces contract not merged"
     getattr(openapi_models, model).model_validate(body)
 
 
