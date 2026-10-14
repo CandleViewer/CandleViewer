@@ -21,6 +21,7 @@ from typing import Any
 import psycopg
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.storage.repositories.drawings import (
@@ -34,7 +35,10 @@ from candleviewer.storage.repositories.drawings import (
     DrawingVersionConflictError,
     UpdateOp,
 )
-from candleviewer.storage.repositories.drawings_sqlalchemy import SqlAlchemyDrawingRepository
+from candleviewer.storage.repositories.drawings_sqlalchemy import (
+    _LIST,
+    SqlAlchemyDrawingRepository,
+)
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -162,7 +166,6 @@ async def test_token_strictly_increases_on_rapid_updates(
         row = await repo.update(a, rid, _f(label=str(i)), if_match=None)
         seen.append(row.updated_at)
     assert all(x < y for x, y in pairwise(seen))
-    assert len({r for r in seen}) == len(seen)
 
 
 async def test_soft_delete_hides_row_but_keeps_it(
@@ -292,8 +295,11 @@ async def test_list_keyset_paging_and_layout_filter(
 async def test_purge_respects_the_90_day_boundary_and_the_limit(
     repo: SqlAlchemyDrawingRepository, pg_dsn: str
 ) -> None:
+    """Touches only this test's own ids (C-13.7); other tests' rows are never rewritten."""
     a = _user(pg_dsn)
     young, old = [str(uuid.uuid4()) for _ in range(2)], [str(uuid.uuid4()) for _ in range(3)]
+    live = str(uuid.uuid4())
+    await repo.create(a, live, _f())
     for i in young + old:
         await repo.create(a, i, _f())
         await repo.soft_delete(a, i)
@@ -302,19 +308,104 @@ async def test_purge_respects_the_90_day_boundary_and_the_limit(
                   (young,))  # fmt: skip
         c.execute("UPDATE drawings SET deleted_at = now() - interval '91 days' WHERE id = ANY(%s)",
                   (old,))  # fmt: skip
-        c.execute("UPDATE drawings SET deleted_at = now() - interval '200 days' "
-                  "WHERE deleted_at IS NOT NULL AND id <> ALL(%s)", (young + old,))  # fmt: skip
-        stale_elsewhere = c.execute(
-            "SELECT count(*) FROM drawings WHERE deleted_at < now() - interval '90 days'"
-        ).fetchone()
-    assert stale_elsewhere is not None
-    total = int(str(stale_elsewhere[0]))
-    assert await repo.purge_deleted(90, 1) == 1
-    assert await repo.purge_deleted(90, total + 10) == total - 1
-    assert await repo.purge_deleted(90, 10) == 0
+
+    def remaining() -> set[str]:
+        with _sync(pg_dsn) as c:
+            rows = c.execute(
+                "SELECT id::text FROM drawings WHERE id = ANY(%s)", (young + old + [live],)
+            ).fetchall()
+        return {str(r[0]) for r in rows}
+
+    assert await repo.purge_deleted(90, 1) == 1  # the limit caps one call
+    assert len(remaining() & set(old)) == 2
+    # Other tests only leave freshly deleted rows, so only this test's `old` rows qualify.
+    assert await repo.purge_deleted(90, 100) == 2
+    assert remaining() == set(young) | {live}  # 89-day-old and live rows survive
+    assert await repo.purge_deleted(90, 100) == 0
+    assert (await repo.get(a, live)) is not None
+
+
+async def test_batch_duplicate_create_id_hits_the_savepoint_and_rolls_back_everything(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    a, x = _user(pg_dsn), str(uuid.uuid4())
+    with pytest.raises(BatchOpFailed) as err:
+        await repo.apply_batch(a, [CreateOp(x, _f()), CreateOp(x, _f())])
+    assert (err.value.index, err.value.rule) == (1, "id_unavailable")
+    assert await repo.get(a, x) is None
+
+
+async def test_idor_batch_update_by_other_owner_with_real_token_changes_nothing(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    a, b, rid = _user(pg_dsn), _user(pg_dsn), str(uuid.uuid4())
+    mine = await repo.create(a, rid, _f(label="mine"))
+    with pytest.raises(BatchOpFailed) as err:
+        await repo.apply_batch(b, [UpdateOp(rid, mine.updated_at, _f(label="hijack"))])
+    assert (err.value.index, err.value.rule) == (0, "target_unavailable")
+    after = await repo.get(a, rid)
+    assert after is not None and (after.label, after.updated_at) == ("mine", mine.updated_at)
+
+
+async def test_idor_single_update_by_other_owner_is_not_found_for_any_token(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    a, b, rid = _user(pg_dsn), _user(pg_dsn), str(uuid.uuid4())
+    mine = await repo.create(a, rid, _f(label="mine"))
+    stale = mine.updated_at - timedelta(seconds=5)
+    for token in (mine.updated_at, stale):
+        with pytest.raises(DrawingNotFoundError):  # never VersionConflict: no oracle
+            await repo.update(b, rid, _f(label="hijack"), if_match=token)
+    after = await repo.get(a, rid)
+    assert after is not None and (after.label, after.updated_at) == ("mine", mine.updated_at)
+
+
+async def test_idor_other_owners_deleted_row_is_target_unavailable_in_a_batch(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    a, b, rid = _user(pg_dsn), _user(pg_dsn), str(uuid.uuid4())
+    mine = await repo.create(a, rid, _f(label="mine"))
+    await repo.soft_delete(a, rid)
     with _sync(pg_dsn) as c:
-        left = c.execute("SELECT id::text FROM drawings WHERE id = ANY(%s)", (young,)).fetchall()
-    assert sorted(str(r[0]) for r in left) == sorted(young)
+        before = c.execute(
+            "SELECT label, updated_at FROM drawings WHERE id = %s", (rid,)
+        ).fetchone()
+    for op in (DeleteOp(rid, mine.updated_at), UpdateOp(rid, mine.updated_at, _f(label="x"))):
+        with pytest.raises(BatchOpFailed) as err:
+            await repo.apply_batch(b, [op])
+        assert (err.value.index, err.value.rule) == (0, "target_unavailable")
+    with _sync(pg_dsn) as c:
+        assert (
+            c.execute("SELECT label, updated_at FROM drawings WHERE id = %s", (rid,)).fetchone()
+            == before
+        )
+
+
+async def test_exists_for_other_owner_is_false_for_a_deleted_row(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    """Pinned choice: only LIVE foreign rows count, so the cross-owner audit record is not
+    emitted for a deleted id (it is indistinguishable from a missing one)."""
+    a, b, rid = _user(pg_dsn), _user(pg_dsn), str(uuid.uuid4())
+    await repo.create(a, rid, _f())
+    assert await repo.exists_for_other_owner(b, rid) is True
+    await repo.soft_delete(a, rid)
+    assert await repo.exists_for_other_owner(b, rid) is False
+
+
+async def test_batch_stale_update_token_and_never_existed_target(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    a, rid = _user(pg_dsn), str(uuid.uuid4())
+    first = await repo.create(a, rid, _f(label="v1"))
+    cur = await repo.update(a, rid, _f(label="v2"), if_match=None)
+    with pytest.raises(BatchOpFailed) as stale:
+        await repo.apply_batch(a, [UpdateOp(rid, first.updated_at, _f(label="v3"))])
+    assert (stale.value.index, stale.value.rule) == (0, "version_conflict")
+    with pytest.raises(BatchOpFailed) as ghost:
+        await repo.apply_batch(a, [UpdateOp(str(uuid.uuid4()), _T, _f())])
+    assert (ghost.value.index, ghost.value.rule) == (0, "target_unavailable")
+    assert await repo.get(a, rid) == cur
 
 
 _SEED_USERS = 20
@@ -322,9 +413,24 @@ _SEED_ROWS = 50_000
 _RUNS = 200
 
 
+async def _explain(
+    repo: SqlAlchemyRelationalRepository, analyze: bool, params: dict[str, Any]
+) -> Any:
+    option = "ANALYZE, FORMAT JSON" if analyze else "FORMAT JSON"
+    stmt = sa.text(f"EXPLAIN ({option}) " + _LIST.text)
+    async with repo.unit_of_work() as uow:
+        return (await uow.session.execute(stmt, params)).scalar_one()
+
+
 @pytest.mark.perf
 async def test_list_uses_ix_dr_user_symbol_and_p99_under_5ms(pg_dsn: str) -> None:
-    """Ticket perf scenario: 50k rows; plan uses the index; server-side p99 < 5 ms (query #28)."""
+    """Ticket perf scenario on the repository's shipped `_LIST` statement (query #28).
+
+    50k rows over 20 users; the real parameter shape (layout NULL, after_id set). The plan
+    must use `ix_dr_user_symbol`. The latency budget is the p99 of the server-side
+    `Execution Time` of `EXPLAIN (ANALYZE, FORMAT JSON)` over 200 runs, in ms; it excludes
+    planning time and client/Docker round trips, which the AC does not measure.
+    """
     users = [_user(pg_dsn) for _ in range(_SEED_USERS)]
     syms = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"]
     geom = json.dumps({"points": [{"t": "2026-10-01T00:00:00Z", "p": "1"}] * 2})
@@ -337,24 +443,23 @@ async def test_list_uses_ix_dr_user_symbol_and_p99_under_5ms(pg_dsn: str) -> Non
                 (u, syms, geom, _SEED_ROWS // _SEED_USERS),
             )
         c.execute("ANALYZE drawings")
-        query = (
-            "SELECT id::text, owner_user_id::text, symbol, layout_id::text, tool, geometry, style,"
-            " label, locked, visible, z_index, created_at, updated_at FROM drawings"
-            " WHERE owner_user_id = %s::uuid AND symbol = 'BTCUSDT' AND deleted_at IS NULL"
-            " AND id > %s::uuid ORDER BY id LIMIT 101"
-        )
-        args = (users[0], "00000000-0000-0000-0000-000000000000")
-        plan = c.execute("EXPLAIN (FORMAT JSON) " + query, args).fetchone()
-        assert plan is not None and "ix_dr_user_symbol" in json.dumps(plan[0])
+    params: dict[str, Any] = {
+        "owner": users[0],
+        "symbol": "BTCUSDT",
+        "layout": None,
+        "after_id": "00000000-0000-0000-0000-000000000000",
+        "limit": 101,
+    }
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-perf")
+    try:
+        assert "ix_dr_user_symbol" in json.dumps(await _explain(rel, False, params))
         for _ in range(20):  # warm-up
-            c.execute(query, args).fetchall()
-        # Budget #28 is server-side: use the executor's own "Execution Time", not a client
-        # round trip (which adds Docker/network latency the AC does not measure).
-        server_ms: list[float] = []
-        for _ in range(_RUNS):
-            analyzed = c.execute("EXPLAIN (ANALYZE, FORMAT JSON) " + query, args).fetchone()
-            assert analyzed is not None
-            doc: Any = analyzed[0]
-            server_ms.append(float(doc[0]["Execution Time"]))
+            await _explain(rel, True, params)
+        server_ms = [
+            float((await _explain(rel, True, params))[0]["Execution Time"]) for _ in range(_RUNS)
+        ]
+    finally:
+        await rel.dispose()
     p99 = statistics.quantiles(server_ms, n=100)[98]
+    print(f"drawings list server-side p99 = {p99:.3f} ms over {len(server_ms)} runs")
     assert p99 < 5.0, f"server-side p99 {p99:.3f} ms"
