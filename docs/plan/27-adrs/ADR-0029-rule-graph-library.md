@@ -1,7 +1,8 @@
 # ADR-0029: Rule node-graph library and layout placement
 
-- Status: Proposed (owner approval pending)
+- Status: Accepted (2026-10-14)
 - Date: 2026-10-04
+- Note: headless measurement accepted by owner 2026-10-14 (#1778); Electron/reference-hardware run deferred to E37-Q04
 - Ticket: E37-K01; evidence: `docs/plan/spikes/E37-K01.md`
 
 ## Context
