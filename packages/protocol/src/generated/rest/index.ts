@@ -788,7 +788,10 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Revoke the current session (or all sessions) */
+    /**
+     * Revoke the current session (or all sessions)
+     * @description Allowed while the session is idle-locked (SCR-005 "Sign out instead").
+     */
     post: operations["authLogout"];
     delete?: never;
     options?: never;
@@ -933,7 +936,9 @@ export interface paths {
      *     the JSON body (non-browser clients — kept so a future mobile client works unchanged,
      *     arch P1). Tokens are single-use: presenting a token that has already been rotated
      *     revokes the **entire session family** and returns `refresh_token_invalid` (reuse
-     *     detection), logging a `critical` audit entry.
+     *     detection), logging a `critical` audit entry. A token whose session is idle-locked gets
+     *     `401 session_idle_locked`: nothing is rotated or revoked, and the same token refreshes
+     *     again after `POST /auth/unlock`.
      */
     post: operations["authRefresh"];
     delete?: never;
@@ -951,11 +956,41 @@ export interface paths {
     };
     /**
      * Introspect the current session
-     * @description Returns the caller identity, effective permissions, granted account scope, kill-switch state and server time — the bootstrap call the web app makes on load.
+     * @description Returns the caller identity, effective permissions, granted account scope, kill-switch
+     *     state, server time and the session's deadlines and lock state (`session`). The web app
+     *     makes this bootstrap call on load. It is read-only introspection and never counts as
+     *     activity: polling it never moves `session.idle_deadline`. While the session is
+     *     idle-locked it still answers `200` with `session.locked: true`, so the lock screen can
+     *     read the session it unlocks. Time the CMP-098 warning from `session.idle_deadline` and
+     *     `server_time`, never from a client clock.
      */
     get: operations["authGetSession"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/session/extend": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Record activity and move the idle deadline (CMP-098 Extend)
+     * @description The explicit activity call behind the CMP-098 "Extend" control. It re-stamps
+     *     `last_seen_at` (`REQUEST` on B16) and returns the new `session.idle_deadline` with
+     *     `server_time`. It never moves `expires_at` (the 12 h absolute lifetime). Once the session
+     *     is idle-locked it is refused with `401 session_idle_locked`, so Extend can never lift a
+     *     lock: only `POST /auth/unlock` does.
+     */
+    post: operations["authExtendSession"];
     delete?: never;
     options?: never;
     head?: never;
@@ -997,6 +1032,48 @@ export interface paths {
      *     Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement`, `killswitch` and `backups` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
      */
     post: operations["authStepUp"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/auth/unlock": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Lift the idle lock with the password only
+     * @description Lifts the idle lock (SCR-005) with the **password only**. No TOTP is asked while the
+     *     session is inside its 12 h absolute lifetime (US-ONB-004, E09-S03). On success
+     *     `last_seen_at` is re-stamped (`REQUEST` on B16), `session.idle_deadline` moves forward,
+     *     `session.locked` is `false`, and the body is the same `SessionInfo` as
+     *     `GET /auth/session`. A session that is not locked gets the same password check and `200`.
+     *
+     *     The access token identifies the session. While the session is idle-locked, this
+     *     operation also accepts the token after its 12-minute lifetime, because a lock routinely
+     *     outlasts it and `POST /auth/refresh` is refused while locked. Such a client calls
+     *     `POST /auth/refresh` after unlocking to get a fresh access token. Every other operation
+     *     keeps refusing an expired access token.
+     *
+     *     * A wrong password is `401 unlock_invalid`, with the same generic `detail` every time.
+     *     * The fifth consecutive wrong password (`MAX_UNLOCK_ATTEMPTS`) revokes the session:
+     *       `401 session_revoked` with `revoked_reason: unlock_attempts_exceeded`, and its sockets
+     *       get the revocation frame (#2272). Every later unlock is `401 session_revoked`.
+     *     * If the absolute lifetime elapsed while locked, the answer is `401 session_revoked`
+     *       with `revoked_reason: expired`; the client falls back to a full sign-in (SCR-001).
+     *
+     *     Throttled like login, per source IP: a throttled attempt is `429` and checks no
+     *     password. Audited write-ahead: `auth.session_unlocked` on success and
+     *     `auth.unlock_failed` on every wrong password; the revoking failure also writes
+     *     `auth.session_revoked`. The password is never logged, audited or echoed.
+     */
+    post: operations["authUnlock"];
     delete?: never;
     options?: never;
     head?: never;
@@ -6582,10 +6659,20 @@ export interface components {
         ret_code?: number;
         ret_msg?: string;
       };
+      /**
+       * Format: date-time
+       * @description `session_idle_locked` only: when the session idle-locked (its `idle_deadline`).
+       */
+      idle_locked_at?: string;
       /** @description Correlation id, `urn:cv:req:{uuid}`; matches the `X-Request-Id` header and the audit entry. */
       instance?: string;
       required_permissions?: string[];
       retry_after_seconds?: number;
+      /**
+       * @description `session_revoked` only. `expired`: the 12 h absolute lifetime elapsed. `unlock_attempts_exceeded`: five consecutive wrong unlock passwords. `revoked`: any other revocation; the specific cause is not disclosed.
+       * @enum {string}
+       */
+      revoked_reason?: "expired" | "unlock_attempts_exceeded" | "revoked";
       status: number;
       /** @description `step_up_required` only: the exact, case-sensitive text a typed confirmation must equal when the action asks for one (for example the account name), else null. Like `action_summary`, it is an identifier or a server-resolved label of the validated request, never free text or credential material. It is a label only when no other object of its kind that the caller can see has that label, compared case-insensitively, and the label is printable ASCII; otherwise it is the object's identifier. */
       target?: string | null;
@@ -7433,6 +7520,11 @@ export interface components {
         withdrawal_permission_present?: boolean;
       }[];
     };
+    SessionExtendResponse: {
+      /** Format: date-time */
+      server_time: string;
+      session: components["schemas"]["SessionState"];
+    };
     SessionInfo: {
       account_scope: string[];
       allowed_environments?: components["schemas"]["Environment"][];
@@ -7447,12 +7539,40 @@ export interface components {
       permissions: string[];
       /** Format: date-time */
       server_time: string;
+      session: components["schemas"]["SessionState"];
       /**
        * Format: date-time
        * @description Latest live step-up grace-window expiry on this session (E09-S04); null if none.
        */
       step_up_expires_at?: string | null;
       user: components["schemas"]["User"];
+    };
+    /** @description Server truth for the caller's session lifetime and idle lock (E09-D06, #2300). Clients time the CMP-098 warning and the SCR-005 lock from these values and `server_time`, never from a client clock. */
+    SessionState: {
+      /**
+       * Format: date-time
+       * @description End of the 12 h absolute lifetime. Refresh, extend and unlock never move it.
+       */
+      expires_at: string;
+      /**
+       * Format: uuid
+       * @description Server-side session id (`sid`); `POST /auth/refresh` rotates it.
+       */
+      id: string;
+      /**
+       * Format: date-time
+       * @description When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Once `locked`, the moment it locked.
+       */
+      idle_deadline: string;
+      /** @description Idle timeout of this session in seconds (per user, 5 to 60 minutes). */
+      idle_timeout_s: number;
+      /**
+       * Format: date-time
+       * @description When this session id was issued (sign-in, or the refresh that rotated it).
+       */
+      issued_at: string;
+      /** @description True once `idle_deadline` has passed; only `POST /auth/unlock` clears it. */
+      locked: boolean;
     };
     SetFeatureFlagRequest: {
       /**
@@ -7917,6 +8037,11 @@ export interface components {
       price: components["schemas"]["Decimal"];
       trigger_by?: components["schemas"]["TriggerBy"];
     };
+    /** @description Password only; unlock never asks for TOTP (US-ONB-004). */
+    UnlockRequest: {
+      /** Format: password */
+      password: string;
+    };
     UpdateExchangeAccountRequest: {
       /** Format: uuid */
       active_profile_id?: string | null;
@@ -8208,7 +8333,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Not authenticated. */
+    /** @description Not authenticated. `code: session_idle_locked` (with `idle_locked_at`) means the session is valid but idle-locked: unlock it with `POST /auth/unlock` instead of signing in again. */
     Unauthorized: {
       headers: {
         [name: string]: unknown;
@@ -9890,6 +10015,37 @@ export interface operations {
       422: components["responses"]["UnprocessableEntity"];
     };
   };
+  authExtendSession: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Idle deadline moved. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionExtendResponse"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["CsrfTokenInvalid"];
+    };
+  };
   authListSessions: {
     parameters: {
       query?: {
@@ -9988,6 +10144,52 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
+    };
+  };
+  authUnlock: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": components["schemas"]["UnlockRequest"];
+      };
+    };
+    responses: {
+      /** @description Unlocked; the session is active again. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SessionInfo"];
+        };
+      };
+      /** @description `unlock_invalid` (wrong password); `session_revoked` (revoked, by the fifth wrong password or otherwise, or past its absolute lifetime: sign in again); or `unauthenticated` (unknown access token). */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      403: components["responses"]["CsrfTokenInvalid"];
+      422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listChartTemplates: {

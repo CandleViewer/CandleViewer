@@ -87,6 +87,22 @@ info:
       per-source budget (beyond it: the same `403` with an optional `Retry-After` and no audit
       record). The problem `detail` never echoes token or cookie values.
 
+    ### Idle lock (E09-D06, #2300)
+    A session with no activity passes `session.idle_deadline` (`last_seen_at + idle_timeout_s`)
+    and becomes **idle-locked**. It is locked, not revoked: WS frames keep flowing (ADR-0020
+    section 4). Only `POST /auth/unlock`, `POST /auth/logout` and `GET /auth/session` are
+    allowed while locked. Every other authenticated operation answers a request from a locked
+    session with `401 session_idle_locked` (problem field `idle_locked_at`) instead of
+    `unauthenticated`, and changes nothing; an expired access token is still `unauthenticated`.
+    `POST /auth/refresh` answers a locked session the same way instead of
+    `refresh_token_invalid`, and rotates nothing. The client then shows the unlock screen
+    (SCR-005), not sign-in. Activity is explicit: `GET /auth/session` is read-only and never
+    moves the idle deadline, and neither does client-side input or WS traffic.
+    `POST /auth/session/extend` moves it but is refused once locked; only `POST /auth/unlock`
+    lifts a lock. `session_revoked` is answered only by `POST /auth/unlock`; every other
+    operation keeps the uniform `unauthenticated` for a revoked or expired session, so no other
+    route works as a session oracle.
+
     ### RBAC
     Roles `owner` | `manager` | `viewer` map to permission codes (`orders:write`,
     `keys:manage`, …). Each operation lists them in `x-rbac.permissions`. In addition,
@@ -229,6 +245,18 @@ x-error-codes:
   - code: refresh_token_invalid
     status: 401
     title: Refresh token unknown, rotated away, or revoked (possible reuse attack)
+    retryable: false
+  - code: session_idle_locked
+    status: 401
+    title: Session is idle-locked; unlock it with the password (POST /auth/unlock)
+    retryable: false
+  - code: unlock_invalid
+    status: 401
+    title: Unlock password rejected
+    retryable: false
+  - code: session_revoked
+    status: 401
+    title: Session revoked or past its absolute lifetime; sign in again
     retryable: false
   - code: step_up_required
     status: 403
@@ -862,7 +890,9 @@ paths:
         the JSON body (non-browser clients — kept so a future mobile client works unchanged,
         arch P1). Tokens are single-use: presenting a token that has already been rotated
         revokes the **entire session family** and returns `refresh_token_invalid` (reuse
-        detection), logging a `critical` audit entry.
+        detection), logging a `critical` audit entry. A token whose session is idle-locked gets
+        `401 session_idle_locked`: nothing is rotated or revoked, and the same token refreshes
+        again after `POST /auth/unlock`.
       security:
         - refreshCookie: []
         - {}
@@ -896,6 +926,7 @@ paths:
       tags: [auth]
       operationId: authLogout
       summary: Revoke the current session (or all sessions)
+      description: Allowed while the session is idle-locked (SCR-005 "Sign out instead").
       x-rbac: { permissions: [], scope: self }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -929,7 +960,14 @@ paths:
       tags: [auth]
       operationId: authGetSession
       summary: Introspect the current session
-      description: Returns the caller identity, effective permissions, granted account scope, kill-switch state and server time — the bootstrap call the web app makes on load.
+      description: |
+        Returns the caller identity, effective permissions, granted account scope, kill-switch
+        state, server time and the session's deadlines and lock state (`session`). The web app
+        makes this bootstrap call on load. It is read-only introspection and never counts as
+        activity: polling it never moves `session.idle_deadline`. While the session is
+        idle-locked it still answers `200` with `session.locked: true`, so the lock screen can
+        read the session it unlocks. Time the CMP-098 warning from `session.idle_deadline` and
+        `server_time`, never from a client clock.
       x-rbac: { permissions: [], scope: self }
       responses:
         "200":
@@ -973,8 +1011,119 @@ paths:
                     server_time: "2026-09-14T10:31:02.114Z"
                     clock_offset_ms: 4
                     api_version: "1.0.0"
+                    session:
+                      {
+                        id: "5b1f0c3e-7d2a-4c11-9e8f-0a1b2c3d4e5f",
+                        issued_at: "2026-09-14T10:24:00Z",
+                        expires_at: "2026-09-14T20:05:00Z",
+                        idle_deadline: "2026-09-14T10:46:02Z",
+                        idle_timeout_s: 900,
+                        locked: false,
+                      }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+
+  /auth/session/extend:
+    post:
+      tags: [auth]
+      operationId: authExtendSession
+      summary: Record activity and move the idle deadline (CMP-098 Extend)
+      description: |
+        The explicit activity call behind the CMP-098 "Extend" control. It re-stamps
+        `last_seen_at` (`REQUEST` on B16) and returns the new `session.idle_deadline` with
+        `server_time`. It never moves `expires_at` (the 12 h absolute lifetime). Once the session
+        is idle-locked it is refused with `401 session_idle_locked`, so Extend can never lift a
+        lock: only `POST /auth/unlock` does.
+      x-rbac: { permissions: [], scope: self }
+      x-idempotency: ignored
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      responses:
+        "200":
+          description: Idle deadline moved.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionExtendResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+
+  /auth/unlock:
+    post:
+      tags: [auth]
+      operationId: authUnlock
+      summary: Lift the idle lock with the password only
+      description: |
+        Lifts the idle lock (SCR-005) with the **password only**. No TOTP is asked while the
+        session is inside its 12 h absolute lifetime (US-ONB-004, E09-S03). On success
+        `last_seen_at` is re-stamped (`REQUEST` on B16), `session.idle_deadline` moves forward,
+        `session.locked` is `false`, and the body is the same `SessionInfo` as
+        `GET /auth/session`. A session that is not locked gets the same password check and `200`.
+
+        The access token identifies the session. While the session is idle-locked, this
+        operation also accepts the token after its 12-minute lifetime, because a lock routinely
+        outlasts it and `POST /auth/refresh` is refused while locked. Such a client calls
+        `POST /auth/refresh` after unlocking to get a fresh access token. Every other operation
+        keeps refusing an expired access token.
+
+        * A wrong password is `401 unlock_invalid`, with the same generic `detail` every time.
+        * The fifth consecutive wrong password (`MAX_UNLOCK_ATTEMPTS`) revokes the session:
+          `401 session_revoked` with `revoked_reason: unlock_attempts_exceeded`, and its sockets
+          get the revocation frame (#2272). Every later unlock is `401 session_revoked`.
+        * If the absolute lifetime elapsed while locked, the answer is `401 session_revoked`
+          with `revoked_reason: expired`; the client falls back to a full sign-in (SCR-001).
+
+        Throttled like login, per source IP: a throttled attempt is `429` and checks no
+        password. Audited write-ahead: `auth.session_unlocked` on success and
+        `auth.unlock_failed` on every wrong password; the revoking failure also writes
+        `auth.session_revoked`. The password is never logged, audited or echoed.
+      x-rbac: { permissions: [], scope: self }
+      x-idempotency: ignored
+      x-rate-limit: 10 requests / minute / source IP
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UnlockRequest" }
+      responses:
+        "200":
+          description: Unlocked; the session is active again.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionInfo" }
+        "401":
+          description: >
+            `unlock_invalid` (wrong password); `session_revoked` (revoked, by the fifth wrong
+            password or otherwise, or past its absolute lifetime: sign in again); or
+            `unauthenticated` (unknown access token).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                wrongPassword:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/unlock_invalid",
+                      title: "Unlock password rejected",
+                      status: 401,
+                      detail: "The password is incorrect.",
+                      instance: "urn:cv:req:0193f2bb-1113",
+                      code: unlock_invalid,
+                    }
+                expired:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/session_revoked",
+                      title: "Session revoked or past its absolute lifetime; sign in again",
+                      status: 401,
+                      detail: "Your session expired. Sign in again.",
+                      instance: "urn:cv:req:0193f2bb-1114",
+                      code: session_revoked,
+                      revoked_reason: expired,
+                    }
+        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/sessions:
     get:
@@ -9981,7 +10130,7 @@ components:
                       message: "0.0005 is below min_order_qty 0.001",
                     }
     Unauthorized:
-      description: Not authenticated.
+      description: "Not authenticated. `code: session_idle_locked` (with `idle_locked_at`) means the session is valid but idle-locked: unlock it with `POST /auth/unlock` instead of signing in again."
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -9995,6 +10144,18 @@ components:
                   detail: "Access token expired at 2026-09-14T10:21:00Z.",
                   instance: "urn:cv:req:0193f2bb-1111",
                   code: unauthenticated,
+                }
+            idleLocked:
+              summary: Any authenticated operation on an idle-locked session (#2300)
+              value:
+                {
+                  type: "https://candleviewer.local/errors/session_idle_locked",
+                  title: "Session is idle-locked; unlock it with the password (POST /auth/unlock)",
+                  status: 401,
+                  detail: "Unlock with your password to continue.",
+                  instance: "urn:cv:req:0193f2bb-1112",
+                  code: session_idle_locked,
+                  idle_locked_at: "2026-09-14T10:46:02Z",
                 }
     Forbidden:
       description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused."
@@ -10423,6 +10584,17 @@ components:
               message: { type: string }
         required_permissions: { type: array, items: { type: string } }
         retry_after_seconds: { type: integer }
+        idle_locked_at:
+          type: string
+          format: date-time
+          description: "`session_idle_locked` only: when the session idle-locked (its `idle_deadline`)."
+        revoked_reason:
+          type: string
+          enum: [expired, unlock_attempts_exceeded, revoked]
+          description: >
+            `session_revoked` only. `expired`: the 12 h absolute lifetime elapsed.
+            `unlock_attempts_exceeded`: five consecutive wrong unlock passwords. `revoked`: any
+            other revocation; the specific cause is not disclosed.
         exchange:
           type: object
           description: Present when the failure originated at Bybit.
@@ -10869,9 +11041,16 @@ components:
       properties:
         current_password: { type: string, format: password }
         new_password: { type: string, format: password, minLength: 12, maxLength: 512 }
+    UnlockRequest:
+      type: object
+      additionalProperties: false
+      required: [password]
+      description: Password only; unlock never asks for TOTP (US-ONB-004).
+      properties:
+        password: { type: string, format: password, minLength: 1, maxLength: 512, writeOnly: true }
     SessionInfo:
       type: object
-      required: [user, permissions, account_scope, server_time]
+      required: [user, permissions, account_scope, server_time, session]
       properties:
         user: { $ref: "#/components/schemas/User" }
         permissions: { type: array, items: { type: string } }
@@ -10891,6 +11070,47 @@ components:
         api_version: { type: string }
         feature_flags:
           { type: object, additionalProperties: true, description: "Flags resolved for this user." }
+        session: { $ref: "#/components/schemas/SessionState" }
+    SessionState:
+      type: object
+      description: >
+        Server truth for the caller's session lifetime and idle lock (E09-D06, #2300). Clients
+        time the CMP-098 warning and the SCR-005 lock from these values and `server_time`,
+        never from a client clock.
+      required: [id, issued_at, expires_at, idle_deadline, idle_timeout_s, locked]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Server-side session id (`sid`); `POST /auth/refresh` rotates it.
+        issued_at:
+          type: string
+          format: date-time
+          description: When this session id was issued (sign-in, or the refresh that rotated it).
+        expires_at:
+          type: string
+          format: date-time
+          description: End of the 12 h absolute lifetime. Refresh, extend and unlock never move it.
+        idle_deadline:
+          type: string
+          format: date-time
+          description: >
+            When the idle lock engages unless activity is recorded first
+            (`last_seen_at + idle_timeout_s`). Once `locked`, the moment it locked.
+        idle_timeout_s:
+          type: integer
+          minimum: 300
+          maximum: 3600
+          description: Idle timeout of this session in seconds (per user, 5 to 60 minutes).
+        locked:
+          type: boolean
+          description: True once `idle_deadline` has passed; only `POST /auth/unlock` clears it.
+    SessionExtendResponse:
+      type: object
+      required: [session, server_time]
+      properties:
+        session: { $ref: "#/components/schemas/SessionState" }
+        server_time: { type: string, format: date-time }
     UserSession:
       type: object
       properties:
