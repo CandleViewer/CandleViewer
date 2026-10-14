@@ -19,7 +19,7 @@
     "priority": "P1 High",
     "perspective": "Architecture",
     "risk": "R5 Scope",
-    "estimate": 66,
+    "estimate": 69,
     "parent": null,
     "blocked_by": [
       "E35",
@@ -276,7 +276,7 @@
     "priority": "P0 Critical",
     "perspective": "Development",
     "risk": "R7 Data accuracy",
-    "estimate": 5,
+    "estimate": 8,
     "parent": "E37",
     "blocked_by": [
       "E37-S01"
