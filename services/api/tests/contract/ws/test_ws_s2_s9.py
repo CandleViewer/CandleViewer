@@ -271,7 +271,7 @@ def test_s5_events_for_another_account_never_reach_this_subscription() -> None:
 # -- S6 ----------------------------------------------------------------------------------------
 
 
-#: §16.2 / §8.4: the SPEC's outbound budget (not the gateway's own constant).
+#: §16.2 / §8.4: the SPEC's outbound budget (not the gateway's own constant, 1 024: #2410).
 SPEC_QUEUE_FRAMES = 2_000
 
 
@@ -294,6 +294,40 @@ def test_s6_orders_overflow_is_bounded_by_the_spec_budget_then_slow_consumer_442
         assert deltas <= SPEC_QUEUE_FRAMES  # no growth path past the budget
         assert (f["p"]["reason"], f["p"]["code"]) == ("slow_consumer", 4429)
         assert c.closed() == 4429
+
+
+@pytest.mark.xfail(strict=True, reason="#2409: gateway lacks the §8 overflow ladder")
+def test_s6_xfail_coalescable_overflow_gets_backpressure_snap_and_no_close() -> None:
+    """§8.4 steps 1-2: a coalescable topic over budget is dropped and re-snapshotted with
+    `reason: "backpressure"`; the socket is NOT closed (only orders/executions close it)."""
+    w = World()
+    with connect(w) as c:
+        c.sub({"ch": "trades.BTCUSDT"})
+        c.drain(1)
+        n = SPEC_QUEUE_FRAMES + 500
+        body = delta_body("trades")
+        w.call(lambda: [w.hub.publish("trades.BTCUSDT", body) for _ in range(n)])
+        seen = []
+        while (f := c.recv(validate=False))["t"] != "bye" and len(seen) < n + 5:
+            seen.append(f)
+            if f["t"] == "snap" and f["meta"]["reason"] == "backpressure":
+                return
+        raise AssertionError("no `snap reason:backpressure`; got a close or no snapshot")
+
+
+@pytest.mark.xfail(
+    strict=True, reason="#2410: gateway queue bound (1 024) is below the spec's 2 000"
+)
+def test_s6_xfail_coalescable_topic_is_not_cut_below_the_spec_budget() -> None:
+    """§16.2: up to 2 000 queued frames are legitimate; a burst of exactly that must all arrive."""
+    w = World()
+    with connect(w) as c:
+        c.sub({"ch": "trades.BTCUSDT"})
+        c.drain(1)
+        body = delta_body("trades")
+        w.call(lambda: [w.hub.publish("trades.BTCUSDT", body) for _ in range(SPEC_QUEUE_FRAMES)])
+        got = sum(c.recv(validate=False)["t"] == "d" for _ in range(SPEC_QUEUE_FRAMES))
+        assert got == SPEC_QUEUE_FRAMES
 
 
 # -- S7 ----------------------------------------------------------------------------------------
