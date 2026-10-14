@@ -209,6 +209,12 @@ Standing assumptions for all areas: no public listener exists; all human actors 
 | K9  | Information disclosure | Plaintext key lingering in process memory / core dump / swap                                              | M   | H   | **High**     | SR-008 bounded plaintext lifetime + zeroisation, SR-009 core dumps disabled, swap on an encrypted volume       | Medium (accepted, AC-16) |
 | K10 | Tampering              | Malicious `.env` or config injection introduces an attacker-controlled key at startup                     | L   | H   | Medium       | SR-004 keys only from the encrypted store, never env; config schema rejects key-like fields                    | Low                      |
 
+> K1–K10 above are re-derived, against the built E27-T02 credential broker, the E27-K01 KEK custody finding and
+> the `exchange-accounts` contract, in the dedicated model `docs/security/threat-models/E27-accounts.md`
+> (E27-X01), summarised as Area 13 (§5.14). It adds what this table does not show: fund-moving permission groups
+> that contain neither "withdraw" nor "transfer", one KEK lineage shared by every environment, and the in-process
+> limit of the M2 boundary.
+
 ### 5.2 Area 2 — Order path (A-05, A-06)
 
 | T   | STRIDE                 | Threat                                                                                      | L   | I   | Risk         | Mitigations                                                                                                                            | Residual |
@@ -476,17 +482,47 @@ SR-191 (§6.18); abuse cases AC-01..AC-28 go to E17-X02 (see RSK-063, RSK-064). 
 | WG7 | Repudiation            | Private-topic subscription or revocation leaves no record                                                                    | M   | M   | Medium   | `ws.subscribe.denied`, `ws.subscription.revoked`; SR-186, SR-187                                    | Low      |
 | WG8 | Denial of service      | Transport limits enforced by the ASGI server (message size, compression, fragmentation, handshake) not explicitly configured | M   | M   | Medium   | SR-191 explicit server WS limits (#2176)                                                            | Medium   |
 
+### 5.14 Area 13 — Accounts, sub-accounts and the API-key vault (E27, A-01, A-02, TB-5, TB-7)
+
+**E27 accounts and key vault** (`docs/security/threat-models/E27-accounts.md`, ticket E27-X01) re-derives Area 1
+(K1-K10) against the built M2 credential broker (E27-T02), the E27-K01 KEK custody finding and the
+`exchange-accounts` contract. 64 rows (KV-S01..KV-E10): one inherent Critical (a key that can move funds, KV-E05)
+and 19 High. Three concerns get dedicated analysis: the withdrawal and fund-movement gate (C-2.8), where the
+substring rule passes fund-moving permission groups such as `FiatP2P` and the contract text is weaker than the
+rule; the M2 boundary, a capability discipline inside one process rather than a trust boundary (#2279); and how
+much exchange budget verification may spend without starving stops and cancels. Controls SR-E27-01..SR-E27-16
+(model §9) are requested on the open E27 tickets and existing follow-ups; abuse cases AC-01..AC-27 go to E27-X02
+(see RSK-065, RSK-066, RSK-067). Status Draft.
+
+| T    | STRIDE                 | Threat                                                                                          | L   | I   | Risk         | Mitigations                                                                                                                    | Residual                      |
+| ---- | ---------------------- | ----------------------------------------------------------------------------------------------- | --- | --- | ------------ | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
+| KV1  | Information disclosure | A database dump, stolen volume or backup yields usable keys                                     | M   | H   | **High**     | SR-001, SR-002, SR-090..SR-092; KEK outside the database, WSL and every volume (ADR-0009 Amendment 1); restore drill (E27-X04) | Low (after #2338)             |
+| KV2  | Elevation of privilege | A non-live process with a `file` KEK on the same database holds the KEK that wraps live DEKs    | M   | H   | **High**     | One KEK lineage, or one database, per environment (#2338); `file` refused in live                                              | Low (after #2338)             |
+| KV3  | Elevation of privilege | A key that can withdraw, transfer or otherwise move funds is stored or used                     | M   | H   | **Critical** | SR-030, SR-030a, SR-031, SR-032; three agreeing layers (M2, M13, 0019 CHECK); allow-list (#2270); contract fix (SR-E27-04)     | Low (after #2270)             |
+| KV4  | Information disclosure | Key material in a log, trace, error body or support bundle                                      | M   | H   | **High**     | SR-005..SR-007, SR-121, SR-123, SR-177; 422 without input echo; leak-assertion suite (E27-X02)                                 | Low                           |
+| KV5  | Information disclosure | Plaintext leaves M2, through candidate-key verification or environment-held credentials         | M   | H   | **High**     | C-2.7 as built (M2 computes the MAC); #2352; SR-E27-01; SR-004 (#2386)                                                         | Low                           |
+| KV6  | Information disclosure | In-process code or a compromised dependency reads the KEK from memory                           | L   | H   | Medium       | SR-009, SR-130..SR-138; capability guards; process isolation of signing (#2279)                                                | Medium (accepted until #2279) |
+| KV7  | Elevation of privilege | A Manager reaches an account outside their grant over REST or WS                                | M   | H   | **High**     | SR-050, SR-051, SR-074, SR-151; E27-X03 matrix with enumeration resistance                                                     | Low                           |
+| KV8  | Denial of service      | Verification or self-check traffic starves the stop and cancel reserve                          | M   | H   | **High**     | SR-044a..SR-044c, SR-071; `poll` bucket only, a global cap and a WS-open cap (SR-E27-05)                                       | Low                           |
+| KV9  | Denial of service      | The KEK is unavailable and every signature stops                                                | M   | H   | **High**     | Fail-closed degraded latch; the native SL stays on the exchange (SR-056); custody runbook and drills                           | Medium (accepted)             |
+| KV10 | Repudiation            | A key or account action leaves no attributable audit record                                     | M   | H   | **High**     | SR-060, SR-062, SR-063; write-ahead M2 audit; one registered vocabulary with the Owner as actor (SR-E27-09)                    | Low                           |
+| KV11 | Spoofing               | Forged step-up, or account create, patch or delete mounted without step-up                      | L   | H   | Medium       | SR-025; the step-up registry guard extended to the account routes (SR-E27-02)                                                  | Low                           |
+| KV12 | Spoofing               | The key's whitelist lists foreign addresses or a wildcard, so a stolen key works from elsewhere | M   | H   | **High**     | SR-033, SR-030a (whitelist equals the egress IP); strict whitelist check (SR-E27-04)                                           | Low                           |
+
 ### 5.11 Risk summary
 
-| Residual level  | Count                                                                                                                                                   |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Low             | 95 (adds S10–S12, S14, S16–S18, S20–S21 from E07-X01; WG2, WG4–WG7 from E17-X01)                                                                        |
-| Medium          | 8 (K9 memory exposure under host compromise; N5 remote-access outage; G3 unsigned commits, accepted; S13, S15 from E07-X01; WG1, WG3, WG8 from E17-X01) |
-| High / Critical | 0                                                                                                                                                       |
+| Residual level  | Count                                                                                                                                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Low             | 105 (adds S10–S12, S14, S16–S18, S20–S21 from E07-X01; WG2, WG4–WG7 from E17-X01; KV1–KV5, KV7, KV8, KV10–KV12 from E27-X01)                                                    |
+| Medium          | 10 (K9 memory exposure under host compromise; N5 remote-access outage; G3 unsigned commits, accepted; S13, S15 from E07-X01; WG1, WG3, WG8 from E17-X01; KV6, KV9 from E27-X01) |
+| High / Critical | 0                                                                                                                                                                               |
 
 Any threat that remains High or Critical after mitigation is a release blocker and must be recorded in §16 with explicit owner sign-off before the affected release proceeds. S17/S19/S20 (E07-X01) are rated
 Low contingent on E07-T02/E07-T05 shipping their named controls (`docs/security/threat-models/E07-storage.md`
 §7) — tracked, not silently accepted, and re-triaged at those PRs' security review if the control is missing.
+KV1, KV2 and KV3 (E27-X01) are rated Low contingent on #2338 and #2270, and the other Low rows of Area 13 on the
+open E27 tickets that build their controls (`docs/security/threat-models/E27-accounts.md` §11.1); the same
+re-triage applies. KV6 and KV9 are Medium residuals awaiting Owner acceptance (that model's §11.2).
 
 ---
 
@@ -500,7 +536,7 @@ Notation: **MUST** = mandatory, verified before the owning release ships. **SHOU
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
 | SR-001 | Exchange credentials MUST be stored using envelope encryption: a per-credential data encryption key (DEK, 256-bit, AES-256-GCM or XChaCha20-Poly1305) encrypts the secret; the DEK is itself wrapped by a master key (KEK). Only the wrapped DEK and ciphertext are persisted in Postgres.                                                                                                             | unit, manual-review                  |
 | SR-002 | The KEK MUST live outside the database and outside the repo: on Windows, the OS keyring (Credential Manager) accessed through a host-side agent; in WSL/container deployments, an `age`/`sops` identity file on a volume with `0400` permissions owned by the service user ("KMS-lite"). The KEK MUST never be written to the DB, to a backup that shares the data key, to logs, or to an image layer. | manual-review, ci-gate (secret scan) |
-| SR-003 | Ciphertexts MUST be AEAD with associated data binding `account_id`, `credential_id`, `environment` (live/demo) and a `key_version`, so a swapped or copied row fails to decrypt. *E27-T02 (#835): `key_version` is bound via `credential_id` (one `api_keys` row per key version); recorded deviation awaiting Security sign-off on #835.*                                                                                                                                                                                                                       | unit                                 |
+| SR-003 | Ciphertexts MUST be AEAD with associated data binding `account_id`, `credential_id`, `environment` (live/demo) and a `key_version`, so a swapped or copied row fails to decrypt. _E27-T02 (#835): `key_version` is bound via `credential_id` (one `api_keys` row per key version); recorded deviation awaiting Security sign-off on #835._                                                             | unit                                 |
 | SR-004 | Credentials MUST be loaded only from the encrypted store. Reading an API secret from an environment variable, CLI flag, config file or request body (other than the single onboarding submission) is prohibited; the config schema MUST reject fields matching known key patterns.                                                                                                                     | unit, ci-gate                        |
 | SR-005 | API secrets are **write-only** across the API: no endpoint, DTO, GraphQL-ish projection, log line or admin screen may return a secret or any prefix longer than the first 4 characters of the key id. A contract test MUST assert that no response schema contains a secret field.                                                                                                                     | contract, unit                       |
 | SR-006 | A central redaction filter MUST scrub secrets, tokens, cookies, TOTP codes and signature headers from all log sinks, exception handlers and error responses, matching by both field name and value (registry of live secret values held in memory).                                                                                                                                                    | unit, integration                    |
