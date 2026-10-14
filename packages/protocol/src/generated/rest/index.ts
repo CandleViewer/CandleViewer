@@ -560,6 +560,32 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/alerts/deliveries/{deliveryId}/desktop-outcome": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        deliveryId: components["parameters"]["DeliveryId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Report the outcome of a desktop-channel delivery (Electron shell report-back)
+     * @description The Electron shell reports what happened when it tried to show a `desktop`-channel alert
+     *     natively: `shown`, `blocked` (OS/user denied or focus-assist suppressed it) or `failed`.
+     *     `permission` carries the OS notification permission state observed by the shell
+     *     (e.g. `granted`, `denied`, `default`). Body is closed (`extra: forbid`): unknown
+     *     properties are rejected with 422. Only the delivery's owner may report (`scope: self`).
+     */
+    post: operations["reportAlertDesktopOutcome"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/alerts/deliveries/ack-all": {
     parameters: {
       query?: never;
@@ -4190,6 +4216,7 @@ export interface components {
       fired_at?: string;
       /** Format: int64 */
       id?: number;
+      /** @description The delivery row `body`, falling back to `title` when `body` is empty. */
       message?: string;
       severity?: components["schemas"]["Severity"];
       status?: components["schemas"]["DeliveryStatus"];
@@ -5972,11 +5999,17 @@ export interface components {
       created_at: string;
       /** Format: uuid */
       exchange_account_id?: string | null;
-      /** Format: uuid */
+      /**
+       * Format: uuid
+       * @description Deterministic: uuid5(namespace, source_table + source_id), so the same source row always maps to the same notification id.
+       */
       id: string;
       /** @enum {string} */
       kind: "alert" | "rule" | "order" | "risk" | "system";
-      /** Format: date-time */
+      /**
+       * Format: date-time
+       * @description `acked_at` for alert deliveries; always null for rule, order and system rows until their owners define read state. `order_events` rows are omitted until E29 lands the table.
+       */
       read_at?: string | null;
       /** @description Deep link to the screen that explains this notification. */
       route?: string | null;
@@ -9185,6 +9218,47 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+    };
+  };
+  reportAlertDesktopOutcome: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        deliveryId: components["parameters"]["DeliveryId"];
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** @enum {string} */
+          outcome: "shown" | "blocked" | "failed";
+          permission: string;
+        };
+      };
+    };
+    responses: {
+      /** @description Outcome recorded. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   ackAllAlertDeliveries: {

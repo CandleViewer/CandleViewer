@@ -683,6 +683,16 @@ All private topics are **account-scoped**: the server intersects the requested `
 
 **As built (#377).** Kill-switch transitions are pushed on `system` as a `kill_switch` frame (§12.5) before the re-evaluation in §9.5 runs, so the UI can disable order entry on that frame alone. A live public subscription takes one shared upstream lease per `(symbol, family)` on the E08 ingestion streams. The lease is released 30 s after the last consumer leaves. Families with no ingestion stream yet stay `snapshot_pending`.
 
+#### 6.2.1 `alerts` topic (contract only)
+
+> **Ships after E17-S03 (#411) / E17-T03 (#412) fan-out primitives — no emitter before.** Until then the
+> topic is specified but not served: no alerts-only emitter is built ahead of E17, and clients use
+> `GET /v1/alerts/deliveries` and `GET /v1/notifications`.
+
+Payload: [`AlertUpdate`](#157-alertupdate); `message` is the delivery `body`, falling back to `title`.
+Permission `alerts:read`, own alerts only (§6.3). Desktop-channel outcomes are reported over REST via
+`POST /v1/alerts/deliveries/{deliveryId}/desktop-outcome`, not over this socket.
+
 ### 6.3 Topic → permission matrix
 
 | Topic family                                                                                     | Required permission | Scope narrowing             |
