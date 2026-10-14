@@ -359,6 +359,14 @@ class Client:
                 return frame
         pytest.fail(f"no {t} frame")
 
+    def next_validated(self, t: str) -> dict[str, Any]:
+        """Next frame of type `t`, fully schema-validated; frames before it are skipped WITHOUT
+        validation. Used where the build emits an undocumented frame first (`permission_change`,
+        F3/#2397) that a test must not depend on."""
+        frame = self.next_of_raw(t)
+        validate_frame(frame)
+        return frame
+
     def recv_permission_change(self) -> dict[str, Any]:
         """Next frame, which must be `permission_change`, envelope-unvalidated.
 
