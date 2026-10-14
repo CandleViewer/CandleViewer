@@ -6,15 +6,18 @@ runs per request through `auth.scopes.enforce()`, each denial audited as `rbac.d
 by the caller; a missing, deleted or foreign drawing is the same 404, and a foreign live id on
 PUT/DELETE is also audited (`object_kind="drawing"`). Drawing writes are not audited (not a C-2.9
 action). Bodies are read raw so byte, depth and batch-size caps run before pydantic; no content is
-logged.
+logged. POST and batch replay an `Idempotency-Key` from a bounded per-user cache.
 """
 
 import base64
+import hashlib
 import inspect
 import json
 import re
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Coroutine
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Final, Protocol
 from uuid import UUID
@@ -68,6 +71,7 @@ _CODES: Final[dict[str, tuple[int, str]]] = {
     "forbidden": (403, "Authenticated but lacking the required permission"),
     "not_found": (404, "Resource does not exist or is out of the caller's scope"),
     "conflict": (409, "Concurrent modification or state conflict"),
+    "idempotency_key_reuse": (409, "Idempotency-Key reused with a different request payload"),
     "version_conflict": (412, "If-Match / ETag precondition failed"),
     "payload_too_large": (413, "Request body or batch exceeds the operation's size ceiling"),
     "validation_failed": (422, "Request body or parameters failed schema validation"),
@@ -83,6 +87,90 @@ _BATCH_RULES: Final = {
     "version_conflict": "The drawing was changed by another session; reload and retry.",
     "id_unavailable": "This id is already used; create the drawing under a new id.",
 }
+
+
+IDEMPOTENCY_MAX_ENTRIES: Final = 4096
+IDEMPOTENCY_MAX_BYTES: Final = 32 * 1024 * 1024
+IDEMPOTENCY_USER_MAX_ENTRIES: Final = 256
+IDEMPOTENCY_USER_MAX_BYTES: Final = 4 * 1024 * 1024
+IDEMPOTENCY_MAX_ENTRY_BYTES: Final = 256 * 1024
+IDEMPOTENCY_TTL_S: Final = 86_400
+#: Bytes charged per entry on top of len(body) + len(key): digest, ETag, entry tuple, LRU slots.
+IDEMPOTENCY_ENTRY_OVERHEAD: Final = 512
+
+
+@dataclass(frozen=True, slots=True)
+class StoredResponse:
+    digest: str  # sha256 of the raw request body
+    status: int
+    body: bytes
+    etag: str | None
+
+
+class IdempotencyCache:
+    """Best-effort `Idempotency-Key` replay (#357 decision record 8: a bounded per-user LRU) of 2xx
+    responses, keyed (user_id, "operationId:key"). Losing an entry only re-runs the request.
+
+    Bounds (C-2.18): 4096 entries / 32 MiB in total and 256 entries / 4 MiB per user, an entry
+    costing len(body) + len(key) + IDEMPOTENCY_ENTRY_OVERHEAD; a body over 256 KiB is never stored.
+    A user over its caps loses its own oldest entry, so no user can evict another while the global
+    caps hold; over the global caps the least recently used entry goes. Entries live
+    IDEMPOTENCY_TTL_S on the injected monotonic clock; an expired hit is a miss and is dropped.
+    Every operation is O(1) amortised (no scans).
+    """
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        max_entry_bytes: int = IDEMPOTENCY_MAX_ENTRY_BYTES,
+    ) -> None:
+        self._clock, self._max_entry = clock, max_entry_bytes
+        self._lru: OrderedDict[tuple[str, str], tuple[StoredResponse, int, float]] = OrderedDict()
+        self._users: dict[str, OrderedDict[str, None]] = {}  # per user, oldest first
+        self._user_bytes: dict[str, int] = {}
+        self.stored_bytes = 0
+
+    def __len__(self) -> int:
+        return len(self._lru)
+
+    def get(self, user: str, key: str) -> StoredResponse | None:
+        hit = self._lru.get((user, key))
+        if hit is None:
+            return None
+        if self._clock() >= hit[2]:  # expired: a miss
+            self._drop(user, key)
+            return None
+        self._lru.move_to_end((user, key))
+        self._users[user].move_to_end(key)
+        return hit[0]
+
+    def put(self, user: str, key: str, value: StoredResponse) -> None:
+        if len(value.body) > self._max_entry:
+            return  # never stored: a retry simply runs again
+        if (user, key) in self._lru:
+            self._drop(user, key)
+        size = len(value.body) + len(key) + IDEMPOTENCY_ENTRY_OVERHEAD
+        self._lru[(user, key)] = (value, size, self._clock() + IDEMPOTENCY_TTL_S)
+        self._users.setdefault(user, OrderedDict())[key] = None
+        self._user_bytes[user] = self._user_bytes.get(user, 0) + size
+        self.stored_bytes += size
+        while user in self._users and (
+            len(self._users[user]) > IDEMPOTENCY_USER_MAX_ENTRIES
+            or self._user_bytes[user] > IDEMPOTENCY_USER_MAX_BYTES
+        ):
+            self._drop(user, next(iter(self._users[user])))
+        while len(self._lru) > IDEMPOTENCY_MAX_ENTRIES or self.stored_bytes > IDEMPOTENCY_MAX_BYTES:
+            self._drop(*next(iter(self._lru)))
+
+    def _drop(self, user: str, key: str) -> None:
+        size = self._lru.pop((user, key))[1]
+        mine = self._users[user]
+        del mine[key]
+        self.stored_bytes -= size
+        self._user_bytes[user] -= size
+        if not mine:
+            del self._users[user], self._user_bytes[user]
 
 
 class _Emitter(Protocol):
@@ -327,6 +415,7 @@ def make_drawings_router(
     clock: Callable[[], float] = time.time,
     new_id: Callable[[], UUID] = _new_id,
     metrics: DrawingsMetricsLike | None = None,
+    idempotency: IdempotencyCache | None = None,
 ) -> APIRouter:
     """`audit` is mandatory (a denial must leave its `rbac.denied` record). No resolver (no
     identity store: nothing can verify a session) fails closed with 401; no store with 503.
@@ -334,6 +423,7 @@ def make_drawings_router(
     if audit is None:
         raise TypeError("make_drawings_router: an audit emitter is required")
     router = APIRouter(tags=["workspaces"], route_class=_ProblemRoute)
+    cache = IdempotencyCache() if idempotency is None else idempotency
 
     def conflict(rule: str) -> None:
         if metrics is not None:
@@ -378,6 +468,35 @@ def make_drawings_router(
             )  # fmt: skip
         return _not_found()
 
+    def idempotency_key(request: Request, operation: str) -> str | None:
+        raw = request.headers.get("idempotency-key")
+        if raw is None:
+            return None
+        try:
+            return f"{operation}:{UUID(raw)}"
+        except ValueError:
+            msg = "Idempotency-Key must be a UUID."
+            raise _invalid([_rule("Idempotency-Key", "uuid_parsing", msg)]) from None
+
+    def replay(owner: str, key: str | None, digest: str) -> Response | None:
+        """The stored 2xx for this key and body; the same key with another body is a 409."""
+        hit = None if key is None else cache.get(owner, key)
+        if hit is None:
+            return None
+        if hit.digest != digest:
+            conflict("idempotency_key_reuse")
+            raise _Problem("idempotency_key_reuse", "The key was first used with another body.")
+        headers = {"Idempotency-Replayed": "true"} | ({"ETag": hit.etag} if hit.etag else {})
+        return Response(hit.body, hit.status, headers, media_type="application/json")
+
+    def remember(owner: str, key: str | None, digest: str, out: JSONResponse) -> JSONResponse:
+        if key is not None:
+            stored = StoredResponse(
+                digest, out.status_code, bytes(out.body), out.headers.get("etag")
+            )
+            cache.put(owner, key, stored)
+        return out
+
     async def no_layouts(owner: str, refs: list[tuple[str, UUID | None]]) -> None:
         errs = [
             _rule(field, "layout_not_found", "No such layout.")
@@ -410,7 +529,12 @@ def make_drawings_router(
     @router.post("/drawings")
     async def create_drawing(request: Request) -> Response:
         owner = str((await caller(request, Permission.WORKSPACES_WRITE)).user_id)
-        body = _parse(DrawingIn, _text(await _read_capped(request, MAX_SINGLE_BODY_BYTES)))
+        key = idempotency_key(request, "createDrawing")
+        raw = await _read_capped(request, MAX_SINGLE_BODY_BYTES)
+        digest = hashlib.sha256(raw).hexdigest()
+        if (hit := replay(owner, key, digest)) is not None:
+            return hit
+        body = _parse(DrawingIn, _text(raw))
         await no_layouts(owner, [("layout_id", body.layout_id)])
         try:
             row = await store().create(owner, str(new_id()), _fields(body))
@@ -418,7 +542,7 @@ def make_drawings_router(
             conflict("id_unavailable")
             raise _Problem("conflict", "Id collision; retry the request.") from None
         _log().info("drawing_created", user_id=owner, symbol=row.symbol, op_count=1)
-        return _respond(row, 201)
+        return remember(owner, key, digest, _respond(row, 201))
 
     @router.put("/drawings/{drawingId}")
     async def update_drawing(
@@ -462,7 +586,12 @@ def make_drawings_router(
     @router.post("/drawings/batch")
     async def batch_drawings(request: Request) -> Response:
         owner = str((await caller(request, Permission.WORKSPACES_WRITE)).user_id)
-        text = _text(await _read_capped(request, MAX_BATCH_BODY_BYTES))
+        key = idempotency_key(request, "batchUpsertDrawings")
+        raw = await _read_capped(request, MAX_BATCH_BODY_BYTES)
+        digest = hashlib.sha256(raw).hexdigest()
+        if (hit := replay(owner, key, digest)) is not None:
+            return hit
+        text = _text(raw)
         _count_ops(text)
         body = _parse(BatchIn, text)
         await no_layouts(owner, [
@@ -487,11 +616,14 @@ def make_drawings_router(
         _log().info("drawings_batch_applied", user_id=owner, op_count=len(ops))
         created, updated = [_dump(r) for r in res.created], [_dump(r) for r in res.updated]
         out = {"created": created, "updated": updated, "deleted": list(res.deleted)}
-        return JSONResponse(out)
+        return remember(owner, key, digest, JSONResponse(out))
 
     return router
 
 
 __all__ = [
-    "CURSOR_TTL_S", "DrawingsMetricsLike", "decode_cursor", "encode_cursor", "make_drawings_router",
+    "CURSOR_TTL_S", "IDEMPOTENCY_ENTRY_OVERHEAD", "IDEMPOTENCY_MAX_BYTES",
+    "IDEMPOTENCY_MAX_ENTRIES", "IDEMPOTENCY_MAX_ENTRY_BYTES", "IDEMPOTENCY_TTL_S",
+    "IDEMPOTENCY_USER_MAX_BYTES", "IDEMPOTENCY_USER_MAX_ENTRIES", "DrawingsMetricsLike",
+    "IdempotencyCache", "StoredResponse", "decode_cursor", "encode_cursor", "make_drawings_router",
 ]  # fmt: skip
