@@ -142,26 +142,27 @@ Every frame in both directions is a single map with this shape. Field order is i
 }
 ```
 
-| `t`        | Name                 | Direction | Purpose                                                                      |
-| ---------- | -------------------- | --------- | ---------------------------------------------------------------------------- |
-| `hello`    | hello                | C→S       | First frame; declares client identity and capabilities.                      |
-| `welcome`  | welcome              | S→C       | Server capabilities, limits, negotiated encoding, heartbeat policy.          |
-| `auth`     | auth                 | C→S       | Presents the bearer access token.                                            |
-| `auth_ok`  | auth accepted        | S→C       | Identity, permissions, account scope, environments.                          |
-| `sub`      | subscribe            | C→S       | Subscribe to one or more topics.                                             |
-| `sub_ok`   | subscribe result     | S→C       | Per-topic accept/reject.                                                     |
-| `unsub`    | unsubscribe          | C→S       | Unsubscribe from topics.                                                     |
-| `unsub_ok` | unsubscribe result   | S→C       | Confirmation.                                                                |
-| `snap`     | snapshot             | S→C       | Full state for a topic; resets the sequence baseline.                        |
-| `d`        | delta                | S→C       | Incremental update; requires an unbroken sequence.                           |
-| `resync`   | resync request       | C→S       | Client asks for a fresh snapshot on a topic.                                 |
-| `revoked`  | subscription revoked | S→C       | Server terminated a subscription (permission/scope/kill).                    |
-| `ping`     | ping                 | both      | Liveness probe.                                                              |
-| `pong`     | pong                 | both      | Liveness reply, echoes `id`.                                                 |
-| `err`      | error                | S→C       | Request-scoped or topic-scoped error.                                        |
-| `ctl`      | control              | C→S       | Runtime tuning of an existing subscription (throttle, depth, filters).       |
-| `ctl_ok`   | control result       | S→C       | Confirmation of `ctl`.                                                       |
-| `bye`      | goodbye              | S→C       | Server is closing the connection; carries the reason before the close frame. |
+| `t`                 | Name                  | Direction | Purpose                                                                          |
+| ------------------- | --------------------- | --------- | -------------------------------------------------------------------------------- |
+| `hello`             | hello                 | C→S       | First frame; declares client identity and capabilities.                          |
+| `welcome`           | welcome               | S→C       | Server capabilities, limits, negotiated encoding, heartbeat policy.              |
+| `auth`              | auth                  | C→S       | Presents the bearer access token.                                                |
+| `auth_ok`           | auth accepted         | S→C       | Identity, permissions, account scope, environments.                              |
+| `sub`               | subscribe             | C→S       | Subscribe to one or more topics.                                                 |
+| `sub_ok`            | subscribe result      | S→C       | Per-topic accept/reject.                                                         |
+| `unsub`             | unsubscribe           | C→S       | Unsubscribe from topics.                                                         |
+| `unsub_ok`          | unsubscribe result    | S→C       | Confirmation.                                                                    |
+| `snap`              | snapshot              | S→C       | Full state for a topic; resets the sequence baseline.                            |
+| `d`                 | delta                 | S→C       | Incremental update; requires an unbroken sequence.                               |
+| `resync`            | resync request        | C→S       | Client asks for a fresh snapshot on a topic.                                     |
+| `revoked`           | subscription revoked  | S→C       | Server terminated a subscription (permission/scope/kill).                        |
+| `permission_change` | authorisation changed | S→C       | Live re-resolved identity, permissions and scope; precedes any `revoked` (§9.5). |
+| `ping`              | ping                  | both      | Liveness probe.                                                                  |
+| `pong`              | pong                  | both      | Liveness reply, echoes `id`.                                                     |
+| `err`               | error                 | S→C       | Request-scoped or topic-scoped error.                                            |
+| `ctl`               | control               | C→S       | Runtime tuning of an existing subscription (throttle, depth, filters).           |
+| `ctl_ok`            | control result        | S→C       | Confirmation of `ctl`.                                                           |
+| `bye`               | goodbye               | S→C       | Server is closing the connection; carries the reason before the close frame.     |
 
 ### 3.2 Encoding field `e`
 
@@ -235,14 +236,14 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 
 ### 3.6 Frame size limits
 
-| Limit                              | Value   | Enforcement                                                                                |
-| ---------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`.                                                              |
+| Limit                              | Value   | Enforcement                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`.                                                                                                                                                                                                                                                                                                                                                 |
 | Max inbound JSON nesting depth     | 32      | As-built (SR-184): pre-scanned before decode; deeper, malformed or non-UTF-8 frames are a `frame_malformed` protocol violation (3 strikes -> `4400`), never `1011`. The deepest legitimate client frame in `ws-schema.json` (`sub`/`ctl`: envelope -> topic entry -> `options` -> list) nests at most 6 levels including the envelope, so 32 is headroom, not a format limit. |
-| Max outbound frame (server→client) | 4 MiB   | Server splits snapshots into `partial` chunks (header flag bit3) rather than exceeding it. |
-| Max topics per `sub` frame         | 50      | Excess rejected per-topic with `too_many_topics`.                                          |
-| Max subscriptions per connection   | 200     | New subscribes rejected with `subscription_limit`.                                         |
-| Max connections per user           | 8       | Oldest idle connection is closed with `bye` when exceeded.                                 |
+| Max outbound frame (server→client) | 4 MiB   | Server splits snapshots into `partial` chunks (header flag bit3) rather than exceeding it.                                                                                                                                                                                                                                                                                    |
+| Max topics per `sub` frame         | 50      | Excess rejected per-topic with `too_many_topics`.                                                                                                                                                                                                                                                                                                                             |
+| Max subscriptions per connection   | 200     | New subscribes rejected with `subscription_limit`.                                                                                                                                                                                                                                                                                                                            |
+| Max connections per user           | 8       | Oldest idle connection is closed with `bye` when exceeded.                                                                                                                                                                                                                                                                                                                    |
 
 Snapshot chunking: a `snap` larger than 4 MiB is sent as N frames sharing one `id`, each with `partial` set, the last one clearing it. All chunks consume **one** sequence number in total, assigned to the final chunk; intermediate chunks carry `s: null`.
 
@@ -1061,6 +1062,21 @@ Authorisation is re-evaluated on every change to the user's roles, permissions o
 }
 ```
 
+Before any `revoked` frames, the server sends one `permission_change` frame carrying the connection's re-resolved identity, so the client can refresh its permission-gated UI without a reconnect. It is sent on every re-evaluation, even when no subscription is affected. The payload is the live subset of `auth_ok` (no `session_id` / `token_expires_at_ms`; the session is unchanged). Schema: §13.4.
+
+```jsonc
+{
+  "t": "permission_change",
+  "ts": 1789133600000,
+  "p": {
+    "user_id": "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001",
+    "roles": ["manager"],
+    "permissions": ["marketdata:read", "orders:read"],
+    "account_scope": ["a1000000-0000-4000-8000-000000000001"],
+  },
+}
+```
+
 `reason` ∈ `permission_revoked` | `account_scope_changed` | `user_disabled` | `session_revoked` | `key_revoked` | `account_disabled` | `replay_session_ended` | `resync_rate_limited` | `topic_removed`.
 
 If the user is disabled entirely, the server sends `bye` with `4403` and closes. If only a scope narrowed, other subscriptions continue untouched and `resubscribe_allowed: true` invites the client to re-subscribe with the reduced set.
@@ -1453,6 +1469,7 @@ Shared definitions used throughout:
         "d",
         "resync",
         "revoked",
+        "permission_change",
         "ping",
         "pong",
         "err",
@@ -1645,6 +1662,27 @@ Shared definitions used throughout:
     "session_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
     "token_expires_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
     "kill_switch": { "$ref": "cv://ws/v1/system.schema.json#/$defs/killSwitch" }
+  },
+  "additionalProperties": false
+}
+```
+
+`permission_change` (S→C, §9.5) carries a dedicated payload schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cv://ws/v1/permission_change.schema.json",
+  "type": "object",
+  "required": ["user_id", "roles", "permissions", "account_scope"],
+  "properties": {
+    "user_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
+    "roles": { "type": "array", "items": { "enum": ["owner", "manager", "viewer"] } },
+    "permissions": { "type": "array", "items": { "type": "string" } },
+    "account_scope": {
+      "type": "array",
+      "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" }
+    }
   },
   "additionalProperties": false
 }

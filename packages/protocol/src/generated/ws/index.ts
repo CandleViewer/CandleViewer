@@ -365,6 +365,7 @@ export type CandleViewerWSEnvelope = {
     | "d"
     | "resync"
     | "revoked"
+    | "permission_change"
     | "ping"
     | "pong"
     | "err"
@@ -787,6 +788,14 @@ export interface Orders {
    * Order ids that left the open set (terminal state) and may be dropped from the live view.
    */
   removed?: string[];
+}
+
+// Source: cv://ws/v1/permission_change.schema.json
+export interface CvWsV1PermissionChangeSchemaJson {
+  user_id: string;
+  roles: ("owner" | "manager" | "viewer")[];
+  permissions: string[];
+  account_scope: string[];
 }
 
 // Source: cv://ws/v1/positions.schema.json
