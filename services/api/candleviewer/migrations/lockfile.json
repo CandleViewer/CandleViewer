@@ -96,6 +96,11 @@
       "path": "services/api/candleviewer/migrations/versions/0020_kek_versions.py",
       "sha256": "43723339f1e174bd9a2fd1e1b0bc708278abe4f10bce1c7d229ce91efebf502d",
       "down_revision": "0019_snapshot_withdraw_transfer"
+    },
+    "0021_drawings": {
+      "path": "services/api/candleviewer/migrations/versions/0021_drawings.py",
+      "sha256": "15c97a51f701ef743d6554debe81a81b56d7e4759fa2cb9c9297d9ab04497fc0",
+      "down_revision": "0020_kek_versions"
     }
   }
 }
