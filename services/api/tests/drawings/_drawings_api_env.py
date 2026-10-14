@@ -171,6 +171,12 @@ class FakeDrawingRepo:
     async def purge_deleted(self, older_than_days: int, limit: int) -> int:
         return 0  # the retention job is slice C4; the router never purges
 
+    async def count_live_by_tool(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for r in self.rows.values():
+            counts[r.tool] = counts.get(r.tool, 0) + 1
+        return counts
+
 
 class Audit:
     def __init__(self) -> None:

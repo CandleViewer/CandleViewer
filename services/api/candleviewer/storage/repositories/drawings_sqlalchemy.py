@@ -106,9 +106,12 @@ _PURGE = sa.text(
     "DELETE FROM drawings WHERE id IN (SELECT id FROM drawings WHERE deleted_at IS NOT NULL "
     "AND deleted_at < now() - make_interval(days => CAST(:days AS integer)) LIMIT :limit)"
 )
+_COUNT_LIVE = sa.text(
+    "SELECT tool, count(*) AS n FROM drawings WHERE deleted_at IS NULL GROUP BY tool"
+)
 
 #: Statements allowed to omit the owner filter (see module docstring); tested.
-UNSCOPED = frozenset({"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE"})
+UNSCOPED = frozenset({"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE", "_COUNT_LIVE"})
 
 #: Upper bound for one purge call so a single transaction stays short.
 MAX_PURGE_BATCH = 10_000
@@ -297,6 +300,12 @@ class SqlAlchemyDrawingRepository:
             res = await uow.session.execute(_PURGE, {"days": older_than_days, "limit": limit})
             await uow.commit()
         return int(getattr(res, "rowcount", 0))
+
+    async def count_live_by_tool(self) -> dict[str, int]:
+        """Live rows per tool across all owners (metrics only; like the purge, owner-agnostic)."""
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_COUNT_LIVE)).all()
+        return {str(tool): int(n) for tool, n in rows}
 
 
 __all__ = ["DRAWING_COLUMNS", "MAX_PURGE_BATCH", "SqlAlchemyDrawingRepository"]
