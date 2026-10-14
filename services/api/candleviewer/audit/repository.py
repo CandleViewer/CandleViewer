@@ -32,24 +32,34 @@ class AuditRepository(Protocol):
     async def query_page(
         self,
         *,
+        restrict_to_actor: str | None,
         actor_user_id: str | None,
         actions: list[str] | None,
         subject_type: str | None,
+        subject_id: str | None,
         severity: str | None,
         outcome: str | None,
+        ip: str | None,
+        q: str | None,
         from_ts: datetime | None,
         to_ts: datetime | None,
         cursor: int | None,
         limit: int,
-        ip: str | None = None,
         timeout_ms: int | None = None,
     ) -> list[dict[str, Any]]:
-        """`timeout_ms` bounds the whole call, connection checkout included, and the
+        """Up to `limit` rows matching every supplied filter (AND), ordered by `id DESC`,
+        most recent first, below `cursor` when given. `from_ts` is inclusive and `to_ts`
+        exclusive. `q` is a full-text search (every term must match). `subject_type` is the
+        `object_kind` column and `subject_id` the `object_id` column.
+
+        `restrict_to_actor` has no default, so no caller can forget it: when set, only that
+        actor's rows are returned and `actor_user_id` is ignored (narrowed, never widened).
+        It is `None` only for the Owner's view.
+
+        `timeout_ms` bounds the whole call, connection checkout included, and the
         statement (`statement_timeout`, transaction-local); an overrun raises the builtin
         `TimeoutError`. Any other database failure raises a storage error that carries only
-        the SQLSTATE, never the bound filters. Return up to `limit` rows ordered by
-        `id DESC`, most recent first, matching every supplied filter (including `subject_type`,
-        the `object_kind` column)."""
+        the SQLSTATE, never the bound filters."""
         ...
 
     async def fetch_entry_hash(self, entry_id: int) -> str | None:

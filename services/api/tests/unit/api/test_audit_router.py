@@ -7,6 +7,7 @@ these routes existed on `create_app()`'s FastAPI instance."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -49,9 +50,10 @@ class _FakeQuery:
         # Mirrors `AuditQueryService.query`'s own validation (QA defect
         # #1596 review): a naive datetime or `from_ts > to_ts` must raise
         # `ValidationError`, not be accepted silently by the fake.
-        AuditQueryRequest.model_validate({k: v for k, v in kwargs.items() if k != "timeout_ms"})
+        paging = ("timeout_ms", "restrict_to_actor")
+        AuditQueryRequest.model_validate({k: v for k, v in kwargs.items() if k not in paging})
         self.query_calls.append(kwargs)
-        return AuditPage(items=[], chain_verified=True, count=0)
+        return AuditPage(items=[], chain_verified=True)
 
     async def verify(self, **kwargs: Any) -> VerifyResult:
         self.verify_calls.append(kwargs)
@@ -365,9 +367,9 @@ class _RowsQuery(_FakeQuery):
 
     async def query(self, **kwargs: Any) -> AuditPage:
         self.query_calls.append(kwargs)
-        actor = kwargs.get("actor_user_id")
+        actor = kwargs["restrict_to_actor"] or kwargs.get("actor_user_id")
         rows = [e for e in self.items if actor is None or str(e.actor_user_id) == actor]
-        return AuditPage(items=rows, chain_verified=True, count=len(rows))
+        return AuditPage(items=rows, chain_verified=True)
 
 
 def _service_with(items: list[AuditEntry]) -> _FakeAuditService:
@@ -408,7 +410,8 @@ def test_manager_query_sees_only_own_events_redacted() -> None:
     assert [i["id"] for i in items] == [1]
     assert items[0]["detail"] == {} and items[0]["ip"] is None
     assert items[0]["user_agent"] is None
-    assert service.query_service.query_calls[0]["actor_user_id"] == str(me.user_id)
+    [call] = service.query_service.query_calls
+    assert call["actor_user_id"] == call["restrict_to_actor"] == str(me.user_id)
 
 
 def test_owner_query_sees_all_events_raw() -> None:
@@ -419,6 +422,7 @@ def test_owner_query_sees_all_events_raw() -> None:
     assert [i["id"] for i in items] == [1, 2]
     assert items[1]["detail"] == {"symbol": "BTCUSDT", "environment": "live"}
     assert items[1]["ip"] == "100.84.12.9"
+    assert service.query_service.query_calls[0]["restrict_to_actor"] is None
 
 
 # ---- #2392 "Limits": per-user limiter, time budget, store errors ---------------------------
@@ -852,3 +856,71 @@ async def test_manager_with_audit_read_bounded_record_count_over_two_hours() -> 
         for _, _, kw in records
     )
     assert pages + budget._users[str(me.user_id)].pending_pages() == served > 0
+
+
+# ---- #2392 filters and scope: subject_id, q, the caller's scope ----------------------------
+
+
+def test_manager_q_filter_is_refused_with_403_and_recorded() -> None:
+    client, svc = _budgeted(_manager_with_read())
+    r = client.get("/admin/audit", params={"q": "password"})
+    assert (r.status_code, r.json()["code"]) == (403, "forbidden")
+    [(action, kw)] = svc.writer_service.emitted
+    assert (action, kw["reason"]) == ("admin.audit_denied", "filter_not_permitted:q")
+    assert svc.query_service.query_calls == [] and "password" not in str(kw)
+
+
+def test_owner_q_and_subject_id_reach_the_service_and_are_recorded_as_digests() -> None:
+    """Both free-text filters reach the query as given but are recorded only as a digest and
+    a length, so a control sequence typed into either never lands in the permanent log."""
+    client, svc = _budgeted(_owner())
+    params = {"q": "Breakout BTC", "subject_id": "\x1b[2Jo-1"}
+    assert client.get("/admin/audit", params=params).status_code == 200
+    [call] = svc.query_service.query_calls
+    assert (call["q"], call["subject_id"], call["restrict_to_actor"]) == (
+        "Breakout BTC",
+        "\x1b[2Jo-1",
+        None,
+    )
+    [(_, kw)] = svc.writer_service.emitted
+
+    def digest(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    assert kw["after_state"]["filters"] == {
+        "subject_id_sha256": digest("\x1b[2Jo-1"),
+        "subject_id_len": 7,
+        "q_sha256": digest("Breakout BTC"),
+        "q_len": 12,
+    }
+    assert "Breakout" not in str(kw) and "o-1" not in str(kw)
+
+
+@pytest.mark.parametrize(
+    ("params", "field"),
+    [
+        ({"from": "2026-01-01T00:00:00Z", "to": "2026-01-01T00:00:00Z"}, "to"),
+        ({"q": "x" * 201}, "q"),
+        ({"q": "a\x00b"}, "q"),
+        ({"subject_id": "s" * 65}, "subject_id"),
+    ],
+)
+def test_empty_window_and_overlong_text_filters_are_422(params: dict[str, Any], field: str) -> None:
+    client, svc = _budgeted(_owner())
+    r = client.get("/admin/audit", params=params)
+    assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
+    assert [e["field"] for e in r.json()["errors"]] == [field]
+    assert svc.query_service.query_calls == []
+
+
+def test_a_row_outside_the_callers_scope_is_never_served() -> None:
+    me = _manager_with_read()
+    svc = _service_with([_entry(1, me.user_id), _entry(2, uuid.uuid4())])
+
+    async def leaky(**kwargs: Any) -> AuditPage:  # a scope bug below the router
+        return AuditPage(items=svc.query_service.items, chain_verified=True)
+
+    svc.query_service.query = leaky  # type: ignore[method-assign]  # test double
+    r = _budgeted(me, svc)[0].get("/admin/audit")
+    assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
+    assert "items" not in r.json()
