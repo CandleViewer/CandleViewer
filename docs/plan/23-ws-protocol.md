@@ -763,7 +763,7 @@ One topic per instance of a catalogue machine (`28-statechart-catalogue.md` B1�
 
 B8 `position_protection`, B9 `rule_instance`, B13 `ws_conn` and B15 `paper_account` have no public id yet (§16.6 W9), so they are not in the grammar.
 
-**Scope binding.** Each registry entry carries the immutable scope in the column above. The owning module takes it from its own record, not from the machine's context (the B4–B7, B10 and B12 contexts hold no account or user), and binds it when it builds the machine and again when it restores one. An entry of a scoped kind that has no scope is refused to every role: `decide()` refuses a missing account to every role, and a user-scoped kind has no wider view (D2 on #414).
+**Scope binding.** Each registry entry carries the immutable scope in the column above. The owning module takes it from its own record, not from the machine's context (the B4–B7, B10 and B12 contexts hold no account or user), and binds it when it builds the machine and again when it restores one. An entry of a scoped kind that has no scope is refused to every role: `decide()` refuses a missing account to every role, and a user-scoped kind has no wider view (D2 on #414). The publisher counts and logs each such entry when it is published (Observability, below), so a missing binding is never a silent refusal.
 
 **Payload** ([`MachineStateUpdate`](#1510-machinestateupdate); the field list is owned by `24-internal-schemas.md` §17.6). A `snap` and a `d` carry the same whole object. A `d` replaces the previous payload; nothing is merged.
 
@@ -787,11 +787,12 @@ Adding a key is a contract change to this table and to §15.10.
 **Snapshot and deltas.** The server keeps each entity's latest payload in a registry that only the publisher writes.
 
 - An authorised `sub` gets `sub_ok` with `snapshot_pending: true`, then a `snap` from the registry (`meta.reason: initial`).
-- There is never a `snap` without a published state. For a scoped kind, an entity with no entry (unknown, not yet published or removed) is refused exactly like a foreign one (Authorisation, below); the client subscribes again once the entity appears on its domain topic. For an unscoped kind (`recording`, `book`, `live_gate`, `kill_switch`), an entity with no entry is not refused, because there is no scope to protect: the subscription stays `snapshot_pending` until the first publish (§7.7). A `symbol` that is not a known instrument is `unsupported_symbol`.
+- There is never a `snap` without a published state. For a scoped kind, an entity with no entry (unknown, not yet published or removed) is refused exactly like a foreign one (Authorisation, below); the client subscribes again once the entity appears on its domain topic. For an unscoped kind (`recording`, `book`, `live_gate`, `kill_switch`), an entity with no entry is not refused, because there is no scope to protect: the subscription stays `snapshot_pending` until the first publish on its topic wakes it (§7.7). A pending `machines` subscription is never retried on inbound frames. A `symbol` that is not a known instrument is `unsupported_symbol`.
+- A `machines` subscription never takes an upstream or bar lease and never triggers auto-record. A `recording:` or `book:` entity counts toward the 40-symbol cap per connection (§16.2).
 - Every later publish is a `d` on the subscription's own sequence (§7.7). `resync` works as for every topic (§7.4, §7.5).
 - A machine is published when it enters its initial state, on every transition, once at bring-up after a restore (a restore re-runs no entry action, `28` §21.4), and whenever `degraded` changes.
-- The registry holds one entry per running machine, so the owning supervisors' caps bound it (C-2.18). The payload whose `tags` contain `terminal` is the entity's last; its entry stays for 60 s, and at most 10 000 terminal entries are kept, oldest removed first (§16.2).
-- When an entry is removed (retention expiry, a supervisor stopping its machine, or shutdown), each live subscription to it gets `revoked` with `topic_removed` and `resubscribe_allowed: false`.
+- The registry holds one entry per running machine, so it is bounded by the live interpreters it mirrors (C-2.18). The payload whose `tags` contain `terminal` is the entity's last; its entry stays for 60 s, and at most 10 000 terminal entries are kept, oldest removed first (§16.2).
+- When an entry is removed (retention expiry, a supervisor stopping its machine, or shutdown), each live subscription to it gets `revoked` with `topic_removed`. `resubscribe_allowed` is `true` for an unscoped kind, whose fresh `sub` is accepted as pending, and `false` for a scoped kind, whose fresh `sub` is refused.
 
 **Coalescing and options.** Whole-object last-write-wins, with at most one pending payload per subscription (§8.2). A burst of transitions, such as a chain of `after:` timers, therefore yields one `d` carrying the latest state. Intermediate states are not delivered: this is a state topic, not an event log (history is in `machine_events`, E42-T07).
 
@@ -831,9 +832,9 @@ The columns use the actors and outcomes of the RBAC matrix (`services/api/tests/
 - **No existence oracle.** A refusal depends only on the kind and the caller, never on whether the entity exists or whose it is, and the server does the same work for an unknown entity as for a foreign one.
 - **`deny_pending_decision`.** A cell whose rule waits for an owner decision (§16.6 W6–W8). It is not the RBAC matrix's `not_executable` (authorisation unreachable in CI): its cells run and expect `forbidden`. The publisher slice adds this table to the matrix as executed per-kind cells (13 kinds × 5 actors).
 - **On a change.** Every RBAC change (§9.5) re-applies the whole row to each live subscription, not just the permission. A subscription the new principal may no longer hold is revoked with `permission_revoked` (role or permission lost, so a demoted Owner loses `trade_group`, `live_gate` and `reconciliation`) or `account_scope_changed` (account lost), with `resubscribe_allowed: false`. A disabled user gets `bye` with 4403, and a revoked own session closes with 4401.
-- **Audit.** Each refusal (`ws.subscribe.denied`) and revocation (`ws.subscription.revoked`) of a `machines` subscription records the full `ch` and one internal reason: `role`, `unknown`, `foreign`, `unscoped` or `evicted` (C-12.8). The reason stays server-side; the client sees only the codes above.
+- **Audit.** Each refusal (`ws.subscribe.denied`) and revocation (`ws.subscription.revoked`) of a `machines` subscription records the full `ch` and one internal reason, in the `reason` column only: `role`, `unknown`, `foreign` or `unscoped` on a refusal, and `role`, `foreign` or `evicted` on a revocation (C-12.8). The `action`, `object_kind`, `outcome` and `severity` are identical for every reason, so the fields a Manager can read about their own events (SR-067) never vary with it. The reason stays server-side; the client sees only the codes above. `evicted` is used only when a subscription is revoked, so no tombstone of a removed entity is kept, and a later `sub` to it is `unknown`.
 
-**Observability.** `cv_machine_ws_publish_total{entity_kind}` counts one per payload the publisher records, not per subscriber frame. `entity_kind` takes only the kind names above. The publisher registers it in the metric catalogue next to E50-T60's `cv_machine_*` families. Subscribe outcomes stay on `cv_ws_subscribe_total{topic="machines",result}`.
+**Observability.** `cv_machine_ws_publish_total{entity_kind}` counts one per payload the publisher records, not per subscriber frame. `entity_kind` takes only the kind names above. The publisher registers it in the metric catalogue next to E50-T60's `cv_machine_*` families. `cv_machine_ws_scope_missing_total{entity_kind}` counts each payload of a scoped kind published without a scope, with a warning log; any increase is a binding defect, because that entry is refused to every role. Subscribe outcomes stay on `cv_ws_subscribe_total{topic="machines",result}`.
 
 ---
 
@@ -3568,10 +3569,10 @@ change.
 
 ### 15.10 `MachineStateUpdate`
 
-Payload of `machines.{entity}.state` (§6.4). The per-kind `context_summary` keys are the §6.4
-table; the schema below closes their union. `state`, `regions` and `tags` take the chart's own
-identifiers, so they are typed as identifiers here and checked against the charts by the contract
-test, never restated (C-2.19).
+Payload of `machines.{entity}.state` (§6.4). The per-kind `context_summary` keys are the §6.4 table;
+the schema below closes `context_summary` per `machine_kind`, and its `allOf` must equal that table.
+`state`, `regions` and `tags` take the chart's own identifiers, so they are typed as identifiers
+here and checked against the charts by the contract test, never restated (C-2.19).
 
 ```json
 {
