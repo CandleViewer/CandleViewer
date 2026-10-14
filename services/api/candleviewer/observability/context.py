@@ -6,13 +6,16 @@ extra wiring. `spawn()` and `run_in_thread()` are the two sanctioned ways to
 hop off the current task: both carry the context across, which bare
 `asyncio.create_task` (copies, but is banned by Semgrep for app code so the
 intent is explicit) and `run_in_executor` / `to_thread` (copies only
-via `to_thread`; raw executors do not) cannot guarantee.
+via `to_thread`; raw executors do not) cannot guarantee. `thread_future()` is
+the narrow exception for a thread whose caller must outlive its own
+cancellation (see its docstring).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextvars
+import functools
 from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
 from typing import Any, Final
@@ -72,3 +75,21 @@ async def run_in_thread[T](func: Callable[..., T], /, *args: Any, **kwargs: Any)
     ctx = contextvars.copy_context()
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, lambda: ctx.run(func, *args, **kwargs))
+
+
+def thread_future[T](func: Callable[..., T], /, *args: Any) -> asyncio.Future[T]:
+    """Start `func(*args)` in the default executor under a copy of the current
+    context and return the executor's plain `asyncio.Future`: not a coroutine and
+    not a Task.
+
+    Only for a caller that holds a lock which must outlive its own cancellation
+    until the thread has returned (the audit WAL, #2250): it awaits the future
+    through `asyncio.shield` until the future is done. It is a Future rather than a
+    Task because event-loop teardown (`asyncio.run`) cancels every Task, and a
+    Task wrapper (`spawn(run_in_thread(...))`, `asyncio.to_thread`) would cancel
+    the executor future while the thread still runs; the holder would then drop
+    the lock early. Nothing cancels this future except whoever holds it. Use
+    `run_in_thread` everywhere else."""
+    ctx = contextvars.copy_context()
+    loop = asyncio.get_running_loop()
+    return loop.run_in_executor(None, functools.partial(ctx.run, func, *args))
