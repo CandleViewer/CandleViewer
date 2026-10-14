@@ -65,3 +65,9 @@ class RetentionSchedule:
         if not self.enabled:
             return {}
         return {"alert_deliveries_purge": self.retention_cron}
+
+    def drawings_jobs(self) -> dict[str, str]:
+        """Soft-deleted `drawings` purge (E14-T01): shares the retention cron; empty when off."""
+        if not self.enabled:
+            return {}
+        return {"drawings_purge": self.retention_cron}
