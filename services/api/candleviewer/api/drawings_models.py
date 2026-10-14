@@ -145,10 +145,20 @@ def sanitize_text(value: str, *, allow_newline: bool) -> str:
     return value.translate(_TABLE_KEEP_LF if allow_newline else _TABLE)
 
 
-def _clean(value: object, *, allow_newline: bool) -> object:
-    """Before-validator: reject lone surrogates, then sanitise; non-strings pass to type check."""
+def _clean(value: object, *, allow_newline: bool, max_len: int) -> object:
+    """Before-validator: enforce the RAW max length, reject lone surrogates, then sanitise.
+
+    WHY the raw check comes first: the contract's JSON Schema ``maxLength`` applies to the string
+    as sent. If only the sanitised length were checked, a 121-character label holding one control
+    character would be schema-invalid yet accepted. (The post-sanitise min/max checks stay, as the
+    sanitised text is what is stored.) Non-strings pass through to the type check.
+    """
     if not isinstance(value, str):
         return value
+    if len(value) > max_len:
+        raise PydanticCustomError(
+            "string_too_long", "String must be at most {n} characters", {"n": max_len}
+        )
     try:
         value.encode("utf-8")
     except UnicodeEncodeError:
@@ -255,18 +265,14 @@ class DrawingGeometryIn(BaseModel):
     @field_validator("text", mode="before")
     @classmethod
     def _clean_text(cls, v: object) -> object:
-        return _clean(v, allow_newline=True)
+        return _clean(v, allow_newline=True, max_len=_MAX_TEXT)
 
     @field_validator("text", mode="after")
     @classmethod
     def _text_length(cls, v: str | None) -> str | None:
         if v is not None and not v:
             raise PydanticCustomError("text_required", "Text must not be empty")
-        if v is not None and len(v) > _MAX_TEXT:
-            raise PydanticCustomError(
-                "string_too_long", "Text must be at most {n} characters", {"n": _MAX_TEXT}
-            )
-        return v
+        return v  # max already enforced on the raw string; sanitising only shortens
 
     @field_validator("levels", mode="after")
     @classmethod
@@ -322,7 +328,7 @@ class DrawingIn(BaseModel):
     @field_validator("label", mode="before")
     @classmethod
     def _clean_label(cls, v: object) -> object:
-        return _clean(v, allow_newline=False)
+        return _clean(v, allow_newline=False, max_len=_MAX_LABEL)
 
     @field_validator("label", mode="after")
     @classmethod
@@ -331,11 +337,7 @@ class DrawingIn(BaseModel):
             raise PydanticCustomError(
                 "string_too_short", "Label must be at least 1 character after sanitising"
             )
-        if v is not None and len(v) > _MAX_LABEL:
-            raise PydanticCustomError(
-                "string_too_long", "Label must be at most {n} characters", {"n": _MAX_LABEL}
-            )
-        return v
+        return v  # max already enforced on the raw string; sanitising only shortens
 
     @model_validator(mode="after")
     def _tool_rules(self) -> DrawingIn:
