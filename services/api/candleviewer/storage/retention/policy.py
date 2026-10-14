@@ -95,3 +95,6 @@ class RetentionPolicy:
 ALERT_DELIVERIES_HOT_DAYS = 180
 ALERT_DELIVERIES_COLD_MONTHS = 24
 ALERT_DELIVERIES_ACTION = "archive_parquet"
+
+#: Soft-deleted drawings are hard-purged after this many days (E14-T01, 21-database-schema.md).
+DRAWINGS_SOFT_DELETE_DAYS = 90
