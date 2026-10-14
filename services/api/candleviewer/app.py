@@ -96,7 +96,7 @@ from candleviewer.api.step_up import (
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.users import SnapshotResolver, UserRoleStore, make_users_router
-from candleviewer.api.workspaces import make_workspaces_router
+from candleviewer.api.workspaces import OPERATIONS, make_workspaces_router
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.models import (
@@ -272,6 +272,11 @@ from candleviewer.storage.retention.kline_boundary import (
 from candleviewer.storage.retention.policy import RetentionPolicy, RetentionRule
 from candleviewer.storage.retention.rule_prune import RulePruneTask
 from candleviewer.storage.retention.schedule import RetentionSchedule
+from candleviewer.storage.retention.workspaces_tasks import (
+    USER_BUCKETS,
+    WorkspacesMetrics,
+    WorkspacesPurgeTask,
+)
 from candleviewer.storage.service import StorageService
 from candleviewer.ws.gateway import Authenticate, GatewayHub, make_ws_router
 from candleviewer.ws.machines import MachineStateRegistry
@@ -1618,6 +1623,29 @@ def create_app(
             metrics=app.state.drawings_metrics,
         )
     )
+    # E15-T01: workspaces metrics (conflicts/panes/duration recorded by the router) + 90-day
+    # soft-delete purge and the users-per-bucket gauge. `workspaces` has no forbid-delete trigger.
+    app.state.workspaces_metrics = WorkspacesMetrics(
+        conflicts=metrics_facade.counter(
+            "cv_workspace_conflicts_total", "Stale If-Match 412s.", ("resource",), max_series=2
+        ),
+        layout_panes=metrics_facade.histogram(
+            "cv_layout_panes", "Panes per changed layout write.", buckets=(0, 1, 2, 4, 8, 12, 16)
+        ),
+        users=metrics_facade.gauge(
+            "cv_workspace_users", "Users by live-workspace bucket.", ("bucket",),
+            max_series=len(USER_BUCKETS),
+        ),
+        purged=metrics_facade.counter(
+            "cv_workspaces_purged_total", "Workspaces/layouts hard-purged.", ("kind",),
+            max_series=2,
+        ),
+        request_seconds=metrics_facade.histogram(
+            "cv_workspace_request_seconds", "Duration per /workspaces operation.",
+            ("operation",), buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+            max_series=len(OPERATIONS),
+        ),
+    )  # fmt: skip
     # E15-T01: owner-scoped /workspaces; callers from the session (`audit_resolver`, as for
     # /admin/audit; None without an identity store -> 401), RBAC via `auth.scopes.enforce`.
     # Postgres on the real backend only: the fake backend answers 503 without any I/O.
@@ -1628,9 +1656,22 @@ def create_app(
         if resolved.storage_backend == "real"
         else None
     )
+    app.state.workspaces_purge_task = (
+        WorkspacesPurgeTask(
+            app.state.workspaces_repository,
+            _retention,
+            app.state.workspaces_metrics.purged,
+            app.state.workspaces_metrics.users,
+        )
+        if app.state.workspaces_repository is not None
+        else None
+    )
     app.include_router(
         make_workspaces_router(
-            lambda: app.state.workspaces_repository, audit_resolver, _LazyAuditEmitter(ctx.audit)
+            lambda: app.state.workspaces_repository,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
+            metrics=app.state.workspaces_metrics,
         )
     )
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).

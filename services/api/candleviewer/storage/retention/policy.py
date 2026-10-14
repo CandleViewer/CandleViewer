@@ -98,3 +98,5 @@ ALERT_DELIVERIES_ACTION = "archive_parquet"
 
 #: Soft-deleted drawings are hard-purged after this many days (E14-T01, 21-database-schema.md).
 DRAWINGS_SOFT_DELETE_DAYS = 90
+#: Soft-deleted workspaces and layouts are hard-purged after this many days (E15-T01, §3.8.1).
+WORKSPACES_SOFT_DELETE_DAYS = 90

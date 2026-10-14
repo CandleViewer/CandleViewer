@@ -216,6 +216,14 @@ class WorkspaceRepository(Protocol):
         """Hard-delete soft-deleted layouts then workspaces past the cut-off (FKs cascade)."""
         ...
 
+    async def purge_deleted_counts(self, older_than_days: int, limit: int) -> tuple[int, int]:
+        """As `purge_deleted`, split `(layouts, workspaces)`; `limit` is per statement."""
+        ...
+
+    async def count_users_by_workspace_bucket(self) -> dict[str, int]:
+        """Users per live-workspace-count bucket (`1|2-4|5-8|9-16|17-32`), all owners."""
+        ...
+
 
 __all__ = [
     "LayoutFields", "LayoutRow", "PaneFields", "WorkspaceConflictError", "WorkspaceDetailRow",
