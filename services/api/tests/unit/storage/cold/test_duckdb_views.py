@@ -237,3 +237,44 @@ def test_validated_dsn_reaches_attach_as_escaped_literal(
     build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn=_OK_DSN)
     attach = next(q for q in con.sql if q.startswith("ATTACH"))
     assert attach == "ATTACH 'dbname=x user=cv_ro host=localhost' AS pg (TYPE postgres, READ_ONLY)"
+
+
+def test_build_views_disables_extension_autoload_and_autoinstall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (#2194): a LOAD of a missing extension must never autoload/download."""
+    con = _RecordingCon(fail_load=False)
+    _patch_connect(monkeypatch, con)
+    build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path))
+    assert "SET autoinstall_known_extensions = false" in con.sql
+    assert "SET autoload_known_extensions = false" in con.sql
+
+
+def test_real_connection_has_autoload_off_and_missing_extension_is_typed(tmp_path: Path) -> None:
+    """Real DuckDB, empty extension dir: typed error, nothing downloaded."""
+    from candleviewer.storage.cold import duckdb_views
+    from candleviewer.storage.cold.duckdb_views import PostgresExtensionUnavailable
+
+    ext_dir = tmp_path / "ext"
+    ext_dir.mkdir()
+    seen: list[object] = []
+    real = duckdb.connect
+
+    def connect(path: str) -> object:
+        con = real(path, config={"extension_directory": str(ext_dir)})
+        seen.append(con)
+        return con
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(duckdb_views.duckdb, "connect", connect)
+        with pytest.raises(PostgresExtensionUnavailable):
+            build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn=_OK_DSN)
+    assert not any(ext_dir.iterdir())
+
+
+def test_guard_rejects_install_in_unit_tests() -> None:
+    con = duckdb.connect(":memory:")
+    for stmt in ("INSTALL postgres", "force install postgres", "FORCE INSTALL httpfs"):
+        with pytest.raises(AssertionError, match="network"):
+            con.execute(stmt)
+    assert con.execute("SELECT 1").fetchone() == (1,)

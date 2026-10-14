@@ -136,6 +136,7 @@ def build_views(db_path: Path, registry: DatasetRegistry, *, pg_dsn: str | None 
     try:
         con.execute("SET TimeZone = 'UTC'")
         con.execute("SET autoinstall_known_extensions = false")
+        con.execute("SET autoload_known_extensions = false")
         for view_name, stream in VIEW_STREAMS.items():
             if not _create_parquet_view(con, view_name, registry.dataset_glob(stream)):
                 # Not yet exported: a typed empty view so queries return 0 rows.

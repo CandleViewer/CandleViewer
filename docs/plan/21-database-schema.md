@@ -2851,7 +2851,8 @@ Small files kill DuckDB scan performance. The compactor runs weekly (Sundays 03:
 A single DuckDB database file `cold/analytics.duckdb` holds views (not data) over the Parquet lake, plus attached Postgres for joins.
 
 ```sql
-INSTALL httpfs; INSTALL postgres; LOAD postgres;
+-- extensions are preinstalled in the image; never INSTALLed at runtime (C-13.5)
+LOAD postgres;
 ATTACH 'dbname=candleviewer user=cv_ro host=127.0.0.1' AS pg (TYPE postgres, READ_ONLY);
 
 CREATE OR REPLACE VIEW trades AS
