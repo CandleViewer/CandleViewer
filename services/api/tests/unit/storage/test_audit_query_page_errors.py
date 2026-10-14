@@ -72,16 +72,19 @@ def _assert_no_db_error_in_chain(err: BaseException) -> None:
 async def _page(rel: _Rel, timeout_ms: int | None = 50) -> list[dict[str, Any]]:
     repo = SqlAlchemyAuditRepository(rel)  # type: ignore[arg-type]  # structural fake
     return await repo.query_page(
+        restrict_to_actor=None,
         actor_user_id=None,
         actions=None,
         subject_type=None,
+        subject_id=None,
         severity=None,
         outcome=None,
+        ip=_IP,
+        q=None,
         from_ts=None,
         to_ts=None,
         cursor=None,
         limit=10,
-        ip=_IP,
         timeout_ms=timeout_ms,
     )
 
@@ -89,7 +92,8 @@ async def _page(rel: _Rel, timeout_ms: int | None = 50) -> list[dict[str, Any]]:
 async def test_query_page_sets_the_statement_timeout_then_reads() -> None:
     rel = _Rel()
     assert await _page(rel) == [{"id": 1}]
-    assert "set_config" in rel.statements[0]
+    assert "set_config" in rel.statements[0] and "force_custom_plan" in rel.statements[0]
+    assert "ORDER BY audit_log.id DESC" in rel.statements[1]
     unbounded = _Rel()
     assert await _page(unbounded, timeout_ms=None) == [{"id": 1}]
     assert len(unbounded.statements) == 1 and "set_config" not in unbounded.statements[0]
