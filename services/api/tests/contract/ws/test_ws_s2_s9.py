@@ -307,7 +307,7 @@ def test_s6_xfail_coalescable_overflow_gets_backpressure_snap_and_no_close() -> 
         n = SPEC_QUEUE_FRAMES + 500
         body = delta_body("trades")
         w.call(lambda: [w.hub.publish("trades.BTCUSDT", body) for _ in range(n)])
-        seen = []
+        seen: list[dict[str, Any]] = []
         while (f := c.recv(validate=False))["t"] != "bye" and len(seen) < n + 5:
             seen.append(f)
             if f["t"] == "snap" and f["meta"]["reason"] == "backpressure":
