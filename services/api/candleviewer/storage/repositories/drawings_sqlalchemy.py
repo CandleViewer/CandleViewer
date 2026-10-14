@@ -141,13 +141,21 @@ def _params(fields: DrawingFields) -> dict[str, Any]:
 
 
 def _is_pk_collision(exc: IntegrityError) -> bool:
-    """unique_violation (SQLSTATE 23505) on the primary key, not message text."""
-    orig = exc.orig
-    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
-    constraint = getattr(orig, "constraint_name", None) or getattr(
-        getattr(orig, "diag", None), "constraint_name", None
-    )
-    return bool(sqlstate == "23505" and constraint == "drawings_pkey")
+    """unique_violation (SQLSTATE 23505) on the primary key, not message text.
+
+    asyncpg's wrapper exposes `sqlstate` but the constraint name lives on the driver
+    exception (`__cause__`, or `diag` for psycopg); look in all of those places.
+    """
+    orig: Any = exc.orig
+    if getattr(orig, "sqlstate", None) != "23505":
+        return False
+    for src in (orig, getattr(orig, "__cause__", None), getattr(orig, "driver_exception", None)):
+        name = getattr(src, "constraint_name", None) or getattr(
+            getattr(src, "diag", None), "constraint_name", None
+        )
+        if name:
+            return bool(name == "drawings_pkey")
+    return False
 
 
 class SqlAlchemyDrawingRepository:

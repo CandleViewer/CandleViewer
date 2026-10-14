@@ -186,3 +186,19 @@ async def test_purge_rejects_unsafe_arguments_before_touching_the_database(
     repo = mod.SqlAlchemyDrawingRepository(unused)
     with pytest.raises(ValueError, match="purge needs"):
         await repo.purge_deleted(days, limit)
+
+
+def test_pk_collision_reads_the_constraint_from_the_driver_exception_cause() -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    class _Driver(Exception):
+        constraint_name = "drawings_pkey"
+
+    class _Wrapper(Exception):
+        sqlstate = "23505"
+
+    wrapper = _Wrapper("dup")
+    wrapper.__cause__ = _Driver()
+    assert mod._is_pk_collision(IntegrityError("s", {}, wrapper))
+    bare = _Wrapper("dup")  # no constraint anywhere: fail closed
+    assert not mod._is_pk_collision(IntegrityError("s", {}, bare))
