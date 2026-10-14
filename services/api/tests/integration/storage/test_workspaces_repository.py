@@ -82,7 +82,7 @@ def _ws(name: str | None = None, *, default: bool = False) -> WorkspaceFields:
 def _pane(slot: int, **over: object) -> PaneFields:
     base: dict[str, object] = {
         "slot_index": slot, "pane_kind": _KINDS[slot % 4], "symbol": _SYMBOLS[slot % 4],
-        "interval_code": "time:1m" if slot % 4 != 3 else None, "chart_template_id": None,
+        "interval_code": "time:1" if slot % 4 != 3 else None, "chart_template_id": None,
         "indicator_preset_ids": (), "pane_config": {"sync_group": "A", "settings": {"n": 1}},
         "scale_mode": "auto",
     }  # fmt: skip
@@ -271,7 +271,7 @@ async def test_idor_matrix_other_owner_sees_and_changes_nothing(
     a, b = _user(pg_dsn), _user(pg_dsn)
     wid, lid = await _new_ws(repo, a), str(uuid.uuid4())
     made = await repo.create_layout(a, wid, lid, _lay("L"))
-    await _new_ws(repo, b)
+    wb = await _new_ws(repo, b)
     assert await repo.get_workspace_detail(b, wid) is None
     assert await repo.get_layout(b, wid, lid) is None
     assert await repo.list_layouts(b, wid, after_id=None, limit=10) is None
@@ -289,6 +289,18 @@ async def test_idor_matrix_other_owner_sees_and_changes_nothing(
     assert await repo.exists_for_other_owner(b, "layout", lid)
     assert not await repo.exists_for_other_owner(a, "layout", lid)
     assert await repo.get_layout(a, wid, lid) == made
+    # §11.3: another owner's layout addressed under the caller's OWN workspace path
+    lb = str(uuid.uuid4())
+    made_b = await repo.create_layout(b, wb, lb, _lay("LB"))
+    assert await repo.get_layout(a, wid, lb) is None
+    with pytest.raises(WorkspaceNotFoundError):
+        await repo.replace_layout(a, wid, lb, _lay("hijack"), if_match=None)
+    with pytest.raises(WorkspaceNotFoundError):
+        await repo.soft_delete_layout(a, wid, lb)
+    assert await repo.get_layout(b, wb, lb) == made_b
+    assert await repo.get_layout(a, wid, lid) == made
+    detail = await repo.get_workspace_detail(a, wid)
+    assert detail is not None and [x.id for x in detail.layouts] == [lid]
 
 
 async def test_layout_under_another_workspace_of_the_same_owner_is_not_found(
@@ -391,7 +403,7 @@ async def test_chart_open_probe_ignores_deleted_layouts(
     a = _user(pg_dsn)
     wid, lid = await _new_ws(repo, a), str(uuid.uuid4())
     symbol = "ZZZ" + uuid.uuid4().hex[:6].upper() + "USDT"
-    pane = _pane(0, symbol=symbol, pane_kind="chart", interval_code="time:1m")
+    pane = _pane(0, symbol=symbol, pane_kind="chart", interval_code="time:1")
     fields = LayoutFields("L", "1x1", None, True, False, False, None, False, (pane,))
     await repo.create_layout(a, wid, lid, fields)
     assert await repo.is_chart_open(symbol) and symbol in await repo.chart_open_symbols()
@@ -503,16 +515,17 @@ async def test_recorder_probe_statements_use_ix_lp_symbol_at_scale(
         c.execute(
             "INSERT INTO layout_panes (id, layout_id, slot_index, pane_kind, symbol) "
             "SELECT gen_random_uuid(), l.id, s, 'chart', "
-            "'AC7S' || (abs(hashtext(l.id::text || s::text)) % 200) || 'USDT' "
-            "FROM layouts l CROSS JOIN generate_series(0, 15) s WHERE l.name LIKE 'ac7-%'"
+            "'AC7S' || (abs(hashtext(l.id::text || s::text)) %% 200) || 'USDT' "
+            "FROM layouts l CROSS JOIN generate_series(0, 15) s "
+            "WHERE l.owner_user_id = ANY(%s::uuid[]) AND l.name LIKE 'ac7-%%'",
+            ([a, b],),
         )
-        c.execute("UPDATE layout_panes SET symbol = 'AC7S0USDT' WHERE symbol = 'BTCUSDT'")
     three = [str(uuid.uuid4()) for _ in range(3)]
     fresh = {a: await _new_ws(repo, a), b: await _new_ws(repo, b)}  # bulk rows filled wa/wb's cap
     for i, lid in enumerate(three):
         owner = a if i < 2 else b
         wid = fresh[owner]
-        pane = _pane(0, symbol="BTCUSDT", pane_kind="chart", interval_code="time:1m")
+        pane = _pane(0, symbol="BTCUSDT", pane_kind="chart", interval_code="time:1")
         await repo.create_layout(
             owner,
             wid,
@@ -522,11 +535,17 @@ async def test_recorder_probe_statements_use_ix_lp_symbol_at_scale(
     with _sync(pg_dsn) as c:
         c.execute("ANALYZE layouts")
         c.execute("ANALYZE layout_panes")
-        n = c.execute("SELECT count(*) FROM layouts WHERE name LIKE 'ac7-%'").fetchone()
+        n = c.execute(
+            "SELECT count(*) FROM layouts "
+            "WHERE owner_user_id = ANY(%s::uuid[]) AND name LIKE 'ac7-%%'",
+            ([a, b],),
+        ).fetchone()
         assert n is not None and isinstance(n[0], int) and n[0] >= 1000
         rows = c.execute(
             "SELECT lp.layout_id::text, lp.slot_index FROM layout_panes lp JOIN layouts l "
-            "ON l.id = lp.layout_id WHERE lp.symbol = 'BTCUSDT' AND l.deleted_at IS NULL"
+            "ON l.id = lp.layout_id WHERE lp.symbol = 'BTCUSDT' AND l.deleted_at IS NULL "
+            "AND l.owner_user_id = ANY(%s::uuid[])",
+            ([a, b],),
         ).fetchall()
         assert sorted(str(r[0]) for r in rows) == sorted(three)
         probe = str(mod._CHART_OPEN)
