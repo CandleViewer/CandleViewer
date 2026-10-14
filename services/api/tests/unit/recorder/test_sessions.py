@@ -5,13 +5,11 @@ Chaos scenarios: C-13.6 #2 (WS drop) and #12 (process kill) are exercised at uni
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
 import pytest
-from structlog.testing import capture_logs
 
 from candleviewer.exchange.bybit.public_ws import stream_for_topic
 from candleviewer.recorder.models import RecorderSetChanged
@@ -326,62 +324,3 @@ async def test_crash_recovery_audit_failure_leaves_session_open() -> None:
     with pytest.raises(OSError):
         await fresh.recover_on_startup(T0 + 9)
     assert store.gaps == [] and len(await store.list_live_sessions()) == 1
-
-
-class _StalledAudit:
-    """Audit sink whose `emit` parks until released, like an `AuditWriter` append in flight."""
-
-    def __init__(self, fail: bool = False) -> None:
-        self.entered, self.release, self.finished = (asyncio.Event() for _ in range(3))
-        self.cancelled, self.fail = False, fail
-        self.records: list[str] = []
-
-    async def emit(self, action: str, **kw: Any) -> None:
-        self.entered.set()
-        try:
-            await self.release.wait()
-        except asyncio.CancelledError:
-            self.cancelled = True
-            raise
-        finally:
-            self.finished.set()
-        if self.fail:
-            raise OSError("audit down")
-        self.records.append(action)
-
-
-async def _stalled_recovery(audit: _StalledAudit) -> MemRecorderStore:
-    """Crash recovery whose `recorder.stop` audit outlives `store_timeout_s` (0 s: the
-    in-memory store never suspends, so only the stalled audit reaches the deadline)."""
-    store = MemRecorderStore()
-    await SessionManager(store, now_us=UsClock(T0)).on_set_changed(_added())
-    cfg = SessionConfig(store_timeout_s=0.0)
-    fresh = SessionManager(store, now_us=UsClock(T0 + 9), config=cfg, audit=audit)
-    with pytest.raises(TimeoutError):
-        await fresh.recover_on_startup(T0 + 9)
-    return store
-
-
-async def test_crash_recovery_audit_timeout_never_cancels_the_audit_write() -> None:
-    """#2250: the timeout fails recovery (session left open, retried on the next start) but
-    never cancels the sink mid-write: an `AuditWriter` append in flight is left to finish."""
-    audit = _StalledAudit()
-    store = await _stalled_recovery(audit)
-    assert audit.entered.is_set() and not audit.cancelled
-    assert store.gaps == [] and len(await store.list_live_sessions()) == 1
-    audit.release.set()
-    await asyncio.wait_for(audit.finished.wait(), 5)
-    assert audit.records == ["recorder.stop"] and not audit.cancelled
-
-
-async def test_crash_recovery_audit_failing_after_timeout_is_logged() -> None:
-    audit = _StalledAudit(fail=True)
-    with capture_logs() as logs:
-        await _stalled_recovery(audit)
-        audit.release.set()
-        await asyncio.wait_for(audit.finished.wait(), 5)
-        for _ in range(5):  # let the write's done-callbacks run
-            await asyncio.sleep(0)
-    failed = [e for e in logs if e["event"] == "recorder_audit_write_failed"]
-    assert [(e["error"], e["log_level"]) for e in failed] == [("OSError", "error")]
-    assert not audit.cancelled and audit.records == []

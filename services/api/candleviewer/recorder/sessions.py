@@ -34,7 +34,6 @@ from typing import Any, Final, Literal, Protocol
 
 import structlog
 
-from candleviewer.observability import spawn
 from candleviewer.recorder.metrics import (
     recorder_gap_seconds_total,
     recorder_gaps_total,
@@ -67,14 +66,6 @@ _B11_STATE: Final[dict[str, str]] = {
 
 def logger() -> structlog.stdlib.BoundLogger:
     return structlog.get_logger("candleviewer.recorder.sessions")  # type: ignore[no-any-return]  # structlog: Any
-
-
-def _log_unawaited_audit_failure(write: asyncio.Task[None]) -> None:
-    """Done-callback of an audit write its caller stopped awaiting (timeout or cancel):
-    nobody else sees its outcome."""
-    exc = None if write.cancelled() else write.exception()
-    if exc is not None:
-        logger().error("recorder_audit_write_failed", error=type(exc).__name__)
 
 
 def to_dt(us: int) -> datetime:
@@ -215,8 +206,6 @@ class SessionManager:
         self._invalidate = invalidate or (lambda _symbol: None)
         self._live: dict[str, _Live] = {}
         self._lock = asyncio.Lock()
-        #: `recorder.stop` audit writes still in flight (see `_audit_restart`).
-        self._audit_writes: set[asyncio.Task[None]] = set()
 
     # -- queries -------------------------------------------------------------------------------
 
@@ -387,14 +376,11 @@ class SessionManager:
     async def _audit_restart(self, symbol: str, sid: str, lo: int, hi: int) -> None:
         """C-2.9 write-ahead: the `recorder.stop` audit precedes the gap row and the close; an
         audit failure raises, so recovery stops with the session still open (retried on the
-        next start) — never an unaudited close. The emit runs as a tracked task awaited through
-        `asyncio.shield` (#2250): the `store_timeout_s` bound fails recovery the same way but
-        never cancels the sink mid-write (an `AuditWriter` append in flight is left to finish;
-        the retry may then audit the close twice — over-audit, never under-audit)."""
+        next start) — never an unaudited close."""
         if self._audit is None:
             return
-        write = spawn(
-            self._audit.emit(
+        async with asyncio.timeout(self._cfg.store_timeout_s):
+            await self._audit.emit(
                 "recorder.stop",
                 actor_label=SYSTEM_RECORDER,
                 actor_user_id=None,
@@ -409,17 +395,7 @@ class SessionManager:
                     "gap_end_us": str(hi),
                 },
                 env=self._cfg.env,
-            ),
-            name="recorder-audit-restart",
-        )
-        self._audit_writes.add(write)  # strong ref: the loop holds tasks only weakly
-        write.add_done_callback(self._audit_writes.discard)
-        try:
-            async with asyncio.timeout(self._cfg.store_timeout_s):
-                await asyncio.shield(write)
-        except (TimeoutError, asyncio.CancelledError):
-            write.add_done_callback(_log_unawaited_audit_failure)
-            raise
+            )
 
     async def _touch(self, sid: str, first: int, last: int) -> None:
         await self._call(
