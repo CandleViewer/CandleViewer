@@ -37,7 +37,10 @@ jobs:
   py:
     name: py
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
+    # 30 min default (#2185): the unit suite can take 18-19.5 min on a shared runner, so a 20 min
+    # budget cancelled green runs during `uv build`. A py-only variable, so tuning the shared
+    # CV_CI_TIMEOUT_MINUTES for other lanes cannot shrink it. The speed-up is #2424 (ADR-0013 p90).
+    timeout-minutes: ${{ fromJSON(vars.CV_CI_PY_TIMEOUT_MINUTES || 30) }}
     defaults:
       run:
         working-directory: services/api
@@ -129,7 +132,7 @@ jobs:
   # C-13.9 wall-clock budgets run in their own parallel job (#2185 follow-up): measured inside the
   # covered run they failed on shared runners (test_create_app_under_200ms read 766 ms vs 200 ms on
   # four unrelated PRs, passing alone every time), and as a trailing step they pushed the `py` job
-  # past its 20-minute default timeout once the unit suite reached ~17 min (8094 passed, then
+  # past its then-20-minute default timeout once the unit suite reached ~17 min (8094 passed, then
   # cancelled at 20m01 on #2182). Same selection, same flags, still blocking: `ci-required` in
   # pr.yml depends on `py`, whose reusable-workflow conclusion aggregates every job in this file.
   py-perf:
