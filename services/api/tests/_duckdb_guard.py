@@ -4,7 +4,6 @@ implicit/explicit INSTALL/LOAD/ATTACH autoinstall fails locally with zero egress
 from __future__ import annotations
 
 import re
-import tempfile
 from collections.abc import Iterator
 from typing import Any
 
@@ -33,20 +32,32 @@ class _GuardedConnection:
         return getattr(self._inner, name)
 
 
-@pytest.fixture(autouse=True)
-def _cv_no_duckdb_install(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+@pytest.fixture(autouse=True, scope="session")
+def _cv_no_duckdb_install(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     real_connect = duckdb.connect
-
-    tmp = tempfile.mkdtemp(prefix="cv-duckdb-ext-")
+    tmp = str(tmp_path_factory.mktemp("duckdb-ext"))
     missing = tmp + "/no-such-repo"
+    settings = {
+        "custom_extension_repository": missing,
+        "autoinstall_extension_repository": missing,
+        "extension_directory": tmp + "/ext",
+    }
 
     def guarded(*args: Any, **kwargs: Any) -> _GuardedConnection:
         cfg = dict(kwargs.pop("config", None) or (args[2] if len(args) > 2 else {}))
         pos = args[:2]
-        cfg.setdefault("custom_extension_repository", missing)
-        cfg.setdefault("autoinstall_extension_repository", missing)
-        cfg.setdefault("extension_directory", tmp + "/ext")
+        for k, v in settings.items():
+            cfg.setdefault(k, v)
         return _GuardedConnection(real_connect(*pos, config=cfg, **kwargs))
 
-    monkeypatch.setattr(duckdb, "connect", guarded)
-    yield
+    # Default connection (duckdb.execute/sql) is used by module-level code too.
+    default = (
+        duckdb.default_connection()
+        if callable(duckdb.default_connection)
+        else duckdb.default_connection
+    )
+    for k, v in settings.items():
+        default.execute(f"SET {k}='{v}'")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(duckdb, "connect", guarded)
+        yield

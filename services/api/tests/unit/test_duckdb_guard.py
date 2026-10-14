@@ -17,3 +17,10 @@ def test_guard_blocks_install_and_fails_load_offline() -> None:
         con.sql("ATTACH 'x' AS p (TYPE postgres)")
     with pytest.raises(duckdb.Error):
         con.install_extension("httpfs")
+
+
+def test_default_connection_install_fails_locally() -> None:
+    import duckdb
+
+    with pytest.raises(duckdb.Error):
+        duckdb.execute("INSTALL httpfs")
