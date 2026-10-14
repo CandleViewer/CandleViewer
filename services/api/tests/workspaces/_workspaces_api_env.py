@@ -22,7 +22,7 @@ from candleviewer.storage.repositories.workspaces import (
     WorkspaceRow,
     WorkspaceVersionConflictError,
     WriteResult,
-)
+)  # fmt: skip
 
 USER_A = uuid.UUID("00000000-0000-4000-8000-00000000000a")
 USER_B = uuid.UUID("00000000-0000-4000-8000-00000000000b")

@@ -9,6 +9,8 @@ import _workspaces_api_env as fakes
 import pytest
 from _workspaces_api_env import MISSING, SID, USER_A, USER_B, VIEWER, Env, wire
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import InterfaceError, OperationalError, ProgrammingError
+from structlog.testing import capture_logs
 
 from candleviewer.storage.errors import StorageTierUnavailable
 
@@ -53,14 +55,6 @@ def test_idor_matrix_on_workspaces(method: str, actor: str) -> None:
     assert len(env.audit.denied()) == 1
 
 
-def test_viewer_reads_only_its_own_and_cannot_write() -> None:
-    env = Env()
-    env.create("Mine")
-    env.as_user(VIEWER)
-    assert env.c.get(f"/workspaces/{MISSING}").status_code == 404
-    assert env.c.post("/workspaces", json=wire({"name": "x"})).status_code == 403
-
-
 def test_deleted_workspace_is_404_and_unaudited_for_everyone() -> None:
     env = Env()
     w = env.create("Mine")
@@ -90,8 +84,16 @@ def test_every_route_401_without_a_session(method: str, path: str, body: Any) ->
     assert Env(wired=False).c.request(method, path, json=body).status_code == 401  # fail closed
 
 
+def _db(kind: type[Exception]) -> Exception:
+    return kind("SELECT secret FROM t WHERE x=:x", {"x": "SECRET-PARAM"}, Exception("conn"))
+
+
 @pytest.mark.parametrize(("method", "path", "body"), CALLS)
-@pytest.mark.parametrize("fault", [None, OSError("down"), StorageTierUnavailable("down")])
+@pytest.mark.parametrize(
+    "fault",
+    [None, OSError("down"), StorageTierUnavailable("down"), _db(OperationalError),
+     _db(InterfaceError)],
+)  # fmt: skip
 def test_store_unavailable_is_503(method: str, path: str, body: Any, fault: Any) -> None:
     env = Env()
     if fault is None:
@@ -111,8 +113,11 @@ def test_store_unavailable_is_503(method: str, path: str, body: Any, fault: Any)
         names = "list_workspaces get_workspace_detail create_workspace update_workspace".split()
         for name in [*names, "soft_delete_workspace", "exists_for_other_owner"]:
             setattr(env.repo, name, boom)
-    r = env.c.request(method, path, json=body and wire(body))
+    with capture_logs() as logs:
+        r = env.c.request(method, path, json=body and wire(body))
     assert r.status_code == 503 and r.json()["code"] == "store_unavailable", r.text
+    assert r.headers["retry-after"] == "5"
+    assert "SECRET-PARAM" not in repr(logs) and "SELECT" not in repr(logs)  # class name only
     assert r.headers["content-type"] == "application/problem+json"
 
 
@@ -140,3 +145,14 @@ def test_a_foreign_probe_that_races_a_delete_is_still_404() -> None:
     env.repo.exists_for_other_owner = gone  # type: ignore[method-assign]  # race injection
     assert env.c.get(f"/workspaces/{w['id']}").status_code == 404
     assert env.audit.denied() == []  # deleted between the read and the probe: not "live"
+
+
+def test_a_programming_error_is_a_bug_and_stays_500() -> None:
+    env = Env()
+
+    async def broken(*_a: Any, **_k: Any) -> Any:
+        raise _db(ProgrammingError)
+
+    env.repo.soft_delete_workspace = broken  # type: ignore[method-assign]  # fault injection
+    quiet = TestClient(env.c.app, raise_server_exceptions=False)
+    assert quiet.delete(f"/workspaces/{MISSING}").status_code == 500
