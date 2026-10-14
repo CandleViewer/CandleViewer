@@ -58,6 +58,17 @@ class _Rel:
         yield SimpleNamespace(session=SimpleNamespace(execute=execute))
 
 
+def _assert_no_db_error_in_chain(err: BaseException) -> None:
+    """C-12.6: the DB error (statement text, bound `ip`) is reachable from no raised error."""
+    chain: list[BaseException] = []
+    seen: BaseException | None = err
+    while seen is not None:
+        chain.append(seen)
+        seen = seen.__cause__ or seen.__context__
+    assert chain == [err] and err.__suppress_context__
+    assert not any("SELECT" in repr(e) or _IP in repr(e) for e in chain)
+
+
 async def _page(rel: _Rel, timeout_ms: int | None = 50) -> list[dict[str, Any]]:
     repo = SqlAlchemyAuditRepository(rel)  # type: ignore[arg-type]  # structural fake
     return await repo.query_page(
@@ -97,7 +108,7 @@ async def test_query_page_overrun_raises_builtin_timeout_error(
 ) -> None:
     with capture_logs() as logs, pytest.raises(TimeoutError) as err:
         await _page(_Rel(on_enter, on_query), timeout_ms=10)
-    assert err.value.__cause__ is None and err.value.__context__ is None
+    _assert_no_db_error_in_chain(err.value)
     assert [(e["event"], e["cause"]) for e in logs] == [("audit.read.timeout", cause)]
 
 
@@ -113,8 +124,8 @@ async def test_query_page_store_error_carries_only_the_sqlstate(
 ) -> None:
     with capture_logs() as logs, pytest.raises(AuditReadFailed) as err:
         await _page(_Rel(on_enter, on_query))
-    assert isinstance(err.value, StorageTierUnavailable)
-    assert err.value.sqlstate == sqlstate and err.value.__suppress_context__
+    assert isinstance(err.value, StorageTierUnavailable) and err.value.sqlstate == sqlstate
+    _assert_no_db_error_in_chain(err.value)
     error = type(on_query or on_enter).__name__
     assert [(e["event"], e["error"], e["sqlstate"]) for e in logs] == [
         ("audit.read.failed", error, sqlstate)

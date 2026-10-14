@@ -188,6 +188,7 @@ class SqlAlchemyAuditRepository:
         # The budget covers the whole call, connection checkout included: a pool wait
         # would otherwise run to the pool's own 30 s timeout.
         budget = asyncio.timeout(None if timeout_ms is None else timeout_ms / 1000)
+        cause, error, state = "", "", None
         try:
             async with budget:
                 async with self._relational.unit_of_work() as uow:
@@ -202,13 +203,17 @@ class SqlAlchemyAuditRepository:
             cause = "pool"
         except (sa.exc.SQLAlchemyError, OSError) as exc:
             state = _sqlstate(exc) if isinstance(exc, sa.exc.DBAPIError) else None
-            if state != _QUERY_CANCELED and not budget.expired():
-                # Class and SQLSTATE only: the exception text carries the bound filters.
-                _log().warning("audit.read.failed", error=type(exc).__name__, sqlstate=state)
-                raise AuditReadFailed(state) from None
-            cause = "statement_timeout"
-        _log().warning("audit.read.timeout", cause=cause, budget_ms=timeout_ms)
-        raise TimeoutError("audit read exceeded its time budget")
+            if state == _QUERY_CANCELED or budget.expired():
+                cause = "statement_timeout"
+            error = type(exc).__name__
+        # Raised after the handlers and `from None`: the database error, whose text carries
+        # the statement and the bound filters, stays in no exception chain (C-12.6). The log
+        # lines carry the cause, or the class and SQLSTATE, only.
+        if cause:
+            _log().warning("audit.read.timeout", cause=cause, budget_ms=timeout_ms)
+            raise TimeoutError("audit read exceeded its time budget") from None
+        _log().warning("audit.read.failed", error=error, sqlstate=state)
+        raise AuditReadFailed(state) from None
 
     async def fetch_entry_hash(self, entry_id: int) -> str | None:
         async with self._relational.unit_of_work() as uow:
