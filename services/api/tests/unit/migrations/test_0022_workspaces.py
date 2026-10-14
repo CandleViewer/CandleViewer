@@ -65,14 +65,9 @@ def test_upgrade_sql_has_tables_composite_fks_and_indexes() -> None:
     assert "CREATE INDEX ix_lp_layout ON layout_panes (layout_id, slot_index)" in sql
     assert "CREATE INDEX ix_lp_symbol ON layout_panes (symbol) WHERE symbol IS NOT NULL" in sql
     assert "CREATE UNIQUE INDEX ux_lay_default" in sql
+    assert "chart_template_id    uuid," in sql  # no FK: chart_templates does not exist (#2411)
     flat = "".join(sql.split())
     assert "pane_kindIN(" + ",".join(f"'{k}'" for k in _KINDS) + ")" in flat
-
-
-def test_chart_template_id_has_no_foreign_key() -> None:
-    sql = _render("upgrade", "0021_drawings:0022_workspaces")
-    assert "chart_template_id    uuid," in sql
-    assert "chart_templates" not in sql.split("CREATE TABLE layout_panes")[1].split(";")[0]
 
 
 def test_drawings_fk_is_added_not_valid_then_validated() -> None:
