@@ -92,7 +92,8 @@ _REFLECT = frozenset({"getattr", "setattr", "hasattr", "delattr", "getattr_stati
 _OBJ_REFLECT = frozenset({"__getattribute__", "__setattr__", "__delattr__"})
 _ATTRGETTERS = frozenset({"attrgetter", "methodcaller"})
 _STR_PREFIXES = ("candleviewer.secrets", "/run/credentials", "CV_KEK_", "CV_BYBIT_API_")
-#: R10: the configured plaintext exchange credential fields (Settings), readable only in settings.py.
+#: R10: the configured plaintext exchange credential fields (Settings),
+#: readable only in settings.py.
 _SETTINGS_CREDS = frozenset({"bybit_api_key", "bybit_api_secret"})
 
 #: Exact allow-list: (file, rule, construct). Each entry is one reviewed, unrelated use.
