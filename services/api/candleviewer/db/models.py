@@ -27,6 +27,7 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     MetaData,
@@ -1376,7 +1377,7 @@ kek_versions = Table(
 )
 
 
-#: `drawings` (E14-T01, revision 0021_drawings). `layout_id` has no FK until E15-T01.
+#: `drawings` (E14-T01, revision 0021_drawings; the layouts FK is in 0022_workspaces).
 DRAWING_TOOLS: tuple[str, ...] = (
     "trendline",
     "horizontal_line",
@@ -1444,4 +1445,139 @@ drawings = Table(
         "anchor_end",
         postgresql_where=text("deleted_at IS NULL"),
     ),
+    # Same-owner composite FK (0022_workspaces, D27); MATCH SIMPLE skips layout_id IS NULL.
+    ForeignKeyConstraint(
+        ["layout_id", "owner_user_id"],
+        ["layouts.id", "layouts.owner_user_id"],
+        name="fk_drawings_layout_id_layouts",
+        ondelete="CASCADE",
+    ),
+    Index("ix_dr_layout", "layout_id", postgresql_where=text("layout_id IS NOT NULL")),
+)
+
+
+#: `workspaces`, `layouts`, `layout_panes` (E15-T01, revision 0022_workspaces).
+PANE_KINDS: tuple[str, ...] = (
+    "chart",
+    "dom",
+    "tape",
+    "profile",
+    "cvd",
+    "oi",
+    "deep_stats",
+    "regime",
+    "positions",
+    "journal",
+    "watchlist",
+    "alerts",
+)
+
+workspaces = Table(
+    "workspaces",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("name", Text, nullable=False),
+    Column("is_default", Boolean, nullable=False, server_default=text("false")),
+    Column("icon_token", Text, nullable=False, server_default=text("'workspace.default'")),
+    Column("sort_order", SmallInteger, nullable=False, server_default=text("0")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("deleted_at", TIMESTAMP(timezone=True)),
+    UniqueConstraint("id", "user_id", name="ux_workspaces_id_user_id"),
+    Index(
+        "ux_ws_name",
+        "user_id",
+        text("lower(name)"),
+        unique=True,
+        postgresql_where=text("deleted_at IS NULL"),
+    ),
+    Index(
+        "ux_ws_default",
+        "user_id",
+        unique=True,
+        postgresql_where=text("is_default AND deleted_at IS NULL"),
+    ),
+)
+
+layouts = Table(
+    "layouts",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("workspace_id", UUID(as_uuid=True), nullable=False),
+    Column("owner_user_id", UUID(as_uuid=True), nullable=False),
+    Column("name", Text, nullable=False),
+    Column("grid_preset", Text, nullable=False, server_default=text("'1x1'")),
+    Column("grid_spec", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("crosshair_sync", Boolean, nullable=False, server_default=text("true")),
+    Column("level_sync", Boolean, nullable=False, server_default=text("false")),
+    Column("symbol_sync", Boolean, nullable=False, server_default=text("false")),
+    Column("hotkey_slot", SmallInteger),
+    Column("is_default", Boolean, nullable=False, server_default=text("false")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("deleted_at", TIMESTAMP(timezone=True)),
+    ForeignKeyConstraint(
+        ["workspace_id", "owner_user_id"],
+        ["workspaces.id", "workspaces.user_id"],
+        name="fk_layouts_workspace_id_workspaces",
+        ondelete="CASCADE",
+    ),
+    UniqueConstraint("id", "owner_user_id", name="ux_layouts_id_owner_user_id"),
+    CheckConstraint(
+        "grid_preset IN ('1x1','2x1','1x2','2x2','1+3','3x3','custom')", name="lay_preset"
+    ),
+    CheckConstraint("hotkey_slot IS NULL OR hotkey_slot BETWEEN 1 AND 9", name="lay_slot"),
+    Index(
+        "ux_lay_name",
+        "workspace_id",
+        text("lower(name)"),
+        unique=True,
+        postgresql_where=text("deleted_at IS NULL"),
+    ),
+    Index(
+        "ux_lay_slot",
+        "workspace_id",
+        "hotkey_slot",
+        unique=True,
+        postgresql_where=text("hotkey_slot IS NOT NULL AND deleted_at IS NULL"),
+    ),
+    Index(
+        "ux_lay_default",
+        "workspace_id",
+        unique=True,
+        postgresql_where=text("is_default AND deleted_at IS NULL"),
+    ),
+    Index("ix_lay_workspace", "workspace_id"),
+)
+
+layout_panes = Table(
+    "layout_panes",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("layout_id", ForeignKey("layouts.id", ondelete="CASCADE"), nullable=False),
+    Column("slot_index", SmallInteger, nullable=False),
+    Column("pane_kind", Text, nullable=False),
+    Column("symbol", symbol_code),
+    Column("interval_code", Text),
+    # No FK: chart_templates does not exist yet (0014/0017 precedent, #2411).
+    Column("chart_template_id", UUID(as_uuid=True)),
+    Column(
+        "indicator_preset_ids",
+        ARRAY(UUID(as_uuid=True)),
+        nullable=False,
+        server_default=text("'{}'"),
+    ),
+    Column("pane_config", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("scale_mode", Text, nullable=False, server_default=text("'auto'")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    UniqueConstraint("layout_id", "slot_index", name="ux_lp_slot"),
+    CheckConstraint(
+        "pane_kind IN (" + ",".join(f"'{k}'" for k in PANE_KINDS) + ")", name="lp_kind"
+    ),
+    CheckConstraint("slot_index BETWEEN 0 AND 15", name="lp_slot"),
+    CheckConstraint("scale_mode IN ('auto','linked','manual','log')", name="lp_scale"),
+    Index("ix_lp_layout", "layout_id", "slot_index"),
+    Index("ix_lp_symbol", "symbol", postgresql_where=text("symbol IS NOT NULL")),
 )
