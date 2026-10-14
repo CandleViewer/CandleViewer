@@ -309,6 +309,10 @@ async def test_purge_respects_the_90_day_boundary_and_the_limit(
                   (young,))  # fmt: skip
         c.execute("UPDATE drawings SET deleted_at = now() - interval '91 days' WHERE id = ANY(%s)",
                   (old,))  # fmt: skip
+        # Age the live row's created/updated too: a purge filtering on the wrong column
+        # (created_at / updated_at instead of deleted_at) would delete it and fail below.
+        c.execute("UPDATE drawings SET created_at = now() - interval '200 days', "
+                  "updated_at = now() - interval '200 days' WHERE id = %s", (live,))  # fmt: skip
 
     def remaining() -> set[str]:
         with _sync(pg_dsn) as c:
@@ -421,6 +425,30 @@ async def test_batch_update_cannot_change_symbol_or_tool(
         assert (err.value.index, err.value.rule) == (1, "immutable_field")
         assert await repo.get(a, other) is None  # whole batch rolled back
         assert await repo.get(a, rid) == mine  # row (incl. token) unchanged
+
+
+@pytest.mark.parametrize("target", ["live", "deleted", "missing"])
+@pytest.mark.parametrize("change", ["symbol", "tool"])
+async def test_immutable_field_is_never_an_oracle_for_another_owner(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str, target: str, change: str
+) -> None:
+    """Ownership/liveness is checked BEFORE immutability: B changing symbol/tool on a row
+    it cannot see must get `target_unavailable`, never `immutable_field` (which would leak
+    A's symbol/tool). Pins the check order."""
+    a, b, rid = _user(pg_dsn), _user(pg_dsn), str(uuid.uuid4())
+    token = _T
+    mine = None
+    if target != "missing":
+        mine = await repo.create(a, rid, _f("BTCUSDT", label="mine"))
+        token = mine.updated_at
+    if target == "deleted":
+        await repo.soft_delete(a, rid)
+    fields = _f("ETHUSDT") if change == "symbol" else dataclasses.replace(_f(), tool="rectangle")
+    with pytest.raises(BatchOpFailed) as err:
+        await repo.apply_batch(b, [UpdateOp(rid, token, fields)])
+    assert (err.value.index, err.value.rule) == (0, "target_unavailable")
+    if target == "live":
+        assert await repo.get(a, rid) == mine
 
 
 _SEED_USERS = 20
