@@ -324,8 +324,10 @@ def test_setting_strings_are_sanitised_scalar_and_array(raw: str) -> None:
     assert stored([raw, "ok"]) == ["ab", "ok"]
 
 
-def test_setting_string_keeps_newline_stripped_and_text_untrimmed() -> None:
-    assert stored(" a\nb ") == " ab "
+def test_setting_string_is_trimmed_like_a_name_and_empty_is_kept() -> None:
+    assert stored(" a\nb ") == "ab"
+    assert stored(["  ", "\x00"]) == ["", ""]
+    assert stored("\x00") == ""
 
 
 def test_setting_string_256_boundary_is_raw_length() -> None:

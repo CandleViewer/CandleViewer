@@ -172,7 +172,7 @@ def _setting_scalar(value: object) -> bool | int | float | str:
     WHY a plain validator: pydantic's union validation reports one error per branch per value,
     which let a small body fan out into tens of thousands of errors, and it left strings
     unsanitised (a NUL reaches Postgres as a raw driver error, a 500). One value now yields at
-    most one error. Order for strings mirrors names: raw length, lone surrogate, then strip.
+    most one error. Strings follow the name rules: raw length, lone surrogate, strip, trim.
     ``bool`` is tested before ``int`` (it is an ``int`` subclass); ints and floats keep their
     kind (``1`` stays ``1``, ``1.0`` stays ``1.0``); ``-0.0`` is stored as ``0.0``.
     """
@@ -195,7 +195,7 @@ def _setting_scalar(value: object) -> bool | int | float | str:
             raise PydanticCustomError(
                 "invalid_unicode", "String is not valid Unicode (lone surrogate)"
             ) from None
-        return sanitize_text(value, allow_newline=False)
+        return sanitize_name(value)  # same strip set + trim as names (#2400 r3); empty is kept
     raise PydanticCustomError("setting_value_type", "Value must be a string, number or boolean")
 
 
