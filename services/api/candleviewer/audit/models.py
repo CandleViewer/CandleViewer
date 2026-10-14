@@ -116,6 +116,8 @@ class AuditQueryRequest(BaseModel):
     @classmethod
     def _single_ip(cls, value: str | None) -> str | None:
         if value is not None:
+            if "%" in value:  # a scope id (fe80::1%eth0) is not a single plain address
+                raise ValueError("ip must not carry a scope id")
             ipaddress.ip_address(value)  # one address only; CIDR raises ValueError
         return value
 
