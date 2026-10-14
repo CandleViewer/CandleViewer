@@ -58,6 +58,21 @@ _TOKEN: Final = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{
 _PERMISSIONS: Final = {p.value: p for p in Permission}
 _LENGTH: Final = re.compile(r"[0-9]{1,19}")
 #: A token no stored `updated_at` can equal: an unparseable `If-Match` is "stale" (D12, D13).
+_RETRY_AFTER_S: Final = 5
+#: Driver errors that mean "the database is unreachable or timed out". `api` may not import a
+#: storage driver (ADR-0003), so they are recognised by class identity, not imported; the
+#: repository does not translate them (S3). Integrity/Programming/Data errors are bugs: 500.
+_OUTAGE_CLASSES: Final = frozenset(
+    {"sqlalchemy.exc.OperationalError", "sqlalchemy.exc.InterfaceError"}
+)
+
+
+def _is_outage(exc: Exception) -> bool:
+    if isinstance(exc, OSError | StorageTierUnavailable):
+        return True
+    return any(f"{c.__module__}.{c.__qualname__}" in _OUTAGE_CLASSES for c in type(exc).__mro__)
+
+
 _NEVER_MATCHES: Final = datetime(1, 1, 1, tzinfo=UTC)
 _CONFLICTS: Final = {
     "name_taken": "That name is already in use.",
@@ -99,7 +114,8 @@ class _Problem(Exception):
     def response(self) -> JSONResponse:
         body = {"type": f"https://candleviewer.local/errors/{self.code}", "title": self.title,
                 "status": self.status, "code": self.code, "detail": self.detail}  # fmt: skip
-        return JSONResponse(body | self.extra, self.status, media_type="application/problem+json")
+        headers = {"Retry-After": str(_RETRY_AFTER_S)} if self.code == "store_unavailable" else {}
+        return JSONResponse(body | self.extra, self.status, headers, "application/problem+json")
 
 
 class _ProblemRoute(APIRoute):
@@ -113,7 +129,10 @@ class _ProblemRoute(APIRoute):
                 return await inner(request)
             except _Problem as p:
                 return p.response()
-            except (OSError, StorageTierUnavailable) as exc:
+            except Exception as exc:  # re-raised below unless it is a store outage
+                if not _is_outage(exc):
+                    raise
+                # class name only: str(exc) of a SQLAlchemy error embeds bound parameters
                 _log().error("workspaces_store_unavailable", error=type(exc).__name__)
                 return _Problem(
                     "store_unavailable", "The workspace store is unavailable."
@@ -209,7 +228,10 @@ def _if_match(raw: str | None) -> datetime | None:
         value = value[1:-1]
     if _TOKEN.fullmatch(value) is None:
         return _NEVER_MATCHES
-    return datetime.fromisoformat(value)
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:  # well-formed but impossible (month 13, Feb 30): stale like any other junk
+        return _NEVER_MATCHES
 
 
 def _dump_workspace(row: WorkspaceRow) -> dict[str, Any]:
