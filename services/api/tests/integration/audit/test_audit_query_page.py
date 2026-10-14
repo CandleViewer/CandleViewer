@@ -188,3 +188,30 @@ async def test_page_chain_check_agrees_with_the_trigger(
         assert newer.chain_verified  # the rows above the altered one still check out
     finally:
         svc.close()
+
+
+async def test_page_rows_carry_the_owner_entry_columns(repo: SqlAlchemyAuditRepository) -> None:
+    """#2445: the select returns the columns the Owner's `AuditEntry` is built from, typed
+    (uuid session, parsed JSONB state, env text), and `query()` maps them."""
+    session = uuid.uuid4()
+    await repo.insert(
+        _row(
+            "it_owner",
+            1,
+            session_id=session,
+            reason="owner_only",
+            before_state={"qty": "1"},
+            env="demo",
+        )
+    )
+    await repo.insert(_row("it_owner", 2, after_state=None))
+    [full] = await _page(repo, "it_owner", subject_id="obj-1")
+    assert full["session_id"] == session and full["reason"] == "owner_only"
+    assert full["before_state"] == {"qty": "1"} and full["env"] == "demo"
+    assert full["actor_label"] == "it" and full["object_label"] == "label 1"
+    page = await AuditQueryService(repo).query(restrict_to_actor=None, subject_type="it_owner")
+    by_id = {e.subject_id: e for e in page.items}
+    assert by_id["obj-1"].detail == {"before": {"qty": "1"}, "after": {"symbol": "BTCUSDT", "n": 1}}
+    assert by_id["obj-1"].environment == "demo" and by_id["obj-1"].session_id == session
+    assert by_id["obj-2"].detail == {"before": None, "after": None}
+    assert page.chain_verified

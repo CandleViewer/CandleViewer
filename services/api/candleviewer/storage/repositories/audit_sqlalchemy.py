@@ -19,7 +19,7 @@ from typing import Any
 
 import sqlalchemy as sa
 import structlog
-from sqlalchemy.dialects.postgresql import ARRAY, ENUM, INET, TIMESTAMP, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, ENUM, INET, JSONB, TIMESTAMP, UUID
 
 from candleviewer.observability.audit_query_metrics import cv_audit_query_timeouts_total
 from candleviewer.settings import Settings
@@ -118,13 +118,20 @@ _AUDIT = sa.table(
     sa.column("id", sa.BigInteger),
     sa.column("event_ts", TIMESTAMP(timezone=True)),
     sa.column("actor_user_id", UUID(as_uuid=True)),
+    sa.column("actor_label", sa.Text),
     sa.column("actor_ip", INET),
+    sa.column("session_id", UUID(as_uuid=True)),
     sa.column("action", sa.Text),
     sa.column("object_kind", sa.Text),
     sa.column("object_id", sa.Text),
+    sa.column("object_label", sa.Text),
     sa.column("outcome", sa.Text),
     sa.column("severity", sa.Text),
+    sa.column("reason", sa.Text),
+    sa.column("before_state", JSONB),
+    sa.column("after_state", JSONB),
     sa.column("request_id", UUID(as_uuid=True)),
+    sa.column("env", sa.Text),
     sa.column("entry_hash", sa.Text),
     sa.column("prev_hash", sa.Text),
 )
