@@ -74,6 +74,20 @@ def check_message(message: object) -> SigningMessage:
     return message
 
 
+def message_sha256(message: SigningMessage) -> str:
+    """Lowercase hex SHA-256 of `message` as the caller sent it, before the key id is spliced in,
+    so the key id is never hashed. It ties a write-ahead audit record to its request (C-2.9).
+    Each bytes part is framed as 0x00, its 8-byte big-endian length and the bytes; each
+    `KEY_ID_SLOT` as 0x01. Different messages never share an encoding."""
+    digest = hashlib.sha256()
+    for part in message:
+        if isinstance(part, bytes):
+            digest.update(b"\x00" + len(part).to_bytes(8, "big") + part)
+        else:
+            digest.update(b"\x01")
+    return digest.hexdigest()
+
+
 def scrub_frames(exc: BaseException) -> None:
     """Drop the locals of every finished frame in the tracebacks of `exc` and of the exceptions
     chained to it, so a kept or locals-rendering traceback cannot show the key material those

@@ -36,6 +36,7 @@ from candleviewer.secrets.signing import (
     SigningMessage,
     check_message,
     mac_hex,
+    message_sha256,
     scrub_frames,
 )
 from candleviewer.secrets.store import AuditSink, CredentialStore
@@ -52,6 +53,19 @@ _SIGNABLE = frozenset({"active", "rotating"})
 _TOUCH_INTERVAL_S = 60.0
 _IO_TIMEOUT_S = 2.0
 _SYSTEM = ("system", "secrets", None)
+#: Closes a write-ahead `security.credential_borrowed` record when signing fails after it.
+_SIGN_FAILED = "security.credential_sign_failed"
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """Bounded `reason` of a failure-outcome record: M2's own reason code (codes only, never
+    key material, `errors.py`), else the kind of failure."""
+    if isinstance(exc, SecretsError):
+        code = str(exc)
+        return code if code.isascii() and code.isidentifier() else "error"
+    if isinstance(exc, asyncio.CancelledError):
+        return "cancelled"
+    return "error" if isinstance(exc, Exception) else "interrupted"
 
 
 def _m2_only(cls: type) -> None:
@@ -282,6 +296,8 @@ class CredentialBroker:
         fn: Callable[[Secret[str], Secret[str]], Awaitable[T]],
         caller_module: str,
         purpose: str,
+        *,
+        digest: str | None = None,
     ) -> T:
         """The single audited decrypt path. Its only production caller is `_sign`, which
         uses the secret for the request MAC inside M2 and returns no plaintext secret (C-2.7,
@@ -294,18 +310,23 @@ class CredentialBroker:
         method to call without them. In-process Python cannot make that impossible — a module
         can still reach the KEK by introspection — so the CI guard
         (`test_capability_boundary.py`) is the enforcing control; process isolation of
-        signing is the real fix (#835 residual, follow-up issue)."""
+        signing is the real fix (#835 residual, follow-up issue). The write-ahead record
+        carries `digest` as `message_sha256`; any failure after it (fence, decrypt, MAC,
+        cancellation) appends `security.credential_sign_failed` with a bounded `reason`."""
         if caller_module not in ALLOWED_CALLERS or purpose not in _PURPOSES:
             raise CredentialUnavailable("caller_not_permitted")
+        actor = ("system", caller_module, None)
+        extra = {"caller_module": caller_module, "purpose": purpose}
+        if digest is not None:
+            extra["message_sha256"] = digest
         result = "error"
+        audited: CredentialRow | None = None
         try:
             kek = self._require_kek()
             row = self._check_row(await self._load(key_id), key_id, purpose)
-            fields = self._fields(
-                row, actor=("system", caller_module, None), caller_module=caller_module,
-                purpose=purpose,
-            )  # fmt: skip
+            fields = self._fields(row, actor=actor, **extra)
             await self._audit("security.credential_borrowed", fields)
+            audited = row
             await self._touch(key_id)
             row = self._check_row(row, key_id, purpose)  # fence: destroyed during the awaits?
             attrs = {k: fields[k] for k in ("key_id", "env", "kek_version")}
@@ -347,6 +368,11 @@ class CredentialBroker:
                 k_s = s_s = None
             result = "ok"
             return out
+        except BaseException as exc:
+            if audited is not None:  # close the write-ahead record (C-2.9)
+                reason = _failure_reason(exc)
+                await self._outcome(_SIGN_FAILED, audited, actor, reason=reason, **extra)
+            raise
         finally:
             m.credential_borrow_total.labels(stage=caller_module, result=result).inc()
 
@@ -372,7 +398,7 @@ class CredentialBroker:
                     raise  # KeyboardInterrupt, CancelledError: not the MAC's doing; propagate
             raise CredentialUnavailable("signing_failed")
 
-        return await self._borrow(key_id, mac, caller_module, purpose)
+        return await self._borrow(key_id, mac, caller_module, purpose, digest=message_sha256(parts))
 
     async def destroy(self, key_id: UUID, *, actor: tuple[str, str, str | None] = _SYSTEM) -> None:
         """Fence first (in-flight borrows refuse at their post-audit re-check), then audit,
@@ -394,11 +420,11 @@ class CredentialBroker:
             self._cache.flush(key_id)
 
     async def _outcome(
-        self, action: str, row: CredentialRow, actor: tuple[str, str, str | None]
+        self, action: str, row: CredentialRow, actor: tuple[str, str, str | None], **extra: str
     ) -> None:
         """Best-effort failure-outcome record; never replaces the original exception."""
         try:
-            await self._audit(action, self._fields(row, actor=actor))
+            await self._audit(action, self._fields(row, actor=actor, **extra))
         except Exception:
             m.credential_outcome_audit_failures_total.inc()
 
