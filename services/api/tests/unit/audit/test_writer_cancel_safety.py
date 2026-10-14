@@ -334,7 +334,6 @@ def _wal_op(w: AuditWriter, name: str) -> asyncio.Task[Any]:
     return ops[0]
 
 
-@pytest.mark.xfail(strict=True, reason="#2250 op-task cancel; fixed in next commit")
 async def test_writer_op_task_cancelled_mid_append_keeps_lock_and_end_matches_file(
     repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, slow_disk: SlowDisk
 ) -> None:
@@ -365,7 +364,6 @@ async def test_writer_op_task_cancelled_mid_append_keeps_lock_and_end_matches_fi
     await w.stop(_WAIT_S)
 
 
-@pytest.mark.xfail(strict=True, reason="#2250 op-task cancel; fixed in next commit")
 async def test_writer_op_task_cancelled_mid_compaction_keeps_later_ack_durable(
     repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:

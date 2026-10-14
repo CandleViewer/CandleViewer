@@ -47,6 +47,8 @@ these tasks before and after it cancels the flusher.
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import json
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
@@ -84,6 +86,37 @@ def _uuid_or_none(value: str | uuid.UUID | None) -> uuid.UUID | None:
     if value is None or isinstance(value, uuid.UUID):
         return value
     return uuid.UUID(value)
+
+
+async def _uninterruptible[T](fn: Callable[..., T], /, *args: Any) -> T:
+    """Run a blocking WAL call in a worker thread and wait for it to finish even if
+    the awaiting task is cancelled (#2250 review).
+
+    The caller holds `_wal_lock`: releasing it while the thread still runs would let
+    a second append truncate the in-flight frame. A plain executor future is not a
+    Task, so event-loop teardown cannot cancel it; a cancellation of *this* task is
+    absorbed until the thread returns, then re-raised."""
+    loop = asyncio.get_running_loop()
+    ctx = contextvars.copy_context()
+    fut = loop.run_in_executor(None, functools.partial(ctx.run, fn, *args))
+    cancelled = False
+    while True:
+        try:
+            result = await asyncio.shield(fut)
+        except asyncio.CancelledError:
+            if fut.done():
+                raise
+            if not cancelled:
+                logger().critical(
+                    "audit WAL op cancelled while its worker thread runs; "
+                    "holding _wal_lock until it returns",
+                    call=getattr(fn, "__name__", "?"),
+                )
+            cancelled = True
+            continue
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
 
 class AuditWriter:
@@ -320,12 +353,12 @@ class AuditWriter:
         prefix (only when no flush batch is in flight, whose offsets a
         compaction would invalidate) and retry once."""
         try:
-            await asyncio.to_thread(self._wal.append, record)
+            await _uninterruptible(self._wal.append, record)
         except AuditWalFull:
             if self._inflight or self._wal.committed_offset() == 0:
                 raise
-            await asyncio.to_thread(self._wal.compact)
-            await asyncio.to_thread(self._wal.append, record)
+            await _uninterruptible(self._wal.compact)
+            await _uninterruptible(self._wal.append, record)
 
     async def _supervised(self) -> None:
         try:
@@ -360,7 +393,7 @@ class AuditWriter:
         """Flusher WAL op: the next uncommitted batch; marks idle when empty."""
         async with self._wal_lock:
             op.holding = True
-            batch = await asyncio.to_thread(self._wal.read_pending, self._flush_batch_size)
+            batch = await _uninterruptible(self._wal.read_pending, self._flush_batch_size)
             self._inflight = bool(batch)
             if not batch:
                 self._idle.set()
@@ -371,10 +404,12 @@ class AuditWriter:
         `_wal_lock`, so no append can land between the copy and the file swap."""
         async with self._wal_lock:
             op.holding = True
-            await asyncio.to_thread(self._wal.mark_committed, end_offset)
+            await _uninterruptible(self._wal.mark_committed, end_offset)
             self._pending = max(0, self._pending - count)
             self._inflight = False
-            await asyncio.to_thread(self._wal.compact)
+            # A cancellation surfaces here only after mark_committed returned; it
+            # then skips compaction (the cursor is durable, compaction is optional).
+            await _uninterruptible(self._wal.compact)
 
     async def _write_with_retry(self, record: dict[str, Any]) -> None:
         delay = self._retry_initial_delay_s
@@ -413,7 +448,8 @@ class AuditUnavailable(AuditError):
 class _WalOp:
     """One `_wal_lock` critical section (see `AuditWriter._shielded`)."""
 
-    #: Set by the op right after it takes `_wal_lock`; from then on it is never cancelled.
+    #: Set by the op right after it takes `_wal_lock`. From then on a cancellation of the
+    #: op task cannot release the lock mid-call: each WAL call runs via `_uninterruptible`.
     holding: bool = False
 
 
