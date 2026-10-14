@@ -44,6 +44,13 @@ auth_csrf_refused_total = Counter(
     ["reason"],
 )
 auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets performed.")
+auth_session_fixation_attempts_total = Counter(
+    "auth_session_fixation_attempts_total",
+    "Session credentials never issued here, or another user's, presented (U6/SR-013), by reason.",
+    # closed set: unknown_token | foreign_session (attempts)
+    #             | audit_throttled | audit_slow | audit_unavailable | audit_failed (bookkeeping)
+    ["reason"],
+)
 auth_revocation_latency_seconds = Histogram(
     "auth_revocation_latency_seconds",
     "Seconds from session revocation to its WebSocket connection being closed.",
@@ -88,7 +95,9 @@ users_invites_pending = Gauge(
 
 #: Series re-exported onto the scraped app registry (#2090): module-level counters
 #: land on the library default registry, which Prometheus never scrapes.
-AUTH_EXPORTED_NAMES: frozenset[str] = frozenset({"auth_csrf_refused_total"})
+AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
+    {"auth_csrf_refused_total", "auth_session_fixation_attempts_total"}
+)
 
 
 def export_auth_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
