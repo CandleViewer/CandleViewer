@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -216,7 +217,9 @@ def test_settings_preserve_int_and_float_exactly() -> None:
         st.from_regex(r"[a-z][a-z0-9_]{0,31}", fullmatch=True),
         st.one_of(
             st.integers(-(10**15), 10**15),
-            st.floats(min_value=-1e15, max_value=1e15, allow_nan=False).filter(lambda x: x != 0),
+            st.floats(min_value=-1e15, max_value=1e15, allow_nan=False).filter(
+                lambda x: abs(x) >= 1e-15
+            ),
         ),
         max_size=32,
     )
@@ -377,6 +380,32 @@ def test_setting_numbers_are_limited_to_1e15() -> None:
         assert any(
             e["rule"] == "number_out_of_range" for e in errs(LayoutPaneIn, setting_pane(bad))
         )
+
+
+@pytest.mark.parametrize("bad", [5e-324, 1e-16, -1e-16, 2.2250738585072014e-308, 9.9e-16])
+def test_setting_tiny_nonzero_floats_are_out_of_range(bad: float) -> None:
+    for value in (bad, [bad]):
+        got = [e["rule"] for e in errs(LayoutPaneIn, setting_pane(value))]
+        assert got == ["number_out_of_range"]
+
+
+@pytest.mark.parametrize("ok", [1e-15, -1e-15, 0.0, 0, 1, 0.5, 1e15, -1e15])
+def test_setting_precision_floor_boundaries_are_accepted(ok: float) -> None:
+    assert stored(ok) == ok
+    assert stored([ok]) == [ok]
+
+
+def test_setting_zero_keeps_its_kind_and_negative_zero_is_zero() -> None:
+    assert type(stored(0)) is int
+    assert type(stored(0.0)) is float and str(stored(-0.0)) == "0.0"
+
+
+def test_accepted_boundary_values_print_back_small() -> None:
+    """Deterministic size pin: every accepted extreme prints (as Postgres jsonb would, in plain
+    decimal) in <= 40 characters, so stored size cannot balloon on read."""
+    for x in (1e-15, -1e-15, 1e15, -1e15, 0.0, 123456789.123456, 1.5e-15, 999999999999999.9):
+        assert len(format(Decimal(repr(x)), "f")) <= 40
+    assert len(format(Decimal(repr(5e-324)), "f")) > 300  # why the floor exists
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])

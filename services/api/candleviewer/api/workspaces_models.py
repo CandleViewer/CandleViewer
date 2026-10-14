@@ -164,6 +164,10 @@ class WorkspaceIn(BaseModel):
 
 # --- pane config (D6) ----------------------------------------------------------------------
 _MAX_NUMBER: Final = 10**15
+#: Precision floor: a non-zero float below this is refused. WHY: `5e-324` is 6 bytes as Python
+#: prints it but Postgres jsonb prints it back as a ~326-digit decimal, so a small stored body
+#: could be read back ~700x larger (event-loop cost on every GET). Zero stays allowed.
+_MIN_NUMBER: Final = 1e-15
 
 
 def _setting_scalar(value: object) -> bool | int | float | str:
@@ -183,6 +187,10 @@ def _setting_scalar(value: object) -> bool | int | float | str:
             raise PydanticCustomError("finite_number", "Number must be finite")
         if abs(value) > _MAX_NUMBER:
             raise PydanticCustomError("number_out_of_range", "Number must be within +-1e15")
+        if value != 0 and abs(value) < _MIN_NUMBER:
+            raise PydanticCustomError(
+                "number_out_of_range", "Non-zero number must be at least 1e-15 in magnitude"
+            )
         return 0.0 if isinstance(value, float) and value == 0 else value
     if isinstance(value, str):
         if len(value) > _MAX_STR:
