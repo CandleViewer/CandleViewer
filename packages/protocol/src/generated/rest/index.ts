@@ -23,7 +23,8 @@ export interface paths {
      *     Entries are never updated or deleted and are kept indefinitely (C-12.8). `id`,
      *     `subject_label` and `user_agent` are informational: `entry_hash` does not cover them. The
      *     hash is unkeyed, so a writer with database access could rebuild a consistent chain; only
-     *     signed off-box checkpoints detect that, and checkpoint signatures are not produced yet.
+     *     external anchors detect that: the SR-068 off-box mirror, retained signed exports and
+     *     signed checkpoints (export and checkpoint signatures are not produced yet).
      *
      *     **Access** (`04-security-program.md` §7.2.2 row 49, SR-067). The Owner sees every entry
      *     with raw payloads. A Manager (`audit:read`) sees only entries it is the actor of, in the
@@ -40,11 +41,11 @@ export interface paths {
      *     subject label are not integrity-checked. Redaction applied when an entry was written is
      *     never reversed on read.
      *
-     *     **Ordering and paging.** Newest first: by `ts` descending, then `id` descending. Paging is
-     *     keyset-based, never offset. Each page resumes strictly after the last entry returned, so
-     *     every entry that existed when paging started is returned exactly once; entries written
-     *     while paging may or may not appear. No match is `200` with `items: []`,
-     *     `chain_verified: true` and a null `meta.next_cursor`.
+     *     **Ordering and paging.** Newest first: by `ts` descending, then `id` descending. `limit` is
+     *     1 to 500, default 100. Paging is keyset-based, never offset. Each page resumes strictly
+     *     after the last entry returned, so every entry that existed when paging started is
+     *     returned exactly once; entries written while paging may or may not appear. No match is
+     *     `200` with `items: []`, `chain_verified: true` and a null `meta.next_cursor`.
      *
      *     **Integrity.** `chain_verified` is true when, for every returned entry, the hashed fields
      *     recompute to its `entry_hash` and its `prev_hash` equals the `entry_hash` of the entry
@@ -52,18 +53,33 @@ export interface paths {
      *     full entries before any projection. It says nothing about the informational fields or the
      *     rest of the chain (`verifyAuditChain` checks ranges).
      *
-     *     **Rate limit and audit budget.** Calls are rate-limited per user. Reads are audited without
-     *     letting them flood the audit log, which also carries order intents. A session writes one
-     *     `admin.audit_read` (the filters, with `q` kept only as a digest, and the returned count,
-     *     never the entries) per distinct filter set. Continuation pages of a filter set already
-     *     recorded are not recorded again; they are counted, and the count is carried on the
-     *     session's next `admin.audit_read`. Both `admin.audit_read` and cross-actor
-     *     `admin.audit_denied` records have a configured budget per session. Beyond the rate limit
-     *     or a budget the call is `429 rate_limited` with `Retry-After` and returns no data. If a
-     *     due record cannot be written the call fails with `503 store_unavailable` and returns
-     *     nothing. Any other refusal on the `/admin/audit*` operations is recorded as
-     *     `admin.audit_denied` within a per-session budget; beyond it the refusal is unchanged but
-     *     carries `Retry-After` and writes no record, as for `auth.csrf_refused`.
+     *     **Limits.** Per user, at most `audit_query_rate_per_minute` calls a minute (default 60) and
+     *     `audit_query_max_concurrent` calls in flight (default 2); beyond either the call is
+     *     `429 rate_limited` with `Retry-After`. Each call has a time budget
+     *     (`audit_query_timeout_ms`, default 4000); a call that overruns it fails with
+     *     `503 store_unavailable` and `Retry-After` and returns no data.
+     *
+     *     **Audit budget.** Reads are audited without letting them flood the audit log, which also
+     *     carries order intents. Counters and budgets are kept per user, across all of the user's
+     *     sessions, so a token refresh or a new session does not reset them. The first read of a
+     *     distinct filter set writes `admin.audit_read` (the filters, with `q` kept only as a
+     *     digest, and the returned count, never the entries). Continuation pages are counted and
+     *     flushed into an `admin.audit_read` at least every `audit_read_flush_pages` pages (default
+     *     50) or `audit_read_flush_seconds` (default 300), whichever comes first. Records written
+     *     for a user (`admin.audit_read`, and `admin.audit_denied` for a cross-actor filter or any
+     *     other refusal on the `/admin/audit*` operations) are capped by
+     *     `audit_record_budget_per_hour` (default 120). Over the cap a read is `429 rate_limited`
+     *     with no data, and a refusal is returned unchanged with `Retry-After`, as for
+     *     `auth.csrf_refused`. A `429`, and a refusal over the cap, write no record; they are
+     *     counted, and the next record written for the user carries the count (`suppressed`). If
+     *     a due record cannot be written the call fails with `503 store_unavailable` and returns
+     *     nothing.
+     *
+     *     Counters live in LRU-bounded maps (`audit_budget_tracked_users`, default 1024) with a
+     *     global cap on audit writes in flight (`audit_inflight_writes`, default 64), as for
+     *     `auth.csrf_refused` (C-2.18). Eviction errs toward more records: an evicted user's pending
+     *     counts are written first, and that user's next read counts as a new filter set. A due
+     *     record held back by the in-flight cap counts as unwritable (`503`).
      *
      *     Every state-changing API call, every order sent, every key operation, every kill-switch
      *     transition, every login (success and failure) and every rule arm/disarm produces an entry.
@@ -92,9 +108,9 @@ export interface paths {
      *     covers the window `[from, to)`, for offline retention. Poll `GET /admin/jobs/{jobId}`; once
      *     the job succeeds its `result` is an `AuditExportResult`.
      *
-     *     **Who.** Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50), with a live
-     *     step-up elevation of the `audit_export` action class (SR-067). Until the session is
-     *     elevated the call is refused with `403` and `code: step_up_required`.
+     *     **Who.** Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50), with a
+     *     step-up of the `audit_export` action class within its grace window (SR-067). Until then
+     *     the call is refused with `403` and `code: step_up_required`.
      *
      *     **Limits.** These are configured server-side, so that export cannot be used for
      *     exfiltration or denial of service. A window longer than the configured maximum is
@@ -113,14 +129,18 @@ export interface paths {
      *     stored: redaction applied when an entry was written is preserved and nothing is
      *     re-hydrated.
      *
-     *     **Download.** Only the user who requested the export may poll the job or fetch the file;
-     *     anyone else gets `404 not_found`. Each download needs a live `audit_export` step-up, is
-     *     rate-limited per user (`429`), and is audited before any byte is sent
-     *     (`503 store_unavailable` if that record cannot be written). It is an authenticated `GET`
-     *     whose URL carries no credential, and it answers with `Cache-Control: no-store`,
-     *     `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and
-     *     `Repr-Digest: sha-256=:…:`. After `expires_at` the file is deleted and the download is
-     *     `410 gone`.
+     *     **Download.** The file at `download_url` is fetched with an authenticated `GET` whose URL
+     *     carries no credential. Its checks run in this order: authentication (`401`),
+     *     authorisation (`403`), requester (`404 not_found` for anyone but the user who requested
+     *     the export, and for an unknown or evicted job), step-up of the `audit_export` class
+     *     within its grace window (`403 step_up_required`, checked by the operation after the
+     *     requester check, never by a path-matched pre-check), the per-user rate limit (`429`),
+     *     expiry (`410 gone` after `expires_at`, when the file is deleted), then a write-ahead
+     *     audit record (`503 store_unavailable` if it cannot be written) before any byte is
+     *     streamed. Its refusals fall under the audit budget described on `queryAuditLog`. The
+     *     response sets `Cache-Control: no-store`, `Content-Disposition: attachment`,
+     *     `X-Content-Type-Options: nosniff` and `Repr-Digest: sha-256=:…:`. Polling the job follows
+     *     the same requester rule.
      *
      *     **Audit.** The request is audited before the job exists (`admin.audit_export`); if that
      *     record cannot be written the call fails with `503 store_unavailable` and no job is
@@ -150,29 +170,34 @@ export interface paths {
      *     each entry's `prev_hash` equals the `entry_hash` of the entry before it. The first entry
      *     is checked against its stored predecessor (`anchor_hash`; genesis is 64 zeros). Every
      *     checkpoint with `head_id <= to_id` must name an existing entry whose `entry_hash` equals
-     *     the checkpoint's `head_hash`. Checking stops at the **first** divergence in id order (a
-     *     hash, link or checkpoint mismatch, or a missing checkpointed entry), reported as
-     *     `first_bad_id`. A break is a `200` with `verified: false`, never an error status. An empty
-     *     range (`entries_checked: 0`) proves nothing. The hash is unkeyed SHA-256, so a writer with
-     *     database access could rebuild a consistent chain; only signed off-box checkpoints detect
-     *     that, and checkpoint signatures are not produced yet.
+     *     the checkpoint's `head_hash`. When the range ends at the current head, a checkpoint whose
+     *     `head_id` is above the head is also a break: the tail was truncated, and `first_bad_id` is
+     *     that `head_id`. Checking stops at the **first** divergence in id order (a hash, link or
+     *     checkpoint mismatch, or a missing checkpointed entry), reported as `first_bad_id`. A break
+     *     is a `200` with `verified: false`, never an error status. An empty range
+     *     (`entries_checked: 0`) proves nothing. The hash is unkeyed SHA-256, so a writer with
+     *     database access could rebuild a consistent chain; only external anchors detect that: the
+     *     SR-068 off-box mirror, retained signed exports and signed checkpoints (export and
+     *     checkpoint signatures are not produced yet).
      *
      *     **Range.** Ids increase but are not contiguous, so a bound may name an id that does not
-     *     exist. A missing bound is filled in so that the span `to_id - from_id + 1` stays within
-     *     the configured maximum: `to_id` defaults to the newest entry when the run starts, or to
-     *     the end of a maximum-sized span from `from_id` if that is earlier; `from_id` defaults to
-     *     the first entry, or to the start of a maximum-sized span ending at `to_id` if that is
-     *     later. When both are given, a span above the maximum is `422 validation_failed`; the
-     *     problem `detail` and `errors[].rule` (`max_verify_span`) name the limit. The response
-     *     echoes the effective range.
+     *     exist. The span `to_id - from_id + 1` is capped by `audit_verify_max_span` (default
+     *     1000000). With neither bound, the range is the newest span of that size, ending at the
+     *     newest entry when the run starts. With one bound, the other is filled in to make a
+     *     maximum-sized span, clipped to the first and the newest entry. When both are given, a
+     *     longer span is `422 validation_failed`; the problem `detail` and `errors[].rule`
+     *     (`max_verify_span`) name the limit. The response echoes the effective range.
      *
      *     **Who and how often.** Owner only (`04-security-program.md` §7.2.2 row 49a): a Manager
-     *     holding `audit:read` is refused with `403`. Synchronous. One verification runs at a time,
-     *     the nightly job included (`409 conflict`), and calls are rate-limited per user
-     *     (`429 rate_limited`). A `started` `admin.audit_verify` record is written before the run;
-     *     if it cannot be written the call fails with `503 store_unavailable` and nothing runs. The
-     *     result is recorded too (severity `critical` when `verified` is false), and a failed
-     *     verification is also raised as a critical security event.
+     *     holding `audit:read` is refused with `403`. Synchronous. The checks run in this order:
+     *     authentication (`401`), authorisation (`403`), body validation and range defaulting
+     *     (`422`), the per-user rate limit (`429 rate_limited`), single-flight (`409 conflict`: one
+     *     verification at a time, the nightly job included), then a write-ahead `started`
+     *     `admin.audit_verify` record (`503 store_unavailable` if it cannot be written; nothing
+     *     runs). A caller who is not authorised therefore never learns whether a verification is
+     *     running. The result is recorded too (severity `critical` when `verified` is false), and a
+     *     failed verification is also raised as a critical security event. Refusals fall under the
+     *     audit budget described on `queryAuditLog`.
      */
     post: operations["verifyAuditChain"];
     delete?: never;
@@ -4484,7 +4509,7 @@ export interface components {
     /** @description `Job.result` of a succeeded `audit_export` job. The artefact is NDJSON (gzip when `compressed`): a signed header line, then the chain span in id order. `signature` is a detached Ed25519 signature over the ASCII bytes `cv.audit.export.v1:` followed by the lowercase hex `sha256`. Verify it with the public key the Owner pinned for `key_id`, which is published out of band; never trust a key served next to the artefact. */
     AuditExportResult: {
       compressed: boolean;
-      /** @description Relative API URL of the artefact. It carries no credential: fetching it is an authenticated `GET`, allowed only to the requesting user with a live `audit_export` step-up, and audited before any byte is sent (see `exportAuditLog`). */
+      /** @description Relative API URL of the artefact. It carries no credential: fetching it is an authenticated `GET`, allowed only to the requesting user within the `audit_export` step-up grace window, and audited before any byte is sent (see `exportAuditLog`). */
       download_url: string;
       /**
        * Format: date-time
@@ -8235,7 +8260,7 @@ export interface operations {
         cursor?: string;
         /** @description Inclusive start of the time window (RFC 3339 UTC). */
         from?: components["parameters"]["From"];
-        /** @description Exact actor IP address (IPv4 or IPv6). Owner only; `403` for a Manager. */
+        /** @description Exact actor IP address, parsed as one IPv4 or IPv6 address; a CIDR range or any other value is `422 validation_failed`. Owner only; `403` for a Manager. */
         ip?: string;
         /** @description Page size. */
         limit?: components["parameters"]["Limit"];

@@ -4423,7 +4423,7 @@ class AuditExportResult(BaseModel):
     download_url: Annotated[
         str,
         Field(
-            description="Relative API URL of the artefact. It carries no credential: fetching it is an authenticated `GET`, allowed only to the requesting user with a live `audit_export` step-up, and audited before any byte is sent (see `exportAuditLog`)."
+            description="Relative API URL of the artefact. It carries no credential: fetching it is an authenticated `GET`, allowed only to the requesting user within the `audit_export` step-up grace window, and audited before any byte is sent (see `exportAuditLog`)."
         ),
     ]
     sha256: Annotated[
