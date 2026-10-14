@@ -50,9 +50,6 @@ def test_model_constraint_and_index_names_match_sql() -> None:
     }
     assert {i.name for i in models.layout_panes.indexes} == {"ix_lp_layout", "ix_lp_symbol"}
     assert "ix_dr_layout" in {i.name for i in models.drawings.indexes}
-
-
-def test_model_pane_kinds_match_spec_order() -> None:
     assert list(models.PANE_KINDS) == _KINDS
 
 
