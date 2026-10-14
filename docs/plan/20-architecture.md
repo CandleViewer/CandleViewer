@@ -837,7 +837,12 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_RECORDER_MAX_SYMBOLS`        | int    | `20`                      | runtime | manual add 422 / auto-start refused above                                                                           |
 | `CV_RECORDER_WAL_DIR`            | path   | `<data dir>/recorder-wal` | process | StreamWriter spill WAL; absolute, no `..`, inside the data dir; must not share a volume with Postgres/logs (SR-096) |
 | `CV_RECORDER_WAL_MAX_BYTES`      | int    | `1073741824`              | process | WAL cap (all streams); past it: drop + `backpressure_drop` gap                                                      |
-| `CV_DISK_CAP_GB`                 | int    | `500`                     | runtime | pause auto-record at 90 %                                                                                           |
+| `CV_DISK_CAP_GB`                 | int    | `600`                     | runtime | E16-K01 (provisional); ladder in 24-internal-schemas §13.4.1                                                        |
+| `CV_DISK_WARN_PCT`               | int    | `80`                      | runtime | warning event; re-arms 5 points lower                                                                               |
+| `CV_DISK_AUTOSTOP_PCT`           | int    | `90`                      | runtime | no new auto-record; accelerated retention                                                                           |
+| `CV_DISK_HALT_PCT`               | int    | `95`                      | runtime | write gate: symbols without an open position dropped (gaps)                                                         |
+| `CV_DISK_SAMPLE_INTERVAL_S`      | float  | `60`                      | process | DiskBudget sampling cadence                                                                                         |
+| `CV_ALLOW_SHARED_VOLUME`         | bool   | `false`                   | process | SR-096 escape hatch; refused unless testnet (E16-FR-11)                                                             |
 | `CV_ORDER_RATE_PER_UID`          | int    | `8`                       | runtime | below Bybit's 10/s for headroom                                                                                     |
 | `CV_NATIVE_SL_DEADLINE_MS`       | int    | `3000`                    | runtime | NakedPositionAlert threshold                                                                                        |
 | `CV_KILLSWITCH_ON_DISCONNECT_S`  | int    | `30`                      | runtime | watchdog flatten policy (opt-in per account)                                                                        |

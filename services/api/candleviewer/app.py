@@ -101,6 +101,7 @@ from candleviewer.bars.reader import BarReader, tape_time_bar_reader
 from candleviewer.bars.service import BarsService
 from candleviewer.bars_wiring import wire_bars
 from candleviewer.book.service import BookService
+from candleviewer.budget_wiring import build_disk_budget
 from candleviewer.bus.models import Topic
 from candleviewer.bus.service import BusService
 from candleviewer.domain.events import InstrumentUpdatedEvent
@@ -170,7 +171,7 @@ from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.recorder.coverage import CoverageService
-from candleviewer.recorder.metrics import current_write_backlog_rows
+from candleviewer.recorder.metrics import current_write_backlog_rows, export_recorder_metrics
 from candleviewer.recorder.service import RecorderService
 from candleviewer.replay.service import ReplayService
 from candleviewer.risk.service import RiskService
@@ -856,6 +857,12 @@ def create_app(
     app.state.coverage_service = coverage_service
     if coverage_service is not None:
         ctx.recorder.attach_coverage(coverage_service)
+    # E16-T07 (#491): DiskBudget on the real backend (no recorder flag; lifespan-started).
+    app.state.disk_budget = build_disk_budget(
+        resolved,
+        bus=ctx.bus.bus,
+        recorder_repo=SqlAlchemyRecorderRepository(_kb_pg) if _kb_pg is not None else None,
+    )
     app.state.kline_boundary_refresh = KlineBoundaryRefreshTask(
         kline_boundary,
         kline_policy_loader(SqlAlchemyRecorderRepository(_kb_pg) if _kb_pg is not None else None),
@@ -1073,6 +1080,10 @@ def create_app(
     )
     # E12-T03: bars series (builders + BarBuilderSet) on the scraped registry.
     app.state.bars_metrics = export_bars_metrics(ctx.metrics, env=resolved.environment.value)
+    # E16-T03/T07: StreamWriter and DiskBudget series on the scraped registry.
+    app.state.recorder_metrics = export_recorder_metrics(
+        ctx.metrics, env=resolved.environment.value
+    )
     app.state.secrets_metrics = export_secrets_metrics(ctx.metrics, env=resolved.environment.value)
     # E17-T02: CVWB encode frames/bytes per body_kind.
     app.state.cvwb_metrics = export_cvwb_metrics(ctx.metrics, env=resolved.environment.value)

@@ -169,7 +169,13 @@ async def test_hot_partitions_closed_days_parses_and_filters() -> None:
     hot = QuestDbHotPartitions(pg)
     days = await hot.closed_days(T, DAY_START_US + 86_400_000_000)
     assert days == [DAY_START_US]
-    assert pg.calls[0][0] == "SELECT name FROM table_partitions('trades')"
+    assert pg.calls[0][0] == "SELECT name, diskSize FROM table_partitions('trades')"
+
+
+async def test_hot_partitions_disk_bytes_sums_disk_size_over_tables() -> None:
+    pg = FakePg([{"name": "2026-10-17", "diskSize": 7}, {"name": "2026-10-18", "diskSize": None}])
+    assert await QuestDbHotPartitions(pg).disk_bytes([T, StreamKind.TICKERS]) == 14
+    assert [sql.split("(")[1] for sql, _ in pg.calls] == ["'trades')", "'tickers')"]
 
 
 async def test_hot_partitions_symbols_bind_naive_utc_ts_params() -> None:
