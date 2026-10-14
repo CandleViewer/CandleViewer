@@ -117,8 +117,14 @@ def test_symbol_pattern_and_length_limits() -> None:
         assert bad(body(symbol=s))[0][0] == "symbol", s
 
 
-def test_label_is_sanitised_before_length_checks_and_newline_is_stripped() -> None:
-    assert DrawingIn.model_validate(body(label="a\n" + "‮" * 500 + "b")).label == "ab"
+def test_label_is_sanitised_and_newline_is_stripped() -> None:
+    assert DrawingIn.model_validate(body(label="a\n" + "‮" * 50 + "b")).label == "ab"
+
+
+def test_label_raw_length_over_120_with_control_char_is_string_too_long() -> None:
+    # 120 visible + 1 control = 121 raw: schema-invalid, so rejected though it sanitises to 120.
+    assert bad(body(label="x" * 120 + "\x00")) == [("label", "string_too_long")]
+    assert DrawingIn.model_validate(body(label="x" * 119 + "\x00")).label == "x" * 119
 
 
 def test_label_empty_or_empty_after_sanitising_is_string_too_short() -> None:
