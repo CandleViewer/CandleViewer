@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import functools
 import hashlib
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,6 +33,27 @@ from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.verify_slot import VerifySlot
 
 _GENESIS_HASH = "0" * 64
+#: Rows per verify batch (ticket "Technical notes").
+VERIFY_BATCH_SIZE = 10_000
+#: The hashed columns after `prev_hash`, in the order `audit_chain()` hashes them
+#: (`21-database-schema.md` §3.10.1).
+HASHED_FIELDS = (
+    "actor_user_id",
+    "actor_label",
+    "actor_ip",
+    "session_id",
+    "action",
+    "object_kind",
+    "object_id",
+    "outcome",
+    "severity",
+    "reason",
+    "before_state",
+    "after_state",
+    "request_id",
+    "env",
+    "event_ts",
+)
 
 
 def _canonical_field(value: object) -> str:
@@ -44,7 +66,14 @@ def _canonical_field(value: object) -> str:
     return f"{len(text)}:{text}"
 
 
-def _canonical_hash(prev_hash: str, row: dict[str, Any]) -> str:
+def _canonical_digest(prev_hash: str, renderings: Iterable[str | None]) -> str:
+    """`audit_chain()`'s digest: `prev_hash`, then the renderings in `HASHED_FIELDS` order,
+    each framed by `_canonical_field`, then SHA-256 over the UTF-8 bytes."""
+    payload = _canonical_field(prev_hash) + "".join(map(_canonical_field, renderings))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _canonical_hash(prev_hash: str, row: Mapping[str, Any]) -> str:
     """Recompute `audit_chain()`'s digest.
 
     `row` carries every hashed column already rendered to text by Postgres
@@ -52,26 +81,7 @@ def _canonical_hash(prev_hash: str, row: dict[str, Any]) -> str:
     so this is a pure concatenation of `_canonical_field` encodings — the
     same length-prefixed form as the trigger's `audit_field()`.
     """
-    parts = (
-        prev_hash,
-        row["actor_user_id"],
-        row["actor_label"],
-        row["actor_ip"],
-        row["session_id"],
-        row["action"],
-        row["object_kind"],
-        row["object_id"],
-        row["outcome"],
-        row["severity"],
-        row["reason"],
-        row["before_state"],
-        row["after_state"],
-        row["request_id"],
-        row["env"],
-        row["event_ts"],
-    )
-    payload = "".join(_canonical_field(part) for part in parts)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return _canonical_digest(prev_hash, (row[name] for name in HASHED_FIELDS))
 
 
 def _page_chain_verified(rows: list[dict[str, Any]]) -> bool:
@@ -217,37 +227,36 @@ class AuditQueryService:
         *,
         from_id: int | None = None,
         to_id: int | None = None,
-        batch_size: int = 5_000,
+        batch_size: int = VERIFY_BATCH_SIZE,
     ) -> VerifyResult:
+        """Check `[from_id, to_id]` (both inclusive; defaults: the first entry and the head).
+        The first entry is checked against the stored `entry_hash` of the greatest id below
+        `from_id` (genesis when there is none): ids have gaps, so `from_id - 1` may not
+        exist (design §1 gap 10). `to_id` is clamped to the head read when the run starts,
+        so entries appended during the run are not checked; a range past the head checks
+        nothing. Keyset batches of `batch_size` rows; the walk stops at the first entry
+        whose `prev_hash` or recomputed hash diverges."""
+        head = await self._repository.read_head()
+        last_id = 0 if head is None else head[0]
+        if to_id is not None:
+            last_id = min(to_id, last_id)
+        after_id = 0 if from_id is None else from_id - 1
         checked = 0
-        expected_prev = _GENESIS_HASH
         first_bad_id: int | None = None
-        cursor = from_id - 1 if from_id else 0
-
-        if from_id and from_id > 1:
-            prev_hash = await self._repository.fetch_entry_hash(from_id - 1)
-            if prev_hash is not None:
-                expected_prev = prev_hash
-
-        while first_bad_id is None:
-            rows = await self._repository.fetch_verify_batch(
-                after_id=cursor, to_id=to_id, limit=batch_size
-            )
-            if not rows:
-                break
-            for row in rows:
-                checked += 1
-                if row["prev_hash"] != expected_prev:
-                    first_bad_id = row["id"]
+        if after_id < last_id:
+            expected = await self._repository.fetch_anchor_hash(after_id + 1) or _GENESIS_HASH
+            while first_bad_id is None:
+                rows = await self._repository.fetch_verify_batch(
+                    after_id=after_id, to_id=last_id, limit=batch_size
+                )
+                for row in rows:  # (id, prev_hash, entry_hash, *renderings)
+                    checked += 1
+                    if row[1] != expected or _canonical_digest(expected, row[3:]) != row[2]:
+                        first_bad_id = row[0]
+                        break
+                    expected, after_id = row[2], row[0]
+                if len(rows) < batch_size or after_id >= last_id:
                     break
-                recomputed = _canonical_hash(expected_prev, row)
-                if recomputed != row["entry_hash"]:
-                    first_bad_id = row["id"]
-                    break
-                expected_prev = row["entry_hash"]
-                cursor = row["id"]
-            if len(rows) < batch_size:
-                break
 
         return VerifyResult(
             verified=first_bad_id is None,

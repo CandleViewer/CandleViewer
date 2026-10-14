@@ -79,6 +79,10 @@ _INSERT_SQL = sa.text("""
 _HEAD_SQL = sa.text("SELECT id, entry_hash FROM audit_log ORDER BY id DESC LIMIT 1")
 _COUNT_SQL = sa.text("SELECT count(*) FROM audit_log")
 _ENTRY_HASH_SQL = sa.text("SELECT entry_hash FROM audit_log WHERE id = :id")
+#: The stored predecessor of a range starting at `:before_id` (ids have gaps).
+_ANCHOR_SQL = sa.text(
+    "SELECT entry_hash FROM audit_log WHERE id < :before_id ORDER BY id DESC LIMIT 1"
+)
 
 #: Every hashed column is rendered to text *by Postgres*, with exactly the
 #: casts `audit_chain()` uses, so the Python verifier encodes the same bytes
@@ -143,9 +147,7 @@ _VERIFY_BATCH_SQL = sa.text(
     "before_state::text AS before_state, after_state::text AS after_state, "
     "request_id::text AS request_id, env::text AS env, "
     "to_char(event_ts AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.USOF') AS event_ts "
-    "FROM audit_log WHERE id > :after_id "
-    "AND (CAST(:to_id AS bigint) IS NULL OR id <= CAST(:to_id AS bigint)) "
-    "ORDER BY id ASC LIMIT :limit"
+    "FROM audit_log WHERE id > :after_id AND id <= :to_id ORDER BY id ASC LIMIT :limit"
 )
 
 #: For given rows, by id: the renderings the trigger hashed (as `_VERIFY_BATCH_SQL`, each cut
@@ -335,16 +337,17 @@ class SqlAlchemyAuditRepository:
             after=after,
             limit=limit,
         )
-        shared = 0 if owner else 1
-        if self._reads >= self._read_slots or self._shared_reads + shared >= self._read_slots:
-            _log().warning("audit.read.busy", slots=self._read_slots, owner=owner)
-            raise AuditReadBusy
-        self._reads += 1
-        self._shared_reads += shared
         # The budget covers the whole call, connection checkout included: a pool wait
         # would otherwise run to the pool's own 30 s timeout.
         budget = asyncio.timeout(None if timeout_ms is None else timeout_ms / 1000)
         cause, error, state = "", "", None
+        shared = 0 if owner else 1
+        if self._reads >= self._read_slots or self._shared_reads + shared >= self._read_slots:
+            _log().warning("audit.read.busy", slots=self._read_slots, owner=owner)
+            raise AuditReadBusy
+        # Nothing runs between taking the slot and the `try` that gives it back.
+        self._reads += 1
+        self._shared_reads += shared
         try:
             async with budget:
                 async with self._relational.unit_of_work() as uow:
@@ -382,13 +385,17 @@ class SqlAlchemyAuditRepository:
             row = (await uow.session.execute(_ENTRY_HASH_SQL, {"id": entry_id})).first()
             return row[0] if row is not None else None
 
+    async def fetch_anchor_hash(self, before_id: int) -> str | None:
+        async with self._relational.unit_of_work() as uow:
+            rows = list(await uow.session.execute(_ANCHOR_SQL, {"before_id": before_id}))
+            return str(rows[0][0]) if rows else None
+
     async def fetch_verify_batch(
-        self, *, after_id: int, to_id: int | None, limit: int
-    ) -> list[dict[str, Any]]:
+        self, *, after_id: int, to_id: int, limit: int
+    ) -> list[tuple[Any, ...]]:
         params = {"after_id": after_id, "to_id": to_id, "limit": limit}
         async with self._relational.unit_of_work() as uow:
-            result = await uow.session.execute(_VERIFY_BATCH_SQL, params)
-            return [dict(row._mapping) for row in result]
+            return [tuple(row) for row in await uow.session.execute(_VERIFY_BATCH_SQL, params)]
 
     async def read_head(self) -> tuple[int, str] | None:
         async with self._relational.unit_of_work() as uow:

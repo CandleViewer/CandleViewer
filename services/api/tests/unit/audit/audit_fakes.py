@@ -32,10 +32,17 @@ class FakeAuditRepository:
         self.rows: list[dict[str, Any]] = []
         self.checkpoints: dict[int, dict[str, Any]] = {}
         self.page_calls: list[dict[str, Any]] = []
+        self.verify_calls: list[tuple[int, int, int]] = []  # (after_id, to_id, limit)
         self.over_cap: set[int] = set()
         self._up = asyncio.Event()
         self._up.set()
         self.insert_attempts = 0
+        self._next_id = 1
+
+    def burn_ids(self, n: int) -> None:
+        """Consume `n` sequence values without a row, as a WAL-replay duplicate
+        (`ON CONFLICT DO NOTHING`) or a rolled-back insert does: ids have gaps."""
+        self._next_id += n
 
     @property
     def down(self) -> bool:
@@ -66,7 +73,7 @@ class FakeAuditRepository:
             return None if v is None else json.dumps(v, sort_keys=True)
 
         row: dict[str, Any] = {
-            "id": len(self.rows) + 1,
+            "id": self._next_id,
             "record_id": record["record_id"],
             "prev_hash": prev,
             "actor_user_id": record.get("actor_user_id"),
@@ -90,6 +97,7 @@ class FakeAuditRepository:
 
         row["entry_hash"] = _canonical_hash(prev, row)
         self.rows.append(row)
+        self._next_id += 1
 
     async def query_page(self, **kw: Any) -> list[dict[str, Any]]:
         """As `SqlAlchemyAuditRepository.query_page`: AND-ed filters, newest first by
@@ -136,11 +144,21 @@ class FakeAuditRepository:
                 return str(r["entry_hash"])
         return None
 
+    async def fetch_anchor_hash(self, before_id: int) -> str | None:
+        earlier = [r for r in self.rows if r["id"] < before_id]
+        return str(max(earlier, key=lambda r: r["id"])["entry_hash"]) if earlier else None
+
     async def fetch_verify_batch(
-        self, *, after_id: int, to_id: int | None, limit: int
-    ) -> list[dict[str, Any]]:
-        sel = [r for r in self.rows if r["id"] > after_id and (to_id is None or r["id"] <= to_id)]
-        return [dict(r) for r in sel[:limit]]
+        self, *, after_id: int, to_id: int, limit: int
+    ) -> list[tuple[Any, ...]]:
+        """As the repository: keyset `after_id < id <= to_id` in id order, as tuples
+        `(id, prev_hash, entry_hash, *renderings)` in `HASHED_FIELDS` order."""
+        from candleviewer.audit.query import HASHED_FIELDS
+
+        self.verify_calls.append((after_id, to_id, limit))
+        sel = sorted((r for r in self.rows if after_id < r["id"] <= to_id), key=lambda r: r["id"])
+        head = ("id", "prev_hash", "entry_hash")
+        return [tuple(r[k] for k in (*head, *HASHED_FIELDS)) for r in sel[:limit]]
 
     async def read_head(self) -> tuple[int, str] | None:
         return (self.rows[-1]["id"], self.rows[-1]["entry_hash"]) if self.rows else None

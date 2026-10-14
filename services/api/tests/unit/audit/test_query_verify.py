@@ -8,6 +8,7 @@ import json
 import uuid
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 import pytest
 from audit_fakes import FakeAuditRepository, FakeClock
@@ -18,7 +19,7 @@ from candleviewer.audit.checkpoint import run_checkpoint
 from candleviewer.audit.cursor import decode_cursor
 from candleviewer.audit.errors import AuditChainBroken
 from candleviewer.audit.models import AuditOutcome, Severity
-from candleviewer.audit.query import AuditQueryService
+from candleviewer.audit.query import VERIFY_BATCH_SIZE, AuditQueryService
 
 _ME, _OTHER = str(uuid.UUID(int=1)), str(uuid.UUID(int=2))
 
@@ -203,6 +204,60 @@ async def test_verify_broken_prev_link_located(repo: FakeAuditRepository, clock:
     del repo.rows[2]  # out-of-band delete of id 3
     result = await AuditQueryService(repo).verify()
     assert not result.verified and result.first_bad_id == 4
+
+
+async def test_verify_anchors_on_the_greatest_id_below_from_id(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Design §1 gap 10: ids have gaps (a WAL-replay duplicate or a rolled-back insert uses
+    up a sequence value). With no row at `from_id - 1`, the anchor is the stored
+    `entry_hash` of the greatest id below `from_id`, never genesis (a false break)."""
+    await _seed(repo, 3, clock)
+    repo.burn_ids(1)  # id 4 is never written
+    await _seed(repo, 3, clock, first=3)  # ids 5, 6, 7
+    svc = AuditQueryService(repo)
+    for from_id in (4, 5):
+        result = await svc.verify(from_id=from_id)
+        assert (result.verified, result.entries_checked, result.first_bad_id) == (True, 3, None)
+    assert (await svc.verify()).verified  # and the whole chain, across the gap
+
+
+async def test_verify_clamps_to_the_head_read_when_it_starts(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Entries appended during the run, and a `to_id` beyond the head, are not checked."""
+    await _seed(repo, 5, clock)
+    fetch = repo.fetch_verify_batch
+
+    async def fetch_then_append(**kw: Any) -> list[tuple[Any, ...]]:
+        rows = await fetch(**kw)
+        await _seed(repo, 1, clock, first=100 + len(repo.rows))  # a write lands mid-run
+        return rows
+
+    repo.fetch_verify_batch = fetch_then_append  # type: ignore[method-assign]  # spy on the fake
+    result = await AuditQueryService(repo).verify(to_id=1_000, batch_size=2)
+    assert (result.verified, result.entries_checked) == (True, 5)
+    assert {to_id for _, to_id, _ in repo.verify_calls} == {5}
+
+
+async def test_verify_walks_keyset_batches_of_ten_thousand_by_default(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 10, clock)
+    assert VERIFY_BATCH_SIZE == 10_000
+    await AuditQueryService(repo).verify()
+    assert repo.verify_calls == [(0, 10, 10_000)]
+    repo.verify_calls.clear()
+    await AuditQueryService(repo).verify(from_id=3, batch_size=4)
+    assert repo.verify_calls == [(2, 10, 4), (6, 10, 4)]  # a full last batch ends at the head
+
+
+async def test_verify_an_empty_or_past_the_head_range_checks_nothing(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 3, clock)
+    result = await AuditQueryService(repo).verify(from_id=4)
+    assert (result.verified, result.entries_checked, repo.verify_calls) == (True, 0, [])
 
 
 _FIELDS = ["actor_label", "action", "reason", "before_state", "object_id", "event_ts", "severity"]
