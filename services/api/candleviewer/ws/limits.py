@@ -19,6 +19,10 @@ Single home for every bound the gateway enforces. Overflow policy:
 from __future__ import annotations
 
 MAX_INBOUND_FRAME_BYTES = 256 * 1024
+#: SR-184: max container nesting of an inbound frame. The deepest legitimate
+#: client frame (`sub`/`ctl` envelope -> p -> options -> list -> object) is ~6
+#: levels in ws-schema.json; 32 leaves headroom. Checked BEFORE `json.loads`.
+MAX_JSON_DEPTH = 32
 MAX_TOPICS_PER_SUB = 50
 MAX_SUBSCRIPTIONS = 200
 #: §16.2 / welcome `limits.max_symbols_per_connection`; excess -> `subscription_limit`.
@@ -41,3 +45,31 @@ SERVER_WS_PER_MESSAGE_DEFLATE = True
 SERVER_WS_MAX_QUEUE = 4
 #: Whole-process concurrent connection/task bound (8 per user x a few users).
 SERVER_LIMIT_CONCURRENCY = 256
+
+
+def json_depth_exceeds(text: str, limit: int) -> bool:
+    """True if `text` nests `[`/`{` deeper than `limit` (string-aware, O(n)).
+
+    A cheap pre-scan so a hostile frame never reaches the recursive decoder."""
+    if text.count("[") + text.count("{") <= limit:
+        return False  # cannot nest deeper than the number of openers
+    depth = 0
+    in_str = False
+    esc = False
+    for ch in text:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+        elif ch == '"':
+            in_str = True
+        elif ch in "[{":
+            depth += 1
+            if depth > limit:
+                return True
+        elif ch in "]}":
+            depth -= 1
+    return False

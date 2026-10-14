@@ -77,7 +77,12 @@ from candleviewer.ws.lifecycle import (
     welcome_payload,
 )
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
-from candleviewer.ws.limits import AUTH_TIMEOUT_S, MAX_INBOUND_FRAME_BYTES
+from candleviewer.ws.limits import (
+    AUTH_TIMEOUT_S,
+    MAX_INBOUND_FRAME_BYTES,
+    MAX_JSON_DEPTH,
+    json_depth_exceeds,
+)
 from candleviewer.ws.metrics import (
     cv_ws_auth_failures_total,
     cv_ws_clock_skew_ms,
@@ -404,9 +409,12 @@ class _Connection:
             self.close_with("frame_too_big")
             return None
         try:
-            return json.loads(raw)
-        except ValueError:
-            return []  # malformed: handled as a non-object frame
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            if json_depth_exceeds(text, MAX_JSON_DEPTH):
+                return []  # SR-184: too deep -> protocol violation, never decoded
+            return json.loads(text)
+        except (ValueError, RecursionError):  # UnicodeDecodeError is a ValueError
+            return []  # malformed: handled as a non-object frame (a violation)
 
     def violation(self, frame_id: Any, code: str = "frame_malformed") -> None:
         """Malformed/unexpected frame after `hello`; 3 strikes -> `4400` (§4.4)."""
