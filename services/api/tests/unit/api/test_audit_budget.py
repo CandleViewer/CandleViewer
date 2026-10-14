@@ -4,22 +4,29 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
+import math
 from typing import Any
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.api.audit_budget import (
     DENIAL_ACTION,
     FILTER_SETS_PER_USER,
+    FLUSH_REASON,
     READ_ACTION,
+    SUMMARY_REASON,
+    SYSTEM_ACTOR,
+    AuditBudgetFlushTask,
     AuditRecordBudget,
     BudgetActor,
     BudgetWriteFailed,
     filters_digest,
 )
-from candleviewer.audit.models import AuditOutcome
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.redact import redact
 
 
@@ -280,6 +287,143 @@ async def test_a_user_holding_a_reservation_is_never_evicted() -> None:
     assert _pages(w.records[-1]) == {"A": 1}
 
 
+async def test_untracked_users_429s_reach_one_system_summary_per_window() -> None:
+    clock, w, b = _setup(tracked_users=1)
+    await b.write_denial(ACTOR, w, DENY)
+    for _ in range(2):
+        b.count_suppressed(OTHER)
+        await b.flush_due(w)
+    _, kw, _ = w.records[-1]
+    assert (kw["actor_label"], kw["actor_user_id"], kw["outcome"]) == (
+        SYSTEM_ACTOR,
+        None,
+        AuditOutcome.DENIED,
+    )
+    assert kw["after_state"] == {"suppressed": 1, "untracked_users": True}
+    assert len(w.records) == 2 and b._untracked == 1  # one per window
+    clock.now += 300
+    await b.flush_due(w)
+    assert w.records[-1][1]["after_state"]["suppressed"] == 1
+
+
+async def test_out_of_cap_records_at_most_one_per_user_and_window() -> None:
+    clock, w, b = _setup(per_hour=1, flush_pages=1000)
+    em = b.emitter(w, ACTOR)
+    served = suppressed = 0
+    for _ in range(100):  # a busy user: pages pending, refusals over the cap, every tick
+        clock.now += 10
+        plan = await _read(b, w, ACTOR, "A")
+        await em.emit(DENIAL_ACTION, **DENY)
+        served += plan in ("count", "record")
+        suppressed += em.suppressed + (plan == "refuse")
+        await b.flush_due(w)
+    oob = [at for _, kw, at in w.records if kw.get("reason") in (FLUSH_REASON, SUMMARY_REASON)]
+    assert len(w.records) - len(oob) == 1  # the hourly cap
+    assert len(oob) <= math.ceil(1000 / 300) and all(
+        y - x >= 300 for x, y in itertools.pairwise(oob)
+    )
+    st = b._users["u1"]
+    assert _recorded_pages(w) + st.pending_pages() == served
+    carried = sum(kw["after_state"].get("suppressed", 0) for _, kw, _ in w.records)
+    assert carried + st.suppressed == suppressed
+
+
+async def test_out_of_cap_records_carry_their_counts_and_no_request_fields() -> None:
+    clock, w, b = _setup(per_hour=10)
+    for _ in range(3):
+        await _read(b, w, ACTOR, "A")
+    clock.now += 300
+    assert await b.flush_due(w) == 1
+    action, kw, _ = w.records[-1]
+    assert (action, kw["reason"], kw["outcome"], kw["severity"]) == (
+        READ_ACTION,
+        FLUSH_REASON,
+        AuditOutcome.SUCCESS,
+        Severity.INFO,
+    )
+    assert _pages(w.records[-1]) == {"A": 2} and kw["actor_user_id"] == "u1"
+    b.count_suppressed(ACTOR)
+    clock.now += 300
+    assert await b.flush_due(w) == 1
+    action, kw, _ = w.records[-1]
+    assert (action, kw["reason"], kw["outcome"], kw["severity"], kw["after_state"]) == (
+        DENIAL_ACTION,
+        SUMMARY_REASON,
+        AuditOutcome.DENIED,
+        Severity.WARNING,
+        {"suppressed": 1},
+    )
+    assert not {"session_id", "actor_ip", "request_id"} & {*kw, *w.records[-2][1]}
+
+
+async def test_failed_out_of_cap_write_waits_for_the_next_window() -> None:
+    clock, w, b = _setup()
+    b.count_suppressed(ACTOR)
+    w.mode = "fail"
+    assert await b.flush_due(w) == 1
+    w.mode = "ok"
+    assert await b.flush_due(w) == 0
+    clock.now += 300
+    assert await b.flush_due(w) == 1 and w.records[-1][1]["after_state"] == {"suppressed": 1}
+
+
+async def test_drain_writes_every_outstanding_count() -> None:
+    _, w, b = _setup(tracked_users=1, per_hour=10)
+    for _ in range(2):
+        await _read(b, w, ACTOR, "A")
+    b.count_suppressed(ACTOR)
+    b.count_suppressed(OTHER)  # not tracked
+    assert await b.drain(w) == 0
+    assert [(kw["reason"], kw["after_state"]) for _, kw, _ in w.records[1:]] == [
+        (FLUSH_REASON, {"pages": [{"filters_sha256": "A", "pages": 1}], "suppressed": 1}),
+        (SUMMARY_REASON, {"suppressed": 1, "untracked_users": True}),
+    ]
+    b.count_suppressed(ACTOR)
+    w.mode = "hang"
+    assert await b.drain(w, timeout_s=0.01) == 0  # the record is in flight, counts taken
+    assert b.inflight == 1
+    await w.resolve(True)
+    b.count_suppressed(ACTOR)
+    w.mode = "fail"
+    with capture_logs() as logs:
+        assert await b.drain(w) == 1  # given back, and said so
+    assert logs[-1]["event"] == "audit.budget.drain_incomplete"
+
+
+async def test_flush_task_ticks_and_drains_on_stop() -> None:
+    _, w, b = _setup()
+    calls: list[float] = []
+    second = asyncio.Event()
+
+    async def sleep(seconds: float) -> None:
+        calls.append(seconds)
+        if len(calls) == 2:
+            second.set()
+            await asyncio.Event().wait()
+
+    b.count_suppressed(ACTOR)
+    task = AuditBudgetFlushTask(b, w, sleep=sleep)
+    task.start()
+    task.start()
+    await second.wait()
+    assert calls == [30.0, 30.0] and w.records[-1][1]["reason"] == SUMMARY_REASON
+    b.count_suppressed(ACTOR)
+    assert task.running and await task.stop() == 0 and not task.running
+    assert w.records[-1][1]["after_state"] == {"suppressed": 1}
+
+
+async def test_flush_task_tick_survives_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, w, b = _setup()
+
+    async def boom(raw: Any) -> int:
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(b, "flush_due", boom)
+    task = AuditBudgetFlushTask(b, w, interval_s=1.0)
+    await task.run_once()
+    assert await task.stop() == 0  # never started: drains only
+
+
 def test_filters_digest_ignores_key_order() -> None:
     assert filters_digest({"a": 1, "b": [2]}) == filters_digest({"b": [2], "a": 1})
     assert filters_digest({"a": 1}) != filters_digest({"a": 2})
@@ -300,8 +444,8 @@ async def test_budget_records_pass_audit_redaction_unchanged() -> None:
 
 _ACTORS = [BudgetActor(f"p{i}", f"user{i}", f"p{i}", owner=i == 0) for i in range(3)]
 _CAPS, _WINDOW = {"p0": 3, "p1": 2, "p2": 2}, 300.0
-_KINDS = ("read", "start_read", "finish_read", "refuse", "limit_429", "advance", "writer")
-_KINDS += ("resolve",)
+_KINDS = ("read", "start_read", "finish_read", "refuse", "limit_429", "advance", "flush")
+_KINDS += ("writer", "resolve")
 
 
 def _ops(kinds: frozenset[str]) -> st.SearchStrategy[list[tuple[str, int, str, bool, int, str]]]:
@@ -322,12 +466,25 @@ def _ops(kinds: frozenset[str]) -> st.SearchStrategy[list[tuple[str, int, str, b
     )
 
 
+def _out_of_cap(fields: dict[str, Any]) -> bool:
+    return fields.get("reason") in (FLUSH_REASON, SUMMARY_REASON)
+
+
 def _assert_bound(w: _Writer) -> None:
-    """Per user and in any hour: at most the cap."""
+    """Per user and in any hour: capped records <= cap, and out-of-cap ones spaced at least a
+    window apart, so at most cap + ceil(3600 / window) records in all."""
     for a in _ACTORS:
-        mine = [at for _, kw, at in w.records if kw["actor_user_id"] == a.user_id]
-        for start in mine:
-            assert len([at for at in mine if start <= at < start + 3600]) <= _CAPS[a.key]
+        mine = [
+            (at, _out_of_cap(kw)) for _, kw, at in w.records if kw["actor_user_id"] == a.user_id
+        ]
+        for start, _ in mine:
+            hour = [oob for at, oob in mine if start <= at < start + 3600]
+            assert hour.count(False) <= _CAPS[a.key]
+            assert hour.count(True) <= math.ceil(3600 / _WINDOW)
+        oob = sorted(at for at, is_oob in mine if is_oob)
+        assert all(y - x >= _WINDOW for x, y in itertools.pairwise(oob))
+    system = sorted(at for _, kw, at in w.records if kw["actor_user_id"] is None)
+    assert all(y - x >= _WINDOW for x, y in itertools.pairwise(system))
 
 
 @settings(max_examples=500)
@@ -380,19 +537,23 @@ async def test_bounded_record_count_and_no_lost_count_under_any_interleaving(
             suppressed += 1
         elif kind == "advance":
             clock.now += seconds
+        elif kind == "flush":
+            await b.flush_due(w)
         elif kind == "writer":
             w.mode = mode
         elif kind == "resolve" and w.hanging:
-            action = w.hanging[0][2]
+            _, _, action, kw = w.hanging[0]
             await w.resolve(ok)
             # A read record that timed out: its caller served nothing, yet it is recorded.
-            unserved_recorded += ok and action == READ_ACTION
+            unserved_recorded += ok and action == READ_ACTION and not _out_of_cap(kw)
 
         _assert_bound(w)
         assert len(b) <= 2 and b.inflight <= 2
         users = b._users.values()
         hanging = [kw for _, _, _, kw in w.hanging]
-        unserved_hanging = sum(1 for _, _, a, _ in w.hanging if a == READ_ACTION)
+        unserved_hanging = sum(
+            1 for _, _, a, kw in w.hanging if a == READ_ACTION and not _out_of_cap(kw)
+        )
         pending = sum(u.pending_pages() for u in users)
         in_flight = sum(_carried_pages(kw) for kw in hanging)
         assert _recorded_pages(w) + pending + in_flight == (
