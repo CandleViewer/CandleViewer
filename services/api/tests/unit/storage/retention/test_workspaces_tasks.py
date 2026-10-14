@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 import structlog
 from prometheus_client import generate_latest
+from pydantic import SecretStr
 
 from candleviewer.app import create_app
 from candleviewer.observability.metrics import BoundedMetric, Metrics
+from candleviewer.settings import Settings
 from candleviewer.storage.repositories.workspaces_sqlalchemy import MAX_PURGE_BATCH
 from candleviewer.storage.retention import policy
 from candleviewer.storage.retention.schedule import RetentionSchedule
@@ -53,13 +54,17 @@ def _metrics() -> tuple[Metrics, BoundedMetric, BoundedMetric]:
     return m, purged, users
 
 
+def _labels(raw: str) -> str:
+    return ",".join(p for p in raw.split(",") if not p.startswith("env="))
+
+
 def _snap(m: Metrics, name: str) -> dict[str, float]:
     text = generate_latest(m.registry).decode()
     out: dict[str, float] = {}
     for line in text.splitlines():
         if line.startswith(name + "{"):
             k, _, v = line.rpartition(" ")
-            out[k[len(name) + 1 : -1]] = float(v)
+            out[_labels(k[len(name) + 1 : -1])] = float(v)
     return out
 
 
@@ -183,10 +188,33 @@ async def test_disabled_schedule_never_starts() -> None:
     assert not task.running
 
 
-@pytest.mark.parametrize("enabled", [True, False])
-def test_create_app_wires_the_task_and_metrics(enabled: bool, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CV_RETENTION_ENABLED", "true" if enabled else "false")
-    app = create_app()
-    assert app.state.workspaces_metrics.users.name == "cv_workspace_users"
-    # fake storage backend: no repository, so no purge task to start
-    assert app.state.workspaces_purge_task is None
+def _real(*, retention_enabled: bool) -> Settings:
+    return Settings(
+        storage_backend="real",
+        retention_enabled=retention_enabled,
+        auth_totp_key_hex=SecretStr("11" * 32),
+        auth_recovery_hmac_key_hex=SecretStr("22" * 32),
+        auth_csrf_key_hex=SecretStr("33" * 32),
+        auth_pepper=SecretStr("pepper"),
+    )
+
+
+def test_create_app_wires_the_task_and_metrics_on_the_real_backend() -> None:
+    on = create_app(_real(retention_enabled=True))
+    assert on.state.workspaces_purge_task._enabled is True
+    assert on.state.workspaces_metrics.users.name == "cv_workspace_users"
+    off = create_app(_real(retention_enabled=False))
+    assert off.state.workspaces_purge_task._enabled is False
+
+
+def test_create_app_has_no_task_on_the_fake_backend() -> None:
+    app = create_app(Settings(retention_enabled=True))
+    assert app.state.workspaces_purge_task is None  # no repository, nothing to purge
+
+
+def test_the_lifespan_collects_the_task_for_start_and_stop() -> None:
+    import inspect
+
+    from candleviewer import main
+
+    assert '"workspaces_purge_task"' in inspect.getsource(main._lifespan)
