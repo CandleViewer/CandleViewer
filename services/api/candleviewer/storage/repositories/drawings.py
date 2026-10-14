@@ -33,8 +33,18 @@ class DrawingIdUnavailableError(Exception):
     """A create reused an id held by ANY row, any owner, any state (HTTP 409)."""
 
 
+#: Rules a failing batch op can report (the API maps them to `errors[0].rule`).
+#: `immutable_field`: an update tried to change `symbol` or `tool` (immutable, as on PUT).
+BATCH_RULES = frozenset(
+    {"target_unavailable", "version_conflict", "id_unavailable", "immutable_field"}
+)
+
+
 class BatchOpFailed(Exception):
-    """First failing batch operation; the whole batch has been rolled back."""
+    """First failing batch operation; the whole batch has been rolled back.
+
+    `rule` is one of `BATCH_RULES`.
+    """
 
     def __init__(self, index: int, rule: str) -> None:
         super().__init__(f"operations.{index}: {rule}")
@@ -152,7 +162,7 @@ class DrawingRepository(Protocol):
 
 
 __all__ = [
-    "BatchOp", "BatchOpFailed", "BatchResult", "CreateOp", "DeleteOp", "DrawingFields",
-    "DrawingIdUnavailableError", "DrawingNotFoundError", "DrawingRepository", "DrawingRow",
-    "DrawingVersionConflictError", "UpdateOp", "format_token",
+    "BATCH_RULES", "BatchOp", "BatchOpFailed", "BatchResult", "CreateOp", "DeleteOp",
+    "DrawingFields", "DrawingIdUnavailableError", "DrawingNotFoundError", "DrawingRepository",
+    "DrawingRow", "DrawingVersionConflictError", "UpdateOp", "format_token",
 ]  # fmt: skip

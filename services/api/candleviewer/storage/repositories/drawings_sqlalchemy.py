@@ -6,6 +6,10 @@ Static, parameterised `sa.text` only. Every statement is filtered by
 deleted rows to answer `id_unavailable` identically for all of them) and `purge_deleted`
 (retention job, no caller identity). Every UPDATE bumps `updated_at` strictly
 monotonically so the token never repeats, even inside one clock tick.
+
+Batch failure rules (`BatchOpFailed.rule`): `target_unavailable`, `version_conflict`,
+`id_unavailable` and `immutable_field` (an update changing `symbol` or `tool`; checked against
+the row locked by the snapshot, so it is race-free).
 """
 
 from __future__ import annotations
@@ -94,7 +98,8 @@ _SOFT_DELETE = sa.text(
     "AND deleted_at IS NULL"
 )
 _SNAPSHOT = sa.text(
-    "SELECT id::text AS id, owner_user_id::text AS owner_user_id, deleted_at, updated_at "
+    "SELECT id::text AS id, owner_user_id::text AS owner_user_id, symbol, tool, deleted_at, "
+    "updated_at "
     "FROM drawings WHERE id = ANY(CAST(:ids AS uuid[])) ORDER BY id FOR UPDATE"
 )
 _PURGE = sa.text(
@@ -263,6 +268,8 @@ class SqlAlchemyDrawingRepository:
                 if existing["updated_at"] != op.if_match:
                     raise BatchOpFailed(i, "version_conflict")
                 if isinstance(op, UpdateOp):
+                    if op.fields.symbol != existing["symbol"] or op.fields.tool != existing["tool"]:
+                        raise BatchOpFailed(i, "immutable_field")
                     params = {
                         "id": op.id,
                         "owner": owner,
