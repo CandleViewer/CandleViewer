@@ -326,3 +326,75 @@ async def test_writer_flusher_op_failing_after_cancel_is_logged(
         ("audit-wal-commit", "OSError", "critical")
     ]
     assert not w._wal_lock.locked() and not w._wal_ops
+
+
+def _wal_op(w: AuditWriter, name: str) -> asyncio.Task[Any]:
+    ops = [t for t in w._wal_ops if t.get_name() == name]
+    assert len(ops) == 1, f"expected one in-flight {name} op, got {len(ops)}"
+    return ops[0]
+
+
+@pytest.mark.xfail(strict=True, reason="#2250 op-task cancel; fixed in next commit")
+async def test_writer_op_task_cancelled_mid_append_keeps_lock_and_end_matches_file(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, slow_disk: SlowDisk
+) -> None:
+    """#2250 review (Medium): event-loop teardown cancels the WAL *op task itself*,
+    not only its caller. That must not release `_wal_lock` while the append's
+    worker thread still runs, or the next append truncates the in-flight frame."""
+    repo.down = True  # keep records in the WAL for inspection
+    w = _writer(repo, tmp_path, clock)
+    await w.start()
+    disk = slow_disk(w)
+    disk.arm()
+    emit = asyncio.create_task(w.emit("auth.login", actor_label="first"))
+    await _thread_event(disk.stalled)
+    _wal_op(w, "audit-wal-append").cancel()  # as asyncio.Runner teardown would
+    await asyncio.sleep(0)
+    assert w._wal_lock.locked(), "cancelling the op task released _wal_lock mid-append"
+    second = asyncio.create_task(w.emit("auth.login", actor_label="second"))
+    assert not await _yield_until(second.done), "an append ran beside the stalled one"
+    disk.release.set()
+    await asyncio.wait_for(second, _WAIT_S)
+    with pytest.raises(asyncio.CancelledError):
+        await emit
+    wal = w._wal
+    assert [r["actor_label"] for _, r in wal.replay()] == ["first", "second"]
+    assert wal.torn_tail_truncations == 0
+    assert wal._end == (tmp_path / "audit.wal").stat().st_size
+    repo.down = False
+    await w.stop(_WAIT_S)
+
+
+@pytest.mark.xfail(strict=True, reason="#2250 op-task cancel; fixed in next commit")
+async def test_writer_op_task_cancelled_mid_compaction_keeps_later_ack_durable(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancelling the commit op task during compaction must not let a later,
+    acknowledged emit land in the old file that the compaction then swaps away."""
+    w = _writer(repo, tmp_path, clock)
+    stalled, release = threading.Event(), threading.Event()
+    mark_committed = w._wal.mark_committed
+
+    def parked_mark_committed(offset: int) -> None:
+        if offset == 0:  # inside compact(): remainder copied to .tmp, file not yet swapped
+            stalled.set()
+            release.wait(_WAIT_S)
+        mark_committed(offset)
+
+    monkeypatch.setattr(w._wal, "mark_committed", parked_mark_committed)
+    await w.start()
+    try:
+        await w.emit("auth.login", actor_label="committed")
+        await _thread_event(stalled)
+        _wal_op(w, "audit-wal-commit").cancel()  # as asyncio.Runner teardown would
+        await asyncio.sleep(0)
+        assert w._wal_lock.locked(), "cancelling the commit op released _wal_lock mid-compaction"
+        late = asyncio.create_task(w.emit("auth.login", actor_label="late"))
+        assert not await _yield_until(late.done), "an append ran beside the compaction"
+        release.set()
+        await asyncio.wait_for(late, _WAIT_S)  # acknowledged
+    finally:
+        release.set()
+    assert [r["actor_label"] for _, r in w._wal.replay()] == ["late"], "acknowledged record lost"
+    assert w._wal._end == (tmp_path / "audit.wal").stat().st_size
+    await w.stop(_WAIT_S)
