@@ -14,6 +14,7 @@ router's job (E15 owns layouts), because it needs storage.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Annotated, Any, Final, Literal, get_args
@@ -308,7 +309,7 @@ class DrawingIn(BaseModel):
     """A full drawing as sent on create/update (PUT is full replacement)."""
 
     model_config = _CFG
-    symbol: Annotated[StrictStr, Field(pattern=r"^[A-Z0-9]{2,20}USDT$", max_length=20)]
+    symbol: Annotated[StrictStr, Field(pattern=r"^[A-Z0-9]{2,16}USDT$")]
     tool: Tool
     layout_id: UUID | None = None
     geometry: DrawingGeometryIn
@@ -398,10 +399,23 @@ def _not_allowed(key: str, tool: str) -> tuple[tuple[str | int, ...], str, str]:
 
 
 # --- batch ----------------------------------------------------------------------------------
-def _require_str(v: object) -> object:
-    """``if_match`` must be a JSON string (pydantic would otherwise accept unix-epoch numbers)."""
+_TOKEN_RE: Final = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z$")
+
+
+def _token_str(v: object) -> object:
+    """Require ``if_match`` to be the exact server token: 6 fractional digits and ``Z``.
+
+    WHY: the token is the row's ``updated_at`` as the server serialises it. Accepting other
+    spellings (milliseconds, ``+00:00``, unix epoch numbers) would let a client send a value
+    that parses to the same instant yet is not what the server issued, blurring the contract.
+    The pattern is checked on the raw string; pydantic then parses it to an aware datetime.
+    """
     if not isinstance(v, str):
         raise PydanticCustomError("string_type", "Input should be a string")
+    if not _TOKEN_RE.fullmatch(v):
+        raise PydanticCustomError(
+            "string_pattern_mismatch", "if_match must look like YYYY-MM-DDTHH:MM:SS.ffffffZ"
+        )
     return v
 
 
@@ -423,7 +437,7 @@ class BatchUpdateIn(BaseModel):
     if_match: AwareDatetime
     drawing: DrawingIn
 
-    _str_only = field_validator("if_match", mode="before")(staticmethod(_require_str))
+    _str_only = field_validator("if_match", mode="before")(staticmethod(_token_str))
 
 
 class BatchDeleteIn(BaseModel):
@@ -434,7 +448,7 @@ class BatchDeleteIn(BaseModel):
     id: UUID
     if_match: AwareDatetime
 
-    _str_only = field_validator("if_match", mode="before")(staticmethod(_require_str))
+    _str_only = field_validator("if_match", mode="before")(staticmethod(_token_str))
 
 
 type BatchOp = Annotated[BatchCreateIn | BatchUpdateIn | BatchDeleteIn, Field(discriminator="op")]
