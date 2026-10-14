@@ -197,10 +197,27 @@ def test_redact_entry_for_manager_strips_payload_and_pii() -> None:
         entry_hash="h",
         prev_hash=None,
     )
-    out = redact_entry_for_view(entry, AuditView.OWN_REDACTED)
+    out = redact_entry_for_view(entry.model_copy(update={"prev_hash": "p"}), AuditView.OWN_REDACTED)
     assert out.detail == {} and out.ip is None and out.user_agent is None
-    assert out.action == "order.place" and out.entry_hash == "h"
+    assert out.action == "order.place" and out.entry_hash is None and out.prev_hash is None
     assert redact_entry_for_view(entry, AuditView.RAW) == entry
+
+
+def test_own_redacted_allow_list_is_pinned() -> None:
+    """SR-067 and contract #2392: exactly these fields keep their values for a Manager;
+    widening the list needs Security review."""
+    assert OWN_REDACTED_FIELDS == {
+        "id",
+        "ts",
+        "actor_user_id",
+        "actor_username",
+        "action",
+        "subject_type",
+        "subject_id",
+        "outcome",
+        "severity",
+        "request_id",
+    }
 
 
 def test_redact_projection_is_an_allow_list_new_fields_hidden_by_default() -> None:

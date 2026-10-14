@@ -21,6 +21,7 @@ import sqlalchemy as sa
 import structlog
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, INET, TIMESTAMP, UUID
 
+from candleviewer.observability.audit_query_metrics import cv_audit_query_timeouts_total
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -369,6 +370,7 @@ class SqlAlchemyAuditRepository:
         # lines carry the cause, or the class and SQLSTATE, only.
         if cause:
             _log().warning("audit.read.timeout", cause=cause, budget_ms=timeout_ms)
+            cv_audit_query_timeouts_total.labels(cause).inc()
             raise TimeoutError("audit read exceeded its time budget") from None
         _log().warning("audit.read.failed", error=error, sqlstate=state)
         raise AuditReadFailed(state) from None

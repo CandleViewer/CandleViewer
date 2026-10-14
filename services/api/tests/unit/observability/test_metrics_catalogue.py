@@ -267,6 +267,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
     from candleviewer.net.metrics import NET_EXPORTED_NAMES
+    from candleviewer.observability.audit_query_metrics import EXPORTED_NAMES as AUDIT_NAMES
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
     from candleviewer.secrets.metrics import EXPORTED_NAMES as SECRETS_NAMES
     from candleviewer.ws.metrics import CV_WS_NAMES
@@ -281,6 +282,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
         | NET_EXPORTED_NAMES
     )
     others |= FLAG_NAMES
+    others |= AUDIT_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
@@ -378,3 +380,24 @@ def test_workspaces_catalogue_caps_equal_the_closed_label_sets() -> None:
     assert caps["cv_workspace_request_seconds"] == len(OPERATIONS)
     panes = next(s for s in CATALOGUE if s.name == "cv_layout_panes")
     assert panes.buckets == (0, 1, 2, 4, 8, 12, 16)
+
+
+def test_exported_audit_query_metrics_served_with_env_and_closed_labels() -> None:
+    """E42-T02: the audit read-path series are catalogued, served with `env`, and labelled
+    only by closed sets."""
+    from candleviewer.observability import audit_query_metrics as aq
+
+    assert aq.EXPORTED_NAMES <= {s.name for s in live_specs() if s.exported}
+    spec = {s.name: s for s in CATALOGUE}["cv_audit_query_duration_seconds"]
+    assert spec.max_series == len(aq.FILTER_CLASSES)
+    m = Metrics("demo")
+    collector = aq.export_audit_query_metrics(m.registry, env="demo")
+    try:
+        aq.cv_audit_query_timeouts_total.labels("pool").inc(0)
+        aq.cv_audit_query_duration_seconds.labels("none").observe(0)
+        text = generate_latest(m.registry).decode()
+        for name in aq.EXPORTED_NAMES:
+            assert f"# HELP {name} " in text, name
+        assert 'cv_audit_query_timeouts_total{cause="pool",env="demo"}' in text
+    finally:
+        collector.close()
