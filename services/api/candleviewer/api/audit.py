@@ -36,6 +36,15 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
+from candleviewer.api.audit_budget import (
+    DENIAL_ACTION,
+    AuditRecordBudget,
+    BudgetActor,
+    BudgetedEmitter,
+    BudgetWriteFailed,
+    ReadReservation,
+    filters_digest,
+)
 from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditQueryRefused
 from candleviewer.audit.access import (
     AuditAccessDenied,
@@ -185,8 +194,33 @@ def _invalid(exc: ValidationError, model: type[BaseModel], status_code: int = 42
     )
 
 
-def _unavailable(detail: str) -> JSONResponse:
+def _unavailable(detail: str = "audit record could not be written") -> JSONResponse:
     return _problem(503, "Service unavailable", detail, code="store_unavailable", retry_after_s=1)
+
+
+def _budget_actor(principal: AuditPrincipal) -> BudgetActor:
+    owner = principal.is_owner or principal.has("*")
+    return BudgetActor(str(principal.user_id), principal.username, principal.user_id, owner)
+
+
+def _request_fields(principal: AuditPrincipal) -> dict[str, Any]:
+    return {
+        "actor_label": principal.username,
+        "actor_user_id": principal.user_id,
+        "actor_ip": principal.ip,
+        "session_id": principal.session_id,
+        "object_kind": "audit_log",
+        "request_id": principal.request_id,
+    }
+
+
+def _recorded_filters(req: AuditQueryRequest, actor_user_id: str | None) -> dict[str, Any]:
+    """The filter set as recorded and digested: validated canonical values under their
+    contract names, without paging or unset filters (`ip` stays under `ip`, which the
+    audit redactor hashes)."""
+    narrowed = req.model_copy(update={"actor_user_id": actor_user_id})
+    dumped = narrowed.model_dump(mode="json", exclude={"cursor", "limit"}, exclude_none=True)
+    return {_PARAM_NAMES.get(k, k): v for k, v in dumped.items()}
 
 
 def make_audit_router(
@@ -194,6 +228,7 @@ def make_audit_router(
     principal_resolver: PrincipalResolver | None = None,
     *,
     limiter: AuditQueryLimiter | None = None,
+    budget: AuditRecordBudget | None = None,
     query_timeout_ms: int = 4000,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
@@ -203,13 +238,28 @@ def make_audit_router(
     yet) both degrade to `503`/`501` responses rather than raising at import
     time, so `create_app()` stays constructible with fakes only (C-2.16-
     adjacent: the router itself never touches a datastore or the network).
+
+    Read and refusal records go through `budget` (contract "Audit budget"): a record
+    over the user's cap is counted instead, which makes a read `429` and leaves a
+    refusal unchanged but for `Retry-After`; a due record that cannot be written makes
+    the call `503` with nothing returned (C-2.9).
     """
     router = APIRouter(prefix="/admin/audit", tags=["admin"])
     query_limiter = limiter if limiter is not None else AuditQueryLimiter()
+    record_budget = budget if budget is not None else AuditRecordBudget()
 
     class _HttpProblem(Exception):
         def __init__(self, response: JSONResponse) -> None:
             self.response = response
+
+    def _over_cap(key: str, detail: str = "audit record budget reached") -> JSONResponse:
+        retry = record_budget.retry_after(key)
+        return _problem(429, "Too many requests", detail, code="rate_limited", retry_after_s=retry)
+
+    def _forbidden(key: str, emitter: BudgetedEmitter, detail: str) -> JSONResponse:
+        # `Retry-After` only for a refusal over the caller's own record cap.
+        retry = record_budget.retry_after(key) if emitter.suppressed else None
+        return _problem(403, "Forbidden", detail, code="forbidden", retry_after_s=retry)
 
     async def _authorize_or_raise(
         request: Request, operation: str
@@ -230,10 +280,13 @@ def make_audit_router(
             raise _HttpProblem(
                 _problem(401, "Unauthorized", "no verified session for this request")
             )
+        emitter = record_budget.emitter(audit_service.writer, _budget_actor(principal))
         try:
-            view = await authorize(principal, operation, audit_service.writer)
+            view = await authorize(principal, operation, emitter)
+        except BudgetWriteFailed as exc:
+            raise _HttpProblem(_unavailable()) from exc
         except AuditAccessDenied as exc:
-            raise _HttpProblem(_problem(403, "Forbidden", str(exc))) from exc
+            raise _HttpProblem(_forbidden(str(principal.user_id), emitter, str(exc))) from exc
         return audit_service, principal, view
 
     @router.get("")
@@ -258,10 +311,12 @@ def make_audit_router(
             service, principal, view = await _authorize_or_raise(request, "query")
         except _HttpProblem as problem:
             return problem.response
+        actor = _budget_actor(principal)
+        emitter = record_budget.emitter(service.writer, actor)
         if view is AuditView.OWN_REDACTED and ip is not None:
             # Contract: `ip` is Owner only. The redacted projection hides it, so filtering
             # on it would reveal it one query at a time.
-            return await _refuse(service.writer, principal, "filter_not_permitted:ip")
+            return await _refuse(emitter, principal, "filter_not_permitted:ip")
         try:
             req = AuditQueryRequest.model_validate(
                 {
@@ -279,15 +334,11 @@ def make_audit_router(
             )
         except ValidationError as exc:
             return _invalid(exc, AuditQueryRequest)
-        key = str(principal.user_id)
         filters = req.model_dump(exclude={"cursor"})
-        if view is AuditView.OWN_REDACTED:
-            # SR-067: a non-owner reads only its own events; the filter is
-            # forced server-side, whatever `actor_user_id` the caller sent.
-            filters["actor_user_id"] = key
         try:
-            lease = query_limiter.acquire(key)
+            lease = query_limiter.acquire(actor.key)
         except AuditQueryRefused as exc:
+            record_budget.count_suppressed(actor)
             return _problem(
                 429,
                 "Too many requests",
@@ -296,34 +347,72 @@ def make_audit_router(
                 retry_after_s=exc.retry_after_s,
             )
         try:
-            return await _run_query(service, key, view, filters, req.cursor)
+            if view is AuditView.OWN_REDACTED:
+                if req.actor_user_id not in (None, actor.key):
+                    refused = await _record_cross_actor(emitter, principal, req.actor_user_id)
+                    if refused is not None:
+                        return refused
+                # SR-067: a non-owner reads only its own events; the filter is
+                # forced server-side, whatever `actor_user_id` the caller sent.
+                filters["actor_user_id"] = actor.key
+            recorded = _recorded_filters(req, filters["actor_user_id"])
+            plan = record_budget.plan_read(actor, filters_digest(recorded))
+            try:
+                return await _run_query(
+                    service, principal, view, filters, req.cursor, plan, recorded
+                )
+            finally:
+                plan.release()  # a read that served nothing gives its reservation back
         finally:
             lease.release()
 
     async def _refuse(
-        writer: AuditWriterLike, principal: AuditPrincipal, reason: str
+        emitter: BudgetedEmitter, principal: AuditPrincipal, reason: str
     ) -> JSONResponse:
-        await writer.emit(
-            "admin.audit_denied",
-            actor_label=principal.username,
-            actor_user_id=principal.user_id,
-            actor_ip=principal.ip,
-            session_id=principal.session_id,
-            object_kind="audit_log",
-            outcome=AuditOutcome.DENIED,
-            severity=Severity.WARNING,
-            reason=reason,
-            request_id=principal.request_id,
-        )
-        return _problem(403, "Forbidden", "filter not permitted for this caller", code="forbidden")
+        try:
+            await emitter.emit(
+                DENIAL_ACTION,
+                **_request_fields(principal),
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason=reason,
+            )
+        except BudgetWriteFailed:
+            return _unavailable()
+        return _forbidden(str(principal.user_id), emitter, "filter not permitted for this caller")
+
+    async def _record_cross_actor(
+        emitter: BudgetedEmitter, principal: AuditPrincipal, requested: str
+    ) -> JSONResponse | None:
+        """Record the attempt before the narrowed read runs (contract: "the attempt is
+        recorded"). Over the cap the read is `429`; unwritable is `503`; both serve nothing."""
+        try:
+            await emitter.emit(
+                DENIAL_ACTION,
+                **_request_fields(principal),
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason="cross_actor_filter_narrowed",
+                after_state={"requested_actor": requested},
+            )
+        except BudgetWriteFailed:
+            return _unavailable()
+        return _over_cap(str(principal.user_id)) if emitter.suppressed else None
 
     async def _run_query(
         service: AuditServiceLike,
-        key: str,
+        principal: AuditPrincipal,
         view: AuditView,
         filters: dict[str, Any],
         cursor: int | None,
+        plan: ReadReservation,
+        recorded: dict[str, Any],
     ) -> JSONResponse:
+        key = str(principal.user_id)
+        if plan.action == "refuse":
+            return _over_cap(key)
+        if plan.action == "unwritable":
+            return _unavailable()
         try:
             page = await service.query.query(**filters, cursor=cursor, timeout_ms=query_timeout_ms)
         except ValidationError as exc:
@@ -338,6 +427,16 @@ def make_audit_router(
                 redact_entry_for_view(e, view) for e in page.items if str(e.actor_user_id) == key
             ]
             page = page.model_copy(update={"items": items, "count": len(items)})
+        if plan.action == "record":
+            # The filters and the returned count, never the entries.
+            detail = {"view": view.value, "filters": recorded, "returned_count": len(page.items)}
+            try:
+                await record_budget.write_read(
+                    plan, service.writer, _request_fields(principal), detail
+                )
+            except BudgetWriteFailed:
+                return _unavailable()
+        plan.commit()
         return JSONResponse(status_code=200, content=_jsonable(page))
 
     @router.post("/verify")

@@ -106,6 +106,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ]
     for t in alert_tasks:
         t.start()
+    audit_flush = getattr(app.state, "audit_budget_flush", None)
+    if audit_flush is not None:
+        audit_flush.start()
     overrides = getattr(app.state, "log_level_overrides", None)
     if overrides is not None:
         overrides.start()
@@ -174,6 +177,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             left = await csrf_audits.drain()
             if left:
                 logger().warning("shutdown with %d CSRF-refusal audit(s) still in flight", left)
+        if audit_flush is not None:
+            # Budgeted audit counts are written (bounded) before the audit module stops.
+            await audit_flush.stop()
         await supervisor.stop_all()
 
 
