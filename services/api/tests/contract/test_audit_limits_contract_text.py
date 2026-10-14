@@ -17,6 +17,12 @@ def test_settings_defaults_are_named_in_the_contract() -> None:
             "audit_query_rate_per_minute",
             "audit_query_max_concurrent",
             "audit_query_timeout_ms",
+            "audit_record_budget_per_hour",
+            "audit_record_budget_owner_per_hour",
+            "audit_read_flush_pages",
+            "audit_read_flush_seconds",
+            "audit_budget_tracked_users",
+            "audit_inflight_writes",
         )
         if name not in text
     ]
@@ -26,4 +32,7 @@ def test_settings_defaults_are_named_in_the_contract() -> None:
     )
     s = Settings()
     assert (s.audit_query_rate_per_minute, s.audit_query_max_concurrent) == (60, 2)
-    assert s.audit_query_timeout_ms == 4000
+    assert (s.audit_query_timeout_ms, s.audit_record_budget_per_hour) == (4000, 120)
+    assert (s.audit_record_budget_owner_per_hour, s.audit_read_flush_pages) == (600, 50)
+    assert (s.audit_read_flush_seconds, s.audit_budget_tracked_users) == (300.0, 1024)
+    assert s.audit_inflight_writes == 64
