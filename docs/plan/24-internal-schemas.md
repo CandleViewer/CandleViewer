@@ -4135,7 +4135,7 @@ A context carrying `_fault` is never written to `machine_snapshots`. Instead a q
 | `updated_at_ms`   | int         | time of the reported change                                                                                                          |
 | `context_summary` | object      | optional; the closed per-kind allow-list of 23 §6.4                                                                                  |
 
-_Revised 2026-10-14 (E17-T08 contract)._ The topic `ch` names the entity, so `entity_id` is not repeated. Sequencing is the envelope `s` shared by every topic (23 §3.3), so there is no per-entity `seq`. `state` and `regions` replace `state_ids` and `published_enum`: the owning sections' enums are not mapped from the charts for most machines (`28` §22), and they already travel on their own topics (`orders`, `trade_groups`, `rules`, `recorder`, `system`).
+_Revised 2026-10-14 (E17-T08 contract)._ The topic `ch` names the entity, so `entity_id` is not repeated. Sequencing is the envelope `s` shared by every topic (23 §3.3), so there is no per-entity `seq`. `state` and `regions` replace `state_ids` and `published_enum`: no document maps chart states to the owning sections' enums (`28` §22 records gaps for B1, B10, B11, B19 and B20), and those enums already travel on their own topics (`orders`, `trade_groups`, `rules`, `recorder`, `system`).
 
 **Versioning.** `machine_hash` is fixed per chart. Changing a chart without a version bump and a registered upcaster with a golden-snapshot test fails CI (MUST-12). A no-op upcaster is forbidden (MUSTNOT-09). The library version is pinned exactly: a snapshot whose `lib_snapshot_ver` is below 3 is refused at restore.
 

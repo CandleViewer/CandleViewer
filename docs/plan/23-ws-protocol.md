@@ -737,7 +737,7 @@ Permissions are checked **at subscribe time and again on every change to the use
 
 ### 6.4 Statechart machine state: `machines.{entity}.state` (E17-T08)
 
-One topic per instance of a catalogue machine (`28-statechart-catalogue.md` B1–B20). It carries the state the machine publishes on state entry (C-2.20). Frames come only from the statechart plugin's `on_transition` hook (E50-T60). The gateway answers `sub`, `snap`, `resync` and deltas from what that hook recorded; it never imports `statechart/factory.py` or `statechart/persistence.py`, and never holds or queries an `Interpreter`. **Status: contract only.** Until the E17-T08 publisher lands, the server answers `unknown_topic`.
+One topic per instance of a catalogue machine (`28-statechart-catalogue.md` B1–B20). It carries the state the machine publishes on state entry (C-2.20). The statechart side feeds it: the plugin's `on_transition` hook (E50-T60), plus the bring-up and latch publishes below. The gateway answers `sub`, `snap`, `resync` and deltas only from what was published; it never imports `statechart/factory.py` or `statechart/persistence.py`, and never holds or queries an `Interpreter`. **Status: contract only.** Until the E17-T08 publisher lands, the server answers `unknown_topic`.
 
 | Topic                     | Options               | Snapshot                            | Default throttle | Payload schema                                   |
 | ------------------------- | --------------------- | ----------------------------------- | ---------------- | ------------------------------------------------ |
