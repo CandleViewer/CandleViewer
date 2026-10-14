@@ -238,6 +238,7 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 | Limit                              | Value   | Enforcement                                                                                |
 | ---------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
 | Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`.                                                              |
+| Max inbound JSON nesting depth     | 32      | As-built (SR-184): pre-scanned before decode; deeper, malformed or non-UTF-8 frames are a `frame_malformed` protocol violation (3 strikes -> `4400`), never `1011`. The deepest legitimate client frame in `ws-schema.json` (`sub`/`ctl`: envelope -> topic entry -> `options` -> list) nests at most 6 levels including the envelope, so 32 is headroom, not a format limit. |
 | Max outbound frame (server→client) | 4 MiB   | Server splits snapshots into `partial` chunks (header flag bit3) rather than exceeding it. |
 | Max topics per `sub` frame         | 50      | Excess rejected per-topic with `too_many_topics`.                                          |
 | Max subscriptions per connection   | 200     | New subscribes rejected with `subscription_limit`.                                         |
