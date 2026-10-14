@@ -172,6 +172,7 @@ from candleviewer.paper.service import PaperService
 from candleviewer.recorder.coverage import CoverageService
 from candleviewer.recorder.metrics import current_write_backlog_rows
 from candleviewer.recorder.service import RecorderService
+from candleviewer.replay.metrics import export_replay_metrics
 from candleviewer.replay.service import ReplayService
 from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
@@ -1061,6 +1062,8 @@ def create_app(
     app.state.ws_metrics = export_ws_metrics(ctx.metrics, env=resolved.environment.value)
     # #2090: auth series (incl. auth_csrf_refused_total) on the scraped registry.
     app.state.auth_metrics = export_auth_metrics(ctx.metrics, env=resolved.environment.value)
+    # E26-T02: replay read-path series (reads per stream and tier, gap markers, read-ahead).
+    app.state.replay_metrics = export_replay_metrics(ctx.metrics, env=resolved.environment.value)
     # E40-T01: alert_deliveries retention purge + alert gauges (lifespan-started).
     _alert_pg = SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "alerts")
     _retention = RetentionSchedule.from_settings(resolved)

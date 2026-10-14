@@ -87,6 +87,16 @@ def test_double_prices_become_shortest_round_trip_decimals() -> None:
     assert str(event.payload.size) == "0.00001"
 
 
+def test_float_subclasses_such_as_numpy_doubles_convert_exactly() -> None:
+    """Regression: `repr(numpy.float64(x))` is `np.float64(x)`, not a number."""
+    import numpy as np
+
+    event = event_from_row(StreamKind.TRADES, _trade(price=np.float64(65000.5)))
+
+    assert isinstance(event.payload, RecordedTrade)
+    assert event.payload.price == Decimal("65000.5")
+
+
 def test_decimal_text_and_integers_convert_exactly() -> None:
     event = event_from_row(StreamKind.TRADES, _trade(price="65000.50", size=3))
 

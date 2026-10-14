@@ -299,6 +299,12 @@ class Settings(BaseSettings):
     funding_enabled: bool = True
     funding_refresh_interval_s: int = Field(default=3600, ge=60)
     funding_backfill_days: int = Field(default=30, ge=1, le=400)
+    # E26-T02: replay read-ahead (ADR-0035 proposed; 20-architecture Sec.4.2), bounded in events
+    # and bytes, whichever binds first, under a per-session memory ceiling. Defaults: ~30 s of
+    # the busiest dense 200-depth minute E26-K01 measured.
+    replay_readahead_events: int = Field(default=131_072, ge=1_024, le=4_194_304)
+    replay_readahead_bytes: int = Field(default=64 << 20, ge=1 << 20, le=1 << 30)
+    replay_memory_ceiling_bytes: int = Field(default=256 << 20, ge=2 << 20, le=4 << 30)
     order_rate_per_uid: int = 8
     native_sl_deadline_ms: int = 3000
     killswitch_on_disconnect_s: int = 30
@@ -337,6 +343,13 @@ class Settings(BaseSettings):
                 "CV_QUESTDB_PG_PASSWORD must be set to a non-default value "
                 "(environment=live, storage_backend=real)"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _replay_ceiling_above_readahead(self) -> Settings:
+        """E26-T02: the replay memory ceiling holds the read-ahead queue plus the stream windows."""
+        if self.replay_memory_ceiling_bytes <= self.replay_readahead_bytes:
+            raise ValueError("CV_REPLAY_MEMORY_CEILING_BYTES must exceed CV_REPLAY_READAHEAD_BYTES")
         return self
 
     @model_validator(mode="after")

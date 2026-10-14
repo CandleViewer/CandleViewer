@@ -15,7 +15,6 @@ from tests.unit.replay._events import (
     ROOMY,
     SECOND,
     SYM,
-    T0,
     Harness,
     delta,
     digest,
@@ -95,14 +94,15 @@ async def test_a_duplicated_row_keeps_the_copy_read_last() -> None:
     assert await harness.read_all() == [newer]
 
 
-async def test_a_capped_read_is_halved_and_reread_without_losing_rows() -> None:
-    dense = [trade(i, trade_id=f"d{i:03}") for i in range(400)]
+async def test_a_capped_read_keeps_its_complete_instants_and_loses_no_rows() -> None:
+    """A capped read returns the earliest rows; all but its last instant are complete."""
+    dense = [trade(i // 2, trade_id=f"d{i:03}") for i in range(400)]  # two prints per instant
     harness = Harness(hot=dense)
 
-    got = events(await harness.read_all(budget_bytes=row_bytes(TRADES, 200) * 50))
+    got = events(await harness.read_all(budget_bytes=row_bytes(TRADES, 200) * 51))
 
-    assert [e.ts_us for e in got] == [T0 + i for i in range(400)]
-    assert harness.hot.reads > 400 // 50
+    assert [e.tiebreak for e in got] == [(f"d{i:03}",) for i in range(400)]
+    assert harness.hot.reads >= 400 // 51
 
 
 async def test_reads_are_capped_at_max_rows_per_read_without_losing_rows() -> None:

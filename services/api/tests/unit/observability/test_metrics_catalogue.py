@@ -32,7 +32,7 @@ _UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|m
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "2a6eea4d4e7d7006b7729cb3f455e4c0e4f003929837629c6f9cad90a6b0588b"
+GOLDEN_CATALOGUE_SHA256 = "39d744b28bf5a1507f2a199fe2967f34ae35f93bd7a21d1622f490199741b86c"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -174,11 +174,13 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
+    from candleviewer.replay.metrics import EXPORTED_NAMES as REPLAY_NAMES
     from candleviewer.secrets.metrics import EXPORTED_NAMES as SECRETS_NAMES
     from candleviewer.ws.metrics import CV_WS_NAMES
     from candleviewer.ws.metrics import EXPORTED_NAMES as CVWB_NAMES
 
     others = CVWB_NAMES | RECORDER_NAMES | CV_WS_NAMES | AUTH_EXPORTED_NAMES | SECRETS_NAMES
+    others |= REPLAY_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
@@ -231,6 +233,25 @@ def test_exported_recorder_metrics_served_with_env() -> None:
         recorder_rows_total.labels(stream="trades").inc()
         text = generate_latest(m.registry).decode()
         assert 'recorder_rows_total{env="demo",stream="trades"}' in text
+        for name in EXPORTED_NAMES:
+            assert f"# HELP {name} " in text, name
+    finally:
+        collector.close()
+
+
+def test_exported_replay_metrics_served_with_env() -> None:
+    """E26-T02: the replay read-path series are `live`, served via `export_replay_metrics`."""
+    from candleviewer.replay.merge import replay_events_read_total
+    from candleviewer.replay.metrics import EXPORTED_NAMES, export_replay_metrics
+
+    assert EXPORTED_NAMES <= {s.name for s in live_specs() if s.exported}
+    m = Metrics("demo")
+    register_r0(m)
+    collector = export_replay_metrics(m.registry, env="demo")
+    try:
+        replay_events_read_total.labels(stream="trades", tier="parquet").inc(0)
+        text = generate_latest(m.registry).decode()
+        assert 'replay_events_read_total{env="demo",stream="trades",tier="parquet"}' in text
         for name in EXPORTED_NAMES:
             assert f"# HELP {name} " in text, name
     finally:

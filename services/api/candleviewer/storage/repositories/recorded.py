@@ -266,12 +266,14 @@ def _invalid(column: str) -> StorageRecordInvalid:
 
 def _decimal(value: object, column: str) -> Decimal | None:
     """`None`, NaN and infinities read as missing; a non-numeric value is invalid."""
+    if type(value) is float:  # the DOUBLE fast path: both tiers return floats
+        return Decimal(repr(value)) if math.isfinite(value) else None
     if value is None:
         return None
     if isinstance(value, bool):
         raise _invalid(column)
-    if isinstance(value, float):
-        return Decimal(repr(value)) if math.isfinite(value) else None
+    if isinstance(value, float):  # a float subclass (e.g. numpy.float64): plain float text
+        return Decimal(float.__repr__(value)) if math.isfinite(value) else None
     if not isinstance(value, Decimal | int | str):
         raise _invalid(column)
     try:
@@ -294,6 +296,8 @@ def _req_decimal(row: _Row, column: str) -> Decimal:
 
 def _opt_int(row: _Row, column: str) -> int | None:
     value = row.get(column)
+    if type(value) is int:
+        return value
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int | str):
@@ -465,10 +469,13 @@ def event_from_row(stream: StreamKind, row: Mapping[str, object]) -> RecordedEve
         raise StorageRecordInvalid(f"stream {stream.value!r} is not replayable")
     seq, tiebreak, payload = mapper(row)
     ts = row.get("ts")
-    if ts is None:
+    if type(ts) is int:  # the cold tier selects epoch microseconds directly
+        ts_us = ts
+    elif ts is None:
         raise _invalid("ts")
-    try:
-        ts_us = ts_us_from_row(ts)
-    except (TypeError, ValueError) as exc:
-        raise _invalid("ts") from exc
+    else:
+        try:
+            ts_us = ts_us_from_row(ts)
+        except (TypeError, ValueError) as exc:
+            raise _invalid("ts") from exc
     return RecordedEvent(ts_us, seq, _req_str(row, "symbol"), stream, tiebreak, payload)

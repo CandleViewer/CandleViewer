@@ -11,3 +11,7 @@ def ok(reg: object) -> None:
 
 def ok_trigger_mode(reg: object) -> None:
     reg.counter("cv_z_total", "help", ("trigger_mode",))  # ok: cv-obs-metric-label-allowlist
+
+
+def ok_tier(reg: object) -> None:
+    reg.histogram("cv_w_seconds", "help", ("tier",))  # ok: cv-obs-metric-label-allowlist

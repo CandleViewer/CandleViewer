@@ -9,8 +9,11 @@ is unique per event, so two reads of one recorded window are identical whichever
 storage order served them, never the heap's incidental behaviour.
 
 **Reading.** One cursor per `(symbol, stream)` reads `[start, end)` in adaptive windows. A
-window starts at `window_us` (ADR-0035: 30 s), doubles while the stream is sparse, and halves
-and is re-read when a read hits the cursor's row cap. Each window is sorted and duplicate rows
+window starts at `window_us` (ADR-0035: 30 s) and doubles while the stream is sparse. A read
+that hits the cursor's row cap returns the earliest rows (the reader contract), so every
+instant before the last one it returned is complete: those rows are kept, the next read starts
+at that last instant, and the window shrinks to the span that filled the cap. Nothing is re-read
+or lost. Each window is sorted and duplicate rows
 are dropped, keeping the one read last (the cold tier may hold a re-exported part twice, 21
 Sec.5.3). A heap then interleaves the cursors and the gap markers.
 
@@ -171,12 +174,9 @@ class _Cursor(_Input):
     def window(self) -> tuple[int, int]:
         return self._next_us, min(self._end_us, self._next_us + self._width)
 
-    def shrink(self, span_us: int) -> bool:
-        """Halve the window after a truncated read; `False` once it is down to 1 µs."""
-        if span_us <= 1:
-            return False
-        self._width = span_us // 2
-        return True
+    def fit(self, span_us: int) -> None:
+        """After a capped read: the next window spans what filled the cap (at least 1 µs)."""
+        self._width = max(1, span_us)
 
     def load(self, hi_us: int, events: Sequence[RecordedEvent], max_width_us: int) -> int:
         """Install the window ending at `hi_us`, merge-sorted with the last duplicate kept, and
@@ -297,13 +297,17 @@ class RecordedMerge:
             lo_us, hi_us = source.window()
             events = await self._read_window(source, lo_us, hi_us)
             if len(events) > source.row_cap:
-                if not source.shrink(hi_us - lo_us):
+                # The earliest rows came back: every instant before the last one is complete.
+                last_us = max(event.ts_us for event in events)
+                events = [event for event in events if event.ts_us < last_us]
+                if not events:  # one instant alone exceeds the cap
                     raise ReplayMemoryCeilingExceeded(
                         budget_bytes=self._budget_bytes,
                         symbol=source.symbol,
                         stream=source.stream,
                     )
-                continue
+                source.fit(last_us - lo_us)
+                hi_us = last_us
             dropped = source.load(hi_us, events, self._max_window_us)
             if dropped and not source.dup_warned:
                 source.dup_warned = True
