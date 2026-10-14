@@ -40,7 +40,9 @@ as a tracked task that its caller awaits through `asyncio.shield`. A
 cancelled caller (an `asyncio.timeout` around `emit()`, or `stop()`
 cancelling the flusher) can no longer release the lock while a WAL worker
 thread is still running; before, the next append truncated the in-flight
-frame as a torn tail and `AuditWal._end` drifted past EOF. `stop()` drains
+frame as a torn tail and `AuditWal._end` drifted past EOF. A cancel of an
+op task itself (event-loop teardown) is deferred until its WAL call has
+returned and its bookkeeping is done (`_uninterruptible`). `stop()` drains
 these tasks before and after it cancels the flusher.
 """
 
@@ -86,36 +88,36 @@ def _uuid_or_none(value: str | uuid.UUID | None) -> uuid.UUID | None:
     return uuid.UUID(value)
 
 
-async def _uninterruptible[T](fn: Callable[..., T], /, *args: Any) -> T:
-    """Run a blocking WAL call in a worker thread and wait for it to finish even if
-    the awaiting task is cancelled (#2250 review).
+async def _uninterruptible[T](op: _WalOp, fn: Callable[..., T], /, *args: Any) -> T:
+    """Run one blocking WAL call in a worker thread and wait for it to return even if
+    the op task is cancelled meanwhile (#2250 review).
 
-    The caller holds `_wal_lock`: releasing it while the thread still runs would let
-    a second append truncate the in-flight frame. `thread_future` returns the plain
+    The op holds `_wal_lock`: releasing it while the thread still runs would let a
+    second append truncate the in-flight frame. `thread_future` returns the plain
     executor future, not a Task, so event-loop teardown cannot cancel it; never wrap
     the call in a Task (`spawn(run_in_thread(...))`, `asyncio.to_thread`), because
     teardown would cancel that Task and with it the future, while the thread runs.
-    A cancellation of *this* task is absorbed until the thread returns, then
-    re-raised."""
+
+    A cancellation of the op task does not end the op here. It is recorded as
+    `op.cancel_pending` and the call's result is returned, so the op finishes its
+    bookkeeping (`_pending`, `_idle`, `_wake`, `_inflight`) before it raises
+    `CancelledError` itself (`_WalOp.raise_if_cancelled`). If the WAL call raised,
+    that exception propagates instead and the deferred cancel is not re-raised
+    here: an op that ends with the WAL error reports it in place of the cancel
+    (an emit then gets `AuditUnavailable`)."""
     fut = thread_future(fn, *args)
-    cancelled = False
-    while True:
+    while not fut.done():
         try:
-            result = await asyncio.shield(fut)
+            await asyncio.shield(fut)
         except asyncio.CancelledError:
-            if fut.done():
-                raise
-            if not cancelled:
+            if not op.cancel_pending:
                 logger().critical(
                     "audit WAL op cancelled while its worker thread runs; "
                     "holding _wal_lock until it returns",
                     call=getattr(fn, "__name__", "?"),
                 )
-            cancelled = True
-            continue
-        if cancelled:
-            raise asyncio.CancelledError
-        return result
+            op.cancel_pending = True
+    return fut.result()
 
 
 class AuditWriter:
@@ -294,11 +296,12 @@ class AuditWriter:
     async def _accept(self, op: _WalOp, record: dict[str, Any]) -> None:
         """`emit()`'s WAL op: append + bookkeeping under `_wal_lock`, then the
         fail-closed alarm and the flusher wake-up. Once it holds the lock it
-        runs to the end even if `emit()`'s caller was cancelled."""
+        runs to the end even if `emit()`'s caller, or the op task itself, was
+        cancelled; a cancel of the op task is raised after the wake-up."""
         try:
             async with self._wal_lock:
                 op.holding = True
-                await self._append_durably(record)
+                await self._append_durably(op, record)
                 self._pending += 1
                 # Under the lock, so the flusher cannot mark idle after this.
                 self._idle.clear()
@@ -310,6 +313,7 @@ class AuditWriter:
             logger().critical(reason_text)
             raise AuditUnavailable(reason_text) from exc
         self._wake.set()
+        op.raise_if_cancelled()
 
     async def _shielded[**P, T](
         self,
@@ -347,17 +351,17 @@ class AuditWriter:
         while self._wal_ops:
             await asyncio.wait(set(self._wal_ops))
 
-    async def _append_durably(self, record: dict[str, Any]) -> None:
+    async def _append_durably(self, op: _WalOp, record: dict[str, Any]) -> None:
         """Caller holds `_wal_lock`. On `AuditWalFull`, reclaim the committed
         prefix (only when no flush batch is in flight, whose offsets a
         compaction would invalidate) and retry once."""
         try:
-            await _uninterruptible(self._wal.append, record)
+            await _uninterruptible(op, self._wal.append, record)
         except AuditWalFull:
             if self._inflight or self._wal.committed_offset() == 0:
                 raise
-            await _uninterruptible(self._wal.compact)
-            await _uninterruptible(self._wal.append, record)
+            await _uninterruptible(op, self._wal.compact)
+            await _uninterruptible(op, self._wal.append, record)
 
     async def _supervised(self) -> None:
         try:
@@ -392,23 +396,29 @@ class AuditWriter:
         """Flusher WAL op: the next uncommitted batch; marks idle when empty."""
         async with self._wal_lock:
             op.holding = True
-            batch = await _uninterruptible(self._wal.read_pending, self._flush_batch_size)
-            self._inflight = bool(batch)
+            batch = await _uninterruptible(op, self._wal.read_pending, self._flush_batch_size)
+            # A cancelled read ends this flusher run, so nothing writes or commits
+            # the batch: no stale in-flight flag may block the emergency compaction.
+            self._inflight = bool(batch) and not op.cancel_pending
             if not batch:
                 self._idle.set()
-            return batch
+        op.raise_if_cancelled()
+        return batch
 
     async def _commit(self, op: _WalOp, end_offset: int, count: int) -> None:
         """Flusher WAL op: advance the commit cursor, then compact — both under
         `_wal_lock`, so no append can land between the copy and the file swap."""
         async with self._wal_lock:
             op.holding = True
-            await _uninterruptible(self._wal.mark_committed, end_offset)
+            await _uninterruptible(op, self._wal.mark_committed, end_offset)
             self._pending = max(0, self._pending - count)
             self._inflight = False
-            # A cancellation surfaces here only after mark_committed returned; it
-            # then skips compaction (the cursor is durable, compaction is optional).
-            await _uninterruptible(self._wal.compact)
+            # Cancelled during the cursor write: the cursor is durable and the
+            # bookkeeping above is done; compaction is optional, so it is skipped.
+            # (If mark_committed raised, its error propagated before any of this.)
+            if not op.cancel_pending:
+                await _uninterruptible(op, self._wal.compact)
+        op.raise_if_cancelled()
 
     async def _write_with_retry(self, record: dict[str, Any]) -> None:
         delay = self._retry_initial_delay_s
@@ -450,6 +460,14 @@ class _WalOp:
     #: Set by the op right after it takes `_wal_lock`. From then on a cancellation of the
     #: op task cannot release the lock mid-call: each WAL call runs via `_uninterruptible`.
     holding: bool = False
+    #: Set by `_uninterruptible` when the op task was cancelled during a WAL call. The op
+    #: finishes that call and its bookkeeping, then raises (`raise_if_cancelled`).
+    cancel_pending: bool = False
+
+    def raise_if_cancelled(self) -> None:
+        """Raise the deferred cancellation, once the op's bookkeeping is done."""
+        if self.cancel_pending:
+            raise asyncio.CancelledError
 
 
 def _log_abandoned_op(task: asyncio.Task[Any]) -> None:

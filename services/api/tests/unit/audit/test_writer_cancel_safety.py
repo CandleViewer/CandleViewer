@@ -25,7 +25,7 @@ from audit_fakes import FakeAuditRepository, FakeClock
 from structlog.testing import capture_logs
 
 from candleviewer.audit import wal as wal_module
-from candleviewer.audit.writer import AuditWriter
+from candleviewer.audit.writer import AuditUnavailable, AuditWriter
 
 #: Upper bound on any wait for a worker thread: a hang fails instead of blocking CI.
 _WAIT_S = 5.0
@@ -265,11 +265,18 @@ async def test_writer_emit_cancelled_while_queued_for_lock_appends_nothing(
     assert not w._wal_ops
 
 
+@pytest.mark.parametrize("cancelled", ["caller", "op task"])
 async def test_writer_cancelled_emit_whose_append_fails_still_alarms_and_counts(
-    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, slow_disk: SlowDisk
+    cancelled: str,
+    repo: FakeAuditRepository,
+    tmp_path: Path,
+    clock: FakeClock,
+    slow_disk: SlowDisk,
 ) -> None:
     """The op outlives its cancelled caller, so a WAL failure is still surfaced:
-    `AuditUnavailable` bookkeeping and the fail-closed alarm run inside the op."""
+    `AuditUnavailable` bookkeeping and the fail-closed alarm run inside the op. Round 3:
+    likewise when the op task itself is cancelled; the WAL error then wins over the
+    deferred cancel, so the waiting `emit()` reports `AuditUnavailable`."""
     alarms: list[str] = []
 
     async def alarm(reason: str) -> None:
@@ -284,10 +291,15 @@ async def test_writer_cancelled_emit_whose_append_fails_still_alarms_and_counts(
     disk.fail_after_release = True
     emit = asyncio.create_task(w.emit("auth.login", actor_label="doomed"))
     await _thread_event(disk.stalled)
-    emit.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await emit
+    expected: type[BaseException] = asyncio.CancelledError
+    if cancelled == "caller":
+        emit.cancel()
+    else:
+        _wal_op(w, "audit-wal-append").cancel()  # as asyncio.Runner teardown would
+        expected = AuditUnavailable
     disk.release.set()
+    with pytest.raises(expected):
+        await emit
     await w.stop(_WAIT_S)
     assert alarms == ["audit WAL unavailable: OSError"] and w.refused_total == 1
     assert repo.rows == [] and not w._wal_lock.locked()
@@ -356,11 +368,15 @@ async def test_writer_op_task_cancelled_mid_append_keeps_lock_and_end_matches_fi
     await asyncio.wait_for(second, _WAIT_S)
     with pytest.raises(asyncio.CancelledError):
         await emit
+    assert w.buffer_depth == 2, "the cancelled op skipped its bookkeeping"
     wal = w._wal
     assert [r["actor_label"] for _, r in wal.replay()] == ["first", "second"]
     assert wal.torn_tail_truncations == 0
     assert wal._end == (tmp_path / "audit.wal").stat().st_size
     repo.down = False
+    await w.flush(_WAIT_S)
+    assert [r["actor_label"] for r in repo.rows] == ["first", "second"]
+    assert w.buffer_depth == 0
     await w.stop(_WAIT_S)
 
 
@@ -396,6 +412,98 @@ async def test_writer_op_task_cancelled_mid_compaction_keeps_later_ack_durable(
     assert [r["actor_label"] for _, r in w._wal.replay()] == ["late"], "acknowledged record lost"
     assert w._wal._end == (tmp_path / "audit.wal").stat().st_size
     await w.stop(_WAIT_S)
+
+
+async def test_writer_op_task_cancelled_mid_append_still_wakes_the_flusher(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, slow_disk: SlowDisk
+) -> None:
+    """#2250 round 3: the deferred cancel must not skip the op's bookkeeping. With no
+    later emit, only this op's `_idle.clear()` + `_wake.set()` get the record flushed;
+    before, `flush()` returned at once with nothing in the DB until a restart."""
+    w = _writer(repo, tmp_path, clock)
+    await w.start()
+    await w.flush(_WAIT_S)  # the start-up replay found nothing: idle
+    disk = slow_disk(w)
+    disk.arm()
+    emit = asyncio.create_task(w.emit("auth.login", actor_label="only"))
+    await _thread_event(disk.stalled)
+    _wal_op(w, "audit-wal-append").cancel()  # as asyncio.Runner teardown would
+    disk.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await emit  # ends with its op, after the op's bookkeeping
+    await w.flush(_WAIT_S)
+    assert [r["actor_label"] for r in repo.rows] == ["only"] and w.buffer_depth == 0
+    await w.stop(_WAIT_S)
+
+
+async def test_writer_op_task_cancelled_mid_cursor_write_finishes_bookkeeping(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2250 round 3: a commit op cancelled during its cursor write still clears
+    `_inflight` and settles `_pending` before it ends. A stale `_inflight` refused the
+    emergency compaction, so a full WAL failed every emit with `AuditUnavailable`."""
+    w = _writer(repo, tmp_path, clock)
+    stalled, release = threading.Event(), threading.Event()
+    mark_committed = w._wal.mark_committed
+
+    def parked_mark_committed(offset: int) -> None:
+        if offset != 0:  # the batch's cursor write, not compact()'s reset to 0
+            stalled.set()
+            release.wait(_WAIT_S)
+        mark_committed(offset)
+
+    monkeypatch.setattr(w._wal, "mark_committed", parked_mark_committed)
+    await w.start()
+    try:
+        await w.emit("auth.login", actor_label="committed")
+        await _thread_event(stalled)
+        commit = _wal_op(w, "audit-wal-commit")
+        commit.cancel()  # as asyncio.Runner teardown would
+        release.set()
+        await asyncio.wait({commit}, timeout=_WAIT_S)
+    finally:
+        release.set()
+    assert commit.cancelled()
+    assert w._inflight is False and w.buffer_depth == 0
+    # The cursor is durable; the optional compaction was skipped for the cancel.
+    assert w._wal.committed_offset() == (tmp_path / "audit.wal").stat().st_size
+    await w.stop(_WAIT_S)
+
+
+async def test_writer_op_task_cancelled_mid_read_leaves_no_stale_inflight(
+    repo: FakeAuditRepository, tmp_path: Path, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2250 round 3: a batch read whose op task is cancelled ends that flusher run, so
+    nothing commits the batch: `_inflight` must not stay set behind it (it would refuse
+    the emergency compaction). The record is still flushed after a restart."""
+    w = _writer(repo, tmp_path, clock)
+    stalled, release = threading.Event(), threading.Event()
+    read_pending = w._wal.read_pending
+
+    def parked_read_pending(max_records: int) -> list[tuple[int, dict[str, Any]]]:
+        batch = read_pending(max_records)
+        if batch:  # the read that found the record, not the empty start-up one
+            stalled.set()
+            release.wait(_WAIT_S)
+        return batch
+
+    monkeypatch.setattr(w._wal, "read_pending", parked_read_pending)
+    await w.start()
+    try:
+        await w.emit("auth.login", actor_label="x")
+        await _thread_event(stalled)
+        read = _wal_op(w, "audit-wal-read")
+        read.cancel()  # as asyncio.Runner teardown would
+        release.set()
+        await asyncio.wait({read}, timeout=_WAIT_S)
+    finally:
+        release.set()
+    assert read.cancelled() and w._inflight is False
+    await w.stop(_WAIT_S)
+    await w.start()  # the next run reads the same batch again
+    await w.flush(_WAIT_S)
+    await w.stop(_WAIT_S)
+    assert [r["actor_label"] for r in repo.rows] == ["x"]
 
 
 async def _audit_own_shutdown(w: AuditWriter, disk: _SlowDisk, parked: asyncio.Event) -> None:
