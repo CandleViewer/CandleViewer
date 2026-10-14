@@ -104,6 +104,12 @@ def test_scrub_frames_clears_chained_tracebacks() -> None:
     _assert_no_plaintext(info.value)
 
 
+def test_scrub_frames_terminates_on_a_cyclic_chain() -> None:
+    first, second = ValueError("first"), ValueError("second")
+    first.__context__, second.__cause__ = second, first
+    signing_mod.scrub_frames(first)  # visits each exception once
+
+
 @pytest.fixture
 def kept() -> Iterator[list[BaseException]]:
     """Every exception raised during the test, kept as a debugger or APM hook would keep it."""
