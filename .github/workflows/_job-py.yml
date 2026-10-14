@@ -37,7 +37,9 @@ jobs:
   py:
     name: py
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
+    # 30 min default (#2185): the unit suite alone now takes 18-19.5 min on a shared runner, so a
+    # 20 min budget cancelled green runs during `uv build`. Splitting the job is the follow-up.
+    timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 30) }}
     defaults:
       run:
         working-directory: services/api
