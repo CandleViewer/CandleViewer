@@ -694,8 +694,7 @@ operations:
     permissions: ['workspaces:read']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /market/bars:
     permissions: ['marketdata:read']
@@ -1498,8 +1497,7 @@ operations:
     permissions: ['workspaces:read']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /workspaces:
     permissions: ['workspaces:write']
@@ -1536,36 +1534,31 @@ operations:
     permissions: ['workspaces:read']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /workspaces/{workspaceId}/layouts:
     permissions: ['workspaces:write']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   GET /workspaces/{workspaceId}/layouts/{layoutId}:
     permissions: ['workspaces:read']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   PUT /workspaces/{workspaceId}/layouts/{layoutId}:
     permissions: ['workspaces:write']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   DELETE /workspaces/{workspaceId}/layouts/{layoutId}:
     permissions: ['workspaces:write']
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
 # WS topic families (23-ws-protocol.md §6.3). sub_ok = subscription accepted; 401 = frame before
 # `auth`; account_scope_denied / 403 as in §5.2. `system` is implicit (no check).

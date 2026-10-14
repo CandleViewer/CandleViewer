@@ -5,11 +5,13 @@ through `auth.scopes.enforce()`, each denial audited as `rbac.denied`: `workspac
 `workspaces:write` to write, `scope: self`. A missing, deleted or foreign workspace/layout is the
 same 404 (D18); a live foreign id is also audited (`object_kind` workspace|layout), on reads too.
 Writes are not audited (D20). Bodies are read raw so the byte and depth caps run before pydantic.
-Evaluation order (D13): 401, 403, 413, 422, 404, no-op 200, 412, 409, write (the last four
+Evaluation order (D13): 401, 403, 413, 422, 400, 404, no-op 200, 412, 409, write (the last four
 are the repository's, in one transaction). Logs carry ids, counts and outcomes, never content.
 """
 
+import base64
 import inspect
+import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Coroutine
@@ -21,10 +23,16 @@ import structlog
 from fastapi import APIRouter, Path, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from candleviewer.api.drawings_models import MAX_JSON_DEPTH, format_errors
-from candleviewer.api.workspaces_models import MAX_WORKSPACE_BODY_BYTES, WorkspaceIn
+from candleviewer.api.workspaces_models import (
+    MAX_LAYOUT_BODY_BYTES,
+    MAX_WORKSPACE_BODY_BYTES,
+    LayoutIn,
+    WorkspaceIn,
+)
+from candleviewer.api.workspaces_presets import LAYOUT_PRESETS
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission, Scope
@@ -33,7 +41,9 @@ from candleviewer.ingestion.ticker_stream import uuid7
 from candleviewer.observability.redaction import redact_structure
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.workspaces import (
+    LayoutFields,
     LayoutRow,
+    PaneFields,
     WorkspaceConflictError,
     WorkspaceFields,
     WorkspaceNotFoundError,
@@ -45,6 +55,7 @@ from candleviewer.ws.limits import json_depth_exceeds
 
 #: The registered `x-error-codes` this router emits: code -> (status, catalogue title).
 _CODES: Final[dict[str, tuple[int, str]]] = {
+    "invalid_cursor": (400, "Pagination cursor is malformed or expired"),
     "unauthenticated": (401, "Missing, malformed or expired access token"),
     "forbidden": (403, "Authenticated but lacking the required permission"),
     "not_found": (404, "Resource does not exist or is out of the caller's scope"),
@@ -56,6 +67,8 @@ _CODES: Final[dict[str, tuple[int, str]]] = {
 }
 _TOKEN: Final = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z")
 _PERMISSIONS: Final = {p.value: p for p in Permission}
+CURSOR_TTL_S: Final = 3600
+_MAX_CURSOR: Final = 512
 _LENGTH: Final = re.compile(r"[0-9]{1,19}")
 #: A token no stored `updated_at` can equal: an unparseable `If-Match` is "stale" (D12, D13).
 _RETRY_AFTER_S: Final = 5
@@ -274,6 +287,48 @@ def _if_match(request: Request) -> datetime | None:
         return _NEVER_MATCHES
 
 
+def encode_cursor(kind: str, scope: str, after: object, iat: int) -> str:
+    """Opaque keyset cursor (D22): base64url JSON bound to its listing and issue time."""
+    raw = json.dumps({"v": 1, "k": kind, "s": scope, "a": after, "iat": iat})
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def decode_cursor(cursor: str, kind: str, scope: str, now: int) -> Any:
+    """The after key of a cursor issued for this listing less than an hour ago, else 400."""
+    bad = _Problem("invalid_cursor", "The cursor is malformed, expired or for another listing.")
+    try:
+        if len(cursor) > _MAX_CURSOR:
+            raise ValueError(cursor)
+        data = json.loads(base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)))
+        if not isinstance(data, dict) or set(data) != {"v", "k", "s", "a", "iat"}:
+            raise ValueError(cursor)
+    except ValueError:
+        raise bad from None
+    iat = data["iat"]
+    if type(data["v"]) is not int or (data["v"], data["k"], data["s"]) != (1, kind, scope):
+        raise bad
+    if type(iat) is not int or not 0 <= now - iat <= CURSOR_TTL_S:
+        raise bad
+    return data["a"]
+
+
+def _after_workspace(raw: Any) -> tuple[int, str]:
+    try:
+        order, wid = raw
+        if type(order) is not int or not 0 <= order <= 32767:
+            raise ValueError(raw)
+        return order, str(UUID(str(wid)))
+    except (TypeError, ValueError):
+        raise _Problem("invalid_cursor", "The cursor is malformed.") from None
+
+
+def _after_id(raw: Any) -> str:
+    try:
+        return str(UUID(str(raw)))
+    except ValueError:
+        raise _Problem("invalid_cursor", "The cursor is malformed.") from None
+
+
 def _dump_workspace(row: WorkspaceRow) -> dict[str, Any]:
     """`Workspace`: exactly the documented fields (never a spread row); tokens at 6 digits."""
     return {
@@ -306,12 +361,43 @@ def _dump_layout(row: LayoutRow) -> dict[str, Any]:
     }  # fmt: skip
 
 
+def _layout_fields(body: LayoutIn) -> LayoutFields:
+    values = body.db_values()
+    panes = tuple(PaneFields(**pane) for pane in values.pop("panes"))
+    return LayoutFields(**values, panes=panes)
+
+
+def _dump_preset(index: int) -> dict[str, Any]:
+    """`LayoutPreset`: the catalogue entry with a complete `LayoutInput` (defaults materialised)."""
+    entry = LAYOUT_PRESETS[index]
+    layout = entry.layout.db_values()
+    layout["panes"] = [p | {"indicator_preset_ids": list(p["indicator_preset_ids"])}
+                       for p in layout["panes"]]  # fmt: skip
+    return {
+        "id": str(entry.id), "name": entry.name, "description": entry.description,
+        "is_builtin": entry.is_builtin, "pane_count": entry.pane_count, "layout": layout,
+    }  # fmt: skip
+
+
 def _fmt(value: datetime) -> str:
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _respond(body: dict[str, Any], token: str, status: int = 200) -> JSONResponse:
     return JSONResponse(body, status, headers={"ETag": f'"{token}"'})
+
+
+class _ListQuery(BaseModel):  # `Cursor` + `Limit` parameters
+    model_config = ConfigDict(frozen=True, extra="ignore")  # unknown params ignored, like FastAPI
+    cursor: str | None = None
+    limit: Annotated[int, Field(ge=1, le=500)] = 100
+
+
+def _query(request: Request) -> _ListQuery:
+    try:
+        return _ListQuery.model_validate(dict(request.query_params))
+    except ValidationError as exc:
+        raise _invalid(format_errors(exc)) from None
 
 
 def _new_id() -> UUID:
@@ -327,6 +413,7 @@ def make_workspaces_router(
     principal_resolver: _Resolver | None,
     audit: _Emitter,
     *,
+    clock: Callable[[], float] = time.time,
     new_id: Callable[[], UUID] = _new_id,
 ) -> APIRouter:
     """`audit` is mandatory (a denial must leave its `rbac.denied` record). No resolver (no
@@ -373,6 +460,23 @@ def make_workspaces_router(
                 reason=f"not_owner:workspaces:{mode}:self",
             )  # fmt: skip
         return _not_found(kind)
+
+    @router.get("/workspaces")
+    async def list_workspaces(request: Request) -> Response:
+        owner = str((await caller(request, Permission.WORKSPACES_READ)).user_id)
+        q, now = _query(request), int(clock())
+        after = (
+            None
+            if q.cursor is None
+            else _after_workspace(decode_cursor(q.cursor, "ws", owner, now))
+        )
+        rows = await store().list_workspaces(owner, after=after, limit=q.limit + 1)
+        items, more = rows[: q.limit], len(rows) > q.limit
+        nxt = None
+        if more:
+            nxt = encode_cursor("ws", owner, [items[-1].sort_order, items[-1].id], now)
+        meta = {"next_cursor": nxt, "has_more": more, "count": len(items)}
+        return JSONResponse({"items": [_dump_workspace(r) for r in items], "meta": meta})
 
     @router.get("/workspaces/{workspaceId}")
     async def get_workspace(
@@ -441,6 +545,137 @@ def make_workspaces_router(
         _log().info("workspace_deleted", user_id=owner, workspace_id=wid)
         return Response(status_code=204)
 
+    async def miss(p: AuditPrincipal, wid: str, lid: str | None, mode: str) -> _Problem:
+        """The same 404 whatever is wrong with the path; the first live foreign object on it
+        (layout, then workspace) is audited once. A layout under another workspace of the
+        caller's own is not a foreign hit (D18)."""
+        owner = str(p.user_id)
+        found: tuple[_Kind, str] | None = None
+        if lid is not None and await store().exists_for_other_owner(owner, "layout", lid):
+            found = ("layout", lid)
+        elif await store().exists_for_other_owner(owner, "workspace", wid):
+            found = ("workspace", wid)
+        if found is not None:
+            await audit.emit(
+                "rbac.denied", actor_label=owner, actor_user_id=p.user_id, actor_ip=p.ip,
+                session_id=p.session_id, request_id=p.request_id, object_kind=found[0],
+                object_id=found[1], outcome=AuditOutcome.DENIED, severity=Severity.WARNING,
+                reason=f"not_owner:workspaces:{mode}:self",
+            )  # fmt: skip
+        return _not_found("workspace" if lid is None else "layout")
+
+    @router.get("/layout-presets")
+    async def list_layout_presets(request: Request) -> Response:
+        await caller(request, Permission.WORKSPACES_READ)
+        q, now = _query(request), int(clock())
+        start = 0
+        if q.cursor is not None:
+            after = decode_cursor(q.cursor, "pre", "-", now)
+            if type(after) is not int or not 0 <= after < len(LAYOUT_PRESETS):
+                raise _Problem("invalid_cursor", "The cursor is malformed.")
+            start = after + 1
+        page = range(start, min(start + q.limit, len(LAYOUT_PRESETS)))
+        more = page.stop < len(LAYOUT_PRESETS)
+        nxt = encode_cursor("pre", "-", page[-1], now) if more else None
+        meta = {"next_cursor": nxt, "has_more": more, "count": len(page)}
+        return JSONResponse({"items": [_dump_preset(i) for i in page], "meta": meta})
+
+    @router.get("/workspaces/{workspaceId}/layouts")
+    async def list_layouts(
+        request: Request, workspace_id: Annotated[str, Path(alias="workspaceId")]
+    ) -> Response:
+        principal = await caller(request, Permission.WORKSPACES_READ)
+        owner, wid = str(principal.user_id), _uuid("workspaceId", workspace_id)
+        q, now = _query(request), int(clock())
+        scope = f"{owner}:{wid}"
+        after = None
+        if q.cursor is not None:
+            after = _after_id(decode_cursor(q.cursor, "lay", scope, now))
+        rows = await store().list_layouts(owner, wid, after_id=after, limit=q.limit + 1)
+        if rows is None:
+            raise await miss(principal, wid, None, "read")
+        items, more = rows[: q.limit], len(rows) > q.limit
+        nxt = encode_cursor("lay", scope, items[-1].id, now) if more else None
+        meta = {"next_cursor": nxt, "has_more": more, "count": len(items)}
+        return JSONResponse({"items": [_dump_layout(r) for r in items], "meta": meta})
+
+    @router.post("/workspaces/{workspaceId}/layouts")
+    async def create_layout(
+        request: Request, workspace_id: Annotated[str, Path(alias="workspaceId")]
+    ) -> Response:
+        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        owner = str(principal.user_id)
+        raw = await _read_capped(request, MAX_LAYOUT_BODY_BYTES)
+        wid = _uuid("workspaceId", workspace_id)
+        body = _parse(LayoutIn, _text(raw))
+        _idempotency_key(request)  # replay arrives with the shared cache (ruling Q5)
+        try:
+            row = await store().create_layout(owner, wid, str(new_id()), _layout_fields(body))
+        except WorkspaceNotFoundError:
+            raise await miss(principal, wid, None, "write") from None
+        except WorkspaceConflictError as exc:
+            raise _conflict(exc) from None
+        _log().info("layout_created", user_id=owner, workspace_id=wid, layout_id=row.id,
+                    pane_count=len(row.panes))  # fmt: skip
+        return _respond(_dump_layout(row), row.token, 201)
+
+    @router.get("/workspaces/{workspaceId}/layouts/{layoutId}")
+    async def get_layout(
+        request: Request,
+        workspace_id: Annotated[str, Path(alias="workspaceId")],
+        layout_id: Annotated[str, Path(alias="layoutId")],
+    ) -> Response:
+        principal = await caller(request, Permission.WORKSPACES_READ)
+        owner, wid = str(principal.user_id), _uuid("workspaceId", workspace_id)
+        lid = _uuid("layoutId", layout_id)
+        row = await store().get_layout(owner, wid, lid)
+        if row is None:
+            raise await miss(principal, wid, lid, "read")
+        return _respond(_dump_layout(row), row.token)
+
+    @router.put("/workspaces/{workspaceId}/layouts/{layoutId}")
+    async def update_layout(
+        request: Request,
+        workspace_id: Annotated[str, Path(alias="workspaceId")],
+        layout_id: Annotated[str, Path(alias="layoutId")],
+    ) -> Response:
+        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        owner = str(principal.user_id)
+        raw = await _read_capped(request, MAX_LAYOUT_BODY_BYTES)
+        wid, lid = _uuid("workspaceId", workspace_id), _uuid("layoutId", layout_id)
+        body = _parse(LayoutIn, _text(raw))
+        if_match = _if_match(request)
+        try:
+            done = await store().replace_layout(
+                owner, wid, lid, _layout_fields(body), if_match=if_match
+            )
+        except WorkspaceNotFoundError:
+            raise await miss(principal, wid, lid, "write") from None
+        except WorkspaceVersionConflictError:
+            raise _stale("layout") from None
+        except WorkspaceConflictError as exc:
+            raise _conflict(exc) from None
+        _log().info("layout_updated", user_id=owner, workspace_id=wid, layout_id=lid,
+                    pane_count=len(done.row.panes), changed=done.changed)  # fmt: skip
+        return _respond(_dump_layout(done.row), done.row.token)
+
+    @router.delete("/workspaces/{workspaceId}/layouts/{layoutId}")
+    async def delete_layout(
+        request: Request,
+        workspace_id: Annotated[str, Path(alias="workspaceId")],
+        layout_id: Annotated[str, Path(alias="layoutId")],
+    ) -> Response:
+        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        owner, wid = str(principal.user_id), _uuid("workspaceId", workspace_id)
+        lid = _uuid("layoutId", layout_id)
+        _idempotency_key(request)
+        try:
+            await store().soft_delete_layout(owner, wid, lid)
+        except WorkspaceNotFoundError:
+            raise await miss(principal, wid, lid, "write") from None
+        _log().info("layout_deleted", user_id=owner, workspace_id=wid, layout_id=lid)
+        return Response(status_code=204)
+
     return router
 
 
@@ -452,4 +687,4 @@ def _idempotency_key(request: Request) -> None:
         _uuid("Idempotency-Key", raw)
 
 
-__all__ = ["make_workspaces_router"]
+__all__ = ["CURSOR_TTL_S", "decode_cursor", "encode_cursor", "make_workspaces_router"]
