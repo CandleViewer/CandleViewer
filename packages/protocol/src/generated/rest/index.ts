@@ -3865,10 +3865,10 @@ export interface paths {
      *     accepted on input only, as leniency. Any other value, including `*` and a list of tags, is
      *     unparseable.
      *
-     *     Evaluation order for the `/workspaces*` and `/layout-presets` operations (steps that do not
-     *     apply are skipped): `401`; `403` (permission, CSRF); `413`; `422` (path, headers, body);
-     *     `400 invalid_cursor` (lists); `Idempotency-Key` replay (stored 2xx + `Idempotency-Replayed:
-     *     true`) or `409 idempotency_key_reuse`; `404` (missing,
+     *     Evaluation order for `/workspaces*` (not `exportWorkspace`, E15-S07) and `/layout-presets`
+     *     (steps that do not apply are skipped): `401`; `403` (permission, CSRF); `413`; `422` (path,
+     *     query, headers, body); `400 invalid_cursor` (lists); `Idempotency-Key` replay (stored 2xx +
+     *     `Idempotency-Replayed: true`) or `409 idempotency_key_reuse`; `404` (missing,
      *     soft-deleted or another user's, identical); no-op `200` (the body changes nothing: unchanged
      *     token, no write, even when `If-Match` is stale or unparseable, as the change is already
      *     applied, RFC 9110 §13.1.1); `412 version_conflict` (stale or unparseable `If-Match`, nothing
@@ -5659,7 +5659,7 @@ export interface components {
        * @default false
        */
       level_sync: boolean;
-      /** @description 1..40 characters after sanitising, as for workspace names. Unique per workspace, case-insensitive, among live layouts (`409 conflict`, rule `name_taken`). */
+      /** @description At most 40 characters as sent, at least 1 after sanitising, as for workspace names. Unique per workspace, case-insensitive, among live layouts (`409 conflict`, rule `name_taken`). */
       name: string;
       /** @description In any order: panes are keyed by `slot_index`, and responses sort by it. */
       panes: components["schemas"]["LayoutPaneInput"][];
@@ -6211,7 +6211,7 @@ export interface components {
      * @enum {string}
      */
     PaneScaleMode: "auto" | "linked" | "manual" | "log";
-    /** @description A flat setting value: a string of at most 256 characters, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans. Objects are not allowed. */
+    /** @description A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised exactly like `WorkspaceInput.name` (the strip set shared with `DrawingGeometry`, then trimming; an empty result is kept); a lone surrogate is rule `invalid_unicode`. Numbers lie within ±1e15, so they read back with the same kind and digits; `-0.0` is stored as `0.0`. */
     PaneSettingValue: string | number | boolean | null | (string | number | boolean)[];
     PlaceOrderRequest: {
       algo?: components["schemas"]["AlgoSpec"];
@@ -7756,10 +7756,10 @@ export interface components {
      *
      *     Observable validation (all `422 validation_failed`): JSON nesting depth must be at most 16;
      *     `NaN` and `Infinity` are rejected; a string that cannot be encoded as UTF-8 (a lone
-     *     surrogate) is rule `invalid_unicode`. `name` is sanitised on write, before the length check:
-     *     U+0000-U+001F, U+007F-U+009F, U+2028, U+2029, U+061C, U+200E, U+200F, U+202A-U+202E and
-     *     U+2066-U+2069 are removed, then surrounding whitespace is trimmed; nothing else is altered.
-     *     Empty after sanitising is rule `string_too_short`, over 40 is `string_too_long`. Reads
+     *     surrogate) is rule `invalid_unicode`. `name` is at most 40 characters as sent (rule
+     *     `string_too_long`), then sanitised: U+0000-U+001F, U+007F-U+009F, U+2028, U+2029, U+061C,
+     *     U+200E, U+200F, U+202A-U+202E and U+2066-U+2069 are removed, then surrounding whitespace is
+     *     trimmed; nothing else is altered. Empty after sanitising is rule `string_too_short`. Reads
      *     return the sanitised name.
      */
     WorkspaceInput: {
@@ -7770,7 +7770,7 @@ export interface components {
        * @default false
        */
       is_default: boolean;
-      /** @description 1..40 characters after sanitising (above), SCR-020. Unique per user, case-insensitive, among live workspaces (`409 conflict`, rule `name_taken`). */
+      /** @description At most 40 characters as sent, at least 1 after sanitising (above), SCR-020. Unique per user, case-insensitive, among live workspaces (`409 conflict`, rule `name_taken`). */
       name: string;
       /**
        * @description Client-defined tab order; ties break by `id`.

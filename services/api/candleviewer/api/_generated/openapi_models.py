@@ -3526,7 +3526,7 @@ class WorkspaceInput(BaseModel):
     name: Annotated[
         str,
         Field(
-            description="1..40 characters after sanitising (above), SCR-020. Unique per user, case-insensitive, among live workspaces (`409 conflict`, rule `name_taken`).",
+            description="At most 40 characters as sent, at least 1 after sanitising (above), SCR-020. Unique per user, case-insensitive, among live workspaces (`409 conflict`, rule `name_taken`).",
             max_length=40,
             min_length=1,
         ),
@@ -3601,21 +3601,53 @@ class PaneSettingValue1(RootModel[str]):
     root: Annotated[
         str,
         Field(
-            description="A flat setting value: a string of at most 256 characters, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans. Objects are not allowed.",
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised exactly like `WorkspaceInput.name` (the strip set shared with `DrawingGeometry`, then trimming; an empty result is kept); a lone surrogate is rule `invalid_unicode`. Numbers lie within ±1e15, so they read back with the same kind and digits; `-0.0` is stored as `0.0`.",
             max_length=256,
         ),
     ]
 
 
-class PaneSettingValue21(RootModel[str]):
+class PaneSettingValue2(RootModel[int]):
+    root: Annotated[
+        int,
+        Field(
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised exactly like `WorkspaceInput.name` (the strip set shared with `DrawingGeometry`, then trimming; an empty result is kept); a lone surrogate is rule `invalid_unicode`. Numbers lie within ±1e15, so they read back with the same kind and digits; `-0.0` is stored as `0.0`.",
+            ge=-1000000000000000,
+            le=1000000000000000,
+        ),
+    ]
+
+
+class PaneSettingValue3(RootModel[float]):
+    root: Annotated[
+        float,
+        Field(
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised exactly like `WorkspaceInput.name` (the strip set shared with `DrawingGeometry`, then trimming; an empty result is kept); a lone surrogate is rule `invalid_unicode`. Numbers lie within ±1e15, so they read back with the same kind and digits; `-0.0` is stored as `0.0`.",
+            ge=-1000000000000000.0,
+            le=1000000000000000.0,
+        ),
+    ]
+
+
+class PaneSettingValue41(RootModel[str]):
     root: Annotated[str, Field(max_length=256)]
 
 
-class PaneSettingValue2(RootModel[list[PaneSettingValue21 | int | float | bool]]):
+class PaneSettingValue42(RootModel[int]):
+    root: Annotated[int, Field(ge=-1000000000000000, le=1000000000000000)]
+
+
+class PaneSettingValue43(RootModel[float]):
+    root: Annotated[float, Field(ge=-1000000000000000.0, le=1000000000000000.0)]
+
+
+class PaneSettingValue4(
+    RootModel[list[PaneSettingValue41 | PaneSettingValue42 | PaneSettingValue43 | bool]]
+):
     root: Annotated[
-        list[PaneSettingValue21 | int | float | bool],
+        list[PaneSettingValue41 | PaneSettingValue42 | PaneSettingValue43 | bool],
         Field(
-            description="A flat setting value: a string of at most 256 characters, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans. Objects are not allowed.",
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised exactly like `WorkspaceInput.name` (the strip set shared with `DrawingGeometry`, then trimming; an empty result is kept); a lone surrogate is rule `invalid_unicode`. Numbers lie within ±1e15, so they read back with the same kind and digits; `-0.0` is stored as `0.0`.",
             max_length=32,
         ),
     ]
@@ -3632,7 +3664,16 @@ class PaneConfig(BaseModel):
         ),
     ] = None
     settings: Annotated[
-        dict[str, PaneSettingValue1 | int | float | bool | PaneSettingValue2 | None] | None,
+        dict[
+            str,
+            PaneSettingValue1
+            | PaneSettingValue2
+            | PaneSettingValue3
+            | bool
+            | PaneSettingValue4
+            | None,
+        ]
+        | None,
         Field(
             description="Kind-specific flat settings (for example DOM depth, tape filters, CVD anchor, visible range), at most 32 keys. Every key must match `^[a-z][a-z0-9_]{0,31}$` (`422` rule `invalid_setting_key`); the server enforces this because generators cannot express key patterns. Numbers keep their kind (`1` stays `1`, `1.0` stays `1.0`). Omitted means `{}`.",
             max_length=32,
@@ -5561,7 +5602,7 @@ class LayoutInput(BaseModel):
     name: Annotated[
         str,
         Field(
-            description="1..40 characters after sanitising, as for workspace names. Unique per workspace, case-insensitive, among live layouts (`409 conflict`, rule `name_taken`).",
+            description="At most 40 characters as sent, at least 1 after sanitising, as for workspace names. Unique per workspace, case-insensitive, among live layouts (`409 conflict`, rule `name_taken`).",
             max_length=40,
             min_length=1,
         ),
