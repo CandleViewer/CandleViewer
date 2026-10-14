@@ -17,6 +17,7 @@ import os
 import statistics
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
@@ -39,12 +40,20 @@ from candleviewer.storage.repositories.drawings import (
     DrawingFields,
     DrawingIdUnavailableError,
     DrawingNotFoundError,
+    DrawingRow,
     DrawingVersionConflictError,
     UpdateOp,
 )
 from candleviewer.storage.repositories.drawings_sqlalchemy import (
+    _INSERT_MANY,
     _LIST,
+    _SNAPSHOT,
+    _SOFT_DELETE_MANY,
+    _UPDATE_MANY,
+    MAX_BATCH_OPS_STORAGE,
     SqlAlchemyDrawingRepository,
+    _row_json,
+    _rows_param,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -397,7 +406,7 @@ async def test_purge_respects_the_90_day_boundary_and_the_limit(
     assert (await repo.get(a, live)) is not None
 
 
-async def test_batch_duplicate_create_id_hits_the_savepoint_and_rolls_back_everything(
+async def test_batch_duplicate_create_id_fails_at_the_second_create_and_rolls_back_everything(
     repo: SqlAlchemyDrawingRepository, pg_dsn: str
 ) -> None:
     a, x = _user(pg_dsn), str(uuid.uuid4())
@@ -593,3 +602,331 @@ async def test_count_live_by_tool_counts_only_live_rows_of_every_owner(
     assert after.get("trendline", 0) - before.get("trendline", 0) == 2
     assert after.get("rectangle", 0) - before.get("rectangle", 0) == 1
     assert all(isinstance(k, str) and isinstance(v, int) for k, v in after.items())
+
+
+async def test_set_based_batch_mixed_success_keeps_order_and_bumps_tokens(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    a = _user(pg_dsn)
+    ups = [str(uuid.uuid4()) for _ in range(3)]
+    dels = [str(uuid.uuid4()) for _ in range(3)]
+    rows = {i: await repo.create(a, i, _f()) for i in ups + dels}
+    news = [str(uuid.uuid4()) for _ in range(4)]
+    ops: list[BatchOp] = [
+        CreateOp(news[0], _f(label="c0")),
+        DeleteOp(dels[2], rows[dels[2]].updated_at),
+        UpdateOp(ups[1], rows[ups[1]].updated_at, _f(label="u1")),
+        CreateOp(news[1], _f(label="c1")),
+        UpdateOp(ups[0], rows[ups[0]].updated_at, _f(label="u0")),
+        DeleteOp(dels[0], rows[dels[0]].updated_at),
+        CreateOp(news[2], _f(label="c2")),
+        UpdateOp(ups[2], rows[ups[2]].updated_at, _f(label="u2")),
+        DeleteOp(dels[1], rows[dels[1]].updated_at),
+        CreateOp(news[3], _f(label="c3")),
+    ]
+    out = await repo.apply_batch(a, ops)
+    assert [r.id for r in out.created] == news
+    assert [r.id for r in out.updated] == [ups[1], ups[0], ups[2]]
+    assert [r.label for r in out.updated] == ["u1", "u0", "u2"]
+    assert out.deleted == (dels[2], dels[0], dels[1])
+    for r in out.updated:
+        assert r.updated_at > rows[r.id].updated_at
+    assert [await repo.get(a, d) for d in dels] == [None, None, None]
+    assert (await repo.get(a, news[3])) is not None
+
+
+async def test_insert_many_skips_an_existing_id_via_on_conflict_without_erroring(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    a, b = _user(pg_dsn), _user(pg_dsn)
+    taken = str(uuid.uuid4())
+    await repo.create(b, taken, _f())
+    fresh = [str(uuid.uuid4()) for _ in range(2)]
+    payload = json.dumps([_row_json(i, _f()) for i in [fresh[0], taken, fresh[1]]])
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-it-on-conflict")
+    try:
+        async with rel.unit_of_work() as uow:
+            got = await uow.session.execute(_INSERT_MANY, {"owner": a, "rows": payload})
+            assert [r["id"] for r in got.mappings()] == fresh
+    finally:
+        await rel.dispose()
+
+
+class _RaceSession:
+    """Delegates to the real session; after the snapshot runs, commits a rival insert."""
+
+    def __init__(self, inner: Any, rival: Any) -> None:
+        self._inner, self._rival = inner, rival
+
+    async def execute(self, stmt: Any, params: Any = None) -> Any:
+        res = await self._inner.execute(stmt, params)
+        if "FOR UPDATE" in str(stmt):  # the snapshot: the id is still free here
+            self._rival()
+        return res
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+class _RaceUow:
+    def __init__(self, inner: Any, rival: Any) -> None:
+        self._inner, self.session = inner, _RaceSession(inner.session, rival)
+
+    async def commit(self) -> None:
+        await self._inner.commit()
+
+
+class _RaceRelational:
+    def __init__(self, real: SqlAlchemyRelationalRepository, rival: Any) -> None:
+        self._real, self._rival = real, rival
+
+    def unit_of_work(self) -> Any:
+        real, rival = self._real.unit_of_work(), self._rival
+
+        class _Ctx:
+            async def __aenter__(self) -> _RaceUow:
+                return _RaceUow(await real.__aenter__(), rival)
+
+            async def __aexit__(self, *exc: Any) -> Any:
+                return await real.__aexit__(*exc)
+
+        return _Ctx()
+
+
+async def test_batch_concurrent_create_after_snapshot_is_id_unavailable_via_on_conflict(
+    pg_dsn: str,
+) -> None:
+    a, rival_owner = _user(pg_dsn), _user(pg_dsn)
+    first, raced, last = (str(uuid.uuid4()) for _ in range(3))
+
+    def rival() -> None:  # another connection commits `raced` between snapshot and INSERT
+        with _sync(pg_dsn) as c:
+            c.execute(
+                "INSERT INTO drawings (id, owner_user_id, symbol, tool, geometry) "
+                "VALUES (%s, %s, 'BTCUSDT', 'trendline', '{\"points\":[]}'::jsonb)",
+                (raced, rival_owner),
+            )
+
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-it-race")
+    try:
+        racing = SqlAlchemyDrawingRepository(
+            _RaceRelational(rel, rival)  # type: ignore[arg-type]  # test double of the UoW factory
+        )
+        with pytest.raises(BatchOpFailed) as err:
+            await racing.apply_batch(
+                a, [CreateOp(first, _f()), CreateOp(raced, _f()), CreateOp(last, _f())]
+            )
+        assert (err.value.index, err.value.rule) == (1, "id_unavailable")
+        real = SqlAlchemyDrawingRepository(rel)
+        assert [await real.get(a, first), await real.get(a, last)] == [None, None]
+        assert await real.get(rival_owner, raced) is not None  # only the rival's row exists
+    finally:
+        await rel.dispose()
+
+
+async def test_batch_stale_target_deleted_before_batch_fails_at_snapshot_and_rolls_back(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    a = _user(pg_dsn)
+    u, d, c = (str(uuid.uuid4()) for _ in range(3))
+    ru, rd = await repo.create(a, u, _f()), await repo.create(a, d, _f())
+    await repo.soft_delete(a, d)  # deleted between token read and batch
+    with pytest.raises(BatchOpFailed) as err:
+        await repo.apply_batch(
+            a,
+            [
+                CreateOp(c, _f()),
+                UpdateOp(u, ru.updated_at, _f(label="z")),
+                DeleteOp(d, rd.updated_at),
+            ],
+        )
+    assert (err.value.index, err.value.rule) == (2, "target_unavailable")
+    assert await repo.get(a, c) is None
+    assert (await repo.get(a, u)) == ru
+
+
+async def test_batch_first_snapshot_failure_in_operation_order_wins(
+    repo: SqlAlchemyDrawingRepository, pg_dsn: str
+) -> None:
+    a = _user(pg_dsn)
+    u = str(uuid.uuid4())
+    ru = await repo.create(a, u, _f())
+    ops: list[BatchOp] = [
+        UpdateOp(u, ru.updated_at + timedelta(microseconds=5), _f()),
+        DeleteOp(str(uuid.uuid4()), _T),
+    ]
+    with pytest.raises(BatchOpFailed) as err:
+        await repo.apply_batch(a, ops)
+    assert (err.value.index, err.value.rule) == (0, "version_conflict")
+
+
+def _plan_nodes(node: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    yield node
+    for child in node.get("Plans", []):
+        yield from _plan_nodes(child)
+
+
+async def test_bulk_batch_statements_use_the_pk_index_and_never_seq_scan_drawings(
+    pg_dsn: str,
+) -> None:
+    """Plan shape (not wall clock): on 50k+ analysed rows owned by one user, each bulk statement
+    reaches `drawings` through `drawings_pkey` and none seq-scans it."""
+    owner = _user(pg_dsn)
+    with _sync(pg_dsn) as c:
+        c.execute(
+            "INSERT INTO drawings (id, owner_user_id, symbol, tool, geometry) "
+            "SELECT gen_random_uuid(), %s::uuid, 'BTCUSDT', 'trendline', "
+            "'{\"points\":[]}'::jsonb FROM generate_series(1, 50000)",
+            (owner,),
+        )
+        c.execute("ANALYZE drawings")
+        sample = [str(r[0]) for r in c.execute(
+            "SELECT id FROM drawings WHERE owner_user_id = %s LIMIT 50", (owner,)
+        ).fetchall()]  # fmt: skip
+    f = _f()
+    ups = _rows_param([_row_json(i, f, _T) for i in sample])
+    news = _rows_param([_row_json(str(uuid.uuid4()), f) for _ in range(100)])
+    cases: dict[str, tuple[Any, dict[str, Any]]] = {
+        "snapshot": (_SNAPSHOT, {"ids": sample}),
+        "insert": (_INSERT_MANY, {"owner": owner, "rows": news}),
+        "update": (_UPDATE_MANY, {"owner": owner, "ids": sample, "rows": ups}),
+        "delete": (_SOFT_DELETE_MANY, {"owner": owner, "ids": sample}),
+    }
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-it-plans")
+    try:
+        for name, (stmt, params) in cases.items():
+            async with rel.unit_of_work() as uow:
+                res = await uow.session.execute(
+                    sa.text("EXPLAIN (FORMAT JSON) " + stmt.text), params
+                )
+                raw = res.scalar_one()
+            plan = raw if isinstance(raw, list) else json.loads(raw)
+            nodes = list(_plan_nodes(plan[0]["Plan"]))
+            assert not [
+                n for n in nodes
+                if n.get("Node Type") == "Seq Scan" and n.get("Relation Name") == "drawings"
+            ], f"{name}: seq scan on drawings"  # fmt: skip
+            assert "drawings_pkey" in json.dumps(plan), f"{name}: PK index unused"
+    finally:
+        await rel.dispose()
+
+
+_BATCH_RUNS = 500  # measured runs; p99 = ~5th-worst, so 1-2 fsync hiccups cannot decide it
+_WARMUP = 10
+
+
+def _vacuum(dsn: str) -> None:
+    with _sync(dsn) as c:  # autocommit: VACUUM cannot run inside a transaction
+        c.execute("VACUUM ANALYZE drawings")
+
+
+def _checkpoint(dsn: str) -> None:
+    with _sync(dsn) as c:  # superuser, autocommit
+        c.execute("ANALYZE drawings")  # the seed grew the table; stale stats pick owner-index scans
+        c.execute("CHECKPOINT")  # flush the test's own seed/warm-up writes
+
+
+def _timed(label: str, timings: list[float]) -> float:
+    p99 = statistics.quantiles(timings, n=100)[98]
+    print(f"drawings batch {label}: p50 = {statistics.median(timings):.3f} ms, "
+          f"p99 = {p99:.3f} ms, max = {max(timings):.3f} ms over {len(timings)} runs")  # fmt: skip
+    return p99
+
+
+@pytest.mark.perf
+async def test_batch_of_200_creates_p99_under_50ms(pg_dsn: str) -> None:
+    """Ticket NFR: a batch of 200 ops < 50 ms p99.
+
+    Fixed data: one user, 200 `CreateOp`s with fresh ids per run (ids are the only thing that
+    varies). Wall time of `apply_batch` (snapshot lock + insert + commit) as the repository sees
+    it, p99 over 500 runs after a warm-up, on the same host as the database.
+
+    Methodology (both choices keep the 50 ms bound exact): 500 measured runs instead of 100,
+    because with 100 samples `quantiles(n=100)[98]` is effectively the second-worst run and one
+    or two fsync hiccups decide the result; with 500 it is about the 5th-worst.
+    An `ANALYZE` and a `CHECKPOINT` run after seeding and warm-up and before measuring. The
+    ANALYZE matters because the seed grows the table: with stale statistics the planner
+    reached rows through the owner index (`ix_dr_user_symbol`) instead of the primary key. The
+    CHECKPOINT keeps the measurement from absorbing the flush of the test's own seed data.
+
+    Where it runs: judged by the isolated `py-perf` CI job (`pytest -m perf`, C-13.9). CI's
+    `integration` job passes `-m integration`, which overrides the default `not perf`, so these
+    tests ALSO run there in the full-file context; they are judged in both jobs. Local runs on
+    a shared laptop are informational only. The time includes the commit, which is what a
+    caller experiences.
+    """
+    owner = _user(pg_dsn)
+    _vacuum(pg_dsn)
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-batch-perf")
+    repo = SqlAlchemyDrawingRepository(rel)
+    fields = _f()
+
+    def ops() -> list[BatchOp]:
+        return [CreateOp(str(uuid.uuid4()), fields) for _ in range(200)]
+
+    try:
+        for _ in range(_WARMUP):  # warm-up: connection, statement cache
+            await repo.apply_batch(owner, ops())
+        _checkpoint(pg_dsn)
+        timings: list[float] = []
+        for _ in range(_BATCH_RUNS):
+            batch = ops()
+            t0 = time.perf_counter()
+            result = await repo.apply_batch(owner, batch)
+            timings.append((time.perf_counter() - t0) * 1000)
+            assert len(result.created) == 200
+    finally:
+        await rel.dispose()
+    p99 = _timed("(200 creates)", timings)
+    assert p99 < 50.0, f"batch p99 {p99:.3f} ms"
+
+
+@pytest.mark.perf
+async def test_mixed_batch_of_200_p99_under_50ms(pg_dsn: str) -> None:
+    """Mixed NFR variant: 100 creates + 50 updates + 50 soft deletes per batch (200 ops).
+
+    Methodology (both choices keep the 50 ms bound exact): 500 measured runs instead of 100,
+    because with 100 samples `quantiles(n=100)[98]` is effectively the second-worst run and one
+    or two fsync hiccups decide the result; with 500 it is about the 5th-worst.
+    An `ANALYZE` and a `CHECKPOINT` run after seeding and warm-up and before measuring. The
+    ANALYZE matters because the seed grows the table: with stale statistics the planner
+    reached rows through the owner index (`ix_dr_user_symbol`) instead of the primary key. The
+    CHECKPOINT keeps the measurement from absorbing the flush of the test's own seed data.
+
+    Where it runs: judged by the isolated `py-perf` CI job (`pytest -m perf`, C-13.9). CI's
+    `integration` job passes `-m integration`, which overrides the default `not perf`, so these
+    tests ALSO run there in the full-file context; they are judged in both jobs. Local runs on
+    a shared laptop are informational only. The time includes the commit, which is what a
+    caller experiences.
+    """
+    owner = _user(pg_dsn)
+    _vacuum(pg_dsn)
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-batch-perf-mixed")
+    repo = SqlAlchemyDrawingRepository(rel)
+    fields = _f()
+    runs = _WARMUP + _BATCH_RUNS
+    pool: list[DrawingRow] = []  # 50 update targets + 50 delete targets per run
+    for _ in range(100 * runs // MAX_BATCH_OPS_STORAGE):
+        seeded = await repo.apply_batch(
+            owner, [CreateOp(str(uuid.uuid4()), fields) for _ in range(MAX_BATCH_OPS_STORAGE)]
+        )
+        pool.extend(seeded.created)
+    try:
+        timings: list[float] = []
+        for run in range(runs):
+            if run == _WARMUP:  # seed + warm-up are flushed before the first measured run
+                _checkpoint(pg_dsn)
+            chunk = pool[run * 100 : (run + 1) * 100]
+            batch: list[BatchOp] = [CreateOp(str(uuid.uuid4()), fields) for _ in range(100)]
+            batch += [UpdateOp(r.id, r.updated_at, _f(label="m")) for r in chunk[:50]]
+            batch += [DeleteOp(r.id, r.updated_at) for r in chunk[50:]]
+            t0 = time.perf_counter()
+            result = await repo.apply_batch(owner, batch)
+            elapsed = (time.perf_counter() - t0) * 1000
+            assert (len(result.created), len(result.updated), len(result.deleted)) == (100, 50, 50)
+            if run >= _WARMUP:
+                timings.append(elapsed)
+    finally:
+        await rel.dispose()
+    p99 = _timed("(100 creates, 50 updates, 50 deletes)", timings)
+    assert p99 < 50.0, f"mixed batch p99 {p99:.3f} ms"
