@@ -343,7 +343,7 @@ class SessionState(BaseModel):
     idle_deadline: Annotated[
         AwareDatetime,
         Field(
-            description="When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Once `locked`, the moment it locked.\n"
+            description="When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Only `POST /auth/session/extend` and `POST /auth/unlock` move it; `POST /auth/refresh` carries it over unchanged. Once `locked`, the moment it locked.\n"
         ),
     ]
     idle_timeout_s: Annotated[
