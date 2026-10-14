@@ -195,11 +195,13 @@ def test_d27_no_action_refuses_re_owning_a_workspace_or_re_pointing_a_drawing(pg
         a, b = _user(c), _user(c)
         wa = _workspace(c, a)
         la, lb = _layout(c, wa, a), _layout(c, _workspace(c, b), b)
-        with pytest.raises(pgerr.ForeignKeyViolation):
+        with pytest.raises(pgerr.ForeignKeyViolation) as moved:
             c.execute("UPDATE workspaces SET user_id = %s WHERE id = %s", (b, wa))
+        assert moved.value.diag.constraint_name == "fk_layouts_workspace_id_workspaces"
         da = _drawing(c, a, la)
-        with pytest.raises(pgerr.ForeignKeyViolation):
+        with pytest.raises(pgerr.ForeignKeyViolation) as pointed:
             c.execute("UPDATE drawings SET layout_id = %s WHERE id = %s", (lb, da))
+        assert pointed.value.diag.constraint_name == "fk_drawings_layout_id_layouts"
 
 
 def test_d27_symbol_global_and_same_owner_drawings_are_accepted(pg_dsn: str) -> None:

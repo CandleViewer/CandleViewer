@@ -104,7 +104,7 @@
     },
     "0022_workspaces": {
       "path": "services/api/candleviewer/migrations/versions/0022_workspaces.py",
-      "sha256": "a58b3be5335cea20974985737c4f36b180957d7985b7a1c553fc9f3e1f8f9c39",
+      "sha256": "c62b225e1462fbc27b0a7a411d5d0902e211189b6e495a09c183d4c12f537516",
       "down_revision": "0021_drawings"
     }
   }

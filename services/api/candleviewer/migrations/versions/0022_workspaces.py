@@ -16,10 +16,14 @@ recorded in Sec.3.8.1):
   the database guarantees workspace.user = layout.owner = drawing.owner
   (D27, #357 residual R5). `MATCH SIMPLE` leaves `layout_id IS NULL` drawings
   unchecked.
-* `drawings.layout_id` FK is added here (E14-T01 left the column bare), under a
-  5 s `lock_timeout` (0019 pattern, C-5.6). `env.py` runs all pending revisions in
-  one transaction, so NOT VALID gives no lock relief; the window is short because
-  `drawings` is small and the guard proves every `layout_id` is NULL.
+* `drawings.layout_id` FK is added here (E14-T01 left the column bare). Both
+  `upgrade()` and `downgrade()` start with `SET LOCAL lock_timeout = '5s'` (0019
+  pattern, C-5.6) and reset it at the end, so every lock-taking statement is
+  bounded, including the `users` lock the new FKs take. `upgrade()` locks
+  `drawings` first so it never holds `users` while waiting on `drawings`.
+  `env.py` runs all pending revisions in one transaction, so NOT VALID gives no
+  lock relief; the window is short because `drawings` is small and the guard
+  proves every `layout_id` is NULL.
 * `ux_lay_default` (one live default layout per workspace), `ix_lay_workspace`
   and `ix_dr_layout` (FK-side indexes for the purge cascades) are new.
 * `ix_lp_layout` is kept exactly as Sec.3.8.1 even though `ux_lp_slot`
@@ -48,15 +52,18 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute(_TABLES_SQL)
     op.execute("SET LOCAL lock_timeout = '5s';")
+    op.execute("LOCK TABLE drawings IN SHARE ROW EXCLUSIVE MODE;")
+    op.execute(_TABLES_SQL)
     op.execute(_DRAWINGS_FK_SQL)
     op.execute("ALTER TABLE drawings VALIDATE CONSTRAINT fk_drawings_layout_id_layouts")
     op.execute("SET LOCAL lock_timeout = DEFAULT;")
 
 
 def downgrade() -> None:
+    op.execute("SET LOCAL lock_timeout = '5s';")
     op.execute(_DOWNGRADE_SQL)
+    op.execute("SET LOCAL lock_timeout = DEFAULT;")
 
 
 _TABLES_SQL = """
