@@ -615,12 +615,18 @@ export interface paths {
     put?: never;
     /**
      * Revoke the current session (or all sessions)
-     * @description Allowed while the session is idle-locked, for the calling session only (SCR-005
+     * @description Ends the calling session, or with `all_sessions: true` every session of the user. The
+     *     session is identified as in "Idle lock" (access token, else the `cv_refresh` cookie), so
+     *     the calling session can always be ended, locked or not, and after a reload too.
+     *
+     *     Allowed while the session is idle-locked, for the calling session only (SCR-005
      *     "Sign out instead"). From a locked session, `all_sessions: true` answers
      *     `401 session_idle_locked` and revokes nothing: every session, the calling one included,
      *     stays as it was, no cookie is cleared, and no `auth.logout` or `auth.session_revoked`
-     *     record is written. Signing the user out of every session needs an unlocked session
-     *     (see "Idle lock").
+     *     record is written. Signing the user out of every session needs an unlocked session and
+     *     an access token. With only the cookie, `all_sessions: true` is refused and revokes
+     *     nothing: `401 session_idle_locked` if the session is locked, otherwise
+     *     `401 unauthenticated`.
      */
     post: operations["authLogout"];
     delete?: never;
@@ -767,10 +773,11 @@ export interface paths {
      *     arch P1). Tokens are single-use: presenting a token that has already been rotated
      *     revokes the **entire session family** and returns `refresh_token_invalid` (reuse
      *     detection), logging a `critical` audit entry. A token whose session is idle-locked gets
-     *     `401 session_idle_locked`: nothing is rotated or revoked, and the same token refreshes
-     *     again after `POST /auth/unlock`. Refresh is not activity: the rotated session inherits
-     *     `last_seen_at` as well as `expires_at`, so `session.idle_deadline` is unchanged (see
-     *     "Idle lock"); only `POST /auth/session/extend` and `POST /auth/unlock` move it.
+     *     `401 session_idle_locked`: nothing is rotated or revoked, no `auth.session_refreshed`
+     *     record is written, and the same token refreshes again after `POST /auth/unlock`.
+     *     Refresh is not activity: the rotated session inherits `last_seen_at` as well as
+     *     `expires_at`, so `session.idle_deadline` is unchanged (see "Idle lock"); only
+     *     `POST /auth/session/extend` and `POST /auth/unlock` move it.
      */
     post: operations["authRefresh"];
     delete?: never;
@@ -792,8 +799,10 @@ export interface paths {
      *     state, server time and the session's deadlines and lock state (`session`). The web app
      *     makes this bootstrap call on load. It is read-only introspection and never counts as
      *     activity: polling it never moves `session.idle_deadline`. While the session is
-     *     idle-locked it still answers `200` with `session.locked: true`, so the lock screen can
-     *     read the session it unlocks. Time the CMP-098 warning from `session.idle_deadline` and
+     *     idle-locked it still answers `200` with `session.locked: true` and
+     *     `step_up_expires_at: null`, so the lock screen can read the session it unlocks, also
+     *     after a reload: without an access token the `cv_refresh` cookie identifies the session
+     *     (see "Idle lock"). Time the CMP-098 warning from `session.idle_deadline` and
      *     `server_time`, never from a client clock.
      */
     get: operations["authGetSession"];
@@ -822,6 +831,9 @@ export interface paths {
      *     `session.idle_deadline` with `server_time`. It never moves `expires_at` (the 12 h
      *     absolute lifetime). Once the session is idle-locked it is refused with
      *     `401 session_idle_locked`, so Extend can never lift a lock: only `POST /auth/unlock` does.
+     *     Audited write-ahead as `auth.session_extended` (extend is not a token rotation, so it is
+     *     not `auth.session_refreshed`); if the audit sink is down the answer is `503` and the
+     *     deadline does not move.
      */
     post: operations["authExtendSession"];
     delete?: never;
@@ -884,31 +896,38 @@ export interface paths {
      *     `session.locked` is `false`, and the body is the same `SessionInfo` as
      *     `GET /auth/session`.
      *
+     *     Unlock restores no step-up elevation ("Idle lock"; #2290 ruling, rule 4d): every
+     *     pre-lock grant is cleared from the session row, the `200` has `step_up_expires_at: null`,
+     *     and the next dangerous action answers `403 step_up_required` until a fresh step-up.
+     *
      *     The password is checked only while the session is idle-locked. A live session that is
      *     not locked gets `409 conflict`: no password is checked, no failure is counted, no
      *     activity is recorded and nothing is audited; the client re-reads `GET /auth/session`.
      *     Unlock is therefore never a password check on an unlocked session.
      *
-     *     The access token identifies the session. While the session is idle-locked, this
-     *     operation also accepts the token after its 12-minute lifetime, because a lock routinely
-     *     outlasts it and `POST /auth/refresh` is refused while locked. Such a client calls
-     *     `POST /auth/refresh` after unlocking to get a fresh access token. Every other operation
-     *     keeps refusing an expired access token, and so does this one for a session that is not
-     *     locked.
+     *     An access token inside its lifetime identifies the session, else the `cv_refresh` cookie
+     *     does ("Idle lock"). An expired access token is never accepted: after a long lock or a
+     *     reload the client unlocks with the cookie, then calls `POST /auth/refresh`.
      *
      *     * A wrong password is `401 unlock_invalid`, with the same generic `detail` every time.
      *     * The fifth consecutive wrong password (`MAX_UNLOCK_ATTEMPTS`) revokes the session:
      *       `401 session_revoked` with `revoked_reason: unlock_attempts_exceeded`, and its sockets
      *       get the revocation frame (#2272). Every later unlock is `401 session_revoked`.
-     *       Failures are counted per session; a locked session cannot rotate, so refreshing
-     *       cannot reset the count.
+     *       Failures are counted per session by the server process: a locked session cannot
+     *       rotate, so refreshing cannot reset the count, but a server restart does. A failure
+     *       counts even if its audit record cannot be written.
      *     * If the absolute lifetime elapsed while locked, the answer is `401 session_revoked`
      *       with `revoked_reason: expired`; the client falls back to a full sign-in (SCR-001).
+     *     * An access token or cookie of a session that a refresh rotated away, or one this server
+     *       never issued, gets the uniform `401 unauthenticated`, never `session_revoked`.
      *
-     *     Throttled like login, per source IP: a throttled attempt is `429` and checks no
-     *     password. Audited write-ahead: `auth.session_unlocked` on success and
-     *     `auth.unlock_failed` on every wrong password; the revoking failure also writes
-     *     `auth.session_revoked`. The password is never logged, audited or echoed.
+     *     If the audit sink is down the answer is `503` and no password is checked. Throttled like
+     *     login, per source IP: a throttled attempt is `429` and checks no password. The password
+     *     is verified on the same Argon2id path and lockout counters as login and `/auth/step-up`
+     *     (SR-015, SR-016): a wrong unlock password counts toward the account lockout, and a locked
+     *     account fails like a wrong password. Audited write-ahead: `auth.session_unlocked` on
+     *     success and `auth.unlock_failed` on every wrong password; the revoking failure also
+     *     writes `auth.session_revoked`. The password is never logged, audited or echoed.
      */
     post: operations["authUnlock"];
     delete?: never;
@@ -7313,7 +7332,7 @@ export interface components {
       session: components["schemas"]["SessionState"];
       /**
        * Format: date-time
-       * @description Latest live step-up grace-window expiry on this session (E09-S04); null if none.
+       * @description Latest live step-up grace-window expiry on this session (E09-S04); null if none. Always null while the session is idle-locked and in the `POST /auth/unlock` response: no elevation survives the lock (see "Idle lock").
        */
       step_up_expires_at?: string | null;
       user: components["schemas"]["User"];
@@ -9383,7 +9402,7 @@ export interface operations {
       content: {
         "application/json": {
           /**
-           * @description Revoke every session of the current user, not just this one. Refused from an idle-locked session (`401 session_idle_locked`; nothing is revoked).
+           * @description Revoke every session of the current user, not just this one. Refused from an idle-locked session (`401 session_idle_locked`; nothing is revoked), and when only the `cv_refresh` cookie identifies the session.
            * @default false
            */
           all_sessions?: boolean;
@@ -9695,6 +9714,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   authListSessions: {
@@ -9805,7 +9825,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Unlocked; the session is active again. */
+      /** @description Unlocked; the session is active again, with no step-up elevation. */
       200: {
         headers: {
           [name: string]: unknown;
@@ -9814,7 +9834,7 @@ export interface operations {
           "application/json": components["schemas"]["SessionInfo"];
         };
       };
-      /** @description `unlock_invalid` (wrong password); `session_revoked` (revoked, by the fifth wrong password or otherwise, or past its absolute lifetime: sign in again); or `unauthenticated` (unknown access token, or an expired one on a session that is not locked). */
+      /** @description `unlock_invalid` (wrong password); `session_revoked` (the session was revoked, by the fifth wrong password or otherwise, or is past its absolute lifetime: sign in again); or `unauthenticated` (no access token inside its lifetime and no current `cv_refresh` cookie, or a credential of a session that a refresh rotated away or that this server never issued). */
       401: {
         headers: {
           [name: string]: unknown;

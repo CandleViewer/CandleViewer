@@ -2,9 +2,10 @@
 
 Pins `POST /auth/unlock`, `POST /auth/session/extend`, the three new 401 codes and the
 `SessionInfo.session` deadlines that SCR-005 and CMP-098 build on; routes ship in slice 2/2.
-Also pins three rules from the PR #2389 reviews: only extend and unlock record activity (refresh
-carries `last_seen_at` over), unlock checks a password only while the session is locked, and a
-locked session's logout ends only that session (`all_sessions: true` is refused).
+Also pins the rules from the PR #2389 reviews: only extend and unlock record activity (refresh
+carries `last_seen_at` over), unlock checks a password only while the session is locked, a
+locked session's logout ends only that session, the operations allowed while locked also accept
+`cv_refresh`, and step-up elevation never survives the lock (#2290 ruling, rule 4d).
 """
 
 from __future__ import annotations
@@ -22,6 +23,10 @@ from candleviewer.auth.session_service import MAX_IDLE_TIMEOUT_S, MIN_IDLE_TIMEO
 
 _BASE = "urn:cv:openapi"
 _SESSION_FIELDS = {"id", "issued_at", "expires_at", "idle_deadline", "idle_timeout_s", "locked"}
+_METHODS = {"get", "put", "post", "patch", "delete", "head", "options", "trace"}
+#: The operations an idle-locked session may call (#2290 ruling, rule 3a).
+_LOCKED_OK = (("post", "/auth/unlock"), ("post", "/auth/logout"), ("get", "/auth/session"))
+_BEARER_OR_COOKIE: list[dict[str, list[str]]] = [{"bearerAuth": []}, {"refreshCookie": []}]
 
 
 @pytest.fixture(scope="module")
@@ -133,6 +138,25 @@ def test_unlock_contract_audit_actions_are_registered(spec: dict[str, Any]) -> N
         assert action in AUDIT_ACTIONS
 
 
+def test_unlock_contract_checks_the_audit_sink_before_the_password(spec: dict[str, Any]) -> None:
+    # Review round 3 (C-2.9): no unaudited password check; a failure counts even if unaudited.
+    op = _op(spec, "post", "/auth/unlock")
+    assert "503" in op["responses"]
+    description = _flat(op["description"])
+    assert "If the audit sink is down the answer is `503` and no password is checked." in (
+        description
+    )
+    assert "A failure counts even if its audit record cannot be written." in description
+
+
+def test_extend_contract_is_audited_write_ahead(spec: dict[str, Any]) -> None:
+    # Review round 3 (C-2.9): extend is not a token rotation, so not `auth.session_refreshed`.
+    op = _op(spec, "post", "/auth/session/extend")
+    assert op["responses"]["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
+    assert "`auth.session_extended`" in op["description"]
+    assert "auth.session_extended" in AUDIT_ACTIONS
+
+
 def test_extend_contract_returns_the_server_truth_deadline(spec: dict[str, Any]) -> None:
     op = _op(spec, "post", "/auth/session/extend")
     assert op["x-rbac"] == {"permissions": [], "scope": "self"}
@@ -170,6 +194,12 @@ def test_refresh_contract_carries_the_idle_deadline_over(spec: dict[str, Any]) -
     assert "`POST /auth/refresh` carries it over unchanged" in _flat(deadline)
 
 
+def test_refresh_refused_while_locked_writes_no_refreshed_record(spec: dict[str, Any]) -> None:
+    # Review round 3 (gap G): today the route audits `auth.session_refreshed` before refusing.
+    refresh = _flat(_op(spec, "post", "/auth/refresh")["description"])
+    assert "no `auth.session_refreshed` record is written" in refresh
+
+
 def test_logout_from_a_locked_session_ends_only_the_calling_session(spec: dict[str, Any]) -> None:
     # PR #2389 review round 2: logout is allowed while locked only as SCR-005 "Sign out
     # instead". Revoke-all is a write (#2290 ruling, rule 3b): with a bearer copied from a
@@ -196,6 +226,77 @@ def test_logout_from_a_locked_session_ends_only_the_calling_session(spec: dict[s
     assert op["responses"]["401"] == {"$ref": "#/components/responses/Unauthorized"}
 
 
+@pytest.mark.parametrize(("method", "path"), _LOCKED_OK)
+def test_operations_allowed_while_locked_accept_the_refresh_cookie(
+    spec: dict[str, Any], method: str, path: str
+) -> None:
+    # Review round 3: the bearer lives in memory for 12 min and refresh is refused while locked,
+    # so bearer-only, a long lock or a reload would leave no way to unlock or sign out.
+    assert _op(spec, method, path)["security"] == _BEARER_OR_COOKIE
+
+
+def test_only_refresh_and_the_locked_session_operations_accept_the_refresh_cookie(
+    spec: dict[str, Any],
+) -> None:
+    accepting = {
+        (method, path)
+        for path, item in spec["paths"].items()
+        for method, op in item.items()
+        if method in _METHODS
+        and any("refreshCookie" in r for r in op.get("security", spec["security"]))
+    }
+    assert accepting == {("post", "/auth/refresh"), *_LOCKED_OK}
+    no_expired = "No other operation accepts the cookie, and none, unlock included, accepts an"
+    assert f"{no_expired} expired access token." in _idle_lock_section(spec)
+
+
+def test_cookie_identified_writes_are_csrf_bound_to_the_cookie_session(
+    spec: dict[str, Any],
+) -> None:
+    for path in ("/auth/unlock", "/auth/logout"):  # SR-041 / SR-042, as on `/auth/refresh`
+        op = _op(spec, "post", path)
+        assert {"$ref": "#/components/parameters/CsrfToken"} in op["parameters"]
+        assert op["responses"]["403"] == {"$ref": "#/components/responses/CsrfTokenInvalid"}
+    text = spec["info"]["description"]
+    bound = "for a `POST /auth/logout` or `POST /auth/unlock` identified by the `cv_refresh` cookie"
+    assert bound in _flat(text[text.index("### CSRF") : text.index("### Idle lock")])
+
+
+def test_unlock_never_accepts_an_expired_access_token(spec: dict[str, Any]) -> None:
+    # Review round 3 withdraws decision 1: the cookie identifies a locked session instead.
+    op = _op(spec, "post", "/auth/unlock")
+    description = _flat(op["description"])
+    assert "An expired access token is never accepted" in description
+    assert "accepts the token after its 12-minute lifetime" not in description
+    # Rotated-away or unknown credentials get the uniform 401, never `session_revoked`.
+    assert "unauthenticated" in {e["code"] for e in _examples(op["responses"]["401"]).values()}
+
+
+def test_a_locked_session_can_always_be_signed_out(spec: dict[str, Any]) -> None:
+    op = _op(spec, "post", "/auth/logout")
+    assert op["security"] == _BEARER_OR_COOKIE
+    # Ending the calling session only reduces privilege; ending every session needs a bearer.
+    cookie_only = "With only the cookie, `all_sessions: true` is refused and revokes nothing"
+    assert cookie_only in _flat(op["description"])
+
+
+def test_unlock_restores_no_step_up_elevation(spec: dict[str, Any]) -> None:
+    # Review round 3 (High; #2290 ruling, rule 4d): a one-factor unlock must never inherit a
+    # two-factor grant, or a password alone could release the kill switch after a lock.
+    op = _op(spec, "post", "/auth/unlock")
+    unlocked = _examples(op["responses"]["200"]).values()
+    assert unlocked
+    for example in unlocked:
+        _conforms(spec, example, "/components/schemas/SessionInfo")
+        assert example["session"]["locked"] is False and example["step_up_expires_at"] is None
+    assert "`403 step_up_required`" in _flat(op["description"])
+    section = _idle_lock_section(spec)
+    assert "Step-up elevation never survives the lock (#2290 ruling, rule 4d" in section
+    # Enforced on the session row by synchronous code, not only by B16 (C-2.21).
+    row = "clears them from the session row no later than the write that lifts the lock"
+    assert row in section and "C-2.21" in section
+
+
 def test_session_info_requires_the_session_state(spec: dict[str, Any]) -> None:
     info = _schema(spec, "SessionInfo")
     assert "session" in info["required"]
@@ -214,7 +315,10 @@ def test_get_session_examples_conform_and_carry_the_lock_state(spec: dict[str, A
     examples = _examples(_op(spec, "get", "/auth/session")["responses"]["200"])
     for example in examples.values():
         _conforms(spec, example, "/components/schemas/SessionInfo")
-        assert example["session"]["locked"] is False
+    by_lock = {example["session"]["locked"]: example for example in examples.values()}
+    assert set(by_lock) == {False, True}
+    # The lock voids elevation at once, so the lock screen never shows a pre-lock grace.
+    assert by_lock[True]["step_up_expires_at"] is None
 
 
 def test_unauthorized_response_documents_session_idle_locked(spec: dict[str, Any]) -> None:
