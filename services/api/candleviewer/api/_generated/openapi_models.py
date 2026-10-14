@@ -5427,7 +5427,7 @@ class SessionInfo(BaseModel):
     step_up_expires_at: Annotated[
         AwareDatetime | None,
         Field(
-            description="Latest live step-up grace-window expiry on this session (E09-S04); null if none."
+            description='Latest live step-up grace-window expiry on this session (E09-S04); null if none. Always null while the session is idle-locked and in the `POST /auth/unlock` response: no elevation survives the lock (see "Idle lock").\n'
         ),
     ] = None
     clock_offset_ms: Annotated[
