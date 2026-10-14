@@ -7080,13 +7080,17 @@ paths:
         flushed into an `admin.audit_read` at least every `audit_read_flush_pages` pages (default
         50) or `audit_read_flush_seconds` (default 300), whichever comes first. Records written
         for a user (`admin.audit_read`, and `admin.audit_denied` for a cross-actor filter or any
-        other refusal on the `/admin/audit*` operations) are capped by
-        `audit_record_budget_per_hour` (default 120). Over the cap a read is `429 rate_limited`
-        with no data, and a refusal is returned unchanged with `Retry-After`, as for
-        `auth.csrf_refused`. A `429`, and a refusal over the cap, write no record; they are
-        counted, and the next record written for the user carries the count (`suppressed`). If
-        a due record cannot be written the call fails with `503 store_unavailable` and returns
-        nothing.
+        other refusal on the `/admin/audit*` operations) are capped per hour by
+        `audit_record_budget_per_hour` (default 120), or for the Owner, who must be able to keep
+        investigating during an incident, by `audit_record_budget_owner_per_hour` (default 600).
+        Over the cap a read is `429 rate_limited` with no data, and a refusal is returned
+        unchanged with `Retry-After`, as for `auth.csrf_refused`. A `429`, and a refusal over the
+        cap, write no record; they are counted, and the next record written for the user carries
+        the count (`suppressed`). Totals not yet carried are also flushed on the
+        `audit_read_flush_seconds` cadence, in at most one summary record per user and window
+        (`admin.audit_denied`, reason `suppressed_summary`). That record is reserved outside the
+        cap, so the totals reach the log even after a burst exhausts it. If a due record cannot
+        be written the call fails with `503 store_unavailable` and returns nothing.
 
         Counters live in LRU-bounded maps (`audit_budget_tracked_users`, default 1024) with a
         global cap on audit writes in flight (`audit_inflight_writes`, default 64), as for
@@ -7239,13 +7243,14 @@ paths:
         **Who and how often.** Owner only (`04-security-program.md` §7.2.2 row 49a): a Manager
         holding `audit:read` is refused with `403`. Synchronous. The checks run in this order:
         authentication (`401`), authorisation (`403`), body validation and range defaulting
-        (`422`), the per-user rate limit (`429 rate_limited`), single-flight (`409 conflict`: one
-        verification at a time, the nightly job included), then a write-ahead `started`
-        `admin.audit_verify` record (`503 store_unavailable` if it cannot be written; nothing
-        runs). A caller who is not authorised therefore never learns whether a verification is
-        running. The result is recorded too (severity `critical` when `verified` is false), and a
-        failed verification is also raised as a critical security event. Refusals fall under the
-        audit budget described on `queryAuditLog`.
+        (`422`), the per-user rate limit (`audit_verify_rate_per_hour`, default 30;
+        `429 rate_limited`), single-flight (`409 conflict`: one verification at a time, the
+        nightly job included), then a write-ahead `started` `admin.audit_verify` record
+        (`503 store_unavailable` if it cannot be written; nothing runs). A caller who is not
+        authorised therefore never learns whether a verification is running. The result is
+        recorded too (severity `critical` when `verified` is false), and a failed verification is
+        also raised as a critical security event. Refusals fall under the audit budget described
+        on `queryAuditLog`.
       x-rbac: { permissions: [audit:read], scope: none }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
@@ -7368,7 +7373,7 @@ paths:
         name the limit, and no job is created. The configured row cap bounds the whole span; a
         larger span fails the job with `error: export_too_large` before anything is written. Only
         one export may be queued or running (`409 conflict`). Exports are rate-limited per user
-        (`429 rate_limited` with `Retry-After`).
+        (`audit_export_rate_per_hour`, default 5; `429 rate_limited` with `Retry-After`).
 
         **Content.** The file holds the contiguous chain span from the first to the last entry
         whose `ts` falls in the window, as of the chain head when the job starts. Entries inside
@@ -7383,11 +7388,11 @@ paths:
         carries no credential. Its checks run in this order: authentication (`401`),
         authorisation (`403`), requester (`404 not_found` for anyone but the user who requested
         the export, and for an unknown or evicted job), step-up of the `audit_export` class
-        within its grace window (`403 step_up_required`, checked by the operation after the
-        requester check, never by a path-matched pre-check), the per-user rate limit (`429`),
-        expiry (`410 gone` after `expires_at`, when the file is deleted), then a write-ahead
-        audit record (`503 store_unavailable` if it cannot be written) before any byte is
-        streamed. Its refusals fall under the audit budget described on `queryAuditLog`. The
+        within its grace window (`403 step_up_required`, checked by the operation itself, after
+        the requester check), the per-user rate limit (`audit_download_rate_per_hour`, default 20;
+        `429`), expiry (`410 gone` after `expires_at`, when the file is deleted), then a
+        write-ahead audit record (`503 store_unavailable` if it cannot be written) before any byte
+        is streamed. Its refusals fall under the audit budget described on `queryAuditLog`. The
         response sets `Cache-Control: no-store`, `Content-Disposition: attachment`,
         `X-Content-Type-Options: nosniff` and `Repr-Digest: sha-256=:…:`. Polling the job follows
         the same requester rule.
