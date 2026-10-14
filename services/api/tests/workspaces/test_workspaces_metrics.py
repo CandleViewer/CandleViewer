@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import re
 import uuid
-from typing import Any
 
 import _workspaces_api_env as fakes
-import pytest
 import structlog
 from _workspaces_api_env import LAYOUT, PERMS, SID, USER_A, FakeWorkspaceRepo, wire
 from fastapi import FastAPI, Request
@@ -55,9 +54,7 @@ def _client(m: WorkspacesMetrics | None) -> tuple[TestClient, FakeWorkspaceRepo]
 
     app = FastAPI()
     app.include_router(
-        make_workspaces_router(
-            lambda: repo, _Resolver(), fakes.Audit(), metrics=m, timer=_Tick()
-        )
+        make_workspaces_router(lambda: repo, _Resolver(), fakes.Audit(), metrics=m, timer=_Tick())
     )
     return TestClient(app), repo
 
@@ -67,7 +64,7 @@ def _series(reg: Metrics, name: str) -> dict[str, float]:
     for line in generate_latest(reg.registry).decode().splitlines():
         if line.startswith(name) and not line.startswith("#"):
             k, _, v = line.rpartition(" ")
-            out[k] = float(v)
+            out[re.sub(r',?env="demo",?', "", k).replace("{}", "")] = float(v)
     return out
 
 
@@ -119,8 +116,9 @@ def test_duration_is_recorded_per_operation_with_the_fake_clock() -> None:
 
 def test_every_operation_name_is_a_real_route_name() -> None:
     c, _ = _client(None)
-    names = {r.name for r in c.app.routes if hasattr(r, "methods")}  # type: ignore[attr-defined]
-    assert set(OPERATIONS) == names
+    fresh = make_workspaces_router(lambda: None, None, fakes.Audit())
+    names = {getattr(r, "name", "") for r in fresh.routes}
+    assert names == set(OPERATIONS) and c is not None
 
 
 def test_no_metrics_means_nothing_recorded_and_no_error() -> None:
@@ -131,19 +129,28 @@ def test_no_metrics_means_nothing_recorded_and_no_error() -> None:
 def test_logs_never_carry_names_pane_config_grid_spec_or_bodies() -> None:
     _, m = _metrics()
     c, _ = _client(m)
-    secret = "CANARY-name-7731"
+    secret = "CANARY-name-7731"  # noqa: S105 - a log-canary marker, not a credential
     ws = str(c.post("/workspaces", json=wire({"name": secret})).json()["id"])
     cfg = {"sync_group": "A", "settings": {"note": "CANARY-cfg-9921"}}
     pane = {"slot_index": 0, "pane_kind": "chart", "symbol": "BTCUSDT", "pane_config": cfg}
     lay = LAYOUT | {"name": secret + "-lay", "panes": [pane]}
     with structlog.testing.capture_logs() as logs:
         made = c.post(f"/workspaces/{ws}/layouts", json=wire(lay, "LayoutInput")).json()
-        c.put(f"/workspaces/{ws}/layouts/{made['id']}", json=wire(lay | {"panes": []}, "LayoutInput"))
+        c.put(
+            f"/workspaces/{ws}/layouts/{made['id']}", json=wire(lay | {"panes": []}, "LayoutInput")
+        )
         c.put(f"/workspaces/{ws}", json=wire({"name": secret + "2"}))
         c.delete(f"/workspaces/{ws}/layouts/{made['id']}")
     assert logs
-    allowed = {"event", "log_level", "user_id", "workspace_id", "layout_id", "pane_count", "changed"}
+    allowed = {
+        "event",
+        "log_level",
+        "user_id",
+        "workspace_id",
+        "layout_id",
+        "pane_count",
+        "changed",
+    }
     assert {k for e in logs for k in e} <= allowed
     assert "CANARY" not in repr(logs)
     assert uuid.UUID(str(logs[0]["user_id"])) == USER_A
-    del Any
