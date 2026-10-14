@@ -333,6 +333,13 @@ class Settings(BaseSettings):
     audit_query_max_concurrent: int = Field(default=2, ge=1)
     # Capped at the relational pool's own 30 s statement timeout.
     audit_query_timeout_ms: int = Field(default=4000, ge=1, le=30_000)
+    # Per-user audit record budget (same contract). The owner has a separate, larger cap.
+    audit_record_budget_per_hour: int = Field(default=120, ge=1)
+    audit_record_budget_owner_per_hour: int = Field(default=600, ge=1)
+    audit_read_flush_pages: int = Field(default=50, ge=1)
+    audit_read_flush_seconds: float = Field(default=300.0, gt=0.0)
+    audit_budget_tracked_users: int = Field(default=1024, ge=1)
+    audit_inflight_writes: int = Field(default=64, ge=1)
 
     # E27-T02 / e27-kek.md §4: KEK source vocabulary. `host-keychain` is a deprecated alias
     # of `handle` for one release. The KEK itself never enters Settings or os.environ.
