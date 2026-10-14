@@ -5991,11 +5991,11 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 | **Schema owner** | 24-internal-schemas.md §15.1 (session model), §15.3 (step-up), ADR-0010 |
 | **Fit (research)** | Good |
 | **Event rate** | low; documented ~100-session threshold per process |
-| **States / leaves / finals** | 7 / 5 / 1 |
+| **States / leaves / finals** | 10 / 8 / 2 |
 
 **Purpose.** One session's authentication state and, orthogonally, its elevation (step-up) state.
 
-**Why this shape.** Two regions: `auth` (pending MFA / active / revoked) and `elevation` (normal / elevated). `elevated_until_us` becomes a **derived value of the elevation region** rather than a column someone can forget to check.
+**Why this shape.** Two regions: `auth` (pending MFA / active / idle-locked / revoked) and `elevation` (normal / elevated / read-only downgrade / dead). `elevated_until_us` becomes a **derived value of the elevation region** rather than a column someone can forget to check. The idle lock is a non-terminal `auth` state (ADR-0020 §4): it drops elevation, keeps a read-only downgrade, and only a password unlock (`UNLOCK_OK`) returns it to `active`.
 
 ### B16.1 Contract (normative)
 
@@ -6010,10 +6010,24 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
   "spawnBlockingTimeout": 5000,
   "type": "parallel",
   "on": {
-    "LOGOUT": { "target": ".elevation.dead" },
-    "IDLE_DEADLINE": { "target": ".elevation.dead" },
-    "ABSOLUTE_DEADLINE": { "target": ".elevation.dead" },
-    "REVOKE": { "target": ".elevation.dead" }
+    "LOGOUT": {
+      "target": "#session.elevation.dead"
+    },
+    "ABSOLUTE_DEADLINE": {
+      "target": "#session.elevation.dead"
+    },
+    "REVOKE": {
+      "target": "#session.elevation.dead"
+    },
+    "UNLOCK_FAILED": [
+      {
+        "target": "#session.elevation.dead",
+        "guard": "unlock_attempts_exhausted"
+      },
+      {
+        "actions": []
+      }
+    ]
   },
   "context": {
     "session_id": null,
@@ -6023,18 +6037,37 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
     "refresh_expires_at_us": 0,
     "elevated_until_us": null,
     "mfa_satisfied": false,
-    "revoke_reason": null
+    "revoke_reason": null,
+    "elevated_classes": {},
+    "step_up_failures": 0,
+    "readonly_until_us": null,
+    "idle_locked": false,
+    "unlock_attempts": 0,
+    "one_click_armed": null
   },
   "states": {
     "auth": {
       "initial": "pending_mfa",
+      "on": {
+        "UNLOCK_OK": {
+          "actions": [
+            "audit_ignored_request"
+          ]
+        },
+        "UNLOCK_FAILED": {
+          "actions": [
+            "audit_ignored_request"
+          ]
+        }
+      },
       "states": {
         "pending_mfa": {
           "on": {
             "MFA_OK": {
               "target": "#session.auth.active",
               "actions": [
-                "mark_mfa_satisfied"
+                "mark_mfa_satisfied",
+                "audit_login"
               ]
             },
             "MFA_FAILED": [
@@ -6062,8 +6095,7 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
         },
         "active": {
           "entry": [
-            "stamp_idle_deadline",
-            "audit_login"
+            "stamp_idle_deadline"
           ],
           "on": {
             "REQUEST": {
@@ -6074,9 +6106,67 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
               ]
             },
             "IDLE_DEADLINE": {
+              "target": "#session.auth.idle_locked"
+            },
+            "ABSOLUTE_DEADLINE": {
               "target": "#session.auth.revoked",
               "actions": [
-                "set_revoke_idle"
+                "set_revoke_expired"
+              ]
+            },
+            "REVOKE": {
+              "target": "#session.auth.revoked",
+              "actions": [
+                "set_revoke_admin"
+              ]
+            },
+            "LOGOUT": {
+              "target": "#session.auth.revoked",
+              "actions": [
+                "set_revoke_logout"
+              ]
+            }
+          }
+        },
+        "idle_locked": {
+          "tags": [
+            "locked"
+          ],
+          "entry": [
+            "mark_idle_locked",
+            "clear_elevated",
+            "disarm_one_click",
+            "audit_idle_locked"
+          ],
+          "exit": [
+            "clear_idle_locked"
+          ],
+          "on": {
+            "UNLOCK_OK": {
+              "target": "#session.auth.active",
+              "actions": [
+                "stamp_idle_deadline",
+                "audit_session_unlocked"
+              ]
+            },
+            "UNLOCK_FAILED": [
+              {
+                "target": "#session.auth.revoked",
+                "guard": "unlock_attempts_exhausted",
+                "actions": [
+                  "set_revoke_locked"
+                ]
+              },
+              {
+                "actions": [
+                  "bump_unlock_attempts",
+                  "audit_unlock_failed"
+                ]
+              }
+            ],
+            "REQUEST": {
+              "actions": [
+                "audit_ignored_request"
               ]
             },
             "ABSOLUTE_DEADLINE": {
@@ -6113,24 +6203,56 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
     },
     "elevation": {
       "initial": "normal",
+      "on": {
+        "IDLE_DEADLINE": {
+          "actions": []
+        }
+      },
       "states": {
         "normal": {
           "tags": [
             "not_elevated"
           ],
           "on": {
-            "STEP_UP_OK": {
-              "target": "#session.elevation.elevated",
-              "actions": [
-                "stamp_elevated_until",
-                "audit_step_up"
-              ]
-            },
-            "STEP_UP_FAILED": {
-              "actions": [
-                "audit_step_up_failed"
-              ]
-            }
+            "STEP_UP_OK": [
+              {
+                "target": "#session.elevation.elevated",
+                "guard": "session_unlocked",
+                "actions": [
+                  "stamp_elevated_until",
+                  "audit_step_up"
+                ]
+              },
+              {
+                "actions": [
+                  "audit_ignored_request"
+                ]
+              }
+            ],
+            "STEP_UP_FAILED": [
+              {
+                "target": "#session.elevation.readonly_downgrade",
+                "guard": "step_up_strikes_exhausted",
+                "actions": [
+                  "record_step_up_failure",
+                  "audit_step_up_failed",
+                  "audit_readonly_downgrade"
+                ]
+              },
+              {
+                "actions": [
+                  "record_step_up_failure",
+                  "audit_step_up_failed"
+                ]
+              }
+            ],
+            "ACTION_REQUEST": [
+              {
+                "actions": [
+                  "audit_step_up_required"
+                ]
+              }
+            ]
           }
         },
         "elevated": {
@@ -6154,11 +6276,63 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
                 "stamp_elevated_until",
                 "audit_step_up"
               ]
+            },
+            "STEP_UP_FAILED": [
+              {
+                "target": "#session.elevation.readonly_downgrade",
+                "guard": "step_up_strikes_exhausted",
+                "actions": [
+                  "record_step_up_failure",
+                  "audit_step_up_failed",
+                  "audit_readonly_downgrade"
+                ]
+              },
+              {
+                "actions": [
+                  "record_step_up_failure",
+                  "audit_step_up_failed"
+                ]
+              }
+            ],
+            "ACTION_REQUEST": [
+              {
+                "guard": "grace_window_valid",
+                "actions": [
+                  "audit_grace_used"
+                ]
+              },
+              {
+                "actions": [
+                  "audit_step_up_required"
+                ]
+              }
+            ],
+            "IDLE_DEADLINE": {
+              "target": "#session.elevation.normal",
+              "actions": [
+                "clear_elevated"
+              ]
             }
           }
         },
         "dead": {
           "type": "final"
+        },
+        "readonly_downgrade": {
+          "tags": [
+            "readonly"
+          ],
+          "entry": [
+            "clear_elevated"
+          ],
+          "on": {
+            "READONLY_EXPIRED": {
+              "target": "#session.elevation.normal",
+              "actions": [
+                "clear_step_up_failures"
+              ]
+            }
+          }
         }
       }
     }
@@ -6172,57 +6346,93 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 |---|---|---|---|---|---|
 | `auth` | compound | — | — | — | — |
 | `auth.pending_mfa` | atomic | — | — | — | — |
-| `auth.active` | atomic | — | `stamp_idle_deadline`, `audit_login` | — | — |
+| `auth.active` | atomic | — | `stamp_idle_deadline` | — | — |
+| `auth.idle_locked` | atomic | `locked` | `mark_idle_locked`, `clear_elevated`, `disarm_one_click`, `audit_idle_locked` | `clear_idle_locked` | — |
 | `auth.revoked` | final | `terminal` | `audit_session_revoked`, `broadcast_revocation` | — | — |
 | `elevation` | compound | — | — | — | — |
 | `elevation.normal` | atomic | `not_elevated` | — | — | — |
 | `elevation.elevated` | atomic | `elevated` | `schedule_elevation_deadline` | — | — |
 | `elevation.dead` | final | — | — | — | — |
+| `elevation.readonly_downgrade` | atomic | `readonly` | `clear_elevated` | — | — |
 
 ### B16.3 Events and transitions
 
 | From | Event | Guard | Target | Actions | `reenter` |
 |---|---|---|---|---|---|
-| `auth.pending_mfa` | `MFA_OK` | — | `auth.active` | `mark_mfa_satisfied` | — |
+| `auth.pending_mfa` | `MFA_OK` | — | `auth.active` | `mark_mfa_satisfied`, `audit_login` | — |
 | `auth.pending_mfa` | `MFA_FAILED` | `mfa_attempts_exhausted` | `auth.revoked` | `set_revoke_locked` | — |
 | `auth.pending_mfa` | `MFA_FAILED` | — | _(internal)_ | `bump_mfa_attempts`, `audit_mfa_failed` | — |
 | `auth.pending_mfa` | `MFA_TIMEOUT` | — | `auth.revoked` | `set_revoke_timeout` | — |
 | `auth.active` | `REQUEST` | — | `auth.active` | `stamp_idle_deadline` | yes |
-| `auth.active` | `IDLE_DEADLINE` | — | `auth.revoked` | `set_revoke_idle` | — |
+| `auth.active` | `IDLE_DEADLINE` | — | `auth.idle_locked` | — | — |
 | `auth.active` | `ABSOLUTE_DEADLINE` | — | `auth.revoked` | `set_revoke_expired` | — |
 | `auth.active` | `REVOKE` | — | `auth.revoked` | `set_revoke_admin` | — |
 | `auth.active` | `LOGOUT` | — | `auth.revoked` | `set_revoke_logout` | — |
-| `elevation.normal` | `STEP_UP_OK` | — | `elevation.elevated` | `stamp_elevated_until`, `audit_step_up` | — |
-| `elevation.normal` | `STEP_UP_FAILED` | — | _(internal)_ | `audit_step_up_failed` | — |
+| `auth.idle_locked` | `UNLOCK_OK` | — | `auth.active` | `stamp_idle_deadline`, `audit_session_unlocked` | — |
+| `auth.idle_locked` | `UNLOCK_FAILED` | `unlock_attempts_exhausted` | `auth.revoked` | `set_revoke_locked` | — |
+| `auth.idle_locked` | `UNLOCK_FAILED` | — | _(internal)_ | `bump_unlock_attempts`, `audit_unlock_failed` | — |
+| `auth.idle_locked` | `REQUEST` | — | _(internal)_ | `audit_ignored_request` | — |
+| `auth.idle_locked` | `ABSOLUTE_DEADLINE` | — | `auth.revoked` | `set_revoke_expired` | — |
+| `auth.idle_locked` | `REVOKE` | — | `auth.revoked` | `set_revoke_admin` | — |
+| `auth.idle_locked` | `LOGOUT` | — | `auth.revoked` | `set_revoke_logout` | — |
+| `auth` | `UNLOCK_OK` / `UNLOCK_FAILED` | — | _(internal)_ | `audit_ignored_request` | — |
+| `elevation.normal` | `STEP_UP_OK` | `session_unlocked` | `elevation.elevated` | `stamp_elevated_until`, `audit_step_up` | — |
+| `elevation.normal` | `STEP_UP_OK` | — | _(internal)_ | `audit_ignored_request` | — |
+| `elevation.normal` / `elevation.elevated` | `STEP_UP_FAILED` | `step_up_strikes_exhausted` | `elevation.readonly_downgrade` | `record_step_up_failure`, `audit_step_up_failed`, `audit_readonly_downgrade` | — |
+| `elevation.normal` / `elevation.elevated` | `STEP_UP_FAILED` | — | _(internal)_ | `record_step_up_failure`, `audit_step_up_failed` | — |
+| `elevation.normal` | `ACTION_REQUEST` | — | _(internal)_ | `audit_step_up_required` | — |
 | `elevation.elevated` | `ELEVATION_DEADLINE` | — | `elevation.normal` | `clear_elevated` | — |
 | `elevation.elevated` | `STEP_UP_OK` | — | `elevation.elevated` | `stamp_elevated_until`, `audit_step_up` | yes |
-| _(root)_ | `LOGOUT` / `IDLE_DEADLINE` / `ABSOLUTE_DEADLINE` / `REVOKE` | — | `elevation.dead` | — | — |
+| `elevation.elevated` | `ACTION_REQUEST` | `grace_window_valid` | _(internal)_ | `audit_grace_used` | — |
+| `elevation.elevated` | `ACTION_REQUEST` | — | _(internal)_ | `audit_step_up_required` | — |
+| `elevation.elevated` | `IDLE_DEADLINE` | — | `elevation.normal` | `clear_elevated` | — |
+| `elevation.readonly_downgrade` | `READONLY_EXPIRED` | — | `elevation.normal` | `clear_step_up_failures` | — |
+| `elevation` | `IDLE_DEADLINE` | — | _(internal)_ | — | — |
+| _(root)_ | `LOGOUT` / `ABSOLUTE_DEADLINE` / `REVOKE` | — | `elevation.dead` | — | — |
+| _(root)_ | `UNLOCK_FAILED` | `unlock_attempts_exhausted` | `elevation.dead` | — | — |
+| _(root)_ | `UNLOCK_FAILED` | — | _(internal)_ | — | — |
 
 ### B16.4 Guards
 
 | Guard | Polarity | Contract |
 |---|---|---|
 | `mfa_attempts_exhausted` | pure predicate over `(context, event)` | no I/O; total; returns `False` on any internal error and logs at `ERROR` (A6) |
+| `step_up_strikes_exhausted` | pure predicate over `(context, event)` | this failure is the third consecutive step-up failure; total (A6) |
+| `grace_window_valid` | pure predicate over `(context, event)` | an unexpired grace window for `event.action_class`, never for a no-grace class; total, fails closed (A6) |
+| `unlock_attempts_exhausted` | pure predicate over `(context, event)` | this failure is the fifth consecutive failed unlock (`SessionService.MAX_UNLOCK_ATTEMPTS`); total (A6) |
+| `session_unlocked` | pure predicate over `(context, event)` | `True` only while `context.idle_locked` is explicitly `false`; deny-by-default (A6), so elevation is never granted while locked |
 
 ### B16.5 Actions
 
-All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fault"]`, aborts the transition and routes to this machine's fault state; the snapshot writer refuses to persist a faulted context (MUST-01).
+All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fault"]`, aborts the transition and routes to this machine's fault state; the snapshot writer refuses to persist a faulted context (MUST-01). `disarm_one_click` records `one_click_armed: false` and publishes that plain flag to the session's arm record, which the OMS validator reads synchronously (C-2.20, C-2.21; #2305); it never re-arms.
 
 | Action |
 |---|
+| `audit_grace_used` |
+| `audit_idle_locked` |
+| `audit_ignored_request` |
 | `audit_login` |
 | `audit_mfa_failed` |
+| `audit_readonly_downgrade` |
 | `audit_session_revoked` |
+| `audit_session_unlocked` |
 | `audit_step_up` |
 | `audit_step_up_failed` |
+| `audit_step_up_required` |
+| `audit_unlock_failed` |
 | `broadcast_revocation` |
 | `bump_mfa_attempts` |
+| `bump_unlock_attempts` |
 | `clear_elevated` |
+| `clear_idle_locked` |
+| `clear_step_up_failures` |
+| `disarm_one_click` |
+| `mark_idle_locked` |
 | `mark_mfa_satisfied` |
+| `record_step_up_failure` |
 | `schedule_elevation_deadline` |
 | `set_revoke_admin` |
 | `set_revoke_expired` |
-| `set_revoke_idle` |
 | `set_revoke_locked` |
 | `set_revoke_logout` |
 | `set_revoke_timeout` |
@@ -6234,16 +6444,21 @@ All actions are `@cv_action`-wrapped (A1). A raising action writes `context["_fa
 | ID | Invariant |
 |---|---|
 | **INV-B16-a** | Elevation cannot outlive the session: leaving the active auth state clears elevation unconditionally. |
-| **INV-B16-b** | Every revocation records a specific reason (logout / idle / expired / admin / locked / timeout) and is broadcast to connected clients. |
+| **INV-B16-b** | Every revocation records a specific reason (logout / expired / admin / locked / timeout) and is broadcast to connected clients. |
 | **INV-B16-c** | Every step-up attempt, success or failure, writes an audit record (C-2.9). |
 | **INV-B16-d** | `revoked` is terminal for that session id; a session is never un-revoked. |
 | **INV-B16-e** | Deadlines (absolute, idle, elevation) are absolute timestamps evaluated on access, so a deadline that expired while the process was down is honoured on restore. |
+| **INV-B16-f** | A locked session is never un-revoked by unlock and never re-elevated by unlock. |
+| **INV-B16-g** | Unlock requires the password factor and is audited: only `UNLOCK_OK`, sent after synchronous code verified the password, takes `auth.idle_locked` back to `auth.active`, and it writes `auth.session_unlocked`. |
 
 > **Corrected 2026-09-24 (C-04 / R13-13 / R14-03, proven in `docs/research/xstate/battle-v0.9.1/contracts/g4_c04_c07b.py`, 11/11 both engines):** the four revocation events are hoisted to the root and target the new final `elevation.dead`, and the region-level `elevated.on.REVOKE` handler is **deleted** — a deeper handler outranks the root arm, so leaving it in landed `REVOKE` in `normal`, re-elevatable (the root hoist alone fixed 9/12 lanes). Re-elevation `STEP_UP_OK` now also audits (INV-B16-c). This closes INV-B16-a on every kill event.
+
+> **Corrected 2026-10-14 (#2301, PR #2290 Architect ruling rules 2-4):** the idle lock is the non-terminal `auth.idle_locked` (ADR-0020 §4), no longer a revocation, so `IDLE_DEADLINE` leaves the root hoist and `set_revoke_idle` is gone; `LOGOUT` / `ABSOLUTE_DEADLINE` / `REVOKE` keep the C-04 shape. The lock drops elevation and keeps a read-only downgrade (a one-factor unlock never inherits a two-factor grace). Four shapes are deliberate, each measured on 0.9.1 through the factory: (1) **`IDLE_DEADLINE` lives in the `elevation` region, not on the root.** The library selects one transition per active leaf, so a root `IDLE_DEADLINE -> elevation.normal` arm also fires from every auth leaf without its own arm: it re-entered `normal` from `dead` (a revoked session could then be re-elevated, the C-04 class) and dropped `readonly_downgrade` on a repeated lock signal. `elevated` leaves for `normal`; every other elevation state absorbs the event. (2) `session_unlocked` on `normal.STEP_UP_OK` (the `idle_locked` flag is set on lock entry and cleared on exit) keeps `elevation.elevated` and `auth.idle_locked` exclusive for any event sequence. (3) `UNLOCK_OK` / `UNLOCK_FAILED` outside the lock are absorbed and audited on the `auth` region: under `onUnhandled: "defer"` a stray unlock was replayed into the next lock and lifted it. (4) `audit_login` moves from `active.entry` to the `MFA_OK` arm, because `UNLOCK_OK` re-enters `active` and an unlock is not a login. Lock-entry actions change context first and talk to the outside world last (CV-C02). The E09-S04 step-up drift (`readonly_downgrade`, `ACTION_REQUEST`, `READONLY_EXPIRED` and their guards and actions) is folded in, so this entry and the machine JSON agree.
 
 ### B16.7 Implementation notes
 
 - Session machines are single-process-owned; beyond roughly 100 concurrent sessions the hosting assumption is re-examined (E09).
+- The chart records the lock and the `sessions` row enforces it (`SessionService.require_active` refuses a locked session; C-2.21). `SessionChart` evaluates `is_idle_locked` on access (INV-B16-e) and records `IDLE_DEADLINE` before the next event, so an unlock is recorded against the still-locked row.
 
 ---
 
