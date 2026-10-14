@@ -15,7 +15,10 @@ refusals cannot crowd the audit log, which also carries order intents.
   capped record carried: the pending pages of a user with no `admin.audit_read` for
   `flush_seconds` (`admin.audit_read`, reason `continuation_flush`), otherwise the
   suppressed count (`admin.audit_denied`, reason `suppressed_summary`). The window stamp
-  advances before the write, so a failing writer gets one attempt per window.
+  advances before the write, so a failing writer gets one attempt per window. A flush also
+  restarts the user's read timer: over the cap, a known filter set keeps paging at most
+  `flush_pages - 1` pages per window, every page counted and recorded by the next flush, so
+  the Owner can keep paging during an incident and the bound below still holds.
 
 Per user, in any hour: at most `cap + ceil(3600 / flush_seconds)` records (120 + 12 at the
 defaults, 600 + 12 for the Owner). Only the shutdown `drain()` ignores the window.
@@ -26,11 +29,13 @@ is a tracked task that is never cancelled (`AuditWriter.emit` must not stop mid-
 holds its slot until done and settles its own counts. A caller that gives up after the writer
 accepted a read record errs toward recording more: that page is recorded, not served.
 
-State is bounded (C-2.18): `tracked_users` users and `inflight_cap` writes in flight, as for
-`auth.csrf_refused` (`api/csrf.py`). The least recently used user is evicted only once its
-state no longer matters (no record in the last hour, no out-of-cap record in the current
-window, no counts, nothing in flight), so a fresh entry counts as the old one would; until
-then a new user writes nothing.
+State is bounded (C-2.18): `tracked_users` users, plus at most `OWNER_ENTRIES` Owner
+accounts tracked apart so that other users can never crowd the Owner out, and
+`inflight_cap` writes in flight, as for `auth.csrf_refused` (`api/csrf.py`). The least
+recently used entry is evicted only once its state no longer matters (no record in the last
+hour, no out-of-cap record in the current window, no counts, nothing in flight), so a fresh
+entry counts as the old one would; until then a new user writes nothing (logged once per
+tick as `audit.budget.untracked`).
 """
 
 from __future__ import annotations
@@ -58,6 +63,8 @@ SUMMARY_REASON = "suppressed_summary"
 FLUSH_REASON = "continuation_flush"
 SYSTEM_ACTOR = "system:audit-budget"
 FILTER_SETS_PER_USER = 16
+#: Owner accounts tracked apart from `tracked_users`.
+OWNER_ENTRIES = 8
 #: As `api/csrf.py` `AUDIT_TIMEOUT_S`: how long a caller waits for one audit write.
 WRITE_TIMEOUT_S = 2.0
 DRAIN_TIMEOUT_S = 5.0
@@ -87,7 +94,8 @@ def filters_digest(filters: dict[str, Any]) -> str:
 
 @dataclass(frozen=True, slots=True)
 class BudgetActor:
-    """Who a record is for. `key` identifies the user across sessions."""
+    """Who a record is for. `key` identifies the user across sessions. `owner` is the
+    principal's `is_owner` (`PrincipalSnapshot.is_owner`, SR-017), never a role name."""
 
     key: str
     label: str
@@ -193,14 +201,19 @@ class AuditRecordBudget:
         self._tracked, self._inflight_cap = tracked_users, inflight_cap
         self._flush_pages, self._flush_s = flush_pages, flush_seconds
         self._write_timeout_s, self._clock = write_timeout_s, clock
-        self._users: OrderedDict[str, _User] = OrderedDict()
+        self._users: OrderedDict[str, _User] = OrderedDict()  # at most `tracked_users`
+        self._owners: OrderedDict[str, _User] = OrderedDict()  # at most `OWNER_ENTRIES`
         self._tasks: set[asyncio.Task[bool]] = set()
         self._inflight = 0
         self._untracked = 0  # suppressed counts of users that could not be tracked
+        self._untracked_calls = 0  # calls refused an entry since the last tick
         self._system_oob = -math.inf
 
     def __len__(self) -> int:
-        return len(self._users)
+        return len(self._users) + len(self._owners)
+
+    def _entries(self) -> list[_User]:
+        return [*self._users.values(), *self._owners.values()]
 
     @property
     def inflight(self) -> int:
@@ -215,33 +228,40 @@ class AuditRecordBudget:
 
     def retry_after(self, key: str) -> int:
         """Seconds until the user's oldest capped record leaves its hour (at least 1)."""
-        st = self._users.get(key)
+        st = self._users.get(key) or self._owners.get(key)
         if st is None or not st.stamps:
             return 1
         return max(1, math.ceil(st.stamps[0] + _HOUR_S - self._clock()))
 
     # -- state --------------------------------------------------------------------------
     def _track(self, actor: BudgetActor) -> _User | None:
-        st = self._users.get(actor.key)
+        """The user's entry, made if there is room. Owner accounts have their own map, so
+        other users can never crowd the Owner out of the budget."""
+        users = self._users if actor.key in self._users else self._owners
+        st = users.get(actor.key)
         if st is not None:
-            self._users.move_to_end(actor.key)
-        elif len(self._users) < self._tracked or self._evict_one():
-            st = self._users[actor.key] = _User(actor)
+            users.move_to_end(actor.key)
         else:
-            return None
+            users, bound = (
+                (self._owners, OWNER_ENTRIES) if actor.owner else (self._users, self._tracked)
+            )
+            if len(users) >= bound and not self._evict_one(users):
+                self._untracked_calls += 1
+                return None
+            st = users[actor.key] = _User(actor)
         st.actor = actor
         return st
 
-    def _evict_one(self) -> bool:
+    def _evict_one(self, users: OrderedDict[str, _User]) -> bool:
         """Drop the least recently used user whose state no longer matters: a fresh entry
         for it then counts exactly as the old one would, so eviction never lifts the bound."""
         now = self._clock()
-        for key, st in self._users.items():
+        for key, st in users.items():
             _prune(st, now)
             busy = st.stamps or st.reserved or st.reading or st.writing
             recent = now - st.last_oob < self._flush_s
             if not (busy or recent or st.suppressed or st.pending_pages()):
-                del self._users[key]
+                del users[key]
                 return True
         return False
 
@@ -392,7 +412,7 @@ class AuditRecordBudget:
         records were attempted."""
         now = self._clock()
         attempted = 0
-        for st in list(self._users.values()):
+        for st in self._entries():
             if now - st.last_oob < self._flush_s:
                 continue
             if st.pending_pages() and now - st.last_read_record >= self._flush_s:
@@ -408,6 +428,9 @@ class AuditRecordBudget:
             self._system_oob = now
             attempted += 1
             await self._out_of_cap(raw, None, DENIAL_ACTION)
+        if self._untracked_calls:  # the bound was full of busy users
+            _log().warning("audit.budget.untracked", calls=self._untracked_calls)
+            self._untracked_calls = 0
         return attempted
 
     async def drain(self, raw: _Raw, timeout_s: float = DRAIN_TIMEOUT_S) -> int:
@@ -416,7 +439,7 @@ class AuditRecordBudget:
         many users still hold counts (logged)."""
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(timeout_s):
-                for st in list(self._users.values()):
+                for st in self._entries():
                     if st.pending_pages():
                         await self._out_of_cap(raw, st, READ_ACTION)
                     if st.suppressed:
@@ -425,7 +448,7 @@ class AuditRecordBudget:
                     await self._out_of_cap(raw, None, DENIAL_ACTION)
                 if self._tasks:
                     await asyncio.wait(set(self._tasks))
-        left = sum(1 for st in self._users.values() if st.suppressed or st.pending_pages())
+        left = sum(1 for st in self._entries() if st.suppressed or st.pending_pages())
         if left or self._untracked:
             _log().warning("audit.budget.drain_incomplete", users=left, untracked=self._untracked)
         return left

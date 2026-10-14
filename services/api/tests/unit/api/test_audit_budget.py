@@ -11,12 +11,14 @@ from typing import Any
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from pydantic import ValidationError
 from structlog.testing import capture_logs
 
 from candleviewer.api.audit_budget import (
     DENIAL_ACTION,
     FILTER_SETS_PER_USER,
     FLUSH_REASON,
+    OWNER_ENTRIES,
     READ_ACTION,
     SUMMARY_REASON,
     SYSTEM_ACTOR,
@@ -28,6 +30,7 @@ from candleviewer.api.audit_budget import (
 )
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.redact import redact
+from candleviewer.settings import Settings
 
 
 class _Clock:
@@ -290,9 +293,11 @@ async def test_a_user_holding_a_reservation_is_never_evicted() -> None:
 async def test_untracked_users_429s_reach_one_system_summary_per_window() -> None:
     clock, w, b = _setup(tracked_users=1)
     await b.write_denial(ACTOR, w, DENY)
-    for _ in range(2):
-        b.count_suppressed(OTHER)
-        await b.flush_due(w)
+    with capture_logs() as logs:
+        for _ in range(2):
+            b.count_suppressed(OTHER)
+            await b.flush_due(w)
+    assert [e["calls"] for e in logs if e["event"] == "audit.budget.untracked"] == [1, 1]
     _, kw, _ = w.records[-1]
     assert (kw["actor_label"], kw["actor_user_id"], kw["outcome"]) == (
         SYSTEM_ACTOR,
@@ -424,6 +429,22 @@ async def test_flush_task_tick_survives_an_error(monkeypatch: pytest.MonkeyPatch
     assert await task.stop() == 0  # never started: drains only
 
 
+async def test_owner_keeps_reading_when_every_tracked_entry_is_busy() -> None:
+    _, w, b = _setup(tracked_users=64, per_hour=1, owner_per_hour=2)
+    for i in range(64):  # each holds a record of this hour, so none can be evicted
+        await b.write_denial(BudgetActor(f"v{i}", "viewer", f"v{i}", owner=False), w, DENY)
+    assert b.plan_read(OTHER, "A").action == "unwritable"  # the bound holds for others
+    owner = BudgetActor("o1", "owner", "o1", owner=True)
+    assert [await _read(b, w, owner, d) for d in "ABC"] == ["record", "record", "refuse"]
+    assert (len(b), list(b._owners)) == (65, ["o1"])  # within its own cap of 2
+
+
+def test_tracked_users_setting_has_a_floor() -> None:
+    assert Settings(audit_budget_tracked_users=64).audit_budget_tracked_users == 64
+    with pytest.raises(ValidationError):
+        Settings(audit_budget_tracked_users=63)
+
+
 def test_filters_digest_ignores_key_order() -> None:
     assert filters_digest({"a": 1, "b": [2]}) == filters_digest({"b": [2], "a": 1})
     assert filters_digest({"a": 1}) != filters_digest({"a": 2})
@@ -442,8 +463,9 @@ async def test_budget_records_pass_audit_redaction_unchanged() -> None:
 
 # ---- property: any interleaving keeps the record bound and every count ---------------------
 
-_ACTORS = [BudgetActor(f"p{i}", f"user{i}", f"p{i}", owner=i == 0) for i in range(3)]
-_CAPS, _WINDOW = {"p0": 3, "p1": 2, "p2": 2}, 300.0
+# p0 is the Owner; three other users share two tracked entries, so eviction is exercised.
+_ACTORS = [BudgetActor(f"p{i}", f"user{i}", f"p{i}", owner=i == 0) for i in range(4)]
+_CAPS, _WINDOW = {"p0": 3, "p1": 2, "p2": 2, "p3": 2}, 300.0
 _KINDS = ("read", "start_read", "finish_read", "refuse", "limit_429", "advance", "flush")
 _KINDS += ("writer", "resolve")
 
@@ -455,7 +477,7 @@ def _ops(kinds: frozenset[str]) -> st.SearchStrategy[list[tuple[str, int, str, b
     return st.lists(
         st.tuples(
             st.sampled_from(sorted(kinds)),
-            st.sampled_from([0, 1, 1, 2]),
+            st.sampled_from([0, 1, 1, 2, 3]),
             st.sampled_from("AB"),
             st.booleans(),
             st.sampled_from([1, 60, 299, 300, 900, 3600]),
@@ -521,6 +543,8 @@ async def test_bounded_record_count_and_no_lost_count_under_any_interleaving(
         if kind in ("read", "start_read") and len(reads) < 4:
             res = b.plan_read(actor, digest)
             suppressed += res.action == "refuse"
+            # The Owner is never refused an entry; only a full in-flight cap stops it.
+            assert not (actor.owner and res.action == "unwritable" and b.inflight < 2)
             if res.action in ("count", "record"):
                 if kind == "read":
                     served += await finish(actor, res, ok)
@@ -548,8 +572,8 @@ async def test_bounded_record_count_and_no_lost_count_under_any_interleaving(
             unserved_recorded += ok and action == READ_ACTION and not _out_of_cap(kw)
 
         _assert_bound(w)
-        assert len(b) <= 2 and b.inflight <= 2
-        users = b._users.values()
+        assert len(b._users) <= 2 and len(b._owners) <= OWNER_ENTRIES and b.inflight <= 2
+        users = b._entries()
         hanging = [kw for _, _, _, kw in w.hanging]
         unserved_hanging = sum(
             1 for _, _, a, kw in w.hanging if a == READ_ACTION and not _out_of_cap(kw)
