@@ -67,7 +67,11 @@ class RetentionSchedule:
         return {"alert_deliveries_purge": self.retention_cron}
 
     def drawings_jobs(self) -> dict[str, str]:
-        """Soft-deleted `drawings` purge (E14-T01): shares the retention cron; empty when off."""
+        """Soft-deleted `drawings` purge (E14-T01): 90 d, empty when off.
+
+        The value is the retention cron for reference only: the task is a fixed 24 h
+        interval loop (`DrawingsPurgeTask`), not cron-driven, like `alert_jobs()`.
+        """
         if not self.enabled:
             return {}
         return {"drawings_purge": self.retention_cron}

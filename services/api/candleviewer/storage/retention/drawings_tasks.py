@@ -31,6 +31,8 @@ def logger() -> Any:
 
 
 INTERVAL_SECONDS = 24 * 3600
+#: Batches per run; bounds one run, the next run continues the backlog.
+MAX_BATCHES_PER_RUN = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,16 +70,15 @@ class DrawingsPurgeTask:
         return self._task is not None and not self._task.done()
 
     async def run_once(self) -> None:
+        # Count and log per batch so a later failure never loses rows already purged.
         try:
-            total = 0
-            while True:
+            for _ in range(MAX_BATCHES_PER_RUN):
                 n = await self._repo.purge_deleted(DRAWINGS_SOFT_DELETE_DAYS, MAX_PURGE_BATCH)
-                total += n
+                if n:
+                    self._purged.child().inc(n)
+                logger().info("drawings_purged", deleted=n)
                 if n < MAX_PURGE_BATCH:
                     break
-            if total:
-                self._purged.child().inc(total)
-            logger().info("drawings_purged", deleted=total)
         except Exception:
             logger().exception("drawings_purge_failed")
 
