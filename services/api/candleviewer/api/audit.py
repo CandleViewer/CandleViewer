@@ -29,9 +29,11 @@ for a given request, that is a normal 401 per the resolver's own contract
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 from typing import Annotated, Any, Protocol
 
+import structlog
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
@@ -64,6 +66,11 @@ from candleviewer.audit.models import (
 from candleviewer.storage.errors import StorageTierUnavailable
 
 
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
+
 class _Emitter(Protocol):
     async def emit(
         self,
@@ -92,13 +99,16 @@ class AuditQueryServiceLike(Protocol):
     async def query(
         self,
         *,
+        restrict_to_actor: str | None,
         actor_user_id: str | None = None,
         actions: list[str] | None = None,
         subject_type: str | None = None,
+        subject_id: str | None = None,
         severity: str | None = None,
         outcome: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
+        q: str | None = None,
         cursor: int | None = None,
         limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
         ip: str | None = None,
@@ -219,9 +229,16 @@ def _request_fields(principal: AuditPrincipal) -> dict[str, Any]:
 def _recorded_filters(req: AuditQueryRequest, actor_user_id: str | None) -> dict[str, Any]:
     """The filter set as recorded and digested: validated canonical values under their
     contract names, without paging or unset filters (`ip` stays under `ip`, which the
-    audit redactor hashes)."""
+    audit redactor hashes). The two free-text filters, `q` (contract) and `subject_id`,
+    are kept only as a digest and their length, so text typed into them, control
+    characters included, never reaches the append-only log verbatim."""
     narrowed = req.model_copy(update={"actor_user_id": actor_user_id})
     dumped = narrowed.model_dump(mode="json", exclude={"cursor", "limit"}, exclude_none=True)
+    for name in ("q", "subject_id"):
+        text = dumped.pop(name, None)
+        if text is not None:
+            dumped[f"{name}_sha256"] = hashlib.sha256(text.encode()).hexdigest()
+            dumped[f"{name}_len"] = len(text)
     return {_PARAM_NAMES.get(k, k): v for k, v in dumped.items()}
 
 
@@ -308,6 +325,8 @@ def make_audit_router(
         cursor: int | None = None,
         limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
         ip: str | None = None,
+        subject_id: str | None = None,
+        q: str | None = None,
     ) -> JSONResponse:
         try:
             service, principal, view = await _authorize_or_raise(request, "query")
@@ -315,21 +334,24 @@ def make_audit_router(
             return problem.response
         actor = _budget_actor(principal)
         emitter = record_budget.emitter(service.writer, actor)
-        if view is AuditView.OWN_REDACTED and ip is not None:
-            # Contract: `ip` is Owner only. The redacted projection hides it, so filtering
-            # on it would reveal it one query at a time.
-            return await _refuse(emitter, principal, "filter_not_permitted:ip")
+        hidden = [name for name, value in (("ip", ip), ("q", q)) if value is not None]
+        if view is not AuditView.RAW and hidden:
+            # Contract: `ip` and `q` are Owner only. The redacted projection hides the IP and
+            # the payload, so filtering on them would reveal them one query at a time.
+            return await _refuse(emitter, principal, f"filter_not_permitted:{hidden[0]}")
         try:
             req = AuditQueryRequest.model_validate(
                 {
                     "actor_user_id": actor_user_id,
                     "actions": action,
                     "subject_type": subject_type,
+                    "subject_id": subject_id,
                     "ip": ip,
                     "severity": severity,
                     "outcome": outcome,
                     "from_ts": from_,
                     "to_ts": to,
+                    "q": q,
                     "cursor": cursor,
                     "limit": limit,
                 }
@@ -349,13 +371,13 @@ def make_audit_router(
                 retry_after_s=exc.retry_after_s,
             )
         try:
-            if view is AuditView.OWN_REDACTED:
+            if view is not AuditView.RAW:
                 if req.actor_user_id not in (None, actor.key):
                     refused = await _record_cross_actor(emitter, principal, req.actor_user_id)
                     if refused is not None:
                         return refused
-                # SR-067: a non-owner reads only its own events; the filter is
-                # forced server-side, whatever `actor_user_id` the caller sent.
+                # SR-067: a non-owner reads only its own events. The repository applies
+                # the scope in the SQL of every page, whatever `actor_user_id` was sent.
                 filters["actor_user_id"] = actor.key
             recorded = _recorded_filters(req, filters["actor_user_id"])
             plan = record_budget.plan_read(actor, filters_digest(recorded))
@@ -415,8 +437,12 @@ def make_audit_router(
             return _over_cap(key)
         if plan.action == "unwritable":
             return _unavailable()
+        # Fail closed: any view but the Owner's raw one is scoped to the caller's own entries.
+        restrict = None if view is AuditView.RAW else key
         try:
-            page = await service.query.query(**filters, cursor=cursor, timeout_ms=query_timeout_ms)
+            page = await service.query.query(
+                **filters, restrict_to_actor=restrict, cursor=cursor, timeout_ms=query_timeout_ms
+            )
         except ValidationError as exc:
             return _invalid(exc, AuditQueryRequest)
         except TimeoutError:
@@ -424,11 +450,13 @@ def make_audit_router(
         except StorageTierUnavailable:
             # The store error carries only its SQLSTATE; it is logged where it is raised.
             return _unavailable("audit store unavailable")
-        if view is AuditView.OWN_REDACTED:
-            items = [
-                redact_entry_for_view(e, view) for e in page.items if str(e.actor_user_id) == key
-            ]
-            page = page.model_copy(update={"items": items, "count": len(items)})
+        if restrict is not None:
+            if any(str(e.actor_user_id) != restrict for e in page.items):
+                # The scope is applied in the SQL; a row outside it is never served.
+                _log().error("audit.read.out_of_scope", view=view.value)
+                return _unavailable("audit store unavailable")
+            items = [redact_entry_for_view(e, view) for e in page.items]
+            page = page.model_copy(update={"items": items})
         if plan.action == "record":
             # The filters and the returned count, never the entries.
             detail = {"view": view.value, "filters": recorded, "returned_count": len(page.items)}

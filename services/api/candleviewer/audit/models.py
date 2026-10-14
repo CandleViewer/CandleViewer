@@ -15,7 +15,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 
 class AuditOutcome(StrEnum):
@@ -103,8 +103,8 @@ _ACTION_CODE = re.compile(r"[a-z0-9_]+([.][a-z0-9_]+){1,3}")
 class AuditQueryRequest(BaseModel):
     """Validated filter set for `AuditQueryService.query` — `limit` bounded
     to 1..`AUDIT_QUERY_MAX_LIMIT`, unknown keys rejected. `from_ts`/`to_ts`
-    must be tz-aware UTC and `from_ts <= to_ts` (PR #1608 review finding 3:
-    previously a naive datetime or `from_ts > to_ts` was accepted silently).
+    must be tz-aware UTC; `to_ts` is exclusive, so `from_ts < to_ts` (PR #1608
+    review finding 3: previously a naive datetime was accepted silently).
     The other filters follow the contract's parameter rules and are kept in
     canonical form, so only canonical values are queried or recorded."""
 
@@ -113,13 +113,28 @@ class AuditQueryRequest(BaseModel):
     actor_user_id: str | None = None
     actions: list[str] | None = None
     subject_type: str | None = None
+    subject_id: str | None = Field(default=None, max_length=64)
     ip: str | None = None
     severity: Severity | None = None
     outcome: AuditOutcome | None = None
     from_ts: datetime | None = None
     to_ts: datetime | None = None
+    q: str | None = Field(default=None, max_length=200)
     cursor: int | None = Field(default=None, ge=1)
     limit: int = Field(default=AUDIT_QUERY_DEFAULT_LIMIT, ge=1, le=AUDIT_QUERY_MAX_LIMIT)
+
+    @field_validator("subject_id", "q")
+    @classmethod
+    def _storable_text(cls, value: str | None) -> str | None:
+        """Postgres text cannot hold NUL, so no stored value could match one."""
+        if value is not None and "\x00" in value:
+            raise ValueError("must not contain NUL")
+        return value
+
+    @field_validator("q")
+    @classmethod
+    def _blank_q_is_no_search(cls, value: str | None) -> str | None:
+        return value if value is None or value.strip() else None
 
     @field_validator("ip")
     @classmethod
@@ -166,11 +181,13 @@ class AuditQueryRequest(BaseModel):
             raise ValueError("must be a tz-aware (UTC) timestamp")
         return value
 
-    @model_validator(mode="after")
-    def _range_ordered(self) -> Self:
-        if self.from_ts is not None and self.to_ts is not None and self.from_ts > self.to_ts:
-            raise ValueError("from_ts must be <= to_ts")
-        return self
+    @field_validator("to_ts")
+    @classmethod
+    def _after_from(cls, value: datetime | None, info: ValidationInfo) -> datetime | None:
+        start = info.data.get("from_ts")
+        if value is not None and start is not None and start >= value:
+            raise ValueError("to is exclusive and must be after from")
+        return value
 
 
 class AuditPage(BaseModel):

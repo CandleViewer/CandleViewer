@@ -83,13 +83,16 @@ class AuditQueryService:
     async def query(
         self,
         *,
+        restrict_to_actor: str | None,
         actor_user_id: str | None = None,
         actions: list[str] | None = None,
         subject_type: str | None = None,
+        subject_id: str | None = None,
         severity: str | None = None,
         outcome: str | None = None,
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
+        q: str | None = None,
         cursor: int | None = None,
         limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
         ip: str | None = None,
@@ -100,33 +103,42 @@ class AuditQueryService:
         rather than issuing an unbounded query. `subject_type` (the
         `object_kind` column) is passed through to the repository — PR
         #1608 review finding 5: it used to be accepted here and silently
-        dropped."""
+        dropped.
+
+        `restrict_to_actor` has no default: the caller states the scope it
+        resolved (`None` only for the Owner's raw view, else the caller's own
+        user id), and the repository applies it in the SQL of every page."""
         req = AuditQueryRequest.model_validate(
             {
                 "actor_user_id": actor_user_id,
                 "actions": actions,
                 "subject_type": subject_type,
+                "subject_id": subject_id,
                 "ip": ip,
                 "severity": severity,
                 "outcome": outcome,
                 "from_ts": from_ts,
                 "to_ts": to_ts,
+                "q": q,
                 "cursor": cursor,
                 "limit": limit,
             }
         )
         limit = req.limit
         rows = await self._repository.query_page(
+            restrict_to_actor=restrict_to_actor,
             actor_user_id=req.actor_user_id,
             actions=req.actions,
             subject_type=req.subject_type,
+            subject_id=req.subject_id,
             severity=None if req.severity is None else req.severity.value,
             outcome=None if req.outcome is None else req.outcome.value,
+            ip=req.ip,
+            q=req.q,
             from_ts=req.from_ts,
             to_ts=req.to_ts,
             cursor=req.cursor,
             limit=limit + 1,
-            ip=req.ip,
             timeout_ms=timeout_ms,
         )
 

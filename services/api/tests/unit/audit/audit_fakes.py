@@ -17,10 +17,20 @@ def _pg_ts(raw: str) -> str:
     return ts.strftime("%Y-%m-%dT%H:%M:%S.%f") + "+00"
 
 
+def _ts(row: dict[str, Any]) -> datetime:
+    return datetime.fromisoformat(row["event_ts"][:-3] + "+00:00")
+
+
+def _doc(row: dict[str, Any]) -> str:
+    parts = (row["before_state"], row["after_state"], row["object_label"])
+    return " ".join(p for p in parts if p is not None).lower()
+
+
 class FakeAuditRepository:
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
         self.checkpoints: dict[int, dict[str, Any]] = {}
+        self.page_calls: list[dict[str, Any]] = []
         self._up = asyncio.Event()
         self._up.set()
         self.insert_attempts = 0
@@ -64,6 +74,7 @@ class FakeAuditRepository:
             "action": record["action"],
             "object_kind": record.get("object_kind"),
             "object_id": record.get("object_id"),
+            "object_label": record.get("object_label"),
             "outcome": record["outcome"],
             "severity": record["severity"],
             "reason": record.get("reason"),
@@ -79,22 +90,34 @@ class FakeAuditRepository:
         self.rows.append(row)
 
     async def query_page(self, **kw: Any) -> list[dict[str, Any]]:
+        """As `SqlAlchemyAuditRepository.query_page`: AND-ed filters, `id DESC` below
+        `cursor`, `to_ts` exclusive, a set `restrict_to_actor` replacing `actor_user_id`,
+        and `q` as every term in the document."""
+        self.page_calls.append(kw)
+        restrict = kw["restrict_to_actor"]
+        exact = {
+            "actor_user_id": restrict if restrict is not None else kw["actor_user_id"],
+            "object_kind": kw["subject_type"],
+            "object_id": kw["subject_id"],
+            "actor_ip": kw["ip"],
+            "severity": kw["severity"],
+            "outcome": kw["outcome"],
+        }
         out = sorted(self.rows, key=lambda r: -r["id"])
-        if kw["cursor"] is not None:
-            out = [r for r in out if r["id"] < kw["cursor"]]
+        for column, want in exact.items():
+            if want is not None:
+                out = [r for r in out if r[column] is not None and str(r[column]) == want]
         if kw["actions"]:
             out = [r for r in out if r["action"] in kw["actions"]]
-        if kw.get("subject_type") is not None:
-            out = [r for r in out if r["object_kind"] == kw["subject_type"]]
-        if kw.get("ip") is not None:
-            out = [r for r in out if r.get("actor_ip") == kw["ip"]]
-        for key in ("severity", "outcome", "actor_user_id"):
-            if kw[key] is not None:
-                out = [r for r in out if r[key] == kw[key]]
-        return [
-            {**r, "event_ts": datetime.fromisoformat(r["event_ts"][:-3] + "+00:00")}
-            for r in out[: kw["limit"]]
-        ]
+        if kw["from_ts"] is not None:
+            out = [r for r in out if _ts(r) >= kw["from_ts"]]
+        if kw["to_ts"] is not None:
+            out = [r for r in out if _ts(r) < kw["to_ts"]]
+        if kw["q"] is not None:
+            out = [r for r in out if all(t.lower() in _doc(r) for t in kw["q"].split())]
+        if kw["cursor"] is not None:
+            out = [r for r in out if r["id"] < kw["cursor"]]
+        return [{**r, "event_ts": _ts(r)} for r in out[: kw["limit"]]]
 
     async def fetch_entry_hash(self, entry_id: int) -> str | None:
         for r in self.rows:
