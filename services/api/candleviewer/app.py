@@ -1597,7 +1597,10 @@ def create_app(
     )
     app.include_router(
         make_drawings_router(
-            lambda: app.state.drawings_repository, audit_resolver, _LazyAuditEmitter(ctx.audit)
+            lambda: app.state.drawings_repository,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
+            metrics=app.state.drawings_metrics,
         )
     )
     # E15-T01: owner-scoped /workspaces; callers from the session (`audit_resolver`, as for
