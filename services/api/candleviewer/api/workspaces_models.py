@@ -1,4 +1,4 @@
-"""Request validation for ``/workspaces`` and ``/layouts`` (E15-T01; pane models: spec D1-D7).
+"""Request validation for ``/workspaces`` and ``/layouts`` (E15-T01; spec D1-D17).
 
 WHY a pure module: the router, the repository and the OpenAPI contract must agree on one
 definition of "a valid workspace/layout". No I/O, router or storage import lives here, so the
@@ -26,6 +26,7 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    FailFast,
     Field,
     PlainValidator,
     StrictBool,
@@ -348,4 +349,144 @@ class LayoutPaneIn(BaseModel):
             "indicator_preset_ids": tuple(str(i) for i in self.indicator_preset_ids),
             "pane_config": self.pane_config.to_json(),
             "scale_mode": self.scale_mode,
+        }
+
+
+# --- grid spec (D5) ------------------------------------------------------------------------
+class GridLeafIn(BaseModel):
+    model_config = _CFG
+    type: Literal["leaf"]
+    slot: StrictInt = Field(ge=0, le=15)
+
+
+class GridTabsetIn(BaseModel):
+    model_config = _CFG
+    type: Literal["tabset"]
+    children: Annotated[list[GridLeafIn], FailFast(), _cap(16), Field(min_length=1, max_length=16)]
+    active: StrictInt = Field(default=0, ge=0, le=15)
+
+
+class GridSplitIn(BaseModel):
+    model_config = _CFG
+    type: Literal["row", "column"]
+    children: Annotated[list[GridNodeIn], FailFast(), _cap(16), Field(min_length=2, max_length=16)]
+    sizes: Annotated[
+        list[Annotated[float, Field(strict=True, gt=0, le=1)]],
+        FailFast(),
+        _cap(16),
+        Field(min_length=2, max_length=16),
+    ]
+
+
+GridNodeIn = Annotated[GridSplitIn | GridTabsetIn | GridLeafIn, Field(discriminator="type")]
+GridSplitIn.model_rebuild()
+
+
+def _strict_int(value: object) -> object:
+    """Literal[1] alone coerces `true` and `1.0`; only a real int may reach it."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PydanticCustomError("int_type", "Input should be the integer 1")
+    return value
+
+
+class LayoutGridSpec(BaseModel):
+    """`LayoutGridSpec` v1; structural caps are checked by `LayoutIn` (they need the panes)."""
+
+    model_config = _CFG
+    version: Annotated[Literal[1], BeforeValidator(_strict_int)]
+    root: GridNodeIn
+
+
+def _tree_errors(root: Any, slots: set[int]) -> list[tuple[tuple[str | int, ...], str, str]]:
+    """Walk the tree once, bounded: stops descending past the node cap or the depth cap."""
+    errs: list[tuple[tuple[str | int, ...], str, str]] = []
+    nodes = 0
+    leaves: list[tuple[tuple[str | int, ...], int]] = []
+    stack: list[tuple[Any, tuple[str | int, ...], int]] = [(root, ("grid_spec", "root"), 1)]
+    while stack:
+        node, path, depth = stack.pop()
+        nodes += 1
+        if nodes > MAX_TREE_NODES:
+            return [(("grid_spec", "root"), "tree_too_large", "Tree has too many nodes")]
+        if depth > MAX_TREE_DEPTH:
+            errs.append((path, "tree_too_deep", "Tree is nested too deeply"))
+            continue
+        if isinstance(node, GridLeafIn):
+            leaves.append(((*path, "slot"), node.slot))
+            continue
+        kids = node.children
+        if isinstance(node, GridSplitIn):
+            if len(node.sizes) != len(kids):
+                errs.append(((*path, "sizes"), "sizes_mismatch", "sizes needs one entry per child"))
+            elif abs(sum(node.sizes) - 1) > 1e-6:
+                errs.append(((*path, "sizes"), "sizes_sum", "sizes must sum to 1"))
+        elif node.active >= len(kids):
+            errs.append(((*path, "active"), "active_out_of_range", "active is not a child index"))
+        stack.extend(
+            (c, (*path, "children", i), depth + 1) for i, c in reversed(list(enumerate(kids)))
+        )
+    if len(leaves) > MAX_PANES:
+        return [(("grid_spec", "root"), "tree_too_large", "Tree has too many leaves")]
+    seen: set[int] = set()
+    for lpath, slot in sorted(leaves, key=lambda t: tuple(str(p).zfill(4) for p in t[0])):
+        if slot in seen:
+            errs.append((lpath, "duplicate_leaf", "slot is used by an earlier leaf"))
+        seen.add(slot)
+        if slot not in slots:
+            errs.append((lpath, "unknown_slot", "slot is not a pane slot in this body"))
+    return errs
+
+
+# --- layout --------------------------------------------------------------------------------
+class LayoutIn(BaseModel):
+    """`LayoutInput` (D5, D17): the whole pane set is validated as one unit."""
+
+    model_config = _CFG
+    name: Name
+    grid_preset: Annotated[LayoutGridPreset, _NN] = "1x1"
+    grid_spec: LayoutGridSpec | None = None
+    crosshair_sync: _Flag = True
+    level_sync: _Flag = False
+    symbol_sync: _Flag = False
+    hotkey_slot: StrictInt | None = Field(default=None, ge=1, le=9)
+    is_default: _Flag = False
+    panes: Annotated[list[LayoutPaneIn], _cap(MAX_PANES), Field(max_length=MAX_PANES)]
+
+    @model_validator(mode="after")
+    def _rules(self) -> LayoutIn:
+        errs: list[tuple[tuple[str | int, ...], str, str]] = []
+        first: dict[int, int] = {}
+        for i, pane in enumerate(self.panes):
+            if pane.slot_index in first:  # name the LATER pane (spec / AC 4)
+                msg = f"slot_index {pane.slot_index} already used by panes.{first[pane.slot_index]}"
+                errs.append((("panes", i, "slot_index"), "duplicate_slot", msg))
+            else:
+                first[pane.slot_index] = i
+        custom = self.grid_preset == "custom"
+        if custom and self.grid_spec is None:
+            errs.append((("grid_spec",), "grid_spec_required", "custom layouts need a grid_spec"))
+        elif not custom and self.grid_spec is not None:
+            errs.append(
+                (("grid_spec",), "grid_spec_not_allowed", "only custom layouts take a grid_spec")
+            )
+        elif self.grid_spec is not None:
+            errs.extend(_tree_errors(self.grid_spec.root, set(first)))
+        if errs:
+            _fail(errs)
+        return self
+
+    def db_values(self) -> dict[str, Any]:
+        """Keys equal the repository's `LayoutFields`; panes sorted by slot, as pane dicts.
+        A named preset stores no spec (None, D5)."""
+        spec = None if self.grid_spec is None else self.grid_spec.model_dump(mode="json")
+        return {
+            "name": self.name,
+            "grid_preset": self.grid_preset,
+            "grid_spec": spec,
+            "crosshair_sync": self.crosshair_sync,
+            "level_sync": self.level_sync,
+            "symbol_sync": self.symbol_sync,
+            "hotkey_slot": self.hotkey_slot,
+            "is_default": self.is_default,
+            "panes": tuple(p.db_values() for p in sorted(self.panes, key=lambda p: p.slot_index)),
         }
