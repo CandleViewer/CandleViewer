@@ -43,10 +43,10 @@ Not touched: `~/.claude/settings.json`, `~/.claude.json` user-scope MCP, Windows
 | Step | Status |
 |---|---|
 | Configuration prepared | **done** — doctor: 18 PASS |
-| Credential prerequisite (old exposed token revoked by admin; fresh token for existing agent; current connect code) | **pending — owner/admin action** |
-| Desktop/Code MCP connected | not yet (needs credentials + `/mcp` reconnect) |
-| Identity verified (`whoami` = candleviewer / main-orchestrator / isMain true) | not yet |
-| Human round trip (`[SETUP-CHECK] … 8236a4ad` → ACK nonce → ack → reply → close) | not yet |
+| Credential prerequisite | **owner decision 2026-10-14:** self-hosted, single user, public repo — the existing token is reused; no revocation (recorded verbatim in the session). Credentials entered into the ignored `settings.local.json`; doctor → READY |
+| MCP connected | **done** — direct Streamable-HTTP session to the hub (server `relayroom 0.1.0`, 14 tools); in-session `/mcp` reconnect pending |
+| Identity verified | **done** — `whoami` → project `candleviewer`, part `main-orchestrator`, `isMain: true`; `roster` shows this part online, `you: true`; `inbox` empty |
+| Human round trip | **sent** — progress event `01a13bd2-bbf3-7d42-b007-a09caffd2db8`; thread `01a13bd2-be93-7d19-ad57-085f57ab55be`, message `01a13bd2-bee1-7bfd-890e-eb6e8cb74732`, nonce `fb27e4f2`; **awaiting the owner's `ACK fb27e4f2` in the dashboard**, then ack → reply → close |
 | Out-of-scope changes | **none made** |
 | Other session's live behaviour | **not inspected** (no unrelated WSL project exists on this machine) |
 
