@@ -18,12 +18,40 @@ export interface paths {
     };
     /**
      * Query the append-only audit log
-     * @description The audit log is hash-chained (`entry_hash = SHA256(prev_hash || canonical_entry)`), so
-     *     tampering is detectable. Entries are never updated or deleted; retention is 2 years.
-     *     Access follows `04-security-program.md` §7.2.2 row 49 and SR-067: the Owner sees every
-     *     entry with raw payloads; a Manager (`audit:read`) sees only entries where it is the actor,
-     *     with `detail`, `ip` and `user_agent` removed — the `actor_user_id` filter is forced
-     *     server-side to the caller; a Viewer holds no `audit:read` and gets `403`.
+     * @description The audit log is append-only and hash-chained: each entry's `entry_hash` is SHA-256 over
+     *     its canonical serialisation and the previous entry's hash (`21-database-schema.md`
+     *     §3.10.1), so tampering is detectable. Entries are never updated or deleted and are kept
+     *     indefinitely (C-12.8).
+     *
+     *     **Access** (`04-security-program.md` §7.2.2 row 49, SR-067). The Owner sees every entry
+     *     with raw payloads. A Manager (`audit:read`) sees only entries it is the actor of, in the
+     *     redacted projection described on `AuditEntry`. The narrowing is applied in the data layer
+     *     on every page: an `actor_user_id` naming another user is replaced by the caller's own id,
+     *     so only the caller's entries come back, and the attempt is recorded as
+     *     `admin.audit_denied`. A Manager may not filter on fields its projection hides (`q`,
+     *     `ip`); that is `403 forbidden`. A Viewer holds no `audit:read` and gets `403` (owner
+     *     decision recorded on #2083).
+     *
+     *     **Filters** are combined with AND; repeating `action` matches any of the given codes.
+     *     `from` is inclusive and `to` exclusive. `q` matches the recorded, already-redacted
+     *     `detail` and the subject label; every term must match, case-insensitively. Redaction
+     *     applied when the entry was written is never reversed on read.
+     *
+     *     **Ordering and paging.** Newest first. Paging is keyset-based, never offset:
+     *     `meta.next_cursor` resumes strictly after the last returned entry, so entries appended
+     *     while a client pages are never skipped or duplicated. The cursor is opaque; a malformed or
+     *     foreign cursor is `400 invalid_cursor`. No match is `200` with `items: []`,
+     *     `chain_verified: true` and a null `meta.next_cursor`.
+     *
+     *     **Integrity.** `chain_verified` is true when every returned entry's `entry_hash`
+     *     recomputes from its stored fields and its `prev_hash` equals the `entry_hash` of the entry
+     *     before it in the chain, whether or not that entry is on this page. It is computed on the
+     *     full entries before any projection and does not cover the whole chain (`verifyAuditChain`
+     *     does).
+     *
+     *     Each successful call is itself audited (`admin.audit_read`: the filters, with `q` kept only
+     *     as a digest, and the returned count, never the entries). If that record cannot be written
+     *     the call fails with `503` and returns nothing.
      *
      *     Every state-changing API call, every order sent, every key operation, every kill-switch
      *     transition, every login (success and failure) and every rule arm/disarm produces an entry.
@@ -48,7 +76,29 @@ export interface paths {
     put?: never;
     /**
      * Export an audit slice as signed NDJSON
-     * @description Produces a downloadable NDJSON bundle with a detached signature over the file digest, for offline retention. Export itself is audited.
+     * @description Schedules an asynchronous export of the entries recorded in `[from, to)` as NDJSON (gzip
+     *     when `compress`), with a detached Ed25519 signature over the SHA-256 digest of the file,
+     *     for offline retention. Poll `GET /admin/jobs/{jobId}`; once the job succeeds its `result`
+     *     is an `AuditExportResult`.
+     *
+     *     **Who.** Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50), with a live
+     *     step-up elevation (SR-067). Until the session is elevated the call is refused with `403`
+     *     and `code: step_up_required`.
+     *
+     *     **Limits.** These are configured server-side, so that export cannot be used for
+     *     exfiltration or denial of service. A range longer than the configured maximum is
+     *     `422 validation_failed`: the problem `detail` and `errors[].rule` (`max_export_range`)
+     *     name the limit, and no job is created. Only one export may be queued or running
+     *     (`409 conflict`). Exports are rate-limited per caller (`429 rate_limited` with
+     *     `Retry-After`).
+     *
+     *     **Content.** Entries are exported exactly as stored, in chain order, as of the chain head
+     *     when the job starts. Redaction applied when an entry was written is preserved and nothing
+     *     is re-hydrated. The file is kept only until the result's `expires_at`.
+     *
+     *     **Audit.** The request is audited before the job exists (`admin.audit_export`); if that
+     *     record cannot be written the call fails with `503` and no job is created. Completion is
+     *     audited with the range, row count, file digest and actor, and so is every download.
      */
     post: operations["exportAuditLog"];
     delete?: never;
@@ -68,7 +118,21 @@ export interface paths {
     put?: never;
     /**
      * Verify the audit hash chain over a range
-     * @description Recomputes the chain and reports the first divergence, if any. Run nightly by a scheduled job and on demand from the Admin screen. Owner only (`04-security-program.md` §7.2.2 row 49a): a Manager holding `audit:read` is refused with `403`.
+     * @description Recomputes every entry in `[from_id, to_id]` in chain (id) order, in bounded batches, with
+     *     the trigger's canonical serialisation (`21-database-schema.md` §3.10.1), and checks that
+     *     each entry's `prev_hash` equals the `entry_hash` of the entry before it. The first entry of
+     *     the range is linked to its stored predecessor (genesis: 64 zeros). Checking stops at the
+     *     **first** divergence, reported as `first_bad_id`. A break is a `200` with
+     *     `verified: false`, never an error status. Ids increase but are not contiguous, so either
+     *     bound may name an id that does not exist. `from_id` defaults to the first entry and
+     *     `to_id` to the newest entry when the request starts; entries appended during the run are
+     *     not checked.
+     *
+     *     Owner only (`04-security-program.md` §7.2.2 row 49a): a Manager holding `audit:read` is
+     *     refused with `403`. Run nightly by a scheduled job and on demand from the Admin screen.
+     *     Every run is audited (`admin.audit_verify`, with the range and the result; severity
+     *     `critical` when `verified` is false), and a failed verification is also raised as a
+     *     critical security event.
      */
     post: operations["verifyAuditChain"];
     delete?: never;
@@ -285,7 +349,7 @@ export interface paths {
     };
     /**
      * Poll an asynchronous job (refresh, export, backup, verification, simulation)
-     * @description Uniform polling surface for every `202`-returning endpoint in this API.
+     * @description Uniform polling surface for every `202`-returning endpoint in this API. An unknown or evicted job id is `404 not_found`. `error` carries a stable code, never a message. For `kind: audit_export`, `result` is an `AuditExportResult` once `status` is `succeeded`.
      */
     get: operations["getJob"];
     put?: never;
@@ -4323,27 +4387,95 @@ export interface components {
       key?: components["schemas"]["ApiKey"];
       verification?: components["schemas"]["KeyVerification"];
     };
+    /** @description One audit-log entry. In a Manager's projection (SR-067) only the identity, action, subject, outcome, severity, request id and hash fields keep their values; every other field is null and `detail` is `{}`. */
     AuditEntry: {
-      action?: string;
-      /** Format: uuid */
-      actor_user_id?: string | null;
+      action: string;
+      /**
+       * Format: uuid
+       * @description Null for system and rule actors.
+       */
+      actor_user_id: string | null;
+      /** @description Actor label recorded at write time; survives user deletion. */
       actor_username?: string | null;
-      detail?: {
+      /** @description The recorded, already-redacted state change: `before` and `after`, each an object or null. `{}` in a Manager's projection. */
+      detail: {
+        after?: {
+          [key: string]: unknown;
+        } | null;
+        before?: {
+          [key: string]: unknown;
+        } | null;
+      } & {
         [key: string]: unknown;
       };
-      entry_hash?: string;
-      /** Format: int64 */
-      id?: number;
+      /** @description SHA-256 (hex) over this entry's canonical serialisation and `prev_hash`. */
+      entry_hash: string;
+      environment?: components["schemas"]["Environment"] | null;
+      /**
+       * Format: int64
+       * @description Chain position (`audit_log.id`); increasing, not contiguous.
+       */
+      id: number;
+      /** @description Actor IP address (PII). */
       ip?: string | null;
-      outcome?: components["schemas"]["AuditOutcome"];
-      prev_hash?: string | null;
+      outcome: components["schemas"]["AuditOutcome"];
+      /** @description `entry_hash` of the previous entry in the chain; 64 zeros for the first entry. */
+      prev_hash: string | null;
+      /** @description Denial reason or failure code. */
+      reason?: string | null;
+      /** @description Id of the request that produced the entry. */
       request_id?: string | null;
-      severity?: components["schemas"]["Severity"];
-      subject_id?: string | null;
-      subject_type?: string;
-      /** Format: date-time */
-      ts?: string;
+      /** Format: uuid */
+      session_id?: string | null;
+      severity: components["schemas"]["Severity"];
+      subject_id: string | null;
+      /** @description Human name of the subject at the time. */
+      subject_label?: string | null;
+      /** @description Recorded subject kind (`object_kind`). */
+      subject_type: string | null;
+      /**
+       * Format: date-time
+       * @description Event time recorded by the audit writer (UTC, microseconds).
+       */
+      ts: string;
       user_agent?: string | null;
+    };
+    /** @description `Job.result` of a succeeded `audit_export` job. The artefact is NDJSON in chain order (gzip when `compressed`). `signature` is a detached Ed25519 signature over the ASCII bytes `cv.audit.export.v1:` followed by the lowercase hex `sha256`. Verify it with the public key the Owner pinned for `key_id`, which is published out of band; never trust a key served next to the artefact. */
+    AuditExportResult: {
+      compressed: boolean;
+      /** @description Relative API URL of the artefact. Owner only (`audit:export`); every download is re-authorised and audited. */
+      download_url: string;
+      /**
+       * Format: date-time
+       * @description The artefact is deleted after this instant.
+       */
+      expires_at: string;
+      /** Format: int64 */
+      first_id?: number | null;
+      /**
+       * Format: date-time
+       * @description Requested inclusive start.
+       */
+      from: string;
+      /** @description Signing key identifier: key version and public-key fingerprint. */
+      key_id: string;
+      /** Format: int64 */
+      last_id?: number | null;
+      /** Format: int64 */
+      row_count: number;
+      /** @description SHA-256 (hex) of the artefact bytes exactly as downloaded. */
+      sha256: string;
+      /** @description Base64 of the 64-byte Ed25519 signature. */
+      signature: string;
+      /** @constant */
+      signature_alg: "ed25519";
+      /** Format: int64 */
+      size_bytes: number;
+      /**
+       * Format: date-time
+       * @description Requested exclusive end.
+       */
+      to: string;
     };
     /** @enum {string} */
     AuditOutcome: "success" | "failure" | "denied";
@@ -5396,9 +5528,13 @@ export interface components {
         | "reconciliation"
         | "archive_import";
       progress_pct?: number;
-      result?: {
-        [key: string]: unknown;
-      } | null;
+      /** @description Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult`; other kinds carry their own object. */
+      result?:
+        | components["schemas"]["AuditExportResult"]
+        | {
+            [key: string]: unknown;
+          }
+        | null;
       /** Format: date-time */
       started_at?: string | null;
       /** @enum {string} */
@@ -8047,36 +8183,26 @@ export interface operations {
   queryAuditLog: {
     parameters: {
       query?: {
-        /** @description Action codes, e.g. `order.place`, `key.rotate`, `killswitch.engage`. */
+        /** @description Registered action codes, e.g. `orders.submit`, `api_key.rotate`, `risk.freeze_manager`. Repeat the parameter to match any of several codes. */
         action?: string[];
+        /** @description Entries whose actor is this user. Replaced by the caller's id for a Manager. */
         actor_user_id?: string;
         /** @description Opaque forward cursor from `meta.next_cursor`. Cursors expire after 1 hour. */
         cursor?: components["parameters"]["Cursor"];
         /** @description Inclusive start of the time window (RFC 3339 UTC). */
         from?: components["parameters"]["From"];
+        /** @description Exact actor IP address (IPv4 or IPv6). Owner only; `403` for a Manager. */
         ip?: string;
         /** @description Page size. */
         limit?: components["parameters"]["Limit"];
         outcome?: components["schemas"]["AuditOutcome"];
-        /** @description Full-text search across the detail payload. */
+        /** @description Full-text search over the recorded (redacted) `detail` and the subject label; every term must match. Owner only; `403` for a Manager. */
         q?: string;
         severity?: components["schemas"]["Severity"];
+        /** @description Exact recorded subject id, usually combined with `subject_type`. */
         subject_id?: string;
-        subject_type?:
-          | "user"
-          | "exchange_account"
-          | "api_key"
-          | "order"
-          | "trade_group"
-          | "position"
-          | "rule"
-          | "alert"
-          | "recording"
-          | "replay"
-          | "feature_flag"
-          | "backup"
-          | "setting"
-          | "session";
+        /** @description Recorded subject kind (`object_kind`), e.g. `user`, `api_key`, `order`, `rule`, `alert`, `session`. Open-ended: every kind the audit writer records can be filtered. */
+        subject_type?: string;
         /** @description Exclusive end of the time window (RFC 3339 UTC). Defaults to now. */
         to?: components["parameters"]["To"];
       };
@@ -8093,19 +8219,25 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page"] & {
-            /** @description Whether the returned slice's hash chain verifies. */
-            chain_verified?: boolean;
+            /** @description Every returned entry recomputes and links to its chain predecessor (see the operation description). */
+            chain_verified: boolean;
             items?: components["schemas"]["AuditEntry"][];
           };
         };
       };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   exportAuditLog: {
     parameters: {
       query?: never;
       header: {
+        /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
+        "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
          *     against the session id the server resolves itself (not merely header == cookie). All
@@ -8121,11 +8253,20 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": {
-          /** @default true */
+          /**
+           * @description Gzip the NDJSON file.
+           * @default true
+           */
           compress?: boolean;
-          /** Format: date-time */
+          /**
+           * Format: date-time
+           * @description Inclusive start (UTC).
+           */
           from: string;
-          /** Format: date-time */
+          /**
+           * Format: date-time
+           * @description Exclusive end (UTC).
+           */
           to: string;
         };
       };
@@ -8138,14 +8279,19 @@ export interface operations {
         };
         content: {
           "application/json": {
-            /** @description Populated once the job completes. */
+            /** @description Always null here; the job's `result` carries the artefact. */
             download_url?: string | null;
             /** Format: uuid */
-            job_id?: string;
+            job_id: string;
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   verifyAuditChain: {
@@ -8167,9 +8313,15 @@ export interface operations {
     requestBody?: {
       content: {
         "application/json": {
-          /** Format: int64 */
+          /**
+           * Format: int64
+           * @description First id to check (inclusive). Default: the first entry.
+           */
           from_id?: number;
-          /** Format: int64 */
+          /**
+           * Format: int64
+           * @description Last id to check (inclusive). Default: the newest entry at the start.
+           */
           to_id?: number;
         };
       };
@@ -8183,17 +8335,27 @@ export interface operations {
         content: {
           "application/json": {
             /** Format: date-time */
-            checked_at?: string;
-            entries_checked?: number;
-            /** Format: int64 */
-            first_bad_id?: number | null;
-            verified?: boolean;
+            checked_at: string;
+            /**
+             * Format: int64
+             * @description Entries examined, including the first bad one.
+             */
+            entries_checked: number;
+            /**
+             * Format: int64
+             * @description First entry whose hash or link diverges; null when verified.
+             */
+            first_bad_id: number | null;
+            /** @description No divergence was found in the checked range. */
+            verified: boolean;
           };
         };
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listBackups: {
@@ -8554,6 +8716,8 @@ export interface operations {
           "application/json": components["schemas"]["Job"];
         };
       };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
     };
   };

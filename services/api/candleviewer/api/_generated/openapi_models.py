@@ -4262,22 +4262,60 @@ class HotkeyProfile(HotkeyProfileInput):
     updated_at: AwareDatetime | None = None
 
 
+class Detail(BaseModel):
+    model_config = ConfigDict(
+        extra="allow",
+    )
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+
+
 class AuditEntry(BaseModel):
-    id: int | None = None
-    ts: AwareDatetime | None = None
-    actor_user_id: UUID | None = None
-    actor_username: str | None = None
-    action: str | None = None
-    subject_type: str | None = None
-    subject_id: str | None = None
-    outcome: Literal["success", "failure", "denied"] | None = None
-    severity: Literal["debug", "info", "warning", "error", "critical"] | None = None
-    ip: str | None = None
+    id: Annotated[
+        int, Field(description="Chain position (`audit_log.id`); increasing, not contiguous.")
+    ]
+    ts: Annotated[
+        AwareDatetime,
+        Field(description="Event time recorded by the audit writer (UTC, microseconds)."),
+    ]
+    actor_user_id: Annotated[UUID | None, Field(description="Null for system and rule actors.")]
+    actor_username: Annotated[
+        str | None, Field(description="Actor label recorded at write time; survives user deletion.")
+    ] = None
+    action: str
+    subject_type: Annotated[str | None, Field(description="Recorded subject kind (`object_kind`).")]
+    subject_id: str | None
+    subject_label: Annotated[
+        str | None, Field(description="Human name of the subject at the time.")
+    ] = None
+    outcome: Literal["success", "failure", "denied"]
+    severity: Literal["debug", "info", "warning", "error", "critical"]
+    reason: Annotated[str | None, Field(description="Denial reason or failure code.")] = None
+    environment: Literal["live", "demo", "testnet"] | None = None
+    session_id: UUID | None = None
+    ip: Annotated[str | None, Field(description="Actor IP address (PII).")] = None
     user_agent: str | None = None
-    request_id: str | None = None
-    detail: dict[str, Any] | None = None
-    entry_hash: str | None = None
-    prev_hash: str | None = None
+    request_id: Annotated[
+        str | None, Field(description="Id of the request that produced the entry.")
+    ] = None
+    detail: Annotated[
+        Detail,
+        Field(
+            description="The recorded, already-redacted state change: `before` and `after`, each an object or null. `{}` in a Manager's projection."
+        ),
+    ]
+    entry_hash: Annotated[
+        str,
+        Field(
+            description="SHA-256 (hex) over this entry's canonical serialisation and `prev_hash`."
+        ),
+    ]
+    prev_hash: Annotated[
+        str | None,
+        Field(
+            description="`entry_hash` of the previous entry in the chain; 64 zeros for the first entry."
+        ),
+    ]
 
 
 class Component(BaseModel):
@@ -4373,27 +4411,41 @@ class Backup(BaseModel):
     error: str | None = None
 
 
-class Job(BaseModel):
-    id: UUID | None = None
-    kind: (
-        Literal[
-            "instrument_refresh",
-            "audit_export",
-            "backup",
-            "backup_verify",
-            "rule_simulation",
-            "retention_sweep",
-            "reconciliation",
-            "archive_import",
-        ]
-        | None
-    ) = None
-    status: Literal["queued", "running", "succeeded", "failed", "cancelled"] | None = None
-    progress_pct: Annotated[float | None, Field(ge=0.0, le=100.0)] = None
-    started_at: AwareDatetime | None = None
-    finished_at: AwareDatetime | None = None
-    result: dict[str, Any] | None = None
-    error: str | None = None
+class AuditExportResult(BaseModel):
+    download_url: Annotated[
+        str,
+        Field(
+            description="Relative API URL of the artefact. Owner only (`audit:export`); every download is re-authorised and audited."
+        ),
+    ]
+    sha256: Annotated[
+        str,
+        Field(
+            description="SHA-256 (hex) of the artefact bytes exactly as downloaded.",
+            pattern="^[0-9a-f]{64}$",
+        ),
+    ]
+    signature: Annotated[
+        str,
+        Field(
+            description="Base64 of the 64-byte Ed25519 signature.",
+            json_schema_extra={"contentEncoding": "base64"},
+        ),
+    ]
+    signature_alg: Literal["ed25519"]
+    key_id: Annotated[
+        str, Field(description="Signing key identifier: key version and public-key fingerprint.")
+    ]
+    compressed: bool
+    size_bytes: Annotated[int, Field(ge=0)]
+    row_count: Annotated[int, Field(ge=0)]
+    from_: Annotated[AwareDatetime, Field(alias="from", description="Requested inclusive start.")]
+    to: Annotated[AwareDatetime, Field(description="Requested exclusive end.")]
+    first_id: int | None = None
+    last_id: int | None = None
+    expires_at: Annotated[
+        AwareDatetime, Field(description="The artefact is deleted after this instant.")
+    ]
 
 
 class Account1(BaseModel):
@@ -5444,6 +5496,34 @@ class LayoutGridTabset(BaseModel):
     active: Annotated[
         int | None, Field(description="Index of the visible tab in `children`.", ge=0, le=15)
     ] = 0
+
+
+class Job(BaseModel):
+    id: UUID | None = None
+    kind: (
+        Literal[
+            "instrument_refresh",
+            "audit_export",
+            "backup",
+            "backup_verify",
+            "rule_simulation",
+            "retention_sweep",
+            "reconciliation",
+            "archive_import",
+        ]
+        | None
+    ) = None
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"] | None = None
+    progress_pct: Annotated[float | None, Field(ge=0.0, le=100.0)] = None
+    started_at: AwareDatetime | None = None
+    finished_at: AwareDatetime | None = None
+    result: Annotated[
+        AuditExportResult | dict[str, Any] | None,
+        Field(
+            description="Kind-specific outcome once `status` is `succeeded`, otherwise null. For `kind: audit_export` it is an `AuditExportResult`; other kinds carry their own object."
+        ),
+    ] = None
+    error: str | None = None
 
 
 class Watchlist(WatchlistInput):
