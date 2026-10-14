@@ -37,7 +37,6 @@ from candleviewer.audit.models import (
     AuditPage,
     AuditPageMeta,
     AuditQueryRequest,
-    ExportResult,
     Severity,
     VerifyResult,
 )
@@ -53,7 +52,6 @@ class _FakeQuery:
     def __init__(self) -> None:
         self.query_calls: list[dict[str, Any]] = []
         self.verify_calls: list[dict[str, Any]] = []
-        self.export_calls: list[dict[str, Any]] = []
 
     async def query(self, **kwargs: Any) -> AuditPage:
         # Mirrors `AuditQueryService.query`'s own validation (QA defect
@@ -69,10 +67,6 @@ class _FakeQuery:
         return VerifyResult(
             verified=True, entries_checked=0, first_bad_id=None, checked_at=datetime.now(UTC)
         )
-
-    async def schedule_export(self, **kwargs: Any) -> ExportResult:
-        self.export_calls.append(kwargs)
-        return ExportResult(job_id=uuid.uuid4(), download_url=None)
 
 
 class _FakeWriter:
@@ -177,26 +171,53 @@ def test_verify_audit_chain_returns_200_for_authorized_caller() -> None:
     assert len(service.query_service.verify_calls) == 1
 
 
-def test_export_audit_log_returns_202_for_authorized_owner() -> None:
+_EXPORT_BODY = {"from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z"}
+
+
+def test_export_owner_gets_501_not_implemented_without_job_or_record() -> None:
     service = _FakeAuditService()
     client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post(
-        "/admin/audit/export",
-        json={"from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z"},
-    )
-    assert response.status_code == 202
-    assert "job_id" in response.json()
-    assert len(service.query_service.export_calls) == 1
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert response.status_code == 501
+    body = response.json()
+    assert body["type"].endswith("/errors/not_implemented")
+    assert "job_id" not in body and "job_id" not in response.text
+    assert service.writer_service.emitted == []
 
 
-def test_export_audit_log_denied_for_read_only_viewer() -> None:
+@pytest.mark.parametrize(
+    "principal", [_manager_with_read, _manager, _viewer_no_export], ids=["read", "noread", "viewer"]
+)
+def test_export_non_owner_gets_403_with_one_denied_record(principal: Any) -> None:
     service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_viewer_no_export())))
+    client = TestClient(_app(service, _FakeResolver(principal())))
+    assert client.post("/admin/audit/export", json=_EXPORT_BODY).status_code == 403
+    assert _actions(service) == ["admin.audit_denied"]
+
+
+def test_export_unauthenticated_gets_401() -> None:
+    client = TestClient(_app(_FakeAuditService(), _FakeResolver(None)))
+    assert client.post("/admin/audit/export", json=_EXPORT_BODY).status_code == 401
+
+
+def test_export_unauthenticated_with_malformed_body_still_401() -> None:
+    client = TestClient(_app(_FakeAuditService(), _FakeResolver(None)))
     response = client.post(
-        "/admin/audit/export",
-        json={"from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z"},
+        "/admin/audit/export", content=b"{not json", headers={"content-type": "application/json"}
     )
-    assert response.status_code == 403
+    assert response.status_code == 401
+
+
+def test_export_no_resolver_wired_gives_501_not_implemented_code() -> None:
+    client = TestClient(_app(_FakeAuditService(), None))
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert response.status_code == 501
+    assert response.json()["type"].endswith("/errors/not_implemented")
+
+
+def test_export_backend_not_wired_gives_503() -> None:
+    client = TestClient(_app(None, _FakeResolver(_owner())))
+    assert client.post("/admin/audit/export", json=_EXPORT_BODY).status_code == 503
 
 
 def test_inactive_audit_service_returns_503() -> None:
@@ -281,44 +302,6 @@ def test_verify_audit_chain_rejects_non_integer_from_id() -> None:
     service = _FakeAuditService()
     client = TestClient(_app(service, _FakeResolver(_owner())))
     response = client.post("/admin/audit/verify", json={"from_id": "not-an-id"})
-    assert response.status_code == 400
-
-
-def test_export_audit_log_rejects_malformed_timestamp_with_400_not_500() -> None:
-    """PR #1608 review finding 3: a bad `from`/`to` string used to reach
-    `_parse_ts` and raise an unhandled `ValueError` (500)."""
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post(
-        "/admin/audit/export", json={"from": "not-a-timestamp", "to": "2026-01-02T00:00:00Z"}
-    )
-    assert response.status_code == 400
-
-
-def test_export_audit_log_rejects_naive_datetime() -> None:
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post(
-        "/admin/audit/export",
-        json={"from": "2026-01-01T00:00:00", "to": "2026-01-02T00:00:00"},
-    )
-    assert response.status_code == 400
-
-
-def test_export_audit_log_rejects_from_after_to() -> None:
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post(
-        "/admin/audit/export",
-        json={"from": "2026-01-02T00:00:00Z", "to": "2026-01-01T00:00:00Z"},
-    )
-    assert response.status_code == 400
-
-
-def test_export_audit_log_rejects_missing_from() -> None:
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(_owner())))
-    response = client.post("/admin/audit/export", json={"to": "2026-01-02T00:00:00Z"})
     assert response.status_code == 400
 
 

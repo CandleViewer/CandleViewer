@@ -60,7 +60,6 @@ from candleviewer.audit.cursor import AuditCursor, InvalidAuditCursor, decode_cu
 from candleviewer.audit.hashing import ChainHasherBusy
 from candleviewer.audit.models import (
     AUDIT_QUERY_DEFAULT_LIMIT,
-    AuditExportRequest,
     AuditOutcome,
     AuditQueryRequest,
     AuditVerifyRequest,
@@ -123,8 +122,6 @@ class AuditQueryServiceLike(Protocol):
     async def verify(
         self, *, from_id: int | None = None, to_id: int | None = None, batch_size: int = 5_000
     ) -> Any: ...
-
-    async def schedule_export(self, *, from_ts: datetime, to_ts: datetime) -> Any: ...
 
 
 class AuditWriterLike(_Emitter, Protocol):
@@ -323,6 +320,7 @@ def make_audit_router(
                     "Not implemented",
                     "no principal resolver wired — session verification is out of this "
                     "ticket's scope",
+                    code="not_implemented",
                 )
             )
         principal = await principal_resolver.resolve(request)
@@ -529,17 +527,19 @@ def make_audit_router(
         return JSONResponse(status_code=200, content=_jsonable(result))
 
     @router.post("/export")
-    async def export_audit_log(request: Request, body: dict[str, Any]) -> JSONResponse:
+    async def export_audit_log(request: Request) -> JSONResponse:
+        """Deliberate stub until owner decision D1 (export signing-key custody,
+        E42-T02 design §6.3, #889). Authorisation runs first (401/403), then
+        `501 not_implemented`. No body is parsed (no pre-auth 422), no job or
+        artefact is created and no `admin.audit_export` record is written, since
+        nothing is exported. The `202` job flow arrives with the export slice."""
         try:
-            service, _, _ = await _authorize_or_raise(request, "export")
+            await _authorize_or_raise(request, "export")
         except _HttpProblem as problem:
             return problem.response
-        try:
-            req = AuditExportRequest.model_validate(body)
-        except ValidationError as exc:
-            return _invalid(exc, AuditExportRequest, 400)
-        result = await service.query.schedule_export(from_ts=req.from_ts, to_ts=req.to_ts)
-        return JSONResponse(status_code=202, content=_jsonable(result))
+        return _problem(
+            501, "Not implemented", "Audit export is not available yet.", code="not_implemented"
+        )
 
     return router
 
