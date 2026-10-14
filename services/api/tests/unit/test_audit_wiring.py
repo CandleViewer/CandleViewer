@@ -34,15 +34,15 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
             audit_record_budget_owner_per_hour=13,
             audit_read_flush_pages=17,
             audit_read_flush_seconds=19.0,
-            audit_budget_tracked_users=23,
+            audit_budget_tracked_users=71,
             audit_inflight_writes=29,
         )
     )
     lim, bud = seen["limiter"], seen["budget"]
-    assert (lim._rate, lim._max_concurrent, lim._cap) == (7, 3, 23)
+    assert (lim._rate, lim._max_concurrent, lim._cap) == (7, 3, 71)
     assert seen["query_timeout_ms"] == 1500
     assert (bud._per_hour, bud._owner_per_hour) == (11, 13)
     assert (bud._flush_pages, bud._flush_s) == (17, 19.0)
-    assert (bud._tracked, bud._inflight_cap) == (23, 29)
+    assert (bud._tracked, bud._inflight_cap) == (71, 29)
     flush = app.state.audit_budget_flush
     assert flush._budget is bud and flush._interval_s == 19.0  # one budget, ticked by the task
