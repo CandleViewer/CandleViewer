@@ -4315,6 +4315,13 @@ class Detail(BaseModel):
     )
     before: dict[str, Any] | None = None
     after: dict[str, Any] | None = None
+    elided: Annotated[
+        list[Literal["before", "after"]] | None,
+        Field(
+            description="States the server withholds (over its size caps for a page, not a JSON object, or nested deeper than 128 levels); absent when none were withheld. A stored `null` state is never listed.",
+            max_length=2,
+        ),
+    ] = None
 
 
 class AuditEntry(BaseModel):
@@ -4356,7 +4363,7 @@ class AuditEntry(BaseModel):
     detail: Annotated[
         Detail,
         Field(
-            description="The recorded, already-redacted state change: `before` and `after`, each an object or null. `{}` in a Manager's projection."
+            description="The recorded, already-redacted state change: `before` and `after`, each an object or null. `{}` in a Manager's projection. A state the server withholds (over its size caps for a page, not a JSON object, or nested deeper than 128 levels) is `null` and its name is listed in `elided`. A stored `null` state is never listed."
         ),
     ]
     entry_hash: Annotated[
