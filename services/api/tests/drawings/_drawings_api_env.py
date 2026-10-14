@@ -186,7 +186,7 @@ class Audit:
 class Env:
     """Router-only app with a fake repository; `user` is the caller (None = no session)."""
 
-    def __init__(self, *, wired: bool = True, metrics: Any = None) -> None:
+    def __init__(self, *, wired: bool = True, metrics: Any = None, idempotency: Any = None) -> None:
         self.repo, self.audit = FakeDrawingRepo(), Audit()
         self.user: uuid.UUID | None = USER_A
         self.repo_up, self.now = True, T0.timestamp()  # store reachable; the router's clock
@@ -205,7 +205,7 @@ class Env:
         app = FastAPI()
         app.include_router(make_drawings_router(
             lambda: self.repo if self.repo_up else None, _Resolver() if wired else None,
-            self.audit, clock=lambda: self.now, metrics=metrics,
+            self.audit, clock=lambda: self.now, metrics=metrics, idempotency=idempotency,
         ))  # fmt: skip
         self.c = TestClient(app)
 
