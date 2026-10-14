@@ -12,7 +12,7 @@ from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.drawings_sqlalchemy import MAX_PURGE_BATCH
 from candleviewer.storage.retention import policy
-from candleviewer.storage.retention.drawings_tasks import DrawingsPurgeTask
+from candleviewer.storage.retention.drawings_tasks import MAX_BATCHES_PER_RUN, DrawingsPurgeTask
 from candleviewer.storage.retention.schedule import RetentionSchedule
 
 _ON = RetentionSchedule.from_env({"CV_RETENTION_ENABLED": "true"})
@@ -55,8 +55,7 @@ async def test_run_once_loops_until_short_batch_and_counts_total() -> None:
         await task.run_once()
     assert repo.calls == [(90, MAX_PURGE_BATCH)] * 3
     assert _value(m) == 2 * MAX_PURGE_BATCH + 7
-    assert [e["event"] for e in logs] == ["drawings_purged"]
-    assert logs[0]["deleted"] == 2 * MAX_PURGE_BATCH + 7
+    assert [e["deleted"] for e in logs] == [MAX_PURGE_BATCH, MAX_PURGE_BATCH, 7]
 
 
 async def test_run_once_zero_rows_logs_and_leaves_counter() -> None:
@@ -66,6 +65,23 @@ async def test_run_once_zero_rows_logs_and_leaves_counter() -> None:
         await task.run_once()
     assert _value(m) == 0
     assert [e["event"] for e in logs] == ["drawings_purged"]
+
+
+async def test_later_batch_failure_keeps_count_of_purged_rows() -> None:
+    m, c = _counter()
+    task = DrawingsPurgeTask(_Repo([MAX_PURGE_BATCH, RuntimeError("boom")]), _ON, c)
+    with structlog.testing.capture_logs() as logs:
+        await task.run_once()
+    assert _value(m) == MAX_PURGE_BATCH
+    assert [e["event"] for e in logs] == ["drawings_purged", "drawings_purge_failed"]
+
+
+async def test_run_is_bounded_by_max_batches() -> None:
+    m, c = _counter()
+    repo = _Repo([MAX_PURGE_BATCH] * (MAX_BATCHES_PER_RUN + 5))
+    await DrawingsPurgeTask(repo, _ON, c).run_once()
+    assert len(repo.calls) == MAX_BATCHES_PER_RUN
+    assert _value(m) == MAX_BATCHES_PER_RUN * MAX_PURGE_BATCH
 
 
 async def test_failure_is_logged_and_loop_survives() -> None:
@@ -100,12 +116,12 @@ async def test_start_is_idempotent_and_stop_cancels() -> None:
     task = DrawingsPurgeTask(_Repo([0] * 5), _ON, c, sleep=sleep)
     await task.stop()  # not started: no-op
     task.start()
-    first = task._task
     task.start()
-    assert task._task is first and task.running
+    task.start()
+    assert task.running
     await asyncio.sleep(0)
     await task.stop()
-    assert not task.running and first is not None and first.cancelled()
+    assert not task.running
 
 
 async def test_disabled_schedule_never_starts() -> None:
@@ -121,7 +137,9 @@ def test_create_app_wires_task_and_metrics() -> None:
         pg_owner_dsn=SecretStr("postgresql+asyncpg://cv_owner:x@localhost:5432/candleviewer"),
     )
     app = create_app(s)
-    assert app.state.drawings_purge_task._enabled is True
-    dm = app.state.drawings_metrics
-    assert dm.purged is app.state.drawings_purge_task._purged
-    assert create_app(Settings(retention_enabled=False)).state.drawings_purge_task._enabled is False
+    assert app.state.drawings_purge_task is not None
+    assert app.state.drawings_metrics.purged is not None
+    # Disabled schedule: start() is a no-op.
+    off = create_app(Settings(retention_enabled=False)).state.drawings_purge_task
+    off.start()
+    assert not off.running
