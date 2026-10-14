@@ -1020,6 +1020,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E14",
     ),
     _s(
+        "cv_drawings_rows",
+        "gauge",
+        "rows",
+        ("tool",),
+        "Live (not soft-deleted) drawings by tool, all owners (E14-T01).",
+        "dashboard only",
+        _P,
+        "E14",
+        max_series=25,
+    ),
+    _s(
         "cv_outbox_depth",
         "gauge",
         "rows",

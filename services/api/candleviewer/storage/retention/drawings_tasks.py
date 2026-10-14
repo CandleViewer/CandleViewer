@@ -12,7 +12,7 @@ reused" holds within the retention window only (residual R4 on #357).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -42,10 +42,13 @@ class DrawingsMetrics:
     batch_ops: BoundedMetric
     conflicts: BoundedMetric
     purged: BoundedMetric
+    rows: BoundedMetric  # cv_drawings_rows{tool}: live drawings per tool (set by the purge task)
 
 
 class _Purger(Protocol):
     async def purge_deleted(self, older_than_days: int, limit: int) -> int: ...
+
+    async def count_live_by_tool(self) -> dict[str, int]: ...
 
 
 class DrawingsPurgeTask:
@@ -54,6 +57,8 @@ class DrawingsPurgeTask:
         repo: _Purger,
         schedule: RetentionSchedule,
         purged: BoundedMetric,
+        rows: BoundedMetric,
+        tools: Sequence[str],
         *,
         interval_s: float = INTERVAL_SECONDS,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -61,6 +66,8 @@ class DrawingsPurgeTask:
         self._repo = repo
         self._enabled = bool(schedule.drawings_jobs())
         self._purged = purged
+        self._rows = rows
+        self._tools = tuple(tools)  # the closed TOOLS set, injected (storage must not import api)
         self._interval_s = interval_s
         self._sleep = sleep
         self._task: asyncio.Task[None] | None = None
@@ -70,6 +77,19 @@ class DrawingsPurgeTask:
         return self._task is not None and not self._task.done()
 
     async def run_once(self) -> None:
+        await self._purge()
+        await self._sample_rows()  # also the start-up sample: the loop's first run
+
+    async def _sample_rows(self) -> None:
+        """Set `cv_drawings_rows{tool}` for the closed tool set; a failure never stops the loop."""
+        try:
+            counts = await self._repo.count_live_by_tool()
+            for tool in self._tools:
+                self._rows.labels(tool).set(counts.get(tool, 0))
+        except Exception:
+            logger().exception("drawings_rows_sample_failed")
+
+    async def _purge(self) -> None:
         # Count and log per batch so a later failure never loses rows already purged.
         try:
             for _ in range(MAX_BATCHES_PER_RUN):

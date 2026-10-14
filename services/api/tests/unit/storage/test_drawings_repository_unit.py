@@ -109,7 +109,7 @@ _STATEMENTS = {n: v for n, v in vars(mod).items() if isinstance(v, sa.TextClause
 def test_the_statement_set_is_pinned() -> None:
     assert set(_STATEMENTS) == {
         "_INSERT", "_GET", "_EXISTS_OTHER", "_LIST", "_UPDATE", "_SOFT_DELETE", "_SNAPSHOT",
-        "_PURGE",
+        "_PURGE", "_COUNT_LIVE",
     }  # fmt: skip
 
 
@@ -123,7 +123,7 @@ def test_every_statement_is_owner_scoped_except_the_unscoped_ones(name: str) -> 
 
 
 def test_only_three_statements_are_unscoped() -> None:
-    assert mod.UNSCOPED == frozenset({"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE"})
+    assert mod.UNSCOPED == frozenset({"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE", "_COUNT_LIVE"})
     assert set(mod.UNSCOPED) <= set(_STATEMENTS)
 
 
