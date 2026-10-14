@@ -324,9 +324,12 @@ class SessionService:
             raise SessionNotFound("no such session")
 
         now = self._clock()
-        if session.is_absolute_expired(now=now) and not session.is_revoked:
-            revoked = await self._repository.revoke(session_id, reason="expired", now=now)
-            session = revoked or session
+        if session.is_absolute_expired(now=now):
+            # Fail closed: revoke() returns None when a concurrent caller won
+            # the race, and the stale copy must never be accepted (#2273).
+            if not session.is_revoked:
+                await self._repository.revoke(session_id, reason="expired", now=now)
+            raise SessionRevoked(session.revoked_reason or "expired")
 
         if session.is_revoked:
             raise SessionRevoked(session.revoked_reason or "revoked")
