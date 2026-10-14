@@ -166,7 +166,12 @@ class Harness:
         return self
 
     def merge(
-        self, *, budget_bytes: int = ROOMY, window_us: int = 30 * SECOND, timeout_s: float = 5.0
+        self,
+        *,
+        budget_bytes: int = ROOMY,
+        window_us: int = 30 * SECOND,
+        timeout_s: float = 5.0,
+        max_rows: int = 1 << 20,
     ) -> RecordedMerge:
         return RecordedMerge(
             self.req,
@@ -174,6 +179,7 @@ class Harness:
             budget_bytes=budget_bytes,
             window_us=window_us,
             io_timeout_s=timeout_s,
+            max_rows_per_read=max_rows,
         )
 
     async def read_all(

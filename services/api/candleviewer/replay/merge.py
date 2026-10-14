@@ -26,7 +26,9 @@ explicit tier is an operator override: no coverage checks, so a span it lacks re
 
 **Memory.** The cursors share `budget_bytes`: each read is capped at its cursor's share in rows,
 so a stream too dense for even a 1 µs window raises `ReplayMemoryCeilingExceeded` instead of
-growing memory. Every storage await is bounded by `io_timeout_s`.
+growing memory. Tiers map rows off the event loop; a read is also capped at
+`max_rows_per_read` rows so the sort and dedup the merge then does on the loop stays short
+(C-2.17). Every storage await is bounded by `io_timeout_s`.
 """
 
 from __future__ import annotations
@@ -34,7 +36,7 @@ from __future__ import annotations
 import asyncio
 import heapq
 import time
-from collections.abc import AsyncIterator, Awaitable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Sequence
 from operator import itemgetter
 from typing import Any, Final, Literal
 
@@ -42,6 +44,7 @@ import structlog
 
 from candleviewer.observability.metrics import Counter, Histogram
 from candleviewer.replay.errors import (
+    ReplayError,
     ReplayMemoryCeilingExceeded,
     ReplayRequestInvalid,
     ReplaySourceUnavailable,
@@ -80,6 +83,9 @@ ANCHOR_LOOKBACK_US: Final = 3_600 * US_PER_SECOND
 DEFAULT_WINDOW_US: Final = 30 * US_PER_SECOND
 DEFAULT_MAX_WINDOW_US: Final = 3_600 * US_PER_SECOND
 DEFAULT_IO_TIMEOUT_S: Final = 30.0
+#: Rows one read may return. Sorting and deduplicating this many on the event loop took
+#: ~8 ms on a laptop, well inside C-2.17's 50 ms (the tiers map rows off the loop).
+DEFAULT_MAX_ROWS_PER_READ: Final = 8_192
 _RANK_GAP: Final = 0
 _RANK_EVENT: Final = 1
 #: Order-of-magnitude bytes per buffered event (E26-K01 measured ~0.4 KB/event) and per
@@ -213,6 +219,7 @@ class RecordedMerge:
         window_us: int = DEFAULT_WINDOW_US,
         max_window_us: int = DEFAULT_MAX_WINDOW_US,
         io_timeout_s: float = DEFAULT_IO_TIMEOUT_S,
+        max_rows_per_read: int = DEFAULT_MAX_ROWS_PER_READ,
     ) -> None:
         self._request = request
         self._tiers = tiers
@@ -226,7 +233,7 @@ class RecordedMerge:
         self._cursors: list[_Cursor] = []
         for symbol_ord, symbol in enumerate(self._symbols):
             for stream in streams:
-                row_cap = share // row_bytes(stream, request.depth)
+                row_cap = min(share // row_bytes(stream, request.depth), max_rows_per_read)
                 if row_cap < 1:
                     raise ReplayMemoryCeilingExceeded(
                         budget_bytes=budget_bytes, symbol=symbol, stream=stream
@@ -242,9 +249,10 @@ class RecordedMerge:
                 )
                 self._cursors.append(cursor)
 
-    async def batches(self, *, max_events: int, max_bytes: int) -> AsyncIterator[list[ReplayItem]]:
+    async def batches(self, *, max_events: int, max_bytes: int) -> AsyncGenerator[list[ReplayItem]]:
         """The merged items in order, cut into batches of at most `max_events` items or about
-        `max_bytes` estimated bytes, whichever binds first."""
+        `max_bytes` estimated bytes, whichever binds first. If a read fails, the items merged
+        before it are yielded first and the typed error is raised after them."""
         await self.tier()  # refuse a straddling `auto` session before reading any event
         inputs: list[_Input] = [*self._cursors, _Input(await self._gap_markers())]
         marker_index = len(inputs) - 1
@@ -266,7 +274,11 @@ class RecordedMerge:
             if index == marker_index:
                 replay_gap_warnings_total.inc()
             if source.pos >= len(source.buf) and source.more:
-                await self._fill(source)
+                try:
+                    await self._fill(source)
+                except ReplayError:
+                    yield batch  # holds at least the item just merged; all of it is in order
+                    raise
             if source.pos < len(source.buf):
                 heapq.heapreplace(heap, (source.buf[source.pos][0], index))
             else:

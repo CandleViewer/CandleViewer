@@ -105,6 +105,17 @@ async def test_a_capped_read_is_halved_and_reread_without_losing_rows() -> None:
     assert harness.hot.reads > 400 // 50
 
 
+async def test_reads_are_capped_at_max_rows_per_read_without_losing_rows() -> None:
+    """C-2.17: one await never maps or sorts more than `max_rows_per_read` rows."""
+    harness = Harness(hot=[trade(i, trade_id=f"r{i:03}") for i in range(100)])
+    merge = harness.merge(max_rows=10)
+
+    got = [item async for b in merge.batches(max_events=1_000, max_bytes=ROOMY) for item in b]
+
+    assert len(got) == 100
+    assert harness.hot.reads >= 10
+
+
 async def test_a_sparse_stream_widens_its_read_window() -> None:
     hourly = [trade(hour * 3_600 * SECOND) for hour in range(3)]
     harness = Harness(hot=hourly, req=request(end_us=3 * 3_600 * SECOND))

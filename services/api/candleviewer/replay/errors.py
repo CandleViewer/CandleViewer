@@ -23,6 +23,13 @@ class ReplayRequestInvalid(ReplayError, ValueError):
     code = "REPLAY_REQUEST_INVALID"
 
 
+class ReplayWindowTooLarge(ReplayRequestInvalid):
+    """The window exceeds the source's span cap (defence in depth behind E26-T01's
+    `CV_REPLAY_MAX_WINDOW_HOURS`), so a crafted request cannot scan the whole lake."""
+
+    code = "REPLAY_WINDOW_TOO_LARGE"
+
+
 class ReplayMemoryCeilingExceeded(ReplayError):
     """The per-session memory budget cannot hold even the smallest read of one stream: the
     replay stops with this error instead of growing memory (ticket E26-T02)."""
