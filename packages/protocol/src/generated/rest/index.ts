@@ -3865,8 +3865,10 @@ export interface paths {
      *     accepted on input only, as leniency. Any other value, including `*` and a list of tags, is
      *     unparseable.
      *
-     *     Evaluation order for every operation in this group (steps that do not apply are skipped):
-     *     `401`; `403` (permission, CSRF); `413`; `422` (path, headers, body); `404` (missing,
+     *     Evaluation order for the `/workspaces*` and `/layout-presets` operations (steps that do not
+     *     apply are skipped): `401`; `403` (permission, CSRF); `413`; `422` (path, headers, body);
+     *     `400 invalid_cursor` (lists); `Idempotency-Key` replay (stored 2xx + `Idempotency-Replayed:
+     *     true`) or `409 idempotency_key_reuse`; `404` (missing,
      *     soft-deleted or another user's, identical); no-op `200` (the body changes nothing: unchanged
      *     token, no write, even when `If-Match` is stale or unparseable, as the change is already
      *     applied, RFC 9110 §13.1.1); `412 version_conflict` (stale or unparseable `If-Match`, nothing
@@ -6172,7 +6174,7 @@ export interface components {
       sync_group?: "A" | "B" | "C" | null;
     };
     /**
-     * @description `<bar_type>:<param>`, exactly the `bar_type` and `param` of `/market/bars` (and of the WS topic `bars.{symbol}.{bar_type}.{param}`): `param` at most 24 characters, no leading zeros, e.g. `time:1`, `time:D`, `tick:500`, `volume:0.5`, `renko:atr:14`, `pnf:10:3`. A `volume` or `delta` threshold must also be greater than 0 (`422` rule `interval_not_positive`).
+     * @description `<bar_type>:<param>`, exactly the `bar_type` and `param` of `/market/bars` (and of the WS topic `bars.{symbol}.{bar_type}.{param}`): `param` at most 24 characters, no leading zeros, and no trailing zeros in a `volume`/`delta` fraction, so each value has one spelling (`volume:0.5`, never `volume:0.50`), e.g. `time:1`, `time:D`, `tick:500`, `volume:0.5`, `renko:atr:14`, `pnf:10:3`. A `volume` or `delta` threshold must also be greater than 0 (`422` rule `interval_not_positive`).
      * @example time:1
      * @example time:240
      * @example tick:500
