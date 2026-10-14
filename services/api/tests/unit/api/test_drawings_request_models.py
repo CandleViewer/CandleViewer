@@ -15,6 +15,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import BaseModel, ValidationError
+from pydantic_core import InitErrorDetails, PydanticCustomError
 
 from candleviewer.api import drawings_models as dm
 from candleviewer.api.drawings_models import (
@@ -29,6 +30,8 @@ T0 = "2026-01-01T00:00:00Z"
 ID1 = "0190c2a0-0000-7000-8000-000000000001"
 ID2 = "0190c2a0-0000-7000-8000-000000000002"
 ID3 = "0190c2a0-0000-7000-8000-000000000003"
+# Spec regex written out literally so a wrong module pattern is caught.
+SPEC_P_PATTERN = r"^-?(0|[1-9][0-9]{0,14})(\.[0-9]{1,12})?$"
 TOKEN = "2026-01-01T00:00:00.123456Z"  # noqa: S105  # updated_at concurrency token, not a secret
 # Independent copy of the contract table so these tests do not trust POINT_COUNTS itself.
 _COUNT_GROUPS: dict[tuple[int, int], tuple[str, ...]] = {
@@ -204,7 +207,7 @@ def test_db_values_style_keeps_only_set_keys() -> None:
     assert v["style"] == {"width": 2, "dash": "dashed"}
 
 
-@given(st.lists(st.from_regex(dm._P_PATTERN, fullmatch=True), min_size=2, max_size=2))
+@given(st.lists(st.from_regex(SPEC_P_PATTERN, fullmatch=True), min_size=2, max_size=2))
 def test_point_prices_round_trip_verbatim_through_db_values(ps: list[str]) -> None:
     d = body()
     d["geometry"]["points"] = [{"t": T0, "p": p} for p in ps]
@@ -307,7 +310,7 @@ def test_batch_operations_missing_or_not_a_list_is_rejected() -> None:
 
 
 # ------------------------------------------------------------------ format_errors
-def test_format_errors_entries_have_exactly_field_rule_message_and_never_echo_input() -> None:
+def test_format_errors_entries_have_exactly_field_rule_message_and_never_echo_values() -> None:
     with pytest.raises(ValidationError) as ei:
         DrawingIn.model_validate(body(symbol="SECRET-VALUE"))
     (e,) = format_errors(ei.value)
@@ -339,3 +342,41 @@ def test_format_errors_prefix_root_and_numeric_segments() -> None:
 def test_module_size_constants_match_the_contract() -> None:
     sizes = (dm.MAX_BATCH_OPS, dm.MAX_SINGLE_BODY_BYTES, dm.MAX_BATCH_BODY_BYTES, dm.MAX_JSON_DEPTH)
     assert sizes == (200, 64 * 1024, 1024 * 1024, 16)
+
+
+def test_format_errors_unknown_key_in_field_is_sanitised_and_capped_at_64() -> None:
+    key = "k\u202e\n" + "x" * 5000
+    (e,) = format_errors(_exc(DrawingIn, {**body(), key: 1}))
+    seg = e["field"]
+    assert e["rule"] == "extra_forbidden"
+    assert "\u202e" not in seg and "\n" not in seg
+    assert len(seg) == 65 and seg.endswith("\u2026") and seg.startswith("kxxx")
+
+
+def test_format_errors_short_unknown_key_is_not_truncated() -> None:
+    assert format_errors(_exc(DrawingIn, {**body(), "ab": 1}))[0]["field"] == "ab"
+
+
+@pytest.mark.parametrize("op", ["\u202e" * 1024 * 1024, "evil\n"])
+def test_format_errors_bad_op_uses_the_fixed_message(op: str) -> None:
+    (e,) = format_errors(_exc(BatchIn, {"operations": [{"op": op}]}))
+    assert e["rule"] == "union_tag_invalid"
+    assert e["message"] == "op must be one of create, update, delete"
+    (e,) = format_errors(_exc(BatchIn, {"operations": [{}]}))
+    assert e["rule"] == "union_tag_not_found" and "create, update, delete" in e["message"]
+
+
+def test_format_errors_long_message_is_truncated_to_200_code_points() -> None:
+    long_msg = "m\u202e" + "y" * 1000
+    err = ValidationError.from_exception_data(
+        "T", [InitErrorDetails(type=PydanticCustomError("r", long_msg), loc=("a",), input=None)]
+    )
+    (e,) = format_errors(err)
+    assert len(e["message"]) == 201 and e["message"].endswith("\u2026")
+    assert "\u202e" not in e["message"]
+
+
+def _exc(model: type[BaseModel], data: Any) -> ValidationError:
+    with pytest.raises(ValidationError) as ei:
+        model.model_validate(data)
+    return ei.value
