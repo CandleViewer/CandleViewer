@@ -41,9 +41,12 @@ class AuditRepository(Protocol):
         to_ts: datetime | None,
         cursor: int | None,
         limit: int,
+        ip: str | None = None,
+        timeout_ms: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Return up to `limit` rows ordered by `id DESC`, most recent
-        first, matching every supplied filter (including `subject_type`,
+        """`timeout_ms` bounds the read (`statement_timeout`, transaction-local); an
+        overrun raises the builtin `TimeoutError`. Return up to `limit` rows ordered by
+        `id DESC`, most recent first, matching every supplied filter (including `subject_type`,
         the `object_kind` column)."""
         ...
 

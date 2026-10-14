@@ -60,6 +60,7 @@ from candleviewer.api import (
     make_trades_router,
 )
 from candleviewer.api.alerts import make_alerts_router
+from candleviewer.api.audit_limiter import AuditQueryLimiter
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
@@ -1038,7 +1039,17 @@ def create_app(
         if identity is not None
         else None
     )
-    app.include_router(make_audit_router(ctx.audit, audit_resolver))
+    app.include_router(
+        make_audit_router(
+            ctx.audit,
+            audit_resolver,
+            limiter=AuditQueryLimiter(
+                rate_per_minute=resolved.audit_query_rate_per_minute,
+                max_concurrent=resolved.audit_query_max_concurrent,
+            ),
+            query_timeout_ms=resolved.audit_query_timeout_ms,
+        )
+    )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))
     # E04-T06: frontend telemetry push. One facade per process on ctx.metrics
     # (the lifespan's MetricsRuntime reuses it). Session-authenticated via the

@@ -210,6 +210,11 @@ class Settings(BaseSettings):
     audit_wal_path: str = "var/audit/audit.wal"
     audit_checkpoint_path: str = "var/audit/checkpoints.ndjson"
 
+    # E42-T02 (contract #2392): per-user limits for `GET /admin/audit`.
+    audit_query_rate_per_minute: int = Field(default=60, ge=1)
+    audit_query_max_concurrent: int = Field(default=2, ge=1)
+    audit_query_timeout_ms: int = Field(default=4000, ge=1)
+
     # E27-T02 / e27-kek.md §4: KEK source vocabulary. `host-keychain` is a deprecated alias
     # of `handle` for one release. The KEK itself never enters Settings or os.environ.
     kek_source: Literal["handle", "file", "none", "host-keychain"] = "handle"

@@ -36,7 +36,7 @@ class _FakeQuery:
         # Mirrors `AuditQueryService.query`'s own validation (QA defect
         # #1596 review): a naive datetime or `from_ts > to_ts` must raise
         # `ValidationError`, not be accepted silently by the fake.
-        AuditQueryRequest.model_validate(kwargs)
+        AuditQueryRequest.model_validate({k: v for k, v in kwargs.items() if k != "timeout_ms"})
         self.query_calls.append(kwargs)
         return AuditPage(items=[], chain_verified=True, count=0)
 

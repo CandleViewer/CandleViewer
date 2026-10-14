@@ -243,3 +243,20 @@ def test_canonical_field_golden() -> None:
         ("64:" + "0" * 64 + "-1:a--10:auth.login--7:success4:info" + "-" * 6).encode()
     ).hexdigest()
     assert _canonical_hash("0" * 64, row) == expected
+
+
+def test_sqlstate_extraction_and_timeout_mapping() -> None:
+    import sqlalchemy as sa
+
+    from candleviewer.storage.repositories import audit_sqlalchemy as mod
+
+    class _Orig(Exception):
+        sqlstate = "57014"
+
+    class _Wrapped(Exception):
+        def __init__(self) -> None:
+            self.__cause__ = _Orig()
+
+    assert mod._sqlstate(sa.exc.DBAPIError("s", {}, _Orig())) == "57014"
+    assert mod._sqlstate(sa.exc.DBAPIError("s", {}, _Wrapped())) == "57014"
+    assert mod._sqlstate(sa.exc.DBAPIError("s", {}, Exception())) is None

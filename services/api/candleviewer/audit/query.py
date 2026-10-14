@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from candleviewer.audit.models import (
+    AUDIT_QUERY_DEFAULT_LIMIT,
     AuditEntry,
     AuditPage,
     AuditQueryRequest,
@@ -90,9 +91,11 @@ class AuditQueryService:
         from_ts: datetime | None = None,
         to_ts: datetime | None = None,
         cursor: int | None = None,
-        limit: int = 50,
+        limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
+        ip: str | None = None,
+        timeout_ms: int | None = None,
     ) -> AuditPage:
-        """`limit` is validated to 1..1000 by `AuditQueryRequest`
+        """`limit` is validated to 1..500 by `AuditQueryRequest`
         (`extra="forbid"`); out-of-range values raise `ValidationError`
         rather than issuing an unbounded query. `subject_type` (the
         `object_kind` column) is passed through to the repository — PR
@@ -103,6 +106,7 @@ class AuditQueryService:
                 "actor_user_id": actor_user_id,
                 "actions": actions,
                 "subject_type": subject_type,
+                "ip": ip,
                 "severity": severity,
                 "outcome": outcome,
                 "from_ts": from_ts,
@@ -122,6 +126,8 @@ class AuditQueryService:
             to_ts=req.to_ts,
             cursor=req.cursor,
             limit=limit + 1,
+            ip=req.ip,
+            timeout_ms=timeout_ms,
         )
 
         has_more = len(rows) > limit
