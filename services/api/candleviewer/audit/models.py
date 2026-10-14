@@ -77,8 +77,12 @@ class AuditEntry(BaseModel):
     action: str
     subject_type: str | None = None
     subject_id: str | None = None
+    subject_label: str | None = None
     outcome: AuditOutcome
     severity: Severity
+    reason: str | None = None
+    environment: ExchangeEnv | None = None
+    session_id: uuid.UUID | None = None
     ip: str | None
     user_agent: str | None = None
     request_id: str | None

@@ -21,6 +21,15 @@ def _ts(row: dict[str, Any]) -> datetime:
     return datetime.fromisoformat(row["event_ts"][:-3] + "+00:00")
 
 
+def _parsed(text: str | None) -> Any:
+    """JSONB read-back. Tests that tamper with the stored text out of band (to break the
+    chain) leave it unparseable; that is passed through as the text."""
+    try:
+        return None if text is None else json.loads(text)
+    except ValueError:
+        return text
+
+
 def _doc(row: dict[str, Any]) -> str:
     parts = (row["before_state"], row["after_state"], row["object_label"])
     return " ".join(p for p in parts if p is not None).lower()
@@ -118,7 +127,17 @@ class FakeAuditRepository:
             out = [r for r in out if all(t.lower() in _doc(r) for t in kw["q"].split())]
         if kw["after"] is not None:
             out = [r for r in out if (_ts(r), r["id"]) < kw["after"]]
-        return [{**r, "event_ts": _ts(r), "chain": self._chain(r)} for r in out[: kw["limit"]]]
+        # As the real repository: the state columns come back parsed (JSONB), not as text.
+        return [
+            {
+                **r,
+                "event_ts": _ts(r),
+                "before_state": _parsed(r["before_state"]),
+                "after_state": _parsed(r["after_state"]),
+                "chain": self._chain(r),
+            }
+            for r in out[: kw["limit"]]
+        ]
 
     def _chain(self, row: dict[str, Any]) -> dict[str, Any] | None:
         """The stored renderings and the chain predecessor's hash; `None` for an id in
