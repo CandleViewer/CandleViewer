@@ -9,6 +9,7 @@ schemas and `services/api/candleviewer/db/models.py`'s `audit_log` columns.
 from __future__ import annotations
 
 import ipaddress
+import re
 import uuid
 from datetime import datetime
 from enum import StrEnum
@@ -92,12 +93,20 @@ AUDIT_QUERY_MAX_LIMIT = 500
 #: Default page size (contract #2392: 1..500, default 100).
 AUDIT_QUERY_DEFAULT_LIMIT = 100
 
+#: Contract #2392 parameter rules for `GET /admin/audit` (matched in full, not searched).
+AUDIT_QUERY_MAX_ACTIONS = 50
+_UUID_TEXT = re.compile(r"[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}")
+_SUBJECT_TYPE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+_ACTION_CODE = re.compile(r"[a-z0-9_]+([.][a-z0-9_]+){1,3}")
+
 
 class AuditQueryRequest(BaseModel):
     """Validated filter set for `AuditQueryService.query` — `limit` bounded
     to 1..`AUDIT_QUERY_MAX_LIMIT`, unknown keys rejected. `from_ts`/`to_ts`
     must be tz-aware UTC and `from_ts <= to_ts` (PR #1608 review finding 3:
-    previously a naive datetime or `from_ts > to_ts` was accepted silently)."""
+    previously a naive datetime or `from_ts > to_ts` was accepted silently).
+    The other filters follow the contract's parameter rules and are kept in
+    canonical form, so only canonical values are queried or recorded."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -115,11 +124,40 @@ class AuditQueryRequest(BaseModel):
     @field_validator("ip")
     @classmethod
     def _single_ip(cls, value: str | None) -> str | None:
-        if value is not None:
-            if "%" in value:  # a scope id (fe80::1%eth0) is not a single plain address
-                raise ValueError("ip must not carry a scope id")
-            ipaddress.ip_address(value)  # one address only; CIDR raises ValueError
+        if value is None:
+            return None
+        if "%" in value:  # a scope id (fe80::1%eth0) is not a single plain address
+            raise ValueError("ip must not carry a scope id")
+        return str(ipaddress.ip_address(value))  # one address only; CIDR raises ValueError
+
+    @field_validator("actor_user_id")
+    @classmethod
+    def _canonical_uuid(cls, value: str | None) -> str | None:
+        """`format: uuid`, compared in canonical (lower-case) form, so another casing of
+        the caller's own id is still the caller."""
+        if value is not None and not _UUID_TEXT.fullmatch(value):
+            raise ValueError("actor_user_id must be a UUID")
+        return None if value is None else str(uuid.UUID(value))
+
+    @field_validator("subject_type")
+    @classmethod
+    def _subject_type(cls, value: str | None) -> str | None:
+        if value is not None and not _SUBJECT_TYPE.fullmatch(value):
+            raise ValueError("subject_type is not a recorded subject kind")
         return value
+
+    @field_validator("actions")
+    @classmethod
+    def _action_codes(cls, value: list[str] | None) -> list[str] | None:
+        """At most 50 codes of at most 64 characters each; kept sorted and unique, which
+        is the same filter (any of) in canonical form."""
+        if value is None:
+            return None
+        if len(value) > AUDIT_QUERY_MAX_ACTIONS:
+            raise ValueError(f"at most {AUDIT_QUERY_MAX_ACTIONS} action codes")
+        if any(len(a) > 64 or not _ACTION_CODE.fullmatch(a) for a in value):
+            raise ValueError("action is not an action code")
+        return sorted(set(value))
 
     @field_validator("from_ts", "to_ts")
     @classmethod
