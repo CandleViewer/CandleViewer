@@ -364,3 +364,13 @@ def test_row_json_refuses_mistyped_fields_instead_of_letting_postgres_coerce(
 def test_rows_param_keeps_non_ascii_text_unescaped() -> None:
     out = mod._rows_param([{"n_label": "é"}])
     assert "é" in out and "\\u00e9" not in out
+
+
+async def test_apply_batch_accepts_exactly_the_cap_and_reaches_the_snapshot() -> None:
+    rel = _Rel([[], [_mapping(id=str(n)) for n in range(mod.MAX_BATCH_OPS_STORAGE)]])
+    repo = mod.SqlAlchemyDrawingRepository(rel)  # type: ignore[arg-type]  # stub UoW factory
+    ops = [CreateOp(str(n), _fields()) for n in range(mod.MAX_BATCH_OPS_STORAGE)]
+    result = await repo.apply_batch("o", ops)
+    assert len(result.created) == mod.MAX_BATCH_OPS_STORAGE
+    assert len(rel.uow.session.statements) == 2  # snapshot + one INSERT
+    assert rel.uow.commits == 1
