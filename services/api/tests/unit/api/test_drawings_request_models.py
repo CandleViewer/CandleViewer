@@ -7,7 +7,8 @@ HTTP-level behaviour (413, 422 envelope) belongs to the router slice.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+import re
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -21,7 +22,9 @@ from candleviewer.api import drawings_models as dm
 from candleviewer.api.drawings_models import (
     POINT_COUNTS,
     TOOLS,
+    BatchDeleteIn,
     BatchIn,
+    BatchUpdateIn,
     DrawingIn,
     format_errors,
 )
@@ -258,10 +261,46 @@ def test_batch_missing_if_match_is_rejected(make: Any) -> None:
     assert bad({"operations": [o]}, BatchIn) == [("operations.0.if_match", "missing")]
 
 
-@pytest.mark.parametrize("v", ["2026-01-01T00:00:00", "garbage", 1767225600])
-def test_batch_if_match_must_be_an_aware_datetime_string(v: object) -> None:
+@pytest.mark.parametrize("make", [update_op, delete_op])
+@pytest.mark.parametrize(
+    "v",
+    [
+        "2026-01-01T00:00:00.123Z",  # millisecond token
+        "2026-01-01T00:00:00.123456+00:00",  # offset form
+        "2026-01-01T00:00:00Z",
+        "2026-01-01T00:00:00.1234567Z",
+        "2026-01-01T00:00:00.123456z",
+        "2026-01-01T00:00:00.123456Z\n",
+        "garbage",
+        "",
+    ],
+)
+def test_batch_if_match_not_exactly_six_digit_z_token_is_pattern_mismatch(
+    make: Any, v: str
+) -> None:
+    o = {**make(), "if_match": v}
+    assert bad({"operations": [o]}, BatchIn) == [
+        ("operations.0.if_match", "string_pattern_mismatch")
+    ]
+
+
+@pytest.mark.parametrize("v", [1767225600, None, 1.5])
+def test_batch_if_match_non_string_is_string_type(v: object) -> None:
     o = {**delete_op(), "if_match": v}
+    assert bad({"operations": [o]}, BatchIn) == [("operations.0.if_match", "string_type")]
+
+
+def test_batch_if_match_impossible_calendar_value_is_rejected() -> None:
+    o = {**delete_op(), "if_match": "2026-13-45T00:00:00.123456Z"}
     assert bad({"operations": [o]}, BatchIn)[0][0] == "operations.0.if_match"
+
+
+@pytest.mark.parametrize("make", [update_op, delete_op])
+def test_batch_if_match_six_digit_z_token_is_accepted_as_aware_utc_datetime(make: Any) -> None:
+    (op,) = BatchIn.model_validate({"operations": [make()]}).operations
+    assert isinstance(op, BatchUpdateIn | BatchDeleteIn)
+    assert op.if_match == datetime(2026, 1, 1, 0, 0, 0, 123456, tzinfo=UTC)
+    assert op.if_match.utcoffset() == timedelta(0)
 
 
 def test_batch_ids_are_required_on_update_and_must_be_uuids_on_create() -> None:
@@ -380,3 +419,16 @@ def _exc(model: type[BaseModel], data: Any) -> ValidationError:
     with pytest.raises(ValidationError) as ei:
         model.model_validate(data)
     return ei.value
+
+
+def test_symbol_single_pattern_equals_pattern_plus_20_char_cap_at_the_boundary() -> None:
+    legacy = re.compile(r"^[A-Z0-9]{2,20}USDT$")
+    for n in range(30):
+        sym = "A" * n + "USDT"
+        try:
+            DrawingIn.model_validate(body(symbol=sym))
+            accepted = True
+        except ValidationError:
+            accepted = False
+        assert accepted == (bool(legacy.fullmatch(sym)) and len(sym) <= 20), len(sym)
+    assert bad(body(symbol="A" * 17 + "USDT"))[0][0] == "symbol"
