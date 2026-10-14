@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import Any, assert_never
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +23,7 @@ from candleviewer.storage.repositories.drawings import (
     BatchOpFailed,
     BatchResult,
     CreateOp,
+    DeleteOp,
     DrawingFields,
     DrawingIdUnavailableError,
     DrawingNotFoundError,
@@ -94,7 +95,7 @@ _SOFT_DELETE = sa.text(
 )
 _SNAPSHOT = sa.text(
     "SELECT id::text AS id, owner_user_id::text AS owner_user_id, deleted_at, updated_at "
-    "FROM drawings WHERE id = ANY(CAST(:ids AS uuid[])) FOR UPDATE"
+    "FROM drawings WHERE id = ANY(CAST(:ids AS uuid[])) ORDER BY id FOR UPDATE"
 )
 _PURGE = sa.text(
     "DELETE FROM drawings WHERE id IN (SELECT id FROM drawings WHERE deleted_at IS NOT NULL "
@@ -102,18 +103,21 @@ _PURGE = sa.text(
 )
 
 #: Statements allowed to omit the owner filter (see module docstring); tested.
-UNSCOPED = {"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE"}
+UNSCOPED = frozenset({"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE"})
+
+#: Upper bound for one purge call so a single transaction stays short.
+MAX_PURGE_BATCH = 10_000
 
 
 def _json(value: dict[str, Any]) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
 def _decode(value: Any) -> dict[str, Any]:
     return dict(json.loads(value)) if isinstance(value, str) else dict(value)
 
 
-def to_row(m: Any) -> DrawingRow:
+def _to_row(m: Any) -> DrawingRow:  # private: SQLAlchemy RowMapping is Mapping[Any, Any]
     d = dict(m)
     d["geometry"] = _decode(d["geometry"])
     d["style"] = _decode(d["style"])
@@ -137,7 +141,13 @@ def _params(fields: DrawingFields) -> dict[str, Any]:
 
 
 def _is_pk_collision(exc: IntegrityError) -> bool:
-    return "drawings_pkey" in str(exc.orig)
+    """unique_violation (SQLSTATE 23505) on the primary key, not message text."""
+    orig = exc.orig
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    constraint = getattr(orig, "constraint_name", None) or getattr(
+        getattr(orig, "diag", None), "constraint_name", None
+    )
+    return bool(sqlstate == "23505" and constraint == "drawings_pkey")
 
 
 class SqlAlchemyDrawingRepository:
@@ -161,7 +171,7 @@ class SqlAlchemyDrawingRepository:
             "limit": limit,
         }
         async with self._relational.unit_of_work() as uow:
-            return [to_row(r) for r in (await uow.session.execute(_LIST, params)).mappings()]
+            return [_to_row(r) for r in (await uow.session.execute(_LIST, params)).mappings()]
 
     async def get(self, owner: str, drawing_id: str) -> DrawingRow | None:
         async with self._relational.unit_of_work() as uow:
@@ -170,7 +180,7 @@ class SqlAlchemyDrawingRepository:
                 .mappings()
                 .first()
             )
-        return None if row is None else to_row(row)
+        return None if row is None else _to_row(row)
 
     async def exists_for_other_owner(self, owner: str, drawing_id: str) -> bool:
         async with self._relational.unit_of_work() as uow:
@@ -187,7 +197,7 @@ class SqlAlchemyDrawingRepository:
             if _is_pk_collision(exc):
                 raise DrawingIdUnavailableError(drawing_id) from exc
             raise
-        return to_row(row)
+        return _to_row(row)
 
     async def update(
         self,
@@ -208,7 +218,7 @@ class SqlAlchemyDrawingRepository:
                     raise DrawingVersionConflictError(drawing_id)
                 raise DrawingNotFoundError(drawing_id)
             await uow.commit()
-        return to_row(row)
+        return _to_row(row)
 
     async def soft_delete(self, owner: str, drawing_id: str) -> bool:
         async with self._relational.unit_of_work() as uow:
@@ -238,7 +248,7 @@ class SqlAlchemyDrawingRepository:
                         if _is_pk_collision(exc):
                             raise BatchOpFailed(i, "id_unavailable") from exc
                         raise
-                    created.append(to_row(row))
+                    created.append(_to_row(row))
                     continue
                 if existing is None or existing["owner_user_id"] != owner or existing["deleted_at"]:
                     raise BatchOpFailed(i, "target_unavailable")
@@ -251,21 +261,27 @@ class SqlAlchemyDrawingRepository:
                         "if_match": op.if_match,
                         **_params(op.fields),
                     }
-                    got = (await uow.session.execute(_UPDATE, params)).mappings().first()
-                    if got is None:  # pragma: no cover - row is locked by the snapshot
-                        raise BatchOpFailed(i, "version_conflict")
-                    updated.append(to_row(got))
-                else:  # DeleteOp
-                    await uow.session.execute(_SOFT_DELETE, {"id": op.id, "owner": owner})
+                    got = (await uow.session.execute(_UPDATE, params)).mappings().all()
+                    if len(got) != 1:  # fail closed: the locked row must be updated exactly once
+                        raise BatchOpFailed(i, "target_unavailable")
+                    updated.append(_to_row(got[0]))
+                elif isinstance(op, DeleteOp):
+                    res = await uow.session.execute(_SOFT_DELETE, {"id": op.id, "owner": owner})
+                    if getattr(res, "rowcount", 0) != 1:  # fail closed
+                        raise BatchOpFailed(i, "target_unavailable")
                     deleted.append(op.id)
+                else:
+                    assert_never(op)
             await uow.commit()
         return BatchResult(tuple(created), tuple(updated), tuple(deleted))
 
     async def purge_deleted(self, older_than_days: int, limit: int) -> int:
+        if older_than_days < 1 or not 1 <= limit <= MAX_PURGE_BATCH:
+            raise ValueError("purge needs older_than_days >= 1 and 1 <= limit <= MAX_PURGE_BATCH")
         async with self._relational.unit_of_work() as uow:
             res = await uow.session.execute(_PURGE, {"days": older_than_days, "limit": limit})
             await uow.commit()
         return int(getattr(res, "rowcount", 0))
 
 
-__all__ = ["DRAWING_COLUMNS", "SqlAlchemyDrawingRepository", "to_row"]
+__all__ = ["DRAWING_COLUMNS", "MAX_PURGE_BATCH", "SqlAlchemyDrawingRepository"]

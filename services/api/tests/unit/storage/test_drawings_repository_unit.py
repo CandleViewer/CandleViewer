@@ -5,10 +5,13 @@ Real-DB behaviour lives in `tests/integration/storage/test_drawings_repository.p
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from datetime import UTC, datetime, timedelta, timezone
+from typing import Any
 
 import pytest
+import sqlalchemy as sa
 
 from candleviewer.storage.repositories import drawings_sqlalchemy as mod
 from candleviewer.storage.repositories.drawings import (
@@ -55,19 +58,19 @@ def test_format_token_always_six_fractional_digits_and_z(value: datetime, expect
 
 
 def test_row_token_uses_updated_at() -> None:
-    row = mod.to_row(_mapping())
+    row = mod._to_row(_mapping())
     expected = "2026-10-01T12:00:00.000000Z"
     assert row.token == expected
 
 
 def test_to_row_decodes_json_text_and_keeps_decimal_strings_verbatim() -> None:
-    row = mod.to_row(_mapping())
+    row = mod._to_row(_mapping())
     assert row.geometry == {"points": [{"p": "1.10", "t": "x"}]}
     assert row.style == {}
 
 
 def test_to_row_accepts_already_decoded_json() -> None:
-    assert mod.to_row(_mapping(geometry={"points": []})).geometry == {"points": []}
+    assert mod._to_row(_mapping(geometry={"points": []})).geometry == {"points": []}
 
 
 def test_json_is_canonical() -> None:
@@ -88,8 +91,9 @@ def test_ops_and_results_are_frozen_value_objects() -> None:
     assert UpdateOp("a", _T, f).if_match == _T
     assert DeleteOp("a", _T).id == "a"
     assert BatchResult((), (), ()).deleted == ()
-    with pytest.raises(AttributeError):
-        DeleteOp("a", _T).id = "b"  # type: ignore[misc]
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        frozen: Any = DeleteOp("a", _T)  # Any: assigning to a frozen field is the point
+        frozen.id = "b"
 
 
 def test_batch_op_failed_carries_index_and_rule() -> None:
@@ -98,26 +102,33 @@ def test_batch_op_failed_carries_index_and_rule() -> None:
     assert "operations.3" in str(err)
 
 
-_STATEMENTS = {
-    n: getattr(mod, n)
-    for n in ("_INSERT", "_GET", "_EXISTS_OTHER", "_LIST", "_UPDATE", "_SOFT_DELETE",
-              "_SNAPSHOT", "_PURGE")
-}  # fmt: skip
+# Self-discovering: a statement added later cannot dodge the owner-filter guard.
+_STATEMENTS = {n: v for n, v in vars(mod).items() if isinstance(v, sa.TextClause)}
+
+
+def test_the_statement_set_is_pinned() -> None:
+    assert set(_STATEMENTS) == {
+        "_INSERT", "_GET", "_EXISTS_OTHER", "_LIST", "_UPDATE", "_SOFT_DELETE", "_SNAPSHOT",
+        "_PURGE",
+    }  # fmt: skip
 
 
 @pytest.mark.parametrize("name", sorted(_STATEMENTS))
-def test_every_statement_is_owner_scoped_except_the_three_allowed(name: str) -> None:
+def test_every_statement_is_owner_scoped_except_the_unscoped_ones(name: str) -> None:
     text = str(_STATEMENTS[name])
-    if name in mod.UNSCOPED:
-        assert name in {"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE"}
-    elif name == "_INSERT":  # no WHERE clause: the owner is written as a bound value
+    if name == "_INSERT":  # no WHERE clause: the owner is written as a bound value
         assert "CAST(:owner AS uuid)" in text
-    else:
+    elif name not in mod.UNSCOPED:
         assert "owner_user_id = CAST(:owner AS uuid)" in text
 
 
 def test_only_three_statements_are_unscoped() -> None:
-    assert mod.UNSCOPED == {"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE"}
+    assert mod.UNSCOPED == frozenset({"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE"})
+    assert set(mod.UNSCOPED) <= set(_STATEMENTS)
+
+
+def test_snapshot_locks_rows_in_a_deterministic_order() -> None:
+    assert "ORDER BY id FOR UPDATE" in str(_STATEMENTS["_SNAPSHOT"])
 
 
 def test_read_allow_list_excludes_internal_columns() -> None:
@@ -140,3 +151,38 @@ def test_list_uses_the_index_friendly_shape() -> None:
 @pytest.mark.parametrize("name", ["_INSERT", "_GET", "_LIST", "_UPDATE"])
 def test_literal_column_lists_match_the_allow_list(name: str) -> None:
     assert mod.DRAWING_COLUMNS in str(_STATEMENTS[name])
+
+
+def test_json_refuses_nan_and_infinity() -> None:
+    with pytest.raises(ValueError, match="Out of range"):
+        mod._json({"p": float("nan")})
+
+
+def test_pk_collision_needs_sqlstate_23505_and_the_pk_constraint() -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    class _Orig(Exception):
+        def __init__(self, sqlstate: str, constraint: str) -> None:
+            super().__init__("boom")
+            self.sqlstate = sqlstate
+            self.constraint_name = constraint
+
+    def err(state: str, name: str) -> IntegrityError:
+        return IntegrityError("s", {}, _Orig(state, name))
+
+    assert mod._is_pk_collision(err("23505", "drawings_pkey"))
+    assert not mod._is_pk_collision(err("23505", "other_key"))
+    assert not mod._is_pk_collision(err("23503", "drawings_pkey"))
+
+
+@pytest.mark.parametrize(
+    ("days", "limit"),
+    [(0, 10), (-1, 10), (90, 0), (90, -5), (90, mod.MAX_PURGE_BATCH + 1)],
+)
+async def test_purge_rejects_unsafe_arguments_before_touching_the_database(
+    days: int, limit: int
+) -> None:
+    unused: Any = object()  # never touched: the ValueError fires first
+    repo = mod.SqlAlchemyDrawingRepository(unused)
+    with pytest.raises(ValueError, match="purge needs"):
+        await repo.purge_deleted(days, limit)
