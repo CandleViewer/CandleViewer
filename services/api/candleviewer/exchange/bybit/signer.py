@@ -3,7 +3,7 @@
 This module owns the venue's string-to-sign (`docs/plan/24-internal-schemas.md` §14.3 "Auth
 (REST)"): `timestamp + api_key + recv_window + payload`, where `payload` is the query string for
 `GET` and the raw JSON body for `POST`. It never holds the API secret. It sends the message to M2
-with `API_KEY_ID` where the key goes; M2 computes the lowercase hex HMAC-SHA256 and returns it
+with `KEY_ID_SLOT` where the key goes; M2 computes the lowercase hex HMAC-SHA256 and returns it
 with the key id for the `X-BAPI-API-KEY` header.
 """
 
@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from candleviewer.secrets import API_KEY_ID
+from candleviewer.secrets import KEY_ID_SLOT
 
 if TYPE_CHECKING:
     from candleviewer.secrets import CredentialBorrower, Purpose
@@ -53,7 +53,7 @@ class BybitSigner:
         """
         message = (
             str(timestamp_ms).encode(),
-            API_KEY_ID,
+            KEY_ID_SLOT,
             str(recv_window_ms).encode(),
             payload.encode("utf-8"),
         )

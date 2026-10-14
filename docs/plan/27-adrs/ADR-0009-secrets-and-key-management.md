@@ -95,7 +95,7 @@ Refines Design §1; does not reverse it. Detail: `docs/plan/spikes/e27-kek.md`.
 Supersedes Design §3's "plaintext keys exist only inside the exchange adapter". It conforms to
 C-2.7: credentials are plaintext only inside `secrets` (M2), at the moment of request signing.
 - The exchange adapter builds its venue's string-to-sign as byte segments and marks where the key
-  id goes (`API_KEY_ID`). It owns that format (C-2.2).
+  id goes (`KEY_ID_SLOT`). It owns that format (C-2.2).
 - M2's capability `CredentialBorrower.sign(key_id, message, purpose=...)` decrypts, splices the
   key id in and computes HMAC-SHA256 inside M2. It returns the lowercase hex signature and the key
   id (`Secret[str]`, for the request header). It never returns the API secret.

@@ -1,7 +1,7 @@
 """Test double for the M2 signing capability the exchange adapter holds (#2339, C-2.7).
 
 The adapter never sees an API secret, so this double has none either. It splices the key id into
-the message exactly where `API_KEY_ID` marks it, records the call, and returns a deterministic
+the message exactly where `KEY_ID_SLOT` marks it, records the call, and returns a deterministic
 stand-in signature (64 hex chars, not a MAC). The real HMAC-SHA256 is tested against M2 with fixed
 vectors in `tests/unit/credentials_m2/test_signing.py` and end to end in the signer's own tests.
 """
@@ -12,7 +12,7 @@ import zlib
 from collections.abc import Sequence
 from uuid import UUID
 
-from candleviewer.secrets import API_KEY_ID, CredentialBorrower, RequestSignature, Secret
+from candleviewer.secrets import KEY_ID_SLOT, CredentialBorrower, RequestSignature, Secret
 
 #: The `api_keys.id` every double signs for.
 CREDENTIAL_ID = UUID("00000000-0000-4000-8000-0000000000c1")
@@ -22,15 +22,15 @@ Call = tuple[UUID, bytes, str]
 
 
 def assemble(key_id: str, message: Sequence[object]) -> bytes:
-    """The message M2 would MAC: byte segments in order, the key id at each `API_KEY_ID`."""
+    """The message M2 would MAC: byte segments in order, the key id at each `KEY_ID_SLOT`."""
     out = b""
     for part in message:
-        if part is API_KEY_ID:
+        if part is KEY_ID_SLOT:
             out += key_id.encode()
         elif isinstance(part, bytes):
             out += part
         else:
-            raise TypeError("message parts are bytes or API_KEY_ID")
+            raise TypeError("message parts are bytes or KEY_ID_SLOT")
     return out
 
 
