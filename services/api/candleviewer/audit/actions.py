@@ -36,6 +36,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.session_refreshed",
         "auth.session_revoked",
         "auth.idle_locked",
+        # #2300 (E09-D06 ruling): named by the `POST /auth/unlock` contract; the route that
+        # emits them ships in that ticket's slice 2/2.
+        "auth.session_unlocked",
+        "auth.unlock_failed",
         "auth.refresh_reuse_detected",
         "auth.csrf_refused",
         # E09-X02 AC2 (#2144, U6/SR-013): a session credential this server never issued, or

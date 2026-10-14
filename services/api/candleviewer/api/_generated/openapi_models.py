@@ -107,6 +107,18 @@ class Problem(BaseModel):
     )
     required_permissions: list[str] | None = None
     retry_after_seconds: int | None = None
+    idle_locked_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="`session_idle_locked` only: when the session idle-locked (its `idle_deadline`)."
+        ),
+    ] = None
+    revoked_reason: Annotated[
+        Literal["expired", "unlock_attempts_exceeded", "revoked"] | None,
+        Field(
+            description="`session_revoked` only. `expired`: the 12 h absolute lifetime elapsed. `unlock_attempts_exceeded`: five consecutive wrong unlock passwords. `revoked`: any other revocation; the specific cause is not disclosed.\n"
+        ),
+    ] = None
     exchange: Annotated[
         Exchange | None, Field(description="Present when the failure originated at Bybit.")
     ] = None
@@ -273,6 +285,56 @@ class ChangePasswordRequest(BaseModel):
     )
     current_password: SecretStr
     new_password: Annotated[SecretStr, Field(max_length=512, min_length=12)]
+
+
+class UnlockRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    password: Annotated[SecretStr, Field(max_length=512, min_length=1)]
+
+
+class SessionState(BaseModel):
+    id: Annotated[
+        UUID, Field(description="Server-side session id (`sid`); `POST /auth/refresh` rotates it.")
+    ]
+    issued_at: Annotated[
+        AwareDatetime,
+        Field(
+            description="When this session id was issued (sign-in, or the refresh that rotated it)."
+        ),
+    ]
+    expires_at: Annotated[
+        AwareDatetime,
+        Field(
+            description="End of the 12 h absolute lifetime. Refresh, extend and unlock never move it."
+        ),
+    ]
+    idle_deadline: Annotated[
+        AwareDatetime,
+        Field(
+            description="When the idle lock engages unless activity is recorded first (`last_seen_at + idle_timeout_s`). Once `locked`, the moment it locked.\n"
+        ),
+    ]
+    idle_timeout_s: Annotated[
+        int,
+        Field(
+            description="Idle timeout of this session in seconds (per user, 5 to 60 minutes).",
+            ge=300,
+            le=3600,
+        ),
+    ]
+    locked: Annotated[
+        bool,
+        Field(
+            description="True once `idle_deadline` has passed; only `POST /auth/unlock` clears it."
+        ),
+    ]
+
+
+class SessionExtendResponse(BaseModel):
+    session: SessionState
+    server_time: AwareDatetime
 
 
 class UserSession(BaseModel):
@@ -5247,6 +5309,7 @@ class SessionInfo(BaseModel):
     feature_flags: Annotated[
         dict[str, Any] | None, Field(description="Flags resolved for this user.")
     ] = None
+    session: SessionState
 
 
 class CreateUserRequest(BaseModel):
