@@ -72,14 +72,38 @@ _OUTAGE_CLASSES: Final = frozenset(
 _DBAPI_ERROR: Final = "sqlalchemy.exc.DBAPIError"
 
 
+#: SQLSTATE classes that mean "the database cannot serve this now, retry": connection (08),
+#: transaction rollback incl. deadlock/serialization (40), resources (53), operator
+#: intervention incl. statement timeout 57014 (57), system (58); plus lock_not_available 55P03.
+#: Data (22), integrity (23) and syntax/access (42) errors are bugs: 500. Anything else, and a
+#: missing SQLSTATE, stays 500 so it fails visibly.
+_OUTAGE_SQLSTATE_CLASSES: Final = frozenset({"08", "40", "53", "57", "58"})
+
+
+def _sqlstate(exc: Exception) -> str | None:
+    """The SQLSTATE a DBAPI error carries, read like the repository's `map_integrity`: the
+    wrapped driver error (`orig`), then its cause; `.sqlstate` (asyncpg) or `.pgcode`."""
+    orig = getattr(exc, "orig", None)
+    for src in (orig, getattr(orig, "__cause__", None), exc.__cause__):
+        for attr in ("sqlstate", "pgcode"):
+            code = getattr(src, attr, None)
+            if isinstance(code, str) and len(code) == 5:
+                return code
+    return None
+
+
 def _is_outage(exc: Exception) -> bool:
     if isinstance(exc, OSError | StorageTierUnavailable):
         return True
     names = {f"{c.__module__}.{c.__qualname__}" for c in type(exc).__mro__}
     if names & _OUTAGE_CLASSES:
         return True
-    # a generic DBAPIError is an outage only when the driver says the connection is gone
-    return _DBAPI_ERROR in names and getattr(exc, "connection_invalidated", False) is True
+    if _DBAPI_ERROR not in names:
+        return False
+    if getattr(exc, "connection_invalidated", False) is True:
+        return True
+    state = _sqlstate(exc)  # a generic DBAPIError: real timeouts and deadlocks arrive this way
+    return state is not None and (state[:2] in _OUTAGE_SQLSTATE_CLASSES or state == "55P03")
 
 
 _NEVER_MATCHES: Final = datetime(1, 1, 1, tzinfo=UTC)
@@ -142,7 +166,11 @@ class _ProblemRoute(APIRoute):
                 if not _is_outage(exc):
                     raise
                 # class name only: str(exc) of a SQLAlchemy error embeds bound parameters
-                _log().error("workspaces_store_unavailable", error=type(exc).__name__)
+                _log().error(
+                    "workspaces_store_unavailable",
+                    error=type(exc).__name__,
+                    sqlstate=_sqlstate(exc),
+                )
                 return _Problem(
                     "store_unavailable", "The workspace store is unavailable."
                 ).response()
