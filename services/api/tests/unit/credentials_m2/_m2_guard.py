@@ -39,6 +39,8 @@ R10 Plaintext stays in `secrets/` (C-2.7, #2339): the plaintext borrow (`with_cr
     except the exact reviewed site (the key id M2 returns, read for the request header); and
     in the exchange adapter (`exchange/`) any `hmac` import (stdlib or vendor, any alias) and
     the credential plaintext holders `SecretStr` / `get_secret_value`. M2 computes the MAC.
+    Everywhere outside `settings.py`: the Settings fields `bybit_api_key` / `bybit_api_secret`
+    (attribute, name, reflection) and `CV_BYBIT_API_` literals (the env plaintext source).
 """
 
 from __future__ import annotations
@@ -89,7 +91,9 @@ _AUDIT_TARGETS = frozenset({"emit", "writer", "_writer", "_audit_sink", "_audit"
 _REFLECT = frozenset({"getattr", "setattr", "hasattr", "delattr", "getattr_static"})
 _OBJ_REFLECT = frozenset({"__getattribute__", "__setattr__", "__delattr__"})
 _ATTRGETTERS = frozenset({"attrgetter", "methodcaller"})
-_STR_PREFIXES = ("candleviewer.secrets", "/run/credentials", "CV_KEK_")
+_STR_PREFIXES = ("candleviewer.secrets", "/run/credentials", "CV_KEK_", "CV_BYBIT_API_")
+#: R10: the configured plaintext Bybit credential fields (Settings), readable only in settings.py.
+_SETTINGS_CREDS = frozenset({"bybit_api_key", "bybit_api_secret"})
 
 #: Exact allow-list: (file, rule, construct). Each entry is one reviewed, unrelated use.
 ALLOW: frozenset[tuple[str, str, str]] = frozenset(
@@ -258,6 +262,8 @@ class _Checker:
             self.flag(f"{via}{name} (plaintext read outside secrets/)")
         if name in _ADAPTER_PLAINTEXT and self.rel.startswith(_ADAPTER_SITE):
             self.flag(f"{via}{name} (credential plaintext in the exchange adapter)")
+        if name in _SETTINGS_CREDS and self.rel != "settings.py":
+            self.flag(f"{via}{name} (configured plaintext Bybit credential outside settings.py)")
         if name in _ADMIN_ONLY and not self.rel.startswith(_ADMIN_SITE):
             self.flag(f"{via}{name} (admin-only metadata)")
         if name == "__dict__" and not selfish:
@@ -327,6 +333,8 @@ class _Checker:
                         if node.attr not in m2.__all__ and node.attr != "secrets":
                             self.flag(f"candleviewer.{dotted} (M2 via the root package)")
             elif isinstance(node, ast.Name):
+                if node.id in _SETTINGS_CREDS and self.rel != "settings.py":
+                    self.flag(f"{node.id} (configured plaintext Bybit credential)")
                 if node.id in _BORROW:
                     self.flag(f"{node.id}")
                 if node.id in _ADAPTER_PLAINTEXT and self.rel.startswith(_ADAPTER_SITE):

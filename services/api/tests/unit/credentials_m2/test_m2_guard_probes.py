@@ -166,6 +166,11 @@ PLAINTEXT_PROBES: dict[str, str] = {
     "reveal_name": "v = s.reveal()",
     "reveal_getattr": "v = getattr(s, 'reveal')()",
     "reveal_methodcaller": "import operator\nv = operator.methodcaller('reveal')(s)",
+    "settings_secret_value": "def f(s):\n    return s.bybit_api_secret._secret_value",
+    "settings_secret_getter": "def f(s):\n    return s.bybit_api_secret.get_secret_value()",
+    "settings_key_reflect": "def f(s):\n    return getattr(s, 'bybit_api_key')",
+    "environ_subscript": "import os\n\ndef f():\n    return os.environ['CV_BYBIT_API_SECRET']",
+    "environ_get": "import os\n\ndef f():\n    return os.getenv('CV_BYBIT_API_KEY')",
 }
 #: R10 in the exchange adapter: no credential plaintext holder and no MAC primitive.
 ADAPTER_PROBES: dict[str, str] = {
