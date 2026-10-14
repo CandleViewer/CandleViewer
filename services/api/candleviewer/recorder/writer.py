@@ -341,6 +341,17 @@ def liquidation_records(ev: LiquidationLike) -> list[WalRecord]:
 
 
 @dataclass(frozen=True, slots=True)
+class DiskGate:
+    """E16-T07 write gate (#491 decision, INV-B11-a): while `halted()` (DiskBudget level 3 or a
+    refused volume) rows of symbols without an open position are dropped into
+    `backpressure_drop` gaps, and an open position keeps writing. Both are plain synchronous
+    reads, never an interpreter (C-2.20); lifting is the ladder's hysteresis."""
+
+    halted: Callable[[], bool]
+    position_open: Callable[[str], bool]
+
+
+@dataclass(frozen=True, slots=True)
 class WriterConfig:
     """`CV_RECORDER_WAL_*` (20-architecture.md §7.2) and the §3.8 batching thresholds."""
 
@@ -445,7 +456,9 @@ class StreamWriter:
         wall_clock_us: Callable[[], int],
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         fsync: Callable[[int], None] = os.fsync,
+        disk_gate: DiskGate,
     ) -> None:
+        self._gate = disk_gate
         self._store = store
         self._events = events
         self._cfg = config
@@ -556,6 +569,15 @@ class StreamWriter:
         """Never awaits I/O: the queue or the spill buffer, both drained by the lane's pump."""
         self._ctr(symbol).received += 1
         if not records:
+            return
+        try:
+            gated = self._gate.halted() and not self._gate.position_open(symbol)
+        except Exception:  # a failing check never stops recording: keep writing
+            gated = False
+        if gated:
+            self._ctr(symbol).dropped += len(records)
+            stamps = [r.exch_ts for r in records]
+            self._widen(symbol, stream, min(stamps), max(stamps))
             return
         ts = records[0].exch_ts
         b = self._bounds.get(symbol)

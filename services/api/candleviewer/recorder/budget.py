@@ -16,7 +16,7 @@ import re
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
 from typing import Final, Protocol, cast
@@ -25,6 +25,14 @@ import structlog
 
 from candleviewer.bus.models import Topic
 from candleviewer.observability import spawn
+from candleviewer.recorder.metrics import (
+    disk_free_bytes,
+    disk_used_ratio,
+    recorder_bytes_per_day,
+    recorder_disk_budget_last_sample_timestamp_seconds,
+    recorder_disk_pressure_level,
+    recorder_projected_full_timestamp,
+)
 from candleviewer.recorder.models import (
     DiskPressureChanged,
     DiskPressureLevel,
@@ -38,6 +46,7 @@ from candleviewer.storage.errors import StorageError
 
 US_PER_S: Final = 1_000_000
 US_PER_DAY: Final = 86_400 * US_PER_S
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _MAX_RUNWAY_DAYS: Final = 36_500
 _LADDER: Final = (DiskPressureLevel.WARN, DiskPressureLevel.AUTOSTOP, DiskPressureLevel.HALT)
 #: Suggested actions named by every ladder event: codes only, never host paths.
@@ -45,7 +54,7 @@ SUGGESTED_ACTIONS: Final = "reduce_depth,shorten_retention,unpin"
 _RECORDED: Final[tuple[TierName, ...]] = ("questdb", "parquet")
 _TIERS: Final[tuple[TierName, ...]] = ("questdb", "parquet", "postgres")
 _SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{2,20}USDT$")  # OpenAPI `Symbol`
-#: What an optional source (gaps, pins) or the store may raise when unavailable.
+#: What the series store may raise when its volume or file is unavailable.
 _UNAVAILABLE: Final = (OSError, TimeoutError, StorageError)
 _LEVEL_EVENT: Final[dict[DiskPressureLevel, tuple[Severity, str]]] = {
     DiskPressureLevel.WARN: ("WARNING", "recorder.disk_budget_warning"),
@@ -83,16 +92,20 @@ class BudgetConfig:
     #: Largest symbols attributed per sample (memory and metric-cardinality bound).
     max_symbols: int = 64
     io_timeout_s: float = 10.0
+    #: The best-effort per-tier / per-symbol breakdown; never delays the free-space path.
+    breakdown_timeout_s: float = 5.0
     hot_days: int = 7
     retention_days: int = 30
 
     def __post_init__(self) -> None:
-        cap_path = 0 < self.warn_pct < self.autostop_pct < self.halt_pct <= 100
+        cap_path = self.rearm_pct < self.warn_pct < self.autostop_pct < self.halt_pct <= 100
         free_path = 0 < self.halt_free_pct < self.autostop_free_pct < self.accelerate_until_free_pct
+        free_path = free_path and self.autostop_free_pct + self.rearm_pct <= 100
         if self.cap_bytes <= 0 or not (cap_path and free_path) or self.sample_interval_s <= 0:
             raise ValueError(
-                "disk budget: cap > 0, 0 < warn < autostop < halt <= 100 and"
-                " 0 < halt_free < autostop_free < accelerate_until_free"
+                "disk budget: cap > 0, rearm < warn < autostop < halt <= 100,"
+                " 0 < halt_free < autostop_free < accelerate_until_free,"
+                " autostop_free + rearm <= 100"
             )
 
     @property
@@ -115,10 +128,25 @@ class Measurement:
             raise ValueError("volume measurement must satisfy 0 <= free <= total, total > 0")
 
 
-class StorageMeter(Protocol):
-    """`statvfs` + QuestDB `tables()` + Parquet partition sizes; never a shell-out (SR-096)."""
+@dataclass(frozen=True, slots=True)
+class Breakdown:
+    """Best-effort per-tier / per-symbol bytes (QuestDB table sizes, Parquet partition walk)."""
 
-    async def measure(self) -> Measurement: ...
+    tiers: Mapping[TierName, int]
+    symbols: Mapping[str, int]
+
+
+class StorageMeter(Protocol):
+    """`volume()` (`statvfs`, the ladder's free-space input) is read first and alone; the
+    `breakdown()` is best effort. Never a shell-out (SR-096)."""
+
+    async def volume(self) -> tuple[int, int]:
+        """`(total_bytes, free_bytes)` of the recording volume."""
+        ...
+
+    async def breakdown(self) -> Breakdown: ...
+
+    async def close(self) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,7 +295,7 @@ class PressureLadder:
 
 
 def _utc(ts_us: int) -> datetime:
-    return datetime.fromtimestamp(ts_us / US_PER_S, tz=UTC)
+    return _EPOCH + timedelta(microseconds=ts_us)
 
 
 def _days(runway: Fraction | None) -> str:
@@ -316,8 +344,11 @@ class DiskBudget:
         pinned: PinnedSource | None = None,
         store: SeriesStore | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        recording_refused: bool = False,
     ) -> None:
         self._meter, self._events, self._bus = meter, events, bus
+        #: SR-096: a recording volume shared with the backend keeps the write gate closed.
+        self.recording_refused = recording_refused
         self._cfg, self._now_us, self._sleep = config, now_us, sleep
         self._gaps, self._pinned, self._store = gaps, pinned, store
         self._topic = Topic(env=env, domain="recorder", detail="disk_pressure")
@@ -330,6 +361,8 @@ class DiskBudget:
         self._stale = True
         self._report: StorageUsage | None = None
         self._last_pins: frozenset[str] = frozenset()
+        self._breakdown = Breakdown({}, {})
+        self._rate_labels: set[str] = set()
         self._task: asyncio.Task[None] | None = None
 
     @property
@@ -341,14 +374,30 @@ class DiskBudget:
     def accelerate_retention(self) -> bool:
         return self._ladder.accelerate
 
+    @property
+    def halted(self) -> bool:
+        """The `StreamWriter` gate (#491): level 3 or a refused volume. A plain bool per row."""
+        return self.recording_refused or self._ladder.level is DiskPressureLevel.HALT
+
+    @property
+    def refuses_auto_record(self) -> bool:
+        """`RecordingPolicy`: no new chart-open recording from level 2 (ADR-0015 d6, AC3)."""
+        return self.recording_refused or self._ladder.level >= DiskPressureLevel.AUTOSTOP
+
     def report(self) -> StorageUsage | None:
         """`StorageUsage` from the last sample (never measured per request); `None` before it."""
         return self._report
 
     async def sample_once(self) -> None:
         cfg, now = self._cfg, self._now_us()
-        async with asyncio.timeout(cfg.io_timeout_s):
-            m = await self._meter.measure()
+        async with asyncio.timeout(cfg.io_timeout_s):  # free space first: the ladder's input
+            total, free = await self._meter.volume()
+        try:
+            async with asyncio.timeout(cfg.breakdown_timeout_s):
+                self._breakdown = await self._meter.breakdown()
+        except Exception as exc:  # best effort: the last sizes and the free-space path go on
+            logger().warning("disk_budget_breakdown_unavailable", error=type(exc).__name__)
+        m = Measurement(total, free, self._breakdown.tiers, self._breakdown.symbols)
         pinned = await self._pins()
         used = sum(m.tiers.get(t, 0) for t in _RECORDED)
         named = ((s, b) for s, b in m.symbols.items() if _SYMBOL_RE.match(s))
@@ -358,7 +407,8 @@ class DiskBudget:
             await self._persist(point)
         if self._stale:
             self._growth = await self._refit(now)
-        growth, rates = self._growth
+        growth, fitted = self._growth
+        rates = {s: fitted[s] for s, _ in top if s in fitted}  # labels <= max_symbols
         full_at, runway = project_full_at(
             used=used, cap=cfg.cap_bytes, free=m.free_bytes, daily_growth=growth, now_us=now
         )
@@ -366,10 +416,12 @@ class DiskBudget:
         self._ladder.evaluate(
             used=used, cap=cfg.cap_bytes, free=m.free_bytes, total=m.total_bytes, runway_days=runway
         )
+        self._publish_metrics(used, m.free_bytes, full_at, rates)
         state = (self._ladder.level, self._ladder.accelerate)
         if state != self._announced:
             await self._announce(m, used, full_at, runway, top, pinned, now)
             self._announced = state
+        recorder_disk_budget_last_sample_timestamp_seconds.set(now // US_PER_S)
 
     def _build_report(
         self,
@@ -404,6 +456,19 @@ class DiskBudget:
             ),
             generated_at=_utc(now),
         )
+
+    def _publish_metrics(
+        self, used: int, free: int, full_at: int | None, rates: Mapping[str, int]
+    ) -> None:
+        disk_used_ratio.set(used / self._cfg.cap_bytes)
+        disk_free_bytes.set(free)
+        recorder_disk_pressure_level.set(int(self._ladder.level))
+        recorder_projected_full_timestamp.set(0 if full_at is None else full_at // US_PER_S)
+        for gone in self._rate_labels - rates.keys():
+            recorder_bytes_per_day.remove(gone)
+        for symbol, rate in rates.items():
+            recorder_bytes_per_day.labels(symbol=symbol).set(rate)
+        self._rate_labels = set(rates)
 
     async def _announce(
         self,
@@ -460,7 +525,7 @@ class DiskBudget:
             try:
                 async with asyncio.timeout(self._cfg.io_timeout_s):
                     self._last_pins = await self._pinned()
-            except _UNAVAILABLE as exc:
+            except Exception as exc:  # any source failure (driver errors are not mapped)
                 logger().warning("disk_budget_pins_unavailable", error=type(exc).__name__)
         return self._last_pins
 
@@ -494,7 +559,7 @@ class DiskBudget:
             try:
                 async with asyncio.timeout(self._cfg.io_timeout_s):
                     gaps = tuple(await self._gaps(points[0].ts_us, now))
-            except _UNAVAILABLE as exc:  # fit without gaps; the ladder never waits on them
+            except Exception as exc:  # any source failure: fit without gaps, never block
                 logger().warning("disk_budget_gaps_unavailable", error=type(exc).__name__)
         fitted = await asyncio.to_thread(_fit_all, points, gaps, self._cfg, now)
         self._stale = False
@@ -511,8 +576,10 @@ class DiskBudget:
         except (*_UNAVAILABLE, ValueError) as exc:
             logger().warning("disk_budget_series_load_failed", error=type(exc).__name__)
             return
+        now = self._now_us()
         for point in sorted(points, key=lambda p: p.ts_us):
-            self._commit(point)
+            if point.ts_us <= now and point.recorded_bytes >= 0:  # never a future point
+                self._commit(point)
 
     # --- lifecycle ---------------------------------------------------------------------------
 
@@ -520,23 +587,36 @@ class DiskBudget:
         """Start the supervised sampling task (idempotent)."""
         if self._task is None:
             self._task = spawn(self._run(), name="recorder-disk-budget")
+            self._task.add_done_callback(_on_task_done)
 
     async def stop(self) -> None:
+        """Cancel the task, then close the meter (its executor and QuestDB connection)."""
         task, self._task = self._task, None
-        if task is None:
-            return
-        task.cancel()
         try:
-            await task
+            if task is not None:
+                task.cancel()
+                await task
         except asyncio.CancelledError:
-            if not task.cancelled():  # our own caller was cancelled: propagate
+            current = asyncio.current_task()
+            if current is not None and current.cancelling():  # our own caller: propagate
                 raise
+        finally:
+            await self._meter.close()
 
     async def _run(self) -> None:
-        await self.load_series()
+        loaded = False
         while True:
             try:
+                if not loaded:
+                    await self.load_series()
+                    loaded = True
                 await self.sample_once()
             except Exception as exc:  # a failed pass keeps the last level; next pass retries
                 logger().error("disk_budget_sample_failed", error=type(exc).__name__)
             await self._sleep(self._cfg.sample_interval_s)
+
+
+def _on_task_done(task: asyncio.Task[None]) -> None:
+    error = None if task.cancelled() else task.exception()
+    if error is not None:  # never silent (C-2.18)
+        logger().critical("disk_budget_task_died", error=type(error).__name__)

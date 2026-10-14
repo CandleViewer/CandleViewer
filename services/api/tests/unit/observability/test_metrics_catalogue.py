@@ -29,10 +29,19 @@ from candleviewer.observability.metrics_runtime import (
 #: `_ms`/`_mb`: frontend-pushed names fixed by 20-architecture.md §12.1 (E04-T06).
 #: `_rows`: `recorder_write_backlog_rows`, named by E16-T03 (a gauge of queued rows).
 _UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows)$")
+#: Exact names fixed by the E16-T07 ticket (`disk_used_ratio` predates it in the alert rules).
+_SUFFIX_EXCEPTIONS = frozenset(
+    {
+        "disk_used_ratio",
+        "recorder_disk_pressure_level",
+        "recorder_bytes_per_day",
+        "recorder_projected_full_timestamp",
+    }
+)
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "2a6eea4d4e7d7006b7729cb3f455e4c0e4f003929837629c6f9cad90a6b0588b"
+GOLDEN_CATALOGUE_SHA256 = "3923131436b81dc20a9b9f7c74c4363ebc1384a96d84708c09f4a750ee8ae98e"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -55,7 +64,7 @@ def test_catalogue_names_are_unique_and_documented() -> None:
 
 def test_catalogue_live_names_are_unit_suffixed() -> None:
     for s in live_specs():
-        assert _UNIT_SUFFIX.search(s.name), s.name
+        assert _UNIT_SUFFIX.search(s.name) or s.name in _SUFFIX_EXCEPTIONS, s.name
 
 
 def test_catalogue_every_planned_entry_has_owning_epic() -> None:

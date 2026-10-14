@@ -60,6 +60,27 @@ recorder_flush_duration_seconds = Histogram(
     buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 1.0, 5.0),
 )
 
+# --- DiskBudget (E16-T07) — names fixed by the ticket's Observability section ---------------
+disk_used_ratio = Gauge(
+    "disk_used_ratio",
+    "Recorded bytes / CV_DISK_CAP_GB (SR-125 disk high-watermark, SR-096 ladder).",
+)
+disk_free_bytes = Gauge("disk_free_bytes", "Free bytes on the recording volume (statvfs).")
+recorder_disk_pressure_level = Gauge(
+    "recorder_disk_pressure_level",
+    "Disk-pressure ladder level: 0 normal, 1 warn, 2 autostop, 3 halt.",
+)
+recorder_bytes_per_day = Gauge(
+    "recorder_bytes_per_day", "Measured recorded bytes per day per symbol (write rate).", ["symbol"]
+)
+recorder_projected_full_timestamp = Gauge(
+    "recorder_projected_full_timestamp", "Unix time the disk budget is projected full; 0 = none."
+)
+recorder_disk_budget_last_sample_timestamp_seconds = Gauge(
+    "recorder_disk_budget_last_sample_timestamp_seconds",
+    "Unix time of the last completed DiskBudget pass (a stale value = a stuck ladder).",
+)
+
 #: Names served by `export_recorder_metrics`.
 EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
     {
@@ -68,6 +89,12 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "recorder_spill_bytes",
         "recorder_write_backlog_rows",
         "recorder_flush_duration_seconds",
+        "disk_used_ratio",
+        "disk_free_bytes",
+        "recorder_disk_pressure_level",
+        "recorder_bytes_per_day",
+        "recorder_projected_full_timestamp",
+        "recorder_disk_budget_last_sample_timestamp_seconds",
     }
 )
 

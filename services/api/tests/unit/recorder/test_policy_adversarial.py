@@ -18,7 +18,12 @@ OWNER = user_actor("owner-1")
 
 def _cap1(clock: FakeClock, bus: FakeBus, audit: FakeAudit) -> RecordingPolicy:
     p = RecordingPolicy(
-        bus=bus, audit=audit, env="demo", now=clock, config=PolicyConfig(max_symbols=1)
+        disk_refuses=bool,
+        bus=bus,
+        audit=audit,
+        env="demo",
+        now=clock,
+        config=PolicyConfig(max_symbols=1),
     )
     p.positions_reloaded()
     return p
@@ -101,7 +106,7 @@ async def test_audit_outage_recovers_via_retry(
 async def test_warmup_gate_blocks_stop_until_positions_reloaded(
     clock: FakeClock, bus: FakeBus, audit: FakeAudit
 ) -> None:
-    p = RecordingPolicy(bus=bus, audit=audit, env="demo", now=clock)
+    p = RecordingPolicy(disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock)
     try:
         await p.on_position_opened("ETHUSDT", "p1")
         await p.on_position_closed("ETHUSDT", "p1")
@@ -120,7 +125,12 @@ async def test_preemption_waits_for_warmup_gate(
 ) -> None:
     """Reviewer probe: cap 1, gate closed, ETH chart-recorded in grace, position XRP."""
     p = RecordingPolicy(
-        bus=bus, audit=audit, env="demo", now=clock, config=PolicyConfig(max_symbols=1)
+        disk_refuses=bool,
+        bus=bus,
+        audit=audit,
+        env="demo",
+        now=clock,
+        config=PolicyConfig(max_symbols=1),
     )
     try:
         await p.on_chart_opened("ETHUSDT", "c1")

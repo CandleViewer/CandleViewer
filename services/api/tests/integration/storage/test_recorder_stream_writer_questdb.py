@@ -24,6 +24,7 @@ from tests.integration.storage.test_questdb_hot_tier import (
     wait_for_row_count,
 )
 from tests.unit.recorder._writer_helpers import (
+    OPEN_GATE,
     T0,
     FakeClock,
     FakeEvents,
@@ -68,6 +69,7 @@ async def test_stream_writer_rows_commit_on_real_questdb(
             WriterConfig(wal_dir=tmp_path / "wal"),
             clock=clock,
             wall_clock_us=lambda: 0,
+            disk_gate=OPEN_GATE,
         )
         await writer.open()
         writer.seed(["BTCUSDT"])

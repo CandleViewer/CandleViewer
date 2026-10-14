@@ -19,6 +19,7 @@ from candleviewer.storage.questdb.ddl import parse_ddl_dir
 from candleviewer.storage.questdb.ilp_writer import serialize_ilp_line
 from candleviewer.storage.questdb.schemas import ALL_SCHEMAS
 from tests.unit.recorder._writer_helpers import (
+    OPEN_GATE,
     T0,
     FakeEvents,
     FakeSink,
@@ -334,6 +335,7 @@ async def test_wal_on_the_parquet_volume_is_refused_with_defaults(tmp_path: Path
         cfg,
         clock=lambda: 0.0,
         wall_clock_us=lambda: T0,
+        disk_gate=OPEN_GATE,
     )
     with pytest.raises(RecorderWalVolumeError):
         await w.open()
