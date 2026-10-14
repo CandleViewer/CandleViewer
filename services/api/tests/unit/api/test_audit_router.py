@@ -18,7 +18,12 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from candleviewer.api.audit import make_audit_router
-from candleviewer.api.audit_budget import FLUSH_REASON, SUMMARY_REASON, AuditRecordBudget
+from candleviewer.api.audit_budget import (
+    FLUSH_REASON,
+    SUMMARY_REASON,
+    AuditRecordBudget,
+    BudgetActor,
+)
 from candleviewer.api.audit_limiter import AuditQueryLimiter
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import (
@@ -775,6 +780,31 @@ async def test_cancellation_releases_the_limiter_lease_and_the_read_reservation(
     assert all(u.inflight == 0 for u in lim._users.values())
     user = next(iter(budget._users.values()))
     assert (user.reserved, user.reading, user.stamps) == (0, 0, [])
+
+
+async def test_owner_still_reads_when_every_tracked_entry_is_busy() -> None:
+    """`tracked_users` at its floor, every entry busy with another user's record of this
+    hour: the Owner (`is_owner`, SR-017) is tracked apart and reads, up to its own cap."""
+    budget = AuditRecordBudget(tracked_users=64, owner_per_hour=2, clock=_Clock())
+    svc = _FakeAuditService()
+    for i in range(64):
+        viewer = BudgetActor(f"viewer-{i}", "viewer", uuid.uuid4(), owner=False)
+        assert await budget.write_denial(viewer, svc.writer_service, {"actor_label": "viewer"})
+    owner = AuditPrincipal(
+        user_id=uuid.uuid4(), username="owner", permissions=frozenset({"audit:read"}), is_owner=True
+    )
+    resolver = _FakeResolver(owner)
+    app = FastAPI()
+    app.include_router(make_audit_router(svc, resolver, budget=budget))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as ac:
+        codes = [
+            (await ac.get("/admin/audit", params={"outcome": o})).status_code
+            for o in ("success", "denied", "failure")
+        ]
+        resolver._principal = _manager_with_read()
+        other = await ac.get("/admin/audit")
+    assert codes == [200, 200, 429]  # the Owner's own cap of 2
+    assert other.status_code == 503  # any other new user stays within the bound
 
 
 async def test_manager_with_audit_read_bounded_record_count_over_two_hours() -> None:

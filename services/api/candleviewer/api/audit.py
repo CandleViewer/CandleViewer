@@ -199,7 +199,9 @@ def _unavailable(detail: str = "audit record could not be written") -> JSONRespo
 
 
 def _budget_actor(principal: AuditPrincipal) -> BudgetActor:
-    owner = principal.is_owner or principal.has("*")
+    # The Owner's cap and tracked entry follow the resolved `is_owner` only
+    # (`PrincipalSnapshot.is_owner`, SR-017), never a role name or a grant.
+    owner = principal.is_owner
     return BudgetActor(str(principal.user_id), principal.username, principal.user_id, owner)
 
 
