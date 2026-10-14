@@ -47,6 +47,8 @@ class BatchOpFailed(Exception):
     """
 
     def __init__(self, index: int, rule: str) -> None:
+        if rule not in BATCH_RULES:
+            raise ValueError(f"unknown batch rule: {rule!r}")
         super().__init__(f"operations.{index}: {rule}")
         self.index = index
         self.rule = rule
