@@ -65,7 +65,11 @@ def test_put_with_stale_if_match_is_412_and_keeps_the_workspace(env: Env) -> Non
     assert env.repo.rows[w["id"]].name == "B"
 
 
-@pytest.mark.parametrize("header", ["*", '"a", "b"', "garbage", '"2026-10-14T12:00:00Z"'])
+@pytest.mark.parametrize(
+    "header",
+    ["*", '"a", "b"', "garbage", '"2026-10-14T12:00:00Z"',
+     '"2026-13-45T99:99:99.123456Z"', '"2026-02-30T12:00:00.123456Z"'],
+)  # fmt: skip
 def test_unparseable_if_match_is_412_unless_the_body_is_a_no_op(env: Env, header: str) -> None:
     w = env.create()
     url, h = f"/workspaces/{w['id']}", {"If-Match": header}
