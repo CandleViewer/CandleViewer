@@ -362,12 +362,16 @@ def test_exemption_is_exact_not_a_prefix(stack: _Stack) -> None:
 
 
 def test_sr042_cross_origin_requests_are_refused_including_login(stack: _Stack) -> None:
-    """SR-042 / SR-152 "wrong Origin": an Origin outside the allow-list, or
-    `Sec-Fetch-Site: cross-site`, is refused on every unsafe method - including the
-    exempt pre-session login - before anything else runs."""
+    """SR-042 / SR-152 "wrong Origin": an Origin outside the allow-list, with or without a
+    cross-site fetch label, or a cross-site fetch label and no Origin at all, is refused on
+    every unsafe method - including the exempt pre-session login - before anything else runs."""
     victim = stack.login()
     access, token = _bearer(victim), _csrf(victim)
-    for evil in ({"Origin": "https://evil.example"}, {"Sec-Fetch-Site": "cross-site"}):
+    for evil in (
+        {"Origin": "https://evil.example"},
+        {"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "cross-site"},
+    ):
         stack.client.cookies.clear()
         r = stack.client.post(
             "/auth/login", headers=evil, json={"identifier": "basiltt", "password": _PW}
@@ -394,6 +398,33 @@ def test_sr042_cross_origin_requests_are_refused_including_login(stack: _Stack) 
         "/auth/login", headers={"Origin": _ORIGIN}, json={"identifier": "basiltt", "password": _PW}
     )
     assert ok.json()["status"] == "mfa_required"
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_sr042_listed_origin_on_another_site_is_admitted(stack: _Stack, site: str) -> None:
+    """#2274: the allow-list decides (SR-042, `23-ws-protocol.md` §2.5). A listed app origin on
+    another site (the packaged Electron `app://`, a dev page on another port) is not refused for
+    its fetch label, on the exempt login or on a token-bound write. SR-041 still binds the write:
+    without its token the same request is refused for that reason, not for its origin."""
+    victim = stack.login()
+    access, token = _bearer(victim), _csrf(victim)
+    listed = {"Origin": _ORIGIN, "Sec-Fetch-Site": site}
+    stack.client.cookies.clear()
+    login = stack.client.post(
+        "/auth/login", headers=listed, json={"identifier": "basiltt", "password": _PW}
+    )
+    assert login.json()["status"] == "mfa_required"
+    bare = stack.client.post(
+        "/auth/logout", headers={**listed, "Authorization": f"Bearer {access}"}
+    )
+    _assert_refused(stack, bare, "missing")
+    out = stack.client.post(
+        "/auth/logout",
+        headers={**listed, "Authorization": f"Bearer {access}", CSRF_HEADER: token},
+        cookies={CSRF_COOKIE: token},
+    )
+    assert out.status_code == 204, out.text
+    assert "cross_origin" not in [r["reason"] for r in stack.audit.of("auth.csrf_refused")]
 
 
 def test_off_mesh_unsafe_request_gets_the_mesh_403_and_no_csrf_audit(stack: _Stack) -> None:

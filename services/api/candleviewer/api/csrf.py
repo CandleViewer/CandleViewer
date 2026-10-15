@@ -10,10 +10,13 @@ CsrfToken`, `components.responses.CsrfTokenInvalid`.
 0. a path containing a control character is refused with 400 before anything
    else (Starlette's `$` route regex tolerates a trailing newline; exact
    matching here must never disagree with the router);
-1. SR-042: `Sec-Fetch-Site: cross-site` is refused, and a present `Origin`
-   must be in `Settings.allowed_origins`. This also covers the 5 exempt
-   pre-session operations. A missing `Origin` is allowed (non-browser
-   clients); the double-submit token below is what binds those.
+1. SR-042: the allow-list decides. A present `Origin` must be in
+   `Settings.allowed_origins` and is then admitted whatever `Sec-Fetch-Site`
+   says (a listed app origin on another site works, as on the WS upgrade);
+   any other present `Origin` is refused. A missing `Origin` is allowed
+   (non-browser clients; the double-submit token below is what binds those)
+   unless `Sec-Fetch-Site` is `cross-site` or `same-site`. This also covers
+   the 5 exempt pre-session operations.
 
 Then, except for the five pre-session operations (contract "Exempt"):
 
@@ -195,15 +198,20 @@ def _bearer(headers: Headers) -> str | None:
 
 
 def _origin_refused(headers: Headers, allowed: frozenset[str]) -> bool:
-    """SR-042. `Sec-Fetch-Site` must be absent, `same-origin` or `none` (user-initiated):
-    `cross-site` and `same-site` (a sibling host, e.g. another *.ts.net node) are refused.
-    A present `Origin` must be in the allow-list; `null` never is. A missing `Origin`
-    (non-browser client) is allowed: browsers always send it on unsafe cross-origin
-    requests, and the double-submit token still binds the request."""
-    if headers.get("sec-fetch-site", "").lower() in ("cross-site", "same-site"):
-        return True
+    """SR-042: the allow-list decides, as on the WS upgrade (`23-ws-protocol.md` §2.5).
+
+    A present `Origin` is admitted when it is in the allow-list, whatever `Sec-Fetch-Site`
+    says, so a listed app origin on another site (the packaged Electron `app://` origin, a dev
+    page on another port) works: a foreign page cannot make a browser send a listed `Origin`.
+    Any other present `Origin` is refused, `null` included (it is never listed). A missing
+    `Origin` (non-browser client; browsers always send one on unsafe cross-origin requests) is
+    allowed, and the double-submit token still binds the request, unless the browser labelled it
+    `Sec-Fetch-Site: cross-site` or `same-site` (a sibling host, e.g. another *.ts.net node):
+    that request has no listed `Origin` either, so it is refused."""
     origin = headers.get("origin")
-    return origin is not None and origin.rstrip("/") not in allowed
+    if origin is not None:
+        return origin.rstrip("/") not in allowed
+    return headers.get("sec-fetch-site", "").lower() in ("cross-site", "same-site")
 
 
 def source_ip(scope: Scope) -> str | None:

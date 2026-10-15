@@ -355,8 +355,10 @@ repository's secret settings, never from an agent session.
   re-fetch the cookie via `GET /auth/session`; no data is lost. Startup refuses a CSRF key (current
   or previous) equal to the TOTP or recovery key. Alerts: `CsrfRefusalsHigh`,
   `CsrfRefusalAuditUnavailable` (`docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh`).
-- **SR-042 origins (`CV_ALLOWED_ORIGINS`).** The CSRF guard refuses any state-changing request
-  whose `Origin` is not in this exact list, or that carries `Sec-Fetch-Site: cross-site` or
+- **SR-042 origins (`CV_ALLOWED_ORIGINS`).** The allow-list decides. The CSRF guard admits a
+  state-changing request whose `Origin` is in this exact list, whatever `Sec-Fetch-Site` says (a
+  listed app origin on another site works, as on the WS upgrade), and refuses any other `Origin`.
+  A request with no `Origin` is refused only when it carries `Sec-Fetch-Site: cross-site` or
   `same-site`. `null` and wildcards are never accepted. Empty (the default) refuses every browser
   write, which is the production fail-closed state. Set it before rollout to each origin the web app
   is served from, scheme + host + port, comma separated, e.g.

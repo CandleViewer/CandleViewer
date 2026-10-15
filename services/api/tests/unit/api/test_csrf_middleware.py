@@ -22,6 +22,7 @@ from candleviewer.api.csrf import (
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.ws.lifecycle import origin_refusal
 
 _CODEC = CsrfCodec(b"\x07" * 32)
 _SID = uuid.uuid4()
@@ -276,12 +277,21 @@ def test_duplicate_csrf_cookie_last_value_wins_like_request_cookies() -> None:
 
 # -- SR-042 -----------------------------------------------------------------------------------
 
+#: `Sec-Fetch-Site` absent, plus every value a browser sends.
+_SITES = [None, "same-origin", "none", "same-site", "cross-site"]
+
+
+def _with_site(origin: str | None, site: str | None) -> dict[str, str]:
+    headers = {} if origin is None else {"Origin": origin}
+    return headers if site is None else {**headers, "Sec-Fetch-Site": site}
+
 
 @pytest.mark.parametrize(
     "headers",
     [
         {"Origin": "https://evil.example"},
-        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "cross-site"},  # no Origin: not a listed one, so still refused
+        {"Sec-Fetch-Site": "Cross-Site"},  # header values are matched case-insensitively
         {"Sec-Fetch-Site": "same-site"},  # a sibling host (e.g. another *.ts.net node)
         {"Origin": "null"},
     ],
@@ -294,6 +304,68 @@ def test_cross_origin_unsafe_requests_are_refused_including_exempt_routes(
         r = client.post(path, headers={**_pair(), "Authorization": "Bearer good", **headers})
         assert r.status_code == 403 and _code(r) == "csrf_token_invalid", path
         assert audit.calls[-1]["reason"] == "cross_origin"
+
+
+@pytest.mark.parametrize("site", _SITES)
+def test_listed_origin_is_admitted_whatever_sec_fetch_site_says(site: str | None) -> None:
+    """#2274, SR-042: the allow-list decides, as on the WS upgrade (`23-ws-protocol.md` §2.5).
+    A listed app origin on another site (the packaged Electron `app://`, a dev page on another
+    port) arrives as `cross-site` / `same-site`; a foreign page cannot make a browser send a
+    listed `Origin`, so the fetch metadata adds nothing for it."""
+    client, audit = _app(_Sessions())
+    headers = _with_site(_ORIGIN, site)
+    bound = client.post("/w/x", headers={**_pair(), "Authorization": "Bearer good", **headers})
+    login = client.post("/auth/login", headers=headers)  # exempt: the Origin is its only guard
+    assert (bound.status_code, login.status_code) == (200, 200)
+    assert not audit.calls
+
+
+@pytest.mark.parametrize("site", _SITES)
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://evil.example",
+        "null",  # an opaque origin is never listed
+        "http://app.example",  # the listed host, another scheme
+        "https://app.example:8443",  # the listed host, another port
+        "https://app.example.evil.example",  # the listed host as a prefix
+    ],
+)
+def test_unlisted_origin_is_refused_whatever_sec_fetch_site_says(
+    origin: str, site: str | None
+) -> None:
+    client, audit = _app(_Sessions())
+    for path in ("/auth/login", "/w/x"):
+        headers = {**_pair(), "Authorization": "Bearer good", **_with_site(origin, site)}
+        r = client.post(path, headers=headers)
+        assert r.status_code == 403 and _code(r) == "csrf_token_invalid", path
+        assert audit.calls[-1]["reason"] == "cross_origin"
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_listed_origin_on_another_site_still_needs_the_bound_token(site: str) -> None:
+    """Admission by the allow-list is not admission to the write: SR-041 still binds it."""
+    client, audit = _app(_Sessions())
+    headers = {"Origin": _ORIGIN, "Sec-Fetch-Site": site, "Authorization": "Bearer good"}
+    assert client.post("/w/x", headers=headers).status_code == 403
+    assert audit.calls[-1]["reason"] == "missing"
+    other = client.post("/w/x", headers={**headers, **_pair(uuid.uuid4())})  # another session's
+    assert other.status_code == 403
+    assert audit.calls[-1]["reason"] == "wrong_session"
+    assert client.post("/w/x", headers={**headers, **_pair()}).status_code == 200
+
+
+@pytest.mark.parametrize("site", _SITES)
+@pytest.mark.parametrize("origin", [_ORIGIN, _ORIGIN + "/", "https://evil.example", "null"])
+def test_rest_and_ws_let_the_allow_list_decide_alike(origin: str, site: str | None) -> None:
+    """SR-042: for one present `Origin`, the REST guard and the WS upgrade (`23-ws-protocol.md`
+    §2.5) refuse exactly the same requests. They differ only on a missing or repeated `Origin`,
+    deliberately (SR-042)."""
+    client, _ = _app(_Sessions())
+    rest_refused = client.post("/auth/login", headers=_with_site(origin, site)).status_code == 403
+    fetch_sites = [] if site is None else [site]
+    ws_refused = origin_refusal([origin], fetch_sites, frozenset({_ORIGIN})) is not None
+    assert rest_refused == ws_refused
 
 
 def test_allowed_origin_and_same_site_pass() -> None:
