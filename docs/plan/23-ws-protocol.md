@@ -3389,6 +3389,17 @@ on an in-place re-auth. Internal details (listening addresses, remediation text)
 to clients; they appear in logs and `/readyz` only. This uses the existing schema; no schema
 change.
 
+**Feature-flag and maintenance pushes (E42-T03).** After a flag write commits, every
+authenticated connection whose role may see that flag receives a `system` frame of
+`kind: "feature_flags"` within 2 s. `feature_flags` carries **only the changed keys**, each
+resolved for that connection's user exactly as `GET /admin/feature-flags` resolves it, so a client
+merges the frame into the set it holds rather than replacing the set. A key the role may not see
+is omitted, and a frame left with no key is not sent, so a manager or viewer never learns an
+owner-only key. The topic snapshot carries the full set the role may see. Turning
+`maintenance.mode` on or off also sends `kind: "notice"` to every connection within 2 s, with
+`reason` `maintenance.enabled` (severity `warning`) or `maintenance.disabled` (severity `info`)
+and a role-neutral `message`. This uses the existing schema; no schema change.
+
 ---
 
 ## 16. Conformance, limits and test matrix
