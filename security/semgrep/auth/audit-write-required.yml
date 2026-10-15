@@ -46,8 +46,36 @@ rules:
         - "**/tests/**"
         # Allowlist (Security-owned, widening needs Security review). Two classes:
         # (a) audited below the handler, not inline: rules.py, rules_crud.py, step_up.py;
-        # (b) not an audited account action: telemetry.py, plus the exact-route list below.
+        # (b) not an audited account action: telemetry.py, plus the exact-route list above.
         - "**/api/rules.py"        # validate is non-mutating; compile audits in rules/service.py
         - "**/api/rules_crud.py"   # every mutation goes through rules/service.py (audited)
         - "**/api/step_up.py"      # step-up grant/fail audited by the B16 plugin (ACTION_REQUEST)
         - "**/api/telemetry.py"    # frontend telemetry sink, not an audited account action
+
+  - id: audit-write-required-route-scope
+    languages: [python]
+    severity: ERROR
+    message: >-
+      C-2.9: this route is on the audit-write-required UI-state list, which covers only
+      api/drawings.py and api/workspaces.py. Elsewhere (e.g. under APIRouter(prefix=...)) it is a
+      different endpoint: add an audit call or get it classified.
+    metadata:
+      sr: SR-112
+    pattern-either:
+      - pattern: |
+          @$R.post("=~/^/(drawings|drawings/batch|workspaces|workspaces/[{]workspaceId[}]/layouts)$/", ...)
+          async def $F(...):
+              ...
+      - pattern: |
+          @$R.put("=~/^/(drawings/[{]drawingId[}]|workspaces/[{]workspaceId[}]|workspaces/[{]workspaceId[}]/layouts/[{]layoutId[}])$/", ...)
+          async def $F(...):
+              ...
+      - pattern: |
+          @$R.delete("=~/^/(drawings/[{]drawingId[}]|workspaces/[{]workspaceId[}]|workspaces/[{]workspaceId[}]/layouts/[{]layoutId[}])$/", ...)
+          async def $F(...):
+              ...
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/api/drawings.py"
+        - "**/api/workspaces.py"

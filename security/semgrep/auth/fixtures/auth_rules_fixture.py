@@ -177,6 +177,49 @@ async def drawing_share_bad(body):
     return await svc.share(body)
 
 
+@router.post("/workspaces/{workspaceId}/layouts")  # ok: audit-write-required
+async def post_layout_ok(body):
+    return await svc.post(body)
+
+
+@router.post("/drawings/batch-delete")  # ruleid: audit-write-required
+async def post_batch_delete_bad(body):
+    return await svc.post(body)
+
+
+@router.put("/workspaces/{workspaceId}")  # ok: audit-write-required
+async def put_workspace_ok(body):
+    return await svc.put(body)
+
+
+@router.put("/drawings/{drawingId}/alert")  # ruleid: audit-write-required
+async def put_alert_bad(body):
+    return await svc.put(body)
+
+
+@router.delete("/workspaces/{workspaceId}/layouts/{layoutId}")  # ok: audit-write-required
+async def delete_layout_ok():
+    return await svc.delete()
+
+
+@router.delete("/drawings/batch")  # ruleid: audit-write-required
+async def delete_batch_bad():
+    return await svc.delete()
+
+
+# --- audit-write-required-route-scope -------------------------------------
+@admin.delete("/workspaces/{workspaceId}")  # ruleid: audit-write-required-route-scope
+async def admin_delete_workspace_bad(workspace_id):
+    await _audit("workspace.delete")
+    return await svc.delete(workspace_id)
+
+
+@admin.delete("/users/{userId}/workspaces")  # ok: audit-write-required-route-scope
+async def admin_delete_user_workspaces_ok(user_id):
+    await _audit("workspace.purge")
+    return await svc.purge(user_id)
+
+
 @router.get("/accounts")  # ok: audit-write-required
 async def list_ok():
     return await svc.list()
