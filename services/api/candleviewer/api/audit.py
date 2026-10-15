@@ -667,6 +667,10 @@ def make_audit_router(
             result = await service.query.run_verify(plan, deadline_s=verify_deadline_s)
         except _VERIFY_STOP_ERRORS as exc:
             observe_stop(full_chain=plan.full_chain)
+            if isinstance(exc, AuditEntryTooLarge):  # the entry's id and the class only
+                _log().warning(
+                    "audit.verify.entry_too_large", entry_id=exc.entry_id, error=type(exc).__name__
+                )
             reason = _verify_stop(exc)[0]
             await write_verify_record(
                 emit, fields, outcome=_FAILURE, severity=_WARNING, reason=reason, after_state=span
