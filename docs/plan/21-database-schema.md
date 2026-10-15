@@ -3161,6 +3161,8 @@ QuestDB cannot alter an existing table's `DEDUP UPSERT KEYS` column set to add a
 
 **Recommended: B**, because R0 has no production data, `bars_*` is a derived cache of `trades` (never the system of record), and v1 rows of activity families are already corrupt where collisions occurred, so migrating them adds nothing. B is a destructive DDL change and therefore an **explicit owner decision** (#1778 item R); if the owner declines, path A applies. The 0004 file must be idempotent on an empty install, and its PR records the owner's acknowledgement.
 
+**Tail read (#399).** The WS `bars` snapshot reads one series' newest builder rows through `BarReader.read_tail` (`bars/reader.py`): `WHERE symbol = $1 AND bar_param = $2 AND ts >= $3 AND "index" IS NOT NULL ORDER BY ts DESC, generation DESC, "index" DESC LIMIT n`, with n at most 1 000, then reversed. Kline rows (NULL `index`) carry no bar key and are left out. The `ts` lower bound is required: QuestDB 8.1.1 predates questdb/questdb#5148, so a multi-key `DESC ... LIMIT` sorts its whole scan. Time bars look back twice the span of n bars, other kinds the whole non-time window, both within the SR-E12-02 caps (`bars/limits.py`).
+
 ## 10. Seed data
 
 Seeds are declarative YAML applied idempotently by `python -m candleviewer.db.seed` (upsert on natural key), run after migrations in every environment. Seeding is audited as actor `system:seed`.
