@@ -344,3 +344,57 @@ def test_pacer_saturated_holds_a_fast_heatmap_to_one_frame_a_second() -> None:
     assert pacer.throttle_ms(heatmap) == 100
     pacer.classify(100.0, 70.0, [heatmap])
     assert pacer.throttle_ms(heatmap) == DEGRADED_THROTTLE_MS  # x4 alone would give 400 ms
+
+
+def test_pacer_snapshot_from_another_path_discards_the_stale_window() -> None:
+    """#2501 review: a client resync between two flushes must not let a pre-snapshot delta
+    follow the fresh `snap`."""
+    conn, pacer = _conn()
+    sub = _sub(conn, "book.BTCUSDT.50")
+    pacer.offer(sub, _bid("100"))
+    pacer.offer(sub, _bid("101"))  # pending in the window
+    conn.take()
+    assert conn.emitter.snapshot(sub, "client_resync")
+    [snap] = conn.take()
+    assert pacer.tick(100.05) == 0
+    assert conn.take() == []
+    conn.clock.now = 101.0
+    pacer.offer(sub, _bid("102"))
+    [delta] = conn.take()
+    assert delta["s"] == snap["s"] + 1
+    assert delta["p"]["bids"] == [["102", "1"]]
+
+
+def test_pacer_failing_emit_never_leaves_the_window_due() -> None:
+    conn, pacer = _conn()
+    sub = _sub(conn, "book.BTCUSDT.50")
+    pacer.offer(sub, _bid("100"))
+    pacer.offer(sub, _bid("101"))
+
+    def broken(frame: dict[str, Any]) -> None:
+        raise RuntimeError("socket gone")
+
+    conn.emitter.push = broken
+    with pytest.raises(RuntimeError):
+        pacer.tick(100.05)
+    assert pacer.next_due() is None
+
+
+def test_rtt_probe_ids_carry_a_per_connection_nonce() -> None:
+    assert RttProbe(nonce="abc").ping_id(0.0) == "s-rtt-abc-1"
+    assert RttProbe().prefix != RttProbe().prefix
+
+
+def test_pacer_next_update_after_a_snapshot_drops_the_stale_window() -> None:
+    conn, pacer = _conn()
+    sub = _sub(conn, "book.BTCUSDT.50")
+    pacer.offer(sub, _bid("100"))
+    pacer.offer(sub, _bid("101"))  # pending in the window
+    conn.take()
+    assert conn.emitter.snapshot(sub, "reconfigure")
+    conn.take()
+    conn.clock.now = 101.0
+    pacer.offer(sub, _bid("102"))  # the window had closed: leaves at once, without "101"
+    [delta] = conn.take()
+    assert delta["p"]["bids"] == [["102", "1"]]
+    assert delta["p"]["coalesced"] is False

@@ -20,6 +20,7 @@ Plain synchronous code on the hot path (C-2.20); time always comes from the call
 from __future__ import annotations
 
 import math
+import secrets
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -107,8 +108,10 @@ class RttProbe:
     While a probe is unanswered its age counts as the RTT, so a socket that stopped draining reads
     as slow at once rather than when (if ever) the `pong` arrives."""
 
-    def __init__(self, interval_s: float = CLASSIFY_INTERVAL_S) -> None:
+    def __init__(self, interval_s: float = CLASSIFY_INTERVAL_S, nonce: str | None = None) -> None:
         self.interval_s = interval_s
+        #: Unpredictable per connection, so a client cannot answer a probe before it is sent.
+        self.prefix = f"{RTT_PROBE_PREFIX}{secrets.token_hex(4) if nonce is None else nonce}-"
         self.sample_ms: float | None = None
         self._sent = 0
         self._outstanding: tuple[str, float] | None = None
@@ -119,7 +122,7 @@ class RttProbe:
         if self._outstanding is not None or now - self._last_sent < self.interval_s:
             return None
         self._sent += 1
-        probe = f"{RTT_PROBE_PREFIX}{self._sent}"
+        probe = f"{self.prefix}{self._sent}"
         self._outstanding, self._last_sent = (probe, now), now
         return probe
 
@@ -155,8 +158,13 @@ def quality_notice(
 
 @dataclass(slots=True)
 class _Lane:
+    """One subscription's throttle window. `seq` is the topic's sequence number when the lane last
+    emitted or started collecting: if anything else (a snapshot) moved it on, what the lane holds
+    predates that and is discarded."""
+
     sub: Subscription
     queue: CoalescingQueue
+    seq: int
     last_emit: float = -math.inf
     due: float | None = None
 
@@ -169,7 +177,8 @@ class Pacer:
         self.classifier = Classifier()
         self.probe = RttProbe()
         self.lanes: dict[str, _Lane] = {}
-        #: §8.4 step 1: dropped topics awaiting their `backpressure` snapshot, by `sub_id`.
+        #: §8.4 step 1: dropped topics awaiting their `backpressure` snapshot, by `sub_id`; the
+        #: outbound ladder (`Backpressure.drain`) sends them and removes them.
         self.resnapshot_required: dict[str, Subscription] = {}
 
     @property
@@ -197,7 +206,10 @@ class Pacer:
             return False  # the pending `snap` carries this state
         lane = self.lanes.get(sub.sub_id)
         if lane is None:
-            lane = self.lanes[sub.sub_id] = _Lane(sub, CoalescingQueue(sub.topic.family.family))
+            family = sub.topic.family.family
+            lane = self.lanes[sub.sub_id] = _Lane(sub, CoalescingQueue(family), sub.seq)
+        elif lane.seq != sub.seq:
+            self._restart(lane)  # a snapshot went out since: what the lane holds is stale
         lane.queue.set_coalesce(self._coalesce(sub))
         if not lane.queue.offer(body, part, ts_ms=ts_ms):
             self.drop(sub)
@@ -221,7 +233,15 @@ class Pacer:
         """When the earliest pending window closes (monotonic seconds), if any."""
         return min((lane.due for lane in self.lanes.values() if lane.due is not None), default=None)
 
+    def _restart(self, lane: _Lane) -> None:
+        lane.queue.clear()
+        lane.due, lane.seq = None, lane.sub.seq
+
     def _flush(self, lane: _Lane, now: float) -> int:
+        lane.due = None  # first: a failing emit must not leave the window due forever
+        if lane.seq != lane.sub.seq:
+            self._restart(lane)  # never a pre-snapshot delta after the `snap`
+            return 0
         sent = 0
         for emission in lane.queue.take():
             sent += self.emitter.delta(
@@ -231,9 +251,9 @@ class Pacer:
                 coalesced_count=emission.coalesced_count,
                 ts_ms=emission.ts_ms,
             )
+        lane.seq = lane.sub.seq
         if sent:
             lane.last_emit = now
-        lane.due = None
         return sent
 
     def drop(self, sub: Subscription) -> None:
@@ -270,7 +290,8 @@ class Pacer:
         self, now: float, queue_pct: float, subs: Iterable[Subscription]
     ) -> dict[str, Any] | None:
         """One §8.3 sample: on a class change, enforce it and return the `connection_quality`
-        notice to send on `system`; None otherwise."""
+        notice to send on `system`; None otherwise. `subs` is the connection's full subscription
+        set, from which the notice's `degraded_topics` are named."""
         rtt = self.probe.rtt_ms(now)
         if not self.classifier.observe(classify(queue_pct, rtt)):
             return None
