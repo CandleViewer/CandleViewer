@@ -2674,7 +2674,7 @@ flowchart LR
 | E9  | **Actions are transactional per fire.** With `on_error="abort_remaining"` (default), a failed action stops the remaining actions in that fire; everything already done is recorded, nothing is rolled back (you cannot un-place a filled order), and the partial outcome is alerted. |
 | E10 | **Reconnect replay safety.** After a disconnect, the engine does not replay missed triggers. It re-evaluates current state once, and `once`/dedupe keys prevent duplicates. Missed-trigger counts are exposed as a metric.                                                           |
 | E11 | **No rule may act on another rule's algo children** (`exclude_algo_children`, default true).                                                                                                                                                                                         |
-| E12 | **Live requires explicit opt-in.** `scope.environments` defaults to `["demo"]`; adding `"live"` requires the `rules.arm_live` permission, a confirmation dialog, and produces a high-severity audit entry.                                                                           |
+| E12 | **Live requires explicit opt-in.** `scope.environments` defaults to `["demo"]`; adding `"live"` requires the `rules:arm_live` permission, a confirmation dialog, and produces a high-severity audit entry.                                                                           |
 
 Evaluation pipeline per trigger:
 
