@@ -24,6 +24,11 @@ Each finding message names its SR id.
 `no-adhoc-authz` and `no-secret-logging` carry path excludes inside the rule files (the `has_permission`
 wildcard implementations; replay/recording `session_id`). Both files are Security-owned: widening an
 exclude needs Security review (CODEOWNERS).
+`audit-write-required` allow-lists whole files whose audit is emitted below the handler (`api/rules.py`,
+`api/rules_crud.py`, `api/step_up.py`) or that are not audited actions (`api/telemetry.py`), plus an exact-route
+`pattern-not` list for the drawings and workspaces writes (not C-2.9 by #357 item 11 and #402 D20; foreign-id denials
+audited as `rbac.denied` where recorded). A new route in those routers is still flagged. The rule cannot see new
+behaviour inside an approved handler: revisit when E40 exposes `drawings.alert_id` and the 3.8.5 hotkey routes land.
 
 ## Suppressions
 Format: `# nosem: <rule> reason=<why> owner=@team review=2026-12-31`. Undated/unowned = job failure.
