@@ -956,3 +956,13 @@ def test_coalescer_heatmap_root_fields_seen_are_bounded() -> None:
         queue.take()
     assert not queue.offer({"symbol": "X", "k8": 8})
     assert queue.overflowed
+
+
+def test_coalescer_take_turns_an_unreadable_frame_into_an_overflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defence in depth behind `validate`: `take()` never raises, it overflows."""
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    monkeypatch.setattr(queue._merge, "validate", lambda body: None)
+    assert queue.offer({"symbol": "X", "columns": [3]})
+    assert queue.take() == [] and queue.overflowed
