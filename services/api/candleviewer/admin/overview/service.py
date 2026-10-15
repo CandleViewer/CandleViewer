@@ -23,6 +23,7 @@ from candleviewer.admin.overview.ports import (
     RecorderStatus,
     UserCounts,
 )
+from candleviewer.admin.overview.slices import AdminSlice
 
 #: `AdminOverview.accounts.keys_expiring_30d`.
 KEY_EXPIRY_WINDOW: Final = timedelta(days=30)
@@ -74,12 +75,12 @@ class AdminOverviewService:
     async def overview(self) -> OverviewSnapshot:
         read = self._fan.read
         users, accounts, recorder, storage, trading, incidents = await asyncio.gather(
-            read("users", self._users),
-            read("accounts", self._accounts),
-            read("recorder", self._recorder_status),
-            read("storage", self._storage),
-            read("trading", self._trading, cached=False),
-            read("incidents", self._incidents),
+            read(AdminSlice.USERS, self._users),
+            read(AdminSlice.ACCOUNTS, self._accounts),
+            read(AdminSlice.RECORDER, self._recorder_status),
+            read(AdminSlice.STORAGE, self._storage),
+            read(AdminSlice.TRADING, self._trading, cached=False),
+            read(AdminSlice.INCIDENTS, self._incidents),
         )
         return OverviewSnapshot(self._now(), users, accounts, recorder, storage, trading, incidents)
 
