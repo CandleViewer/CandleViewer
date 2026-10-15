@@ -83,6 +83,7 @@ from candleviewer.auth.errors import (
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
 )
+from candleviewer.auth.hashing import last_verify_ms
 from candleviewer.auth.metrics import auth_session_fixation_attempts_total
 from candleviewer.auth.models import (
     LoginRequest,
@@ -229,15 +230,29 @@ def _redact_identifier(identifier: str) -> str:
     return f"{identifier[:3]}***(len={len(identifier)})"
 
 
+def _set_argon2_server_timing(challenge: JSONResponse) -> None:
+    """#2097 Q2: this login's measured Argon2id verification time (`Hasher.verify` keeps it
+    for the request), set only on the 200 challenge: its caller has already proved the
+    password, so the header tells an unauthenticated caller nothing (SR-014)."""
+    elapsed_ms = last_verify_ms()
+    if elapsed_ms is not None:
+        challenge.headers["Server-Timing"] = f"argon2;dur={elapsed_ms:.1f}"
+
+
 def make_auth_router(
     auth_service: AuthServiceLike,
     audit_service: AuditServiceLike | None = None,
     *,
     identity: IdentityProvider | None = None,
     csrf: CsrfCodec,
+    server_timing: bool = False,
 ) -> APIRouter:
     """Bind `/auth/login` to a concrete `AuthService` instance. *csrf* issues the
-    SR-041 `__Host-cv_csrf` cookie wherever a session is minted (#2090)."""
+    SR-041 `__Host-cv_csrf` cookie wherever a session is minted (#2090).
+    *server_timing* (#2097, `CV_AUTH_PERF_ENABLED`, keyless testnet only) adds
+    `Server-Timing: argon2;dur=<ms>` to the `mfa_required` challenge and to no
+    other response, so it never helps tell a wrong password from an unknown user
+    (SR-014)."""
     router = APIRouter(tags=["auth"])
 
     async def _audit_carried_sessions(request: Request, user_id: uuid.UUID) -> bool:
@@ -340,7 +355,7 @@ def make_auth_router(
             actor_ip=audit_ip,
             outcome=AuditOutcome.SUCCESS,
         )
-        return JSONResponse(
+        challenge = JSONResponse(
             status_code=200,
             content={
                 "status": "mfa_required",
@@ -349,6 +364,9 @@ def make_auth_router(
                 "expires_in": result.expires_in,
             },
         )
+        if server_timing:
+            _set_argon2_server_timing(challenge)
+        return challenge
 
     @router.post("/auth/mfa/verify")
     async def mfa_verify(request: Request, body: MfaVerifyRequest) -> JSONResponse:

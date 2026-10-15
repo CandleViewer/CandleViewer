@@ -21,6 +21,9 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import time
+from collections.abc import Callable
+from contextvars import ContextVar
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
@@ -29,6 +32,11 @@ from argon2.exceptions import VerifyMismatchError
 #: `users.password_algo_params`'s column default in
 #: `0001_identity_rbac_sessions_mfa.py`.
 DEFAULT_ARGON2_PARAMS: dict[str, int] = {"m": 65536, "t": 3, "p": 4}
+
+#: #2097: wall time in ms of the latest `Hasher.verify` awaited in this context, timed in the
+#: worker thread around the Argon2id call alone. A ContextVar, so each request (task) sees only
+#: its own value; the perf-only login `Server-Timing` header reads it via `last_verify_ms()`.
+_LAST_VERIFY_MS: ContextVar[float | None] = ContextVar("cv_argon2_last_verify_ms", default=None)
 
 #: A fixed, valid Argon2id hash of an arbitrary constant string. Used only
 #: as the verification target for an unknown identifier so the CPU work
@@ -55,9 +63,12 @@ class Hasher:
     pepper outside the database").
     """
 
-    def __init__(self, pepper: str = "") -> None:
+    def __init__(
+        self, pepper: str = "", *, perf_counter: Callable[[], float] = time.perf_counter
+    ) -> None:
         self._pepper = pepper
         self._default_hasher = _params_to_hasher(DEFAULT_ARGON2_PARAMS)
+        self._perf_counter = perf_counter
 
     def _peppered(self, password: str) -> str:
         return password + self._pepper
@@ -82,9 +93,20 @@ class Hasher:
         Runs off the event loop (`asyncio.to_thread`) — same C-2.18 rationale
         as `hash()`: Argon2id verification is deliberately slow and must
         never block the loop, or a caller could stall the whole backend by
-        hammering `/auth/login` (see this module's PR review history)."""
+        hammering `/auth/login` (see this module's PR review history).
+
+        #2097: the worker thread times the Argon2id call alone (no thread-pool
+        queueing) and the result is kept for this context (`last_verify_ms`).
+        Every path, the dummy hash included, runs the same timed call."""
         peppered = self._peppered(password)
-        return await asyncio.to_thread(self._verify_sync, password_hash, peppered)
+        ok, elapsed_ms = await asyncio.to_thread(self._timed_verify_sync, password_hash, peppered)
+        _LAST_VERIFY_MS.set(elapsed_ms)
+        return ok
+
+    def _timed_verify_sync(self, password_hash: str, peppered_password: str) -> tuple[bool, float]:
+        started = self._perf_counter()
+        ok = self._verify_sync(password_hash, peppered_password)
+        return ok, (self._perf_counter() - started) * 1000.0
 
     def _verify_sync(self, password_hash: str, peppered_password: str) -> bool:
         try:
@@ -114,3 +136,9 @@ def constant_time_eq(a: str, b: str) -> bool:
     elsewhere in this module (never for the Argon2id hash itself, which
     `argon2-cffi` already compares safely)."""
     return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
+
+
+def last_verify_ms() -> float | None:
+    """#2097: wall time in ms of the latest Argon2id verification awaited in this context, or
+    None when none ran. Read only by the perf-only login `Server-Timing` header."""
+    return _LAST_VERIFY_MS.get()

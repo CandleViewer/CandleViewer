@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _QUESTDB_DEV_PASSWORD = "quest"  # noqa: S105 - the QuestDB OSS default, refused on live
@@ -96,6 +96,19 @@ def is_serialised_origin(entry: str) -> bool:
         return False
     netloc = f"[{host}]" if ":" in host else host
     return entry == f"{parts.scheme}://{netloc}" + ("" if port is None else f":{port}")
+
+
+def _keyless_testnet_refusal(
+    switch: str, environment: object, bybit_api_key: object, bybit_api_secret: object
+) -> str | None:
+    """#2097, the #2086 rule for a test or perf switch: why *switch* may not be on, or None on
+    testnet with no exchange key (`CV_BYBIT_API_KEY` and `CV_BYBIT_API_SECRET` both unset).
+    The message names the switch and the rule only, never a value."""
+    if environment is not Environment.TESTNET:
+        return f"{switch} is refused unless CV_ENVIRONMENT=testnet"
+    if bybit_api_key is not None or bybit_api_secret is not None:
+        return f"{switch} is refused while an exchange key (CV_BYBIT_API_*) is configured"
+    return None
 
 
 class Settings(BaseSettings):
@@ -193,6 +206,10 @@ class Settings(BaseSettings):
     auth_totp_key_hex: SecretStr | None = None
     auth_recovery_hmac_key_hex: SecretStr | None = None
     auth_pepper: SecretStr = SecretStr("")
+    # #2097: perf instrumentation for the k6 auth profile (`candleviewer.api.auth_perf`): the
+    # owner-only `GET /auth/_perf/argon2-params` route and `Server-Timing` on the login challenge.
+    # Refused at startup unless testnet with no exchange key (the #2086 gate).
+    auth_perf_enabled: bool = False
     # #2090 (SR-041): dedicated CSRF-token HMAC key (hex, 32 bytes), separate from
     # the TOTP / recovery keys and the refresh tokens. Rotatable: move the old
     # value to `auth_csrf_previous_key_hex` (verify-only) for one refresh lifetime.
@@ -434,6 +451,31 @@ class Settings(BaseSettings):
                     f"CV_ALLOWED_ORIGINS entry {entry!r} is not a serialised origin "
                     "(scheme://host[:port]: lowercase, ASCII host, no path, no default port)"
                 )
+        return value
+
+    def auth_perf_refusal(self) -> str | None:
+        """#2097: why `CV_AUTH_PERF_ENABLED` may not be on here, or None on a keyless testnet.
+        The app checks this again at build time (`api.auth_perf.auth_perf_enabled`)."""
+        return _keyless_testnet_refusal(
+            "CV_AUTH_PERF_ENABLED", self.environment, self.bybit_api_key, self.bybit_api_secret
+        )
+
+    @field_validator("auth_perf_enabled")
+    @classmethod
+    def _refuse_auth_perf_outside_keyless_testnet(cls, value: bool, info: ValidationInfo) -> bool:
+        """#2097 Q1, the #2086 gate: perf instrumentation never runs in live or demo, or next
+        to an exchange key; startup fails before any module starts. A field validator, so the
+        refusal echoes only this flag, never another field's input (C-12.6)."""
+        if not value:
+            return value
+        refusal = _keyless_testnet_refusal(
+            "CV_AUTH_PERF_ENABLED",
+            info.data.get("environment"),
+            info.data.get("bybit_api_key"),
+            info.data.get("bybit_api_secret"),
+        )
+        if refusal is not None:
+            raise ValueError(refusal)
         return value
 
     def model_post_init(self, __context: object) -> None:
