@@ -64,10 +64,12 @@ pg_stat_activity USING (pid) WHERE locktype = 'advisory'`. A crashed holder rele
 7. `archive.verification_failed` (CRITICAL event, `retention_skipped reason=archive_mismatch`): a hot
    day's rows no longer match its verified archive. Typical causes are late or backfilled rows that
    landed after the roll-off exported the day, a new symbol in the day, or a missing manifest. The
-   day is kept and the alert repeats on every pass until the counts match. Nothing has been lost:
-   the extra rows are still hot. Compare the hot `count()` per symbol for the day with the
-   manifest row counts (`_manifests/<stream>/symbol=<SYM>/dt=<DATE>.json`) and find where the rows
-   came from. Never drop the partition by hand.
+   day is kept and the alert repeats on every non-resumed pass until the counts match. Nothing has
+   been lost: the extra rows are still hot. Compare the hot `count()` per symbol for the day with
+   the manifest row counts and find where the rows came from. Daily streams keep one manifest per
+   day, `_manifests/<stream>/symbol=<SYM>/dt=<DATE>.json`. `orderbook_deltas` keeps one per hour,
+   `_manifests/orderbook_deltas/symbol=<SYM>/dt=<DATE>/hour=<HH>.json`; add them up. Never drop the
+   partition by hand.
 
 ## Accidental over-broad policy
 
@@ -85,7 +87,7 @@ Retention is irreversible once a pass runs. Act before the next pass:
 
 ## Owner purge (`POST /admin/recorder/purge`)
 
-**Owner-only** (capability 9a, `04-security-program.md` §13): a manager is refused 403
+**Owner-only** (capability 9a, `04-security-program.md` §7.2 row 9a): a manager is refused 403
 (`purge_owner_only`, audited) even though managers hold `recording:write`, and the refusal
 comes before any step-up prompt. The owner also needs a `recorder` step-up, `reason` (3–280
 chars), `confirm_symbol == symbol`, and `include_pinned: true` for a pinned symbol.
@@ -95,5 +97,7 @@ symbols are skipped (`shared_partition`); the nightly roll-off/retention handles
 before each hot drop the job re-reads which symbols are in the day. If another symbol's rows
 arrived after the plan, the day is skipped: `shared_partition`, or `pinned` when that symbol is
 pinned, because `include_pinned` covers only the purged symbol. The job result and the closing
-`retention.purge` record list every skipped partition with its reason. Poll
-`GET /admin/jobs/{job_id}`.
+`retention.purge` record list delete-time skips (`skipped`, each with its reason). Days held
+while planning (shared or pinned) never reach that re-check: they are counted in the write-ahead
+record as `window.protected` and listed in `protected` (`{partition, reason}`) in the job result
+and the closing record. Poll `GET /admin/jobs/{job_id}`.

@@ -300,6 +300,11 @@ class PruneScope:
 
 @dataclass(slots=True)
 class RunReport:
+    """Outcome of one pass. Three buckets hold what was NOT deleted and never overlap:
+    `protected` = held while PLANNING (the candidate never became an item), `skipped` = an item
+    whose delete-time re-check found a blocker, `failed` = an item whose delete was attempted
+    and raised (it stays `pending`). `deleted` lists the items that were removed."""
+
     dry_run: bool
     deleted: list[PruneItem] = field(default_factory=list)
     #: Held at delete time (the re-check found a blocker after planning).
@@ -890,7 +895,8 @@ class RetentionManager:
         self, plan: PrunePlan, dry_run: bool, *, checkpoint: Checkpoint | None = None
     ) -> RunReport:
         """Execute exactly `plan` (never more): under the volume lock, every unit re-checked.
-        `dry_run` deletes nothing and writes only the `retention.run` record."""
+        `dry_run` deletes nothing and writes only the `retention.run` record: it still reports
+        the plan's holds in `report.protected` but raises no alert (a real pass raises them)."""
         report = RunReport(dry_run=dry_run, protected=list(plan.protected))
         async with self._lock.hold(self._cfg.volume) as got:
             if not got:

@@ -1811,7 +1811,7 @@ CREATE UNIQUE INDEX ux_rp_default ON retention_policies (stream) WHERE scope = '
 CREATE UNIQUE INDEX ux_rp_symbol  ON retention_policies (symbol, stream) WHERE scope = 'symbol';
 ```
 
-Resolution order for a (symbol, stream): pinned symbol → infinite retention; else symbol-scoped policy; else default policy; else hard default 30 days.
+Resolution order for a (symbol, stream): pinned symbol → infinite retention; else symbol-scoped policy; else default policy; else the §7 per-stream default; else, for a known stream §7 does not list (none today), the hard default 30 days. An unknown stream is kept forever (fail toward retaining), never the hard default. A cold partition of a family-split stream (`bars`, whose keys carry `family=`) then takes the §7 row of its family: `bars_time` keeps forever, as does any family §7 does not list, and the result is never shorter than the stream-wide horizon.
 
 #### 3.6.4 `replay_sessions`
 
