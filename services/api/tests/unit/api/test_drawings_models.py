@@ -178,14 +178,19 @@ def test_sanitize_changes_nothing_when_no_listed_characters(s: str) -> None:
     assert sanitize_text(s, allow_newline=False) == s
 
 
-def test_text_is_sanitised_keeping_newline_before_length_checks() -> None:
-    g = DrawingGeometryIn.model_validate(geo(text="l1\nl2\x00" + "‮" * 2000))
+def test_text_is_sanitised_keeping_newline() -> None:
+    g = DrawingGeometryIn.model_validate(geo(text="l1\nl2\x00" + "‮" * 900))
     assert g.text == "l1\nl2"
 
 
 def test_text_length_boundary_is_1000_code_points() -> None:
     DrawingGeometryIn.model_validate(geo(text="😀" * 1000))
     assert bad(geo(text="x" * 1001)) == [("text", "string_too_long")]
+
+
+def test_text_raw_length_over_1000_with_control_char_is_string_too_long() -> None:
+    # 1000 visible + 1 control = 1001 raw: schema-invalid, rejected though it sanitises to 1000.
+    assert bad(geo(text="x" * 1000 + "\x00")) == [("text", "string_too_long")]
 
 
 def test_text_empty_after_sanitising_is_text_required() -> None:
