@@ -7,17 +7,22 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from candleviewer.domain.events import InstrumentUpdatedEvent
 from candleviewer.exchange.base.instruments import InstrumentsFetchResult
 from candleviewer.exchange.bybit.instruments import parse_instruments
 from candleviewer.ingestion.instruments_refresh import (
+    RETRY_BACKOFF_MAX_S,
+    RETRY_BACKOFF_MIN_S,
     InstrumentRefreshError,
     InstrumentsRefreshScheduler,
+    retry_backoff_s,
 )
 from candleviewer.ingestion.metrics import instruments_refresh_total
 
@@ -91,8 +96,37 @@ async def _no_sleep(delay: float) -> None:
         await asyncio.Event().wait()
 
 
+class ParkingSleep:
+    """Fake schedule `sleep`: records each delay and parks the caller until `release()`, so a
+    test steps the refresh schedule one wait at a time (no real time passes, C-13.7)."""
+
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+        self._parked: list[asyncio.Future[None]] = []
+
+    async def __call__(self, delay: float) -> None:
+        self.delays.append(delay)
+        wake: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+        self._parked.append(wake)
+        await wake
+
+    def release(self) -> None:
+        self._parked.pop(0).set_result(None)
+
+
+async def _settle() -> None:
+    """Let the scheduler's task run until it parks again (event-loop turns, no time passes)."""
+    for _ in range(50):
+        await asyncio.sleep(0)
+
+
 def make(
-    pages: list[Any], repo: FakeRepo | None = None, clock: Clock | None = None
+    pages: list[Any],
+    repo: FakeRepo | None = None,
+    clock: Clock | None = None,
+    *,
+    sleep: Callable[[float], Awaitable[None]] = _no_sleep,
+    max_retries: int = 3,
 ) -> tuple[InstrumentsRefreshScheduler, FakeRepo, list[InstrumentUpdatedEvent], Clock]:
     """`pages`: each fetch pops the next entry; an Exception entry is raised."""
     repo = repo or FakeRepo()
@@ -113,8 +147,9 @@ def make(
         repository=repo,
         publish=publish,
         now_us=clock,
-        sleep=_no_sleep,
+        sleep=sleep,
         random_fn=lambda: 0.0,
+        max_retries=max_retries,
     )
     return sched, repo, published, clock
 
@@ -269,3 +304,117 @@ async def test_listener_awaited_after_swap_and_fault_isolated() -> None:
     await sched.refresh_now()
     await sched.refresh_now()
     assert len(seen) == 2 and seen[0] == "trading" and seen[1] != "trading"
+
+
+async def test_failed_cold_start_retries_within_minutes_not_after_the_ttl() -> None:
+    """#2599: nothing persisted and the startup fetch fails -> the schedule retries on a short
+    backoff (seconds to minutes), never the 12 h TTL; once a retry loads the catalogue, the
+    schedule goes back to the TTL."""
+    sleep = ParkingSleep()
+    sched, _, _, _ = make([RuntimeError("exchange down"), [raw()]], sleep=sleep, max_retries=1)
+    await sched.start()
+    try:
+        assert sched.snapshot() is None  # cold: nothing persisted, the startup fetch failed
+        await _settle()
+        assert len(sleep.delays) == 1 and sleep.delays[0] <= 300.0  # minutes at most, not 12 h
+        sleep.release()
+        await _settle()
+        snap = sched.snapshot()
+        assert snap is not None and snap.get("BTCUSDT") is not None
+        assert len(sleep.delays) == 2 and sleep.delays[1] >= 43_200.0  # back on the TTL
+    finally:
+        await sched.stop(grace_s=1.0)
+
+
+async def test_failed_refreshes_back_off_doubling_up_to_the_cap() -> None:
+    """#2599: consecutive failures double the wait (equal jitter; `random_fn` is 0 here, so
+    each wait is half its step) up to the five-minute cap, and never reach the TTL."""
+    sleep = ParkingSleep()
+    sched, _, _, _ = make([RuntimeError("exchange down")], sleep=sleep, max_retries=1)
+    await sched.start()
+    try:
+        for _ in range(9):
+            await _settle()
+            sleep.release()
+        await _settle()
+        steps = [min(RETRY_BACKOFF_MAX_S, RETRY_BACKOFF_MIN_S * 2**n) for n in range(10)]
+        assert sleep.delays == [step / 2 for step in steps]
+        assert sched.snapshot() is None
+    finally:
+        await sched.stop(grace_s=1.0)
+
+
+async def test_failed_scheduled_refresh_of_a_loaded_catalogue_retries_soon() -> None:
+    """#2599: the same backoff follows any failed refresh, so a stale catalogue (and the
+    `catalogue_stale` readiness reason) recovers within minutes, not after another TTL."""
+    sleep = ParkingSleep()
+    sched, _, _, _ = make([[raw()], RuntimeError("blip"), [raw()]], sleep=sleep, max_retries=1)
+    await sched.start()
+    try:
+        await _settle()
+        sleep.release()  # the TTL elapses; the scheduled refresh fails
+        await _settle()
+        assert sched.snapshot().stale_since_us is not None  # type: ignore[union-attr]  # loaded
+        sleep.release()  # the short retry succeeds
+        await _settle()
+        assert sleep.delays[0] >= 43_200.0 and sleep.delays[1] <= RETRY_BACKOFF_MIN_S
+        assert sleep.delays[2] >= 43_200.0  # back on the TTL
+        assert sched.snapshot().stale_since_us is None  # type: ignore[union-attr]  # loaded
+    finally:
+        await sched.stop(grace_s=1.0)
+
+
+async def test_start_abandons_a_hanging_startup_fetch_and_retries_soon() -> None:
+    """#2599: boot (the supervisor awaits `start()`) never waits on the exchange for longer than
+    `start_timeout_s`: the hanging fetch is abandoned and the schedule retries it shortly."""
+    exchange_up = asyncio.Event()
+
+    async def fetch(now_us: Callable[[], int]) -> InstrumentsFetchResult:
+        await exchange_up.wait()  # no answer until the test says so
+        return parse_instruments([raw()], fetched_at_us=now_us())
+
+    sleep = ParkingSleep()
+    sched = InstrumentsRefreshScheduler(
+        fetch_instruments_info=fetch,
+        repository=FakeRepo(),
+        now_us=Clock(),
+        sleep=sleep,
+        random_fn=lambda: 0.0,
+        start_timeout_s=0.0,
+    )
+    await sched.start()  # returns although the exchange never answered
+    try:
+        assert sched.snapshot() is None
+        await _settle()
+        assert sleep.delays == [RETRY_BACKOFF_MIN_S / 2]  # a short retry, not the TTL
+        exchange_up.set()
+        sleep.release()
+        await _settle()
+        assert sched.snapshot() is not None
+    finally:
+        await sched.stop(grace_s=1.0)
+
+
+async def test_start_cancelled_during_the_startup_fetch_leaves_no_task() -> None:
+    """Cancelling `start()` (boot aborted) propagates and schedules nothing."""
+    hang = asyncio.Event()
+
+    async def fetch(now_us: Callable[[], int]) -> InstrumentsFetchResult:
+        await hang.wait()
+        raise AssertionError("unreachable")
+
+    sched = InstrumentsRefreshScheduler(fetch_instruments_info=fetch, repository=FakeRepo())
+    starting = asyncio.create_task(sched.start())
+    await _settle()
+    starting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await starting
+    assert sched._task is None
+
+
+@settings(max_examples=200, deadline=None)
+@given(failures=st.integers(min_value=1, max_value=100_000), rand=st.floats(0.0, 1.0))
+def test_retry_backoff_is_bounded_for_any_outage(failures: int, rand: float) -> None:
+    """Never sooner than half the first step, never past the cap, never an overflow."""
+    delay = retry_backoff_s(failures, rand)
+    assert RETRY_BACKOFF_MIN_S / 2 <= delay <= RETRY_BACKOFF_MAX_S

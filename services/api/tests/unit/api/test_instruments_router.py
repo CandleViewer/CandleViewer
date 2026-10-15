@@ -43,9 +43,15 @@ def _inst(symbol: str, status: str = "Trading") -> Instrument:
 
 
 class FakeReader:
-    def __init__(self, snap: CatalogueSnapshot | None, extra: Instrument | None = None) -> None:
+    def __init__(
+        self,
+        snap: CatalogueSnapshot | None,
+        extra: Instrument | None = None,
+        loads: CatalogueSnapshot | None = None,
+    ) -> None:
         self._snap = snap
         self._extra = extra
+        self._loads = loads  # the snapshot an on-demand refresh loads (None: still down)
         self.ensure_calls: list[str] = []
 
     def snapshot(self) -> CatalogueSnapshot | None:
@@ -53,6 +59,9 @@ class FakeReader:
 
     async def ensure_symbol(self, symbol: str) -> Instrument | None:
         self.ensure_calls.append(symbol)
+        if self._loads is not None:
+            self._snap = self._loads
+            return self._loads.get(symbol)
         if self._extra is not None and self._extra.symbol == symbol:
             return self._extra
         return None
@@ -135,6 +144,22 @@ def test_unknown_symbol_triggers_on_demand_refresh() -> None:
 def test_not_loaded_is_503_never_empty() -> None:
     assert _client(FakeReader(None)).get("/instruments").status_code == 503
     assert _client(None).get("/instruments").status_code == 503
+
+
+def test_detail_refreshes_on_demand_before_any_snapshot_is_loaded() -> None:
+    """#2599: after a failed cold start the detail route still triggers its on-demand refresh."""
+    reader = FakeReader(None, loads=_snap())
+    r = _client(reader).get("/instruments/BTCUSDT")
+    assert r.status_code == 200, r.text
+    assert r.json()["symbol"] == "BTCUSDT" and reader.ensure_calls == ["BTCUSDT"]
+
+
+def test_detail_stays_503_when_the_on_demand_refresh_loads_nothing() -> None:
+    """#2599: no catalogue even after the refresh -> 503, never a false 404 for a real symbol."""
+    reader = FakeReader(None)
+    assert _client(reader).get("/instruments/BTCUSDT").status_code == 503
+    assert reader.ensure_calls == ["BTCUSDT"]
+    assert _client(None).get("/instruments/BTCUSDT").status_code == 503  # no catalogue wired
 
 
 def test_rbac_fail_closed() -> None:

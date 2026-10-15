@@ -16,14 +16,17 @@ this module ever importing either package.
 Design notes tying back to the ticket's Gherkin:
 - "Catalogue loaded at startup": `refresh_now()` is awaited once, inline,
   before `start()` returns, so `GET /instruments` never serves an empty
-  catalogue after boot.
+  catalogue after boot. #2599: under `start_timeout_s`, so boot never waits
+  longer on the exchange; the schedule then retries soon.
 - "Refresh without restart": `start()` schedules a periodic task at
   `ttl_seconds`; `refresh_now()` is also exposed for the "unknown symbol"
   on-demand path (the router calls it directly).
 - "Refresh fails": a failed fetch marks the existing snapshot stale via
   `InstrumentCatalogueCache.mark_stale` rather than clearing it, increments
   `instruments_refresh_total{result="error"}`, and logs a warning — the
-  previous snapshot keeps serving.
+  previous snapshot keeps serving. #2599: the next attempt follows
+  `retry_backoff_s` (seconds, doubling to minutes), not the TTL, so a failed
+  cold start (nothing to serve) recovers without a restart.
 - "Refresh does not stall readers": the fetch + parse + diff work all
   happens before the single atomic `cache.swap()` call; nothing here ever
   blocks a concurrent `cache.current()` read.
@@ -57,6 +60,22 @@ from candleviewer.observability import spawn
 
 _MIN_BACKOFF_S = 1.0
 _MAX_BACKOFF_S = 30.0
+#: #2599: after a failed (or abandoned) refresh the schedule retries on this doubling,
+#: jittered backoff, capped at five minutes, instead of waiting the 12 h TTL.
+RETRY_BACKOFF_MIN_S = 5.0
+RETRY_BACKOFF_MAX_S = 300.0
+#: #2599: `start()` waits at most this long for the startup fetch (boot never waits longer
+#: on the exchange); the schedule then retries on the backoff above.
+START_TIMEOUT_S = 10.0
+
+
+def retry_backoff_s(failures: int, rand: float) -> float:
+    """Delay before the next refresh after `failures` (>= 1) consecutive failed ones:
+    `RETRY_BACKOFF_MIN_S` doubling per failure up to `RETRY_BACKOFF_MAX_S`, with equal jitter
+    (half fixed, half `rand` in [0, 1)), so a retry never comes sooner than half the step. The
+    exponent is clamped, so an outage of any length never overflows the float."""
+    step = min(RETRY_BACKOFF_MAX_S, RETRY_BACKOFF_MIN_S * 2.0 ** min(max(failures, 1) - 1, 16))
+    return step / 2 + step / 2 * rand
 
 
 #: Neutral fetcher port (`exchange.base.instruments.InstrumentsFetcher`):
@@ -124,6 +143,7 @@ class InstrumentsRefreshScheduler:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         random_fn: Callable[[], float] = random.random,
         on_demand_cooldown_s: float = 60.0,
+        start_timeout_s: float = START_TIMEOUT_S,
     ) -> None:
         self._fetch_instruments_info = fetch_instruments_info
         self._repository = repository
@@ -136,6 +156,7 @@ class InstrumentsRefreshScheduler:
         self._now_us = now_us
         self._sleep = sleep
         self._random = random_fn
+        self._start_timeout_s = start_timeout_s
 
         self._on_demand_cooldown_s = on_demand_cooldown_s
         self._last_on_demand_us: int | None = None
@@ -150,7 +171,12 @@ class InstrumentsRefreshScheduler:
         """Load whatever is already persisted (so a restart is never a
         cold, empty catalogue — belt-and-braces alongside the immediate
         `refresh_now()` below), then perform the startup fetch, then
-        schedule the periodic TTL refresh task."""
+        schedule the periodic TTL refresh task.
+
+        #2599: the startup fetch gets at most `start_timeout_s` (the
+        supervisor awaits `start()`, so boot never waits longer on the
+        exchange); a fetch still running then is abandoned, and the schedule
+        retries it on the short backoff, as after any failed refresh."""
         try:
             persisted = [
                 Instrument.model_validate(row) for row in await self._repository.load_all()
@@ -164,16 +190,23 @@ class InstrumentsRefreshScheduler:
                     by_symbol={i.symbol: i for i in persisted}, fetched_at_us=self._now_us()
                 )
             )
+        loaded = False
         try:
-            await self.refresh_now()
+            async with asyncio.timeout(self._start_timeout_s):
+                await self.refresh_now()
+            loaded = True
         except InstrumentRefreshError:
             # "Catalogue loaded at startup" still wants *some* snapshot to
             # serve; the persisted load above already covered that. A
-            # startup fetch failure is not fatal — the periodic task keeps
-            # retrying on schedule.
+            # startup fetch failure is not fatal — the periodic task retries
+            # it on the short backoff (#2599).
             get_logger(__name__).warning("instruments_startup_refresh_failed")
+        except TimeoutError:
+            get_logger(__name__).warning(
+                "instruments_startup_refresh_timeout", timeout_s=self._start_timeout_s
+            )
         self._stopping = False
-        self._task = spawn(self._run_periodic(), name="instruments-refresh")
+        self._task = spawn(self._run_periodic(startup_ok=loaded), name="instruments-refresh")
 
     async def stop(self, grace_s: float = 5.0) -> None:
         self._stopping = True
@@ -320,23 +353,34 @@ class InstrumentsRefreshScheduler:
             except Exception:  # a consumer fault must not fail the refresh
                 get_logger(__name__).exception("instruments_listener_failed")
 
-    async def _run_periodic(self) -> None:
+    async def _run_periodic(self, *, startup_ok: bool) -> None:
+        """The refresh schedule: the TTL (+ up to 5 % jitter) after a successful refresh, and
+        `retry_backoff_s` after a failed or abandoned one (#2599: a failed cold start used to
+        wait the TTL, serving nothing). `stop()` cancels it; the cancellation propagates."""
+        ok, failures = startup_ok, 0
         while not self._stopping:
-            jitter = self._ttl_seconds * 0.05 * self._random()
-            try:
-                await self._sleep(self._ttl_seconds + jitter)
-            except asyncio.CancelledError:
-                return
+            if ok:
+                failures = 0
+                delay = self._ttl_seconds + self._ttl_seconds * 0.05 * self._random()
+            else:
+                failures += 1
+                delay = retry_backoff_s(failures, self._random())
+            await self._sleep(delay)
             if self._stopping:
                 return
-            try:
-                await self.refresh_now()
-            except InstrumentRefreshError:
-                pass  # already logged + metriced in `_refresh_with_retry`
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                get_logger(__name__).exception("instruments_periodic_refresh_unexpected_error")
+            ok = await self._scheduled_refresh()
             current = self.cache.current()
             if current is not None:
                 instruments_cache_age_seconds.set(current.age_seconds(now_us=self._now_us()))
+
+    async def _scheduled_refresh(self) -> bool:
+        """One scheduled refresh; `True` if it loaded. A failure is already logged and counted
+        in `_refresh_with_retry`; anything unexpected is logged and never ends the schedule."""
+        try:
+            await self.refresh_now()
+        except InstrumentRefreshError:
+            return False
+        except Exception:
+            get_logger(__name__).exception("instruments_periodic_refresh_unexpected_error")
+            return False
+        return True

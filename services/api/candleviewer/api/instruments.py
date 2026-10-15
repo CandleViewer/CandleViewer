@@ -21,10 +21,10 @@ from __future__ import annotations
 import base64
 import binascii
 import inspect
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Protocol
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -58,11 +58,18 @@ class InstrumentsPrincipal:
         return "*" in self.permissions or permission in self.permissions  # nosem: no-adhoc-authz reason=Principal.has_permission-wildcard-impl-pending-E09-T01-authorize owner=@CandleViewer/security review=2026-12-31  # noqa: E501  # fmt: skip
 
 
+class _Principal(Protocol):
+    """What the routes need of a caller: `InstrumentsPrincipal`, or the session-backed
+    resolver's `AuditPrincipal` in the deployed app (#2561)."""
+
+    def has(self, permission: str) -> bool: ...
+
+
 class PrincipalResolver(Protocol):
     """Sync or async resolver (`resolve(request)` may return an awaitable), as in `ticker.py`;
     the deployed app wires the session-backed one (#2561)."""
 
-    def resolve(self, request: Request) -> Any: ...
+    def resolve(self, request: Request) -> _Principal | Awaitable[_Principal | None] | None: ...
 
 
 class CatalogueReader(Protocol):
@@ -144,9 +151,7 @@ def make_instruments_router(
         if principal_resolver is None:
             return _problem(501, "Not implemented", "no principal resolver wired")
         resolved = principal_resolver.resolve(request)
-        principal: InstrumentsPrincipal | None = (
-            await resolved if inspect.isawaitable(resolved) else resolved
-        )
+        principal = await resolved if inspect.isawaitable(resolved) else resolved
         if principal is None:
             return _problem(401, "Unauthorized", "no verified session for this request")
         if not principal.has(_REQUIRED_PERMISSION):
@@ -215,14 +220,17 @@ def make_instruments_router(
             return _problem(400, "Bad request", "invalid symbol")
         symbol = symbol.upper()
         reader = catalogue_provider()
-        snap = reader.snapshot() if reader is not None else None
-        if reader is None or snap is None:
+        if reader is None:
             return _problem(503, "Service unavailable", "instrument catalogue not loaded yet")
-        instrument = snap.get(symbol)
+        snap = reader.snapshot()
+        instrument = snap.get(symbol) if snap is not None else None
         if instrument is None:
-            # "Refresh without restart": unknown symbol triggers one refresh.
+            # "Refresh without restart": an unknown symbol triggers one (throttled) refresh,
+            # also before any catalogue loaded (#2599: a failed cold start).
             instrument = await reader.ensure_symbol(symbol)
             snap = reader.snapshot() or snap
+        if snap is None:  # still nothing loaded: never a false 404 for a real symbol
+            return _problem(503, "Service unavailable", "instrument catalogue not loaded yet")
         if instrument is None:
             return _problem(404, "Not found", f"unknown instrument {symbol}")
         body = serialize_instrument(instrument)
