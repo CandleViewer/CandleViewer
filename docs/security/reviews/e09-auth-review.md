@@ -112,18 +112,30 @@ The staging drill by a human is **still required**. What ran is an in-process co
   sessions for the user and an open `/ws` socket that is authenticated and subscribed
   (`book.BTCUSDT.50`). Pending activity is a recorded step-up challenge. A bystander user has a
   session of their own.
-- Action: `SessionService.revoke_all(user, reason="user_disabled")`, then `RevocationHub.revoke`
-  for each revoked session. These are the primitives the E42-T04 cascade has to call; the
+- Action: `SessionService.revoke_all(user, reason="user_disabled")`, then
+  `RevocationHub.revoke(session_id, "user_disabled")` for each revoked session. The
   `DELETE /users/{userId}` route itself does not exist yet.
+- Guidance for the E42-T04 cascade (#965): revoke the sessions first, then end every socket of
+  the user as `23-ws-protocol.md` §9.5 requires: `bye` (`code 4403`, `reason user_disabled`,
+  `reconnect false`), then the close frame `4403`. Either primitive does that:
+  `ConnectionRegistry.user_disabled(user_id)` (reached as `app.state.ws_events.user_disabled`),
+  which closes every authenticated socket of the user, or
+  `RevocationHub.revoke(session_id, "user_disabled")` for each revoked session. The reason must
+  be exactly `user_disabled`: any other reason closes `4401`, which tells the client to refresh
+  its token and reconnect. Corrected on 2026-10-15 (#2493). This section first recorded
+  `code 4401` for the disable and named the hub without that requirement, because
+  `RevocationHub.revoke` then closed `4401` for every reason, against §9.5.
 - Observed: both sessions are revoked, with `revoked_at` equal to the action instant on the
   injected clock (0.000 s injected delay). The SR-029 bound is asserted on the injected clock
   only; no wall-clock figure is asserted. Their access tokens are refused. The socket receives
-  `bye` (`code 4401`, `reason user_disabled`, `reconnect false`). The pending step-up challenge
-  can no longer be read or completed. The revoked token cannot open a new socket. The
-  bystander's session is untouched. Repeating the action is idempotent. The operational latency
-  the Owner needs comes only from the staging drill.
+  `bye` (`code 4403`, `reason user_disabled`, `reconnect false`), then the close frame `4403`.
+  The pending step-up challenge can no longer be read or completed. The revoked token cannot
+  open a new socket. The bystander's session is untouched. Repeating the action is idempotent.
+  The operational latency the Owner needs comes only from the staging drill.
 - Every WS read has a 5 s deadline. With the `bye` send removed from `RevocationHub.revoke`, the
   test fails in about 5 s ("no WS frame within 5.0s"); it does not hang. The mutation was reverted.
+  With `user_disabled` mapped back to `4401` in `RevocationHub.revoke`, the drill and
+  `services/api/tests/unit/ws/test_revocation.py` fail on the code (#2493); also reverted.
 - **Not covered**, because it does not exist yet and belongs to E42-T04 (#965) or E35:
   `users.status=disabled`, grant revocation, disarming the user's rules (rule-engine pending
   actions), the recorded positions decision in the audit log, and the `users.disable` audit row.

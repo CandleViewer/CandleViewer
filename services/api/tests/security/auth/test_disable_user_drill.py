@@ -4,6 +4,8 @@ The `DELETE /users/{userId}` disable cascade is owned by E42-T04 (#965) and does
 so this test drives the same primitives that cascade must call, through the real
 `create_app()` wiring: `SessionService.revoke_all` and the app's own `RevocationHub`. It is a
 regression guard for the propagation path, not the staging drill (which a human still runs).
+The socket must end as 23-ws-protocol.md §9.5 says for a disabled user: `bye user_disabled`
+(`4403`, `reconnect: false`), then the close frame `4403`; never the `4401` re-auth close (#2493).
 
 Measured on the injected clock only: revocation is stamped at the action instant (zero
 injected-time delay, i.e. no timer/deferred path), and every effect is observed before the call
@@ -22,6 +24,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from candleviewer import app as app_module
 from candleviewer.app import create_app
@@ -34,7 +37,7 @@ from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.settings import Settings
 from candleviewer.ws.gateway import make_ws_router
-from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, RevocationHub
+from candleviewer.ws.revocation import CLOSE_USER_DISABLED, RevocationHub
 from tests.unit.auth.auth_fakes import FakeUserRepository
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -105,7 +108,8 @@ class _Env:
         return self.client.portal.call(lambda: fn(*args, **kwargs))
 
     async def disable(self, user_id: str) -> int:
-        """What SR-029 requires of the cascade: revoke every session, then close every socket."""
+        """What SR-029 requires of the cascade: revoke every session, then close every socket
+        with the reason `user_disabled`, which ends it as §9.5 says (`bye` + `4403`)."""
         revoked = await self.sessions.revoke_all(user_id, reason="user_disabled")
         closed = 0
         for record in revoked:
@@ -166,9 +170,12 @@ def test_disable_user_drill_terminates_sessions_sockets_and_pending_actions(env:
 
         bye = _recv(ws)
         assert bye["t"] == "bye"
-        assert bye["p"]["code"] == CLOSE_TOKEN_EXPIRED
+        assert bye["p"]["code"] == CLOSE_USER_DISABLED == 4403
         assert bye["p"]["reason"] == "user_disabled"
         assert bye["p"]["reconnect"] is False
+        with pytest.raises(WebSocketDisconnect) as close:  # §9.5: the close frame follows the bye
+            _recv(ws)
+        assert close.value.code == CLOSE_USER_DISABLED
     assert closed == 1
 
     # Sessions terminated, stamped at the action instant on the injected clock.

@@ -1,8 +1,10 @@
-"""Session-revocation -> WebSocket `4401` close (23-ws-protocol.md §9.5, US-ONB-009).
+"""Session revocation -> WebSocket `bye` + close (23-ws-protocol.md §4.4, §9.5, US-ONB-009).
 
 Transport-agnostic: the (E17) gateway registers one `Closer` per live socket
 keyed by session id; the session router's `publish_revocation` calls
-`RevocationHub.revoke`, which sends the `bye` frame and closes with 4401.
+`RevocationHub.revoke`, which sends the `bye` frame and closes with 4401. The
+reason `user_disabled` (the SR-029 disable cascade) gets the §9.5 `bye` and
+4403 instead, so the client returns to login and does not reconnect (#2493).
 Latency is observed on `auth_revocation_latency_seconds` (alert > 5 s).
 """
 
@@ -115,9 +117,15 @@ def bye_frame(reason: str) -> dict[str, Any]:
     }
 
 
+def _wall_ms() -> int:
+    return time.time_ns() // 1_000_000
+
+
 class RevocationHub:
-    def __init__(self) -> None:
+    def __init__(self, *, wall_ms: Callable[[], int] = _wall_ms) -> None:
         self._sockets: dict[str, list[Closer]] = defaultdict(list)
+        #: Stamps the `user_disabled` bye's `ts`; injectable so tests read a fixed clock.
+        self._wall_ms = wall_ms
 
     def register(self, session_id: str, closer: Closer) -> None:
         self._sockets[session_id].append(closer)
@@ -128,13 +136,21 @@ class RevocationHub:
         if not self._sockets.get(session_id):
             self._sockets.pop(session_id, None)
 
+    def _close_for(self, reason: str) -> tuple[dict[str, Any], int]:
+        """The `bye` and close code for `reason`. §9.5: a disabled user gets its own `bye`
+        and 4403 (do not reconnect); every other session revocation closes 4401."""
+        if reason == "user_disabled":
+            return user_disabled_bye(self._wall_ms()), CLOSE_USER_DISABLED
+        return bye_frame(reason), CLOSE_TOKEN_EXPIRED
+
     async def revoke(self, session_id: str, reason: str = "session_revoked") -> int:
         """Close every socket of `session_id`; returns how many were closed."""
         closers = self._sockets.pop(session_id, [])
         started = time.monotonic()
         for closer in closers:
             try:
-                await closer(bye_frame(reason), CLOSE_TOKEN_EXPIRED)
+                frame, code = self._close_for(reason)
+                await closer(frame, code)
             except Exception:
                 ws_revocation_close_failures_total.inc()
                 _log().error(
