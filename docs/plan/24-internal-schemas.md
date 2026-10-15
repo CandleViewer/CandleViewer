@@ -3156,6 +3156,8 @@ class ReplayBookmark(BaseModel):
 
 **Determinism guarantees.** (1) Events replay in `(ts_event, seq)` order, identical to the recorded order. (2) All engines are pure functions of the event stream plus their config, so `spec_hash` + event range determines the output exactly. (3) A golden-file test replays a recorded hour and diffs every bar, footprint cell, profile level and deterministic metric against the values recorded live; any difference fails CI. (4) `source="replay"` is set on every event, so the OMS can refuse to route replay events to a live account — structurally, not by convention.
 
+**Session persistence.** A session is one owner-scoped `replay_sessions` row (21 §3.6.4) that mirrors the B12 chart: `state` takes every chart state, the six API values plus transient `stepping` and the final `destroyed`. Only `destroyed` is terminal (`finished` and `error` re-enter via SEEK), so idle reclaim and client destroy both persist it, and the repository (`storage/repositories/replay_sessions.py`) refuses every update to such a row. `cursor_ts` is the throttled (≤1 write/s) restore point, not the live cursor, and writing it leaves `updated_at` alone; `updated_at` is the last _control_ activity (a state or speed change, or an explicit touch) and is what the idle sweep compares. `finished_at` is set while the session is `finished` or `destroyed` and `error_message` only while it is `error`; both clear on exit. `speed` is stored as `numeric(6,2)` inside 0.1–100 (CHECK `rps_speed`).
+
 **Trading in replay** routes to the local `PaperMatcher` (§12) with `environment="replay"`. It is the mechanism behind trade post-mortems ("step back through the trade against the recorded DOM") and rule backtests.
 
 ---
