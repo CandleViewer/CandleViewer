@@ -28,11 +28,12 @@ from candleviewer.observability.metrics_runtime import (
 
 #: `_ms`/`_mb`: frontend-pushed names fixed by 20-architecture.md §12.1 (E04-T06).
 #: `_rows`: `recorder_write_backlog_rows`, named by E16-T03 (a gauge of queued rows).
-_UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows)$")
+#: `_ratio`: `replay_achieved_speed_ratio`, named by E26-T03 (Prometheus' base unit for ratios).
+_UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|ratio)$")
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "39d744b28bf5a1507f2a199fe2967f34ae35f93bd7a21d1622f490199741b86c"
+GOLDEN_CATALOGUE_SHA256 = "92ab0ddd38061c91daeb283dbfce11d868bb59544791350e674eeed8249a27c0"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -240,7 +241,8 @@ def test_exported_recorder_metrics_served_with_env() -> None:
 
 
 def test_exported_replay_metrics_served_with_env() -> None:
-    """E26-T02: the replay read-path series are `live`, served via `export_replay_metrics`."""
+    """E26-T02/T03: the replay read-path and playback series are `live`, served via
+    `export_replay_metrics`."""
     from candleviewer.replay.merge import replay_events_read_total
     from candleviewer.replay.metrics import EXPORTED_NAMES, export_replay_metrics
 
