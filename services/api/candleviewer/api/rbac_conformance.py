@@ -28,13 +28,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
+from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.auth.generated_permissions import Permission
 
 _HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
 
-REPO_ROOT = OPENAPI_SPEC_PATH.resolve().parents[2]
-RBAC_SEED_PATH = REPO_ROOT / "services" / "api" / "candleviewer" / "auth" / "rbac_seed.json"
+#: Package-relative (#2555): the seed ships inside the package, so finding it needs no checkout.
+RBAC_SEED_PATH = Path(__file__).resolve().parents[1] / "auth" / "rbac_seed.json"
 
 
 class UndeclaredRouteError(Exception):

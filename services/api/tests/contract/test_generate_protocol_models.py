@@ -25,6 +25,7 @@ _SERVICE_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPT = _SERVICE_ROOT / "scripts" / "generate_protocol_models.py"
 _REST_OUT = _SERVICE_ROOT / "candleviewer" / "api" / "_generated" / "openapi_models.py"
 _WS_OUT = _SERVICE_ROOT / "candleviewer" / "ws" / "_generated" / "ws_models.py"
+_CONTRACT_OUT = _SERVICE_ROOT / "candleviewer" / "api" / "_generated" / "contract_subset.json"
 
 
 def _run_generator(*extra_args: str) -> subprocess.CompletedProcess[str]:
@@ -98,7 +99,7 @@ def test_ws_models_module_imports_cleanly(generated_ws_module) -> None:  # type:
 
 
 def test_generated_files_carry_the_do_not_edit_header() -> None:
-    for path in (_REST_OUT, _WS_OUT):
+    for path in (_REST_OUT, _WS_OUT, _CONTRACT_OUT):
         head = path.read_text(encoding="utf-8")[:400]
         assert "GENERATED FILE — DO NOT EDIT BY HAND" in head, f"{path} is missing its header"
 
@@ -115,14 +116,17 @@ def test_regenerating_twice_is_byte_identical(tmp_path: Path) -> None:
     assert first.returncode == 0, first.stderr
     rest_after_first = _REST_OUT.read_bytes()
     ws_after_first = _WS_OUT.read_bytes()
+    contract_after_first = _CONTRACT_OUT.read_bytes()
 
     second = _run_generator()
     assert second.returncode == 0, second.stderr
     rest_after_second = _REST_OUT.read_bytes()
     ws_after_second = _WS_OUT.read_bytes()
+    contract_after_second = _CONTRACT_OUT.read_bytes()
 
     assert rest_after_first == rest_after_second, "REST model generation is not deterministic"
     assert ws_after_first == ws_after_second, "WS model generation is not deterministic"
+    assert contract_after_first == contract_after_second, "contract subset is not deterministic"
 
 
 @pytest.mark.integration
