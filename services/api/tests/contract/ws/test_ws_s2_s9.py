@@ -409,8 +409,7 @@ def test_s7_kill_switch_transition_reevaluates_every_connected_user() -> None:
         }
 
 
-@pytest.mark.xfail(strict=True, reason="#2397: permission_change is not in the §13.1 envelope enum")
-def test_s7_xfail_f3_permission_change_frame_validates_against_the_envelope() -> None:
+def test_s7_f3_permission_change_frame_validates_against_the_envelope() -> None:
     w = World()
     with connect(w) as c:
         w.grants = ()
