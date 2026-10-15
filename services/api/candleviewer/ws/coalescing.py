@@ -1,8 +1,8 @@
 """Per-topic coalescing queue (E17-T03, `23-ws-protocol.md` §8.1-§8.2).
 
 One `CoalescingQueue` per (connection, topic) holds what the topic produced since its last
-emission. A family merged by its §8.2 rule keeps a merge buffer (`book`: keyed by price level),
-so a merge is O(changes) and memory is O(state), not O(updates). `trades` and
+emission. A family merged by its §8.2 rule keeps a merge buffer keyed by level, bar or entity, so
+a merge is O(changes) and memory is O(state), not O(updates). `trades` and
 `liquidations` keep an append list (§8.2 "append, never merge"). Every other throttled family,
 and a merged family whose subscriber set `coalesce: false`, queues whole frames; a merged family
 folds them into its merge at the frame bound rather than overflow. `never_throttled` families
@@ -11,7 +11,8 @@ folds them into its merge at the frame bound rather than overflow. `never_thrott
 Exactly one pending update leaves verbatim, with its binary `part` and its own replay `ts_ms`; two
 or more leave as one merged structured payload with `coalesced_count` and the latest `ts_ms` (the
 emitter adds the §8.2 disclosure). The producer's CVWB parts cannot be merged here, so a merged
-frame is structured even for a binary subscriber.
+frame is structured even for a binary subscriber. An update that carries nothing new is discarded
+as the client would discard it: an entity older than the pending one (§15 `updated_at_ms`).
 
 `pending_bytes` estimates the JSON size of what `take()` would emit, so the connection budget
 (§8.4) counts pending state as well as queued frames; every buffer is also bounded by count. A
@@ -29,12 +30,14 @@ subscriptions (SR-190).
 from __future__ import annotations
 
 import copy
+import json
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Final
 
+from candleviewer.ws.bar_coalescer import BarCoalescer, BarKey, bar_key
 from candleviewer.ws.binary import Frame
 from candleviewer.ws.topics import FAMILIES
 
@@ -43,7 +46,7 @@ Payload = Mapping[str, Any]
 #: §8.2: append, never merge; throttling batches them into arrays.
 APPENDED_FAMILIES: Final = frozenset({"trades", "liquidations"})
 
-#: Distinct keys (price levels) one merge buffer may hold.
+#: Distinct keys (levels, bars, entities) one merge buffer may hold.
 MAX_PENDING_KEYS: Final = 4096
 #: Items one append list may hold before the topic is re-snapshotted instead of truncated.
 MAX_PENDING_ITEMS: Final = 20_000
@@ -58,8 +61,16 @@ class _BufferFullError(Exception):
     """A merge buffer hit its bound; the update was refused."""
 
 
-#: What a merge raises for an update it cannot take: a bound, or a malformed producer payload.
-_REFUSED: Final = (_BufferFullError, ArithmeticError, LookupError, TypeError, ValueError)
+#: What an update the queue cannot take raises: a bound, or a malformed producer payload (a
+#: pathologically nested one included).
+_REFUSED: Final = (
+    _BufferFullError,
+    ArithmeticError,
+    LookupError,
+    RecursionError,
+    TypeError,
+    ValueError,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,8 +105,9 @@ def _dec(value: Any) -> Decimal:
 
 class _Merge(ABC):
     """Root fields are last-write-wins; subclasses merge their list fields, keep `bytes` (the
-    estimated size of the merged lists) current and raise one of `_REFUSED` instead of taking an
-    update. `result` is called once per window, before `reset`."""
+    estimated size of the merged lists) current, return False when an update changed nothing (the
+    client would discard it) and raise one of `_REFUSED` instead of taking an update. `result` is
+    called once per window, before `reset`."""
 
     def __init__(self, limit: int, lists: tuple[str, ...]) -> None:
         self.limit = limit
@@ -103,17 +115,21 @@ class _Merge(ABC):
         self.root: dict[str, Any] = {}
         self.bytes = 0
 
-    def add(self, body: Payload) -> None:
+    def add(self, body: Payload) -> bool:
         self.root.update((k, v) for k, v in body.items() if k not in self.lists)
-        self.merge(body)
+        return self.merge(body)
 
     @abstractmethod
-    def merge(self, body: Payload) -> None:
+    def merge(self, body: Payload) -> bool:
         """Merge the list fields of one update."""
 
     @abstractmethod
     def result(self) -> dict[str, Any]:
         """The window's merged payload."""
+
+    def splits(self, body: Payload) -> bool:
+        """True when `body` cannot join the pending merge and must start a new frame."""
+        return False
 
     def reset(self) -> None:
         """Forget the pending state after an emission."""
@@ -128,7 +144,7 @@ class _BookMerge(_Merge):
         super().__init__(limit, ("bids", "asks"))
         self.sides: dict[str, dict[Decimal, list[str]]] = {"bids": {}, "asks": {}}
 
-    def merge(self, body: Payload) -> None:
+    def merge(self, body: Payload) -> bool:
         for side, levels in self.sides.items():
             for price, size in body.get(side) or ():
                 key = _dec(price)
@@ -139,6 +155,7 @@ class _BookMerge(_Merge):
                     raise _BufferFullError
                 levels[key] = [price, size]
                 self.bytes += _size(levels[key])
+        return True
 
     def result(self) -> dict[str, Any]:
         bids = [level for _, level in sorted(self.sides["bids"].items(), reverse=True)]
@@ -148,6 +165,129 @@ class _BookMerge(_Merge):
     def reset(self) -> None:
         super().reset()
         self.sides = {"bids": {}, "asks": {}}
+
+
+class _BarsMerge(_Merge):
+    """§8.2 `bars`: per `(generation, index)`, with the confirmed / amended precedence of the
+    existing `BarCoalescer` (#2018)."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(limit, ("bars",))
+        self.bars = BarCoalescer(max_pending=limit)
+        self.sizes: dict[BarKey, int] = {}
+
+    def merge(self, body: Payload) -> bool:
+        changed = False
+        for item in body.get("bars") or ():
+            if self.bars.add(item):
+                key, size = bar_key(item), _size(item)
+                self.bytes += size - self.sizes.get(key, 0)
+                self.sizes[key] = size
+                changed = True
+            elif self.bars.take_overflow():
+                raise _BufferFullError
+        return changed
+
+    def result(self) -> dict[str, Any]:
+        items, _ = self.bars.flush()
+        return {**self.root, "bars": items}
+
+    def reset(self) -> None:
+        super().reset()
+        self.bars = BarCoalescer(max_pending=self.limit)
+        self.sizes = {}
+
+
+class _KeyedMerge(_Merge):
+    """One list of entities, last write wins per key (`ticker`, `metrics`, `wallet`); `newer(old,
+    new)` may discard a replacement."""
+
+    def __init__(
+        self,
+        limit: int,
+        field: str,
+        key: Callable[[Payload], Hashable],
+        *,
+        newer: Callable[[Payload, Payload], bool] | None = None,
+        extra: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(limit, (field, *extra))
+        self.field = field
+        self.key = key
+        self.newer = newer
+        self.items: dict[Hashable, dict[str, Any]] = {}
+        self.sizes: dict[Hashable, int] = {}
+
+    def merge(self, body: Payload) -> bool:
+        changed = False
+        for item in body.get(self.field) or ():
+            changed = self.upsert(self.key(item), item) or changed
+        return changed
+
+    def upsert(self, key: Hashable, item: Payload) -> bool:
+        cur = self.items.get(key)
+        if cur is None:
+            if len(self.items) >= self.limit:
+                raise _BufferFullError
+        elif self.newer is not None and not self.newer(cur, item):
+            return False
+        self.items[key] = dict(item)
+        self._resize(key, _size(item))
+        return True
+
+    def _resize(self, key: Hashable, size: int) -> None:
+        self.bytes += size - self.sizes.pop(key, 0)
+        if size:
+            self.sizes[key] = size
+
+    def result(self) -> dict[str, Any]:
+        return {**self.root, self.field: list(self.items.values())}
+
+    def reset(self) -> None:
+        super().reset()
+        self.items, self.sizes = {}, {}
+
+
+def _not_older(old: Payload, new: Payload) -> bool:
+    """§15: entities carry `updated_at_ms` so a late-arriving older frame is discarded."""
+    return int(new["updated_at_ms"]) >= int(old["updated_at_ms"])
+
+
+class _PositionsMerge(_KeyedMerge):
+    """§8.2 `positions`: whole object per `id`; `removed` ids (went flat) apply after the upserts
+    of the same update. An upsert of an id removed earlier in the window starts a new frame: one
+    payload cannot say "removed, then re-opened" to a client that discards older entities."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(limit, "positions", _id_key, newer=_not_older, extra=("removed",))
+        self.removed: dict[str, None] = {}
+
+    def splits(self, body: Payload) -> bool:
+        return any(str(item["id"]) in self.removed for item in body.get("positions") or ())
+
+    def merge(self, body: Payload) -> bool:
+        changed = super().merge(body)
+        for removed in body.get("removed") or ():
+            pid = str(removed)
+            if pid not in self.removed and len(self.removed) >= self.limit:
+                raise _BufferFullError
+            self.items.pop(pid, None)
+            self._resize(pid, 0)
+            if pid not in self.removed:
+                self.removed[pid] = None
+                self.bytes += _size(pid) + 1
+            changed = True
+        return changed
+
+    def result(self) -> dict[str, Any]:
+        out = super().result()
+        if self.removed:
+            out["removed"] = list(self.removed)
+        return out
+
+    def reset(self) -> None:
+        super().reset()
+        self.removed = {}
 
 
 class _AppendMerge(_Merge):
@@ -161,7 +301,7 @@ class _AppendMerge(_Merge):
         self.items: list[dict[str, Any]] = []
         self.sums: dict[str, int] = {}
 
-    def merge(self, body: Payload) -> None:
+    def merge(self, body: Payload) -> bool:
         items = body.get(self.field) or ()
         if len(self.items) + len(items) > self.limit:
             raise _BufferFullError
@@ -171,6 +311,7 @@ class _AppendMerge(_Merge):
         for name in self.summed:
             if name in body:
                 self.sums[name] = self.sums.get(name, 0) + int(body[name])
+        return True
 
     def result(self) -> dict[str, Any]:
         return {**self.root, self.field: self.items, **self.sums}
@@ -180,9 +321,32 @@ class _AppendMerge(_Merge):
         self.items, self.sums = [], {}
 
 
+def _id_key(item: Payload) -> Hashable:
+    return str(item["id"])
+
+
+def _symbol_key(item: Payload) -> Hashable:
+    return str(item["symbol"])
+
+
+def _balance_key(item: Payload) -> Hashable:
+    return (str(item["exchange_account_id"]), str(item["coin"]))
+
+
+def _metric_key(item: Payload) -> Hashable:
+    """Per metric code; `params` tells two series of the same code apart."""
+    params = item.get("params")
+    return (str(item["metric"]), json.dumps(params, sort_keys=True) if params else "")
+
+
 #: The §8.2 merge rule of each merged or appended family: `(keys bound, items bound) -> merge`.
 _RULES: Final[Mapping[str, Callable[[int, int], _Merge]]] = {
     "book": lambda keys, _: _BookMerge(keys),
+    "bars": lambda keys, _: _BarsMerge(keys),
+    "metrics": lambda keys, _: _KeyedMerge(keys, "series", _metric_key),
+    "ticker": lambda keys, _: _KeyedMerge(keys, "tickers", _symbol_key),
+    "wallet": lambda keys, _: _KeyedMerge(keys, "balances", _balance_key, newer=_not_older),
+    "positions": lambda keys, _: _PositionsMerge(keys),
     "trades": lambda _, items: _AppendMerge(items, "trades", ("dropped",)),
     "liquidations": lambda _, items: _AppendMerge(items, "liquidations"),
 }
@@ -254,11 +418,16 @@ class CoalescingQueue:
             self._fold(self._merge)
 
     def offer(self, body: Payload, part: Frame | None = None, *, ts_ms: int | None = None) -> bool:
-        """Queue one source update; False when refused, i.e. the queue is (or was) overflowed."""
+        """Queue one source update; False when refused, i.e. the queue is (or was) overflowed.
+        `body` is the structured payload every family needs; `part` is its optional CVWB form."""
         if self._overflowed:
             return False
         if self._private:
-            body = copy.deepcopy(body)  # SR-190: nothing of a private update is shared
+            try:
+                body = copy.deepcopy(body)  # SR-190: nothing of a private update is shared
+            except RecursionError:
+                self._overflowed = True
+                return False
         merge = self._merge
         if merge is None or not (self.merging or self._count):
             if len(self._frames) < self._max_frames:
@@ -283,16 +452,19 @@ class CoalescingQueue:
     def _merge_one(
         self, merge: _Merge, body: Payload, part: Frame | None, ts_ms: int | None
     ) -> bool:
+        if self._count and merge.splits(body):
+            self._close_window(merge)
         try:
-            merge.add(body)
+            changed = merge.add(body)
         except _REFUSED:
             self._overflowed = True
             return False
-        self._count += 1
-        if ts_ms is not None:
-            self._ts_ms = ts_ms
-        if self._count == 1:
-            self._first = Emission(_own(body), part, 1, ts_ms)
+        if changed:
+            self._count += 1
+            if ts_ms is not None:
+                self._ts_ms = ts_ms
+            if self._count == 1:
+                self._first = Emission(_own(body), part, 1, ts_ms)
         return True
 
     def take(self) -> list[Emission]:

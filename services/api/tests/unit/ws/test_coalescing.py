@@ -15,7 +15,8 @@ from candleviewer.ws.coalescing import MAX_PENDING_FRAMES, CoalescingQueue, Emis
 Body = dict[str, Any]
 State = dict[str, Any]
 _LISTS = frozenset(
-    {"bids", "asks", "trades", "liquidations", "dropped", "coalesced", "coalesced_count"}
+    {"bids", "asks", "bars", "trades", "liquidations", "dropped", "coalesced", "coalesced_count"}
+    | {"series", "tickers", "balances", "positions", "removed"}
 )
 
 # -- reference clients: every payload, coalesced or not, is applied the same way (§8.2) --------
@@ -36,6 +37,31 @@ def _apply_book(state: State, body: Mapping[str, Any]) -> None:
                 levels[Decimal(price)] = Decimal(size)
 
 
+def _apply_bars(state: State, body: Mapping[str, Any]) -> None:
+    _root(state, body)
+    bars = state.setdefault("bars", {})
+    for item in body["bars"]:
+        key = (item["generation"], item["index"])
+        cur = bars.get(key)
+        if cur is None or not cur["confirm"] or (item["confirm"] and item.get("amended")):
+            bars[key] = item
+
+
+def _keyed(field: str, key: Callable[[Body], Any], *, newer: bool = False) -> Callable[..., None]:
+    def apply(state: State, body: Mapping[str, Any]) -> None:
+        _root(state, body)
+        items = state.setdefault(field, {})
+        for item in body.get(field, ()):
+            cur = items.get(key(item))
+            if newer and cur is not None and item["updated_at_ms"] < cur["updated_at_ms"]:
+                continue  # §15: a late-arriving older entity is discarded
+            items[key(item)] = item
+        for pid in body.get("removed", ()):
+            items.pop(pid, None)
+
+    return apply
+
+
 def _append(field: str) -> Callable[..., None]:
     def apply(state: State, body: Mapping[str, Any]) -> None:
         _root(state, body)
@@ -49,6 +75,7 @@ def _append(field: str) -> Callable[..., None]:
 
 _PRICE = st.sampled_from(["100", "100.0", "100.5", "101", "99.5"])
 _SIZE = st.sampled_from(["0", "0.5", "1", "3.25"])
+_DEC = st.sampled_from(["0.5", "1", "1.25", "2.000", "7.5"])
 #: Producers never set the emitter-owned disclosure fields; a stray one must not leak through.
 _STRAY = st.sampled_from([{}, {}, {"coalesced": True, "coalesced_count": 9}])
 _book = st.builds(
@@ -65,8 +92,69 @@ _book = st.builds(
     st.lists(st.tuples(_PRICE, _SIZE).map(list), max_size=3),
     _STRAY,
 )
+_bar_item = st.builds(
+    lambda g, i, c, conf, am: {
+        "generation": g,
+        "index": i,
+        "t_ms": 1000,
+        "c": str(c),
+        "confirm": conf,
+        "amended": am,
+    },
+    st.integers(0, 1),
+    st.integers(0, 2),
+    st.integers(0, 9),
+    st.booleans(),
+    st.booleans(),
+)
+_bars = st.builds(
+    lambda items: {"symbol": "BTCUSDT", "bar_type": "time", "param": "1m", "bars": items},
+    st.lists(_bar_item, min_size=1, max_size=2),
+)
 
 
+_metrics = st.builds(
+    lambda m, params, v: {
+        "symbol": "BTCUSDT",
+        "series": [{"metric": m, "t_ms": 5, "v": v, **({"params": params} if params else {})}],
+    },
+    st.sampled_from(["cvd", "delta"]),
+    st.sampled_from([None, {"window": 5}]),
+    _DEC,
+)
+_ticker = st.builds(
+    lambda sym, price: {"tickers": [{"symbol": sym, "last_price": price, "ts_ms": 1}]},
+    st.sampled_from(["BTCUSDT", "ETHUSDT"]),
+    _DEC,
+)
+_wallet = st.builds(
+    lambda acc, equity, at: {
+        "balances": [
+            {"exchange_account_id": acc, "coin": "USDT", "equity": equity, "updated_at_ms": at}
+        ]
+    },
+    st.sampled_from(["a1", "a2"]),
+    _DEC,
+    st.integers(0, 5),
+)
+_position = st.builds(
+    lambda pid, size, at: {
+        "id": pid,
+        "exchange_account_id": "a1",
+        "symbol": "BTCUSDT",
+        "side": "long",
+        "size": size,
+        "updated_at_ms": at,
+    },
+    st.sampled_from(["p1", "p2"]),
+    _DEC,
+    st.integers(0, 5),
+)
+_positions = st.builds(
+    lambda ups, removed: {"positions": ups, **({"removed": removed} if removed else {})},
+    st.lists(_position, max_size=2),
+    st.lists(st.sampled_from(["p1", "p2"]), max_size=1),
+)
 _trades = st.builds(
     lambda ids, dropped, stray: {
         "symbol": "BTCUSDT",
@@ -89,6 +177,23 @@ _liquidations = st.builds(
 
 FAMILIES: list[tuple[str, Any, Callable[..., None]]] = [
     ("book", st.lists(_book, max_size=25), _apply_book),
+    ("bars", st.lists(_bars, max_size=25), _apply_bars),
+    (
+        "metrics",
+        st.lists(_metrics, max_size=25),
+        _keyed("series", lambda m: (m["metric"], repr(m.get("params")))),
+    ),
+    ("ticker", st.lists(_ticker, max_size=25), _keyed("tickers", lambda t: t["symbol"])),
+    (
+        "wallet",
+        st.lists(_wallet, max_size=25),
+        _keyed("balances", lambda b: (b["exchange_account_id"], b["coin"]), newer=True),
+    ),
+    (
+        "positions",
+        st.lists(_positions, max_size=25),
+        _keyed("positions", lambda p: p["id"], newer=True),
+    ),
     ("trades", st.lists(_trades, max_size=25), _append("trades")),
     ("liquidations", st.lists(_liquidations, max_size=25), _append("liquidations")),
 ]
@@ -183,6 +288,17 @@ def test_coalescer_500_book_updates_one_window_one_lossless_frame_counted_500() 
     assert _state(_apply_book, [frame.body]) == _state(_apply_book, updates)
 
 
+def test_coalescer_unconfirmed_after_confirmed_bar_keeps_confirmed() -> None:
+    queue = CoalescingQueue("bars")
+    bar = {"generation": 0, "index": 5, "t_ms": 36_300_000, "c": "1", "confirm": True}
+    queue.offer({"symbol": "BTCUSDT", "bar_type": "time", "param": "5m", "bars": [bar]})
+    late = {**bar, "c": "2", "confirm": False}
+    queue.offer({"symbol": "BTCUSDT", "bar_type": "time", "param": "5m", "bars": [late]})
+    [frame] = queue.take()
+    assert frame.body["bars"] == [bar]
+    assert frame.coalesced_count == 1  # the discarded update merged nothing
+
+
 def test_coalescer_200_prints_one_window_all_in_order_unmerged() -> None:
     queue = CoalescingQueue("trades")
     prints = [{"id": f"t{i}", "price": "1", "size": "1", "side": "buy"} for i in range(200)]
@@ -255,6 +371,19 @@ def test_coalescer_private_update_shares_nothing_between_connections() -> None:
     assert body["trade_groups"][0]["status"] == "open"
 
 
+def test_coalescer_merged_private_frames_share_nothing_between_connections() -> None:
+    first = {"positions": [{"id": "p1", "size": "1", "updated_at_ms": 1}]}
+    second = {"positions": [{"id": "p2", "size": "2", "updated_at_ms": 1}]}
+    a, b = CoalescingQueue("positions"), CoalescingQueue("positions")
+    for queue in (a, b):
+        queue.offer(first)
+        queue.offer(second)
+    [fa], [fb] = a.take(), b.take()
+    fa.body["positions"][0]["size"] = "9"
+    assert fb.body["positions"][0]["size"] == "1"
+    assert first["positions"][0]["size"] == "1"
+
+
 # -- bounds, refusals and modes ------------------------------------------------------------------
 
 
@@ -274,11 +403,33 @@ def test_coalescer_book_level_bound_refuses_until_cleared() -> None:
 
 
 @pytest.mark.parametrize(
+    ("family", "first", "grown"),
+    [
+        (
+            "bars",
+            {"bars": [{"generation": 0, "index": 0, "confirm": False}]},
+            {"bars": [{"generation": 0, "index": 1, "confirm": False}]},
+        ),
+        ("ticker", {"tickers": [{"symbol": "A"}]}, {"tickers": [{"symbol": "B"}]}),
+        ("positions", {"positions": [], "removed": ["p1"]}, {"positions": [], "removed": ["p2"]}),
+        ("trades", {"trades": [{"id": "1"}]}, {"trades": [{"id": "2"}]}),
+    ],
+)
+def test_coalescer_bound_reached_sets_overflowed(family: str, first: Body, grown: Body) -> None:
+    queue = CoalescingQueue(family, max_keys=1, max_items=1)
+    assert queue.offer(first)
+    assert not queue.offer(grown)
+    assert queue.overflowed
+
+
+@pytest.mark.parametrize(
     ("family", "malformed"),
     [
         ("book", {"bids": [["100", "1"], ["abc", "1"]], "asks": []}),
         ("book", {"bids": [["NaN", "1"]], "asks": []}),
         ("book", {"bids": [["100", "1", "2"]], "asks": []}),
+        ("bars", {"bars": [{"index": 0, "confirm": False}]}),
+        ("wallet", {"balances": [{"coin": "USDT"}]}),
         ("trades", {"trades": 7}),
     ],
 )
@@ -384,6 +535,41 @@ def test_coalescer_trades_dropped_counts_add_up() -> None:
     assert frame.body == {"symbol": "X", "trades": [{"id": "1"}], "dropped": 5}
 
 
+def test_coalescer_positions_removed_after_upsert_and_upsert_after_removed() -> None:
+    queue = CoalescingQueue("positions")
+    pos = {"id": "p1", "size": "1", "updated_at_ms": 1}
+    queue.offer({"positions": [pos]})
+    queue.offer({"positions": [], "removed": ["p1"]})
+    queue.offer({"positions": [{**pos, "id": "p2"}]})
+    [frame] = queue.take()
+    assert frame.body == {"positions": [{**pos, "id": "p2"}], "removed": ["p1"]}
+    queue.offer({"positions": [], "removed": ["p1"]})
+    queue.offer({"positions": [pos]})
+    assert [f.body for f in queue.take()] == [
+        {"positions": [], "removed": ["p1"]},
+        {"positions": [pos]},
+    ]
+
+
+def test_coalescer_wallet_older_balance_is_discarded() -> None:
+    queue = CoalescingQueue("wallet")
+    new = {"exchange_account_id": "a1", "coin": "USDT", "equity": "2", "updated_at_ms": 9}
+    queue.offer({"balances": [new]})
+    queue.offer({"balances": [{**new, "equity": "1", "updated_at_ms": 3}]})
+    [frame] = queue.take()
+    assert frame.coalesced_count == 1
+    assert frame.body == {"balances": [new]}
+
+
+def test_coalescer_metrics_params_keep_series_apart() -> None:
+    queue = CoalescingQueue("metrics")
+    for params, v in (({"w": 5}, "1"), (None, "2"), ({"w": 5}, "3")):
+        item = {"metric": "cvd", "t_ms": 1, "v": v, **({"params": params} if params else {})}
+        queue.offer({"symbol": "X", "series": [item]})
+    [frame] = queue.take()
+    assert [s["v"] for s in frame.body["series"]] == ["3", "2"]
+
+
 def test_coalescer_fold_refused_by_the_key_bound_overflows() -> None:
     queue = CoalescingQueue("book", coalesce=False, max_frames=2, max_keys=1)
     assert queue.offer(_level("1"))
@@ -401,8 +587,35 @@ def test_coalescer_clear_resets_a_frame_queue_after_overflow() -> None:
     assert queue.offer({"rules": []})
 
 
-def test_coalescer_trades_item_bound_sets_overflowed() -> None:
-    queue = CoalescingQueue("trades", max_items=1)
-    assert queue.offer({"trades": [{"id": "1"}]})
-    assert not queue.offer({"trades": [{"id": "2"}]})
+def test_coalescer_fold_keeps_a_positions_removal_before_its_reopen() -> None:
+    """Hypothesis counterexample: folding whole frames must honour the removed-then-re-opened
+    split, or the client applies the removal last and loses the position."""
+    queue = CoalescingQueue("positions", coalesce=False)
+    pos = {"id": "p1", "size": "0.5", "updated_at_ms": 0}
+    queue.offer({"positions": [], "removed": ["p1"]})
+    queue.offer({"positions": [pos]})
+    queue.set_coalesce(True)
+    assert [f.body for f in queue.take()] == [
+        {"positions": [], "removed": ["p1"]},
+        {"positions": [pos]},
+    ]
+
+
+def _nested(depth: int) -> Body:
+    item: Body = {"id": "1"}
+    for _ in range(depth):
+        item = {"x": item}
+    return item
+
+
+@pytest.mark.parametrize(
+    ("family", "body"),
+    [
+        ("trades", {"trades": [_nested(5_000)]}),
+        ("positions", {"positions": [{"id": "p1", "updated_at_ms": 1, "x": _nested(5_000)}]}),
+    ],
+)
+def test_coalescer_pathologically_nested_update_is_refused(family: str, body: Body) -> None:
+    queue = CoalescingQueue(family)
+    assert not queue.offer(body)
     assert queue.overflowed

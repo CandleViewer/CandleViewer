@@ -33,19 +33,21 @@ class BarCoalescer:
         self._count = 0
         self.overflowed = False
 
-    def add(self, item: BarItem) -> None:
+    def add(self, item: BarItem) -> bool:
+        """Keep `item` unless a confirmed bar outranks it or the bound refuses it; True if kept."""
         key = bar_key(item)
         self._count += 1
         cur = self._pending.get(key)
         if cur is not None and cur.get("confirm"):
             if not item.get("confirm"):
-                return
+                return False
             if not item.get("amended"):
-                return
+                return False
         elif cur is None and len(self._pending) >= self._max:
             self.overflowed = True  # caller must drop pending + force re-snapshot (§8.3)
-            return
+            return False
         self._pending[key] = dict(item)
+        return True
 
     def flush(self) -> tuple[list[dict[str, Any]], int]:
         """Return (items ordered by key, coalesced_count) and reset pending state."""
