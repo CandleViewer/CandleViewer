@@ -25,7 +25,10 @@
       "WebFetch(domain:bytick.com)",
       "Read(./.env)",
       "Read(./.env.*)",
-      "Read(./**/secrets/*.key)"
+      "Read(./**/secrets/*.key)",
+      "Read(./.claude/settings.local.json)",
+      "Read(./.claude/relayroom/**)",
+      "Bash(cat ./.claude/settings.local.json)"
     ]
   },
   "hooks": {
