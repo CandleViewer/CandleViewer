@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+import asyncio
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -19,6 +20,11 @@ class FakeFlagStore:
         self.down = False
         self.loads = 0
         self.writes: list[FlagWrite] = []
+        #: When set, `load` blocks until it is set (a hung or slow store).
+        self.hold: asyncio.Event | None = None
+        self.crash: Exception | None = None
+        #: Runs after the snapshot is taken (e.g. a write committing mid-load).
+        self.on_load: Callable[[], None] | None = None
 
     async def ensure(self, specs: Iterable[FlagSpec]) -> None:
         for spec in specs:
@@ -26,9 +32,16 @@ class FakeFlagStore:
 
     async def load(self) -> Mapping[str, StoredFlag]:
         self.loads += 1
+        snapshot = dict(self.rows)
+        if self.on_load is not None:
+            self.on_load()
+        if self.hold is not None:
+            await self.hold.wait()
+        if self.crash is not None:
+            raise self.crash
         if self.down:
             raise StoreUnavailableError("down")
-        return dict(self.rows)
+        return snapshot
 
     async def write(self, change: FlagWrite) -> StoredFlag:
         if self.down:

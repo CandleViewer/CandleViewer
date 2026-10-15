@@ -3,6 +3,7 @@ an unreachable store, and role-filtered resolution."""
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from uuid import UUID
 
@@ -76,11 +77,78 @@ async def test_invalidate_forces_a_reload() -> None:
     assert store.loads == loads + 1
 
 
-async def test_a_flag_without_a_row_resolves_to_its_default() -> None:
+async def test_a_flag_without_a_row_resolves_to_its_default_not_its_fail_closed_value() -> None:
     service, store, _ = await _service()
-    del store.rows["rules.form_editor"]
+    del store.rows[MAINTENANCE_MODE]
     service.invalidate()
-    assert await service.value("rules.form_editor") is True
+    assert await service.value(MAINTENANCE_MODE) is False
+
+
+async def test_a_hung_store_times_out_and_fails_closed() -> None:
+    store, clock = FakeFlagStore(), Clock()
+    service = FlagService(default_registry(), store, clock=clock, store_timeout_s=0.001)
+    await store.ensure(service.registry.values())
+    store.hold = asyncio.Event()
+    with capture_logs() as logs:
+        assert await service.value(MAINTENANCE_MODE) is True
+    assert logs[-1] == {
+        "event": "feature_flag_store_unavailable",
+        "error": "TimeoutError",
+        "log_level": "warning",
+    }
+
+
+async def test_a_raising_store_fails_closed_and_waits_for_the_retry() -> None:
+    service, store, clock = await _service()
+    store.crash = RuntimeError("socket closed")
+    clock.now += 30
+    assert await service.value(MAINTENANCE_MODE) is True
+    loads = store.loads
+    assert await service.value(MAINTENANCE_MODE) is True
+    assert store.loads == loads
+
+
+async def test_concurrent_reads_share_one_load() -> None:
+    service, store, _ = await _service()
+    service.invalidate()
+    store.hold = asyncio.Event()
+    loads = store.loads
+    readers = [asyncio.create_task(service.value("rules.graph_editor")) for _ in range(3)]
+    await asyncio.sleep(0)
+    store.hold.set()
+    assert await asyncio.gather(*readers) == [True, True, True]
+    assert store.loads == loads + 1
+
+
+async def test_a_load_started_before_invalidate_is_dropped() -> None:
+    service, store, _ = await _service()
+    service.invalidate()
+    store.hold = asyncio.Event()
+    loads = store.loads
+    reader = asyncio.create_task(service.value(MAINTENANCE_MODE))
+    await asyncio.sleep(0)
+    store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
+    service.invalidate()  # a write committed while the first load was in flight
+    store.hold.set()
+    assert await reader is True  # the stale snapshot (value False) was never installed
+    assert store.loads == loads + 2
+
+
+async def test_a_read_overtaken_twice_fails_closed_instead_of_looping() -> None:
+    service, store, _ = await _service()
+    service.invalidate()
+    store.on_load = service.invalidate  # every load is overtaken by a write
+    loads = store.loads
+    assert await service.value(MAINTENANCE_MODE) is True
+    assert store.loads == loads + 2
+
+
+async def test_a_fresh_read_bypasses_a_valid_cache() -> None:
+    service, store, _ = await _service()
+    assert await service.value(MAINTENANCE_MODE) is False
+    store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
+    assert await service.value(MAINTENANCE_MODE) is False
+    assert await service.value(MAINTENANCE_MODE, fresh=True) is True
 
 
 @pytest.mark.parametrize(
@@ -103,6 +171,7 @@ async def test_visible_flags_are_filtered_by_role(
 
 
 async def test_every_evaluation_is_counted_per_flag() -> None:
+    assert flag_evaluations_total._labelnames == ("flag",)
     service, _, _ = await _service()
     before = flag_evaluations_total.labels(MAINTENANCE_MODE)._value.get()
     await service.value(MAINTENANCE_MODE)

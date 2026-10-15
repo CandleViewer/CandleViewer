@@ -42,7 +42,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "ee69913f710bead0301be4e9b46133a3ebdd7d5199faae5b7595561138b40b85"
+GOLDEN_CATALOGUE_SHA256 = "6b93dfa102aac9a30087c723b4fee8a6f0aa89b5f473be1a8e77d8f4480a7422"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -193,6 +193,7 @@ def test_cardinality_check_logs_breached_metrics() -> None:
 def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     """E12-T03: the bars series are `live` via `export_bars_metrics`, not `register_r0`."""
     import candleviewer.bars.builder_set  # noqa: F401 - owns metric families (via its imports)
+    from candleviewer.admin.flags.metrics import EXPORTED_NAMES as FLAG_NAMES
     from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
@@ -210,6 +211,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
         | SECRETS_NAMES
         | NET_EXPORTED_NAMES
     )
+    others |= FLAG_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")

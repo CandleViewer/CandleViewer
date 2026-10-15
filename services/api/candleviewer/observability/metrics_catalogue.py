@@ -1610,6 +1610,32 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E16",
         exported=True,
     ),
+    # --- Feature flags (E42-T03); served by admin.flags.metrics.export_flag_metrics -----
+    # SR-125: `flag` takes only registry keys (a closed, code-reviewed set), never user data.
+    _s(
+        "cv_feature_flag_evaluations_total",
+        "counter",
+        "evaluations",
+        ("flag",),
+        "Server-side feature-flag resolutions, per flag.",
+        "dashboard only",
+        _L,
+        "E42",
+        max_series=32,
+        exported=True,
+    ),
+    _s(
+        "cv_feature_flag_changes_total",
+        "counter",
+        "changes",
+        ("flag", "result"),
+        "Feature-flag write attempts past validation, by result.",
+        "flag churn; conflict or refusal spikes",
+        _L,
+        "E42",
+        max_series=256,
+        exported=True,
+    ),
     # --- SR-125 security metrics (planned) ----------------------------------
     _s(
         "auth_login_failures_total",

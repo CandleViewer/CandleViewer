@@ -25,3 +25,7 @@ def ok_bounded_2453(reg: object) -> None:
 
 def bad_raw_path(reg: object) -> None:
     reg.histogram("cv_g_seconds", "help", ("path",))  # ruleid: cv-obs-metric-label-allowlist
+
+
+def ok_flag(reg: object) -> None:
+    reg.counter("cv_w_total", "help", ("flag", "result"))  # ok: cv-obs-metric-label-allowlist
