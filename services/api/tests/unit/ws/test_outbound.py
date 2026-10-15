@@ -141,6 +141,13 @@ def test_outbound_encode_refuses_a_non_finite_number() -> None:
         encode(_frame("d", "heatmap.BTCUSDT", max_value=float("nan")))
 
 
+def test_outbound_budget_counts_utf8_bytes_of_non_ascii_text() -> None:
+    queue = OutboundQueue()
+    frame = encode(_frame("d", "book.BTCUSDT.50", note="prix élevé €"))
+    queue.push(frame)
+    assert queue.bytes == len(frame.text.encode("utf-8"))  # what the writer actually sends
+
+
 def test_outbound_ready_event_tracks_emptiness() -> None:
     queue = OutboundQueue()
     assert not queue.ready.is_set()
@@ -346,6 +353,17 @@ def test_backpressure_close_hint_counts_pending_state() -> None:
         pacer.offer(orders, {"orders": []})
     events = Backpressure(queue, pacer).check([book, other, orders])
     assert events[-1] == LadderEvent("close", ("book.BTCUSDT.50", "book.ETHUSDT.50"))
+
+
+def test_backpressure_close_hint_names_at_most_five_topics_largest_first() -> None:
+    conn, pacer, queue, _ = _setup(max_frames=7)
+    orders = _orders(conn)
+    for i in range(7):  # seven topics, each queued frame larger than the last
+        queue.push(encode(_frame("d", f"trades.SYM{i}", pad="x" * (10 * i))))
+    for _ in range(8):
+        pacer.offer(orders, {"orders": []})
+    events = Backpressure(queue, pacer).check([orders])
+    assert events == [LadderEvent("close", tuple(f"trades.SYM{i}" for i in (6, 5, 4, 3, 2)))]
 
 
 def test_backpressure_snapshot_that_never_fits_ends_in_a_close() -> None:

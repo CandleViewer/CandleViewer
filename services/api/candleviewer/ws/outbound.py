@@ -217,6 +217,8 @@ class Backpressure:
         for sub in offending:
             self.pacer.drop(sub)
         live = {sub.ch for sub in subs if not sub.snapshot_pending}
+        # Frames of a topic awaiting another snapshot, or no longer subscribed, go too. That
+        # drop is not a redrop: `_settle` forgets its record and the count starts afresh.
         self.queue.drop(
             {topic for topic in queued if topic not in live} | {s.ch for s in offending}
         )
