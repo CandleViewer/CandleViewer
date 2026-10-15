@@ -17,9 +17,25 @@ rules:
           - pattern: $R.histogram($N, $H, (..., "$LABEL", ...), ...)
       # trigger_mode (E40-T03, #1015): bounded to the `alert_trigger_mode` enum
       # {once, once_per_bar, every_time}; max_series=3 at the call site; no identifiers.
+      # A name on this list is allowed only with a closed value set and a `max_series` cap at
+      # each call site; the entries record the existing users. Reusing a name for a new metric
+      # needs the same bound, stated in review.
+      # #2453: each name below has a closed value set in code and a `max_series` cap in the
+      # catalogue; none carries an identifier (user, account, order id, raw path, free text).
+      # bucket (E15-T01): workspace-count buckets {1, 2-4, 5-8, 9-16, 17-32}; max_series=5.
+      # cause (E42-T02): audit read over budget {budget, pool, statement_timeout}; max_series=3.
+      # filter_class (E42-T02): the audit query's 10 shape classes; max_series=10.
+      # operation (E15-T01): the 11 /workspaces router operations; max_series=11.
+      # resource (E15-T01): {workspace, layout}; max_series=2.
+      # route (#2421): the matched route TEMPLATE (`scope["route"].path`), never the raw path,
+      #   plus `unmatched`; bounded by the app's route table; max_series=1000 as a backstop.
+      # rule (E14-T01): drawing write conflicts {version_conflict, target_unavailable,
+      #   id_unavailable, idempotency_key_reuse}; max_series=4.
+      # status_class (#2421): {1xx, 2xx, 3xx, 4xx, 5xx}.
+      # tool (E14-T01): the contract's closed drawing-tool enum; max_series=25.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(endpoint_group|engine|event|kind|method|permission|reason|result|rule_id|screen|sha256|socket|stage|state|stream|symbol|topic|transport|trigger_mode|version)$).*$"
+          regex: "^(?!(bucket|cause|endpoint_group|engine|event|filter_class|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|tool|topic|transport|trigger_mode|version)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"
