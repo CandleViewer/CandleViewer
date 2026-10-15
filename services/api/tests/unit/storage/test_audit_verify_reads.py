@@ -102,6 +102,15 @@ async def test_checkpoint_above_is_the_smallest_head_id_past_the_head() -> None:
     assert await _repo(_Rel(rows=[[None]])).fetch_checkpoint_above(41) is None
 
 
+async def test_checkpoints_carry_the_stored_hash_of_the_id_they_name() -> None:
+    rel = _Rel(rows=[[2, "a" * 64, "a" * 64], [4, "b" * 64, None]])
+    found = await _repo(rel).fetch_checkpoints(9)
+    assert found == [(2, "a" * 64, "a" * 64), (4, "b" * 64, None)]  # None: no entry has id 4
+    read, params = rel.calls[1]
+    assert "LEFT JOIN audit_log a ON a.id = c.head_id" in read and params == {"to_id": 9}
+    assert "WHERE c.head_id <= :to_id ORDER BY c.head_id" in read
+
+
 def _assert_no_db_error_in_chain(err: BaseException) -> None:
     assert err.__cause__ is None and err.__context__ is None and err.__suppress_context__
 
