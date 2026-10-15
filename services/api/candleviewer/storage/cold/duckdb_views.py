@@ -157,7 +157,8 @@ def build_views(db_path: Path, registry: DatasetRegistry, *, pg_dsn: str | None 
         journal_parts = ["SELECT * FROM journal_cold"] if oms_ok["journal_cold"] else []
         if checked_dsn:
             try:
-                con.execute("LOAD postgres")  # preinstalled in the image; no runtime INSTALL
+                # The image must preinstall it (#2255); it is never INSTALLed at runtime.
+                con.execute("LOAD postgres")
             except duckdb.Error as exc:
                 raise PostgresExtensionUnavailable(
                     "duckdb postgres extension is not preinstalled; it is never downloaded"
