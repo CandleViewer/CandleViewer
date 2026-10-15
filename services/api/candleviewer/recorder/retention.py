@@ -9,7 +9,9 @@ Safety properties (each re-checked immediately before every delete, never only a
 - the pin check is the FIRST predicate (§6);
 - a hot (QuestDB) DAY partition holds every symbol, so it is dropped only when every symbol
   in it is past its hot horizon AND the roll-off watermark proves it archived — else it is
-  kept and alerted (`retention.not_archived`);
+  kept and alerted (`retention.not_archived`) — AND each symbol's rows on the day still equal
+  its verified cold manifest — else it is kept and CRITICAL `archive.verification_failed`
+  is raised, whether the mismatch is found while planning or right before the drop;
 - a partition under an active replay/backtest lease is skipped and retried next pass;
 - every deletion writes `data.deleted` write-ahead (C-2.9); the pass writes `retention.run`.
 
@@ -55,6 +57,8 @@ Reason = Literal[
     "pinned", "leased", "hot_window", "not_archived", "archive_mismatch", "shared_partition"
 ]
 PlanMode = Literal["policy", "purge"]
+#: Holds an operator must act on; alerted whether found at plan time or at delete time.
+_ALERTED: Final[frozenset[Reason]] = frozenset({"not_archived", "archive_mismatch"})
 
 retention_deleted_bytes_total = Counter(
     "retention_deleted_bytes_total", "Bytes deleted by retention.", ["symbol", "stream"]
@@ -257,10 +261,13 @@ class PruneScope:
 class RunReport:
     dry_run: bool
     deleted: list[PruneItem] = field(default_factory=list)
+    #: Held at delete time (the re-check found a blocker after planning).
     skipped: list[Protected] = field(default_factory=list)
     failed: list[tuple[PruneItem, str]] = field(default_factory=list)
     resumed: bool = False
     next_run_us: int | None = None
+    #: Held at plan time (never became an item); empty for a resumed checkpointed plan.
+    protected: list[Protected] = field(default_factory=list)
 
     @property
     def freed_bytes(self) -> int:
@@ -675,6 +682,31 @@ class RetentionManager:
             waited += 1.0
         return True
 
+    async def _hold(self, p: Protected) -> None:
+        """Log why an item is held and raise its alert: an archived hot day whose rows no longer
+        match the cold manifest is CRITICAL `archive.verification_failed` (as the roll-off
+        treats late rows); a day past its window that the roll-off has not archived is WARNING
+        `retention.not_archived`."""
+        logger().info(
+            "retention_skipped",
+            reason=p.reason,
+            info=p.info,
+            tier=p.item.tier,
+            stream=p.item.stream,
+            part=p.item.key,
+        )
+        if p.reason == "not_archived":
+            await self._events.emit("WARNING", "retention.not_archived", p.item.detail())
+        elif p.reason == "archive_mismatch":
+            await self._events.emit("CRITICAL", "archive.verification_failed", p.item.detail())
+
+    async def _alert_plan_holds(self, plan: PrunePlan) -> None:
+        """Review round 4 (A): a hold found while PLANNING never reaches the delete-time
+        re-check, so alert it here — a late-row day is never a silent skip."""
+        for p in plan.protected:
+            if p.reason in _ALERTED:
+                await self._hold(p)
+
     async def _execute(
         self, plan: PrunePlan, doc: dict[str, object], ckpt: Checkpoint, report: RunReport
     ) -> bool:
@@ -692,20 +724,7 @@ class RetentionManager:
             if blocker is not None:
                 report.skipped.append(blocker)
                 retention_protected_total.labels(reason=blocker.reason).inc()
-                logger().info(
-                    "retention_skipped",
-                    reason=blocker.reason,
-                    info=blocker.info,
-                    tier=item.tier,
-                    stream=item.stream,
-                    part=item.key,
-                )
-                if blocker.reason == "not_archived":
-                    await self._events.emit("WARNING", "retention.not_archived", item.detail())
-                elif blocker.reason == "archive_mismatch":
-                    await self._events.emit(
-                        "CRITICAL", "archive.verification_failed", item.detail()
-                    )
+                await self._hold(blocker)
                 continue
             if doc.get("pending") != did:
                 # Write-ahead (C-2.9): the exact range + row count land BEFORE the delete.
@@ -783,7 +802,7 @@ class RetentionManager:
     ) -> RunReport:
         """Execute exactly `plan` (never more): under the volume lock, every unit re-checked.
         `dry_run` deletes nothing and writes only the `retention.run` record."""
-        report = RunReport(dry_run=dry_run)
+        report = RunReport(dry_run=dry_run, protected=list(plan.protected))
         async with self._lock.hold(self._cfg.volume) as got:
             if not got:
                 raise RetentionBusy(self._cfg.volume)
@@ -798,6 +817,7 @@ class RetentionManager:
                 doc = _new_doc(plan)
                 await ckpt.save(doc)
             await self._audit_run(plan, report, "start")
+            await self._alert_plan_holds(plan)
             finished = await self._execute(plan, doc, ckpt, report)
             if finished:
                 await ckpt.clear()
@@ -821,7 +841,9 @@ class RetentionManager:
                 plan = await self.preview()
                 doc = _new_doc(plan)
                 await self._ckpt.save(doc)
+                report.protected = list(plan.protected)
             await self._audit_run(plan, report, "start")
+            await self._alert_plan_holds(plan)
             finished = await self._execute(plan, doc, self._ckpt, report)
             if finished:
                 await self._ckpt.clear()

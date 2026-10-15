@@ -1,11 +1,12 @@
 """Integration (E16-T06): one real reaper pass over real QuestDB + real Parquet.
 
 Seeds two BTCUSDT days and rolls the old one off with the real `RollOffJob` (archive + verify
-+ drop). Ten LATE rows then re-create that day in QuestDB: the watermark says "archived", but
-those rows are not in Parquet. One `RetentionManager.run_nightly` (injected clock, 1-day total
-horizon) must therefore (review H2):
++ drop). Ten LATE rows (12:00 UTC, never exported) then re-create that day in QuestDB: the
+watermark says "archived", but those rows are not in Parquet. One `RetentionManager.run_nightly`
+(injected clock, 1-day total horizon) must therefore (review H2):
 - KEEP the hot day (per-symbol hot rows 10 != manifest rows 1200) and raise CRITICAL
-  `archive.verification_failed`, deleting no unarchived row;
+  `archive.verification_failed`, deleting no unarchived row. The rows are already there when
+  the pass plans, so the day is held while planning (`report.protected`, review round 4 A);
 - delete the expired Parquet partition (its own total horizon has passed), with intent + done
   `data.deleted` records that outlive the data.
 Needs Docker (testcontainers QuestDB 8.x); only collects locally without Docker.
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -148,7 +149,7 @@ async def test_retention_real_pass_drops_archived_hot_day_and_expired_parquet(
             config=RollOffConfig(streams=(T,)),
             clock=lambda: _NOW,
         ).run()
-        await _seed(conn, host, ilp_port, _OLD, 10)  # a late hot copy of the archived day
+        await _seed(conn, host, ilp_port, _OLD + timedelta(hours=12), 10)  # late, unexported
         await wait_for_row_count(conn, "trades", 1210)
         cold = ColdRetentionStore(reg)
         assert [p.rows for p in await cold.partitions("BTCUSDT", T)] == [1200]
@@ -170,9 +171,12 @@ async def test_retention_real_pass_drops_archived_hot_day_and_expired_parquet(
         )
         report = await mgr.run_nightly()
 
-        held = [(i.tier, i.key, why) for i, why in report.failed] + [
-            (p.item.tier, p.item.key, f"{p.reason}:{p.info}") for p in report.skipped
-        ]
+        # Held while planning (`protected`) or at the delete-time re-check (`skipped`), or failed.
+        held = (
+            [(i.tier, i.key, why) for i, why in report.failed]
+            + [(p.item.tier, p.item.key, f"{p.reason}:{p.info}") for p in report.skipped]
+            + [(p.item.tier, p.item.key, f"{p.reason}:{p.info}") for p in report.protected]
+        )
         parts = await pg.fetch("SELECT * FROM table_partitions('trades')")
         # Only the expired cold partition goes; the hot day with unarchived late rows stays.
         assert [i.tier for i in report.deleted] == ["cold"], (held, parts)

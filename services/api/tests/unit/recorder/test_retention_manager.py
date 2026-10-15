@@ -127,7 +127,11 @@ async def test_unarchived_hot_day_is_never_dropped_and_alerts() -> None:
     w.archived[("BTCUSDT", T)] = day(12)  # watermark short of the day
     plan = await manager(w).preview()
     assert [p.reason for p in plan.protected] == ["not_archived"] and plan.items == ()
-    assert (await manager(w).run_nightly()).deleted == [] and w.deletes == []
+    assert w.events == []  # a preview never alerts
+    report = await manager(w).run_nightly()
+    assert report.deleted == [] and w.deletes == []
+    assert [p.reason for p in report.protected] == ["not_archived"]  # held while planning
+    assert w.events == [("WARNING", "retention.not_archived")]
 
 
 async def test_archived_hot_day_past_hot_window_is_dropped() -> None:
@@ -316,6 +320,26 @@ async def test_hot_day_with_late_unarchived_rows_is_kept_and_critical() -> None:
     assert [(p.reason, p.info) for p in held.protected] == [
         ("archive_mismatch", "BTCUSDT hot=8 cold=5")
     ]
+
+
+async def test_late_rows_present_at_plan_time_are_held_reported_and_critical() -> None:
+    """Review round 4 (A, the CI failure): late rows already on the archived day when the pass
+    PLANS. The day is held while planning, so it never reaches the delete-time re-check; the
+    report must still name it and the pass must still raise CRITICAL (never a silent skip)."""
+    w = _world()
+    w.add_hot(T, 10, {"BTCUSDT": 5})
+    w.archived[("BTCUSDT", T)] = day(9)
+    w.late_rows[("BTCUSDT", day(10))] = 3  # landed after the export, before this pass
+    w.add_cold("BTCUSDT", T, 40)  # an expired cold partition still goes
+    report = await manager(w).run_nightly()
+    assert [i.tier for i in report.deleted] == ["cold"] and day(10) in w.hot[T]
+    assert report.skipped == [] and report.failed == []
+    assert [(p.item.tier, p.reason, p.info) for p in report.protected] == [
+        ("hot", "archive_mismatch", "BTCUSDT hot=8 cold=5")
+    ]
+    assert w.events == [("CRITICAL", "archive.verification_failed")]
+    (run_end,) = [d for a, d in w.audit if a == "retention.run" and d["phase"] == "end"]
+    assert run_end["protected"] == 1
 
 
 async def test_hot_day_without_cold_manifest_is_kept() -> None:
