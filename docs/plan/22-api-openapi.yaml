@@ -9089,6 +9089,41 @@ paths:
                       tier_source: unrecorded
                       recorded_at: null
 
+  /admin/capacity/subaccount-tier:
+    put:
+      tags: [admin]
+      operationId: setSubaccountTier
+      summary: Record the Bybit sub-account tier as a fact (never inferred)
+      description: |
+        Records the system-scope setting `accounts.subaccount_tier` (21-database-schema.md 3.9)
+        that `GET /admin/capacity` reports as `SubaccountCapacity`: cap 5 for `regular`, 20 for
+        `business_kyc`. Owner-only (`admin:write`). Every successful call is audited as
+        `settings.change` with the before and after tier, written ahead of the response; a denied
+        attempt is audited too. The tier cannot be cleared here, and nothing else ever sets it.
+      x-rbac: { permissions: [admin:write], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tier]
+              properties:
+                tier: { type: string, enum: [regular, business_kyc] }
+            examples:
+              businessKyc: { value: { tier: business_kyc } }
+      responses:
+        "200":
+          description: Tier recorded; the resulting sub-account capacity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubaccountCapacity" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+
   /admin/incidents:
     get:
       tags: [admin]
