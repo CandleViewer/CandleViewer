@@ -40,7 +40,7 @@ Drill windows are recorded in `system_events`; coordinate security-rule drills (
 | EgressIpChanged | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-egressipchanged` | synthetic | | | | | | pending |
 | AlertmanagerNotificationsFailed | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-alertmanagernotificationsfailed` | synthetic | | | | | | pending |
 | WsOriginRefusalsHigh | ticket | 5m | `docs/plan/07-release-and-prr.md#alert-wsoriginrefusalshigh` | synthetic | | | | | | pending |
-| AuthRecoveryCodeUsed | ticket | 0m | `docs/plan/07-release-and-prr.md#alert-authrecoverycodeused` | synthetic | | | | | | pending |
+| AuthRecoveryCodeUsed | page | 0m | `docs/plan/07-release-and-prr.md#alert-authrecoverycodeused` | synthetic | | | | | | pending |
 | NetBindingUnsafe | page | 0m | `docs/plan/07-release-and-prr.md#alert-netbindingunsafe` | synthetic | | | | | | pending |
 | IngestionTopicStale | ticket | 1m | `docs/ops/ingestion.md#alert-ingestiontopicstale` | synthetic | | | | | | pending |
 | IngestionBookResyncRateHigh | ticket | 5m | `docs/ops/ingestion.md#alert-ingestionbookresyncratehigh` | synthetic | | | | | | pending |

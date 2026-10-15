@@ -280,15 +280,38 @@ def test_ws_origin_refusal_alert_watches_the_bounded_close_reason() -> None:
     assert url == "docs/plan/07-release-and-prr.md#alert-wsoriginrefusalshigh"
 
 
-def test_recovery_code_alert_tickets_the_owner_on_any_use() -> None:
-    """#2496 (SR-022: each use "alerts the Owner"): any accepted recovery code raises a
-    ticket at once. The counter carries no user label; the runbook reads the audit log."""
-    rule = {r["alert"]: r for r in _rules()}["AuthRecoveryCodeUsed"]
+def _route_for(labels: dict[str, str]) -> dict[str, Any]:
+    """The child route Alertmanager picks for `labels`: the first whose matchers all hold
+    (no child route sets `continue`), else the root route."""
+    import re
+
+    for route in AM["route"]["routes"]:
+        assert not route.get("continue", False)
+        pairs = [re.fullmatch(r'(\w+)\s*=\s*"([^"]*)"', m) for m in route["matchers"]]
+        assert all(p is not None for p in pairs), route["matchers"]  # equality matchers only
+        if all(p is not None and labels.get(p[1]) == p[2] for p in pairs):
+            return dict(route)
+    return dict(AM["route"])
+
+
+def test_recovery_code_alert_pages_the_owner_on_any_use_even_in_quiet_hours() -> None:
+    """#2496 (SR-022: each use "alerts the Owner"): any accepted recovery code pages at once.
+    The alert resolves 15 minutes after a use. On the muted ticket route, one that fires and
+    resolves inside quiet hours is never notified (#2660 review), so its route must have no
+    mute. Its own component, so the page-over-ticket rule hides none of the `auth` tickets.
+    The counter carries no user label; the runbook reads the audit log."""
+    rules = _rules()
+    rule = {r["alert"]: r for r in rules}["AuthRecoveryCodeUsed"]
     assert rule["expr"] == "sum by (env) (increase(auth_recovery_codes_used_total[15m])) > 0"
     assert rule["for"] == "0m"
-    assert rule["labels"] == {"severity": "ticket", "component": "auth"}
+    assert rule["labels"] == {"severity": "page", "component": "auth_recovery"}
+    route = _route_for({**rule["labels"], "alertname": rule["alert"], "env": "live"})
+    assert route["receiver"] == "page" and "mute_time_intervals" not in route
     url = rule["annotations"]["runbook_url"]
     assert url == "docs/plan/07-release-and-prr.md#alert-authrecoverycodeused"
+    assert [r["alert"] for r in rules if r["labels"]["component"] == "auth_recovery"] == [
+        "AuthRecoveryCodeUsed"
+    ]
 
 
 def test_net_binding_alert_pages_as_soon_as_the_guard_trips() -> None:
@@ -305,3 +328,25 @@ def test_net_binding_alert_pages_as_soon_as_the_guard_trips() -> None:
     assert [r["alert"] for r in rules if r["labels"]["component"] == "net"] == [
         "NetBindingUnsafe"
     ]
+
+
+def test_every_system_page_rule_has_an_absent_guard_on_its_series() -> None:
+    """#2496: a page on a series that is never scraped can never fire, and nothing says so
+    (`net_binding_safe` went unserved for the gauge's whole life). Every `system_page.yml`
+    rule except the drill reads a series an `ExpectedMetricMissing*` guard watches."""
+    import re
+
+    guarded: set[str] = set()
+    for r in _rules():
+        hit = re.fullmatch(r"absent\((\w+)\)", r["expr"])
+        if r["alert"].startswith("ExpectedMetricMissing") and hit:
+            guarded.add(hit[1])
+    page_file = INFRA / "prometheus" / "alerts" / "system_page.yml"
+    unguarded = [
+        r["alert"]
+        for g in yaml.safe_load(page_file.read_text(encoding="utf-8"))["groups"]
+        for r in g["rules"]
+        if r["alert"] != "SyntheticAlert"
+        and not any(re.search(rf"\b{m}\b", r["expr"]) for m in guarded)
+    ]
+    assert unguarded == []

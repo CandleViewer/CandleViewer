@@ -3,9 +3,10 @@
 `POST /auth/mfa/recovery` moves `auth_recovery_codes_used_total` once per accepted code,
 next to its `auth.recovery_code_used` audit row and before that write, so a failing audit
 sink cannot hide a use. The series is served on the scraped registry with `env`, where
-`AuthRecoveryCodeUsed` (`infra/prometheus/alerts/system_ticket.yml`) reads it and reaches
-the Owner through Alertmanager. Refused attempts never move it. It has no label, so the
-alert cannot name the user; the audit row does.
+`AuthRecoveryCodeUsed` (`infra/prometheus/alerts/system_page.yml`) reads it and pages the
+Owner through Alertmanager. Refused attempts never move it, including a code burnt by a
+request that lost the challenge race: that request is refused and audited as
+`auth.mfa_failed`. It has no label, so the alert cannot name the user; the audit row does.
 
 The route runs over the real `MfaService` and the in-memory repository.
 """
@@ -27,7 +28,7 @@ from candleviewer.audit.errors import AuditError
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
-from candleviewer.auth.mfa_service import MfaService, _hash_token
+from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP, MfaService, _hash_token
 from candleviewer.auth.recovery_codes import hash_recovery_code
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
@@ -81,8 +82,24 @@ def _used() -> float:
     return float(REGISTRY.get_sample_value(SERIES) or 0.0)
 
 
-async def _repo_with(*codes: str) -> tuple[FakeMfaRepository, uuid.UUID]:
-    repo, user_id = FakeMfaRepository(), uuid.uuid4()
+class _LostConsumeRace(FakeMfaRepository):
+    """A concurrent request consumed the same code between lookup and consume."""
+
+    async def consume_recovery_code(self, code_id: str, *, now: datetime) -> bool:
+        return False
+
+
+class _LostChallengeRace(FakeMfaRepository):
+    """This request consumed its code, but a concurrent one satisfied the challenge first."""
+
+    async def satisfy_challenge(self, challenge_id: str, *, now: datetime) -> bool:
+        return False
+
+
+async def _repo_with(
+    *codes: str, repo: FakeMfaRepository | None = None
+) -> tuple[FakeMfaRepository, uuid.UUID]:
+    repo, user_id = (FakeMfaRepository() if repo is None else repo), uuid.uuid4()
     await repo.replace_recovery_codes(
         str(user_id), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
     )
@@ -166,9 +183,52 @@ async def test_recovery_route_counts_the_use_even_when_the_audit_write_fails() -
     repo, _ = await _repo_with(_CODE)
     before = _used()
 
-    assert _recover(_client(repo, _Audit(fail=True)), "t1", _CODE) == 500
+    # The invariant is the count, not the status: today the unhandled AuditError answers 500,
+    # and a later fail-closed 401 or 503 must still leave the use counted.
+    assert _recover(_client(repo, _Audit(fail=True)), "t1", _CODE) != 200
 
     assert _used() == before + 1
+
+
+async def test_recovery_route_lost_consume_race_is_refused_and_not_counted() -> None:
+    repo, _ = await _repo_with(_CODE, repo=_LostConsumeRace())
+    audit = _Audit()
+    before = _used()
+
+    assert _recover(_client(repo, audit), "t1", _CODE) == 401
+
+    assert _used() == before
+    assert audit.writer.actions == ["auth.mfa_failed"]
+
+
+async def test_recovery_route_lost_challenge_race_burns_the_code_without_counting_it() -> None:
+    """DoR update on #2496: the losing request spent its code but mints nothing, so it is
+    refused and audited as `auth.mfa_failed`; only the request that won the race counts."""
+    repo, user_id = await _repo_with(_CODE, repo=_LostChallengeRace())
+    audit = _Audit()
+    before = _used()
+
+    assert _recover(_client(repo, audit), "t1", _CODE) == 401
+
+    assert _used() == before
+    assert audit.writer.actions == ["auth.mfa_failed"]
+    assert await repo.count_unused_recovery_codes(str(user_id)) == 0
+
+
+async def test_recovery_route_locked_challenge_refuses_a_valid_code_without_counting_it() -> None:
+    repo, user_id = await _repo_with(_CODE)
+    challenge = await repo.find_open_challenge_by_token_hash(_hash_token("t1"))
+    assert challenge is not None
+    for _ in range(CHALLENGE_ATTEMPT_CAP):
+        await repo.record_challenge_attempt(str(challenge.id))
+    audit = _Audit()
+    before = _used()
+
+    assert _recover(_client(repo, audit), "t1", _CODE) == 401
+
+    assert _used() == before
+    assert audit.writer.actions == ["auth.mfa_failed"]
+    assert await repo.count_unused_recovery_codes(str(user_id)) == 1
 
 
 def test_recovery_codes_used_is_catalogued_live_and_exported() -> None:

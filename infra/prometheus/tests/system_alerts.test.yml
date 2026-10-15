@@ -346,8 +346,8 @@ tests:
     alertname: AuthRecoveryCodeUsed
     exp_alerts:
     - exp_labels:
-        severity: ticket
-        component: auth
+        severity: page
+        component: auth_recovery
         env: live
       exp_annotations:
         summary: 'A recovery code was used: confirm it was the account holder'

@@ -94,17 +94,6 @@ groups:
         annotations:
           summary: "Permission-check failure spike"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authzdeniedspike"
-      # #2496 (SR-022: each use "alerts the Owner"): any accepted recovery code. The series has
-      # no user label; the auth.recovery_code_used audit row names the user.
-      - alert: AuthRecoveryCodeUsed
-        expr: sum by (env) (increase(auth_recovery_codes_used_total[15m])) > 0
-        for: 0m
-        labels:
-          severity: ticket
-          component: auth
-        annotations:
-          summary: "A recovery code was used: confirm it was the account holder"
-          runbook_url: "docs/plan/07-release-and-prr.md#alert-authrecoverycodeused"
       - alert: CredentialVerificationFailures
         expr: increase(credential_verification_failures_total[1h]) > 0
         for: 0m

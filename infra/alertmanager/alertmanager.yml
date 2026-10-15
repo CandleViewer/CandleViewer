@@ -29,7 +29,9 @@ route:
     - matchers: [severity = "page"]
       receiver: page
       repeat_interval: 30m
-    # Ticket: held during quiet hours, released when the interval ends.
+    # Ticket: muted during quiet hours. An alert still firing when the interval ends is sent
+    # then; one that fires and resolves inside it is never sent, so an alert that must reach
+    # the Owner on every occurrence (AuthRecoveryCodeUsed, SR-022) is a page.
     - matchers: [severity = "ticket"]
       receiver: ticket
       repeat_interval: 4h

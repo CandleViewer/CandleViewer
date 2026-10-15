@@ -81,6 +81,19 @@ groups:
         annotations:
           summary: "Mesh binding guard tripped: order placement is read-only"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-netbindingunsafe"
+      - alert: AuthRecoveryCodeUsed
+        # #2496 (SR-022: each use "alerts the Owner"): any accepted recovery code. It fires for
+        # 15 minutes after a use, so it pages: a muted ticket that resolves inside quiet hours
+        # is never notified. Its own component, so this page inhibits none of the auth tickets.
+        # The series has no user label; the auth.recovery_code_used audit row names the user.
+        expr: sum by (env) (increase(auth_recovery_codes_used_total[15m])) > 0
+        for: 0m
+        labels:
+          severity: page
+          component: auth_recovery
+        annotations:
+          summary: "A recovery code was used: confirm it was the account holder"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authrecoverycodeused"
       - alert: SyntheticAlert
         expr: cv_synthetic_alert == 1
         for: 1m

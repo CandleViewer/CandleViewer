@@ -460,8 +460,8 @@ def make_auth_router(
             # contact-the-owner message the UI must render differently.
             return _problem(401, "Recovery failed", "invalid or expired code")
 
-        # SR-022 (#2496): each use alerts the Owner (`AuthRecoveryCodeUsed`). Counted before the
-        # audit write, so a failing audit sink cannot hide a use; one count per audited use.
+        # SR-022 (#2496): each use pages the Owner (`AuthRecoveryCodeUsed`). Counted before the
+        # audit write, so a failing audit sink cannot hide a use (the count can then exceed rows).
         auth_recovery_codes_used_total.inc()
         await _audit(
             audit_service,
