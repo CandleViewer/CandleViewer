@@ -235,14 +235,14 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 
 ### 3.6 Frame size limits
 
-| Limit                              | Value   | Enforcement                                                                                |
-| ---------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`.                                                              |
+| Limit                              | Value   | Enforcement                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`.                                                                                                                                                                                                                                                                                                                                                 |
 | Max inbound JSON nesting depth     | 32      | As-built (SR-184): pre-scanned before decode; deeper, malformed or non-UTF-8 frames are a `frame_malformed` protocol violation (3 strikes -> `4400`), never `1011`. The deepest legitimate client frame in `ws-schema.json` (`sub`/`ctl`: envelope -> topic entry -> `options` -> list) nests at most 6 levels including the envelope, so 32 is headroom, not a format limit. |
-| Max outbound frame (server→client) | 4 MiB   | Server splits snapshots into `partial` chunks (header flag bit3) rather than exceeding it. |
-| Max topics per `sub` frame         | 50      | Excess rejected per-topic with `too_many_topics`.                                          |
-| Max subscriptions per connection   | 200     | New subscribes rejected with `subscription_limit`.                                         |
-| Max connections per user           | 8       | Oldest idle connection is closed with `bye` when exceeded.                                 |
+| Max outbound frame (server→client) | 4 MiB   | Server splits snapshots into `partial` chunks (header flag bit3) rather than exceeding it.                                                                                                                                                                                                                                                                                    |
+| Max topics per `sub` frame         | 50      | Excess rejected per-topic with `too_many_topics`.                                                                                                                                                                                                                                                                                                                             |
+| Max subscriptions per connection   | 200     | New subscribes rejected with `subscription_limit`.                                                                                                                                                                                                                                                                                                                            |
+| Max connections per user           | 8       | Oldest idle connection is closed with `bye` when exceeded.                                                                                                                                                                                                                                                                                                                    |
 
 Snapshot chunking: a `snap` larger than 4 MiB is sent as N frames sharing one `id`, each with `partial` set, the last one clearing it. All chunks consume **one** sequence number in total, assigned to the final chunk; intermediate chunks carry `s: null`.
 
@@ -3266,6 +3266,17 @@ a client connecting after the transition still disables order entry (CMP-092). I
 on an in-place re-auth. Internal details (listening addresses, remediation text) are never sent
 to clients; they appear in logs and `/readyz` only. This uses the existing schema; no schema
 change.
+
+**Feature-flag and maintenance pushes (E42-T03).** After a flag write commits, every
+authenticated connection whose role may see that flag receives a `system` frame of
+`kind: "feature_flags"` within 2 s. `feature_flags` carries **only the changed keys**, each
+resolved for that connection's user exactly as `GET /admin/feature-flags` resolves it, so a client
+merges the frame into the set it holds rather than replacing the set. A key the role may not see
+is omitted, and a frame left with no key is not sent, so a manager or viewer never learns an
+owner-only key. The topic snapshot carries the full set the role may see. Turning
+`maintenance.mode` on or off also sends `kind: "notice"` to every connection within 2 s, with
+`reason` `maintenance.enabled` (severity `warning`) or `maintenance.disabled` (severity `info`)
+and a role-neutral `message`. This uses the existing schema; no schema change.
 
 ---
 

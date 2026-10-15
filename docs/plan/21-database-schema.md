@@ -3311,6 +3311,8 @@ Env switching has **no** hotkey by design (digest 23: must be a deliberate click
 | `storage.cold_tier`                                                      | boolean | `true`  | Parquet/DuckDB routing                        |
 | `killswitch.ingestion`                                                   | boolean | `false` | `is_killswitch=true`                          |
 | `killswitch.order_entry`                                                 | boolean | `false` | `is_killswitch=true`                          |
+| `maintenance.mode`                                                       | boolean | `false` | `is_killswitch=true`; blocks order entry      |
+| `maintenance.keep_recorder`                                              | boolean | `true`  | Recorder keeps running in maintenance         |
 
 ### 10.8 Demo/dev fixtures (never in production)
 
