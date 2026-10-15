@@ -22,6 +22,14 @@ SHA-256 must re-verify. Only when **every** symbol in that day verifies is the p
 4. A day that keeps failing pins the watermark below it for the whole stream by design; it never
    skips ahead over data that is still hot.
 5. `rolloff_skipped_locked`: another instance holds the advisory lock; check for a hung run.
+6. `system_event code=rolloff.drop_unconfirmed` (CRITICAL) with
+   `recorder_rolloff_failures_total{reason="drop_not_applied_<reason>"}`: the DROP was issued but
+   QuestDB never confirmed it within `apply_timeout_s`. Nothing was lost — the cold copy verified
+   before the DROP, the day stays `retained` and the watermark did not move. `reason=suspended`:
+   the WAL is suspended; inspect `wal_tables()` and run `ALTER TABLE <table> RESUME WAL;` after
+   fixing the cause — the next nightly run re-issues the drop. `reason=timeout`: QuestDB is slow or
+   unreachable; the next run retries. `reason=unexpected_shape`: `table_partitions()` returned rows
+   without a `name` — a QuestDB version/driver change; stop and file an issue.
 
 ## Quarantined file
 

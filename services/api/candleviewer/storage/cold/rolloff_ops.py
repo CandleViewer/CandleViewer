@@ -273,7 +273,7 @@ class QuestDbHotPartitions:
             async with asyncio.timeout(self._apply_timeout_s):
                 while True:
                     rows = await self._fetch(sql)
-                    if rows and not any(r.get("name") for r in rows):
+                    if any(not r.get("name") for r in rows):
                         raise self._not_applied(table, name, "unexpected_shape", start)
                     if not any(str(r.get("name")) == name and not _emptied(r) for r in rows):
                         return
