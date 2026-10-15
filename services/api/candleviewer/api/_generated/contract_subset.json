@@ -2395,6 +2395,16 @@
         }
       }
     },
+    "/auth/_perf/argon2-params": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/auth/login": {
       "post": {
         "security": [],

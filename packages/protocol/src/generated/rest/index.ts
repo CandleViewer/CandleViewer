@@ -1107,6 +1107,31 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/auth/_perf/argon2-params": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Active Argon2id parameters (perf instrumentation, keyless testnet only)
+     * @description #2097 (E09-Q05): the Argon2id parameters that new password hashes and rehash-on-login
+     *     use, so the k6 auth profile can assert the SR-011 floor (`m` ≥ 65536 KiB, `t` ≥ 3,
+     *     `p` ≥ 4). Mounted only while `CV_AUTH_PERF_ENABLED` is on; `Settings` refuses that switch
+     *     unless `CV_ENVIRONMENT=testnet` with no exchange key configured, so live and demo never
+     *     serve this route. Read-only, so it writes no audit record. The parameters are not
+     *     secret: every stored hash embeds them.
+     */
+    get: operations["authGetArgon2Params"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/auth/login": {
     parameters: {
       query?: never;
@@ -5077,6 +5102,15 @@ export interface components {
     ApiKeyWithVerification: {
       key?: components["schemas"]["ApiKey"];
       verification?: components["schemas"]["KeyVerification"];
+    };
+    /** @description #2097: the Argon2id parameters new password hashes use (SR-011 floor: m ≥ 65536, t ≥ 3, p ≥ 4). Not secret: every stored hash embeds them. */
+    Argon2Params: {
+      /** @description Memory cost in KiB (65536 = 64 MiB). */
+      m: number;
+      /** @description Parallelism (lanes). */
+      p: number;
+      /** @description Time cost (passes over memory). */
+      t: number;
     };
     /** @description One audit-log entry. `entry_hash` covers the hashed fields listed in `21-database-schema.md` §3.10.1; `id`, `subject_label` and `user_agent` are informational and not covered by it. In a Manager's projection (SR-067) only `id`, `ts`, `actor_user_id`, `actor_username`, `action`, `subject_type`, `subject_id`, `outcome`, `severity` and `request_id` keep their values. Every other field, both hashes included, is null, and `detail` is `{}`. The hashes are withheld because, with the hashed fields known, they would let a caller confirm guesses about the fields its projection hides. */
     AuditEntry: {
@@ -10770,6 +10804,35 @@ export interface operations {
       404: components["responses"]["NotFound"];
     };
   };
+  authGetArgon2Params: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The active parameters. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Argon2Params"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      /** @description `CV_AUTH_PERF_ENABLED` is off (always so in live and demo): the route is not mounted. */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   authLogin: {
     parameters: {
       query?: never;
@@ -10786,6 +10849,8 @@ export interface operations {
       /** @description Authenticated, or an MFA challenge was issued. */
       200: {
         headers: {
+          /** @description #2097 (SR-011 measurement): `argon2;dur=<ms>`, the wall time of this login's one Argon2id verification in milliseconds with one decimal. Present only when `status=mfa_required` and `CV_AUTH_PERF_ENABLED` is on (keyless testnet, never live or demo). No refusal ever carries it, so it cannot tell an unknown user from a wrong password (SR-014). */
+          "Server-Timing"?: string;
           /** @description `cv_refresh` and `__Host-cv_csrf` (SR-041) cookies; present only when `status=authenticated`. */
           "Set-Cookie"?: string;
           [name: string]: unknown;
