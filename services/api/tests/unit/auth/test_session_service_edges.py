@@ -3,11 +3,14 @@ auth/* per-file coverage floor). No I/O; fake clock."""
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from candleviewer.auth import session_service
 from candleviewer.auth.errors import (
@@ -116,3 +119,48 @@ def test_throttle_bounded_map_drops_oldest_key() -> None:
     assert not t.is_blocked("a")
     assert t.is_blocked("b")
     assert t.is_blocked("c")
+
+
+class _YieldingRepository(FakeSessionRepository):
+    async def find_by_id(self, session_id: str):  # type: ignore[no-untyped-def]  # test double
+        found = await super().find_by_id(session_id)
+        await asyncio.sleep(0)  # both callers hold a stale copy before either revokes
+        return found
+
+
+async def test_require_active_racing_expiry_revokes_never_accepts() -> None:
+    """#2273: the loser of the expiry-revoke race must not accept the session."""
+    repo, clock = _YieldingRepository(), _Clock()
+    svc = SessionService(repo, Hasher(pepper=os.urandom(16).hex()), clock=clock)
+    deadline = _NOW + timedelta(minutes=5)
+    m = await svc.mint(str(uuid.uuid4()), expires_at=deadline)
+    clock.now = deadline
+    results = await asyncio.gather(
+        svc.require_active(str(m.session_id)),
+        svc.require_active(str(m.session_id)),
+        return_exceptions=True,
+    )
+    assert all(isinstance(r, SessionRevoked) for r in results)
+
+
+@settings(max_examples=50, deadline=None)
+@given(offset=st.integers(min_value=-5, max_value=5))
+def test_require_active_never_returns_absolute_expired_session(offset: int) -> None:
+    async def run() -> None:
+        repo, clock = _YieldingRepository(), _Clock()
+        svc = SessionService(repo, Hasher(pepper=os.urandom(16).hex()), clock=clock)
+        deadline = _NOW + timedelta(minutes=5)
+        m = await svc.mint(str(uuid.uuid4()), expires_at=deadline)
+        clock.now = deadline + timedelta(seconds=offset)
+        results = await asyncio.gather(
+            svc.require_active(str(m.session_id)),
+            svc.require_active(str(m.session_id)),
+            return_exceptions=True,
+        )
+        for r in results:
+            if offset >= 0:
+                assert isinstance(r, SessionRevoked)
+            elif not isinstance(r, BaseException):
+                assert not r.is_absolute_expired(now=clock.now)
+
+    asyncio.run(run())
