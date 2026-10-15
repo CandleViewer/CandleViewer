@@ -24,16 +24,19 @@ from candleviewer.rules.ir import canonicalize, ir_hash
 from candleviewer.rules.ir.schema import to_json_schema
 from candleviewer.rules.issues import RuleCompileError
 from candleviewer.rules.scope import ScopeResolver
-from candleviewer.rules.validator import validate_rule
+from candleviewer.rules.validator import LOOSEN_STOP_PERMISSION, validate_rule
 from candleviewer.rules.vocabulary import (
     MetricRegistry,
     VocabularyUnavailableError,
     build_vocabulary,
     etag_for,
 )
+from candleviewer.rules.vocabulary.catalogue import ARM_LIVE_PERMISSION
 
 _REQUIRED = "rules:read"
-_ADVISORY_PERMISSIONS = ("orders:write", "rules.loosen_stop", "rules.arm_live")
+#: Probed on the caller to annotate the vocabulary and feed the validator. Named constants,
+#: never literals: they must match what the catalogue and the validator check (#2624).
+_ADVISORY_PERMISSIONS = ("orders:write", LOOSEN_STOP_PERMISSION, ARM_LIVE_PERMISSION)
 _CACHE = "private, max-age=60"
 _Counter = Callable[[str], None]
 

@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from candleviewer.api.rules_crud import make_rules_crud_router
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RulesManager
 from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
@@ -83,10 +84,10 @@ async def _no_grants(_o: uuid.UUID) -> list[tuple[uuid.UUID, bool, bool]]:
 def test_arm_live_needs_permission_and_audits_high_severity_on_real_arm() -> None:
     c, audits, src, _m = _setup()
     rid = c.post("/rules", json={"ir": _scoped(A)}).json()["id"]
-    # widen to live on a new version (needs rules.arm_live to save)
+    # widen to live on a new version (needs the seeded rules:arm_live to save, #2624)
     live = _scoped(A, environments=["demo", "live"])
     assert c.put(f"/rules/{rid}", json={"ir": live}, headers={"If-Match": "1"}).status_code == 403
-    src.perms = frozenset({"rules:read", "rules.arm_live"})
+    src.perms = frozenset({"rules:read", Permission.RULES_ARM_LIVE})
     assert c.put(f"/rules/{rid}", json={"ir": live}, headers={"If-Match": "1"}).status_code == 200
     assert "rule_live_scope_armed" not in audits  # saving is not arming
     c.put(f"/rules/{rid}/mode", json={"mode": "armed"}, headers={"Idempotency-Key": "k2"})

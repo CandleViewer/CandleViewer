@@ -14,9 +14,11 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
+from candleviewer.rules.arming import LIVE_ARM_PERMISSION
 from candleviewer.rules.scope import AccountState
 
-ARM_LIVE = "rules.arm_live"
+#: The seeded RBAC code `rules:arm_live` (migration 0015) that `load_permissions` returns (#2624).
+ARM_LIVE = LIVE_ARM_PERMISSION
 
 
 @dataclass(frozen=True, slots=True)
