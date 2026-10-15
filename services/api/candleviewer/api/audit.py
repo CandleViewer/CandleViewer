@@ -598,7 +598,8 @@ def make_audit_router(
         """Write-ahead `started` record, the run, then its result record (#2392). The
         records go straight to the writer, never through the budget; one that cannot be
         written makes the call 503 and serves nothing. A run that stops early is recorded
-        as failure/warning with the reason it stopped."""
+        as failure/warning with the reason it stopped (`internal_error` for anything
+        unexpected, also 503); a cancellation propagates."""
         emit, fields = service.writer.emit, _request_fields(principal)
         span = {"from_id": plan.from_id, "to_id": plan.to_id}
         if not await write_verify_record(
@@ -613,6 +614,17 @@ def make_audit_router(
                 emit, fields, outcome=_FAILURE, severity=_WARNING, reason=reason, after_state=span
             )
             return _unavailable(detail)
+        except Exception as exc:  # anything else, e.g. MemoryError: never a 500, never a pass
+            _log().error("audit.verify.failed", error=type(exc).__name__)
+            await write_verify_record(
+                emit,
+                fields,
+                outcome=_FAILURE,
+                severity=_WARNING,
+                reason="internal_error",
+                after_state=span,
+            )
+            return _unavailable("audit verify failed")
         outcome, severity, reason, after = result_record(result)
         if not await write_verify_record(
             emit, fields, outcome=outcome, severity=severity, reason=reason, after_state=after
