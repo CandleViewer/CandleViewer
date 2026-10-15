@@ -23,16 +23,13 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUs
 from tests.contract.rbac import rbac_harness as rbac
 from tests.csrf_helpers import csrf_headers
 
-OWNER_ROUTES = (
-    "PUT /users/{userId}/roles",
-    "POST /users",
-    "GET /users/invites",
-    "POST /users/{userId}/invite",
-    "DELETE /users/{userId}/invite",
-    "POST /users/{userId}/mfa/reset",
-    "GET /users/{userId}/mfa/reset-preview",
-)
 _ROWS = yaml.safe_load(rbac.MATRIX_PATH.read_text(encoding="utf-8"))["operations"]
+#: Derived, not listed: every served (`executed`) operation gated by `users:write` alone.
+OWNER_ROUTES = tuple(
+    key
+    for key, row in _ROWS.items()
+    if row["state"] == "executed" and row["permissions"] == ["users:write"]
+)
 
 
 def _delegate(target: Any, name: str) -> Callable[..., Any]:
@@ -77,6 +74,7 @@ def _headers(client: TestClient, actor: str) -> dict[str, str]:
 def test_deployed_app_owner_routes_answer_as_the_matrix_says(
     deployed: SimpleNamespace, key: str, actor: str
 ) -> None:
+    """Branches on the cell's reviewed outcome class on purpose (allow / CSRF / 401-403)."""
     method, path = key.split(" ", 1)
     body: dict[str, Any] | None = {} if method in ("POST", "PUT") else None
     resp = deployed.client.request(
@@ -112,3 +110,9 @@ def test_fake_backend_keeps_the_owner_routes_fail_closed() -> None:
     client = TestClient(appmod.create_app(Settings()), client=("127.0.0.1", 50000))
     resp = client.get("/users/invites", headers={"Authorization": "Bearer tok-owner"})
     assert resp.status_code == 501
+
+
+def test_owner_routes_derived_from_the_matrix_cover_the_issue_scope() -> None:
+    """Guard for the derived parametrisation: it can never silently become empty."""
+    named = {"PUT /users/{userId}/roles", "POST /users", "GET /users/invites"}  # by #2492
+    assert named <= set(OWNER_ROUTES) and "POST /users/{userId}/mfa/reset" in OWNER_ROUTES

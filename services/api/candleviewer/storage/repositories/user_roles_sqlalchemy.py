@@ -57,9 +57,12 @@ _GRANT = sa.text(
 
 
 class SqlAlchemyUserRoleStore:
+    """Postgres `UserRoleStore`: reads and replaces a user's effective role set."""
+
     def __init__(
         self, relational: SqlAlchemyRelationalRepository, *, owner_floor: OwnerFloorCheck
     ) -> None:
+        """`owner_floor` is the M18 rule, injected by the composition root (`app.py`)."""
         self._relational = relational
         self._owner_floor = owner_floor
 
@@ -70,6 +73,7 @@ class SqlAlchemyUserRoleStore:
         return None if row is None else frozenset(row._mapping["roles"] or ())
 
     async def count_active_owners(self) -> int:
+        """Active, undeleted users holding an unexpired owner grant (the trigger's count)."""
         async with self._relational.unit_of_work() as uow:
             return int((await uow.session.execute(_COUNT_OWNERS)).scalar_one())
 

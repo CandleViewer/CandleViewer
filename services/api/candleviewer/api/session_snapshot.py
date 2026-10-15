@@ -22,12 +22,16 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 
 
 class SessionSnapshotResolver:
+    """`SnapshotResolver` that re-reads the caller's roles and permissions per request."""
+
     def __init__(self, sessions: Callable[[], _Sessions], identity: _Identity) -> None:
-        # Lazy: `AuthService.sessions` only exists after `start()` (lifespan).
+        """`sessions` is a thunk: `AuthService.sessions` only exists after `start()`
+        (lifespan); `identity` is the SQL identity read path."""
         self._sessions = sessions
         self._identity = identity
 
     async def resolve(self, request: Request) -> PrincipalSnapshot | None:
+        """The bearer token's principal, or `None` (401) on any failure (module docstring)."""
         scheme, _, token = request.headers.get("authorization", "").partition(" ")
         token = token.strip()
         if scheme.lower() != "bearer" or not token:
