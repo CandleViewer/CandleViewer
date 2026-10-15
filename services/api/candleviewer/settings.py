@@ -337,6 +337,10 @@ class Settings(BaseSettings):
     ws_auth_timeout_s: float = Field(default=10.0, gt=0, le=60)
     ws_max_inbound_frame_bytes: int = Field(default=262_144, ge=1024, le=1_048_576)
     ws_max_connections_per_user: int = Field(default=8, ge=1, le=64)
+    # #2558: new sockets one user may authenticate per sliding 60 s (§4.3). The excess is refused
+    # `bye client_rate_limited` + 4429 before `auth_ok`. Default = `ws.lifecycle` constant of the
+    # same name, upper-cased.
+    ws_max_auths_per_user_per_min: int = Field(default=20, ge=1, le=600)
     ws_shutdown_grace_ms: int = Field(default=5000, ge=0, le=60_000)
     ws_shutdown_expected_downtime_ms: int = Field(default=20_000, ge=0, le=600_000)
     # #2565: the api container's SIGTERM -> SIGKILL budget (`CV_API_STOP_BUDGET_S`; the compose

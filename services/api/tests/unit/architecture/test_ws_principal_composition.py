@@ -66,6 +66,9 @@ def deployed() -> Iterator[SimpleNamespace]:
         auth_recovery_hmac_key_hex=SecretStr("22" * 32),
         auth_csrf_key_hex=SecretStr("33" * 32),
         allowed_origins=rbac.WS_ORIGIN,
+        # One app serves every parametrised socket below, so one actor connects far more than 20
+        # times a minute. The per-user connect rate (#2558) is not under test here.
+        ws_max_auths_per_user_per_min=600,
     )
     with pytest.MonkeyPatch.context() as mp:
         for name in ("user", "session_info"):

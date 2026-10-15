@@ -1155,7 +1155,10 @@ def create_app(
         _now_ms,
         services=ws_services,
     )
-    ws_hub = GatewayHub(max_per_user=resolved.ws_max_connections_per_user)
+    ws_hub = GatewayHub(
+        max_per_user=resolved.ws_max_connections_per_user,
+        max_auths_per_min=resolved.ws_max_auths_per_user_per_min,
+    )
     kill_switch = KillSwitchView()
     app.state.ws_registry = ws_registry
     app.state.ws_hub = ws_hub

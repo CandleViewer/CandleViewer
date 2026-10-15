@@ -127,3 +127,25 @@ def test_settings_feed_rate_hz_rejects_non_positive(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("CV_FEED_RATE_HZ", "0")
     with pytest.raises(ValidationError):
         get_settings()
+
+
+def test_settings_ws_connect_rate_defaults_to_20_per_minute() -> None:
+    assert get_settings().ws_max_auths_per_user_per_min == 20
+
+
+@pytest.mark.parametrize("value", [1, 20, 600])
+def test_settings_ws_connect_rate_accepts_its_documented_bounds(
+    monkeypatch: pytest.MonkeyPatch, value: int
+) -> None:
+    monkeypatch.setenv("CV_WS_MAX_AUTHS_PER_USER_PER_MIN", str(value))
+    assert get_settings().ws_max_auths_per_user_per_min == value
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "601", "1.5", "many"])
+def test_settings_ws_connect_rate_rejects_values_outside_1_to_600(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    monkeypatch.setenv("CV_WS_MAX_AUTHS_PER_USER_PER_MIN", value)
+    with pytest.raises(ValidationError) as exc_info:
+        get_settings()
+    assert "ws_max_auths_per_user_per_min" in str(exc_info.value)

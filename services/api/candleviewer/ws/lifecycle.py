@@ -11,6 +11,7 @@ Pure, I/O-free building blocks the gateway drives:
   (case-insensitive header names) and `RefusalLogLimiter` (the refusal log cap).
 - `bye_frame`: the one `bye` builder (§4.4, requirement S11).
 - `InboundRateLimiter`: 30 frames/s and 300 frames/min excluding `pong` (§8.5).
+- `ConnectRateLimiter`: new authenticated sockets per user per sliding minute (§4.3, #2558).
 - `Watchdog`: auth deadline, token expiry, unsolicited ping and heartbeat
   timeout evaluated against an injected monotonic clock (no sleeps).
 - `welcome_payload`: the §4.2 `welcome` body with the full §16.2 limits block.
@@ -19,7 +20,9 @@ Pure, I/O-free building blocks the gateway drives:
 from __future__ import annotations
 
 import enum
-from collections import deque
+import math
+import uuid
+from collections import OrderedDict, deque
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any, Final
@@ -42,6 +45,11 @@ HEARTBEAT_TIMEOUT_S: Final = 45.0
 #: Server sends an unsolicited `ping` after this much outbound silence (§9.1).
 SERVER_PING_AFTER_S: Final = 20.0
 MAX_CONNECTIONS_PER_USER: Final = 8
+#: §4.3 / §16.2 (#2558): sockets one user may newly authenticate in any `AUTH_RATE_WINDOW_S`.
+MAX_AUTHS_PER_USER_PER_MIN: Final = 20
+AUTH_RATE_WINDOW_S: Final = 60.0
+#: The floor of a connect refusal's `bye.retry_after_ms`.
+MIN_CONNECT_RETRY_AFTER_MS: Final = 1000
 SHUTDOWN_GRACE_MS: Final = 5000
 #: Failed `auth` attempts / pre-auth frames / malformed frames before closing.
 MAX_AUTH_FAILURES: Final = 3
@@ -115,6 +123,8 @@ _MESSAGES: Final[dict[str, str]] = {
     "heartbeat_timeout": "No traffic within the heartbeat timeout.",
     "too_many_connections": "Connection limit per user exceeded; oldest idle closed.",
 }
+#: `bye.message` of a connect-rate refusal (§4.3): the cause, not `_MESSAGES`' inbound-frame text.
+CONNECT_RATE_MESSAGE: Final = "Per-user connect rate exceeded; retry after retry_after_ms."
 
 
 class ConnState(enum.StrEnum):
@@ -294,14 +304,19 @@ class RefusalLogLimiter:
 
 
 def bye_frame(
-    reason: str, *, now_ms: int | None = None, retry_after_ms: int | None = None
+    reason: str,
+    *,
+    now_ms: int | None = None,
+    retry_after_ms: int | None = None,
+    message: str | None = None,
 ) -> dict[str, Any]:
-    """§4.4 / §13.6 `bye`; `code` and `reconnect` come from `CLOSE_REASONS`."""
+    """§4.4 / §13.6 `bye`; `code` and `reconnect` come from `CLOSE_REASONS`. `message` overrides
+    the reason's stock text (a reason can have more than one cause)."""
     code, reconnect = CLOSE_REASONS[reason]
     p: dict[str, Any] = {
         "code": int(code),
         "reason": reason,
-        "message": _MESSAGES.get(reason, reason.replace("_", " ")),
+        "message": message or _MESSAGES.get(reason, reason.replace("_", " ")),
         "reconnect": reconnect,
     }
     if retry_after_ms is not None:
@@ -332,6 +347,63 @@ class InboundRateLimiter:
             return False
         self._stamps.append(now)
         return True
+
+
+class ConnectRateLimiter:
+    """Per-user sliding-window cap on new authenticated sockets (§4.3, #2558): at most `limit`
+    successful first `auth`s per user in any `AUTH_RATE_WINDOW_S`.
+
+    `admit(user_id, now)` records one and returns None. When the user already holds `limit` in the
+    window it records nothing and returns the advised `retry_after_ms`: the time until the oldest
+    of them leaves the window, rounded up to a whole millisecond, never below
+    `MIN_CONNECT_RETRY_AFTER_MS`. A stamp leaves the window once it is a full window old (the same
+    exclusive edge as `InboundRateLimiter`). The caller offers only a new socket's first
+    successful `auth`: a failed `auth` and an in-place re-`auth` never get here, and a refusal
+    leaves no trace, so a refused client cannot lengthen its own wait.
+
+    Bounded (C-2.18): a user holds at most `limit` timestamps, and users are kept in the order of
+    their newest stamp, so each `admit` first drops, from the front, every user whose newest stamp
+    has left the window. Memory follows the users active in the last window, not every user ever
+    seen, with no timer or task to own. `now` is an injected monotonic reading, so tests drive
+    windows without sleeping."""
+
+    def __init__(self, limit: int = MAX_AUTHS_PER_USER_PER_MIN) -> None:
+        if limit < 1:
+            raise ValueError(f"limit must be at least 1, got {limit}")
+        self._limit = limit
+        self._stamps: OrderedDict[uuid.UUID, deque[float]] = OrderedDict()
+
+    @property
+    def limit(self) -> int:
+        return self._limit
+
+    def __len__(self) -> int:
+        """The users holding at least one stamp in the window."""
+        return len(self._stamps)
+
+    def admit(self, user_id: uuid.UUID, now: float) -> int | None:
+        """Count one new socket of `user_id` at monotonic `now`; None admits it, else the
+        `retry_after_ms` to advise."""
+        self._drop_idle(now)
+        stamps = self._stamps.get(user_id)
+        if stamps is None:
+            stamps = self._stamps[user_id] = deque(maxlen=self._limit)
+        while stamps and now - stamps[0] >= AUTH_RATE_WINDOW_S:
+            stamps.popleft()
+        if len(stamps) >= self._limit:
+            wait_ms = math.ceil((stamps[0] + AUTH_RATE_WINDOW_S - now) * 1000)
+            return max(MIN_CONNECT_RETRY_AFTER_MS, wait_ms)
+        stamps.append(now)
+        self._stamps.move_to_end(user_id)
+        return None
+
+    def _drop_idle(self, now: float) -> None:
+        """Forget every user whose newest stamp has left the window (the front is the stalest)."""
+        while self._stamps:
+            stalest = next(iter(self._stamps))
+            if now - self._stamps[stalest][-1] < AUTH_RATE_WINDOW_S:
+                return
+            del self._stamps[stalest]
 
 
 def welcome_payload(

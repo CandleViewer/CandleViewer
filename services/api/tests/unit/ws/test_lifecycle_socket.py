@@ -30,6 +30,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
+from candleviewer.ws.lifecycle import MAX_AUTHS_PER_USER_PER_MIN
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import RevocationHub
 
@@ -73,11 +74,13 @@ class _Audit:
 
 
 class _World:
-    def __init__(self, *, max_per_user: int = 8) -> None:
+    def __init__(
+        self, *, max_per_user: int = 8, max_auths_per_min: int = MAX_AUTHS_PER_USER_PER_MIN
+    ) -> None:
         self.clock = _Clock()
         self.audit = _Audit()
         self.tokens_seen: list[str] = []
-        self.hub = GatewayHub(max_per_user=max_per_user)
+        self.hub = GatewayHub(max_per_user=max_per_user, max_auths_per_min=max_auths_per_min)
         self.revocation = RevocationHub()
 
         async def resolve(uid: uuid.UUID) -> PrincipalSnapshot:
