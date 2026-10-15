@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from hypothesis import given
+from hypothesis import example, given, reject
 from hypothesis import strategies as st
 from pydantic import BaseModel, ValidationError
 
@@ -152,22 +152,26 @@ def rendered(x: float) -> int:
     return len(format(Decimal(repr(x)), "f"))
 
 
+@example(-1.0094174924396806e-06)
+@example(1e-06)
+@example(-1e-06)
 @given(x=st.floats(min_value=-1000, max_value=1000, allow_nan=False, allow_infinity=False))
 def test_accepted_level_renders_within_the_bound(x: float) -> None:
     try:
         model = DrawingIn.model_validate(fib([x]))
     except ValidationError:
-        return  # refused values are not stored
+        reject()  # a refused value is not an example; never pass vacuously
     levels = model.db_values()["geometry"]["levels"]
     assert rendered(levels[0]) <= MAX_RENDERED
 
 
+@example(1e-06)
 @given(x=st.floats(min_value=0, max_value=1, allow_nan=False, allow_infinity=False))
 def test_accepted_fill_opacity_renders_within_the_bound(x: float) -> None:
     try:
         model = DrawingIn.model_validate(styled(x))
     except ValidationError:
-        return  # refused values are not stored
+        reject()  # a refused value is not an example; never pass vacuously
     assert rendered(model.db_values()["style"]["fill_opacity"]) <= MAX_RENDERED
 
 
