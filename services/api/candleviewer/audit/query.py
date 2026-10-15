@@ -36,12 +36,13 @@ from candleviewer.audit.models import (
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.observability.context import spawn
+from candleviewer.settings import Settings
 
 _GENESIS_HASH = "0" * 64
 #: Rows per verify batch (ticket "Technical notes").
 VERIFY_BATCH_SIZE = 10_000
-#: `audit_verify_max_span` (#2392): the most ids one range may span.
-VERIFY_MAX_SPAN = 1_000_000
+#: The `audit_verify_max_span` default (#2392): the most ids one range may span.
+VERIFY_MAX_SPAN: int = Settings.model_fields["audit_verify_max_span"].default
 _PREFETCH = "audit.verify.prefetch"
 #: The hashed columns after `prev_hash`, in the order `audit_chain()` hashes them
 #: (`21-database-schema.md` §3.10.1).
