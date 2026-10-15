@@ -49,7 +49,7 @@ from candleviewer.api.audit_budget import (
     filters_digest,
 )
 from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditQueryRefused
-from candleviewer.api.audit_verify import result_record, write_verify_record
+from candleviewer.api.audit_verify import observe_verify, result_record, write_verify_record
 from candleviewer.audit.access import (
     AuditAccessDenied,
     AuditPrincipal,
@@ -625,6 +625,7 @@ def make_audit_router(
                 after_state=span,
             )
             return _unavailable("audit verify failed")
+        observe_verify(result)  # the chain series follow the run, recorded or not
         outcome, severity, reason, after = result_record(result)
         if not await write_verify_record(
             emit, fields, outcome=outcome, severity=severity, reason=reason, after_state=after

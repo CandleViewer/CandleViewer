@@ -1326,24 +1326,33 @@ def test_verify_writes_a_started_record_then_its_result() -> None:
     assert svc.writer_service.emitted[0][1]["object_kind"] == "audit_log"
 
 
-def test_verify_break_is_a_critical_record() -> None:
+def _failures() -> float:
+    return REGISTRY.get_sample_value("audit_chain_verification_failures_total") or 0.0
+
+
+def test_verify_break_is_a_critical_record_counted_and_the_chain_state_is_zero() -> None:
     svc = _FakeAuditService()
     svc.query_service.verify_result = _broken()
+    before = _failures()
     r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
     assert (r.status_code, r.json()["verified"], r.json()["first_bad_id"]) == (200, False, 3)
     assert _verify_records(svc)[-1][:3] == ("failure", "critical", "entry_hash_mismatch@3")
+    assert _failures() == before + 1
+    assert REGISTRY.get_sample_value("cv_audit_chain_verified_state") == 0
 
 
 @pytest.mark.parametrize("ok", [0, 1])
 def test_verify_record_that_cannot_be_written_is_503_with_nothing_served(ok: int) -> None:
     """0: the write-ahead record fails, so nothing runs. 1: the result record fails after
-    the run, and the result is not served."""
+    the run, and the result is not served; the break still counts."""
     svc = _FakeAuditService()
     svc.writer_service = _WriterFailingAfter(ok)
     svc.query_service.verify_result = _broken()
+    before = _failures()
     r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
     assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
     assert "verified" not in r.json() and svc.query_service.runs == ok
+    assert _failures() == before + ok
 
 
 def test_verify_that_fails_unexpectedly_is_503_and_recorded_as_an_internal_error() -> None:

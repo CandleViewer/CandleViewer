@@ -1,4 +1,4 @@
-"""`api/audit_verify.py`: the result record and the bounded record write."""
+"""`api/audit_verify.py`: the gauge rule, the result record and the bounded record write."""
 
 from __future__ import annotations
 
@@ -7,12 +7,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from prometheus_client import REGISTRY
 
 from candleviewer.api import audit_verify as mod
 from candleviewer.audit.models import AuditOutcome, ChainBreakKind, Severity, VerifyResult
 
 
-def _result(*, verified: bool) -> VerifyResult:
+def _result(*, verified: bool, full: bool = False) -> VerifyResult:
     return VerifyResult(
         verified=verified,
         entries_checked=4,
@@ -23,7 +24,25 @@ def _result(*, verified: bool) -> VerifyResult:
         anchor_hash="0" * 64,
         last_hash="a" * 64,
         kind=None if verified else ChainBreakKind.PREV_HASH_MISMATCH,
+        full_chain=full,
     )
+
+
+def _state() -> float | None:
+    return REGISTRY.get_sample_value("cv_audit_chain_verified_state")
+
+
+def test_gauge_rule_only_a_genesis_to_head_run_sets_one() -> None:
+    mod.observe_verify(_result(verified=False))
+    assert _state() == 0
+    mod.observe_verify(_result(verified=True))
+    assert _state() == 0  # a passing partial range never hides the break
+    mod.observe_verify(_result(verified=True, full=True))
+    assert _state() == 1
+    mod.observe_verify(_result(verified=True))
+    assert _state() == 1
+    mod.observe_verify(_result(verified=False, full=True))
+    assert _state() == 0
 
 
 def test_result_record_is_critical_with_kind_at_id_on_a_break() -> None:

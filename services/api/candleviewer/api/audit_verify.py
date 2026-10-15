@@ -1,5 +1,5 @@
-"""`POST /admin/audit/verify` outcome: its `admin.audit_verify` records (contract #2392,
-design §9).
+"""`POST /admin/audit/verify` outcome: its `admin.audit_verify` records and the chain series
+(contract #2392, design §5 and §9).
 
 Records go straight to the audit writer, never through the 3a record budget, so a verify
 record is never suppressed or folded into a summary. Each run writes at most two: a
@@ -9,6 +9,10 @@ record that cannot be written in `WRITE_TIMEOUT_S` makes the call `503` with not
 (fail closed, C-2.9). The writer's `emit` is cancellation-safe, so the timeout never tears
 an append. Outside the budget, these records are bounded only by verify's own run limits
 (the per-user rate limit and single-flight that follow in the stack).
+
+Gauge rule (design §5): a break sets `cv_audit_chain_verified_state` to 0 and counts in
+`audit_chain_verification_failures_total`; only a run from genesis to the head that found no
+break sets it to 1, so a passing partial range never hides a known break.
 """
 
 from __future__ import annotations
@@ -21,6 +25,10 @@ import structlog
 
 from candleviewer.api.audit_budget import WRITE_TIMEOUT_S
 from candleviewer.audit.models import AuditOutcome, Severity, VerifyResult
+from candleviewer.observability.audit_query_metrics import (
+    audit_chain_verification_failures_total,
+    cv_audit_chain_verified_state,
+)
 
 VERIFY_ACTION = "admin.audit_verify"
 
@@ -73,3 +81,13 @@ def result_record(result: VerifyResult) -> tuple[AuditOutcome, Severity, str, di
     if result.verified:
         return AuditOutcome.SUCCESS, Severity.INFO, "verified", after
     return AuditOutcome.FAILURE, Severity.CRITICAL, f"{kind}@{result.first_bad_id}", after
+
+
+def observe_verify(result: VerifyResult) -> None:
+    """Apply the gauge rule and count a break."""
+    if not result.verified:
+        cv_audit_chain_verified_state.set(0)
+        audit_chain_verification_failures_total.inc()
+        _log().error("audit.verify.break", kind=result.kind, first_bad_id=result.first_bad_id)
+    elif result.full_chain:
+        cv_audit_chain_verified_state.set(1)

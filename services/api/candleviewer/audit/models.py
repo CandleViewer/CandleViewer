@@ -318,6 +318,8 @@ class VerifyResult(BaseModel):
     last_hash: str | None
     #: For the verify record (`admin.audit_verify`); not part of the response.
     kind: ChainBreakKind | None = Field(default=None, exclude=True)
+    #: The run covered genesis to the head (the gauge rule); not part of the response.
+    full_chain: bool = Field(default=False, exclude=True)
 
 
 class ExportResult(BaseModel):

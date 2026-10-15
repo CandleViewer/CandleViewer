@@ -348,9 +348,10 @@ class AuditQueryService:
         `ValueError`, never an empty "verified" walk."""
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
-        anchor = _GENESIS_HASH
+        stored = None
         if plan.from_id is not None:
-            anchor = await self._repository.fetch_anchor_hash(plan.from_id) or _GENESIS_HASH
+            stored = await self._repository.fetch_anchor_hash(plan.from_id)
+        anchor = stored or _GENESIS_HASH
         walk = _Walk(0, 0, anchor)
         if plan.from_id is not None and plan.to_id is not None:
             walk = await self._check_range(plan.from_id, plan.to_id, plan, anchor, batch_size)
@@ -366,6 +367,8 @@ class AuditQueryService:
             anchor_hash=anchor,
             last_hash=walk.last_hash if walk.passed else None,
             kind=walk.kind,
+            # From genesis (no entry below `from_id`) to the head read at defaulting.
+            full_chain=plan.from_id is not None and stored is None and plan.to_id == plan.head_id,
         )
 
     async def _check_range(
