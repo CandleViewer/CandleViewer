@@ -1,6 +1,6 @@
 """`ReplayClock` playback (E26-T03): faithful drift-free pacing, speed changes, pause and resume,
-unbounded mode, gaps, backpressure, source failures and per-session task ownership. Fake time
-only (C-13.7)."""
+unbounded mode, gaps, backpressure, steps, loop wrap, source failures and per-session task
+ownership. Fake time only (C-13.7)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from candleviewer.bars.models import BarSpec, BarUpdate
+from candleviewer.bars.time_builder import TimeBarBuilder, bucket_bounds
 from candleviewer.replay import (
     STEP,
     UNBOUNDED,
@@ -21,11 +23,14 @@ from candleviewer.replay import (
     ReplayClockStateError,
     ReplayGap,
     ReplayItem,
+    ReplayRequestInvalid,
     ReplaySourceUnavailable,
     StopReason,
 )
 from candleviewer.storage.models import StreamKind
-from tests.unit.replay._events import SECOND, T0, trade
+from candleviewer.storage.repositories.recorded import RecordedEvent, RecordedTrade
+from tests.unit.bars._trades import trade as bar_trade
+from tests.unit.replay._events import SECOND, SYM, T0, delta, trade
 from tests.unit.replay._playback import ListStream, RecordingObserver, RecordingSink
 from tests.unit.replay._time import FakeTime
 
@@ -294,3 +299,154 @@ def test_playback_never_drops_reorders_or_runs_early_and_the_cursor_never_goes_b
     if speed > 0:
         for event, at in zip(r.sink.events, r.sink.at, strict=True):
             assert at - start >= (event.ts_us - T0) / (speed * SECOND) - 0.001 - 1e-9
+
+
+async def test_step_events_delivers_exactly_that_many_at_once() -> None:
+    r = rig(every_second(10), end_s=10, speed=STEP)
+    async with r.clock as clock:
+        assert await clock.step_events() == "step"
+        assert await clock.step_events(3) == "step"
+        assert (len(r.sink.events), clock.now_us()) == (4, T0 + 3 * SECOND)
+        assert await clock.step_events(100) == "range_end"
+    assert (r.sink.events, r.time.waits) == (every_second(10), 0)
+
+
+async def test_step_ms_delivers_its_window_and_lands_the_cursor_at_the_end() -> None:
+    r = rig(every_second(10), end_s=10, speed=STEP)
+    async with r.clock as clock:
+        assert await clock.step_ms(1_500) == "step"
+        assert (len(r.sink.events), clock.now_us()) == (2, T0 + 1_500_000)
+        assert await clock.step_ms(60_000) == "range_end"
+        assert (len(r.sink.events), clock.now_us()) == (10, T0 + 10 * SECOND)
+
+
+class TimeBarProbe:
+    """`BarProbe` over the real `TimeBarBuilder`: every close it reports is the builder's own."""
+
+    def __init__(self, spec: BarSpec) -> None:
+        self.spec, self.builder, self.closes = spec, TimeBarBuilder(spec, SYM), 0
+        self._due: int | None = None
+
+    def due_us(self) -> int | None:
+        return self._due
+
+    def apply(self, event: RecordedEvent) -> bool:
+        if not isinstance(event.payload, RecordedTrade):
+            return False
+        self._due = bucket_bounds(self.spec, event.ts_us)[1]
+        return self._count(self.builder.on_trade(bar_trade(event.ts_us, event.payload.price)))
+
+    def tick(self, now_us: int) -> bool:
+        closed = self._count(self.builder.on_clock(now_us))
+        self._due = None if closed else self._due
+        return closed
+
+    def _count(self, updates: Sequence[BarUpdate]) -> bool:
+        closed = sum(u.kind == "close" for u in updates)
+        self.closes += closed
+        return closed > 0
+
+
+async def test_step_bar_reveals_exactly_one_bar_of_the_active_spec() -> None:
+    """Ticket AC 3: at speed 0 with a 1-minute BarSpec, each step_bar closes exactly one bar of
+    the real builder, and the book events in that minute arrive with its trades."""
+    items = sorted(
+        [*(trade(i * 10 * SECOND, trade_id=f"t{i}") for i in range(30)), delta(25 * SECOND)],
+        key=lambda e: e.ts_us,
+    )
+    r = rig(items, end_s=300, speed=STEP)
+    probe = r.clock.bar_probe = TimeBarProbe(BarSpec(kind="time", interval_ms=60_000))
+    async with r.clock as clock:
+        for minute in (1, 2):
+            assert await clock.step_bar() == "step"
+            assert (probe.closes, clock.now_us()) == (minute, T0 + minute * 60 * SECOND)
+            assert r.sink.events == [e for e in items if e.ts_us < T0 + minute * 60 * SECOND]
+
+
+async def test_steps_refuse_while_playing_bad_sizes_and_a_missing_probe() -> None:
+    r = rig(every_second(5), end_s=5, time=FakeTime(auto=False))
+    async with r.clock as clock:
+        with pytest.raises(ReplayClockStateError, match="bar probe"):
+            await clock.step_bar()
+        clock.play()
+        with pytest.raises(ReplayClockStateError, match="pause playback"):
+            await clock.step_events()
+        await clock.pause()
+        with pytest.raises(ReplayRequestInvalid, match="one event"):
+            await clock.step_events(0)
+        with pytest.raises(ReplayRequestInvalid, match="1 ms"):
+            await clock.step_ms(0)
+
+
+@pytest.mark.parametrize(("policy", "reason", "count"), [("stop", "gap", 2), ("skip", "step", 3)])
+async def test_a_gap_ends_a_step_under_stop_and_is_stepped_over_under_skip(
+    policy: GapPolicy, reason: StopReason, count: int
+) -> None:
+    two = T0 + 2 * SECOND
+    marker = ReplayGap(two, SYM, StreamKind.TRADES, two, T0 + 5 * SECOND, "ws_disconnect")
+    items: list[ReplayItem] = [*every_second(2), marker, trade(6 * SECOND, trade_id="after")]
+    r = rig(items, end_s=10, speed=STEP, config=ClockConfig(gap_policy=policy))
+    async with r.clock as clock:
+        assert await clock.step_events(3) == reason
+        assert await clock.step_ms(1_000) == "step"
+    assert (len(r.sink.events), r.obs.gaps) == (count, [(marker, policy == "stop")])
+
+
+async def test_a_loop_wraps_back_to_its_start_and_plays_the_range_again() -> None:
+    """US-RPL-008: playback stops at the loop end (B12 RANGE_END); the loop-enabled session
+    repositions to the loop start, which is the only way the cursor moves back."""
+    loop = [trade(i * SECOND, trade_id=f"t{i}") for i in range(10, 20)]
+    r = rig([], end_s=60)
+    async with r.clock as clock:
+        await clock.reposition(ListStream(loop), at_us=T0 + 10 * SECOND, end_us=T0 + 20 * SECOND)
+        assert await clock.play() == "range_end"
+        assert clock.now_us() == T0 + 20 * SECOND
+        await clock.reposition(ListStream(loop), at_us=T0 + 10 * SECOND)
+        assert clock.now_us() == T0 + 10 * SECOND
+        assert await clock.play() == "range_end"
+        with pytest.raises(ReplayRequestInvalid, match="inside the session"):
+            await clock.reposition(ListStream([]), at_us=T0 + 30 * SECOND)
+    assert (r.sink.events, r.stream.closes) == (loop + loop, 1)
+
+
+class CountProbe:
+    """A count bar (a tick bar of `n` events): it closes on an event, never on time."""
+
+    def __init__(self, n: int) -> None:
+        self.n, self.seen = n, 0
+
+    def due_us(self) -> int | None:
+        return None
+
+    def apply(self, event: RecordedEvent) -> bool:
+        self.seen += 1
+        return self.seen % self.n == 0
+
+    def tick(self, now_us: int) -> bool:
+        return False
+
+
+async def test_step_bar_on_a_count_bar_stops_on_the_closing_event() -> None:
+    r = rig(every_second(5), end_s=5, speed=STEP)
+    r.clock.bar_probe = CountProbe(3)
+    async with r.clock as clock:
+        assert await clock.step_bar() == "step"
+        assert len(r.sink.events) == 3
+        assert await clock.step_bar() == "range_end"
+    assert len(r.sink.events) == 5
+
+
+async def test_stop_at_gap_ends_step_ms_and_step_bar_at_the_boundary() -> None:
+    a, b = T0 + SECOND, T0 + 2 * SECOND
+    items: list[ReplayItem] = [
+        trade(0, trade_id="t0"),
+        ReplayGap(a, SYM, StreamKind.TRADES, a, b, "ws_disconnect"),
+        ReplayGap(b, SYM, StreamKind.TICKERS, b, T0 + 3 * SECOND, "ws_disconnect"),
+        trade(4 * SECOND, trade_id="t4"),
+    ]
+    r = rig(items, end_s=5, speed=STEP, config=ClockConfig(gap_policy="stop"))
+    r.clock.bar_probe = CountProbe(10)
+    async with r.clock as clock:
+        assert await clock.step_ms(5_000) == "gap"
+        assert await clock.step_bar() == "gap"
+        assert (len(r.sink.events), clock.now_us()) == (1, b)
