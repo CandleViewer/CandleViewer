@@ -38,6 +38,7 @@ Status values: `decided` (binding now), `proposed` (decision deadline stated ins
 | [ADR-0032](ADR-0032-alert-evaluation-placement.md)                | Alert evaluation placement, subscription sharing and storm thresholds (E40-K01)                                               | **proposed** (owner approval pending)                                                       |
 | [ADR-0033](ADR-0033-renko-brick-sizing-and-series-rebuild.md)     | Renko brick sizing (`atr:*` deferred to R2) and cancellable series rebuild semantics (E12-K01)                                | decided (ratified 2026-10-09, #1778)                                                                |
 | [ADR-0034](ADR-0034-indicator-compute-placement.md)               | Indicator compute placement (`client_worker` vs `server`) and bit-for-bit worker-mirror parity (E13-K01)                      | decided (ratified 2026-10-09, #1778)                                                                |
+| [ADR-0035](ADR-0035-replay-source-and-seek.md)                   | Replay source tier, read-ahead and seek strategy (E26-K01; ticket said ADR-0018, taken)                                       | **proposed** (finalised in E26-T07; owner approval pending)                                 |
 
 ## Writing a new ADR
 
