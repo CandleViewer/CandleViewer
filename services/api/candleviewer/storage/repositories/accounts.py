@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 
@@ -77,6 +77,43 @@ class ExchangeAccountRow:
 
 
 @dataclass(frozen=True, slots=True)
+class ApiKeyRow:
+    """Metadata only; no ciphertext, nonce or DEK handle."""
+
+    id: UUID
+    exchange_account_id: UUID
+    label: str
+    key_id_last4: str
+    kek_version: int
+    permission_snapshot: dict[str, object]
+    permission_snapshot_at: datetime
+    can_trade: bool
+    can_withdraw: bool
+    can_transfer: bool
+    read_only: bool
+    status: str
+    expires_at: datetime | None
+    last_used_at: datetime | None
+    rotation_due_at: datetime | None
+    created_at: datetime
+    revoked_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class ApiKeyRotationRow:
+    id: UUID
+    old_api_key_id: UUID
+    new_api_key_id: UUID
+    started_at: datetime
+    validated_at: datetime | None
+    cutover_at: datetime | None
+    completed_at: datetime | None
+    failed_at: datetime | None
+    failure_reason: str | None
+    grace_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
 class NewExchangeAccount:
     id: UUID
     exchange: str
@@ -95,6 +132,18 @@ class ExchangeAccountPatch:
     is_enabled: bool | None = None
     position_mode: str | None = None
     margin_mode: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class NewKeyRotation:
+    id: UUID
+    exchange_account_id: UUID
+    old_api_key_id: UUID
+    new_api_key_id: UUID
+    grace_seconds: int = 900
+
+
+RotationStep = Literal["validated", "cutover", "completed", "failed"]
 
 
 class AccountsStoreError(Exception):
@@ -150,3 +199,35 @@ class AccountsStore(Protocol):
     ) -> ExchangeAccountRow | None: ...
 
     async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> bool: ...
+
+    async def get_key(
+        self, scope: OwnerScope, account_id: UUID, key_id: UUID
+    ) -> ApiKeyRow | None: ...
+
+    async def list_keys(self, scope: OwnerScope, account_id: UUID) -> tuple[ApiKeyRow, ...]: ...
+
+    async def transition_key_status(
+        self, scope: OwnerScope, account_id: UUID, key_id: UUID, *, expected: str, new: str
+    ) -> ApiKeyRow | None: ...
+
+    async def start_rotation(
+        self, scope: OwnerScope, new: NewKeyRotation
+    ) -> ApiKeyRotationRow | None: ...
+
+    async def get_rotation(
+        self, scope: OwnerScope, account_id: UUID, rotation_id: UUID
+    ) -> ApiKeyRotationRow | None: ...
+
+    async def list_rotations(
+        self, scope: OwnerScope, account_id: UUID, *, limit: int
+    ) -> tuple[ApiKeyRotationRow, ...]: ...
+
+    async def record_rotation_step(
+        self,
+        scope: OwnerScope,
+        account_id: UUID,
+        rotation_id: UUID,
+        step: RotationStep,
+        *,
+        failure_reason: str | None,
+    ) -> ApiKeyRotationRow | None: ...

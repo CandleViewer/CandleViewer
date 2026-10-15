@@ -20,6 +20,8 @@ parameters (exchange_uid, label).
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
@@ -35,11 +37,15 @@ from candleviewer.storage.repositories.accounts import (
     AccountsStoreRuleError,
     AccountsStoreScopeDeniedError,
     AccountsStoreStaleError,
+    ApiKeyRotationRow,
+    ApiKeyRow,
     ExchangeAccountPatch,
     ExchangeAccountRow,
     GrantScope,
     NewExchangeAccount,
+    NewKeyRotation,
     OwnerScope,
+    RotationStep,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -47,7 +53,13 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 
 _ENVS = frozenset({"live", "demo", "testnet"})
 _KINDS = frozenset({"main", "sub"})
+_STATUSES = frozenset({"pending", "active", "rotating", "revoked", "expired", "invalid"})
+#: Targets of `transition_key_status`; `revoked` stays in M2 (broker flushes the DEK cache).
+_TRANSITION_TARGETS = frozenset({"active", "rotating", "expired", "invalid"})
 MAX_PAGE = 500
+#: Upper bound of `list_rotations(limit=...)`. `_LIST_KEYS` has its own literal `LIMIT 100`
+#: (the contract has no key pagination; live keys are 3 or fewer), pinned by a unit test.
+_ROTATION_LIMIT = 100
 
 #: Pinned read allow-lists (C-3.2: no envelope column, no `ip_whitelist`/`last_error_*`). SQL is
 #: literal only, as in `drawings_sqlalchemy.py`: every statement repeats its list verbatim instead
@@ -63,6 +75,22 @@ _EA_COLS = (
     "ea.max_sub_accounts_hint AS max_sub_accounts_hint, "
     "ea.last_reconciled_at AS last_reconciled_at, ea.created_at AS created_at, "
     "ea.updated_at AS updated_at, ea.deleted_at AS deleted_at"
+)
+_KEY_COLS = (
+    "k.id::text AS id, k.exchange_account_id::text AS exchange_account_id, k.label AS label, "
+    "k.key_id_last4 AS key_id_last4, k.kek_version AS kek_version, "
+    "k.permission_snapshot AS permission_snapshot, "
+    "k.permission_snapshot_at AS permission_snapshot_at, k.can_trade AS can_trade, "
+    "k.can_withdraw AS can_withdraw, k.can_transfer AS can_transfer, k.read_only AS read_only, "
+    "k.status::text AS status, k.expires_at AS expires_at, k.last_used_at AS last_used_at, "
+    "k.rotation_due_at AS rotation_due_at, k.created_at AS created_at, k.revoked_at AS revoked_at"
+)
+_ROT_COLS = (
+    "r.id::text AS id, r.old_api_key_id::text AS old_api_key_id, "
+    "r.new_api_key_id::text AS new_api_key_id, r.started_at AS started_at, "
+    "r.validated_at AS validated_at, r.cutover_at AS cutover_at, "
+    "r.completed_at AS completed_at, r.failed_at AS failed_at, "
+    "r.failure_reason AS failure_reason, r.grace_seconds AS grace_seconds"
 )
 #: SR-051 predicates, repeated verbatim in the statements below and pinned the same way.
 _OWNER_PRED = (
@@ -214,13 +242,164 @@ _SOFT_DELETE = sa.text(
     "WHERE ea.id = CAST(:id AS uuid) AND ea.deleted_at IS NULL"
 )
 
-OWNER_STATEMENTS = frozenset({_CREATE, _GET_OWNER, _LIST_OWNER, _UPDATE, _SOFT_DELETE})
+_GET_KEY = sa.text(
+    "SELECT "
+    "k.id::text AS id, k.exchange_account_id::text AS exchange_account_id, k.label AS label, "
+    "k.key_id_last4 AS key_id_last4, k.kek_version AS kek_version, "
+    "k.permission_snapshot AS permission_snapshot, "
+    "k.permission_snapshot_at AS permission_snapshot_at, k.can_trade AS can_trade, "
+    "k.can_withdraw AS can_withdraw, k.can_transfer AS can_transfer, k.read_only AS read_only, "
+    "k.status::text AS status, k.expires_at AS expires_at, k.last_used_at AS last_used_at, "
+    "k.rotation_due_at AS rotation_due_at, k.created_at AS created_at, k.revoked_at AS revoked_at"
+    " FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
+    "WHERE ea.deleted_at IS NULL AND k.exchange_account_id = CAST(:account AS uuid)"
+    " AND k.id = CAST(:key AS uuid)"
+)
+_LIST_KEYS = sa.text(
+    "SELECT "
+    "k.id::text AS id, k.exchange_account_id::text AS exchange_account_id, k.label AS label, "
+    "k.key_id_last4 AS key_id_last4, k.kek_version AS kek_version, "
+    "k.permission_snapshot AS permission_snapshot, "
+    "k.permission_snapshot_at AS permission_snapshot_at, k.can_trade AS can_trade, "
+    "k.can_withdraw AS can_withdraw, k.can_transfer AS can_transfer, k.read_only AS read_only, "
+    "k.status::text AS status, k.expires_at AS expires_at, k.last_used_at AS last_used_at, "
+    "k.rotation_due_at AS rotation_due_at, k.created_at AS created_at, k.revoked_at AS revoked_at"
+    " FROM api_keys k JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
+    "WHERE ea.deleted_at IS NULL AND k.exchange_account_id = CAST(:account AS uuid)"
+    " AND k.revoked_at IS NULL "
+    "ORDER BY k.created_at, k.id LIMIT 100"
+)
+_TRANSITION = sa.text(
+    "UPDATE api_keys AS k SET status = CAST(:new AS key_status), "
+    "updated_by = CAST(:caller AS uuid), updated_at = now() "
+    "FROM exchange_accounts ea WHERE ea.id = k.exchange_account_id AND ea.deleted_at IS NULL "
+    "AND k.exchange_account_id = CAST(:account AS uuid) AND k.id = CAST(:key AS uuid) "
+    "AND k.revoked_at IS NULL AND k.status::text = CAST(:expected AS text) "
+    "RETURNING "
+    "k.id::text AS id, k.exchange_account_id::text AS exchange_account_id, k.label AS label, "
+    "k.key_id_last4 AS key_id_last4, k.kek_version AS kek_version, "
+    "k.permission_snapshot AS permission_snapshot, "
+    "k.permission_snapshot_at AS permission_snapshot_at, k.can_trade AS can_trade, "
+    "k.can_withdraw AS can_withdraw, k.can_transfer AS can_transfer, k.read_only AS read_only, "
+    "k.status::text AS status, k.expires_at AS expires_at, k.last_used_at AS last_used_at, "
+    "k.rotation_due_at AS rotation_due_at, k.created_at AS created_at, k.revoked_at AS revoked_at"
+)
+
+_START_ROT = sa.text(
+    "INSERT INTO api_key_rotations (id, old_api_key_id, new_api_key_id, started_by, "
+    "grace_seconds) SELECT CAST(:id AS uuid), o.id, n.id, CAST(:caller AS uuid), "
+    "CAST(:grace AS integer) FROM api_keys o "
+    "JOIN api_keys n ON n.id = CAST(:new_key AS uuid) "
+    "AND n.exchange_account_id = o.exchange_account_id "
+    "JOIN exchange_accounts ea ON ea.id = o.exchange_account_id "
+    "WHERE o.id = CAST(:old_key AS uuid) AND o.exchange_account_id = CAST(:account AS uuid) "
+    "AND o.revoked_at IS NULL AND n.revoked_at IS NULL AND ea.deleted_at IS NULL "
+    "RETURNING id::text AS id, old_api_key_id::text AS old_api_key_id, "
+    "new_api_key_id::text AS new_api_key_id, started_at AS started_at, "
+    "validated_at AS validated_at, cutover_at AS cutover_at, completed_at AS completed_at, "
+    "failed_at AS failed_at, failure_reason AS failure_reason, grace_seconds AS grace_seconds"
+)
+_GET_ROT = sa.text(
+    "SELECT "
+    "r.id::text AS id, r.old_api_key_id::text AS old_api_key_id, "
+    "r.new_api_key_id::text AS new_api_key_id, r.started_at AS started_at, "
+    "r.validated_at AS validated_at, r.cutover_at AS cutover_at, "
+    "r.completed_at AS completed_at, r.failed_at AS failed_at, "
+    "r.failure_reason AS failure_reason, r.grace_seconds AS grace_seconds"
+    " FROM api_key_rotations r JOIN api_keys o ON o.id = r.old_api_key_id "
+    "JOIN exchange_accounts ea ON ea.id = o.exchange_account_id "
+    "WHERE ea.deleted_at IS NULL AND o.exchange_account_id = CAST(:account AS uuid)"
+    " AND r.id = CAST(:rot AS uuid)"
+)
+_LIST_ROTS = sa.text(
+    "SELECT "
+    "r.id::text AS id, r.old_api_key_id::text AS old_api_key_id, "
+    "r.new_api_key_id::text AS new_api_key_id, r.started_at AS started_at, "
+    "r.validated_at AS validated_at, r.cutover_at AS cutover_at, "
+    "r.completed_at AS completed_at, r.failed_at AS failed_at, "
+    "r.failure_reason AS failure_reason, r.grace_seconds AS grace_seconds"
+    " FROM api_key_rotations r JOIN api_keys o ON o.id = r.old_api_key_id "
+    "JOIN exchange_accounts ea ON ea.id = o.exchange_account_id "
+    "WHERE ea.deleted_at IS NULL AND o.exchange_account_id = CAST(:account AS uuid)"
+    " ORDER BY r.started_at DESC, r.id DESC LIMIT :limit"
+)
+# Rotation steps: one CAS UPDATE each, scoped to the path account and to an open rotation.
+_STEP_VALIDATED = sa.text(
+    "UPDATE api_key_rotations AS r SET validated_at = clock_timestamp()"
+    " FROM api_keys o, exchange_accounts ea WHERE o.id = r.old_api_key_id "
+    "AND ea.id = o.exchange_account_id AND ea.deleted_at IS NULL "
+    "AND o.exchange_account_id = CAST(:account AS uuid) AND r.id = CAST(:rot AS uuid) "
+    "AND r.completed_at IS NULL AND r.failed_at IS NULL"
+    " AND r.validated_at IS NULL RETURNING "
+    "r.id::text AS id, r.old_api_key_id::text AS old_api_key_id, "
+    "r.new_api_key_id::text AS new_api_key_id, r.started_at AS started_at, "
+    "r.validated_at AS validated_at, r.cutover_at AS cutover_at, "
+    "r.completed_at AS completed_at, r.failed_at AS failed_at, "
+    "r.failure_reason AS failure_reason, r.grace_seconds AS grace_seconds"
+)
+_STEP_CUTOVER = sa.text(
+    "UPDATE api_key_rotations AS r SET cutover_at = clock_timestamp()"
+    " FROM api_keys o, exchange_accounts ea WHERE o.id = r.old_api_key_id "
+    "AND ea.id = o.exchange_account_id AND ea.deleted_at IS NULL "
+    "AND o.exchange_account_id = CAST(:account AS uuid) AND r.id = CAST(:rot AS uuid) "
+    "AND r.completed_at IS NULL AND r.failed_at IS NULL"
+    " AND r.validated_at IS NOT NULL AND r.cutover_at IS NULL RETURNING "
+    "r.id::text AS id, r.old_api_key_id::text AS old_api_key_id, "
+    "r.new_api_key_id::text AS new_api_key_id, r.started_at AS started_at, "
+    "r.validated_at AS validated_at, r.cutover_at AS cutover_at, "
+    "r.completed_at AS completed_at, r.failed_at AS failed_at, "
+    "r.failure_reason AS failure_reason, r.grace_seconds AS grace_seconds"
+)
+_STEP_COMPLETED = sa.text(
+    "UPDATE api_key_rotations AS r SET completed_at = clock_timestamp()"
+    " FROM api_keys o, exchange_accounts ea WHERE o.id = r.old_api_key_id "
+    "AND ea.id = o.exchange_account_id AND ea.deleted_at IS NULL "
+    "AND o.exchange_account_id = CAST(:account AS uuid) AND r.id = CAST(:rot AS uuid) "
+    "AND r.completed_at IS NULL AND r.failed_at IS NULL"
+    " AND r.cutover_at IS NOT NULL RETURNING "
+    "r.id::text AS id, r.old_api_key_id::text AS old_api_key_id, "
+    "r.new_api_key_id::text AS new_api_key_id, r.started_at AS started_at, "
+    "r.validated_at AS validated_at, r.cutover_at AS cutover_at, "
+    "r.completed_at AS completed_at, r.failed_at AS failed_at, "
+    "r.failure_reason AS failure_reason, r.grace_seconds AS grace_seconds"
+)
+_STEP_FAILED = sa.text(
+    "UPDATE api_key_rotations AS r SET failed_at = clock_timestamp(), "
+    "failure_reason = CAST(:reason AS text)"
+    " FROM api_keys o, exchange_accounts ea WHERE o.id = r.old_api_key_id "
+    "AND ea.id = o.exchange_account_id AND ea.deleted_at IS NULL "
+    "AND o.exchange_account_id = CAST(:account AS uuid) AND r.id = CAST(:rot AS uuid) "
+    "AND r.completed_at IS NULL AND r.failed_at IS NULL"
+    " RETURNING "
+    "r.id::text AS id, r.old_api_key_id::text AS old_api_key_id, "
+    "r.new_api_key_id::text AS new_api_key_id, r.started_at AS started_at, "
+    "r.validated_at AS validated_at, r.cutover_at AS cutover_at, "
+    "r.completed_at AS completed_at, r.failed_at AS failed_at, "
+    "r.failure_reason AS failure_reason, r.grace_seconds AS grace_seconds"
+)
+_STEPS = {
+    "validated": _STEP_VALIDATED,
+    "cutover": _STEP_CUTOVER,
+    "completed": _STEP_COMPLETED,
+    "failed": _STEP_FAILED,
+}
+
+OWNER_STATEMENTS = frozenset(
+    {
+        _CREATE, _GET_OWNER, _LIST_OWNER, _UPDATE, _SOFT_DELETE, _GET_KEY, _LIST_KEYS,
+        _TRANSITION, _START_ROT, _GET_ROT, _LIST_ROTS, *_STEPS.values(),
+    }
+)  # fmt: skip
 GRANT_STATEMENTS = frozenset({_GET_GRANT, _LIST_GRANT})
 
-_CONFLICT_CONSTRAINTS = frozenset({"exchange_accounts_pkey", "ux_ea_uid", "ux_ea_label"})
+_CONFLICT_CONSTRAINTS = frozenset(
+    {"exchange_accounts_pkey", "ux_ea_uid", "ux_ea_label", "ux_api_keys_active",
+     "api_key_rotations_pkey"}
+)  # fmt: skip
 _RULE_CONSTRAINTS = frozenset(
-    {"ea_parent_shape", "ea_no_self_parent", "ea_uid_fmt", "ea_posmode", "ea_marginmode"}
-)
+    {"ea_parent_shape", "ea_no_self_parent", "ea_uid_fmt", "ea_posmode", "ea_marginmode",
+     "akr_distinct", "akr_grace"}
+)  # fmt: skip
 
 
 def _sqlstate_and_constraint(exc: IntegrityError) -> tuple[str | None, str | None]:
@@ -245,6 +424,15 @@ def _raise_mapped(exc: IntegrityError) -> None:
         raise AccountsStoreRuleError(name) from None
 
 
+def _decode(value: object) -> dict[str, object]:
+    """`permission_snapshot` jsonb arrives as `str` (no asyncpg codec) or as a mapping. Any other
+    shape fails closed; `ak_snapshot_shape` already makes it an object in the database."""
+    parsed: object = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(parsed, Mapping):
+        raise TypeError("permission_snapshot is not a JSON object")
+    return dict(parsed)
+
+
 def _uuid(value: object) -> UUID:
     return UUID(str(value))
 
@@ -258,6 +446,21 @@ def _account(m: Any) -> ExchangeAccountRow:
     d["id"] = _uuid(d["id"])
     d["parent_account_id"] = _opt_uuid(d["parent_account_id"])
     return ExchangeAccountRow(**d)
+
+
+def _key(m: Any) -> ApiKeyRow:
+    d = dict(m)
+    d["id"] = _uuid(d["id"])
+    d["exchange_account_id"] = _uuid(d["exchange_account_id"])
+    d["permission_snapshot"] = _decode(d["permission_snapshot"])
+    return ApiKeyRow(**d)
+
+
+def _rotation(m: Any) -> ApiKeyRotationRow:
+    d = dict(m)
+    for k in ("id", "old_api_key_id", "new_api_key_id"):
+        d[k] = _uuid(d[k])
+    return ApiKeyRotationRow(**d)
 
 
 def _require_owner(scope: object) -> OwnerScope:
@@ -424,3 +627,140 @@ class SqlAlchemyAccountsStore:
             )
             await uow.commit()
         return res.rowcount == 1
+
+    # -- api_keys (metadata only) -----------------------------------------------------------
+    async def get_key(self, scope: OwnerScope, account_id: UUID, key_id: UUID) -> ApiKeyRow | None:
+        owner = _require_owner(scope)
+        async with self._relational.unit_of_work() as uow:
+            await self._gate(uow, owner)
+            res = await uow.session.execute(
+                _GET_KEY, {"account": str(account_id), "key": str(key_id)}
+            )
+            row = res.mappings().first()
+        return None if row is None else _key(row)
+
+    async def list_keys(self, scope: OwnerScope, account_id: UUID) -> tuple[ApiKeyRow, ...]:
+        owner = _require_owner(scope)
+        async with self._relational.unit_of_work() as uow:
+            await self._gate(uow, owner)
+            res = await uow.session.execute(_LIST_KEYS, {"account": str(account_id)})
+            return tuple(_key(r) for r in res.mappings())
+
+    async def transition_key_status(
+        self, scope: OwnerScope, account_id: UUID, key_id: UUID, *, expected: str, new: str
+    ) -> ApiKeyRow | None:
+        owner = _require_owner(scope)
+        if expected not in _STATUSES or new not in _TRANSITION_TARGETS:
+            raise ValueError("unknown or forbidden key status")
+        params: dict[str, Any] = {
+            "account": str(account_id),
+            "key": str(key_id),
+            "expected": expected,
+            "new": new,
+            "caller": str(owner.user_id),
+        }
+        try:
+            async with self._relational.unit_of_work() as uow:
+                await self._gate(uow, owner)
+                row = (await uow.session.execute(_TRANSITION, params)).mappings().first()
+                if row is None:
+                    cur = (
+                        (
+                            await uow.session.execute(
+                                _GET_KEY, {"account": params["account"], "key": params["key"]}
+                            )
+                        )
+                        .mappings()
+                        .first()
+                    )
+                    if cur is None or cur["revoked_at"] is not None:
+                        return None
+                    raise AccountsStoreConflictError("key_status")
+                await uow.commit()
+        except IntegrityError as exc:
+            _raise_mapped(exc)
+            raise
+        return _key(row)
+
+    # -- api_key_rotations ------------------------------------------------------------------
+    async def start_rotation(
+        self, scope: OwnerScope, new: NewKeyRotation
+    ) -> ApiKeyRotationRow | None:
+        owner = _require_owner(scope)
+        params: dict[str, Any] = {
+            "id": str(new.id),
+            "account": str(new.exchange_account_id),
+            "old_key": str(new.old_api_key_id),
+            "new_key": str(new.new_api_key_id),
+            "grace": new.grace_seconds,
+            "caller": str(owner.user_id),
+        }
+        try:
+            async with self._relational.unit_of_work() as uow:
+                await self._gate(uow, owner)
+                row = (await uow.session.execute(_START_ROT, params)).mappings().first()
+                if row is None:
+                    return None
+                await uow.commit()
+        except IntegrityError as exc:
+            _raise_mapped(exc)
+            raise
+        return _rotation(row)
+
+    async def get_rotation(
+        self, scope: OwnerScope, account_id: UUID, rotation_id: UUID
+    ) -> ApiKeyRotationRow | None:
+        owner = _require_owner(scope)
+        async with self._relational.unit_of_work() as uow:
+            await self._gate(uow, owner)
+            res = await uow.session.execute(
+                _GET_ROT, {"account": str(account_id), "rot": str(rotation_id)}
+            )
+            row = res.mappings().first()
+        return None if row is None else _rotation(row)
+
+    async def list_rotations(
+        self, scope: OwnerScope, account_id: UUID, *, limit: int
+    ) -> tuple[ApiKeyRotationRow, ...]:
+        owner = _require_owner(scope)
+        if not 1 <= limit <= _ROTATION_LIMIT:
+            raise ValueError("limit out of range")
+        async with self._relational.unit_of_work() as uow:
+            await self._gate(uow, owner)
+            res = await uow.session.execute(
+                _LIST_ROTS, {"account": str(account_id), "limit": limit}
+            )
+            return tuple(_rotation(r) for r in res.mappings())
+
+    async def record_rotation_step(
+        self,
+        scope: OwnerScope,
+        account_id: UUID,
+        rotation_id: UUID,
+        step: RotationStep,
+        *,
+        failure_reason: str | None,
+    ) -> ApiKeyRotationRow | None:
+        owner = _require_owner(scope)
+        stmt = _STEPS.get(step)
+        if stmt is None:
+            raise ValueError("unknown rotation step")
+        params: dict[str, Any] = {"account": str(account_id), "rot": str(rotation_id)}
+        if step == "failed":
+            if failure_reason is None or not 1 <= len(failure_reason) <= 200:
+                raise ValueError("failure_reason must be 1-200 characters")
+            params["reason"] = failure_reason
+        elif failure_reason is not None:
+            raise ValueError("failure_reason only applies to 'failed'")
+        async with self._relational.unit_of_work() as uow:
+            await self._gate(uow, owner)
+            row = (await uow.session.execute(stmt, params)).mappings().first()
+            if row is None:
+                cur = await uow.session.execute(
+                    _GET_ROT, {"account": params["account"], "rot": params["rot"]}
+                )
+                if cur.mappings().first() is None:
+                    return None
+                raise AccountsStoreConflictError("rotation_state")
+            await uow.commit()
+        return _rotation(row)

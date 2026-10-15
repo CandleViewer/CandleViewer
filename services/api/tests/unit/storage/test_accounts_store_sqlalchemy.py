@@ -25,11 +25,15 @@ from candleviewer.storage.repositories.accounts import (
     AccountsStoreRuleError,
     AccountsStoreScopeDeniedError,
     AccountsStoreStaleError,
+    ApiKeyRotationRow,
+    ApiKeyRow,
     ExchangeAccountPatch,
     ExchangeAccountRow,
     GrantScope,
     NewExchangeAccount,
+    NewKeyRotation,
     OwnerScope,
+    RotationStep,
 )
 from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
 
@@ -98,6 +102,28 @@ def _ea(**over: Any) -> dict[str, Any]:
     return d
 
 
+def _key(**over: Any) -> dict[str, Any]:
+    d: dict[str, Any] = {
+        "id": str(uuid4()), "exchange_account_id": str(uuid4()), "label": "k",
+        "key_id_last4": "abcd", "kek_version": 1, "permission_snapshot": '{"a": 1}',
+        "permission_snapshot_at": _T, "can_trade": False, "can_withdraw": False,
+        "can_transfer": False, "read_only": True, "status": "active", "expires_at": None,
+        "last_used_at": None, "rotation_due_at": None, "created_at": _T, "revoked_at": None,
+    }  # fmt: skip
+    d.update(over)
+    return d
+
+
+def _rot(**over: Any) -> dict[str, Any]:
+    d: dict[str, Any] = {
+        "id": str(uuid4()), "old_api_key_id": str(uuid4()), "new_api_key_id": str(uuid4()),
+        "started_at": _T, "validated_at": None, "cutover_at": None, "completed_at": None,
+        "failed_at": None, "failure_reason": None, "grace_seconds": 900,
+    }  # fmt: skip
+    d.update(over)
+    return d
+
+
 def _all_statements() -> set[sa.TextClause]:
     return {v for v in vars(mod).values() if isinstance(v, sa.TextClause)}
 
@@ -122,13 +148,17 @@ def test_no_statement_names_an_envelope_column() -> None:
     for s in _all_statements():
         for col in _FORBIDDEN_COLS:
             assert col not in _sql(s)
-    for cols in (mod._EA_COLS,):
+    for cols in (mod._EA_COLS, mod._KEY_COLS, mod._ROT_COLS):
         for col in _FORBIDDEN_COLS:
             assert col not in cols
 
 
 def test_column_allow_lists_match_row_dataclasses() -> None:
-    for cols, cls in ((mod._EA_COLS, ExchangeAccountRow),):
+    for cols, cls in (
+        (mod._EA_COLS, ExchangeAccountRow),
+        (mod._KEY_COLS, ApiKeyRow),
+        (mod._ROT_COLS, ApiKeyRotationRow),
+    ):
         aliases = set(re.findall(r" AS (\w+)", cols))
         assert aliases == {f.name for f in dataclasses.fields(cls)}
 
@@ -139,8 +169,11 @@ def test_column_allow_lists_match_row_dataclasses() -> None:
 _STATEMENTS = {n: v for n, v in vars(mod).items() if isinstance(v, sa.TextClause)}
 _COLUMN_COPIES = {
     "_EA_COLS": ("_CREATE", "_GET_OWNER", "_GET_GRANT", "_LIST_OWNER", "_LIST_GRANT", "_UPDATE"),
-}
-_NO_COLUMN_COPY = {"_OWNER_GATE", "_SOFT_DELETE"}
+    "_KEY_COLS": ("_GET_KEY", "_LIST_KEYS", "_TRANSITION"),
+    "_ROT_COLS": ("_GET_ROT", "_LIST_ROTS", "_STEP_VALIDATED", "_STEP_CUTOVER",
+                  "_STEP_COMPLETED", "_STEP_FAILED"),
+}  # fmt: skip
+_NO_COLUMN_COPY = {"_OWNER_GATE", "_SOFT_DELETE", "_START_ROT"}
 
 
 def test_every_statement_has_at_most_one_pinned_column_list() -> None:
@@ -154,6 +187,12 @@ def test_every_statement_has_at_most_one_pinned_column_list() -> None:
 )
 def test_literal_column_lists_match_the_pinned_allow_list(cols: str, name: str) -> None:
     assert getattr(mod, cols) in str(_STATEMENTS[name])
+
+
+def test_start_rotation_returns_exactly_the_rotation_row_fields() -> None:
+    returning = str(mod._START_ROT).split(" RETURNING ")[1]
+    aliases = set(re.findall(r" AS (\w+)", returning))
+    assert aliases == {f.name for f in dataclasses.fields(ApiKeyRotationRow)}
 
 
 def test_owner_gate_is_the_pinned_owner_predicate() -> None:
@@ -170,6 +209,33 @@ def test_owner_and_grant_variants_differ_only_in_the_sr051_predicate(
     o, g = str(_STATEMENTS[owner]), str(_STATEMENTS[grant])
     assert o.count(mod._OWNER_PRED) == 1 and g.count(mod._GRANT_PRED) == 1
     assert o.replace(mod._OWNER_PRED, "<scope>") == g.replace(mod._GRANT_PRED, "<scope>")
+
+
+_PATH_SCOPE = {
+    "k": ("ea.id = k.exchange_account_id", "k.exchange_account_id = CAST(:account AS uuid)"),
+    "o": ("ea.id = o.exchange_account_id", "o.exchange_account_id = CAST(:account AS uuid)"),
+}
+
+
+@pytest.mark.parametrize(
+    ("name", "alias"),
+    [("_GET_KEY", "k"), ("_LIST_KEYS", "k"), ("_TRANSITION", "k"), ("_START_ROT", "o"),
+     ("_GET_ROT", "o"), ("_LIST_ROTS", "o"), ("_STEP_VALIDATED", "o"), ("_STEP_CUTOVER", "o"),
+     ("_STEP_COMPLETED", "o"), ("_STEP_FAILED", "o")],
+)  # fmt: skip
+def test_key_and_rotation_statements_are_scoped_to_the_live_path_account(
+    name: str, alias: str
+) -> None:
+    text = str(_STATEMENTS[name])
+    assert "ea.deleted_at IS NULL" in text
+    for fragment in _PATH_SCOPE[alias]:
+        assert fragment in text
+
+
+@pytest.mark.parametrize("step", sorted(mod._STEPS))
+def test_rotation_steps_update_only_the_named_open_rotation(step: str) -> None:
+    text = str(mod._STEPS[step])
+    assert "r.id = CAST(:rot AS uuid) AND r.completed_at IS NULL AND r.failed_at IS NULL" in text
 
 
 def test_grant_statements_require_snapshot_and_live_grant() -> None:
@@ -196,12 +262,24 @@ def test_list_statements_order_then_single_trailing_limit() -> None:
 
 async def test_owner_methods_with_failed_gate_run_one_statement_and_no_commit() -> None:
     new = NewExchangeAccount(uuid4(), "x", "demo", "main", "1", "a")
+    nr = NewKeyRotation(uuid4(), uuid4(), uuid4(), uuid4())
     calls: list[Callable[[SqlAlchemyAccountsStore], Awaitable[object]]] = [
         lambda s: s.create_account(_OWNER, new),
         lambda s: s.get_account(_OWNER, uuid4()),
         lambda s: s.list_accounts(_OWNER, env=None, kind=None, after=None, limit=5),
         lambda s: s.update_account(_OWNER, uuid4(), ExchangeAccountPatch(label="b"), if_match=None),
         lambda s: s.soft_delete_account(_OWNER, uuid4()),
+        lambda s: s.get_key(_OWNER, uuid4(), uuid4()),
+        lambda s: s.list_keys(_OWNER, uuid4()),
+        lambda s: s.transition_key_status(
+            _OWNER, uuid4(), uuid4(), expected="pending", new="active"
+        ),
+        lambda s: s.start_rotation(_OWNER, nr),
+        lambda s: s.get_rotation(_OWNER, uuid4(), uuid4()),
+        lambda s: s.list_rotations(_OWNER, uuid4(), limit=5),
+        lambda s: s.record_rotation_step(
+            _OWNER, uuid4(), uuid4(), "validated", failure_reason=None
+        ),
     ]
     for call in calls:
         rel = _Rel(_Result(scalar=False))
@@ -216,6 +294,8 @@ async def test_owner_methods_reject_grant_scope_without_sql() -> None:
     s = _store(rel)
     with pytest.raises(AccountsStoreScopeDeniedError):
         await s.soft_delete_account(forged, uuid4())
+    with pytest.raises(AccountsStoreScopeDeniedError):
+        await s.list_keys(forged, uuid4())
     assert rel.calls == []
 
 
@@ -370,8 +450,13 @@ async def test_unknown_integrity_errors_are_reraised(state: str, name: str | Non
 
 
 async def test_unmapped_integrity_error_is_reraised_unchanged_by_every_write() -> None:
+    nr = NewKeyRotation(uuid4(), uuid4(), uuid4(), uuid4())
     calls: list[Callable[[SqlAlchemyAccountsStore], Awaitable[object]]] = [
         lambda s: s.update_account(_OWNER, uuid4(), ExchangeAccountPatch(label="b"), if_match=None),
+        lambda s: s.transition_key_status(
+            _OWNER, uuid4(), uuid4(), expected="pending", new="active"
+        ),
+        lambda s: s.start_rotation(_OWNER, nr),
     ]
     for call in calls:
         err = _integrity("23503", "some_fk")
@@ -428,6 +513,140 @@ async def test_soft_delete_result_without_rowcount_fails_loudly_not_as_not_found
         await _store(_Rel(_Result(), res)).soft_delete_account(_OWNER, uuid4())
 
 
+async def test_key_reads_decode_snapshot_and_bind_account() -> None:
+    acct = uuid4()
+    rel = _Rel(
+        _Result(), _Result([_key()]), _Result(), _Result([_key(permission_snapshot={"b": 2})])
+    )
+    s = _store(rel)
+    got = await s.get_key(_OWNER, acct, uuid4())
+    assert got is not None and got.permission_snapshot == {"a": 1}
+    assert rel.calls[1][1]["account"] == str(acct)
+    keys = await s.list_keys(_OWNER, acct)
+    assert keys[0].permission_snapshot == {"b": 2}
+    rel3 = _Rel(_Result(), _Result([]))
+    assert await _store(rel3).get_key(_OWNER, acct, uuid4()) is None
+
+
+async def test_transition_key_status_paths() -> None:
+    ok = _Rel(_Result(), _Result([_key(status="active")]))
+    row = await _store(ok).transition_key_status(
+        _OWNER, uuid4(), uuid4(), expected="pending", new="active"
+    )
+    assert row is not None and ok.commits == 1
+    gone = _Rel(_Result(), _Result([]), _Result([]))
+    assert (
+        await _store(gone).transition_key_status(
+            _OWNER, uuid4(), uuid4(), expected="pending", new="active"
+        )
+        is None
+    )
+    revoked = _Rel(_Result(), _Result([]), _Result([_key(revoked_at=_T)]))
+    assert (
+        await _store(revoked).transition_key_status(
+            _OWNER, uuid4(), uuid4(), expected="pending", new="active"
+        )
+        is None
+    )
+    stale = _Rel(_Result(), _Result([]), _Result([_key()]))
+    with pytest.raises(AccountsStoreConflictError) as ei:
+        await _store(stale).transition_key_status(
+            _OWNER, uuid4(), uuid4(), expected="pending", new="active"
+        )
+    assert ei.value.constraint == "key_status"
+    dup = _Rel(_Result(), raises=_integrity("23505", "ux_api_keys_active"))
+    with pytest.raises(AccountsStoreConflictError):
+        await _store(dup).transition_key_status(
+            _OWNER, uuid4(), uuid4(), expected="pending", new="active"
+        )
+
+
+@pytest.mark.parametrize(
+    ("expected", "new"), [("pending", "revoked"), ("pending", "pending"), ("zz", "active")]
+)
+async def test_transition_rejects_forbidden_statuses_before_sql(expected: str, new: str) -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError):
+        await _store(rel).transition_key_status(
+            _OWNER, uuid4(), uuid4(), expected=expected, new=new
+        )
+    assert rel.calls == []
+
+
+async def test_rotation_start_get_list() -> None:
+    nr = NewKeyRotation(uuid4(), uuid4(), uuid4(), uuid4(), 60)
+    rel = _Rel(
+        _Result(), _Result([_rot()]), _Result(), _Result([_rot()]), _Result(), _Result([_rot()])
+    )
+    s = _store(rel)
+    assert (await s.start_rotation(_OWNER, nr)) is not None and rel.commits == 1
+    assert rel.calls[1][1]["grace"] == 60
+    assert await s.get_rotation(_OWNER, nr.exchange_account_id, uuid4()) is not None
+    assert len(await s.list_rotations(_OWNER, nr.exchange_account_id, limit=3)) == 1
+    none = _Rel(_Result(), _Result([]))
+    assert await _store(none).start_rotation(_OWNER, nr) is None
+    miss = _Rel(_Result(), _Result([]))
+    assert await _store(miss).get_rotation(_OWNER, uuid4(), uuid4()) is None
+    dup = _Rel(_Result(), raises=_integrity("23514", "akr_distinct"))
+    with pytest.raises(AccountsStoreRuleError):
+        await _store(dup).start_rotation(_OWNER, nr)
+
+
+@pytest.mark.parametrize("limit", [0, mod._ROTATION_LIMIT + 1])
+async def test_list_rotations_rejects_bad_limit(limit: int) -> None:
+    with pytest.raises(ValueError):
+        await _store(_Rel()).list_rotations(_OWNER, uuid4(), limit=limit)
+
+
+def test_key_and_rotation_lists_are_bounded() -> None:
+    assert str(mod._LIST_KEYS).endswith(" ORDER BY k.created_at, k.id LIMIT 100")
+    assert str(mod._LIST_ROTS).endswith(" ORDER BY r.started_at DESC, r.id DESC LIMIT :limit")
+    assert mod._ROTATION_LIMIT == 100
+
+
+async def test_rotation_steps_use_their_statement_and_conflict_when_out_of_order() -> None:
+    steps: tuple[RotationStep, ...] = ("validated", "cutover", "completed")
+    for step in steps:
+        rel = _Rel(_Result(), _Result([_rot()]))
+        await _store(rel).record_rotation_step(_OWNER, uuid4(), uuid4(), step, failure_reason=None)
+        assert rel.calls[1][0] is mod._STEPS[step]
+    failed = _Rel(_Result(), _Result([_rot()]))
+    await _store(failed).record_rotation_step(
+        _OWNER, uuid4(), uuid4(), "failed", failure_reason="why"
+    )
+    assert failed.calls[1][1]["reason"] == "why"
+    out = _Rel(_Result(), _Result([]), _Result([_rot()]))
+    with pytest.raises(AccountsStoreConflictError) as ei:
+        await _store(out).record_rotation_step(
+            _OWNER, uuid4(), uuid4(), "cutover", failure_reason=None
+        )
+    assert ei.value.constraint == "rotation_state"
+    gone = _Rel(_Result(), _Result([]), _Result([]))
+    assert (
+        await _store(gone).record_rotation_step(
+            _OWNER, uuid4(), uuid4(), "completed", failure_reason=None
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("step", "reason"),
+    [("bogus", None), ("failed", None), ("failed", ""), ("failed", "x" * 201), ("validated", "r")],
+)
+async def test_rotation_step_input_validation(step: str, reason: str | None) -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError):
+        await _store(rel).record_rotation_step(
+            _OWNER,
+            uuid4(),
+            uuid4(),
+            step,  # type: ignore[arg-type]  # deliberate: "bogus" must hit the runtime step guard
+            failure_reason=reason,
+        )
+    assert rel.calls == []
+
+
 class _DriverUUID(UUID):
     """Stands in for asyncpg's own `UUID` subclass."""
 
@@ -442,3 +661,14 @@ def test_uuid_helpers_normalise_to_plain_uuid() -> None:
     assert mod._opt_uuid(None) is None
     opt = mod._opt_uuid(_DriverUUID(str(u)))
     assert opt == u and type(opt) is UUID
+
+
+@pytest.mark.parametrize("raw", ['{"a": 1}', {"a": 1}])
+def test_decode_accepts_json_text_or_mapping(raw: object) -> None:
+    assert mod._decode(raw) == {"a": 1}
+
+
+@pytest.mark.parametrize("raw", ['[["a", 1]]', [("a", 1)], None, 7])
+def test_decode_fails_closed_on_a_non_object_snapshot(raw: object) -> None:
+    with pytest.raises(TypeError):
+        mod._decode(raw)
