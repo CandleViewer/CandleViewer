@@ -344,19 +344,74 @@ async def test_4xx_with_mapped_ret_code_raises_mapped_error() -> None:
         await client.aclose()
 
 
+_OK = {"retCode": 0, "retMsg": "OK", "result": {}}
+_TRUNCATED = b'{"retCode":0,"retMsg":"OK","result":{"list":[{"x":'
+
+
 @pytest.mark.asyncio
 @respx.mock
-async def test_non_json_body_raises_unknown_state_error() -> None:
-    """A non-JSON body must never propagate a raw `JSONDecodeError`."""
-    respx.get(f"{BASE_URL}/v5/market/kline").mock(
+async def test_truncated_200_body_on_public_get_is_retried_with_backoff_then_heals() -> None:
+    """E08-Q03 #6 (#1909): a truncated 2xx body is a transport fault, retried like a 5xx."""
+    route = respx.get(f"{BASE_URL}/v5/market/kline").mock(
+        side_effect=[httpx.Response(200, content=_TRUNCATED), httpx.Response(200, json=_OK)]
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    client = BybitRestClient(_config(), governor=_fresh_governor(), sleep=fake_sleep)
+    try:
+        assert (await client.get_public("/v5/market/kline"))["retCode"] == 0
+    finally:
+        await client.aclose()
+    assert route.call_count == 2
+    assert len(sleeps) == 1
+    assert sleeps[0] > 0
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_non_json_200_body_on_public_get_raises_transport_error_when_exhausted() -> None:
+    route = respx.get(f"{BASE_URL}/v5/market/kline").mock(
         return_value=httpx.Response(200, content=b"not json")
     )
-    client = BybitRestClient(_config(), governor=_fresh_governor())
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    client = BybitRestClient(_config(max_retries=2), governor=_fresh_governor(), sleep=fake_sleep)
     try:
-        with pytest.raises(UnknownStateError):
+        with pytest.raises(TransportError):
             await client.get_public("/v5/market/kline")
     finally:
         await client.aclose()
+    assert route.call_count == 3  # initial + max_retries
+    assert len(sleeps) == 2
+    assert all(x > 0 for x in sleeps)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_non_json_body_on_order_class_stays_unknown_state_without_retry() -> None:
+    """C-2.10: order path is never blindly retried; reconciliation owns recovery."""
+    route = respx.post(f"{BASE_URL}/v5/order/create").mock(
+        return_value=httpx.Response(200, content=_TRUNCATED)
+    )
+    signer = BybitSigner(fake_capability("k"), CREDENTIAL_ID)
+    client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
+    try:
+        with pytest.raises(UnknownStateError):
+            await client.signed_request(
+                "POST",
+                "/v5/order/create",
+                body={"symbol": "BTCUSDT", "orderLinkId": "cv-1"},
+                endpoint_class=EndpointClass.ORDER,
+            )
+    finally:
+        await client.aclose()
+    assert route.call_count == 1
 
 
 @pytest.mark.asyncio

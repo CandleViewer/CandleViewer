@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from candleviewer.exchange.base.errors import ExchangeError, TransportError, UnknownStateError
+from candleviewer.exchange.base.errors import ExchangeError, TransportError
 
 # nosemgrep: cv-adapter-isolation reason=Q03 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.metrics import bybit_rest_requests_total
@@ -28,7 +28,6 @@ pytestmark = pytest.mark.chaos
 
 PATH = "/v5/market/recent-trade"
 PARAMS = {"category": "linear", "symbol": "BTCUSDT", "limit": 1000}
-DEFECT_MALFORMED = "#1909"
 
 
 @dataclass(frozen=True)
@@ -46,7 +45,7 @@ _JUNK = Fault(FaultKind.MALFORMED_JSON, count=9, path=PATH)
 CASES = {
     "503": Case(_503, TransportError, 4, "5xx", True),
     "502-html": Case(_HTML, TransportError, 4, "5xx", True),
-    "malformed-json": Case(_JUNK, UnknownStateError, 1, "error", False),
+    "malformed-json": Case(_JUNK, TransportError, 4, "malformed_json", True),
 }
 
 
@@ -68,7 +67,6 @@ async def test_s06_rest_fault_maps_to_typed_error_with_backoff(rig: Rig, name: s
     assert rig.ws.state() in ("open", "connecting")  # a REST fault never touches the WS
 
 
-@pytest.mark.xfail(strict=True, reason=f"{DEFECT_MALFORMED}: malformed 200 is not retried")
 async def test_s06_malformed_json_is_a_retried_transport_error(rig: Rig) -> None:
     """Ticket-declared: malformed JSON -> `TransportError`, retried with backoff."""
     rig.ex.inject(Fault(FaultKind.MALFORMED_JSON, count=1, path=PATH))
