@@ -203,7 +203,10 @@ class Pacer:
         if sub.topic.family.never_throttled:
             return self.emitter.delta(sub, body, part=part, ts_ms=ts_ms)
         if sub.snapshot_pending or sub.effective.get("paused") is True:
-            return False  # the pending `snap` carries this state
+            lane = self.lanes.get(sub.sub_id)
+            if lane is not None and lane.queue.pending:
+                self._restart(lane)  # stale: the pending `snap` carries this state
+            return False
         lane = self.lanes.get(sub.sub_id)
         if lane is None:
             family = sub.topic.family.family
@@ -243,14 +246,18 @@ class Pacer:
             self._restart(lane)  # never a pre-snapshot delta after the `snap`
             return 0
         sent = 0
-        for emission in lane.queue.take():
-            sent += self.emitter.delta(
-                lane.sub,
-                emission.body,
-                part=emission.part,
-                coalesced_count=emission.coalesced_count,
-                ts_ms=emission.ts_ms,
-            )
+        try:
+            for emission in lane.queue.take():
+                sent += self.emitter.delta(
+                    lane.sub,
+                    emission.body,
+                    part=emission.part,
+                    coalesced_count=emission.coalesced_count,
+                    ts_ms=emission.ts_ms,
+                )
+        except Exception:
+            self.drop(lane.sub)  # part of the window is lost: recover through a snapshot
+            raise
         lane.seq = lane.sub.seq
         if sent:
             lane.last_emit = now

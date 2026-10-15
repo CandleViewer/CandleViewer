@@ -378,6 +378,7 @@ def test_pacer_failing_emit_never_leaves_the_window_due() -> None:
     with pytest.raises(RuntimeError):
         pacer.tick(100.05)
     assert pacer.next_due() is None
+    assert pacer.resnapshot_required == {sub.sub_id: sub}  # the lost window recovers by `snap`
 
 
 def test_rtt_probe_ids_carry_a_per_connection_nonce() -> None:
@@ -398,3 +399,14 @@ def test_pacer_next_update_after_a_snapshot_drops_the_stale_window() -> None:
     [delta] = conn.take()
     assert delta["p"]["bids"] == [["102", "1"]]
     assert delta["p"]["coalesced"] is False
+
+
+def test_pacer_window_of_a_paused_subscription_frees_its_pending_bytes() -> None:
+    conn, pacer = _conn()
+    sub = _sub(conn, "book.BTCUSDT.50")
+    pacer.offer(sub, _bid("100"))
+    pacer.offer(sub, _bid("101"))
+    assert pacer.pending_bytes > 0
+    sub.effective["paused"] = True
+    assert not pacer.offer(sub, _bid("102"))
+    assert pacer.pending_bytes == 0
