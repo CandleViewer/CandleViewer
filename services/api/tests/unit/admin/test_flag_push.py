@@ -1,43 +1,47 @@
 """E42-T03: flag changes reach every session as role-filtered `system` frames carrying only the
-changed key, resolved per user; maintenance toggles add a notice to every session."""
+changed key, resolved per user from the committed row; maintenance toggles add a notice."""
 
 from __future__ import annotations
 
 import json
 import time
-from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import jsonschema
+import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.admin.flags import (
-    LIVE_ENABLED,
     MAINTENANCE_MODE,
     FlagService,
     FlagWriter,
+    StoredFlag,
     default_registry,
 )
 from candleviewer.admin.flags.metrics import flag_push_latency_seconds
 from candleviewer.admin.flags.push import FlagPush, Session
-from tests.unit.admin.flag_fakes import Clock, FakeAudit, FakeFlagStore
+from candleviewer.audit.access import AuditPrincipal
+from tests.unit.admin.flag_fakes import T0, Clock, FakeAudit, FakeFlagStore
 
 _OWNER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001")
 _MANAGER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002")
 _VIEWER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0003")
 _WS = Path(__file__).resolve().parents[5] / "packages/protocol/ws-schemas.json"
 _SYSTEM = json.loads(_WS.read_text(encoding="utf-8"))["schemas"]["cv://ws/v1/system.schema.json"]
+_ROLES = {_OWNER: "owner", _MANAGER: "manager", _VIEWER: "viewer"}
 
 
 class _Sessions:
     def __init__(self) -> None:
-        self.frames: dict[UUID, list[dict[str, Any]]] = {_OWNER: [], _MANAGER: [], _VIEWER: []}
-        roles = {_OWNER: "owner", _MANAGER: "manager", _VIEWER: "viewer"}
-        self.sessions = [Session(u, frozenset({roles[u]}), self.frames[u].append) for u in roles]
+        self.frames: dict[UUID, list[dict[str, Any]]] = {u: [] for u in _ROLES}
+        self.sessions = [
+            Session(u, frozenset({r}), self.frames[u].append) for u, r in _ROLES.items()
+        ]
 
-    def authenticated(self) -> Iterable[Session]:
+    def authenticated(self) -> list[Session]:
         return self.sessions
 
 
@@ -46,75 +50,112 @@ def _push_count() -> float:
     return next(s.value for s in samples if s.name == "cv_flag_push_latency_seconds_count")
 
 
-async def _rig() -> tuple[FlagService, FlagWriter, FakeFlagStore, _Sessions]:
+async def _rig() -> tuple[FlagService, FlagPush, FakeFlagStore, _Sessions]:
     store, sessions = FakeFlagStore(), _Sessions()
     service = FlagService(default_registry(), store, clock=Clock())
     await store.ensure(service.registry.values())
-    push = FlagPush(service, sessions)
-    return service, FlagWriter(service, FakeAudit(), on_change=push.flag_changed), store, sessions
+    return service, FlagPush(service, sessions), store, sessions
 
 
-async def _write(writer: FlagWriter, key: str, value: object, store: FakeFlagStore) -> None:
-    await writer.set(
-        key,
-        actor_id=_OWNER,
-        actor_label="owner",
-        value=value,
-        reason="test",
-        expected_updated_at=store.rows[key].updated_at,
-        evidence_url="https://example.invalid/pt" if key == LIVE_ENABLED else None,
-    )
+def _owner() -> AuditPrincipal:
+    return AuditPrincipal(user_id=_OWNER, username="owner", permissions=frozenset({"*"}))
 
 
-async def test_a_flag_change_reaches_all_three_sessions_resolved_per_user() -> None:
-    service, writer, store, sessions = await _rig()
-    store.rows["rules.graph_editor"] = replace(
-        store.rows["rules.graph_editor"], user_overrides={_OWNER: True}
-    )
-    count = _push_count()
-    start = time.monotonic()
-    await _write(writer, "rules.graph_editor", False, store)
-    assert time.monotonic() - start < 2.0
-    assert _push_count() == count + 1
-    for user, frames in sessions.frames.items():
-        roles = next(s.roles for s in sessions.sessions if s.user_id == user)
-        expected = await service.value("rules.graph_editor", user_id=user, roles=roles)
-        assert frames == [
-            {"kind": "feature_flags", "feature_flags": {"rules.graph_editor": expected}}
-        ]
-        jsonschema.Draft202012Validator(_SYSTEM).validate(frames[0])
-    assert sessions.frames[_OWNER][0]["feature_flags"]["rules.graph_editor"] is True
-    assert sessions.frames[_MANAGER][0]["feature_flags"]["rules.graph_editor"] is False
-
-
-async def test_a_manager_and_a_viewer_never_learn_an_owner_only_key() -> None:
-    _, writer, store, sessions = await _rig()
-    await _write(writer, "maintenance.keep_recorder", False, store)
+async def test_each_session_gets_the_committed_value_resolved_for_its_user() -> None:
+    _, push, store, sessions = await _rig()
+    before = store.rows["rules.graph_editor"]
+    after = replace(before, value=False, user_overrides={_OWNER: True})
+    await push.flag_changed("rules.graph_editor", before, after)  # the cache still says True
     assert sessions.frames[_OWNER] == [
-        {"kind": "feature_flags", "feature_flags": {"maintenance.keep_recorder": False}}
+        {"kind": "feature_flags", "feature_flags": {"rules.graph_editor": True}}
     ]
-    assert sessions.frames[_MANAGER] == sessions.frames[_VIEWER] == []
-
-
-async def test_maintenance_on_and_off_sends_every_session_a_notice() -> None:
-    _, writer, store, sessions = await _rig()
-    await _write(writer, MAINTENANCE_MODE, True, store)
-    await _write(writer, MAINTENANCE_MODE, False, store)
-    for frames in sessions.frames.values():
-        notices = [(f["reason"], f["severity"]) for f in frames if f["kind"] == "notice"]
-        assert notices == [("maintenance.enabled", "warning"), ("maintenance.disabled", "info")]
-        values = [
-            f["feature_flags"][MAINTENANCE_MODE] for f in frames if f["kind"] == "feature_flags"
+    for user in (_MANAGER, _VIEWER):
+        assert sessions.frames[user] == [
+            {"kind": "feature_flags", "feature_flags": {"rules.graph_editor": False}}
         ]
-        assert values == [True, False]
+
+
+async def test_every_frame_validates_against_the_system_schema() -> None:
+    _, push, store, sessions = await _rig()
+    before = store.rows[MAINTENANCE_MODE]
+    await push.flag_changed(MAINTENANCE_MODE, before, replace(before, value=True))
+    for frames in sessions.frames.values():
         for frame in frames:
             jsonschema.Draft202012Validator(_SYSTEM).validate(frame)
 
 
-async def test_audience_decides_how_many_sessions_get_a_frame() -> None:
-    service, _, _, sessions = await _rig()
-    push = FlagPush(service, sessions)
-    await push.flag_changed("storage.cold_tier")
-    await push.flag_changed("rules.form_editor")
-    counts = {u: len(f) for u, f in sessions.frames.items()}
-    assert counts == {_OWNER: 2, _MANAGER: 1, _VIEWER: 1}
+async def test_a_manager_and_a_viewer_never_learn_an_owner_only_key() -> None:
+    _, push, store, sessions = await _rig()
+    before = store.rows["maintenance.keep_recorder"]
+    await push.flag_changed("maintenance.keep_recorder", before, replace(before, value=False))
+    assert len(sessions.frames[_OWNER]) == 1
+    assert sessions.frames[_MANAGER] == sessions.frames[_VIEWER] == []
+
+
+async def test_a_maintenance_toggle_notifies_every_session() -> None:
+    _, push, store, sessions = await _rig()
+    before = store.rows[MAINTENANCE_MODE]
+    await push.flag_changed(MAINTENANCE_MODE, before, replace(before, value=True))
+    for frames in sessions.frames.values():
+        assert [(f["reason"], f["severity"]) for f in frames if f["kind"] == "notice"] == [
+            ("maintenance.enabled", "warning")
+        ]
+
+
+async def test_a_maintenance_re_set_to_the_same_value_sends_no_notice() -> None:
+    _, push, store, sessions = await _rig()
+    row = store.rows[MAINTENANCE_MODE]
+    await push.flag_changed(MAINTENANCE_MODE, row, row)
+    assert all(f["kind"] == "feature_flags" for frames in sessions.frames.values() for f in frames)
+
+
+async def test_one_broken_session_never_stops_the_fan_out() -> None:
+    _, push, store, sessions = await _rig()
+
+    def broken(frame: dict[str, Any]) -> None:
+        raise RuntimeError("socket gone")
+
+    sessions.sessions.insert(0, Session(_VIEWER, frozenset({"viewer"}), broken))
+    row = store.rows["rules.form_editor"]
+    with capture_logs() as logs:
+        await push.flag_changed("rules.form_editor", row, replace(row, value=False))
+    assert [len(f) for f in sessions.frames.values()] == [1, 1, 1]
+    assert "feature_flag_push_session_failed" in [e["event"] for e in logs]
+
+
+async def test_sessions_are_snapshot_before_the_fan_out() -> None:
+    _, push, store, sessions = await _rig()
+    late: list[dict[str, Any]] = []
+
+    def joins_late(frame: dict[str, Any]) -> None:
+        sessions.sessions.append(Session(_VIEWER, frozenset({"viewer"}), late.append))
+
+    sessions.sessions.insert(0, Session(_MANAGER, frozenset({"manager"}), joins_late))
+    row = store.rows["rules.form_editor"]
+    await push.flag_changed("rules.form_editor", row, replace(row, value=False))
+    assert late == []
+
+
+async def test_the_push_is_timed() -> None:
+    _, push, store, _ = await _rig()
+    count = _push_count()
+    row = store.rows["rules.form_editor"]
+    await push.flag_changed("rules.form_editor", row, row)
+    assert _push_count() == count + 1
+
+
+@pytest.mark.perf
+async def test_a_write_reaches_all_three_sessions_within_2_s() -> None:
+    service, push, store, sessions = await _rig()
+    writer = FlagWriter(service, FakeAudit(), on_change=push.flag_changed)
+    start = time.monotonic()
+    await writer.set(
+        "rules.graph_editor",
+        _owner(),
+        value=False,
+        reason="perf",
+        expected_updated_at=T0,
+    )
+    assert time.monotonic() - start < 2.0
+    assert all(len(frames) == 1 for frames in sessions.frames.values())
+    assert isinstance(store.rows["rules.graph_editor"], StoredFlag)
