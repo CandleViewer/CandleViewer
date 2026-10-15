@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import copy
+import json
 from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
 from typing import Any
 
 import pytest
-from hypothesis import given
+from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from candleviewer.ws.binary import BOOK_DELTA, Frame
@@ -119,7 +120,7 @@ _metrics = st.builds(
         "series": [{"metric": m, "t_ms": 5, "v": v, **({"params": params} if params else {})}],
     },
     st.sampled_from(["cvd", "delta"]),
-    st.sampled_from([None, {"window": 5}]),
+    st.sampled_from([None, {}, {"window": 5}]),
     _DEC,
 )
 _ticker = st.builds(
@@ -128,12 +129,13 @@ _ticker = st.builds(
     _DEC,
 )
 _wallet = st.builds(
-    lambda acc, equity, at: {
+    lambda acc, coin, equity, at: {
         "balances": [
-            {"exchange_account_id": acc, "coin": "USDT", "equity": equity, "updated_at_ms": at}
+            {"exchange_account_id": acc, "coin": coin, "equity": equity, "updated_at_ms": at}
         ]
     },
     st.sampled_from(["a1", "a2"]),
+    st.sampled_from(["USDT", "BTC"]),
     _DEC,
     st.integers(0, 5),
 )
@@ -181,7 +183,7 @@ FAMILIES: list[tuple[str, Any, Callable[..., None]]] = [
     (
         "metrics",
         st.lists(_metrics, max_size=25),
-        _keyed("series", lambda m: (m["metric"], repr(m.get("params")))),
+        _keyed("series", lambda m: (m["metric"], json.dumps(m.get("params") or {}))),
     ),
     ("ticker", st.lists(_ticker, max_size=25), _keyed("tickers", lambda t: t["symbol"])),
     (
@@ -202,10 +204,13 @@ _IDS = [f[0] for f in FAMILIES]
 _STEP = st.tuples(st.booleans(), st.sampled_from([None, True, False]))
 
 
-def _run(queue: CoalescingQueue, updates: list[Body], steps: list[Any]) -> list[Emission]:
+def _run(queue: CoalescingQueue, updates: list[Body], steps: list[Any]) -> list[Emission] | None:
+    """Offer every update, cutting windows and toggling `coalesce` as `steps` say; None when the
+    queue refused an update (a bound was hit: the topic would be re-snapshotted instead)."""
     emitted: list[Emission] = []
     for update, (cut, toggle) in zip(updates, steps + [(False, None)] * len(updates), strict=False):
-        assert queue.offer(update)
+        if not queue.offer(update):
+            return None
         if toggle is not None:
             queue.set_coalesce(toggle)
         if cut:
@@ -227,9 +232,13 @@ def test_coalescer_state_matches_every_source_update_applied(
     """§16.4: "coalescer produces state identical to applying every source update", whatever
     the windows and however `coalesce` is toggled along the way."""
 
-    @given(updates, st.lists(_STEP, max_size=25), st.booleans())
-    def check(source: list[Body], steps: list[Any], coalesce: bool) -> None:
-        emitted = _run(CoalescingQueue(family, coalesce=coalesce), source, steps)
+    @given(updates, st.lists(_STEP, max_size=25), st.booleans(), st.integers(2, 4))
+    def check(source: list[Body], steps: list[Any], coalesce: bool, max_frames: int) -> None:
+        emitted = _run(
+            CoalescingQueue(family, coalesce=coalesce, max_frames=max_frames), source, steps
+        )
+        assume(emitted is not None)
+        assert emitted is not None
         assert _state(apply, [e.body for e in emitted]) == _state(apply, source)
 
     check()
@@ -256,7 +265,7 @@ def test_coalescer_never_emits_the_disclosure_fields(
 
     @given(updates, st.lists(_STEP, max_size=25))
     def check(source: list[Body], steps: list[Any]) -> None:
-        for emission in _run(CoalescingQueue(family), source, steps):
+        for emission in _run(CoalescingQueue(family), source, steps) or []:
             assert not {"coalesced", "coalesced_count"} & emission.body.keys()
 
     check()
@@ -567,7 +576,7 @@ def test_coalescer_metrics_params_keep_series_apart() -> None:
         item = {"metric": "cvd", "t_ms": 1, "v": v, **({"params": params} if params else {})}
         queue.offer({"symbol": "X", "series": [item]})
     [frame] = queue.take()
-    assert [s["v"] for s in frame.body["series"]] == ["3", "2"]
+    assert [s["v"] for s in frame.body["series"]] == ["2", "3"]
 
 
 def test_coalescer_fold_refused_by_the_key_bound_overflows() -> None:
@@ -649,4 +658,28 @@ def test_coalescer_uncopyable_private_update_is_refused() -> None:
 
     queue = CoalescingQueue("positions")
     assert not queue.offer({"positions": [{"id": "p1", "updated_at_ms": 1, "x": _Uncopyable()}]})
+    assert queue.overflowed
+
+
+def test_coalescer_keyed_entities_leave_in_last_write_order() -> None:
+    """A client keyed more coarsely than the merge (per metric code) still ends on the last
+    write, because entities leave in the order they were last written."""
+    queue = CoalescingQueue("metrics")
+    for params, v in (({"period": 14}, "1"), (None, "2"), ({"period": 14}, "3")):
+        item = {"metric": "atr", "t_ms": 1, "v": v, **({"params": params} if params else {})}
+        queue.offer({"symbol": "X", "series": [item]})
+    [frame] = queue.take()
+    assert [s["v"] for s in frame.body["series"]] == ["2", "3"]
+
+
+@pytest.mark.parametrize(
+    ("family", "body"),
+    [
+        ("profile", {"symbol": "X", "kind": "volume", "profiles": [_nested(5_000)]}),
+        ("book", {"symbol": "X", "bids": [["1", "1"]], "asks": [], "meta": _nested(5_000)}),
+    ],
+)
+def test_coalescer_nested_whole_frame_or_root_field_is_refused(family: str, body: Body) -> None:
+    queue = CoalescingQueue(family)
+    assert not queue.offer(body)
     assert queue.overflowed

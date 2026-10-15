@@ -113,11 +113,16 @@ class _Merge(ABC):
         self.limit = limit
         self.lists = frozenset(lists) | _DISCLOSURE
         self.root: dict[str, Any] = {}
+        self.root_bytes = 0
         self.bytes = 0
 
     def add(self, body: Payload) -> bool:
-        self.root.update((k, v) for k, v in body.items() if k not in self.lists)
-        return self.merge(body)
+        """Merge one update; a discarded update's root fields are discarded with it."""
+        changed = self.merge(body)
+        if changed:
+            self.root.update((k, v) for k, v in body.items() if k not in self.lists)
+            self.root_bytes = _size(self.root)
+        return changed
 
     @abstractmethod
     def merge(self, body: Payload) -> bool:
@@ -133,7 +138,7 @@ class _Merge(ABC):
 
     def reset(self) -> None:
         """Forget the pending state after an emission."""
-        self.root, self.bytes = {}, 0
+        self.root, self.root_bytes, self.bytes = {}, 0, 0
 
 
 class _BookMerge(_Merge):
@@ -231,6 +236,8 @@ class _KeyedMerge(_Merge):
                 raise _BufferFullError
         elif self.newer is not None and not self.newer(cur, item):
             return False
+        else:
+            del self.items[key]  # re-inserted below: entities leave in last-write order
         self.items[key] = dict(item)
         self._resize(key, _size(item))
         return True
@@ -405,7 +412,7 @@ class CoalescingQueue:
     def pending_bytes(self) -> int:
         """Estimated JSON size of the pending state, for the connection budget (§8.4)."""
         merge = self._merge
-        merged = merge.bytes + _size(merge.root) if merge is not None and self._count else 0
+        merged = merge.bytes + merge.root_bytes if merge is not None and self._count else 0
         return self._frame_bytes + merged
 
     def set_coalesce(self, coalesce: bool) -> None:
@@ -432,8 +439,13 @@ class CoalescingQueue:
         if merge is None or not (self.merging or self._count):
             if len(self._frames) < self._max_frames:
                 emission = Emission(_own(body), part, 1, ts_ms)
+                try:
+                    size = _size(emission.body)
+                except _REFUSED:
+                    self._overflowed = True
+                    return False
                 self._frames.append(emission)
-                self._frame_bytes += _size(emission.body)
+                self._frame_bytes += size
                 return True
             if merge is None:
                 self._overflowed = True
@@ -487,9 +499,10 @@ class CoalescingQueue:
             count = 1 if self.family in APPENDED_FAMILIES else self._count
             emission = Emission(merge.result(), None, count, self._ts_ms)
         else:
+            merge.reset()  # only discarded updates: nothing of theirs may leak into the next window
             return
         self._frames.append(emission)
-        self._frame_bytes += merge.bytes + _size(merge.root)
+        self._frame_bytes += merge.bytes + merge.root_bytes
         merge.reset()
         self._count, self._first, self._ts_ms = 0, None, None
 
