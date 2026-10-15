@@ -11,7 +11,6 @@ from __future__ import annotations
 import ast
 import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -23,10 +22,6 @@ _MODULES = sorted(
     [p.relative_to(_ROOT).as_posix() for p in (_ROOT / "api").glob("*.py")]
     + ["ws/gateway.py", "ws/permissions.py"]
 )
-#: Known gaps, each tracked by its own issue. Strict: once fixed, the XPASS fails the run.
-_KNOWN_GAPS = {
-    "api/onboarding.py": "#2323: onboarding.checklist_tamper_rejected is not registered",
-}
 _EMITTERS = frozenset({"emit", "_audit", "_audit_owner"})
 _ACTION = re.compile(r"^[a-z0-9_]+([.][a-z0-9_]+){1,3}$")
 
@@ -47,19 +42,21 @@ def _emitted(module: str) -> set[str]:
     return found
 
 
-def _cases() -> list[Any]:
-    gap = pytest.mark.xfail
-    return [
-        pytest.param(m, marks=gap(strict=True, reason=_KNOWN_GAPS[m])) if m in _KNOWN_GAPS else m
-        for m in _MODULES
-    ]
-
-
-@pytest.mark.parametrize("module", _cases())
+@pytest.mark.parametrize("module", _MODULES)
 def test_every_literal_audit_action_emitted_is_registered(module: str) -> None:
     assert _emitted(module) - AUDIT_ACTIONS == set()
 
 
 def test_the_scan_still_finds_the_actions_it_guards() -> None:
-    found = _emitted("api/auth.py") | _emitted("api/sessions.py") | _emitted("api/invites.py")
-    assert {"auth.login", "auth.session_fixation_attempt", "users.invite_refused"} <= found
+    found = (
+        _emitted("api/auth.py")
+        | _emitted("api/sessions.py")
+        | _emitted("api/invites.py")
+        | _emitted("api/onboarding.py")
+    )
+    assert {
+        "auth.login",
+        "auth.session_fixation_attempt",
+        "users.invite_refused",
+        "onboarding.checklist_tamper_rejected",
+    } <= found

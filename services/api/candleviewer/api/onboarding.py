@@ -89,6 +89,7 @@ def make_onboarding_router(
             if emitter is not None:
                 await emitter.emit(
                     "onboarding.checklist_tamper_rejected",
+                    actor_label=str(principal.user_id),
                     actor_user_id=principal.user_id,
                     outcome=AuditOutcome.DENIED,
                     severity=Severity.WARNING,
