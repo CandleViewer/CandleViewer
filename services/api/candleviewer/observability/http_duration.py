@@ -13,13 +13,20 @@ observation per request, labelled `route`, `method`, `status_class`:
 - `status_class` is `1xx`..`5xx` from the first `http.response.start`; an exception that escapes
   before any response was sent counts as `5xx` and is re-raised unchanged.
 
-No user, account, symbol, query-string or header label exists (C-12.6, C-2.18); the series bound is
-routes x 8 methods x 5 classes, with a hard `max_series` backstop on the catalogue entry
-(buckets and bound live there, beside the other histograms).
+Timing runs until the downstream app returns, so a streaming response is timed to completion of
+its body. A request cancelled with no response started (`asyncio.CancelledError`, client gone) is
+NOT recorded and the error is re-raised: a disconnect is not a server error and must not distort
+5xx-based alerts. Any other escaping exception counts as `5xx`.
+
+No user, account, symbol, query-string or header label exists (C-12.6, C-2.18). The series bound
+is route templates x observed method/status combinations, capped by `max_series=1000` on the
+catalogue entry (buckets live there too). At the cap `BoundedMetric` hands back a no-op child:
+new series are dropped (and a breach is counted), so memory cannot grow.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable, MutableMapping
 from typing import Any, Final
@@ -69,11 +76,14 @@ class HttpDurationMiddleware:
 
         try:
             await self._app(scope, receive, send_wrapper)
-        except BaseException:
-            if not status:
-                status.append(500)
+        except asyncio.CancelledError:
+            if status:
+                self._observe(scope, status[0], self._clock() - start)
             raise
-        finally:
+        except BaseException:
+            self._observe(scope, status[0] if status else 500, self._clock() - start)
+            raise
+        else:
             self._observe(scope, status[0] if status else 500, self._clock() - start)
 
     def _observe(self, scope: MutableMapping[str, Any], status: int, elapsed: float) -> None:

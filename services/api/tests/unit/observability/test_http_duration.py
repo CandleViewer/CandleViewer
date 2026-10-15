@@ -70,8 +70,13 @@ def _app(hist: BoundedMetric) -> FastAPI:
     return app
 
 
-def _keys(hist: BoundedMetric) -> set[tuple[str, ...]]:
-    return set(hist._children)
+def _keys(m: Metrics) -> set[tuple[str, ...]]:
+    fam = next(f for f in m.registry.collect() if f.name == METRIC_NAME)
+    return {
+        (s.labels["route"], s.labels["method"], s.labels["status_class"])
+        for s in fam.samples
+        if s.name.endswith("_count")
+    }
 
 
 def _sum(m: Metrics, route: str, method: str, cls: str) -> float | None:
@@ -86,30 +91,30 @@ def test_route_template_labels_series_and_ids_share_one_series() -> None:
     client = TestClient(_app(hist))
     client.get("/v1/things/a")
     client.get("/v1/things/b")
-    assert _keys(hist) == {("/v1/things/{thing_id}", "GET", "2xx")}
+    assert _keys(m) == {("/v1/things/{thing_id}", "GET", "2xx")}
     assert _sum(m, "/v1/things/{thing_id}", "GET", "2xx") == pytest.approx(0.5)
 
 
 def test_unknown_path_goes_to_unmatched_series() -> None:
-    _, hist = _hist()
+    m, hist = _hist()
     TestClient(_app(hist)).get("/nope/123")
-    assert _keys(hist) == {("unmatched", "GET", "4xx")}
+    assert _keys(m) == {("unmatched", "GET", "4xx")}
 
 
 def test_custom_method_is_other() -> None:
-    _, hist = _hist()
+    m, hist = _hist()
     TestClient(_app(hist)).request("BREW", "/v1/things/a")
-    assert {k[1] for k in _keys(hist)} == {"other"}
+    assert {k[1] for k in _keys(m)} == {"other"}
 
 
 def test_status_classes_and_raised_exception() -> None:
-    _, hist = _hist()
+    m, hist = _hist()
     client = TestClient(_app(hist), raise_server_exceptions=False)
     client.get("/v1/things/a")
     client.get("/v1/bad")
     client.post("/v1/things")
     client.get("/v1/boom")
-    assert _keys(hist) == {
+    assert _keys(m) == {
         ("/v1/things/{thing_id}", "GET", "2xx"),
         ("/v1/bad", "GET", "4xx"),
         ("/v1/things", "POST", "2xx"),
@@ -124,7 +129,7 @@ def test_exception_is_reraised_unchanged() -> None:
 
 
 def test_exception_after_response_start_keeps_sent_status() -> None:
-    _, hist = _hist()
+    m, hist = _hist()
 
     async def app(scope: Scope, receive: Receive, send: Send) -> None:
         await send({"type": "http.response.start", "status": 200, "headers": []})
@@ -137,7 +142,7 @@ def test_exception_after_response_start_keeps_sent_status() -> None:
 
     with pytest.raises(RuntimeError):
         asyncio.run(run())
-    assert _keys(hist) == {("unmatched", "GET", "2xx")}
+    assert _keys(m) == {("unmatched", "GET", "2xx")}
 
 
 class _Refuse:
@@ -158,7 +163,7 @@ def test_refusal_by_inner_middleware_is_timed() -> None:
     app.add_middleware(HttpDurationMiddleware, histogram=hist, clock=_Clock())
     r = TestClient(app).post("/v1/things/x")
     assert r.status_code == 403
-    assert _keys(hist) == {("unmatched", "POST", "4xx")}
+    assert _keys(m) == {("unmatched", "POST", "4xx")}
     assert _sum(m, "unmatched", "POST", "4xx") == pytest.approx(0.25)
 
 
@@ -183,7 +188,7 @@ def test_cardinality_bound_holds_at_max_series() -> None:
 
 
 def test_non_http_scopes_pass_through_untouched() -> None:
-    _, hist = _hist()
+    m, hist = _hist()
     seen: list[str] = []
 
     async def inner(scope: Scope, receive: Receive, send: Send) -> None:
@@ -197,7 +202,7 @@ def test_non_http_scopes_pass_through_untouched() -> None:
 
     asyncio.run(run())
     assert seen == ["websocket", "lifespan"]
-    assert _keys(hist) == set()
+    assert _keys(m) == set()
 
 
 def test_catalogue_entry_is_live_and_bracketing_budgets() -> None:
@@ -224,3 +229,43 @@ def test_create_app_times_a_mesh_refusal() -> None:
     assert r.status_code >= 400
     assert hist.series_count == 1
     assert "X-Correlation-Id" in r.headers
+
+
+def test_cancelled_request_without_response_is_not_recorded_and_reraised() -> None:
+    m, hist = _hist()
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        raise asyncio.CancelledError
+
+    mw = HttpDurationMiddleware(app, histogram=hist, clock=_Clock())
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(mw({"type": "http", "method": "GET"}, _noop_receive, _noop_send))
+    assert _keys(m) == set()
+
+
+def test_create_app_matched_route_is_labelled_by_template() -> None:
+    app = create_app(Settings(environment=Environment.DEMO))
+    hist = app.state.metrics_facade.get(METRIC_NAME)
+    r = TestClient(app, client=("127.0.0.1", 5)).get("/healthz")
+    assert r.status_code == 200
+    assert hist.series_count == 1
+    assert (
+        app.state.metrics_facade.registry.get_sample_value(
+            f"{METRIC_NAME}_count",
+            {"env": "demo", "route": "/healthz", "method": "GET", "status_class": "2xx"},
+        )
+        == 1.0
+    )
+
+
+def test_cancelled_after_response_start_keeps_sent_status() -> None:
+    m, hist = _hist()
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        raise asyncio.CancelledError
+
+    mw = HttpDurationMiddleware(app, histogram=hist, clock=_Clock())
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(mw({"type": "http", "method": "GET"}, _noop_receive, _noop_send))
+    assert _keys(m) == {("unmatched", "GET", "2xx")}
