@@ -104,6 +104,10 @@ class FlagSpec:
     def fail_closed_value(self) -> FlagValue:
         return self.default if self.restrictive is None else self.restrictive
 
+    def visible_to(self, roles: frozenset[str]) -> bool:
+        """Whether a principal with `roles` may learn this flag (its visibility)."""
+        return self.visibility is Visibility.ALL_ROLES or "owner" in roles
+
     @property
     def overridable(self) -> bool:
         """D2: the live gate and kill-switch-class flags take no per-user or per-role override,

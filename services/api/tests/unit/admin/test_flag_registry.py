@@ -187,3 +187,19 @@ def test_only_ordinary_flags_are_overridable(kwargs: dict[str, Any], overridable
 def test_visibility_is_mandatory_with_no_default() -> None:
     with pytest.raises(TypeError, match="visibility"):
         FlagSpec("ui.panel", _B, "d", Category.UI_SURFACE, False)  # type: ignore[call-arg]  # visibility has no default (D6a)
+
+
+@pytest.mark.parametrize(
+    ("visibility", "roles", "visible"),
+    [
+        (Visibility.ALL_ROLES, frozenset({"viewer"}), True),
+        (Visibility.OWNER_ONLY, frozenset({"owner"}), True),
+        (Visibility.OWNER_ONLY, frozenset({"manager"}), False),
+        (Visibility.OWNER_ONLY, frozenset(), False),
+    ],
+)
+def test_visible_to_applies_the_visibility(
+    visibility: Visibility, roles: frozenset[str], visible: bool
+) -> None:
+    spec = FlagSpec("ui.panel", _B, "d", Category.UI_SURFACE, False, visibility)
+    assert spec.visible_to(roles) is visible

@@ -26,13 +26,7 @@ from uuid import UUID
 import structlog
 
 from candleviewer.admin.flags.metrics import flag_evaluations_total, unreadable_overrides_total
-from candleviewer.admin.flags.registry import (
-    FlagRegistry,
-    FlagSpec,
-    FlagValue,
-    Visibility,
-    value_matches,
-)
+from candleviewer.admin.flags.registry import FlagRegistry, FlagSpec, FlagValue, value_matches
 from candleviewer.admin.flags.resolver import StoredFlag, override_matches, resolve
 from candleviewer.admin.flags.store import FlagStore
 from candleviewer.observability import spawn
@@ -184,7 +178,7 @@ class FlagService:
         rows = await self._rows(KILLSWITCH_TTL_S)
         items: list[ResolvedFlag] = []
         for key, spec in self.registry.items():
-            if spec.visibility is Visibility.OWNER_ONLY and "owner" not in roles:
+            if not spec.visible_to(roles):
                 continue
             row = None if rows is None else rows.get(key) or StoredFlag(spec.default)
             items.append(self.resolved(spec, row, user_id, roles))
