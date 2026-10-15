@@ -135,6 +135,9 @@ class CredentialBroker:
     ) -> None:
         if any(k is not None and k.env_name != env_name for k in (kek, prev_kek)):
             # #2338: a KEK opens only its own environment's wraps; never re-bind one here.
+            for k in (kek, prev_kek):
+                if k is not None:
+                    k.close()  # zeroed before the refusal leaves, like drop_kek()
             raise ValueError("KEK loaded for another environment")
         self._store, self._audit_sink = store, audit
         self._kek, self._prev = kek, prev_kek

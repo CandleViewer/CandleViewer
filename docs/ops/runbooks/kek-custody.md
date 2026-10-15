@@ -114,13 +114,25 @@ mesh self-check never clears the KEK latch.
 Migration `0026_kek_versions_env` (#2338) keys `kek_versions` by `(env, version)`.
 
 - It refuses while any `api_keys` row is usable (`revoked_at IS NULL AND status <> 'revoked'`).
-  Those rows hold environment-free `v1:` wraps that cv-api no longer opens, and a migration never
-  holds the KEK to re-wrap them. Revoke each such key through the audited key-management flow
-  (never edit `api_keys` by hand), then run the upgrade again.
+  Such rows may hold environment-free `v1:` wraps (rows written before #2338) that cv-api no
+  longer opens, and a migration never holds the KEK to re-wrap them. Revoke each such key through
+  the audited key-management flow (never edit `api_keys` by hand), then run the upgrade again.
 - Rows enrolled before it join `demo`. The first live boot afterwards enrols a fresh live lineage:
   compare the KCV in its `security.kek_enrolled` record (`env=live`) with the offline copy's KCV
   (SR-E27-15) before any live key is stored.
-- Its downgrade refuses while one version is enrolled under two environments.
+- A KCV that a live process enrolled before the upgrade is now in a `demo`-labelled row, so a live
+  boot with the same KEK is refused as `kek_reused` (the reuse check spans every environment).
+  Either boot live with a different KEK (one KEK per environment), or, before the first live
+  boot, delete that row in a maintenance window under change control (owner + security
+  reviewer): `DELETE FROM kek_versions WHERE env = 'demo' AND version = <n>`. The live lineage
+  then starts at `CV_KEK_VERSION=1`. Use a different KEK if a demo or testnet process ever held
+  this one.
+- Its downgrade refuses while one version is enrolled under two environments. Lineages with
+  disjoint versions, such as `(live, 1)` and `(demo, 2)`, pass that check and merge into one
+  version sequence, and the restored pre-#2338 code applies its global policy to it, so a live
+  boot can then be refused as `kek_version_out_of_sequence`. A rollback is only safe while a
+  single environment has enrolled; otherwise delete the other environments' `kek_versions` rows
+  under change control (owner + security reviewer) before the downgrade.
 
 ## Restore drill
 

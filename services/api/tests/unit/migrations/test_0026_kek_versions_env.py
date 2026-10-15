@@ -34,8 +34,10 @@ def test_upgrade_refuses_usable_keys_then_keys_each_lineage_by_environment() -> 
         [
             "SET LOCAL lock_timeout = '5s';",
             "IF EXISTS (SELECT FROM api_keys WHERE revoked_at IS NULL AND status <> 'revoked') "
-            "THEN RAISE EXCEPTION '0026_kek_versions_env upgrade refused",
-            '(docs/ops/runbooks/kek-custody.md, "Upgrading to per-environment KEK lineages")',
+            "THEN RAISE EXCEPTION '0026_kek_versions_env upgrade refused: usable api_keys rows "
+            "exist and may hold environment-free v1 KEK wraps (rows written before #2338), which "
+            "cv-api refuses after #2338 and a migration cannot re-wrap; revoke them first "
+            '(docs/ops/runbooks/kek-custody.md, "Upgrading to per-environment KEK lineages")\';',
             "ALTER TABLE kek_versions ADD COLUMN env exchange_env NOT NULL DEFAULT 'demo';",
             "ALTER TABLE kek_versions ALTER COLUMN env DROP DEFAULT;",
             "ALTER TABLE kek_versions DROP CONSTRAINT kek_versions_pkey;",

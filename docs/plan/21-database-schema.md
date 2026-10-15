@@ -902,9 +902,10 @@ CREATE TABLE kek_versions (
 
 > **Landed:** `0026_kek_versions_env` (#2338). Rows enrolled before it join `demo`, never `live`;
 > the first live boot enrols a fresh live lineage (KV-S03, Owner check SR-E27-15). The upgrade
-> refuses while any `api_keys` row is usable (`revoked_at IS NULL AND status <> 'revoked'`): those
-> rows hold `v1:` wraps that M2 no longer opens and a migration cannot re-wrap
-> (`kek-custody.md`). The downgrade refuses while a version is enrolled under two environments.
+> refuses while any `api_keys` row is usable (`revoked_at IS NULL AND status <> 'revoked'`): such
+> rows may hold `v1:` wraps (written before #2338) that M2 no longer opens and a migration cannot
+> re-wrap (`kek-custody.md`). The downgrade refuses while a version is enrolled under two
+> environments; a rollback is only safe while a single environment has enrolled (`kek-custody.md`).
 
 **Envelope layout written by M2 into `api_keys` (§3.2.2).** Every sealed field uses one layout,
 `nonce(12) ‖ ciphertext ‖ tag(16)`, each with a fresh nonce:

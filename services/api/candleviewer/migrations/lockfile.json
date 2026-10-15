@@ -124,7 +124,7 @@
     },
     "0026_kek_versions_env": {
       "path": "services/api/candleviewer/migrations/versions/0026_kek_versions_env.py",
-      "sha256": "1a25896f7a5c36bcfab5566c26d237b1eefb6ecec9288cd030c1262172ca6d3c",
+      "sha256": "7e2297e70c77b2ab2ee90e451ef0c6ef5105d4a25db586ff864459d9ac368f18",
       "down_revision": "0025_settings"
     }
   }

@@ -211,10 +211,13 @@ def _rewrap_for(store: Any, key_id: Any, to: LoadedKek) -> None:
 
 
 def test_broker_refuses_a_kek_loaded_for_another_environment(store: Any) -> None:
+    live = kek(env="live")
     with pytest.raises(ValueError, match="another environment"):
-        CredentialBroker(store, AuditLog(), kek(env="live"), env_name="demo")
+        CredentialBroker(store, AuditLog(), live, env_name="demo")
+    current, previous = kek(KEK_V2, 2), kek(env="testnet")
     with pytest.raises(ValueError, match="another environment"):
-        CredentialBroker(store, AuditLog(), kek(KEK_V2, 2), prev_kek=kek(env="testnet"))
+        CredentialBroker(store, AuditLog(), current, prev_kek=previous)
+    assert [not any(k._key) for k in (live, current, previous)] == [True, True, True]  # zeroed
 
 
 async def test_demo_bound_broker_never_reads_a_live_row(store: Any) -> None:

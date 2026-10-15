@@ -19,11 +19,17 @@ and could stop live boots by enrolling a newer version (E27 threat model F-03). 
   from 1. `kv_kcv_unique UNIQUE (kcv)` stays global, so one KEK is never enrolled in two
   environments; `kv_version_pos` and `kv_kcv_len` are unchanged.
 * The upgrade refuses while any `api_keys` row is usable (`revoked_at IS NULL AND status <>
-  'revoked'`). Those rows hold environment-free `v1:` wraps, which M2 refuses after #2338, and a
-  migration never holds the KEK to re-wrap them (ADR-0009 Amendment 1). Revoke them first, as
-  `docs/ops/runbooks/kek-custody.md` describes. No deployment holds such rows today.
+  'revoked'`). Such rows may hold environment-free `v1:` wraps (rows written before #2338), which
+  M2 refuses after #2338, and a migration never holds the KEK to re-wrap them (ADR-0009
+  Amendment 1). Revoke them first, as `docs/ops/runbooks/kek-custody.md` describes. No deployment
+  holds such rows today.
 * Reversible (C-5.2) while no version is enrolled under two environments. Otherwise the
-  downgrade refuses: one `version` key cannot hold two lineages.
+  downgrade refuses: one `version` key cannot hold two lineages. Lineages with disjoint versions,
+  such as `(live, 1)` and `(demo, 2)`, pass that guard and merge into one version sequence, to
+  which the restored pre-#2338 code applies its global policy, so a live boot can then be refused
+  as `kek_version_out_of_sequence`. A rollback is only safe while a single environment has
+  enrolled; otherwise delete the other environments' `kek_versions` rows under change control
+  before the downgrade (`kek-custody.md`).
 
 Not backward compatible for one release: M2 before #2338 cannot enrol into this table (its
 `ON CONFLICT (version)` matches no constraint, so it fails closed with `kcv_store_unavailable`) and
@@ -46,7 +52,7 @@ _UPGRADE_GUARD = """
 DO $BODY$
 BEGIN
   IF EXISTS (SELECT FROM api_keys WHERE revoked_at IS NULL AND status <> 'revoked') THEN
-    RAISE EXCEPTION '0026_kek_versions_env upgrade refused: usable api_keys rows hold v1 KEK wraps that a migration cannot re-wrap; revoke them first (docs/ops/runbooks/kek-custody.md, "Upgrading to per-environment KEK lineages")';
+    RAISE EXCEPTION '0026_kek_versions_env upgrade refused: usable api_keys rows exist and may hold environment-free v1 KEK wraps (rows written before #2338), which cv-api refuses after #2338 and a migration cannot re-wrap; revoke them first (docs/ops/runbooks/kek-custody.md, "Upgrading to per-environment KEK lineages")';
   END IF;
 END $BODY$;
 """
