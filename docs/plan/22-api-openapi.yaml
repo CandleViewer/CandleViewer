@@ -952,6 +952,7 @@ paths:
                     clock_offset_ms: 4
                     api_version: "1.0.0"
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /auth/sessions:
     get:
@@ -974,6 +975,7 @@ paths:
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/UserSession" } }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /auth/password:
     put:

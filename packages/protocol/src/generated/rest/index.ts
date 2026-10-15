@@ -9522,6 +9522,7 @@ export interface operations {
         };
       };
       401: components["responses"]["Unauthorized"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   authListSessions: {
@@ -9550,6 +9551,7 @@ export interface operations {
         };
       };
       401: components["responses"]["Unauthorized"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   authStepUp: {
