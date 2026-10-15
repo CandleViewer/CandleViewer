@@ -55,7 +55,7 @@ from candleviewer.observability import spawn
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
 from candleviewer.replay.errors import ReplayClockStateError, ReplayError, ReplayRequestInvalid
 from candleviewer.replay.models import ReplayGap, ReplayItem
-from candleviewer.replay.pacing import Pacer, RateWindow
+from candleviewer.replay.pacing import MS_PER_S, US_PER_MS, Pacer, RateWindow
 from candleviewer.replay.playback import (
     STEP,
     BarProbe,
@@ -230,7 +230,9 @@ class ReplayClock:
             pacer.set_speed(speed, wall=now, position_us=pacer.position(now))
         else:
             if pacer is not None and pending is not None:
-                self._lost_s += max(0.0, now - pacer.due(pending.ts_us))
+                lost = max(0.0, now - pacer.due(pending.ts_us))
+                self._lost_s += lost
+                replay_backpressure_seconds_total.inc(lost)
             self._pacer = Pacer(speed, wall=now, ts_us=self._cursor) if speed > 0 else None
             if speed == STEP:
                 self._stop = True
@@ -259,7 +261,7 @@ class ReplayClock:
         if ms < 1:
             raise ReplayRequestInvalid("a step covers at least 1 ms")
         async with self._step():
-            target = min(self._cursor + ms * 1_000, self._end_us)
+            target = min(self._cursor + ms * US_PER_MS, self._end_us)
             while isinstance(item := await self._step_item(before_us=target), RecordedEvent):
                 await self._deliver(item)
                 await self._breathe()
@@ -508,7 +510,7 @@ class ReplayClock:
             self._obs.on_backpressure(False)
         self._slow_in_window = False
         if self._pacer is not None:
-            replay_clock_lag_ms.observe(self._max_lag * 1_000)
+            replay_clock_lag_ms.observe(self._max_lag * MS_PER_S)
             _set_ratio(id(self), self._window.ratio)
         self._max_lag = 0.0
         self._flush()

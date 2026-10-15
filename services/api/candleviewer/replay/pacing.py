@@ -17,6 +17,8 @@ from __future__ import annotations
 from typing import Final
 
 US_PER_S: Final = 1_000_000
+US_PER_MS: Final = 1_000
+MS_PER_S: Final = 1_000
 
 
 class Pacer:
