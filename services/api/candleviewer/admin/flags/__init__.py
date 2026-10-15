@@ -29,6 +29,12 @@ from candleviewer.admin.flags.store import (
     StaleWriteError,
     StoreUnavailableError,
 )
+from candleviewer.admin.flags.writes import (
+    FlagConflictError,
+    FlagValidationError,
+    FlagWriter,
+    UnknownFlagError,
+)
 
 __all__ = [
     "DENIED",
@@ -37,19 +43,23 @@ __all__ = [
     "MAINTENANCE_KEEP_RECORDER",
     "MAINTENANCE_MODE",
     "Category",
+    "FlagConflictError",
     "FlagKind",
     "FlagList",
     "FlagRegistry",
     "FlagService",
     "FlagSpec",
     "FlagStore",
+    "FlagValidationError",
     "FlagValue",
     "FlagWrite",
+    "FlagWriter",
     "Resolution",
     "ResolvedFlag",
     "StaleWriteError",
     "StoreUnavailableError",
     "StoredFlag",
+    "UnknownFlagError",
     "UnsafeFlagDefinitionError",
     "Visibility",
     "default_registry",
