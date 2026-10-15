@@ -35,6 +35,7 @@ from candleviewer.audit.models import (
     VerifyResult,
 )
 from candleviewer.audit.repository import AuditRepository
+from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.observability.context import spawn
 from candleviewer.settings import Settings
 
@@ -198,7 +199,8 @@ class AuditQueryService:
     never an INSERT/UPDATE/DELETE (the DB grants forbid the latter two
     anyway). A page's chain check and verify's batches run on `hasher`, a
     bounded executor of its own; `close()` shuts it down. `clock` stamps
-    `checked_at`."""
+    `checked_at`. `verify_slot` is verify's single-flight, shared with the scheduled
+    verify job."""
 
     def __init__(
         self,
@@ -210,6 +212,7 @@ class AuditQueryService:
         self._repository = repository
         self._hasher = hasher if hasher is not None else ChainHasher()
         self._clock = clock
+        self.verify_slot = VerifySlot()
 
     def close(self) -> None:
         self._hasher.shutdown()

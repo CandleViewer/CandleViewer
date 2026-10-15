@@ -27,6 +27,7 @@ import candleviewer.app as appmod
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH
 from candleviewer.audit.models import AuditPage, ExportResult, VerifyResult
 from candleviewer.audit.query import VerifyPlan
+from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     InviteNotFound,
@@ -236,6 +237,9 @@ class _AlertRepo:
 
 class _AuditQuery:
     """`AuditQueryService` stand-in returning empty, valid results (no DB)."""
+
+    def __init__(self) -> None:
+        self.verify_slot = VerifySlot()
 
     async def query(self, **_kw: Any) -> AuditPage:
         return AuditPage(items=[], chain_verified=True)

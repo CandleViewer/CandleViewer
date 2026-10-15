@@ -61,7 +61,7 @@ from candleviewer.api import (
 )
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_budget import AuditBudgetFlushTask, AuditRecordBudget
-from candleviewer.api.audit_limiter import AuditQueryLimiter
+from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditVerifyLimiter
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
@@ -1064,6 +1064,10 @@ def create_app(
             budget=audit_budget,
             query_timeout_ms=resolved.audit_query_timeout_ms,
             verify_max_span=resolved.audit_verify_max_span,
+            verify_limiter=AuditVerifyLimiter(
+                rate_per_hour=resolved.audit_verify_rate_per_hour,
+                tracked_users=resolved.audit_budget_tracked_users,
+            ),
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))
