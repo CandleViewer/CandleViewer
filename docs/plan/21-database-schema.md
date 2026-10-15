@@ -122,7 +122,7 @@ CREATE TYPE recording_state     AS ENUM ('idle','starting','recording','degraded
 CREATE TYPE record_reason       AS ENUM ('manual','chart_open','position_open','rule_dependency','alert_dependency');
 CREATE TYPE stream_kind         AS ENUM ('trades','orderbook_delta','orderbook_snapshot','tickers','klines','liquidations','open_interest','funding');
 CREATE TYPE retention_action    AS ENUM ('drop','archive_parquet','downsample','pin');
-CREATE TYPE replay_state        AS ENUM ('created','buffering','playing','paused','finished','error');
+CREATE TYPE replay_state        AS ENUM ('created','buffering','playing','paused','finished','error','stepping','destroyed');
 CREATE TYPE journal_side        AS ENUM ('long','short');
 CREATE TYPE flag_kind           AS ENUM ('boolean','percentage','variant');
 CREATE TYPE audit_outcome       AS ENUM ('success','failure','denied');
@@ -1768,6 +1768,8 @@ Resolution order for a (symbol, stream): pinned symbol → infinite retention; e
 
 #### 3.6.4 `replay_sessions`
 
+> Shipped as Alembic `0022_replay_sessions` (E26-T01 #624; the register's `0007_recorder` number was taken). DDL below is verbatim. `replay_state` (§1.2) is created by this revision (no earlier owner); it mirrors every B12 `replay` chart state (C-2.19, `28-statechart-catalogue.md` §B12): the six API `ReplayState` values plus transient `stepping` and the final `destroyed` (idle reclaim and client destroy both persist `destroyed`). `ix_rps_live` includes `stepping` because a session mid-step still holds buffers. `bookmarks` is P1 (§12) and carries a `PII:` column comment. `rps_paper` and `paper_account_id … ON DELETE SET NULL` interact: hard-deleting an `exchange_accounts` row still referenced by a `paper_trading` session is refused by `rps_paper` (accounts are soft-deleted via `deleted_at`). Downgrade refuses while the table holds rows.
+
 ```sql
 CREATE TABLE replay_sessions (
   id                   uuid PRIMARY KEY,
@@ -1797,7 +1799,7 @@ CREATE TABLE replay_sessions (
   CONSTRAINT rps_paper CHECK (paper_trading = false OR paper_account_id IS NOT NULL)
 );
 CREATE INDEX ix_rps_user_time ON replay_sessions (user_id, created_at DESC);
-CREATE INDEX ix_rps_live      ON replay_sessions (state) WHERE state IN ('buffering','playing','paused');
+CREATE INDEX ix_rps_live      ON replay_sessions (state) WHERE state IN ('buffering','playing','paused','stepping');
 ```
 
 ### 3.7 Journal & notes
@@ -3119,7 +3121,7 @@ NAMING_CONVENTION = {
 | `0005_api_keys`               | `api_keys`, `api_key_rotations`, withdrawal-off constraint                                                                                                                                                                                 |
 | `0005_profiles`               | `account_profiles` + ladder trigger                                                                                                                                                                                                        |
 | `0006_trading_core`           | `trade_groups`, `trade_group_legs`, `orders`, `order_events`, `executions`, `positions`, `position_snapshots`, `wallet_balances`                                                                                                           |
-| `0007_recorder`               | `recorded_symbols`, `recording_sessions`, `recording_gaps`, `retention_policies`, `replay_sessions`                                                                                                                                        |
+| `0007_recorder`               | `recorded_symbols`, `recording_sessions`, `recording_gaps`, `retention_policies` — landed as `0011_recorder` (E16-T01); `replay_sessions` landed in E26-T01 as `0022_replay_sessions` (#624)                                               |
 | `0008_rules`                  | `rules`, `rule_versions`, `rule_runs`, `rule_events`                                                                                                                                                                                       |
 | `0009_alerts`                 | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                     |
 | `0010_journal`                | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                            |
@@ -3407,6 +3409,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `audit_log`                                            | `actor_ip`                              | P2         | plaintext                                       | Cannot be deleted (append-only); erase requests are satisfied by key destruction of the actor mapping, documented in `04-security-program.md`   |
 | `audit_log`                                            | `before_state`, `after_state`           | P1/S mixed | jsonb                                           | Writer redacts any key matching `secret                                                                                                         | password | token | api_key | seed | nonce`to`"[redacted]"` before insert — enforced by a shared serializer and a unit test with a hostile fixture |
 | `notes`                                                | `body`, `title`                         | P1         | plaintext                                       | User content; exported on data-export request                                                                                                   |
+| `replay_sessions`                                      | `bookmarks`                             | P1         | jsonb                                           | User notes on recorded timestamps; read only by `user_id` in the WHERE clause; purged with the user (CASCADE)                                   |
 | `drawings`                                             | `label`, `geometry`, `style`            | P0         | text / jsonb                                    | User-authored chart annotations; free text, no credentials or PII intended                                                                      |
 | `workspaces`, `layouts`, `layout_panes`                | `name`, `grid_spec`, `pane_config`      | P0         | text / jsonb                                    | User layout preferences; never logged. Pane settings must never carry credentials or account identifiers                                        |
 | `journal_trades`                                       | all P&L columns                         | P1         | plaintext                                       | Financial personal data                                                                                                                         |

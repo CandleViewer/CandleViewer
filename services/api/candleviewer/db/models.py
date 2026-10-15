@@ -869,6 +869,71 @@ retention_policies = Table(
     ),
 )
 
+#: Replay sessions (E26-T01, revision 0022_replay_sessions) - `21-database-schema.md` Sec.3.6.4.
+#: `replay_state` mirrors every B12 `replay` chart state (C-2.19): the six API values, then the
+#: transient `stepping` and the final `destroyed`.
+replay_state = ENUM(
+    "created",
+    "buffering",
+    "playing",
+    "paused",
+    "finished",
+    "error",
+    "stepping",
+    "destroyed",
+    name="replay_state",
+    metadata=metadata,
+    create_type=False,
+)
+
+replay_sessions = Table(
+    "replay_sessions",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("recording_session_id", ForeignKey("recording_sessions.id", ondelete="SET NULL")),
+    Column("symbol", symbol_code, nullable=False),
+    Column("range_start", TIMESTAMP(timezone=True), nullable=False),
+    Column("range_end", TIMESTAMP(timezone=True), nullable=False),
+    Column("cursor_ts", TIMESTAMP(timezone=True)),
+    Column("speed", Numeric(6, 2), nullable=False, server_default=text("1")),
+    Column("state", replay_state, nullable=False, server_default=text("'created'")),
+    Column("source_tier", Text, nullable=False, server_default=text("'auto'")),
+    Column("paper_trading", Boolean, nullable=False, server_default=text("false")),
+    Column("paper_account_id", ForeignKey("exchange_accounts.id", ondelete="SET NULL")),
+    Column(
+        "bookmarks",
+        JSONB,
+        nullable=False,
+        server_default=text("'[]'::jsonb"),
+        comment=(
+            "PII: user notes on recorded timestamps; owner-scoped reads; "
+            "purged with the user (CASCADE)"
+        ),
+    ),
+    Column("loop_enabled", Boolean, nullable=False, server_default=text("false")),
+    Column("events_emitted", BigInteger, nullable=False, server_default=text("0")),
+    Column("gap_warnings", Integer, nullable=False, server_default=text("0")),
+    Column("error_message", Text),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("finished_at", TIMESTAMP(timezone=True)),
+    CheckConstraint("range_end > range_start", name="rps_range"),
+    CheckConstraint("speed BETWEEN 0.1 AND 100", name="rps_speed"),
+    CheckConstraint("source_tier IN ('auto','questdb','parquet')", name="rps_tier"),
+    CheckConstraint(
+        "cursor_ts IS NULL OR (cursor_ts >= range_start AND cursor_ts <= range_end)",
+        name="rps_cursor",
+    ),
+    CheckConstraint("paper_trading = false OR paper_account_id IS NOT NULL", name="rps_paper"),
+    Index("ix_rps_user_time", "user_id", text("created_at DESC")),
+    Index(
+        "ix_rps_live",
+        "state",
+        postgresql_where=text("state IN ('buffering','playing','paused','stepping')"),
+    ),
+)
+
 
 #: Rule-engine tables (E35-T02, revision 0013_rules) - `21-database-schema.md` Sec.3.4.
 #: `scope_account_id` / `trade_group_id` carry no FK yet (E27 / E34 own those tables).
