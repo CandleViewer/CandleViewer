@@ -25,6 +25,7 @@ from typing import Any, Protocol
 
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.metrics import authz_denied_total, normalise_permission
+from candleviewer.storage.repositories.accounts import AccountScope, GrantScope, OwnerScope
 
 #: Mirrors the database `role_name` ENUM (`'owner','manager','viewer'`,
 #: migration `0001_identity_rbac_sessions_mfa.py`) — the *only* three role
@@ -163,6 +164,20 @@ def decide(
         return Deny(DenyReason.TRADING_NOT_GRANTED, permission=permission, scope=scope)
 
     return Allow()
+
+
+def account_scope(principal: PrincipalSnapshot) -> AccountScope:
+    """Storage scope for account reads/writes, mirroring `decide()` for GRANTED_ACCOUNTS: an
+    owner sees every account; others only grants with `can_view` and not `frozen`. Zero grants
+    is an empty scope (nothing), never "all"."""
+    if principal.is_owner:
+        return OwnerScope(principal.user_id)
+    return GrantScope(
+        principal.user_id,
+        frozenset(
+            g.exchange_account_id for g in principal.account_grants if g.can_view and not g.frozen
+        ),
+    )
 
 
 class _AuditEmitter(Protocol):

@@ -124,6 +124,20 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
     # not `*Service`/`*Error` by name, but the module's documented public
     # interface alongside `OmsService`.
     "M14": {"Validator", "ReadOnlyCheck", "OrderPlacementRefused"},
+    # E27-T01 (#2495): the accounts facade and the domain types it returns, consumed by the
+    # E27-S01 routes. No store, row type or SQL adapter is exported (SR-051 scoping stays in
+    # M10), and no model carries an envelope column (C-3.2).
+    "M13": {
+        "AccountsRepository",
+        "AccountKind",
+        "ApiKeyMetadata",
+        "ApiKeyRotation",
+        "ExchangeAccount",
+        "ExchangeEnv",
+        "KeyStatus",
+        "PermissionSet",
+        "PermissionSnapshot",
+    },
     # E27-T02: metadata-only results and capability Protocols `admin` consumes (C-3.2), the
     # caller-bound borrow capability minted at wiring time for M4, and the `Secret` wrapper.
     # #2339: the capability signs inside M2 (C-2.7); M4 gets the `KEY_ID_SLOT` marker, the
