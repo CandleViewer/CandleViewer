@@ -230,6 +230,28 @@ def test_bar_item_refuses_a_value_too_large_to_send() -> None:
         bar_item(_bar(open=Decimal("1E+39")), generation=0, bar_kind="time", include_delta=False)
 
 
+@pytest.mark.parametrize("value", ["1E-39", "0E-999999", "-0E-999999", "1E-999999"])
+def test_bar_item_refuses_a_value_with_too_many_decimal_places(value: str) -> None:
+    bar = _bar().model_copy(update={"turnover": Decimal(value)})
+    with pytest.raises(FrameEncodeError, match="too many decimal places to send"):
+        bar_item(bar, generation=0, bar_kind="time", include_delta=False)
+
+
+def test_bar_item_sends_a_zero_with_a_positive_exponent_and_38_places() -> None:
+    bar = _bar(volume=Decimal("0E+50"), turnover=Decimal("1." + "0" * 37 + "1"))
+    item = bar_item(bar, generation=0, bar_kind="time", include_delta=False)
+    assert (item["v"], len(item["turnover"])) == ("0", 40)
+
+
+def test_a_refusal_names_the_field_and_caps_the_value_it_echoes() -> None:
+    with pytest.raises(FrameEncodeError, match=r"bars \(0, 3\): open_time -1 is negative"):
+        _record(_bar().model_copy(update={"open_time": -1}))
+    long = Decimal("1." + "1" * 500)
+    with pytest.raises(FrameEncodeError) as err:
+        _record(_bar().model_copy(update={"open": long}))
+    assert len(str(err.value)) < 160 and "..." in str(err.value)
+
+
 def test_kind_4_refuses_a_huge_exponent_before_building_the_integer() -> None:
     bar = _bar().model_copy(update={"volume": Decimal("1E+999999")})
     with pytest.raises(FrameEncodeError, match="volume 1E\\+999999 overflows every field"):

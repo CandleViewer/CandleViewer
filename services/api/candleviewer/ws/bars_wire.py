@@ -48,17 +48,21 @@ MAX_TS_SPAN_MS: Final = dict(_BOUNDS)["ts_offset_ms"][1]
 TIME_KINDS: Final[frozenset[WireBarType]] = frozenset({"time", "heikin_ashi"})
 _CONFIRM: Final = 0b1
 #: Exact arithmetic whatever the caller's context: every field explicit, no rounding below the
-#: maximum precision, no traps. Read-only, and only for `scaleb`/`normalize`/`to_integral_value`:
-#: never for division or powers, where `MAX_PREC` would allocate.
+#: maximum precision, no traps. Its flags accumulate and are never read. Only for
+#: `scaleb`/`normalize`/`to_integral_value`: never for division or powers, where `MAX_PREC` would
+#: allocate.
 _EXACT: Final = Context(
     prec=MAX_PREC, rounding=ROUND_HALF_EVEN, Emin=MIN_EMIN, Emax=MAX_EMAX, capitals=1, clamp=0,
     flags=[], traps=[],
 )  # fmt: skip
 #: A scaled value at or above 10**20 fits no 64-bit field; refused before `int()` would build it.
 _MAX_ADJUSTED: Final = 19
-#: The structured twin's ceiling: no bar value reaches 10**39, and `format(.., "f")` grows with the
-#: exponent.
+#: The structured twin's bounds: no bar value reaches 10**39 or needs more than 38 decimal places,
+#: and `format(.., "f")` grows with the exponent either way.
 _MAX_DEC_ADJUSTED: Final = 38
+_MAX_DEC_PLACES: Final = 38
+#: A refusal names at most this much of the value, so a hostile coefficient cannot bloat a log.
+_MAX_VALUE_TEXT: Final = 64
 
 
 def _key(bar: Bar, generation: int) -> str:
@@ -83,7 +87,10 @@ def _open_ms(bar: Bar) -> int:
 
 def _refuse(bar: Bar, generation: int, field: str, value: object, why: str) -> FrameEncodeError:
     """The error, formatted only on failure: the per-record path builds no strings."""
-    return FrameEncodeError(f"{_key(bar, generation)}: {field} {value} {why}")
+    text = str(value)
+    if len(text) > _MAX_VALUE_TEXT:
+        text = f"{text[: _MAX_VALUE_TEXT - 3]}..."
+    return FrameEncodeError(f"{_key(bar, generation)}: {field} {text} {why}")
 
 
 def _dec(value: Decimal, bar: Bar, generation: int, field: str) -> str:
@@ -92,6 +99,9 @@ def _dec(value: Decimal, bar: Bar, generation: int, field: str) -> str:
         raise _refuse(bar, generation, field, value, "is not finite")
     if value and value.adjusted() > _MAX_DEC_ADJUSTED:
         raise _refuse(bar, generation, field, value, "is too large to send")
+    exponent = value.as_tuple().exponent  # an int: the value is finite
+    if isinstance(exponent, int) and -exponent > _MAX_DEC_PLACES:
+        raise _refuse(bar, generation, field, value, "has too many decimal places to send")
     return format(value if value else value.copy_abs(), "f")
 
 
