@@ -30,6 +30,7 @@ from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.models import MfaChallengeRecord, MfaMethodRecord
 from candleviewer.auth.totp import generate_code, generate_secret, time_step_for
+from candleviewer.auth.totp_skew import SKEW_HOLD_S
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.mfa_sqlalchemy import SqlAlchemyMfaRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -192,43 +193,45 @@ async def test_wrong_totp_is_rejected_and_no_session_minted(
     assert v.status_code == 401 and "set-cookie" not in v.headers
 
 
-async def test_skewed_totp_is_refused_like_a_wrong_code_and_raises_a_system_event(
+async def test_skewed_totp_is_refused_generically_and_raises_a_system_event_after_the_hold(
     pg_dsn: str, client: httpx.AsyncClient
 ) -> None:
-    """#2146: a valid code from an authenticator 3 steps (90 s) behind the server is refused with
-    the answer a wrong code gets, and the real `system_events` table gets one `auth` skew row."""
+    """#2146: a valid code from an authenticator a few steps behind the server is refused with the
+    generic answer; the real `system_events` table gets one `auth` skew row once the hold has
+    elapsed, and none before."""
     _, secret = await _seed_owner_with_totp(pg_dsn, "e2e_skew")
 
-    async def verify(code: str) -> httpx.Response:
-        r = await client.post("/auth/login", json={"identifier": "e2e_skew", "password": _PASSWORD})
-        body = {"mfa_token": r.json()["mfa_token"], "method": "totp", "code": code}
-        return await client.post("/auth/mfa/verify", json=body)
+    def code_at(steps: int) -> str:
+        return _code(secret, _NOW + timedelta(seconds=30 * steps))
 
-    rows = sa.text(
-        "SELECT kind, severity::text AS severity, message, details FROM system_events "
-        "WHERE component = 'auth' AND id > :before ORDER BY id"
-    )
-    engine = create_async_engine(pg_dsn)
-    try:
-        async with engine.connect() as conn:
-            before: int = (
-                await conn.execute(sa.text("SELECT coalesce(max(id), 0) FROM system_events"))
-            ).scalar_one()
-            skewed = await verify(_code(secret, _NOW - timedelta(seconds=90)))
-            wrong = await verify(_code(secret, _NOW + timedelta(minutes=10)))  # 20 steps: no skew
-            events = (await conn.execute(rows, {"before": before})).mappings().all()
-    finally:
-        await engine.dispose()
-    assert skewed.status_code == wrong.status_code == 401
-    assert skewed.json() == wrong.json() and "set-cookie" not in skewed.headers
-    assert [(e["kind"], e["severity"]) for e in events] == [("totp_clock_skew", "warning")]
-    assert "clock skew" in events[0]["message"]
-    assert events[0]["details"] == {
-        "surface": "login",
-        "kind": "authenticator_behind",
-        "offset_steps": "-3",
-        "offset_seconds": "-90",
-    }
+    # A step behind by 3 or more whose code is not also the code of a step inside +/-1.
+    window = {code_at(k) for k in (-1, 0, 1)}
+    skewed = next(c for c in map(code_at, range(-3, -11, -1)) if c not in window)
+    r = await client.post("/auth/login", json={"identifier": "e2e_skew", "password": _PASSWORD})
+    body = {"mfa_token": r.json()["mfa_token"], "method": "totp", "code": skewed}
+    refused = await client.post("/auth/mfa/verify", json=body)
+    assert refused.status_code == 401 and "set-cookie" not in refused.headers
+    assert refused.json()["detail"] == "invalid or expired code"  # no skew-specific answer
+
+    async def skew_rows() -> list[Any]:
+        engine = create_async_engine(pg_dsn)
+        try:
+            async with engine.connect() as conn:
+                result = await conn.execute(
+                    sa.text(
+                        "SELECT severity::text AS severity, details FROM system_events "
+                        "WHERE component = 'auth' AND kind = 'totp_clock_skew'"
+                    )
+                )
+                return [dict(row._mapping) for row in result]
+        finally:
+            await engine.dispose()
+
+    assert await skew_rows() == []  # held: no row yet
+    reporter = client.app_context.auth.mfa._skew_reporter  # type: ignore[attr-defined]  # test handle
+    await reporter.publish_due(_NOW.timestamp() + SKEW_HOLD_S)
+    (row,) = await skew_rows()
+    assert row["severity"] == "warning" and "refused_at" in row["details"]
 
 
 async def test_audit_rows_for_login_failure_totp_failure_success_and_logout(

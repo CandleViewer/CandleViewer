@@ -22,9 +22,9 @@ from base64 import b32decode, b32encode
 TOTP_DIGITS = 6
 TOTP_STEP_SECONDS = 30
 TOTP_SKEW_STEPS = 1
-#: How far (steps either side of now) `detect_skew` looks for the code a rejected user sent. A
-#: diagnostic reach, never an acceptance window: SR-021 stays at `TOTP_SKEW_STEPS`. A random wrong
-#: code matches one of the 2 * (10 - 1) = 18 steps in between with probability about 1.8e-5.
+#: How far (steps either side of now) `detect_skew` looks for a rejected code: a diagnostic reach,
+#: never an acceptance window (SR-021 stays at `TOTP_SKEW_STEPS`). A random wrong code matches one
+#: of the 18 steps in between with probability about 1.8e-5.
 TOTP_SKEW_DIAGNOSTIC_STEPS = 10
 
 #: Base32 alphabet minus padding, used for the raw seed (20 bytes / 160 bit,
@@ -90,24 +90,29 @@ def verify_code(
     return None
 
 
-def detect_skew(secret: bytes, code: str, *, unix_time: float) -> int | None:
+def detect_skew(
+    secret: bytes, code: str, *, unix_time: float, floor: int | None = None
+) -> int | None:
     """Diagnostics for a code `verify_code` refused: the signed step offset (matched step minus
     `unix_time`'s own step) at which `code` is the right code for `secret`, when that step lies
     beyond the accepted `TOTP_SKEW_STEPS` but within `TOTP_SKEW_DIAGNOSTIC_STEPS`; else `None`.
     Negative: the authenticator's clock is behind the server's; positive: ahead.
 
-    Never accepts anything (that is `verify_code`'s alone) and a caller must answer a skewed code
-    like any other wrong one. The whole window is always scanned, so timing hides the match."""
+    `floor` is the method's last accepted step: a code for a step at or below it is a replay that
+    `record_time_step` refuses whatever the clock says, so it never matches. Never accepts anything
+    and a caller must answer a skewed code like any other wrong one. The whole window is always
+    scanned, so timing hides the match."""
     if not code.isascii() or not code.isdigit() or len(code) != TOTP_DIGITS:
         return None  # compare_digest raises on non-ASCII text
     current_step = time_step_for(unix_time)
     found: int | None = None
     for distance in range(TOTP_SKEW_STEPS + 1, TOTP_SKEW_DIAGNOSTIC_STEPS + 1):
         for delta in (-distance, distance):
-            if current_step + delta < 0:
+            step = current_step + delta
+            if step < 0:
                 continue
-            matched = hmac.compare_digest(generate_code(secret, current_step + delta), code)
-            if matched and found is None:
+            matched = hmac.compare_digest(generate_code(secret, step), code)
+            if matched and found is None and (floor is None or step > floor):
                 found = delta
     return found
 

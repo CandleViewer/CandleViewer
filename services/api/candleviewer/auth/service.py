@@ -79,6 +79,7 @@ class AuthService:
         #: #2272: where every session this module revokes is published (the
         #: WS `RevocationHub`); attached by the composition root.
         self._revocation_sink: RevocationSink | None = None
+        self._skew_reporter: TotpSkewReporter | None = None
 
     @property
     def is_active(self) -> bool:
@@ -194,7 +195,11 @@ class AuthService:
                     )
                 rc_key = _process_local_key()
             encryptor = TotpEncryptor(key, key_ref=LOCAL_KEY_REF)
-            skew_reporter = TotpSkewReporter(self._system_events)
+            skew_reporter = TotpSkewReporter(
+                self._system_events, clock=lambda: self._clock().timestamp()
+            )
+            skew_reporter.start()  # publishes held reports once due; `stop()` ends it
+            self._skew_reporter = skew_reporter
             self._mfa = MfaService(
                 self._mfa_repository,
                 encryptor,
@@ -229,6 +234,9 @@ class AuthService:
         self._login = None
         self._mfa = None
         self._invites = None
+        if self._skew_reporter is not None:
+            await self._skew_reporter.stop()
+            self._skew_reporter = None
         if self._step_up is not None:
             await self._step_up.stop()
         self._step_up = None

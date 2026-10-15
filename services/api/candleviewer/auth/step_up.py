@@ -326,21 +326,19 @@ class StepUpService:
         return ok
 
     async def _verify(self, user_id: str, code: str, now: datetime) -> bool:
-        refused: list[bytes] = []
+        refused: list[tuple[bytes, int | None]] = []
         for method in await self._mfa.find_active_totp_methods(user_id):
             if method.secret_enc is None:
                 continue
             seed = self._encryptor.decrypt(method.secret_enc)
             step = verify_code(seed, code, unix_time=now.timestamp())
             if step is None:
-                refused.append(seed)
+                refused.append((seed, method.last_accepted_time_step))
                 continue
             # Same replay protection as login codes (ticket Security notes).
             return await self._mfa.record_time_step(str(method.id), time_step=step)
-        # #2146: reached only with a correct password; names a skewed clock, changes nothing else.
-        await self._skew_reporter.report_rejection(
-            refused, code, unix_time=now.timestamp(), surface="step_up"
-        )
+        # #2146: reached only with a correct password; holds a report for a skewed clock.
+        self._skew_reporter.report_rejection(refused, code, unix_time=now.timestamp())
         return False
 
     async def remaining_grace(self, session_id: str, action_class: str) -> timedelta | None:

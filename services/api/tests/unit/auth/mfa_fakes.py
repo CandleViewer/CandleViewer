@@ -1,12 +1,24 @@
-"""In-memory `MfaRepository` and `SystemEventWriter` fakes for E09 MFA unit tests. No database."""
+"""In-memory `MfaRepository` and `SystemEventWriter` fakes for E09 MFA unit tests, and the rig the
+TOTP clock-skew tests share (#2146). No database."""
 
 from __future__ import annotations
 
+import asyncio
+import os
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
-from candleviewer.auth.models import MfaChallengeRecord, MfaMethodKind, MfaMethodRecord
-from candleviewer.observability.health_probes import SystemEvent
+from candleviewer.auth.envelope import TotpEncryptor
+from candleviewer.auth.mfa_service import MfaService, _hash_token
+from candleviewer.auth.models import (
+    MfaChallengeRecord,
+    MfaMethodKind,
+    MfaMethodRecord,
+    MfaVerifyRequest,
+)
+from candleviewer.auth.totp import TOTP_STEP_SECONDS, generate_code, time_step_for
+from candleviewer.auth.totp_skew import SKEW_HOLD_S, TotpSkewReporter
+from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
 
 
 class FakeMfaRepository:
@@ -187,3 +199,66 @@ class RecordingSystemEvents:
         if self._fail_with is not None:
             raise self._fail_with
         self.written.append(event)
+
+
+class StalledSystemEvents:
+    """`SystemEventWriter` whose write never completes: only a caller's own timeout ends it."""
+
+    async def write(self, event: SystemEvent) -> None:
+        await asyncio.Event().wait()
+
+
+class SkewRig:
+    """`MfaService` over `FakeMfaRepository`, a recording event sink and a clock the test moves.
+    Methods are added with a given seed, so nothing random is drawn."""
+
+    def __init__(self, sink: SystemEventWriter | None = None) -> None:
+        self.events = RecordingSystemEvents()  # what the reporter writes, unless `sink` replaces it
+        self.now = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
+        self.user = uuid.uuid4()
+        self.repo = FakeMfaRepository()
+        self.enc = TotpEncryptor(os.urandom(32))
+        self.reporter = TotpSkewReporter(sink or self.events)
+        self.svc = MfaService(
+            self.repo,
+            self.enc,
+            recovery_code_key=b"k" * 32,
+            clock=self.clock,
+            skew_reporter=self.reporter,
+        )
+
+    def clock(self) -> datetime:
+        return self.now
+
+    def advance(self, steps: int) -> None:
+        self.now += timedelta(seconds=TOTP_STEP_SECONDS * steps)
+
+    def code(self, seed: bytes, offset: int = 0) -> str:
+        """The code of `seed` for the step `offset` steps from the current one."""
+        return generate_code(seed, time_step_for(self.now.timestamp()) + offset)
+
+    async def flush(self) -> None:
+        """Let every hold elapse and publish what was held."""
+        await self.reporter.publish_due(self.now.timestamp() + SKEW_HOLD_S)
+
+    async def add_method(self, seed: bytes, *, confirmed: bool = True) -> str:
+        method = await self.repo.create_pending_method(
+            str(self.user),
+            secret_enc=self.enc.encrypt(seed),
+            secret_key_ref=self.enc.key_ref,
+            label="",
+        )
+        if confirmed:
+            await self.repo.confirm_method(str(method.id), now=self.now)
+        return str(method.id)
+
+    async def verify(self, token: str, code: str) -> None:
+        """One `verify` call on the login challenge `token` (opened on first use)."""
+        digest = _hash_token(token)
+        if not any(c.mfa_token_hash == digest for c in self.repo.challenges.values()):
+            expires = self.now + timedelta(minutes=5)
+            await self.repo.create_challenge(
+                str(self.user), purpose="login", mfa_token_hash=digest, expires_at=expires
+            )
+        request = MfaVerifyRequest(mfa_token=token, method=MfaMethodKind.TOTP, code=code)
+        await self.svc.verify(request)

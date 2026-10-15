@@ -112,12 +112,12 @@ class MfaService:
         now = self._clock()
         accepted_step: int | None = None
         matched_method_id: str | None = None
-        seeds: list[bytes] = []
+        refused: list[tuple[bytes, int | None]] = []
         for method in methods:
             if method.secret_enc is None:
                 continue  # mfa_totp_shape CHECK should prevent this; defend anyway
             seed = self._encryptor.decrypt(method.secret_enc)
-            seeds.append(seed)
+            refused.append((seed, method.last_accepted_time_step))
             step = verify_code(seed, request.code, unix_time=now.timestamp())
             if step is not None:
                 accepted_step = step
@@ -125,11 +125,9 @@ class MfaService:
                 break
 
         if accepted_step is None or matched_method_id is None:
-            # #2146: names a skewed authenticator clock; never changes the answer or the attempt
-            # count, and runs first so the attempt that locks the challenge reports too.
-            await self._skew_reporter.report_rejection(
-                seeds, request.code, unix_time=now.timestamp(), surface="login"
-            )
+            # #2146: holds a report for a skewed clock. It awaits nothing, so it cannot delay or
+            # cancel the attempt count, and it runs first so the locking attempt reports too.
+            self._skew_reporter.report_rejection(refused, request.code, unix_time=now.timestamp())
             await self._record_failed_attempt(challenge)
             raise MfaCodeInvalid("invalid TOTP code")
 
@@ -214,9 +212,8 @@ class MfaService:
         now = self._clock()
         accepted_step = verify_code(seed, code, unix_time=now.timestamp())
         if accepted_step is None:
-            await self._skew_reporter.report_rejection(
-                [seed], code, unix_time=now.timestamp(), surface="enrolment"
-            )
+            refused = [(seed, method.last_accepted_time_step)]
+            self._skew_reporter.report_rejection(refused, code, unix_time=now.timestamp())
             raise MfaCodeInvalid("invalid TOTP code")
 
         confirmed = await self._repository.confirm_method(method_id, now=now)
