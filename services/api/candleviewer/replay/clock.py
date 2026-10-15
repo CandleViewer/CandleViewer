@@ -233,7 +233,11 @@ class ReplayClock:
                 lost = max(0.0, now - pacer.due(pending.ts_us))
                 self._lost_s += lost
                 replay_backpressure_seconds_total.inc(lost)
-            self._pacer = Pacer(speed, wall=now, ts_us=self._cursor) if speed > 0 else None
+            # from unbounded, the event in flight is "now": the next is due one interval after it
+            here = self._cursor if pending is None else min(pending.ts_us, self._end_us)
+            self._pacer = (
+                Pacer(speed, wall=now, ts_us=max(here, self._cursor)) if speed > 0 else None
+            )
             if speed == STEP:
                 self._stop = True
         self._window.restart(wall=now, lost_s=self._lost_s, position_us=self._cursor)

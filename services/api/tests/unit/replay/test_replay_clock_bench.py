@@ -31,4 +31,4 @@ async def test_the_bench_paces_every_event_at_100x_in_order() -> None:
     assert report["events"] == 2_040
     result = report["speed_100"]
     assert (result["dropped_max"], result["out_of_order_max"]) == (0, 0)
-    assert result["achieved_ratio_p50"] > 0.99
+    assert result["achieved_ratio"]["min"] > 0.99 and result["runs_with_backpressure"] == 0

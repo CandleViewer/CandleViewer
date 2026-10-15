@@ -14,7 +14,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from prometheus_client import REGISTRY
 
-from candleviewer.bars.models import BarSpec, BarUpdate
+from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 from candleviewer.bars.time_builder import TimeBarBuilder, bucket_bounds
 from candleviewer.replay import (
     STEP,
@@ -466,6 +466,7 @@ class TimeBarProbe:
     def __init__(self, spec: BarSpec) -> None:
         self.spec, self.builder, self.closes = spec, TimeBarBuilder(spec, SYM), 0
         self._due: int | None = None
+        self.last: Bar | None = None  # the last bar it closed
 
     def due_us(self) -> int | None:
         return self._due
@@ -482,9 +483,10 @@ class TimeBarProbe:
         return closed
 
     def _count(self, updates: Sequence[BarUpdate]) -> bool:
-        closed = sum(u.kind == "close" for u in updates)
-        self.closes += closed
-        return closed > 0
+        closed = [u.bar for u in updates if u.kind == "close"]
+        self.closes += len(closed)
+        self.last = closed[-1] if closed else self.last
+        return bool(closed)
 
 
 async def test_step_bar_reveals_exactly_one_bar_of_the_active_spec() -> None:
@@ -691,3 +693,39 @@ async def test_playback_exports_throughput_lag_backpressure_and_the_achieved_rat
     assert after["replay_clock_lag_ms_count"] > 0
     assert min(gauges) < 0.6
     assert _sample("replay_achieved_speed_ratio") == 1.0  # nothing plays any more
+
+
+async def test_playback_feeds_the_bar_probe_so_step_bar_closes_the_bar_play_left_open() -> None:
+    """Play into the middle of a 1-minute bar, pause, then step_bar: the bar it closes holds the
+    trades play delivered too (6, not just the 2 the step delivers)."""
+    items = [trade(i * 10 * SECOND, trade_id=f"t{i}") for i in range(12)]
+    r = rig(items, end_s=120, speed=10.0, time=FakeTime(auto=False))
+    probe = r.clock.bar_probe = TimeBarProbe(BarSpec(kind="time", interval_ms=60_000))
+    async with r.clock as clock:
+        clock.play()
+        await run_for(r.time, 3.5)  # 35 s of replay: the trades at 0..30 s
+        await clock.pause()
+        assert await clock.step_bar() == "step"
+    assert (probe.closes, probe.last and probe.last.trade_count) == (1, 6)
+    assert r.clock.now_us() == T0 + 60 * SECOND
+
+
+async def test_switching_from_unbounded_back_to_paced_paces_from_the_event_in_flight() -> None:
+    """The fifth delivery switches unbounded playback back to 1x: the rest is paced again, one
+    second apart, from the event in flight (not one event late, from the last completed one)."""
+
+    class SwitchingSink(RecordingSink):
+        clock: ReplayClock | None = None
+
+        async def deliver(self, event: RecordedEvent) -> None:
+            await super().deliver(event)
+            if len(self.events) == 5 and self.clock is not None:
+                self.clock.set_speed(1.0)
+
+    time = FakeTime()
+    sink = SwitchingSink(time)
+    r = rig(every_second(20), end_s=20, speed=UNBOUNDED, time=time, sink=sink)
+    sink.clock = r.clock
+    async with r.clock as clock:
+        assert await clock.play() == "range_end"
+    assert [round(b - a, 6) for a, b in itertools.pairwise(r.sink.at)] == [0.0] * 4 + [1.0] * 15
