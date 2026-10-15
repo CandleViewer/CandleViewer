@@ -82,6 +82,18 @@ def _user(dsn: str) -> str:
     return uid
 
 
+def _layout(dsn: str, owner: str) -> str:
+    """A live layout of `owner`: 0022's composite FK (D27) refuses a raw layout uuid."""
+    wid, lid = str(uuid.uuid4()), str(uuid.uuid4())
+    with _sync(dsn) as c:
+        c.execute("INSERT INTO workspaces (id, user_id, name) VALUES (%s, %s, 'w')", (wid, owner))
+        c.execute(
+            "INSERT INTO layouts (id, workspace_id, owner_user_id, name) VALUES (%s, %s, %s, 'l')",
+            (lid, wid, owner),
+        )
+    return lid
+
+
 def _f(
     symbol: str = "BTCUSDT", *, p: str = "65000.10", layout: str | None = None, label: str = "x"
 ) -> DrawingFields:
@@ -285,8 +297,7 @@ async def test_list_keyset_paging_and_layout_filter(
     rest = await repo.list_page(a, symbol="ETHUSDT", layout_id=None, after_id=first[-1].id, limit=3)
     assert [r.id for r in first + rest] == ids
     assert await repo.list_page(a, symbol="SOLUSDT", layout_id=None, after_id=None, limit=3) == []
-    # layout_id has no FK until E15-T01, so a raw uuid is storable at the data layer.
-    lay = str(uuid.uuid4())
+    lay = _layout(pg_dsn, a)
     tagged = str(uuid.uuid4())
     await repo.create(a, tagged, _f("ETHUSDT", layout=lay))
     got = await repo.list_page(a, symbol="ETHUSDT", layout_id=lay, after_id=None, limit=10)
