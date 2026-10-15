@@ -38,8 +38,8 @@ from candleviewer.observability.context import run_in_thread
 ENVELOPE_VERSION: Final = 2
 #: The envelope before `generation` was recorded (#2662); `load` reads it as generation 0.
 LEGACY_ENVELOPE_VERSION: Final = 1
-#: Largest generation a blob may record. Below 2**53 so it stays a safe JSON integer on the WS
-#: wire (23 §14.3, the TS converter rejects larger), with headroom for the `floor + 1` step.
+#: Largest generation a blob may record. Below 2**53, so it stays a safe JSON integer on the WS
+#: wire (the TS converter rejects larger values), with headroom for the `floor + 1` step.
 MAX_GENERATION: Final = 2**52
 MAX_BLOB_BYTES: Final = 8 * 1024 * 1024
 _SYMBOL: Final = re.compile(r"^[A-Z0-9]{4,20}$")
@@ -62,7 +62,8 @@ class Watermark:
 class StoredState:
     state: BuilderState
     watermark: Watermark | None
-    #: The series' bar generation (epoch); 0 for a v1 envelope.
+    #: The series' bar generation (epoch); 0 for a v1 envelope. A claim read from an unauthenticated
+    #: file: bounded to `MAX_GENERATION`, and from a discarded blob it only raises the floor.
     generation: int = 0
 
 

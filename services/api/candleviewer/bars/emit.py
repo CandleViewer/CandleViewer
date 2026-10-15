@@ -16,8 +16,10 @@ other sinks still get the emission, and
 
 `generation` is stamped on every emission: the series' epoch (`BarBuilderSet._Entry.generation`).
 A restored series keeps its blob's, a cold start begins a new one (#2662), so
-`(bar_param, generation, index)` (#2019) never repeats. `WriterSink` stores it on every row. An
-ADR-0033 rebuild would emit under a higher generation through this same path.
+`(bar_param, generation, index)` (#2019) does not repeat (barring the clock-regression residual,
+`builder_set.py`). `WriterSink` stores it on every row, and `BarSubmitter.submit` has no default
+for it, so an emission's generation cannot be dropped silently. An ADR-0033 rebuild (E12-S12,
+not implemented) would write under a generation of its own and swap a pointer.
 """
 
 from __future__ import annotations
@@ -32,7 +34,6 @@ import structlog
 from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 
-LIVE_GENERATION: Final = 0
 #: Per-sink emit bound (§4.2 `Bars lane → sinks` row).
 SINK_TIMEOUT_S: Final = 5.0
 
@@ -54,12 +55,7 @@ class BarSubmitter(Protocol):
     """The slice of E12-T02 `BarWriter` this module needs."""
 
     async def submit(
-        self,
-        bars: Sequence[Bar],
-        spec: BarSpec,
-        *,
-        source: str = ...,
-        generation: int = LIVE_GENERATION,
+        self, bars: Sequence[Bar], spec: BarSpec, *, source: str = ..., generation: int
     ) -> None: ...
 
 

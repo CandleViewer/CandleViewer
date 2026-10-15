@@ -28,7 +28,6 @@ from candleviewer.bars.errors import BarsError
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import (
     BAR_PARAM_CAPACITY,
-    LIVE_GENERATION,
     SOURCE_RANK,
     BarParamCapacityExceeded,
     BarPersistError,
@@ -192,10 +191,11 @@ class BarWriter:
         spec: BarSpec,
         *,
         source: str = "tape",
-        generation: int = LIVE_GENERATION,
+        generation: int,
     ) -> None:
         """Queue rows (validates all first: one bad, synthetic or lower-precedence bar rejects all).
-        `generation` is the series epoch stamped on every row (`WriterSink` passes the emission's).
+        `generation` is the series epoch stamped on every row (`WriterSink` passes the emission's);
+        it has no default, so a caller cannot store the wrong epoch by omission.
 
         Precedence is enforced against rows written by this process; a read-side check against
         the stored row's `source` is the E12-T05 backfill caller's job (it owns the read path).

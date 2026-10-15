@@ -80,7 +80,7 @@ def _rows() -> dict[str, list[dict[str, object]]]:
     """`bar_param` -> stored rows (ascending ts)."""
     store: dict[str, list[dict[str, object]]] = {}
     for spec in _SERIES.values():
-        rows = [bar_row(b, spec) for b in _build(spec) if b.closed]
+        rows = [bar_row(b, spec, generation=0) for b in _build(spec) if b.closed]
         store[bar_param_for(spec)] = sorted(rows, key=lambda r: int(str(r["ts"])))
     return store
 
@@ -376,7 +376,7 @@ class TestRequestEdges:
 
     def test_include_open_serves_the_forming_bar(self) -> None:
         spec = _SERIES[("tick", "100")]
-        forming = bar_row(_build(spec)[-1].model_copy(update={"closed": False}), spec)
+        forming = bar_row(_build(spec)[-1].model_copy(update={"closed": False}), spec, generation=0)
         _STORE["tick:100"].append(forming)
         try:
             q = {**_P, **self._Q}

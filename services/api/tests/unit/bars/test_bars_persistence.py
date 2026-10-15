@@ -79,7 +79,7 @@ def test_unrenderable_spec_is_refused() -> None:
 
 
 def test_row_golden_ilp_line() -> None:
-    row = bar_row(_bar(), SPEC)
+    row = bar_row(_bar(), SPEC, generation=0)
     row["row_checksum"] = 0
     line = serialize_ilp_line(
         BAR_SCHEMAS_BY_FAMILY["time"],
@@ -96,25 +96,25 @@ def test_row_golden_ilp_line() -> None:
 
 
 def test_checksum_is_independent_of_tag_field_placement() -> None:
-    row = bar_row(_bar(), SPEC)
+    row = bar_row(_bar(), SPEC, generation=0)
     reordered = dict(reversed(list(row.items())))
     assert row_checksum(reordered) == row["row_checksum"]
 
 
 def test_checksum_changes_with_values() -> None:
-    a = bar_row(_bar(), SPEC)
-    b = bar_row(_bar(close=Decimal("100.6")), SPEC)
+    a = bar_row(_bar(), SPEC, generation=0)
+    b = bar_row(_bar(close=Decimal("100.6")), SPEC, generation=0)
     assert a["row_checksum"] == row_checksum(a) != b["row_checksum"]
 
 
 def test_synthetic_bar_is_refused() -> None:
     with pytest.raises(SyntheticBarPersistError):
-        bar_row(_bar(synthetic=True), SPEC)
+        bar_row(_bar(synthetic=True), SPEC, generation=0)
 
 
 def test_source_must_be_known() -> None:
     with pytest.raises(BarPersistError):
-        bar_row(_bar(), SPEC, source="guess")
+        bar_row(_bar(), SPEC, source="guess", generation=0)
 
 
 def test_ddl_matches_schema_doc() -> None:
@@ -168,7 +168,7 @@ async def test_backpressure_awaits_and_drops_nothing() -> None:
     w = BarWriter(sink, max_buffered=3, batch_rows=1)
     await w.start()
     bars = [_bar(index=i, open_time=1_700_000_000_000_000 + i) for i in range(12)]
-    producer = asyncio.create_task(w.submit(bars, SPEC))
+    producer = asyncio.create_task(w.submit(bars, SPEC, generation=0))
     await sink.entered.wait()
     await _settle()
     assert not producer.done()  # blocked, awaiting space
@@ -184,15 +184,15 @@ async def test_new_spec_refused_when_saturated_but_known_spec_waits() -> None:
     sink = _SlowSink()
     w = BarWriter(sink, max_buffered=4, batch_rows=1, refuse_new_specs_at=0.5)
     await w.start()
-    await w.submit([_bar(index=0)], SPEC)
+    await w.submit([_bar(index=0)], SPEC, generation=0)
     more = [_bar(index=i, open_time=1_700_000_000_000_000 + i) for i in range(1, 5)]
-    await w.submit(more, SPEC)
+    await w.submit(more, SPEC, generation=0)
     await sink.entered.wait()
     await _settle()
     other = BarSpec(kind="tick", tick_count=100)
     assert not w.healthy
     with pytest.raises(BarBufferFull):
-        await w.submit([_bar(spec_hash=other.spec_hash)], other)
+        await w.submit([_bar(spec_hash=other.spec_hash)], other, generation=0)
     sink.gate.set()
     await w.stop()
 
@@ -219,15 +219,15 @@ async def test_sink_failure_retries_and_loses_nothing() -> None:
 
     w = BarWriter(sink, sleep=no_sleep)
     await w.start()
-    await w.submit([_bar()], SPEC)
+    await w.submit([_bar()], SPEC, generation=0)
     await w.stop()
     assert len(sink.rows) == 1 and calls == 2
 
 
 @pytest.mark.asyncio
 async def test_amended_close_has_same_dedup_key() -> None:
-    first = bar_row(_bar(), SPEC)
-    amended = bar_row(_bar(close=Decimal("100.9")), SPEC)
+    first = bar_row(_bar(), SPEC, generation=0)
+    amended = bar_row(_bar(close=Decimal("100.9")), SPEC, generation=0)
 
     def key(r: dict[str, object]) -> tuple[object, ...]:
         return (r["ts"], r["symbol"], r["bar_param"], r["generation"], r["index"])
@@ -248,7 +248,7 @@ class _Conn:
 
 @pytest.mark.asyncio
 async def test_stale_build_version_served_and_rebuild_scheduled_once() -> None:
-    old = bar_row(_bar(), SPEC)
+    old = bar_row(_bar(), SPEC, generation=0)
     old["build_version"] = 0
     old["row_checksum"] = row_checksum(old)
     scheduled: list[tuple[str, str, int, int]] = []
@@ -265,8 +265,8 @@ async def test_stale_build_version_served_and_rebuild_scheduled_once() -> None:
 
 @pytest.mark.asyncio
 async def test_read_cursor_and_checksum_drop() -> None:
-    good = bar_row(_bar(), SPEC)
-    bad = replace_row(bar_row(_bar(index=4, open_time=1_700_000_000_000_009), SPEC))
+    good = bar_row(_bar(), SPEC, generation=0)
+    bad = replace_row(bar_row(_bar(index=4, open_time=1_700_000_000_000_009), SPEC, generation=0))
     page = await BarReader(_Conn([good, bad]), _sched_noop).read_bars("BTCUSDT", SPEC, 0, 2**55, 2)
     assert page.rows == [good] and page.next_cursor == 1_700_000_000_000_009
 
@@ -308,15 +308,17 @@ async def test_kline_may_not_overwrite_tape_but_other_directions_allowed() -> No
     sink = _Sink()
     w = BarWriter(sink)
     await w.start()
-    await w.submit([_bar()], SPEC, source="tape")
-    await w.submit([_bar(close=Decimal("100.9"))], SPEC, source="tape")  # amend: allowed
+    await w.submit([_bar()], SPEC, source="tape", generation=0)
+    await w.submit(
+        [_bar(close=Decimal("100.9"))], SPEC, source="tape", generation=0
+    )  # amend: allowed
     before = bars_source_overwrite_refused_total.labels("kline", "tape")._value.get()
     with pytest.raises(SourceOverwriteRefused):
-        await w.submit([_bar()], SPEC, source="kline")
+        await w.submit([_bar()], SPEC, source="kline", generation=0)
     assert bars_source_overwrite_refused_total.labels("kline", "tape")._value.get() == before + 1
     other = _bar(index=9, open_time=1_700_000_900_000_000)
-    await w.submit([other], SPEC, source="kline")
-    await w.submit([other], SPEC, source="tape")  # kline -> tape: allowed
+    await w.submit([other], SPEC, source="kline", generation=0)
+    await w.submit([other], SPEC, source="tape", generation=0)  # kline -> tape: allowed
     await w.stop()
     assert len(sink.rows) == 4
 
@@ -373,10 +375,13 @@ async def test_rebuild_registry_global_cap_and_attempt_limit() -> None:
 async def test_checksum_mismatch_and_missing_are_integrity_events() -> None:
     from candleviewer.bars.reader import bars_checksum_mismatch_total as m
 
-    good = bar_row(_bar(), SPEC)
-    bad = {**bar_row(_bar(index=4, open_time=1_700_000_000_000_009), SPEC), "close": 1.0}
+    good = bar_row(_bar(), SPEC, generation=0)
+    bad = {
+        **bar_row(_bar(index=4, open_time=1_700_000_000_000_009), SPEC, generation=0),
+        "close": 1.0,
+    }
     missing = {
-        **bar_row(_bar(index=5, open_time=1_700_000_000_000_010), SPEC),
+        **bar_row(_bar(index=5, open_time=1_700_000_000_000_010), SPEC, generation=0),
         "row_checksum": None,
     }
     legacy = {**missing, "source": None, "ts": 1_700_000_000_000_011}
@@ -394,7 +399,7 @@ async def test_checksum_mismatch_and_missing_are_integrity_events() -> None:
 
 
 def test_checksum_round_trips_through_ilp_floats() -> None:
-    row = bar_row(_bar(), SPEC)
+    row = bar_row(_bar(), SPEC, generation=0)
     assert row_checksum(row) == row["row_checksum"]
     assert row_checksum({**row, "open": float(repr(row["open"]))}) == row["row_checksum"]
 
@@ -423,8 +428,8 @@ async def test_failed_original_retries_before_amend_so_final_row_is_the_amend() 
 
     w = BarWriter(sink, batch_rows=1, sleep=fake_sleep)
     await w.start()
-    await w.submit([_bar()], SPEC)  # original close 100.5 (batch 1 fails once)
-    await w.submit([_bar(close=Decimal("100.9"))], SPEC)  # amend
+    await w.submit([_bar()], SPEC, generation=0)  # original close 100.5 (batch 1 fails once)
+    await w.submit([_bar(close=Decimal("100.9"))], SPEC, generation=0)  # amend
     assert await w.stop() == 0
     assert sink.landed == [100.5, 100.9]  # last write wins -> the amend
     assert sleeps == [0.5]
@@ -450,7 +455,7 @@ async def test_permanent_error_not_retried_transient_bounded_and_counted() -> No
     perm = wr.bars_write_failed_total.labels("permanent")._value.get()
     w = BarWriter(Bad(ValueError("bad row")), sleep=no_sleep)
     await w.start()
-    await w.submit([_bar()], SPEC)
+    await w.submit([_bar()], SPEC, generation=0)
     assert await w.stop() == 0
     assert Bad.calls == 1 and w.degraded and w.last_error is not None
     assert wr.bars_write_failed_total.labels("permanent")._value.get() == perm + 1
@@ -459,7 +464,7 @@ async def test_permanent_error_not_retried_transient_bounded_and_counted() -> No
     exh = wr.bars_write_failed_total.labels("transient_exhausted")._value.get()
     w2 = BarWriter(Bad(ConnectionError("down")), sleep=no_sleep)
     await w2.start()
-    await w2.submit([_bar()], SPEC)
+    await w2.submit([_bar()], SPEC, generation=0)
     await w2.stop()
     assert Bad.calls == wr.MAX_ATTEMPTS and w2.degraded
     assert wr.bars_write_failed_total.labels("transient_exhausted")._value.get() == exh + 1
@@ -470,5 +475,7 @@ async def test_stop_is_bounded_and_returns_remaining() -> None:
     sink = _SlowSink()  # never released: QuestDB "down"
     w = BarWriter(sink, batch_rows=1)
     await w.start()
-    await w.submit([_bar(index=i, open_time=1_700_000_000_000_000 + i) for i in range(3)], SPEC)
+    await w.submit(
+        [_bar(index=i, open_time=1_700_000_000_000_000 + i) for i in range(3)], SPEC, generation=0
+    )
     assert await w.stop(timeout_s=0.01) == 3

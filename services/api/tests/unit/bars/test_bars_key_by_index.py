@@ -57,7 +57,7 @@ async def test_three_volume_bars_from_one_print_survive_write_read_round_trip() 
     store = _DedupStore()
     writer = BarWriter(store, batch_rows=1)
     await writer.start()
-    await writer.submit(bars, SPEC)
+    await writer.submit(bars, SPEC, generation=0)
     assert await writer.stop() == 0
     assert len(store.rows) == 3  # (ts, symbol, bar_param) alone would have collapsed to 1
     page = await BarReader(store, _sched).read_bars(SYM, SPEC, 0, 2**55, 10)
@@ -69,7 +69,7 @@ async def test_three_volume_bars_from_one_print_survive_write_read_round_trip() 
 
 def test_generation_and_index_are_in_the_row_and_the_checksum() -> None:
     b = _closed_bars()[0]
-    base = bar_row(b, SPEC)
+    base = bar_row(b, SPEC, generation=0)
     other = bar_row(b, SPEC, generation=1)
     assert base["index"] == b.index and base["generation"] == 0
     assert other["row_checksum"] != base["row_checksum"] == row_checksum(base)
@@ -116,7 +116,7 @@ def test_ddl_quotes_every_reserved_column_name() -> None:
 
 
 def _row(b: Bar, **kw: object) -> dict[str, object]:
-    row = {**bar_row(b, SPEC), **kw}
+    row = {**bar_row(b, SPEC, generation=0), **kw}
     row["row_checksum"] = row_checksum(row)  # keep the row trustworthy for the reader
     return row
 
@@ -139,12 +139,13 @@ async def test_null_index_kline_rows_do_not_hide_older_tape_rows_from_page_one()
 
 @pytest.mark.asyncio
 async def test_builder_cold_start_index_reset_keeps_ts_order_across_pages() -> None:
-    """(b) index restarts at 0 with generation unchanged: ts must still lead the order."""
+    """(b) Legacy generation-0 history repeats `(generation, index)` after an old cold start, and
+    `index` is not chronological across generations: `ts` must still lead the order."""
     b = _closed_bars()[0]
     store = _DedupStore()
     store.rows[("old", 0)] = _row(b, ts=1_000, index=5)
     store.rows[("old", 1)] = _row(b, ts=1_100, index=6)
-    store.rows[("new", 0)] = _row(b, ts=2_000, index=0)  # cold start: index back to 0
+    store.rows[("new", 0)] = _row(b, ts=2_000, index=0)  # legacy cold start: same generation
     page = await _page(store, 3)
     assert [r["ts"] for r in page] == [1_000, 1_100, 2_000]
 
@@ -247,7 +248,11 @@ async def test_null_index_kline_rows_are_still_served_on_bars_time() -> None:
     b = _closed_bars()[0]
     store = _KeysetStore()
     for i in range(2):
-        row = {**bar_row(b, spec, source="kline"), "ts": 60_000_000 * (i + 1), "index": None}
+        row = {
+            **bar_row(b, spec, source="kline", generation=0),
+            "ts": 60_000_000 * (i + 1),
+            "index": None,
+        }
         row["row_checksum"] = row_checksum(row)
         store.rows[("k", i)] = row
     page = await BarReader(store, _sched).read_bars(SYM, spec, 0, 2**55, 10)

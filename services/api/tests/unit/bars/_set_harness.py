@@ -65,7 +65,7 @@ class FakeWriter:
         self.generations: list[int] = []  # one per row in `rows`
 
     async def submit(
-        self, bars: Sequence[Bar], spec: BarSpec, *, source: str = "tape", generation: int = 0
+        self, bars: Sequence[Bar], spec: BarSpec, *, source: str = "tape", generation: int
     ) -> None:
         self.rows.extend((spec.spec_hash, b.index, source) for b in bars)
         self.generations.extend(generation for _ in bars)

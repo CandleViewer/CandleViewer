@@ -102,14 +102,12 @@ def table_for(spec: BarSpec) -> str:
     return f"bars_{spec.kind}"
 
 
-#: Generation of a row with no builder epoch: the default of `bar_row`, kline-sourced rows and
-#: direct `BarWriter.submit` callers. A live series stamps its own epoch (`builder_set`, #2662).
-LIVE_GENERATION: Final = 0
+#: Generation of a kline-sourced row: an exchange kline has no builder epoch (`kline_rows`). Every
+#: other row carries its series' epoch (`BarBuilderSet`, #2662), so `bar_row` has no default.
+KLINE_GENERATION: Final = 0
 
 
-def bar_row(
-    bar: Bar, spec: BarSpec, *, source: str = "tape", generation: int = LIVE_GENERATION
-) -> dict[str, object]:
+def bar_row(bar: Bar, spec: BarSpec, *, source: str = "tape", generation: int) -> dict[str, object]:
     """One ILP-ready row (designated timestamp `ts` = bar open, µs). Raises on synthetic bars."""
     assert_persistable(bar)
     if source not in SOURCES:

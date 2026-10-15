@@ -137,11 +137,12 @@ async def test_persist_every_60s_with_fake_clock(tmp_path: Path) -> None:
     s = make_set(tmp_path, bus=bus, clock=clock)
     await s.register(T3, SYM, "a")
     path = tmp_path / SYM / f"{T3.spec_hash}.state.json"
+    assert orjson.loads(path.read_bytes())["wm"] is None  # the cold-start blob (#2662)
     await bus.publish(TOPIC, trade(T0, seq=1))
     await settle(bus, s)
     clock.t = T0 + 59_999_999
     await s.tick()
-    assert not path.exists()
+    assert orjson.loads(path.read_bytes())["wm"] is None  # not rewritten before 60 s
     clock.t = T0 + 60_000_000
     await s.tick()
     assert orjson.loads(path.read_bytes())["wm"] == [T0, ["1"]]
@@ -191,7 +192,7 @@ async def test_corrupt_blob_discarded_cold_start_never_raises(tmp_path: Path, va
     path.write_bytes(_corrupt_variants(path.read_bytes())[variant])
     sink, s2 = await _run(tmp_path, [trade(us("11:00:00"), seq=999)])
     assert STATE_COLD_STARTED in s2.health_reasons()
-    assert not path.exists() or variant == "never"
+    assert (await StateStore(tmp_path).load(SYM, T3.spec_hash))[1] == "ok"  # replaced, not kept
     t3 = [u for u in sink.seen if u[0] == T3.spec_hash]
     assert t3[0][2:4] == ("open", 0)  # cold start: fresh series
     await s2.stop()

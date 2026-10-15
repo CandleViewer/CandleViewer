@@ -1,12 +1,14 @@
-"""A builder cold start begins a new bar generation (#2662): `(generation, index)` never repeats.
+"""A builder cold start begins a new bar generation (#2662): `(generation, index)` does not repeat.
 
 `24-internal-schemas.md` §3.1/§3.5. The set stamps every emission with its series' generation. A
 restored series keeps the generation its blob recorded; a cold start takes `max(now_ms, floor + 1)`
-where `floor` is the generation of a discarded blob that still parsed (else -1).
+where `floor` is the highest generation a blob that still parsed recorded or this process issued
+for the series (else -1), and it writes its blob at once so the floor survives a crash.
 """
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -14,14 +16,18 @@ import orjson
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.bars import builder_set
 from candleviewer.bars.activity_builders import TickBarBuilder
 from candleviewer.bars.builder_set import STATE_COLD_STARTED, BarBuilderSet
 from candleviewer.bars.emit import BarEmission, WriterSink
-from candleviewer.bars.models import BuilderState
+from candleviewer.bars.models import BarSpec, BuilderState
+from candleviewer.bars.rows import bar_row
 from candleviewer.bars.state_store import MAX_GENERATION, StateStore, StoredState, Watermark
 from candleviewer.bars.writer import BarWriter
 from candleviewer.bus.bus import Bus
 from candleviewer.exchange.base.models import TradeEvent
+from candleviewer.storage.questdb.ilp_writer import serialize_ilp_line
+from candleviewer.storage.questdb.schemas import BAR_SCHEMAS_BY_FAMILY
 
 from ._set_harness import T3, TOPIC, Clock, FakeTape, RecordingSink, make_set, settle
 from ._trades import SYM, trade, us
@@ -48,6 +54,26 @@ def _ticks(lo: int, hi: int) -> list[TradeEvent]:
 
 def _blob(root: Path) -> Path:
     return StateStore(root).path(SYM, T3.spec_hash)
+
+
+async def _disk_full(_: StoredState) -> None:
+    raise OSError(28, os.strerror(28))
+
+
+async def _refused_blob(root: Path, refusal: str, recorded: int) -> FakeTape | None:
+    """Leave T3's blob on disk with `recorded` as its generation, refused on the next start for
+    `refusal`. Returns the tape that restart needs (`ahead_of_tape` only)."""
+    _, s1 = await _run(root, T0, _ticks(0, 4))
+    await s1.stop()
+    doc = orjson.loads(_blob(root).read_bytes())
+    doc["generation"] = recorded
+    tape = None
+    if refusal == "restore_failed":
+        doc["state_version"] = 7  # the builder refuses it on restore
+    else:
+        tape = FakeTape(_ticks(0, 1))  # tape head T0 is behind the blob's watermark T0 + 3
+    _blob(root).write_bytes(orjson.dumps(doc))
+    return tape
 
 
 async def _run(
@@ -102,16 +128,7 @@ async def test_cold_start_after_a_refused_blob_goes_above_its_generation(
 ) -> None:
     """A blob that parsed but was refused still sets the floor: when the clock reads lower than
     the blob's epoch the new generation is `recorded + 1`; a lower floor leaves `now_ms`."""
-    _, s1 = await _run(tmp_path, T0, _ticks(0, 4))
-    await s1.stop()
-    doc = orjson.loads(_blob(tmp_path).read_bytes())
-    doc["generation"] = recorded
-    tape = None
-    if refusal == "restore_failed":
-        doc["state_version"] = 7  # the builder refuses it on restore
-    else:
-        tape = FakeTape(_ticks(0, 1))  # tape head T0 is behind the blob's watermark T0 + 3
-    _blob(tmp_path).write_bytes(orjson.dumps(doc))
+    tape = await _refused_blob(tmp_path, refusal, recorded)
     with capture_logs() as logs:
         second, s2 = await _run(tmp_path, COLD_US, _ticks(100, 101), tape=tape)
     assert STATE_COLD_STARTED in s2.health_reasons()
@@ -122,6 +139,106 @@ async def test_cold_start_after_a_refused_blob_goes_above_its_generation(
     ]
     assert discarded == [refusal] and started == [(refusal, expected)]
     await s2.stop()
+
+
+async def test_cold_start_writes_its_blob_at_once(tmp_path: Path) -> None:
+    _, s = await _run(tmp_path, COLD_US, [])
+    stored, reason = await StateStore(tmp_path).load(SYM, T3.spec_hash)
+    assert reason == "ok" and stored is not None
+    assert stored.generation == COLD_MS and stored.watermark is None  # no trade applied yet
+    await s.stop()
+
+
+async def test_the_floor_of_a_refused_blob_survives_a_crash_and_a_clock_step_back(
+    tmp_path: Path,
+) -> None:
+    """The refused blob is deleted, so the cold-start blob must carry its floor: a crash before
+    the first 60 s persist and a clock that stepped back must not fall below it."""
+    ahead = COLD_MS + 5_000_000
+    await _refused_blob(tmp_path, "restore_failed", ahead)
+    _, s2 = await _run(tmp_path, COLD_US, _ticks(100, 101))  # cold start: ahead + 1
+    s2._lanes.clear()  # crash: no final blob, only the cold-start one
+    third, s3 = await _run(tmp_path, COLD_US - 3_600_000_000, _ticks(200, 201))  # clock -1 h
+    assert {g for _, g, *_ in third.seen} == {ahead + 2}
+    await s3.stop()
+
+
+async def test_crash_after_a_cold_start_restarts_in_a_new_generation(tmp_path: Path) -> None:
+    """The cold-start blob has no watermark, so no replay can reproduce the bars emitted after
+    it: restoring it would restart `index` at 0 inside the same generation. It is a floor."""
+    first, s1 = await _run(tmp_path, T0, _ticks(0, 7))  # bars 0 and 1 close
+    s1._lanes.clear()  # crash: only the cold-start blob is on disk
+    second, s2 = await _run(tmp_path, T0, _ticks(100, 107))  # the clock has not moved
+    keys = [(g, i) for _, g, k, i, _ in (*first.seen, *second.seen) if k == "close"]
+    assert len(keys) == 4 and len(set(keys)) == 4
+    assert [g for g, _ in keys] == [T0 // 1000] * 2 + [T0 // 1000 + 1] * 2
+    assert STATE_COLD_STARTED not in s2.health_reasons()  # not a refusal: nothing to flag
+    await s2.stop()
+
+
+@pytest.mark.parametrize("first_start", ["cold", "restored"])
+async def test_reregister_after_a_lost_final_save_stays_above_the_issued_generation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first_start: str
+) -> None:
+    """Teardown whose final save failed, the blob gone and the clock stepped back an hour: the
+    in-process floor (what this process issued or restored) still holds."""
+    known = COLD_MS
+    if first_start == "restored":
+        _, s0 = await _run(tmp_path, T0, _ticks(0, 4))
+        await s0.stop()  # a blob with a watermark: the next start restores it
+        known = T0 // 1000
+    clock, bus, rec = Clock(COLD_US), Bus(), RecordingSink()
+    s = make_set(tmp_path, bus=bus, sinks=[rec], clock=clock)
+    await s.register(T3, SYM, "a")
+    monkeypatch.setattr(s._store, "save", _disk_full)  # the final save fails
+    s.release(T3.spec_hash, SYM, "a")
+    clock.t += 30_000_000  # grace over
+    await s.tick()
+    assert s.active(SYM) == ()
+    _blob(tmp_path).unlink(missing_ok=True)  # the blob is gone too
+    monkeypatch.undo()
+    clock.t = T0 - 3_600_000_000  # the clock stepped back
+    await s.register(T3, SYM, "b")
+    await bus.publish(TOPIC, _ticks(100, 101)[0])
+    await settle(bus, s)
+    assert {g for _, g, *_ in rec.seen} == {known + 1}
+    await s.stop()
+
+
+async def test_the_issued_generation_floor_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(builder_set, "ISSUED_FLOOR_CAP", 2)
+    s = make_set(tmp_path, clock=Clock(COLD_US))
+    specs = [BarSpec(kind="tick", tick_count=n) for n in (2, 3, 4)]
+    for spec in specs:
+        await s.register(spec, SYM, "a")
+    assert list(s._issued) == [(SYM, specs[1].spec_hash), (SYM, specs[2].spec_hash)]  # LRU
+    await s.stop()
+
+
+def test_remembering_a_lower_generation_never_lowers_the_floor(tmp_path: Path) -> None:
+    """A restore adopts its blob's generation, but what this process issued stays the floor."""
+    s = make_set(tmp_path)
+    key = (SYM, T3.spec_hash)
+    s._remember(key, 9)
+    s._remember(key, 5)  # e.g. an older blob was restored
+    assert s._issued[key] == 9
+
+
+async def test_a_failed_cold_start_save_is_logged_and_the_series_still_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bus, rec = Bus(), RecordingSink()
+    s = make_set(tmp_path, bus=bus, sinks=[rec], clock=Clock(COLD_US))
+    monkeypatch.setattr(s._store, "save", _disk_full)
+    await s.register(T3, SYM, "a")  # `_save` logs and swallows the OSError
+    for t in _ticks(0, 4):
+        await bus.publish(TOPIC, t)
+    await settle(bus, s)
+    assert {g for _, g, *_ in rec.seen} == {COLD_MS} and not _blob(tmp_path).exists()
+    monkeypatch.undo()
+    await s.stop()
 
 
 def _state() -> BuilderState:
@@ -198,3 +315,20 @@ async def test_writer_sink_stamps_the_emissions_generation_on_every_stored_row()
     await WriterSink(writer).emit(BarEmission(T3, 42, updates))
     assert await writer.stop() == 0
     assert [(r["generation"], r["index"]) for r in store.rows] == [(42, 0), (42, 1)]
+
+
+def test_ilp_line_renders_a_13_digit_generation_as_a_long() -> None:
+    builder = TickBarBuilder(T3, SYM)
+    bar = next(u.bar for t in _ticks(0, 3) for u in builder.on_trade(t) if u.kind == "close")
+    row = bar_row(bar, T3, generation=COLD_MS)
+    fields = {k: v for k, v in row.items() if k != "ts"}
+    line = serialize_ilp_line(BAR_SCHEMAS_BY_FAMILY["tick"], fields, int(str(row["ts"])))
+    assert len(str(COLD_MS)) == 13 and f"generation={COLD_MS}i" in line  # LONG, never a double
+
+
+async def test_generation_has_no_silent_default() -> None:
+    bar = TickBarBuilder(T3, SYM).on_trade(_ticks(0, 1)[0])[0].bar
+    with pytest.raises(TypeError, match="generation"):
+        bar_row(bar, T3)  # type: ignore[call-arg]  # the default is gone on purpose
+    with pytest.raises(TypeError, match="generation"):
+        await BarWriter(_Rows()).submit([bar], T3)  # type: ignore[call-arg]  # same

@@ -79,10 +79,10 @@ def test_rebuild_twice_identical_and_build_version_bump_keeps_bars(
     first, again = lines_for(tape, 500, {"v": spec}), lines_for(tape, 500, {"v": spec})
     _equal(first, again)
     v0 = rows.BUILD_VERSIONS["volume"]
-    row0 = rows.bar_row(_bars(tape, spec)[0], spec)
+    row0 = rows.bar_row(_bars(tape, spec)[0], spec, generation=0)
     monkeypatch.setitem(rows.BUILD_VERSIONS, "volume", v0 + 1)
     _equal(first, lines_for(tape, 500, {"v": spec}))  # identical bars ...
-    row1 = rows.bar_row(_bars(tape, spec)[0], spec)
+    row1 = rows.bar_row(_bars(tape, spec)[0], spec, generation=0)
     assert (row0["build_version"], row1["build_version"]) == (v0, v0 + 1)  # ... new version tag
     assert {k: v for k, v in row0.items() if k not in ("build_version", "row_checksum")} == {
         k: v for k, v in row1.items() if k not in ("build_version", "row_checksum")
