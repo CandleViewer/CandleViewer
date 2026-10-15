@@ -234,6 +234,7 @@ class WsRuntime:
         self._settings = settings
         self._clock = clock
         self._sweeper: asyncio.Task[None] | None = None
+        self._notified = False
 
     def start(self) -> None:
         if self._sweeper is None:
@@ -241,15 +242,22 @@ class WsRuntime:
 
     async def stop(self) -> int:
         """§9.4: `shutdown_notice`, grace, `bye` + `1001`; then wait (bounded) for the sockets
-        to flush and stop the sweeper. Returns the number of connections notified."""
-        s = self._settings
-        notified = await self.hub.shutdown(
-            grace_ms=s.ws_shutdown_grace_ms,
-            expected_downtime_ms=s.ws_shutdown_expected_downtime_ms,
-        )
-        with contextlib.suppress(TimeoutError):
-            async with asyncio.timeout(CLOSE_FLUSH_TIMEOUT_S):
-                await self.hub.wait_empty()
+        to flush and stop the sweeper. Returns the number of connections notified.
+
+        The notice and grace run once (#2546): the server runs this before uvicorn's own
+        shutdown closes the sockets, and the lifespan teardown's later call only stops the
+        sweeper."""
+        notified = 0
+        if not self._notified:
+            self._notified = True
+            s = self._settings
+            notified = await self.hub.shutdown(
+                grace_ms=s.ws_shutdown_grace_ms,
+                expected_downtime_ms=s.ws_shutdown_expected_downtime_ms,
+            )
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(CLOSE_FLUSH_TIMEOUT_S):
+                    await self.hub.wait_empty()
         if self._sweeper is not None:
             self._sweeper.cancel()
             await asyncio.wait({self._sweeper})  # never raises; our own cancel is consumed

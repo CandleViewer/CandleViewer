@@ -1,0 +1,145 @@
+"""#2546: the §9.4 planned shutdown under a real uvicorn server. uvicorn's `Server.shutdown`
+fails every open WebSocket with `1012` before the lifespan teardown runs, so
+`candleviewer.server` runs `WsRuntime.stop()` first (`PlannedShutdownServer`). The app is
+`create_app`'s, as in `test_app_wiring.py`, on an ephemeral loopback port. No network beyond
+127.0.0.1; every wait is bounded by `asyncio.timeout`."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import socket
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
+
+import pytest
+import uvicorn
+from uvicorn.config import STARTUP_FAILURE
+from websockets.asyncio.client import ClientConnection, connect
+from websockets.exceptions import ConnectionClosed
+from websockets.typing import Origin, Subprotocol
+
+from candleviewer import server as entry
+from candleviewer.app import create_app
+from candleviewer.server import PlannedShutdownServer, uvicorn_kwargs
+from tests.unit.ws.test_app_wiring import JSON, ORIGIN, _authenticate, _Kill, _settings
+
+_DEADLINE_S = 10.0
+_ORIGIN = Origin(ORIGIN)
+_JSON = [Subprotocol(p) for p in JSON]
+
+
+@asynccontextmanager
+async def _serve(
+    server_class: type[uvicorn.Server], grace_ms: int = 0
+) -> AsyncIterator[tuple[uvicorn.Server, str]]:
+    """A real uvicorn server of `server_class` running `create_app`, and its `/ws` URL."""
+    settings = _settings().model_copy(update={"ws_shutdown_grace_ms": grace_ms})
+    app = create_app(settings, snapshot_loader=_Kill().load, ws_authenticate=_authenticate)
+    kw = uvicorn_kwargs()
+    del kw["host"], kw["port"]  # the pre-bound loopback socket below
+    config = uvicorn.Config(app, lifespan="off", log_level="warning", **kw)
+    config.load()
+    server = server_class(config)
+    server.lifespan = config.lifespan_class(config)  # as `Server.serve` does before `startup`
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    await server.startup(sockets=[sock])
+    try:
+        yield server, f"ws://127.0.0.1:{sock.getsockname()[1]}/ws"
+    finally:
+        if any(s.is_serving() for s in server.servers):  # the test failed before its shutdown
+            await server.shutdown()
+        sock.close()
+
+
+async def _open(ws: ClientConnection) -> None:
+    await ws.send(json.dumps({"t": "hello", "id": "h", "p": {"clock_ms": 1}}))
+    assert json.loads(await ws.recv())["t"] == "welcome"
+    await ws.send(json.dumps({"t": "auth", "id": "a", "p": {"access_token": "tok"}}))
+    assert json.loads(await ws.recv())["t"] == "auth_ok"
+
+
+async def _until_closed(ws: ClientConnection) -> tuple[list[dict[str, Any]], int | None]:
+    """Every frame the client receives until the server closes the socket, and the close code."""
+    frames: list[dict[str, Any]] = []
+    try:
+        while True:
+            frames.append(json.loads(await ws.recv()))
+    except ConnectionClosed as exc:
+        return frames, exc.rcvd.code if exc.rcvd is not None else None
+
+
+async def test_server_shutdown_sends_the_planned_shutdown_before_closing() -> None:
+    async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer) as (server, url):
+        async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
+            await _open(ws)
+            stopping = asyncio.create_task(server.shutdown())
+            frames, code = await _until_closed(ws)
+            await stopping
+    notice, bye = frames
+    assert (notice["ch"], notice["p"]["kind"]) == ("system", "shutdown_notice")
+    assert (bye["t"], bye["p"]["reason"], bye["p"]["retry_after_ms"]) == ("bye", "shutdown", 7000)
+    assert code == 1001
+
+
+async def test_plain_uvicorn_shutdown_closes_1012_with_no_notice() -> None:
+    """Why `PlannedShutdownServer` exists: uvicorn alone gives the client a bare `1012`."""
+    async with asyncio.timeout(_DEADLINE_S), _serve(uvicorn.Server) as (server, url):
+        async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
+            await _open(ws)
+            stopping = asyncio.create_task(server.shutdown())
+            frames, code = await _until_closed(ws)
+            await stopping
+    assert (frames, code) == ([], 1012)
+
+
+async def test_no_connection_opens_during_the_planned_shutdown() -> None:
+    """Listeners close before the notice, so a client cannot connect during the grace and
+    then get a bare `1012` when uvicorn's own shutdown follows."""
+    async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer, 300) as (server, url):
+        async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
+            await _open(ws)
+            stopping = asyncio.create_task(server.shutdown())
+            assert json.loads(await ws.recv())["p"]["kind"] == "shutdown_notice"
+            with pytest.raises(OSError):
+                await connect(url, subprotocols=_JSON, origin=_ORIGIN)
+            _, code = await _until_closed(ws)
+            await stopping
+    assert code == 1001
+
+
+def test_main_runs_the_planned_shutdown_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    ran: list[uvicorn.Server] = []
+
+    def run(self: uvicorn.Server, sockets: Any = None) -> None:
+        ran.append(self)
+        self.started = True
+        raise KeyboardInterrupt  # Ctrl+C ends `run` as it does `uvicorn.run`: a clean exit
+
+    monkeypatch.setattr(PlannedShutdownServer, "run", run)
+    entry.main([])
+    (server,) = ran
+    assert isinstance(server, PlannedShutdownServer)
+    assert (server.config.app, server.config.ws_max_size) == (
+        entry.APP,
+        uvicorn_kwargs()["ws_max_size"],
+    )
+
+
+def test_main_exits_with_startup_failure_when_the_server_never_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(PlannedShutdownServer, "run", lambda self, sockets=None: None)
+    with pytest.raises(SystemExit) as exc:
+        entry.main([])
+    assert exc.value.code == STARTUP_FAILURE
+
+
+def test_main_reload_keeps_uvicorns_reloader(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: calls.append((app, kw)))
+    entry.main(["--reload"])
+    ((app, kw),) = calls
+    assert (app, kw["reload"]) == (entry.APP, True)

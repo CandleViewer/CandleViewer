@@ -221,6 +221,27 @@ def test_runtime_stop_sends_shutdown_notice_then_1001(world: tuple[TestClient, _
     assert notified == 1
 
 
+def test_runtime_stop_notifies_once(
+    world: tuple[TestClient, _Kill], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2546: the server runs the planned shutdown before uvicorn's own, so the lifespan's later
+    `stop()` must not notify, or wait the grace, a second time."""
+    client, _ = world
+    runtime: WsRuntime = client.app.state.ws_runtime  # type: ignore[attr-defined]
+    calls: list[dict[str, Any]] = []
+    real = runtime.hub.shutdown
+
+    async def shutdown(**kw: Any) -> int:
+        calls.append(kw)
+        return await real(**kw)
+
+    monkeypatch.setattr(runtime.hub, "shutdown", shutdown)
+    assert client.portal is not None
+    client.portal.call(runtime.start)
+    assert (client.portal.call(runtime.stop), client.portal.call(runtime.stop)) == (0, 0)
+    assert len(calls) == 1 and runtime._sweeper is None
+
+
 def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _Kill]) -> None:
     client, _ = world
     catalogued = {s.name for s in CATALOGUE if s.name.startswith("cv_ws_")}
