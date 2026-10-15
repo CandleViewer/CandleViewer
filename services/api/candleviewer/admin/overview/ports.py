@@ -41,6 +41,9 @@ class CountsPort(Protocol):
     async def open_incidents(self) -> int:
         """Distinct (component, kind) of unresolved `error`/`critical` system events."""
 
+    async def subaccounts_in_use(self) -> int:
+        """Most non-deleted sub-accounts under any one main account (the cap is per main)."""
+
 
 @dataclass(frozen=True, slots=True)
 class RecorderStatus:
@@ -56,7 +59,10 @@ class SymbolStorage:
     #: `None` until the recorder has a measured growth fit for this symbol.
     daily_growth_bytes: int | None
     pinned: bool
+    #: `None` for a pinned symbol: kept forever, so its growth is unbounded.
     retention_days: int | None
+    #: In the current recorded-symbol set (only these grow).
+    recording: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,6 +108,17 @@ class RateBudgetUse:
 
 class RateLimitPort(Protocol):
     async def rate_budget(self) -> tuple[RateBudgetUse, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedTier:
+    tier: str
+    recorded_at: datetime
+
+
+class TierPort(Protocol):
+    async def recorded_tier(self) -> RecordedTier | None:
+        """The `accounts.subaccount_tier` system setting, or `None` if never recorded."""
 
 
 class OmsPort(Protocol):
