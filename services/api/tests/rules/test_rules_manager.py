@@ -313,6 +313,28 @@ async def test_set_active_version_requires_grants_for_target_version() -> None:
     assert second
 
 
+async def test_visible_version_hides_an_unseen_rule_before_the_version_lookup() -> None:
+    """#2574: on a rule the actor cannot see, a real version, a missing version and a missing
+    rule are the same 404 (no existence oracle); the refusal on the unseen rule is audited."""
+    m, audits, _ = _mgr()
+    acc2 = "00000000-0000-0000-0000-000000000002"
+    rid = (await m.create(_ir(scope={"level": "global", "account_ids": [acc2]}), OWNER))["id"]
+    vid = (await m.versions(rid))[0]["id"]
+    audits.clear()
+    seen: list[tuple[int, str, str]] = []
+    for r, v in ((rid, vid), (rid, "no-such-version"), ("no-such-rule", vid)):
+        with pytest.raises(RuleError) as e:
+            await m.visible_version(r, v, MGR, "set_active_version")
+        seen.append((e.value.status, e.value.code, e.value.message))
+    assert seen == [(404, "not_found", "That rule does not exist.")] * 3
+    refused = [(p["op"], p["reason"]) for a, p in audits if a == "rule.scope_refused"]
+    assert refused == [("set_active_version", "rule_not_visible")] * 2
+    assert (await m.visible_version(rid, vid, OWNER, "set_active_version"))["id"] == vid
+    with pytest.raises(RuleError) as e:  # a visible rule may say which part is missing
+        await m.visible_version(rid, "no-such-version", OWNER, "set_active_version")
+    assert (e.value.status, e.value.message) == (404, "That version does not exist.")
+
+
 async def test_visibility_considers_every_version_not_just_latest() -> None:
     m, _, _ = _mgr()
     mgr = Actor(

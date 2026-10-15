@@ -256,7 +256,11 @@ def make_rules_crud_router(
         if body is None or not isinstance(body.get("version_id"), str):
             return _bad("body needs 'version_id'")
         try:
-            ver = await mgr.version(str(ruleId), body["version_id"])
+            # Visibility first (#2574): on a rule the caller cannot see, a real version and a
+            # missing rule or version are one 404, never the scope pre-check's 403 (04 §7.3).
+            ver = await mgr.visible_version(
+                str(ruleId), body["version_id"], actor, "set_active_version"
+            )
             denied = await _scope_check(actor, ver["ir"].get("scope"), arming=False)
             if denied is not None:
                 return denied
