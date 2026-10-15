@@ -110,6 +110,7 @@ def test_the_statement_set_is_pinned() -> None:
     assert set(_STATEMENTS) == {
         "_INSERT", "_GET", "_EXISTS_OTHER", "_LIST", "_UPDATE", "_SOFT_DELETE", "_SNAPSHOT",
         "_PURGE", "_COUNT_LIVE", "_INSERT_MANY", "_UPDATE_MANY", "_SOFT_DELETE_MANY",
+        "_LAYOUTS_SHARE",  # E15-T01 spec Sec.7: the in-transaction layout check
     }  # fmt: skip
 
 
