@@ -20,7 +20,10 @@ def order_entry_refusal(gate: MaintenanceGate) -> JSONResponse | None:
         status_code=403,
         content={
             "type": "https://candleviewer.local/errors/trading_disabled",
-            "title": "Kill-switch engaged or live trading not enabled for this deployment",
+            "title": (
+                "Kill-switch or maintenance mode engaged, or live trading not enabled for this "
+                "deployment"
+            ),
             "status": 403,
             "code": "trading_disabled",
             "detail": "Maintenance mode is on; order entry is paused.",
