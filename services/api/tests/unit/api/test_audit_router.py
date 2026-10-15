@@ -1625,3 +1625,53 @@ def test_verify_event_that_fails_changes_neither_the_response_nor_the_record() -
     r = _evented(svc, _SystemEvents(fail=True)).post(_VERIFY, json={})
     assert (r.status_code, r.json()["verified"], r.json()["first_bad_id"]) == (200, False, 3)
     assert _verify_records(svc)[-1][:3] == ("failure", "critical", "entry_hash_mismatch@3")
+
+
+# ---- Validate query parameters after authorisation: 401, then 403, then 422 -------------
+
+#: Each parameter with a type beyond text, a value that does not parse as it, and the rule
+#: the 422 names.
+_MALFORMED = pytest.mark.parametrize(
+    ("param", "value", "rule"),
+    [
+        ("limit", "abc", "int_parsing"),
+        ("from", "yesterday", "datetime_from_date_parsing"),
+        ("to", "yesterday", "datetime_from_date_parsing"),
+    ],
+)
+
+
+@_MALFORMED
+def test_malformed_parameter_from_an_unauthenticated_caller_is_401(
+    param: str, value: str, rule: str
+) -> None:
+    service = _FakeAuditService()
+    r = TestClient(_app(service, _FakeResolver(None))).get("/admin/audit", params={param: value})
+    assert r.status_code == 401 and r.json()["code"] == "unauthenticated"
+    assert r.headers["cache-control"] == "no-store"
+    assert service.writer_service.emitted == [] and service.query_service.query_calls == []
+
+
+@_MALFORMED
+@pytest.mark.parametrize("principal", [_viewer_no_export, _manager], ids=["viewer", "no_read"])
+def test_malformed_parameter_from_a_caller_without_audit_read_is_403_with_one_denial(
+    principal: Any, param: str, value: str, rule: str
+) -> None:
+    service = _FakeAuditService()
+    client = TestClient(_app(service, _FakeResolver(principal())))
+    r = client.get("/admin/audit", params={param: value})
+    assert r.status_code == 403 and r.json()["code"] == "forbidden"
+    assert _actions(service) == ["admin.audit_denied"]
+    assert service.query_service.query_calls == []
+
+
+@_MALFORMED
+def test_malformed_parameter_from_the_owner_is_422_naming_only_field_and_rule(
+    param: str, value: str, rule: str
+) -> None:
+    client, svc = _budgeted(_owner())
+    r = client.get("/admin/audit", params={param: value})
+    assert r.status_code == 422 and r.json()["code"] == "validation_failed"
+    assert r.json()["errors"] == [{"field": param, "rule": rule}]
+    assert value not in r.text
+    assert svc.query_service.query_calls == [] and svc.writer_service.emitted == []
