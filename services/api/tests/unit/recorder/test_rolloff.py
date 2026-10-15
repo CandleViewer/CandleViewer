@@ -18,13 +18,16 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.recorder.rolloff import (
     US_PER_DAY,
     RollOffConfig,
     RollOffJob,
     RollOffTask,
+    recorder_rolloff_failures_total,
 )
 from candleviewer.storage.cold.watermarks import ArchiveOutcome, RollOffWatermark
+from candleviewer.storage.errors import DropNotAppliedReason, StoragePartitionDropNotApplied
 from candleviewer.storage.models import StreamKind, TimeRange
 
 NOW = datetime(2026, 10, 20, 2, 15, tzinfo=UTC)
@@ -474,6 +477,7 @@ class PhaseCrash(BaseException):
                     "crash_archive",
                     "crash_audit",
                     "crash_drop",
+                    "drop_unconfirmed",
                     "crash_advance",
                 ]
             ),
@@ -521,6 +525,8 @@ async def test_property_phase_crashes_write_failures_late_rows_never_lose_data(
         async def drop_day(self, stream: StreamKind, day_start_us: int) -> None:
             if plan.get(day_start_us) == "crash_drop":
                 raise PhaseCrash
+            if plan.get(day_start_us) == "drop_unconfirmed":
+                raise StoragePartitionDropNotApplied("not confirmed", reason="timeout")
             assert day_start_us in verified, "dropped without a verified cold copy"
             await super().drop_day(stream, day_start_us)
 
@@ -595,3 +601,84 @@ async def test_rolloff_purge_audit_precedes_final_recheck_and_drop() -> None:
 
     await _job(H({T: {day(10): ["BTCUSDT"]}}), FakeArchiver(), FakeMarks(), audit=A()).run()
     assert order == ["snapshot", "retention.purge", "snapshot", "drop"]
+
+
+class UnconfirmedHot(FakeHot):
+    """`drop_day` cannot confirm the drop for the days in `unconfirmed` (the day stays listed)."""
+
+    def __init__(
+        self,
+        days: dict[StreamKind, dict[int, list[str]]],
+        unconfirmed: dict[int, DropNotAppliedReason],
+    ) -> None:
+        super().__init__(days)
+        self.unconfirmed = unconfirmed
+
+    async def drop_day(self, stream: StreamKind, day_start_us: int) -> None:
+        if (reason := self.unconfirmed.get(day_start_us)) is not None:
+            raise StoragePartitionDropNotApplied("not confirmed applied", reason=reason)
+        await super().drop_day(stream, day_start_us)
+
+
+def _failures(reason: str) -> float:
+    return float(recorder_rolloff_failures_total.labels(reason=reason)._value.get())
+
+
+@pytest.mark.parametrize(
+    ("reason", "severity"),
+    [("timeout", "WARNING"), ("suspended", "CRITICAL"), ("unexpected_shape", "CRITICAL")],
+)
+async def test_rolloff_unconfirmed_drop_is_audited_retained_and_stops_the_stream(
+    reason: DropNotAppliedReason, severity: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second, third = day(10), day(11), day(12)  # newest-first: the second is unconfirmed
+    hot = UnconfirmedHot({T: {d: ["BTCUSDT"] for d in (first, second, third)}}, {second: reason})
+    arch, marks, audit = FakeArchiver(), FakeMarks(), Audit()
+    emitted: list[tuple[str, str, dict[str, str | int]]] = []
+    advanced: list[tuple[dict[str, list[int]], dict[str, list[int]]]] = []
+    real_advance = RollOffJob._advance
+
+    class Ev:
+        async def emit(self, severity: str, code: str, detail: dict[str, str | int]) -> None:
+            emitted.append((severity, code, detail))
+
+    async def spy(
+        self: RollOffJob,
+        stream: StreamKind,
+        dropped: dict[str, list[int]],
+        retained: dict[str, list[int]],
+    ) -> None:
+        advanced.append(
+            ({k: [*v] for k, v in dropped.items()}, {k: [*v] for k, v in retained.items()})
+        )
+        await real_advance(self, stream, dropped, retained)
+
+    monkeypatch.setattr(RollOffJob, "_advance", spy)
+    label = f"drop_not_applied_{reason}"
+    before = _failures(label)
+
+    report = await _job(hot, arch, marks, audit=audit, events=Ev()).run()
+
+    # No false "dropped": only the day confirmed earlier in the pass; the third day is untouched.
+    assert hot.dropped == report.dropped == [(T, first)]
+    assert sorted(hot.days[T]) == [third, second]
+    assert {d for _, d in arch.calls} == {first, second}
+    assert report.retained == [(T, second, label)]
+    # The write-ahead intent keeps its outcome: same stream + day, plus the reason.
+    assert [a for a, _ in audit.rows] == ["retention.purge"] * 2 + ["rolloff.drop_unconfirmed"]
+    (_, intent), (_, outcome) = audit.rows[1], audit.rows[2]
+    assert intent["range_start_us"] == second
+    assert outcome == intent | {"reason": reason}
+    assert {a for a, _ in audit.rows} <= AUDIT_ACTIONS  # the real writer refuses unregistered ones
+    assert emitted == [
+        (
+            severity,
+            "rolloff.drop_unconfirmed",
+            {"stream": "trades", "range_start_us": second, "reason": reason},
+        )
+    ]
+    assert _failures(label) == before + 1
+    # `_advance` still ran with the confirmed day, but the watermark may not pass a day that is
+    # still hot: newest-first, the unconfirmed day (and the untouched older one) cap it.
+    assert advanced == [({"BTCUSDT": [first]}, {"BTCUSDT": [second]})]
+    assert (await marks.get("BTCUSDT", T)).archived_through_us == 0

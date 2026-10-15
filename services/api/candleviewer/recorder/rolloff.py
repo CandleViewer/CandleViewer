@@ -12,7 +12,10 @@ Any failure -> the partition stays hot, `archive.verification_failed` is
 raised by the archiver, the symbol is retried with bounded exponential backoff
 and its watermark is not advanced. Days are processed newest-first so an
 interrupted run leaves the oldest data hot. The drop is audited (write-ahead)
-before it is issued.
+before it is issued. A drop QuestDB cannot be confirmed to have applied
+(`StoragePartitionDropNotApplied`) is never reported dropped: the outcome is audited
+(`rolloff.drop_unconfirmed`), the day is retained (it caps the watermark) and the stream
+stops for this pass; the next nightly run retries it.
 """
 
 from __future__ import annotations
@@ -28,9 +31,9 @@ import structlog
 
 from candleviewer.observability import spawn
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
-from candleviewer.storage.cold.observability import SystemEventSink
+from candleviewer.storage.cold.observability import Severity, SystemEventSink
 from candleviewer.storage.cold.watermarks import ArchiveOutcome, RollOffWatermark
-from candleviewer.storage.errors import StorageError
+from candleviewer.storage.errors import StorageError, StoragePartitionDropNotApplied
 from candleviewer.storage.models import StreamKind, TimeRange
 
 US_PER_DAY = 86_400_000_000
@@ -310,13 +313,45 @@ class RollOffJob:
                 await self._audit.write("rolloff.drop_aborted", detail | {"reason": reason})
                 await self._late_rows(stream, day, symbols, report, retained)
                 continue
-            await self._hot.drop_day(stream, day_start)
+            try:
+                await self._hot.drop_day(stream, day_start)
+            except StoragePartitionDropNotApplied as exc:
+                await self._drop_unconfirmed(stream, day, symbols, detail, exc, report, retained)
+                break  # the older days wait for the next pass; `_advance` still runs below
             for o in outcomes:
                 recorder_rolloff_bytes_total.labels(stream=stream.value).inc(o.bytes)
                 dropped.setdefault(o.symbol, []).append(day_start)
             report.dropped.append((stream, day_start))
             await asyncio.sleep(0)  # yield between partitions (live ingestion first)
         await self._advance(stream, dropped, retained)
+
+    async def _drop_unconfirmed(
+        self,
+        stream: StreamKind,
+        day: TimeRange,
+        symbols: Sequence[str],
+        detail: dict[str, str | int],
+        exc: StoragePartitionDropNotApplied,
+        report: RollOffReport,
+        retained: dict[str, list[int]],
+    ) -> None:
+        """The DROP was issued but could not be confirmed applied: the day may still be hot, so it
+        is never reported dropped and it caps the watermark (`retained`)."""
+        # The purge record is append-only and stands; record the outcome against the same day.
+        await self._audit.write("rolloff.drop_unconfirmed", detail | {"reason": exc.reason})
+        reason = f"drop_not_applied_{exc.reason}"
+        recorder_rolloff_failures_total.labels(reason=reason).inc()
+        # A timeout is usually WAL lag that clears by itself; the rest needs an operator.
+        severity: Severity = "WARNING" if exc.reason == "timeout" else "CRITICAL"
+        event: dict[str, str | int] = {
+            "stream": stream.value,
+            "range_start_us": day.start_us,
+            "reason": exc.reason,
+        }
+        await self._events.emit(severity, "rolloff.drop_unconfirmed", event)
+        for symbol in symbols:
+            retained.setdefault(symbol, []).append(day.start_us)
+        report.retained.append((stream, day.start_us, reason))
 
     async def _late_rows(
         self,

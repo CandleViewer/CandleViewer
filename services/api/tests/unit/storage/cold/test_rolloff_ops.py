@@ -6,6 +6,7 @@ watermark store, path containment, downsample, and the compaction pass.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from pathlib import Path
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.storage.cold.compaction_run import compact_all
 from candleviewer.storage.cold.compactor import Compactor
@@ -185,46 +187,220 @@ async def test_hot_partitions_drop_uses_allowlisted_table_and_date_literal() -> 
     pg = FakePg()
     await QuestDbHotPartitions(pg).drop_day(StreamKind.ORDERBOOK_DELTA, DAY_START_US)
     assert pg.calls[0] == ("ALTER TABLE orderbook_deltas DROP PARTITION LIST '2026-10-17'", ())
-    assert "table_partitions('orderbook_deltas')" in pg.calls[1][0]
+    poll = pg.calls[1][0]
+    assert poll == "SELECT name, numRows, minTimestamp FROM table_partitions('orderbook_deltas')"
+    assert "2026-10-17" not in poll  # the day is matched Python-side, never spliced into SQL
 
 
-class LaggingDropPg:
-    """Lists the day for `lag` table_partitions calls after the DROP (async WAL apply)."""
+DAY = "2026-10-17"
+LIVE: dict[str, object] = {"name": DAY, "numRows": 120, "minTimestamp": datetime(2026, 10, 17)}
+OTHER: dict[str, object] = {
+    "name": "2026-10-18",
+    "numRows": 7,
+    "minTimestamp": datetime(2026, 10, 18),
+}
 
-    def __init__(self, lag: int | None) -> None:
-        self.lag = lag
+
+class FakeClock:
+    """Monotonic seconds; the fake `sleep` advances it, so wall-clock bounds need no real time."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.slept: list[float] = []
+
+    def __call__(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        assert self.now < 1_000.0, "runaway wait: the wall-clock bound never tripped"
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+class DropPg:
+    """QuestDB's async WAL apply: `table_partitions` keeps listing the day for `lag` polls.
+
+    `lag=None` never applies; `applied` is the inventory once it has; `suspended` is what
+    `wal_tables()` reports; `poll_cost_s` advances `clock` per inventory poll (a slow query).
+    """
+
+    def __init__(
+        self,
+        *,
+        lag: int | None = 0,
+        applied: list[dict[str, object]] | None = None,
+        suspended: bool = False,
+        clock: FakeClock | None = None,
+        poll_cost_s: float = 0.0,
+    ) -> None:
+        self.lag, self.suspended, self.clock, self.poll_cost_s = lag, suspended, clock, poll_cost_s
+        self.applied = [OTHER] if applied is None else applied
+        self.drops: list[str] = []
         self.polls = 0
+        self.wal_reads = 0
+        self.last_wal: tuple[str, tuple[object, ...]] | None = None  # no per-call log: stay bounded
 
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
-        if not sql.startswith("SELECT"):
+        if sql.startswith("ALTER"):
+            self.drops.append(sql)
+            assert len(self.drops) < 5, "runaway: the DROP is being re-issued"
             return []
+        if "wal_tables" in sql:
+            self.wal_reads += 1
+            self.last_wal = (sql, params)
+            return [{"suspended": self.suspended}]
         self.polls += 1
+        assert self.polls < 20_000, "runaway polling: the wall-clock bound never tripped"
+        if self.clock is not None:
+            self.clock.now += self.poll_cost_s
         if self.lag is None or self.polls <= self.lag:
-            return [{"name": "2026-10-17"}, {"name": "2026-10-18"}]
-        return [{"name": "2026-10-18"}]
+            return [dict(LIVE), dict(OTHER)]
+        return [dict(row) for row in self.applied]
+
+
+def _hot(pg: DropPg | FakePg, clock: FakeClock, **kw: float) -> QuestDbHotPartitions:
+    return QuestDbHotPartitions(pg, sleep=clock.sleep, clock=clock, **kw)
 
 
 async def test_hot_partitions_drop_waits_until_applied() -> None:
-    pg, slept = LaggingDropPg(3), []
-
-    async def sleep(s: float) -> None:
-        slept.append(s)
-
-    await QuestDbHotPartitions(pg, sleep=sleep).drop_day(T, DAY_START_US)
-    assert pg.polls == 4
-    assert slept == [0.02, 0.04, 0.08]
+    clock, pg = FakeClock(), DropPg(lag=3)
+    await _hot(pg, clock).drop_day(T, DAY_START_US)
+    assert pg.polls == 4 and len(pg.drops) == 1
+    assert clock.slept == [0.02, 0.04, 0.08]
+    assert pg.wal_reads == 3  # suspension is only read while the day is still listed
 
 
-async def test_hot_partitions_drop_never_applied_raises_after_bound() -> None:
-    pg, slept = LaggingDropPg(None), []
+@pytest.mark.parametrize(
+    "emptied",
+    [
+        {"name": DAY, "numRows": 0, "minTimestamp": datetime(2026, 10, 17)},
+        {"name": DAY, "numRows": "0", "minTimestamp": datetime(2026, 10, 17)},
+        {"name": DAY, "numRows": 5, "minTimestamp": None},
+    ],
+    ids=["zero-rows", "zero-rows-as-text", "null-min-timestamp"],
+)
+async def test_hot_partitions_drop_listed_but_emptied_partition_counts_as_applied(
+    emptied: dict[str, object],
+) -> None:
+    """QuestDB can keep an emptied partition listed until purge: zero rows = nothing to lose."""
+    clock, pg = FakeClock(), DropPg(lag=0, applied=[emptied, OTHER])
+    await _hot(pg, clock).drop_day(T, DAY_START_US)
+    assert pg.polls == 1 and clock.slept == [] and pg.wal_reads == 0
 
-    async def sleep(s: float) -> None:
-        slept.append(s)
 
-    with pytest.raises(StoragePartitionDropNotApplied):
-        await QuestDbHotPartitions(pg, sleep=sleep).drop_day(T, DAY_START_US)
-    assert max(slept) == 0.2
-    assert 10.0 <= sum(slept) < 10.2
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"name": DAY},
+        {"name": DAY, "numRows": "n/a", "minTimestamp": datetime(2026, 10, 17)},
+        {"name": DAY, "numRows": None, "minTimestamp": datetime(2026, 10, 17)},
+    ],
+    ids=["no-row-evidence", "unparsable-num-rows", "null-num-rows"],
+)
+async def test_hot_partitions_drop_listed_without_proof_of_emptiness_is_not_applied(
+    row: dict[str, object],
+) -> None:
+    """Fail closed: a listed day counts as gone only on positive evidence that it is empty."""
+    clock, pg = FakeClock(), DropPg(lag=0, applied=[row, OTHER])
+    with pytest.raises(StoragePartitionDropNotApplied) as exc:
+        await _hot(pg, clock, apply_timeout_s=1.0).drop_day(T, DAY_START_US)
+    assert exc.value.reason == "timeout"
+
+
+async def test_hot_partitions_drop_inventory_without_name_column_fails_closed() -> None:
+    """No row carries `name` (shape change): `{""}` must never read as 'the day is gone'."""
+    pg = FakePg([{"partition": DAY, "numRows": 0}])
+    with pytest.raises(StoragePartitionDropNotApplied) as exc:
+        await QuestDbHotPartitions(pg).drop_day(T, DAY_START_US)
+    assert exc.value.reason == "unexpected_shape" and "reason=unexpected_shape" in str(exc.value)
+    assert len(pg.calls) == 2  # the DROP and one poll: no retry on a shape we cannot read
+
+
+async def test_hot_partitions_drop_suspended_table_fails_fast_and_never_reissues_the_drop() -> None:
+    clock, pg = FakeClock(), DropPg(lag=None, suspended=True)
+    with pytest.raises(StoragePartitionDropNotApplied) as exc:
+        await _hot(pg, clock).drop_day(T, DAY_START_US)
+    err = exc.value
+    assert err.reason == "suspended" and "reason=suspended" in str(err)
+    assert (err.table, err.partition) == ("trades", DAY)
+    assert len(pg.drops) == 1 and pg.polls == 1 and clock.slept == []  # no second DROP, no wait
+    assert pg.last_wal == ("SELECT suspended FROM wal_tables() WHERE name = $1", ("trades",))
+
+
+async def test_hot_partitions_drop_never_applied_raises_timeout_after_wall_clock_bound() -> None:
+    clock, pg = FakeClock(), DropPg(lag=None)
+    with pytest.raises(StoragePartitionDropNotApplied) as exc:
+        await _hot(pg, clock).drop_day(T, DAY_START_US)  # default bound: 120 s
+    err = exc.value
+    assert err.reason == "timeout" and "reason=timeout" in str(err)
+    assert max(clock.slept) == 0.2  # backoff doubles from 20 ms and caps at 200 ms
+    assert 120.0 <= err.waited_s < 120.2 and err.waited_s == pytest.approx(sum(clock.slept))
+    assert len(pg.drops) == 1 and pg.wal_reads == pg.polls  # one DROP; suspension read per poll
+
+
+async def test_hot_partitions_drop_wall_clock_bound_counts_slow_polls_not_only_sleeps() -> None:
+    clock = FakeClock()
+    pg = DropPg(lag=None, clock=clock, poll_cost_s=50.0)  # each inventory poll "takes" 50 s
+    with pytest.raises(StoragePartitionDropNotApplied) as exc:
+        await _hot(pg, clock, apply_timeout_s=120.0).drop_day(T, DAY_START_US)
+    assert exc.value.reason == "timeout" and pg.polls == 3
+    assert exc.value.waited_s >= 150.0  # 3 polls: the sleeps alone (~0.06 s) never reach 120 s
+
+
+class HungPg:
+    """The DROP is accepted; the first inventory poll never answers."""
+
+    def __init__(self) -> None:
+        self.polling = asyncio.Event()
+
+    async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
+        if not sql.startswith("ALTER"):
+            self.polling.set()
+            await asyncio.Event().wait()
+        return []
+
+
+@pytest.mark.parametrize(
+    ("poll_timeout_s", "apply_timeout_s"),
+    [(3600.0, 0.01), (0.01, 3600.0)],
+    ids=["wall-clock-bound", "per-poll-bound"],
+)
+async def test_hot_partitions_drop_hung_poll_is_a_typed_timeout(
+    poll_timeout_s: float, apply_timeout_s: float
+) -> None:
+    hot = QuestDbHotPartitions(HungPg(), timeout_s=poll_timeout_s, apply_timeout_s=apply_timeout_s)
+    with pytest.raises(StoragePartitionDropNotApplied) as exc:
+        # One bound trips in ~10 ms, the other is an hour away; the guard only fails a hang.
+        await asyncio.wait_for(hot.drop_day(T, DAY_START_US), timeout=5)
+    assert exc.value.reason == "timeout"
+
+
+async def test_hot_partitions_drop_cancellation_is_not_swallowed() -> None:
+    pg = HungPg()
+    task = asyncio.ensure_future(QuestDbHotPartitions(pg).drop_day(T, DAY_START_US))
+    await pg.polling.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_hot_partitions_drop_logs_one_warning_per_failure_and_nothing_per_poll() -> None:
+    clock = FakeClock()
+    with capture_logs() as quiet:
+        await _hot(DropPg(lag=5), clock).drop_day(T, DAY_START_US)
+    assert quiet == []  # six polls, five waits: nothing logged
+    with capture_logs() as logs, pytest.raises(StoragePartitionDropNotApplied):
+        await _hot(DropPg(lag=None, suspended=True), clock).drop_day(T, DAY_START_US)
+    assert logs == [
+        {
+            "event": "rolloff_drop_not_applied",
+            "log_level": "warning",
+            "table": "trades",
+            "partition": DAY,
+            "reason": "suspended",
+            "waited_s": 0.0,
+        }
+    ]
 
 
 async def test_hot_partitions_refuse_stream_without_hot_table() -> None:

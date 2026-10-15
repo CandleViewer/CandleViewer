@@ -9,6 +9,11 @@ logs and `system_events`").
 
 from __future__ import annotations
 
+from typing import Literal
+
+#: Why a `DROP PARTITION` could not be confirmed (closed set: safe as a metric label).
+DropNotAppliedReason = Literal["suspended", "timeout", "unexpected_shape"]
+
 
 class StorageError(Exception):
     """Base exception for the M10 `storage` module."""
@@ -36,9 +41,31 @@ class StorageExportVerifyFailed(StorageError):
 
 
 class StoragePartitionDropNotApplied(StorageError):
-    """QuestDB did not apply a `DROP PARTITION` (async on WAL tables) within the bound."""
+    """A `DROP PARTITION` was issued but could not be confirmed applied: the day may still be hot.
+
+    QuestDB applies DDL on WAL tables asynchronously. `reason`: `suspended` (the table's WAL apply
+    is suspended: an operator must resume it), `timeout` (still listed after the wall-clock
+    bound) or `unexpected_shape` (the partition inventory lacks the `name` column: fail closed).
+    The reason is part of the message and a field; `table`, `partition` and `waited_s` say where
+    and how long. Never a success: callers keep the day, and the DROP is not re-issued here.
+    """
 
     code = "STORAGE_PARTITION_DROP_NOT_APPLIED"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: DropNotAppliedReason,
+        table: str = "",
+        partition: str = "",
+        waited_s: float = 0.0,
+    ) -> None:
+        super().__init__(f"{message} (reason={reason})")
+        self.reason: DropNotAppliedReason = reason
+        self.table = table
+        self.partition = partition
+        self.waited_s = waited_s
 
 
 class StorageSchemaDrift(StorageError):
@@ -111,6 +138,7 @@ ERROR_CODES: dict[type[StorageError], str] = {
     StorageError: StorageError.code,
     StorageTierUnavailable: StorageTierUnavailable.code,
     StorageExportVerifyFailed: StorageExportVerifyFailed.code,
+    StoragePartitionDropNotApplied: StoragePartitionDropNotApplied.code,
     StorageSchemaDrift: StorageSchemaDrift.code,
     StorageRetentionBlockedByPin: StorageRetentionBlockedByPin.code,
     StorageRetentionBlockedUnverified: StorageRetentionBlockedUnverified.code,

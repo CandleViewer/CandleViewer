@@ -15,6 +15,7 @@ from candleviewer.storage.errors import (
     StorageDiskCritical,
     StorageError,
     StorageExportVerifyFailed,
+    StoragePartitionDropNotApplied,
     StorageRetentionBlockedByPin,
     StorageRetentionBlockedByReplay,
     StorageRetentionBlockedUnverified,
@@ -29,6 +30,7 @@ def test_error_codes_are_stable_and_unique() -> None:
         StorageError: "STORAGE_ERROR",
         StorageTierUnavailable: "STORAGE_TIER_UNAVAILABLE",
         StorageExportVerifyFailed: "STORAGE_EXPORT_VERIFY_FAILED",
+        StoragePartitionDropNotApplied: "STORAGE_PARTITION_DROP_NOT_APPLIED",
         StorageSchemaDrift: "STORAGE_SCHEMA_DRIFT",
         StorageRetentionBlockedByPin: "STORAGE_RETENTION_BLOCKED_BY_PIN",
         StorageRetentionBlockedUnverified: "STORAGE_RETENTION_BLOCKED_UNVERIFIED",
@@ -51,3 +53,21 @@ def test_storage_tier_unavailable_carries_its_class_code() -> None:
     err = StorageTierUnavailable("questdb down")
     assert err.code == "STORAGE_TIER_UNAVAILABLE"
     assert str(err) == "questdb down"
+
+
+def test_partition_drop_not_applied_carries_structured_reason_and_names_it_in_the_message() -> None:
+    err = StoragePartitionDropNotApplied(
+        "partition 2026-10-17 of trades not applied",
+        reason="suspended",
+        table="trades",
+        partition="2026-10-17",
+        waited_s=1.5,
+    )
+    assert isinstance(err, StorageError) and err.code == "STORAGE_PARTITION_DROP_NOT_APPLIED"
+    assert (err.reason, err.table, err.partition, err.waited_s) == (
+        "suspended",
+        "trades",
+        "2026-10-17",
+        1.5,
+    )
+    assert str(err) == "partition 2026-10-17 of trades not applied (reason=suspended)"

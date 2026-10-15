@@ -5,7 +5,8 @@ so everything that touches pyarrow / QuestDB lives here behind small ports:
 
 * `QuestDbHotPartitions` — closed-day inventory, symbols per day, and the
   `ALTER TABLE ... DROP PARTITION LIST` (table from the closed allowlist via
-  `checked_identifier`, the date literal validated before `sql_string_literal`).
+  `checked_identifier`, the date literal validated before `sql_string_literal`),
+  then a wall-clock-bounded wait until QuestDB has applied it (WAL DDL is async).
 * `ColdArchiver` — orchestrates the existing `ColdExporter` (never forked) and
   adds the read-back verification the ticket requires: the written file is
   re-read and its row count AND a canonical content digest must equal the hot
@@ -22,6 +23,7 @@ import json
 import os
 import re
 import tempfile
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -58,6 +60,7 @@ from candleviewer.storage.cold.writer import (
     write_parquet_file,
 )
 from candleviewer.storage.errors import (
+    DropNotAppliedReason,
     StorageExportVerifyFailed,
     StoragePartitionDropNotApplied,
 )
@@ -68,7 +71,9 @@ from candleviewer.storage.sql_identifiers import checked_identifier, sql_string_
 
 US_PER_DAY = 86_400_000_000
 _US_PER_HOUR = 3_600_000_000
-DROP_APPLY_TIMEOUT_S = 10.0
+#: Wall clock for the whole "drop applied" wait, every poll included. Generous on purpose: a WAL
+#: backlog (bulk import, E16-T10) must not read as a failure.
+DROP_APPLY_TIMEOUT_S = 120.0
 DROP_POLL_MIN_S = 0.02
 DROP_POLL_MAX_S = 0.2
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -152,6 +157,27 @@ class CanonicalDigest:
         return self._hash.hexdigest()
 
 
+_TRUTHY = frozenset({"true", "t", "1"})
+
+
+def _as_int(value: object) -> int | None:
+    try:
+        return int(str(value))
+    except ValueError:
+        return None
+
+
+def _emptied(row: dict[str, object]) -> bool:
+    """A listed partition that holds nothing (QuestDB keeps a dropped one listed until purge).
+
+    Needs positive evidence, so a missing column never reads as "dropped": zero rows, or an
+    explicit NULL `minTimestamp`.
+    """
+    return _as_int(row.get("numRows")) == 0 or (
+        "minTimestamp" in row and row["minTimestamp"] is None
+    )
+
+
 #: Cheap value column per hot table for the pre-drop fingerprint.
 _FINGERPRINT_COLUMN: dict[StreamKind, str] = {
     StreamKind.TRADES: "size",
@@ -172,11 +198,13 @@ class QuestDbHotPartitions:
         timeout_s: float = 60.0,
         apply_timeout_s: float = DROP_APPLY_TIMEOUT_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._conn = connection
         self._timeout_s = timeout_s
         self._apply_timeout_s = apply_timeout_s
         self._sleep = sleep
+        self._clock = clock
 
     async def _fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
         async with asyncio.timeout(self._timeout_s):
@@ -226,25 +254,61 @@ class QuestDbHotPartitions:
         name = day_name(day_start_us)
         if not _DATE_RE.fullmatch(name):  # pragma: no cover - strftime guarantees the shape
             raise ValueError("bad partition name")
+        # Allowlisted table via checked_identifier; day escaped by sql_string_literal.
         stmt = f"ALTER TABLE {table} DROP PARTITION LIST " + sql_string_literal(name)
         await self._fetch(stmt)
         await self._await_dropped(table, name)
 
     async def _await_dropped(self, table: str, name: str) -> None:
-        """WAL tables apply DDL asynchronously: return only once the day is gone (bounded)."""
+        """WAL tables apply DDL asynchronously: return only once the day is gone, else raise.
+
+        Gone = absent from `table_partitions`, or listed but emptied (`_emptied`). A suspended WAL
+        can never apply the drop: fail fast. `apply_timeout_s` bounds the whole wait, every poll
+        included (a hung query too). The DROP is never re-issued; a failure is never success.
+        """
         literal = sql_string_literal(table)
-        sql = f"SELECT name FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted
-        delay, waited = DROP_POLL_MIN_S, 0.0
-        while True:
-            if name not in {str(r.get("name", "")) for r in await self._fetch(sql)}:
-                return
-            if waited >= self._apply_timeout_s:
-                raise StoragePartitionDropNotApplied(
-                    f"partition {name} of {table} still present after {waited:.1f}s"
-                )
-            await self._sleep(delay)
-            waited += delay
-            delay = min(delay * 2, DROP_POLL_MAX_S)
+        sql = f"SELECT name, numRows, minTimestamp FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted table via checked_identifier, escaped by sql_string_literal; the day is matched in Python
+        start, delay = self._clock(), DROP_POLL_MIN_S
+        try:
+            async with asyncio.timeout(self._apply_timeout_s):
+                while True:
+                    rows = await self._fetch(sql)
+                    if rows and not any(r.get("name") for r in rows):
+                        raise self._not_applied(table, name, "unexpected_shape", start)
+                    if not any(str(r.get("name")) == name and not _emptied(r) for r in rows):
+                        return
+                    if await self._wal_suspended(table):
+                        raise self._not_applied(table, name, "suspended", start)
+                    if self._clock() - start >= self._apply_timeout_s:
+                        raise self._not_applied(table, name, "timeout", start)
+                    await self._sleep(delay)
+                    delay = min(delay * 2, DROP_POLL_MAX_S)
+        except TimeoutError:
+            raise self._not_applied(table, name, "timeout", start) from None
+
+    async def _wal_suspended(self, table: str) -> bool:
+        rows = await self._fetch("SELECT suspended FROM wal_tables() WHERE name = $1", table)
+        return any(str(r.get("suspended")).lower() in _TRUTHY for r in rows)
+
+    def _not_applied(
+        self, table: str, name: str, reason: DropNotAppliedReason, start: float
+    ) -> StoragePartitionDropNotApplied:
+        """One structured warning per failed wait (never per poll), then the typed error."""
+        waited = self._clock() - start
+        logger().warning(
+            "rolloff_drop_not_applied",
+            table=table,
+            partition=name,
+            reason=reason,
+            waited_s=round(waited, 3),
+        )
+        return StoragePartitionDropNotApplied(
+            f"partition {name} of {table} not applied after {waited:.1f}s",
+            reason=reason,
+            table=table,
+            partition=name,
+            waited_s=waited,
+        )
 
 
 def _subranges(stream: StreamKind, rng: TimeRange) -> list[tuple[TimeRange, dict[str, str]]]:
