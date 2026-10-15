@@ -4,7 +4,7 @@ system-scope setting `accounts.subaccount_tier` that `GET /admin/capacity` repor
 It is owner-only (`admin:write`), CSRF-protected, takes a closed body, and is audited with an
 action that exists in the audit vocabulary. The tier is committed before capacity is read, so a
 failing `used` source still answers `200`; the write is visible to the next capacity read, ignores
-`Idempotency-Key` and needs no step-up."""
+`Idempotency-Key` and needs no step-up. `used` counts the process environment (C-2.11)."""
 
 from __future__ import annotations
 
@@ -92,6 +92,15 @@ def test_no_step_up_is_required_and_the_reason_is_stated() -> None:
     text = _description()
     assert "No step-up" in text
     assert "SR-025" in text
+
+
+def test_used_counts_the_process_environment_not_a_hard_coded_live() -> None:
+    # C-2.11: a demo process reports its demo sub-accounts; production is live.
+    used = _SPEC["components"]["schemas"]["SubaccountCapacity"]["properties"]["used"]
+    text = " ".join(used["description"].split())
+    scope = "non-deleted sub-accounts in the process environment (live in production; C-2.11)"
+    assert scope in text
+    assert "env = live" not in text
 
 
 def test_rbac_matrix_row_denies_every_non_owner() -> None:
