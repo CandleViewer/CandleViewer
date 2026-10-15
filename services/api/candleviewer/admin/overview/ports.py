@@ -72,7 +72,10 @@ class SymbolStorage:
 
 @dataclass(frozen=True, slots=True)
 class StorageSnapshot:
-    """The recorder's DiskBudget view: measured, never assumed (`None` = not measured yet)."""
+    """The recorder's DiskBudget view: measured, never assumed (`None` = not measured yet).
+
+    Adapters take growth from `DiskBudget.measured_growth()`, never from `report()`, which
+    folds "not measured yet" into `0`."""
 
     used_bytes: int
     free_bytes: int
