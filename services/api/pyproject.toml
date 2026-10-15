@@ -159,7 +159,6 @@ source = ["candleviewer"]
 # coverage floor. Each entry must be removed by the ticket that implements
 # real logic in that module; do not add new entries without a ticket ref.
 omit = [
-  "candleviewer/accounts/*",
   "candleviewer/admin/*",
   # bars models/spec/series/schema are implemented by E12-T01 and counted in the floor.
   "candleviewer/bars/service.py",

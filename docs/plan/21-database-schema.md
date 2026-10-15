@@ -612,7 +612,7 @@ One row per Bybit UID/environment pair. Main account and sub-accounts live in th
 | Column                      | Type           | Null | Default            | Constraints / notes                                    |
 | --------------------------- | -------------- | ---- | ------------------ | ------------------------------------------------------ |
 | `id`                        | uuid           | no   | —                  | PK                                                     |
-| `exchange`                  | exchange_code  | no   | `'bybit'`          | Adapter selector                                       |
+| `exchange`                  | exchange_code  | no   | —                  | Adapter selector; no DB default (0017), set by caller  |
 | `env`                       | exchange_env   | no   | —                  | live / demo / testnet                                  |
 | `kind`                      | account_kind   | no   | —                  | main / sub                                             |
 | `exchange_uid`              | text           | no   | —                  | Bybit UID; UNIQUE with (exchange, env)                 |
@@ -636,7 +636,7 @@ One row per Bybit UID/environment pair. Main account and sub-accounts live in th
 ```sql
 CREATE TABLE exchange_accounts (
   id                    uuid PRIMARY KEY,
-  exchange              exchange_code NOT NULL DEFAULT 'bybit',
+  exchange              exchange_code NOT NULL,
   env                   exchange_env NOT NULL,
   kind                  account_kind NOT NULL,
   exchange_uid          text NOT NULL,
