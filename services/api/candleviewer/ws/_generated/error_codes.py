@@ -23,6 +23,7 @@ class ErrorCode(StrEnum):
     REFRESH_TOKEN_INVALID = "refresh_token_invalid"
     STEP_UP_REQUIRED = "step_up_required"
     SESSION_READ_ONLY = "session_read_only"
+    MFA_ENROLLMENT_REQUIRED = "mfa_enrollment_required"
     POSITIONS_UNKNOWN = "positions_unknown"
     FORBIDDEN = "forbidden"
     CSRF_TOKEN_INVALID = "csrf_token_invalid"
@@ -98,6 +99,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.REFRESH_TOKEN_INVALID: ErrorMeta(("rest",), None, False, None, None, "Refresh token unknown, rotated away, or revoked (possible reuse attack)"),
     ErrorCode.STEP_UP_REQUIRED: ErrorMeta(("rest",), None, False, None, None, "A dangerous action needs a live step-up elevation for its action class"),
     ErrorCode.SESSION_READ_ONLY: ErrorMeta(("rest",), None, False, None, None, "Session is read-only for 5 minutes after three invalid step-up codes"),
+    ErrorCode.MFA_ENROLLMENT_REQUIRED: ErrorMeta(("rest",), None, False, None, None, "Session is enrolment-only; enrol and confirm a TOTP method first"),
     ErrorCode.POSITIONS_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "Open-position state is unavailable; resend with acknowledge_unknown_positions=true"),
     ErrorCode.FORBIDDEN: ErrorMeta(("rest", "ws",), "any", False, None, None, "Authenticated but lacking the required permission"),
     ErrorCode.CSRF_TOKEN_INVALID: ErrorMeta(("rest",), None, False, None, None, "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session (SR-041)"),

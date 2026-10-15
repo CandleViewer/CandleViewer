@@ -384,6 +384,7 @@ Rules:
 - Until `auth_ok`, the only accepted frames are `auth` and `ping`. Anything else → `err` with `not_authenticated` and the connection closes after 3 such frames.
 - `auth_timeout_ms` (10 s) without a successful `auth` → `bye` with `auth_timeout`, close code `4401`.
 - Three failed `auth` attempts → `bye` with `auth_failed`, close `4401`, and a `warning` audit entry.
+- An `auth` or re-`auth` whose session is enrolment-only (its user must enrol TOTP first; `22-api-openapi.yaml`, "Enrolment-only session") is refused at once and the socket closes: `bye` with reason `mfa_enrollment_required`, close `4403`. It does not count as a failed `auth`. The client completes enrolment over REST and connects again with the full session's token.
 - `token_expires_at_ms` tells the client when to re-`auth`. The client SHOULD refresh at `expires_at - 60 s`. If the token expires without re-auth, the server sends `bye` (`token_expired`, `4401`) and closes — subscriptions are not silently continued on an expired identity.
 
 **As built (E17-S01, #2132; wired by #377).** These details are binding:
