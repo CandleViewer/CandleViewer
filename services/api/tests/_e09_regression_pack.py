@@ -4,7 +4,9 @@
 that says which paths the marker covers, and `tests/conftest.py` applies it at collection time.
 Tagging by path, not by a decorator per test, leaves the ~100 test modules other PRs edit untouched
 and lets a new test dropped into a pack directory join the pack without anyone remembering to tag
-it. `tests/qa/test_e09_regression_pack.py` fails when this list and the pack document drift apart.
+it. `tests/qa/test_e09_regression_pack.py` fails when this list and the pack document's "Marker
+coverage" list differ in either direction, when the pack cites a test the marker does not select,
+and when the marker selects anything the default lane deselects.
 """
 
 from __future__ import annotations
@@ -19,8 +21,9 @@ import pytest
 MARKER: Final = "e09_regression"
 API_ROOT: Final = Path(__file__).resolve().parents[1]
 
-# A trailing slash means a directory, anything else one file. The first group is the pack's "How to
-# run" subset; the second is cited by the pack as evidence but lives outside those directories.
+# A trailing slash means a directory, anything else one file. The pack document's "Marker coverage"
+# section lists the same paths. The last two files are cited by the pack as evidence (SR-122, the
+# audit migration) but live outside the suite directories above them.
 PACK_PATHS: Final[tuple[str, ...]] = (
     "tests/unit/auth/",
     "tests/unit/audit/",
@@ -38,6 +41,7 @@ PACK_PATHS: Final[tuple[str, ...]] = (
 # `addopts` in pyproject.toml deselects these by default (nightly or wall-clock-budget lanes). A
 # bare `-m e09_regression` replaces that default expression, so the marker is withheld from them
 # instead of leaving every QA run to repeat "and not perf and not fuzz and not harness".
+# `tests/qa/test_e09_regression_pack.py` fails when this set and that expression differ.
 NIGHTLY_ONLY_MARKERS: Final = frozenset({"fuzz", "harness", "perf"})
 
 

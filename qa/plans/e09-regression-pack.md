@@ -12,11 +12,42 @@ cd services/api
 uv run pytest -p no:randomly --no-cov -m e09_regression
 ```
 
-`e09_regression` is a pytest marker registered in `services/api/pyproject.toml`. `services/api/tests/_e09_regression_pack.py` lists the paths it covers (the auth, audit, API, WS, RBAC contract, auth security and auth chaos suites, the E09-Q01 dry run, and the two files the SR-122 and audit-migration rows cite) and `services/api/tests/conftest.py` applies it at collection, so a new test in one of those directories joins the pack. A bare `-m` replaces the repo's default `-m` expression, so the marker is never put on `perf`, `fuzz` or `harness` items. The run collects the whole tree first (about 15 s). `services/api/tests/qa/test_e09_regression_pack.py` fails when this document cites a test the marker does not select.
-Result when recorded (2026-10-15, section D): 2466 passed, 1 skipped (chaos S1b needs docker), 1 xfailed (#2323, open). Any failure is a release-gate blocker; the xfail is a known open defect, not a pass.
-Docker-only evidence is not selected by the marker; the CI `integration` job runs it (the two audit grant tests in section B2).
+`e09_regression` is a pytest marker registered in `services/api/pyproject.toml`. `services/api/tests/conftest.py` applies it at collection to the paths listed under "Marker coverage" below, so a new test in one of them joins the pack. A bare `-m` replaces the repo's default `-m` expression, so the marker is never put on `perf`, `fuzz` or `harness` items. The run collects the whole tree first (about 15 s).
+
+Expected result: no failure; the chaos S1b test skips without docker. Any failure is a release-gate blocker. Counts and the dated record are in section D2.
+
 Frontend E2E (needs Playwright browsers; **not run by the pack author**): `apps/web/e2e/auth/*.spec.ts`.
-Time budget: automated about 10 min including setup (measured about 1 min 12 s wall, section D); manual items below about 2 h. The manual half has not been executed by anyone yet (#2491).
+
+Time budget: automated about 10 min including setup (about 1 min 20 s wall measured, section D2); manual items below about 2 h. The manual half has not been executed by anyone yet (#2491).
+
+### Marker coverage
+
+The marker selects every test under these paths except the `perf`, `fuzz` and `harness` items. The list lives in `PACK_PATHS` in `services/api/tests/_e09_regression_pack.py`. `services/api/tests/qa/test_e09_regression_pack.py` compares the two lists in both directions, runs real collections to check that `-m e09_regression` selects exactly what the default lane selects in these paths, and fails when this document cites a test that `-m e09_regression` does not select (apart from the evidence in the next subsection).
+
+- `tests/unit/auth/`
+- `tests/unit/audit/`
+- `tests/unit/api/`
+- `tests/unit/ws/`
+- `tests/unit/test_ws_permissions.py`
+- `tests/contract/rbac/`
+- `tests/security/auth/`
+- `tests/qa/test_e09_dryrun_group_a.py` (E09-Q01 dry run)
+- `tests/chaos/auth/`
+- `tests/unit/observability/test_redaction.py` (cited by the SR-122 row)
+- `tests/unit/migrations/test_0003_audit_log.py` (cited by the audit append-only row)
+
+### Evidence the marker does not select
+
+Cited in sections A and B2 and run by another lane. The guard checks that each is still cited, still outside the marker and still selected by its lane's marker.
+
+**A07 timing**, marker `perf`: 1000 samples per arm of a wall-clock test, about 2 min locally, so it stays out of the pack. The CI `py-perf` job runs it; locally:
+
+```
+cd services/api
+uv run pytest -p no:randomly --no-cov -m perf tests/unit/auth/test_login_timing_enumeration.py
+```
+
+**The two audit grant tests of section B2**, marker `integration`: they need the docker Postgres stack. The CI `integration` job runs them.
 
 ## A. Behaviour to automated test
 
@@ -96,8 +127,8 @@ CSRF protection currently relies on SameSite=Strict cookies, the Origin allow-li
 - k6 Argon2 timing header: #2097.
 - Password change during a live step-up: #2099.
 - A revoked owner's in-flight step-up-gated action still completes: #2593 (the #2100 test pins atomicity and order, not refusal).
-- No CI job selects `-m e09_regression` on its own (untracked): adding one edits `.github/workflows`, which is owner-gated (C-9.1). The same tests already run in CI when a PR touches Python (`py`, and `integration` for the auth chaos suite), and the Playwright specs run in `e2e-web`.
-- Manual steps M1-M8 and the staging re-run of the four charters have not been executed by anyone: #2491. The automated half has agent cold runs (section D).
+- No CI job selects `-m e09_regression` on its own: #2716. Adding one edits `.github/workflows`, which `.github/CODEOWNERS` routes to devsecops and security and `AGENTS.md` section 8 item 3 gates behind the `security-review` label. The same tests already run in CI when a PR touches Python (`py`; `integration` for the auth chaos suite; `py-perf` for the A07 timing test), and the Playwright specs run in `e2e-web`.
+- Manual steps M1-M8 and the staging re-run of the four charters have not been executed by anyone: #2491. The automated half has labelled agent runs (section D2).
 - Session id rotation on role change (SR-013): #2101.
 - Owner notification on lockout (SR-016): #2102.
 - End-to-end no-token-in-logs test (SR-122): #2103.
@@ -119,11 +150,11 @@ The wider slice is `src/features/{auth,invites,onboarding}/**`, `src/lib/auth/**
 
 Verdict: **the 80% floor is met** by the slice on lines, functions and branches. CI enforces the thresholds on `apps/web` as a whole, not per slice. Weakest files: `src/features/auth/authApi.ts` branches 62.50% (20/32) and `src/features/invites/AdminInviteScreen.tsx` functions 61.54% (8/13). The 2026-10-12 QA agent measured lines 91.89% and branches 81.31% for `src/features/auth/**` (comment on #297), so the figure is stable.
 
-### D2. Cold runs of the automated half (labelled agent runs, not a human second person)
+### D2. Runs of the automated half (labelled agent runs, not a human second person)
 
 - 2026-10-12, independent QA agent session (comment on #297, owner-delegated per #1778): the path-list form of this pack at `8f81382` in a loopback-only network namespace. Result: 1685 passed, 1 skipped (S1b), 9 deselected, 0 failed; tests 36.7 s (43.5 s wall).
-- 2026-10-15, hcl-worker-1, agent session 766e9ed3 (not the session that built the pack in #2098, and not a human QA engineer): `-m e09_regression` as in "How to run" plus `-rsx`, on `353c65ec` with the marker change, Python 3.14.4 (CI uses 3.12), in a loopback-only network namespace (`unshare -rn`; an external connect fails with ENETUNREACH). Result: 2466 passed, 1 skipped, 1 xfailed, 0 failed, 8876 deselected; tests 66.60 s (1 min 12 s wall). Earlier runs, in and outside the namespace, gave the same passed, skipped and xfailed counts.
+- 2026-10-15, hcl-worker-1, agent session 766e9ed3: an author verification run of this change, not an independent one (this session wrote the marker; it did not build the pack in #2098 and is not a human QA engineer). `-m e09_regression` as in "How to run" plus `-rsx`, on `b5f5d3bb` (the marker change of PR #2678 on main `5b3d2941`), Python 3.14.4 (CI uses 3.12), in a loopback-only network namespace (`unshare -rn` with `lo` up; an external connect fails with ENETUNREACH). Result: 2621 passed, 5 failed, 1 skipped, 9171 deselected; tests 75.70 s (1 min 22 s wall). The 5 failures are `tests/contract/rbac/test_route_matrix.py` stub-status tests that fail on main itself: the pins for `GET /instruments` went stale when #2586 and #2312 merged without each other (the change that repairs it is #2719, open when this ran). The same run with the two-line change of #2719 cherry-picked onto `b5f5d3bb` in a scratch checkout gives 2626 passed, 1 skipped, 0 failed; tests 70.36 s (1 min 16 s wall). The independent run of the marker is left to the QA re-run on #297.
 - Skipped: `tests/chaos/auth/test_auth_chaos.py:163` (S1b, docker stack unavailable; the CI `integration` job runs it).
-- Xfailed: `tests/unit/audit/test_router_actions_registered.py::test_every_literal_audit_action_emitted_is_registered[api/onboarding.py]` (#2323, open).
-- Selection parity: a collect-only of the old path list gives 2434 tests and `-m e09_regression` gives 2468. The marker selects every test of the old path list (two parameter ids embed a random uuid and differ per run) plus the 34 tests of the two extra files the pack cites.
+- Selection parity: `services/api/tests/qa/test_e09_regression_pack.py` collects the pack paths under `-m e09_regression` and under the repo's default `-m` on every run and requires identical node ids (two parameter ids of `tests/security/auth/test_csrf_double_submit.py` embed a random uuid and are masked: #2717). On `b5f5d3bb` the marker selects 2627 tests in the pack paths, 34 of them from the two extra files the pack cites, and withholds 10 `perf`, `fuzz` or `harness` items.
+- A07 timing test (`perf`, not selected by the marker): the command in "How to run" gave 1 passed in 113.84 s (1 min 55 s wall), same session, namespace and code under test as the run above. CI runs it in `py-perf`.
 - Not covered by these runs: manual steps M1-M8 and the staging re-run of the charters (#2491), and the Playwright specs, which CI runs in `e2e-web`.
