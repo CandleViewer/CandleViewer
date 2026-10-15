@@ -16,6 +16,8 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Final, Literal
 
+from candleviewer.admin.errors import AdminError
+
 IncidentStatus = Literal["open", "acknowledged", "resolved"]
 Severity = Literal["debug", "info", "warning", "error", "critical"]
 INCIDENT_SEVERITIES: Final = frozenset({"error", "critical"})
@@ -109,7 +111,7 @@ def apply_event(incident: IncidentState | None, event: SystemEventRow) -> Incide
     )
 
 
-class IncidentTransitionError(Exception):
+class IncidentTransitionError(AdminError):
     """The requested status change is not allowed (`409 conflict`)."""
 
 

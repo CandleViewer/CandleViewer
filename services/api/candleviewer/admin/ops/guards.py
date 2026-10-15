@@ -13,13 +13,14 @@ from __future__ import annotations
 
 from typing import Any, Final, Literal
 
+from candleviewer.admin.errors import AdminError
 from candleviewer.observability.health_probes import ComponentState, HealthSnapshot
 
 RestoreRule = Literal["maintenance_mode_required", "open_positions_unacknowledged"]
 NOT_DEPLOYED_DETAIL: Final = "not deployed"
 
 
-class RestoreRefusedError(Exception):
+class RestoreRefusedError(AdminError):
     """A restore precondition is not met: `409 conflict` naming `rule`; no job is created."""
 
     def __init__(self, rule: RestoreRule, field: str, detail: str) -> None:
