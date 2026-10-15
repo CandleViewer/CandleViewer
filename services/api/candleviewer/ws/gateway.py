@@ -110,8 +110,10 @@ CLOSE_FLUSH_TIMEOUT_S: Final = 2.0
 #: Upper bound on writing a connection's `ws.connection.closed` row; the teardown never waits
 #: longer on the audit sink.
 CLOSE_AUDIT_TIMEOUT_S: Final = 2.0
-#: Close reasons audited at `warning` rather than `info` (E17-S01 Security notes).
-WARNING_CLOSES: Final = frozenset({"auth_failed", "slow_consumer"})
+#: Close reasons audited at `warning` rather than `info` (E17-S01 Security notes; a fault too).
+WARNING_CLOSES: Final = frozenset({"auth_failed", "slow_consumer", "internal_error"})
+#: The close code uvicorn's own shutdown sends every socket, before the lifespan's §9.4 one runs.
+SERVER_RESTART_CLOSE: Final = 1012
 
 #: (raw access token) -> (session_id, user_id, token expires_at); raises on any
 #: invalid token. The expiry is mandatory and timezone-aware: the first instant
@@ -241,10 +243,13 @@ def close_reason_label(reason: str) -> str:
 
 def closed_reason(conn: _Connection, fault: BaseException | None) -> str:
     """Why a connection ended, for its audit row: the `bye`'s reason (bounded like the metric
-    label), else `internal_error` after a fault, else `client_closed`."""
+    label), else `internal_error` after a fault, `shutdown` when the server transport closed it
+    (`SERVER_RESTART_CLOSE`), else `client_closed`."""
     if conn.bye_frame is not None:
         return close_reason_label(str(conn.bye_frame["p"].get("reason", "")))
-    return "internal_error" if fault is not None else "client_closed"
+    if fault is not None:
+        return "internal_error"
+    return "shutdown" if conn.disconnect_code == SERVER_RESTART_CLOSE else "client_closed"
 
 
 def _source_ip(scope: Mapping[str, Any]) -> str | None:
@@ -298,6 +303,8 @@ class _Connection:
         #: so nothing but `bye_frame` may still be sent (#2259 review).
         self.sealed = False
         self.bye_frame: dict[str, Any] | None = None
+        #: The close code of a disconnect the gateway did not send (`closed_reason`).
+        self.disconnect_code: int | None = None
         self.close_code: int | None = None
         #: The token's real expiry (epoch ms), also checked on the wall clock.
         self.token_expires_at_ms: int | None = None
@@ -555,8 +562,9 @@ def make_ws_router(
                     request_id=current_request_id(),
                 )
         except Exception:
+            # Not "not written": a write that timed out may still land (the writer shields it).
             _log().warning(
-                "ws close audit not written", connection_id=conn.connection_id, exc_info=True
+                "ws close audit not confirmed", connection_id=conn.connection_id, exc_info=True
             )
 
     async def do_auth(conn: _Connection, frame: dict[str, Any]) -> None:
@@ -741,6 +749,7 @@ def make_ws_router(
         while not conn.closing:
             msg = await conn.ws.receive()
             if msg.get("type") == "websocket.disconnect":
+                conn.disconnect_code = msg.get("code")
                 return
             conn.watchdog.last_inbound = conn.clock()
             frame = conn.decode(msg, max_frame_bytes)
@@ -833,8 +842,8 @@ def make_ws_router(
             if conn.closing:
                 # Let the writer flush `bye` + close frame (bounded), then stop.
                 await asyncio.wait({write_task}, timeout=CLOSE_FLUSH_TIMEOUT_S)
-        except WebSocketDisconnect:
-            pass
+        except WebSocketDisconnect as exc:
+            conn.disconnect_code = exc.code
         except asyncio.CancelledError as exc:
             if not (
                 exc.args == (_WRITER_DONE,) and handler is not None and handler.uncancel() == 0
@@ -863,10 +872,12 @@ def make_ws_router(
                 registry.unregister(conn.authz)
             if conn.session_id is not None:
                 revocation_hub.unregister(conn.session_id, conn.closer)
-            if conn.lifecycle.can(ConnEvent.CLOSE):
-                conn.lifecycle.fire(ConnEvent.CLOSE)
-            conn.lifecycle.fire(ConnEvent.CLOSED)
-            await audit_close(conn, fault)
-            structlog.contextvars.unbind_contextvars("connection_id", "user_id", "session_id")
+            try:
+                await audit_close(conn, fault)
+            finally:
+                if conn.lifecycle.can(ConnEvent.CLOSE):
+                    conn.lifecycle.fire(ConnEvent.CLOSE)
+                conn.lifecycle.fire(ConnEvent.CLOSED)
+                structlog.contextvars.unbind_contextvars("connection_id", "user_id", "session_id")
 
     return router

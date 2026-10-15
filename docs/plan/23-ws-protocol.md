@@ -400,8 +400,8 @@ Rules:
 - Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_SHUTDOWN_GRACE_MS` (5 000) and `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000). The defaults are the values in this section and §9.4.
 - `auth_ok` carries `user_id`, `roles`, `permissions`, `account_scope`, `session_id`, `token_expires_at_ms` and `kill_switch`. It does not carry `username` or `allowed_environments`, which the examples above show and §13.4 marks optional (#2486).
 - When an authenticated connection ends, one `ws.connection.closed` audit row is written (#2486):
-  - its reason is the close reason: the `bye`'s, else `client_closed`, or `internal_error` after a fault;
-  - it is `warning` for `auth_failed` and `slow_consumer`, and `info` otherwise;
+  - its reason is the close reason: the `bye`'s; else `internal_error` after a fault, `shutdown` when the server transport closed the socket (uvicorn's own shutdown sends `1012`), or `client_closed`;
+  - it is `warning` for `auth_failed`, `slow_consumer` and `internal_error`, and `info` otherwise;
   - it carries E04's `request_id` and never the token;
   - it is best effort, bounded at 2 s.
 

@@ -13,6 +13,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -589,6 +590,7 @@ def _settle(world: _World, done: Callable[[], bool]) -> None:
 
 
 def _close_audits(world: _World) -> list[dict[str, Any]]:
+    """Wait inside the socket's `with` block: leaving it cancels a teardown still under way."""
     _settle(world, lambda: any(r["action"] == CLOSED for r in world.audit.records))
     return [r for r in world.audit.records if r["action"] == CLOSED]
 
@@ -604,7 +606,8 @@ def test_client_close_of_an_authenticated_socket_writes_one_info_close_audit(
     with world.client.websocket_connect("/ws", subprotocols=JSON, headers=headers) as ws:
         _hello(ws)
         assert _auth(ws)["t"] == "auth_ok"
-    (rec,) = _close_audits(world)
+        ws.close(1000)
+        (rec,) = _close_audits(world)
     assert (rec["reason"], rec["severity"], rec["outcome"]) == ("client_closed", "info", "success")
     assert (rec["actor_user_id"], rec["session_id"], rec["actor_label"]) == (USER, SESSION, "ws")
     assert rec["object_kind"] == "ws_connection" and rec["object_id"]
@@ -619,8 +622,8 @@ def test_slow_consumer_close_writes_a_warning_close_audit(world: _World) -> None
         (conn,) = world.hub.of_user(USER)
         world.client.portal.call(conn.evict)  # type: ignore[union-attr]  # portal set in ctx
         bye, _ = _bye_then_close(ws)
+        (rec,) = _close_audits(world)
     assert bye["p"]["reason"] == "slow_consumer"
-    (rec,) = _close_audits(world)
     assert (rec["reason"], rec["severity"]) == ("slow_consumer", "warning")
 
 
@@ -634,8 +637,8 @@ def test_failed_reauths_on_an_authenticated_socket_write_a_warning_close_audit(
             assert _auth(ws, f"bad-{i}")["p"]["code"] == "auth_failed"
         ws.send_json({"t": "auth", "id": "a3", "p": {"access_token": "bad-2"}})
         bye, code = _bye_then_close(ws)
+        (rec,) = _close_audits(world)
     assert (bye["p"]["reason"], code) == ("auth_failed", 4401)
-    (rec,) = _close_audits(world)
     assert (rec["reason"], rec["severity"]) == ("auth_failed", "warning")
     assert rec["actor_user_id"] == USER
     assert [r["action"] for r in world.audit.records] == ["auth.login_failed", CLOSED]
@@ -649,15 +652,32 @@ def test_server_close_audits_the_bye_reason(world: _World) -> None:
         assert world.client.portal is not None
         assert world.client.portal.call(world.revocation.revoke, SESSION) == 1
         _bye_then_close(ws)
-    (rec,) = _close_audits(world)
+        (rec,) = _close_audits(world)
     assert (rec["reason"], rec["severity"]) == ("session_revoked", "info")
+
+
+def test_server_transport_close_is_audited_as_shutdown(world: _World) -> None:
+    """uvicorn's shutdown closes every socket with 1012 before the planned §9.4 shutdown runs."""
+    with world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+        _hello(ws)
+        _auth(ws)
+        ws.close(gateway.SERVER_RESTART_CLOSE)
+        (rec,) = _close_audits(world)
+    assert (rec["reason"], rec["severity"]) == ("shutdown", "info")
+
+
+def test_fault_close_is_audited_as_a_warning() -> None:
+    conn: Any = SimpleNamespace(bye_frame=None, disconnect_code=None)
+    reason = gateway.closed_reason(conn, RuntimeError("writer failed"))
+    assert reason == "internal_error" and reason in gateway.WARNING_CLOSES
 
 
 def test_unauthenticated_close_writes_no_close_audit(world: _World) -> None:
     """No row a peer without a session could multiply; the metric and log line remain."""
     with world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _hello(ws)
-    _settle(world, lambda: len(world.hub) == 0)
+        ws.close(1000)
+        _settle(world, lambda: len(world.hub) == 0)
     assert world.audit.records == []
 
 
@@ -676,5 +696,6 @@ def test_close_audit_failure_never_holds_the_teardown(
         with world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
             _hello(ws)
             _auth(ws)
-        _settle(world, lambda: any(e["event"] == "ws close audit not written" for e in logs))
+            ws.close(1000)
+            _settle(world, lambda: any(e["event"] == "ws close audit not confirmed" for e in logs))
     assert len(world.hub) == 0 and not world.registry._conns.get(USER)
