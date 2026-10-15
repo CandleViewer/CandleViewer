@@ -1374,6 +1374,7 @@ def create_app(
             audit_resolver,
             _LazyAuditEmitter(ctx.audit),
             metrics=app.state.drawings_metrics,
+            layouts=lambda: app.state.workspaces_repository,  # E15-T01: GET ?layout_id
         )
     )
     # E15-T01: workspaces metrics (conflicts/panes/duration recorded by the router) + 90-day

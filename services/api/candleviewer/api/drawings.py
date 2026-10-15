@@ -7,6 +7,13 @@ by the caller; a missing, deleted or foreign drawing is the same 404, and a fore
 PUT/DELETE is also audited (`object_kind="drawing"`). Drawing writes are not audited (not a C-2.9
 action). Bodies are read raw so byte, depth and batch-size caps run before pydantic; no content is
 logged. POST and batch replay an `Idempotency-Key` from a bounded per-user cache.
+
+Layouts (E15-T01 spec Sec.7): the repository checks a write's `layout_id`s inside its own
+transaction (422 `layout_not_found`, the same for unknown, foreign and deleted layouts), and
+`GET ?layout_id` asks the workspaces store (404 otherwise). On PUT the drawing's 404, the stale
+`If-Match` 412 and the `immutable_field` 422 come first, then `layout_not_found`: #2380's
+`updateDrawing` and the #357 record leave this order open, and existence first matches how
+#357 orders `immutable_field` (clarification 3).
 """
 
 import base64
@@ -55,6 +62,7 @@ from candleviewer.storage.repositories.drawings import (
     DeleteOp,
     DrawingFields,
     DrawingIdUnavailableError,
+    DrawingLayoutNotFoundError,
     DrawingNotFoundError,
     DrawingRepository,
     DrawingRow,
@@ -177,6 +185,12 @@ class _Emitter(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
 
 
+class LayoutProbe(Protocol):
+    """`WorkspaceRepository.is_live_layout` (E15-T01): the caller's live layout, no lock."""
+
+    async def is_live_layout(self, owner: str, layout_id: str) -> bool: ...
+
+
 class DrawingsMetricsLike(Protocol):
     """C4's `DrawingsMetrics` (`app.state.drawings_metrics`); the router records these two."""
 
@@ -255,6 +269,11 @@ def _invalid(errors: list[dict[str, str]]) -> _Problem:
 
 def _not_found(what: str = "drawing") -> _Problem:
     return _Problem("not_found", f"No such {what}.")
+
+
+def _no_layout(exc: DrawingLayoutNotFoundError) -> _Problem:
+    """422 `layout_not_found`, worded the same for unknown, foreign and deleted (spec Sec.7)."""
+    return _invalid([_rule(f, "layout_not_found", "No such layout.") for f in exc.fields])
 
 
 def _stale() -> _Problem:
@@ -390,11 +409,6 @@ def _fields(body: DrawingIn) -> DrawingFields:
     return DrawingFields(**(values | {"layout_id": None if layout is None else str(layout)}))
 
 
-async def _layout_owned(owner: str, layout_id: UUID) -> bool:
-    # TODO(#402): E15-T01 creates `layouts`; replace with the owner-scoped live-layout lookup.
-    return False
-
-
 class _ListQuery(BaseModel):  # `listDrawings` query
     model_config = ConfigDict(frozen=True, extra="ignore")  # unknown params ignored, like FastAPI
     symbol: Annotated[str, Field(pattern=r"^[A-Z0-9]{2,16}USDT$")]  # <= 20: the DB domain
@@ -416,10 +430,13 @@ def make_drawings_router(
     new_id: Callable[[], UUID] = _new_id,
     metrics: DrawingsMetricsLike | None = None,
     idempotency: IdempotencyCache | None = None,
+    layouts: Callable[[], LayoutProbe | None] | None = None,
 ) -> APIRouter:
     """`audit` is mandatory (a denial must leave its `rbac.denied` record). No resolver (no
     identity store: nothing can verify a session) fails closed with 401; no store with 503.
-    `metrics` (C4) records batch sizes and conflicts by rule; `None` records nothing."""
+    `metrics` (C4) records batch sizes and conflicts by rule; `None` records nothing.
+    `layouts` answers `GET ?layout_id` (no layout store: 503); writes check their layouts in
+    the repository's own transaction (E15-T01 spec Sec.7)."""
     if audit is None:
         raise TypeError("make_drawings_router: an audit emitter is required")
     router = APIRouter(tags=["workspaces"], route_class=_ProblemRoute)
@@ -497,14 +514,11 @@ def make_drawings_router(
             cache.put(owner, key, stored)
         return out
 
-    async def no_layouts(owner: str, refs: list[tuple[str, UUID | None]]) -> None:
-        errs = [
-            _rule(field, "layout_not_found", "No such layout.")
-            for field, layout in refs
-            if layout is not None and not await _layout_owned(owner, layout)
-        ]
-        if errs:
-            raise _invalid(errs)
+    async def live_layout(owner: str, layout_id: UUID) -> bool:
+        probe = None if layouts is None else layouts()
+        if probe is None:
+            raise _Problem("store_unavailable", "The drawings store is unavailable.")
+        return await probe.is_live_layout(owner, str(layout_id))
 
     @router.get("/drawings")
     async def list_drawings(request: Request) -> Response:
@@ -513,7 +527,7 @@ def make_drawings_router(
             q = _ListQuery.model_validate(dict(request.query_params))
         except ValidationError as exc:
             raise _invalid(format_errors(exc)) from None
-        if q.layout_id is not None and not await _layout_owned(owner, q.layout_id):
+        if q.layout_id is not None and not await live_layout(owner, q.layout_id):
             raise _not_found("layout")
         layout = None if q.layout_id is None else str(q.layout_id)
         now = int(clock())
@@ -535,9 +549,10 @@ def make_drawings_router(
         if (hit := replay(owner, key, digest)) is not None:
             return hit
         body = _parse(DrawingIn, _text(raw))
-        await no_layouts(owner, [("layout_id", body.layout_id)])
         try:
             row = await store().create(owner, str(new_id()), _fields(body))
+        except DrawingLayoutNotFoundError as exc:
+            raise _no_layout(exc) from None
         except DrawingIdUnavailableError:
             conflict("id_unavailable")
             raise _Problem("conflict", "Id collision; retry the request.") from None
@@ -552,7 +567,6 @@ def make_drawings_router(
         owner, did = str(principal.user_id), _drawing_id(drawing_id)
         body = _parse(DrawingIn, _text(await _read_capped(request, MAX_SINGLE_BODY_BYTES)))
         if_match = _if_match(request.headers.get("if-match"))
-        await no_layouts(owner, [("layout_id", body.layout_id)])
         row = await store().get(owner, did)
         if row is None:
             raise await not_found(principal, did)
@@ -564,6 +578,8 @@ def make_drawings_router(
             raise _invalid([_rule(f, "immutable_field", f"{f} cannot be changed") for f in moved])
         try:
             new = await store().update(owner, did, _fields(body), if_match=if_match)
+        except DrawingLayoutNotFoundError as exc:
+            raise _no_layout(exc) from None
         except DrawingVersionConflictError:
             conflict("version_conflict")
             raise _stale() from None
@@ -594,15 +610,13 @@ def make_drawings_router(
         text = _text(raw)
         _count_ops(text)
         body = _parse(BatchIn, text)
-        await no_layouts(owner, [
-            (f"operations.{i}.drawing.layout_id", op.drawing.layout_id)
-            for i, op in enumerate(body.operations) if not isinstance(op, BatchDeleteIn)
-        ])  # fmt: skip
         ops = [_op(op, new_id) for op in body.operations]
         if metrics is not None:
             metrics.batch_ops.child().observe(len(ops))
         try:
             res = await store().apply_batch(owner, ops)
+        except DrawingLayoutNotFoundError as exc:
+            raise _no_layout(exc) from None
         except BatchOpFailed as exc:
             field = f"operations.{exc.index}"
             if exc.rule == "immutable_field":  # as on PUT; checked under the row lock (C2)
@@ -625,5 +639,6 @@ __all__ = [
     "CURSOR_TTL_S", "IDEMPOTENCY_ENTRY_OVERHEAD", "IDEMPOTENCY_MAX_BYTES",
     "IDEMPOTENCY_MAX_ENTRIES", "IDEMPOTENCY_MAX_ENTRY_BYTES", "IDEMPOTENCY_TTL_S",
     "IDEMPOTENCY_USER_MAX_BYTES", "IDEMPOTENCY_USER_MAX_ENTRIES", "DrawingsMetricsLike",
-    "IdempotencyCache", "StoredResponse", "decode_cursor", "encode_cursor", "make_drawings_router",
+    "IdempotencyCache", "LayoutProbe", "StoredResponse", "decode_cursor", "encode_cursor",
+    "make_drawings_router",
 ]  # fmt: skip
