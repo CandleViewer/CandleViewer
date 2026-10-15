@@ -494,6 +494,38 @@ def test_canonical_field_golden() -> None:
     assert _canonical_hash("0" * 64, row) == expected
 
 
+@pytest.mark.parametrize(
+    ("value", "framed"),
+    [
+        (None, "-"),  # SQL NULL
+        ("", "0:"),  # empty string: not NULL
+        ("é", "1:é"),  # U+00E9: 1 character, 2 UTF-8 bytes
+        ("e\u0301", "2:e\u0301"),  # e + combining acute: 2 characters
+        ("日本", "2:日本"),  # 2 characters, 6 bytes
+        ("\U0001f600", "1:\U0001f600"),  # outside the BMP: 1 character (not 2 UTF-16 units)
+        ("1:-", "3:1:-"),  # the framing characters inside a value
+    ],
+)
+def test_canonical_field_pins_the_trigger_framing(value: str | None, framed: str) -> None:
+    """`audit_field()`: NULL is `-`, else `<length>:<value>`, the length in characters as
+    Postgres `length(text)` counts them in a UTF-8 database, never in bytes."""
+    from candleviewer.audit.query import _canonical_field
+
+    assert _canonical_field(value) == framed
+
+
+def test_canonical_digest_hashes_the_utf8_bytes_of_the_framed_fields() -> None:
+    import hashlib
+
+    from candleviewer.audit.query import HASHED_FIELDS, _canonical_digest, _canonical_hash
+
+    renderings = ["\U0001f600", None, "", *([None] * (len(HASHED_FIELDS) - 3))]
+    framed = "64:" + "0" * 64 + "1:\U0001f600" + "-" + "0:" + "-" * (len(HASHED_FIELDS) - 3)
+    expected = hashlib.sha256(framed.encode("utf-8")).hexdigest()
+    assert _canonical_digest("0" * 64, renderings) == expected
+    assert _canonical_hash("0" * 64, dict(zip(HASHED_FIELDS, renderings, strict=True))) == expected
+
+
 def test_sqlstate_extraction_and_timeout_mapping() -> None:
     import sqlalchemy as sa
 

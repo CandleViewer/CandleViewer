@@ -237,6 +237,10 @@ class ExportResult(BaseModel):
     download_url: str | None = None
 
 
+#: `format: int64` in the contract; a larger id could never name an entry.
+_INT64_MAX = 2**63 - 1
+
+
 class AuditVerifyRequest(BaseModel):
     """Validated body for `POST /admin/audit/verify` (PR #1608 review
     finding 3): unknown keys rejected, `from_id`/`to_id` type-checked as
@@ -244,8 +248,8 @@ class AuditVerifyRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    from_id: int | None = Field(default=None, ge=1)
-    to_id: int | None = Field(default=None, ge=1)
+    from_id: int | None = Field(default=None, ge=1, le=_INT64_MAX)
+    to_id: int | None = Field(default=None, ge=1, le=_INT64_MAX)
 
     @model_validator(mode="after")
     def _range_ordered(self) -> Self:
