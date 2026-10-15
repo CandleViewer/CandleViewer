@@ -57,6 +57,7 @@ from candleviewer.api.audit_verify import (
     VERIFY_DEADLINE_S,
     observe_stop,
     observe_verify,
+    raise_break_event,
     result_record,
     write_verify_record,
 )
@@ -79,6 +80,7 @@ from candleviewer.audit.models import (
 from candleviewer.audit.query import VERIFY_MAX_SPAN, VerifyPlan, VerifyRangeBeyondHead
 from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.observability.audit_query_metrics import cv_audit_query_duration_seconds
+from candleviewer.observability.health_probes import SystemEventWriter
 from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
 
 
@@ -343,6 +345,7 @@ def make_audit_router(
     verify_max_span: int = VERIFY_MAX_SPAN,
     verify_limiter: AuditVerifyLimiter | None = None,
     verify_deadline_s: float = VERIFY_DEADLINE_S,
+    verify_events: SystemEventWriter | None = None,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
 
@@ -687,6 +690,10 @@ def make_audit_router(
             )
             return _unavailable("audit verify failed")
         observe_verify(result)  # the chain series follow the run, recorded or not
+        request_id = principal.request_id
+        await raise_break_event(
+            verify_events, result, None if request_id is None else str(request_id)
+        )
         outcome, severity, reason, after = result_record(result)
         if not await write_verify_record(
             emit, fields, outcome=outcome, severity=severity, reason=reason, after_state=after

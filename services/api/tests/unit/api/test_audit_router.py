@@ -1527,3 +1527,42 @@ def test_verify_frees_the_slot_however_the_run_ends(ending: str) -> None:
     expected = 200 if ending == "verified" else 503
     assert _limited_verify(svc).post(_VERIFY, json={}).status_code == expected
     assert not svc.query_service.verify_slot.held
+
+
+# ---- verify break: the critical system event, best effort (#2392) --------------------------
+
+
+class _SystemEvents:
+    def __init__(self, fail: bool = False) -> None:
+        self.written: list[Any] = []
+        self.fail = fail
+
+    async def write(self, event: Any) -> None:
+        if self.fail:
+            raise RuntimeError("system_events unavailable")
+        self.written.append(event)
+
+
+def _evented(svc: _FakeAuditService, events: _SystemEvents) -> TestClient:
+    app = FastAPI()
+    app.include_router(make_audit_router(svc, _FakeResolver(_owner()), verify_events=events))
+    return TestClient(app)
+
+
+def test_verify_break_raises_the_system_event_and_a_verified_run_none() -> None:
+    svc, events = _FakeAuditService(), _SystemEvents()
+    client = _evented(svc, events)
+    assert client.post(_VERIFY, json={}).status_code == 200  # verified: no event
+    assert events.written == []
+    svc.query_service.verify_result = _broken()
+    assert client.post(_VERIFY, json={}).json()["first_bad_id"] == 3
+    [event] = events.written
+    assert (event.kind, event.details["kind"]) == ("audit_chain_break", "entry_hash_mismatch")
+
+
+def test_verify_event_that_fails_changes_neither_the_response_nor_the_record() -> None:
+    svc = _FakeAuditService()
+    svc.query_service.verify_result = _broken()
+    r = _evented(svc, _SystemEvents(fail=True)).post(_VERIFY, json={})
+    assert (r.status_code, r.json()["verified"], r.json()["first_bad_id"]) == (200, False, 3)
+    assert _verify_records(svc)[-1][:3] == ("failure", "critical", "entry_hash_mismatch@3")

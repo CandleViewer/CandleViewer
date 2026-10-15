@@ -15,6 +15,10 @@ Gauge rule (design §5): a break sets `cv_audit_chain_verified_state` to 0 and c
 break sets it to 1, so a passing partial range never hides a known break. A full-range stop
 turns 1 into NaN; 0 stays until a full-range run passes. So a stop never leaves an old 1
 standing, and never clears a known break.
+
+A break also raises the critical `audit_chain_break` system event (`system_events`, component
+`db`), best effort as the recorder's integrity job does: bounded by `EVENT_TIMEOUT_S`, a
+failure logged with its class only, never changing the response or the record.
 """
 
 from __future__ import annotations
@@ -32,9 +36,12 @@ from candleviewer.observability.audit_query_metrics import (
     audit_chain_verification_failures_total,
     cv_audit_chain_verified_state,
 )
+from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
 from candleviewer.settings import Settings
 
 VERIFY_ACTION = "admin.audit_verify"
+#: How long a run waits for its system event: best effort, the record is the primary.
+EVENT_TIMEOUT_S = 2.0
 #: The `audit_verify_deadline_s` default: how long one run may take before it is stopped
 #: (503) and the single-flight slot is free again; well above a full `audit_verify_max_span` run.
 VERIFY_DEADLINE_S: float = Settings.model_fields["audit_verify_deadline_s"].default
@@ -114,3 +121,28 @@ def observe_verify(result: VerifyResult) -> None:
         _log().error("audit.verify.break", kind=result.kind, first_bad_id=result.first_bad_id)
     elif result.full_chain:
         cv_audit_chain_verified_state.set(1)
+
+
+async def raise_break_event(
+    events: SystemEventWriter | None, result: VerifyResult, correlation_id: str | None
+) -> None:
+    """The critical `audit_chain_break` system event for a break; nothing when verified or
+    when no writer is wired."""
+    if events is None or result.verified:
+        return
+    kind = None if result.kind is None else result.kind.value
+    details = {"first_bad_id": result.first_bad_id, "kind": kind}
+    details |= {"from_id": result.from_id, "to_id": result.to_id}
+    event = SystemEvent(
+        component="db",
+        kind="audit_chain_break",
+        severity="critical",
+        message=f"audit chain break at id {result.first_bad_id}",
+        details={key: "" if value is None else str(value) for key, value in details.items()},
+        correlation_id=correlation_id,
+    )
+    try:
+        async with asyncio.timeout(EVENT_TIMEOUT_S):
+            await events.write(event)
+    except Exception as exc:  # best effort: never the response, never the record
+        _log().error("audit.verify.event_write_failed", error=type(exc).__name__)

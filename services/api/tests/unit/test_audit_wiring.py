@@ -47,6 +47,7 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
     assert (seen["query_timeout_ms"], seen["verify_max_span"]) == (1500, 31)
     assert (seen["verify_limiter"]._rate, seen["verify_limiter"]._cap) == (37, 71)
     assert seen["verify_deadline_s"] == 41.0
+    assert seen["verify_events"] is None  # the fake backend wires no `system_events` writer
     assert (bud._per_hour, bud._owner_per_hour) == (11, 13)
     assert (bud._flush_pages, bud._flush_s) == (17, 19.0)
     assert (bud._tracked, bud._inflight_cap) == (71, 29)
