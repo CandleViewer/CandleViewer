@@ -6,8 +6,10 @@ exchange. The projection follows the ticket: growth per recorded symbol is measu
 or, with no measurement yet, the upper bound of the documented band (0.75 GB/day/symbol at
 200-depth, so the warning comes early) with `estimated` set (C10); a symbol not being recorded
 does not grow; with nothing recorded growth is 0 by fact (`nothing_recorded`), not unknown.
-`projected = sum(growth x retention)` over retention-bounded symbols: the disk is projected to
-fill only when a pinned (unbounded) symbol grows or that steady state exceeds used + free.
+`projected = sum(growth x retention)` over retention-bounded symbols. With growth, the disk is
+projected to fill when a pinned (unbounded) symbol grows, when the headroom `min(cap - used,
+free)` is already zero (runway 0, as `DiskBudget.project_full_at`), or when that steady state
+exceeds used + headroom; never "no exhaustion" at the moment of exhaustion (SR-096).
 The sub-account tier is a recorded fact read through `TierPort`, never inferred.
 """
 
@@ -26,7 +28,7 @@ from candleviewer.admin.overview.fanout import (
     SliceFanOut,
     SliceResult,
     SourceUnavailable,
-    _utc_now,
+    utc_now,
 )
 from candleviewer.admin.overview.metrics import capacity_projection_bytes
 from candleviewer.admin.overview.ports import (
@@ -47,7 +49,14 @@ ESTIMATED_DAILY_GROWTH_BYTES: Final = 750_000_000
 Tier = Literal["regular", "business_kyc"]
 TIER_CAPS: Final[Mapping[Tier, int]] = MappingProxyType({"regular": 5, "business_kyc": 20})
 Basis = Literal["measured", "estimated", "nothing_recorded"]
-Problem = tuple[Literal["error", "unavailable"], str]
+#: A sub-read must answer inside the 300 ms slice budget so the other part survives.
+PART_BUDGET_S: Final = 0.2
+#: (status, fixed wire detail, logged-only reason: part and exception class).
+Problem = tuple[Literal["error", "unavailable"], str, str]
+
+
+class UnrecognisedTier(Exception):
+    """A stored tier word outside `TIER_CAPS`: an error, never a guess."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,9 +127,10 @@ def project(snap: StorageSnapshot) -> DiskProjection:
             projected += growth * s.retention_days
         rows.append(SymbolProjection(s.symbol, s.used_bytes, growth, s.pinned, s.retention_days))
     growth_total = sum(r.daily_growth_bytes for r in rows)
-    room = snap.free_bytes if snap.cap_bytes is None else snap.cap_bytes - snap.used_bytes
-    headroom = max(min(room, snap.free_bytes), 0)  # as DiskBudget.project_full_at
-    fills = growth_total > 0 and (unbounded or projected > snap.used_bytes + headroom)
+    headroom = max(min(snap.cap_bytes - snap.used_bytes, snap.free_bytes), 0)  # project_full_at
+    fills = growth_total > 0 and (
+        unbounded or headroom == 0 or projected > snap.used_bytes + headroom
+    )
     days = round(headroom / growth_total, 2) if fills else None
     basis: Basis = "nothing_recorded" if not recording else "estimated" if estimated else "measured"
     return DiskProjection(
@@ -149,9 +159,12 @@ class AdminCapacityService:
         rate_limit: RateLimitPort | None = None,
         subaccounts: SubaccountPort | None = None,
         tier: TierPort | None = None,
-        now: Callable[[], datetime] = _utc_now,
+        now: Callable[[], datetime] = utc_now,
+        part_budget_s: float = PART_BUDGET_S,
     ) -> None:
-        self._fan, self._now = fan, now
+        if not 0 < part_budget_s < fan.budget_s:  # a hung part must not lose the other
+            raise ValueError("part budget must be inside the slice budget")
+        self._fan, self._now, self._part_budget_s = fan, now, part_budget_s
         self._recorder, self._ingestion, self._rate_limit = recorder, ingestion, rate_limit
         self._subaccounts_port, self._tier = subaccounts, tier
 
@@ -199,10 +212,12 @@ class AdminCapacityService:
         )
 
     async def _subaccounts(self) -> SubaccountCapacity | Degraded[SubaccountCapacity]:
-        used, used_problem = await _part("subaccounts", self._used)
-        recorded, tier_problem = await _part("tier", self._recorded_tier)
+        (used, used_problem), (recorded, tier_problem) = await asyncio.gather(
+            _part("subaccounts", self._used, self._part_budget_s),
+            _part("tier", self._recorded_tier, self._part_budget_s),
+        )  # both parts are self-guarded, so neither can outlive the slice
         if recorded is not None:
-            tier: Tier = "regular" if recorded.tier == "regular" else "business_kyc"
+            tier = next(t for t in TIER_CAPS if t == recorded.tier)  # validated in _recorded_tier
             at = recorded.recorded_at
             value = SubaccountCapacity(tier, TIER_CAPS[tier], used, "recorded", at)
         else:  # never recorded is a fact; a failed tier read leaves the tier fields unknown
@@ -211,8 +226,8 @@ class AdminCapacityService:
         problems = [p for p in (used_problem, tier_problem) if p is not None]
         if not problems:
             return value
-        failed = any(status == "error" for status, _ in problems)
-        return Degraded(value, "error" if failed else "unavailable", problems[0][1])
+        worst = next((p for p in problems if p[0] == "error"), problems[0])  # status with detail
+        return Degraded(value, worst[0], worst[1], worst[2])
 
     async def _used(self) -> int:
         if self._subaccounts_port is None:
@@ -224,15 +239,28 @@ class AdminCapacityService:
             raise _unwired("tier")
         recorded = await self._tier.recorded_tier()
         if recorded is not None and recorded.tier not in TIER_CAPS:
-            raise ValueError("unknown sub-account tier")  # a corrupt value is an error
+            raise UnrecognisedTier
         return recorded
 
 
-async def _part[T](what: str, load: Callable[[], Awaitable[T]]) -> tuple[T | None, Problem | None]:
-    """One independently degradable part of a slice: `(value, None)` or `(None, problem)`."""
+async def _part[T](
+    what: str, load: Callable[[], Awaitable[T]], budget_s: float
+) -> tuple[T | None, Problem | None]:
+    """One independently degradable part of a slice, under its own sub-budget. Never raises
+    but for a real cancellation; only fixed details go out, the exception class is logged."""
     try:
-        return await load(), None
+        async with asyncio.timeout(budget_s):
+            return await load(), None
     except SourceUnavailable as exc:
-        return None, ("unavailable", exc.detail)
-    except Exception:  # the message may carry internals: never forwarded
-        return None, ("error", f"{what}: source failed")
+        return None, ("unavailable", exc.detail, f"{what}:unwired")
+    except UnrecognisedTier as exc:
+        return None, ("error", f"{what}: unrecognised value", f"{what}:{type(exc).__name__}")
+    except TimeoutError:
+        return None, ("error", f"{what}: timed out", f"{what}:TimeoutError")
+    except asyncio.CancelledError:
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            raise
+        return None, ("error", f"{what}: source failed", f"{what}:CancelledError")
+    except Exception as exc:  # the message may carry internals: never forwarded
+        return None, ("error", f"{what}: source failed", f"{what}:{type(exc).__name__}")

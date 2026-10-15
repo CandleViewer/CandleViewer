@@ -1,22 +1,28 @@
 """Unit (E42-T01): the `GET /admin/capacity` read model. Projection maths (measured, estimated
-fallback, idle and unmeasured symbols, nothing recorded, negative fits, pinned symbols, cap
-headroom), the sub-account tier and usage read independently (the tier is never inferred), the
-rate-budget mapping, unwired ports, the exported metrics and the disjoint slice-name sets."""
+fallback, idle and unmeasured symbols, nothing recorded, negative fits, pinned symbols, cap and
+zero headroom) with a parity grid against `DiskBudget.project_full_at`, the sub-account tier and
+usage read independently under their own sub-budgets (the tier is never inferred), the
+rate-budget mapping, unwired ports, the exported metrics and the slice names each service reads."""
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.admin.overview.capacity import (
+    PART_BUDGET_S,
+    TIER_CAPS,
     AdminCapacityService,
     RateBudgetRow,
     SubaccountCapacity,
     project,
 )
-from candleviewer.admin.overview.fanout import SliceFanOut
+from candleviewer.admin.overview.fanout import DEFAULT_BUDGET_S, Degraded, SliceFanOut, SliceResult
 from candleviewer.admin.overview.metrics import export_overview_metrics
 from candleviewer.admin.overview.ports import (
     IngestionStats,
@@ -26,8 +32,10 @@ from candleviewer.admin.overview.ports import (
     StorageSnapshot,
     SymbolStorage,
 )
+from candleviewer.admin.overview.service import AdminOverviewService
 from candleviewer.admin.overview.slices import CAPACITY_SLICES, OVERVIEW_SLICES, AdminSlice
 from candleviewer.observability.metrics import CollectorRegistry
+from candleviewer.recorder.budget import project_full_at
 
 NOW = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
 GB = 10**9
@@ -40,8 +48,10 @@ def _sym(
     return SymbolStorage(symbol, 10 * GB, growth, retention is None, retention, recording)
 
 
-def _snap(*symbols: SymbolStorage, cap: int | None = None) -> StorageSnapshot:
-    return StorageSnapshot(40 * GB, 400 * GB, None, None, symbols, cap)
+def _snap(
+    *symbols: SymbolStorage, used: int = 40, free: int = 400, cap: int = 1000
+) -> StorageSnapshot:
+    return StorageSnapshot(used * GB, free * GB, None, None, symbols, cap * GB)
 
 
 @pytest.mark.parametrize(
@@ -55,7 +65,10 @@ def _snap(*symbols: SymbolStorage, cap: int | None = None) -> StorageSnapshot:
         (_snap(), [], "nothing_recorded", None),
         (_snap(_sym("BTCUSDT", -2 * GB)), [0], "measured", None),
         (_snap(_sym("BTCUSDT", GB, retention=None)), [GB], "measured", 400.0),
-        (_snap(_sym("BTCUSDT", GB, retention=None), cap=140 * GB), [GB], "measured", 100.0),
+        (_snap(_sym("BTCUSDT", GB, retention=None), cap=140), [GB], "measured", 100.0),
+        (_snap(_sym("BTCUSDT", GB), used=100, cap=100), [GB], "measured", 0.0),
+        (_snap(_sym("BTCUSDT", GB), free=0), [GB], "measured", 0.0),
+        (_snap(_sym("BTCUSDT", GB), used=110, cap=100), [GB], "measured", 0.0),
     ],
     ids=[
         "measured-steady-state-fits",
@@ -67,6 +80,9 @@ def _snap(*symbols: SymbolStorage, cap: int | None = None) -> StorageSnapshot:
         "negative-fit-adds-no-growth",
         "pinned-is-unbounded",
         "cap-headroom-min-of-cap-and-free",
+        "cap-reached-is-exhausted-now",
+        "free-zero-is-exhausted-now",
+        "cap-below-use-is-exhausted-now",
     ],
 )
 def test_projection(
@@ -76,6 +92,27 @@ def test_projection(
     assert [r.daily_growth_bytes for r in p.per_symbol] == per_symbol
     assert (p.daily_growth_bytes, p.basis, p.days_until_full) == (sum(per_symbol), basis, days)
     assert p.estimated is (basis == "estimated")
+
+
+@pytest.mark.parametrize(
+    ("used", "cap", "free"),
+    [(40, 1000, 400), (40, 140, 400), (100, 100, 400), (110, 100, 400), (40, 1000, 0)],
+    ids=["free-bound", "cap-bound", "cap-reached", "cap-below-use", "free-zero"],
+)
+@pytest.mark.parametrize("pinned", [True, False], ids=["unbounded", "steady-state-below-use"])
+def test_projection_matches_the_disk_budget_runway(
+    used: int, cap: int, free: int, pinned: bool
+) -> None:
+    symbol = _sym("BTCUSDT", GB, retention=None if pinned else 1)  # bounded: 1 GB <= used
+    days = project(_snap(symbol, used=used, free=free, cap=cap)).days_until_full
+    _, runway = project_full_at(
+        used=used * GB, cap=cap * GB, free=free * GB, daily_growth=GB, now_us=0
+    )
+    assert runway is not None
+    if pinned or runway == 0:
+        assert days == round(float(runway), 2)
+    else:
+        assert days is None  # the steady state fits on disk: no exhaustion ahead
 
 
 class Recorder:
@@ -94,21 +131,30 @@ class Ingestion:
         return IngestionStats(messages_per_sec=1840.5, queue_depth=12, dropped_last_hour=0)
 
 
+async def _hang() -> None:
+    await asyncio.Event().wait()
+
+
 class Subaccounts:
-    def __init__(self, used: int | Exception = 3) -> None:
-        self.used = used
+    def __init__(self, used: int | BaseException | None = 3) -> None:
+        self.used, self.entered = used, asyncio.Event()  # used None: hang
 
     async def subaccounts_in_use(self) -> int:
-        if isinstance(self.used, Exception):
+        self.entered.set()
+        if self.used is None:
+            await _hang()
+        if isinstance(self.used, BaseException):
             raise self.used
-        return self.used
+        return int(self.used or 0)
 
 
 class Tier:
-    def __init__(self, tier: str | Exception | None) -> None:
-        self.tier = tier
+    def __init__(self, tier: str | Exception | None, *, hang: bool = False) -> None:
+        self.tier, self.hang = tier, hang
 
     async def recorded_tier(self) -> RecordedTier | None:
+        if self.hang:
+            await _hang()
         if isinstance(self.tier, Exception):
             raise self.tier
         return None if self.tier is None else RecordedTier(self.tier, NOW)
@@ -121,32 +167,31 @@ class RateLimit:
 
 
 def _service(
-    tier: Tier | None, *, sampled: bool = True, used: int | Exception = 3
+    tier: Tier | None,
+    *,
+    sampled: bool = True,
+    used: int | BaseException | None = 3,
+    fan: SliceFanOut | None = None,
+    part_s: float = PART_BUDGET_S,
 ) -> AdminCapacityService:
     return AdminCapacityService(
-        SliceFanOut(monotonic=lambda: 0.0, now=lambda: NOW),
+        fan or SliceFanOut(monotonic=lambda: 0.0, now=lambda: NOW),
         recorder=Recorder(sampled=sampled),
         ingestion=Ingestion(),
         rate_limit=RateLimit(),
         subaccounts=Subaccounts(used),
         tier=tier,
         now=lambda: NOW,
+        part_budget_s=part_s,
     )
 
 
-@pytest.mark.parametrize(
-    "expected",
-    [
-        SubaccountCapacity("regular", 5, 3, "recorded", NOW),
-        SubaccountCapacity("business_kyc", 20, 3, "recorded", NOW),
-    ],
-    ids=["regular-caps-5", "business-kyc-caps-20"],
-)
-async def test_recorded_tier_states_its_cap_as_a_recorded_fact(
-    expected: SubaccountCapacity,
-) -> None:
-    sub = (await _service(Tier(expected.tier)).capacity()).subaccounts
-    assert (sub.status, sub.value) == ("ok", expected)
+@pytest.mark.parametrize(("tier", "cap"), list(TIER_CAPS.items()), ids=list(TIER_CAPS))
+async def test_a_recorded_tier_states_its_own_cap_as_a_recorded_fact(tier: str, cap: int) -> None:
+    sub = (await _service(Tier(tier)).capacity()).subaccounts
+    assert sub.status == "ok" and sub.value is not None
+    assert (sub.value.tier, sub.value.cap, sub.value.used) == (tier, cap, 3)
+    assert (sub.value.tier_source, sub.value.recorded_at) == ("recorded", NOW)
 
 
 async def test_a_never_recorded_tier_is_unrecorded_and_still_counts_usage() -> None:
@@ -158,23 +203,63 @@ async def test_a_never_recorded_tier_is_unrecorded_and_still_counts_usage() -> N
     ("tier", "status", "detail"),
     [
         (None, "unavailable", "tier: no provider wired"),
-        (Tier("vip"), "error", "tier: source failed"),
+        (Tier("vip"), "error", "tier: unrecognised value"),
         (Tier(OSError("db down")), "error", "tier: source failed"),
+        (Tier(None, hang=True), "error", "tier: timed out"),
     ],
-    ids=["no-tier-store", "unknown-tier-word", "tier-read-fails"],
+    ids=["no-tier-store", "unrecognised-tier-word", "tier-read-fails", "tier-read-hangs"],
 )
 async def test_a_failed_tier_read_keeps_the_usage_and_never_infers(
     tier: Tier | None, status: str, detail: str
 ) -> None:
-    sub = (await _service(tier).capacity()).subaccounts
+    sub = (await _service(tier, part_s=0.01).capacity()).subaccounts
     assert (sub.status, sub.detail) == (status, detail)
     assert sub.value == SubaccountCapacity(None, None, 3, None, None)
 
 
-async def test_a_failed_usage_read_keeps_the_recorded_tier() -> None:
-    sub = (await _service(Tier("regular"), used=OSError("db down")).capacity()).subaccounts
+@pytest.mark.parametrize(
+    ("used", "detail"),
+    [(OSError("db down"), "subaccounts: source failed"), (None, "subaccounts: timed out")],
+    ids=["usage-read-fails", "usage-read-hangs"],
+)
+async def test_a_failed_usage_read_keeps_the_recorded_tier(
+    used: Exception | None, detail: str
+) -> None:
+    sub = (await _service(Tier("regular"), used=used, part_s=0.01).capacity()).subaccounts
+    assert (sub.status, sub.detail) == ("error", detail)
+    assert sub.value == SubaccountCapacity("regular", 5, None, "recorded", NOW)
+
+
+async def test_a_stray_cancel_from_a_part_fails_only_that_part() -> None:
+    sub = (await _service(Tier("regular"), used=asyncio.CancelledError()).capacity()).subaccounts
     assert (sub.status, sub.detail) == ("error", "subaccounts: source failed")
     assert sub.value == SubaccountCapacity("regular", 5, None, "recorded", NOW)
+
+
+async def test_cancelling_the_request_cancels_both_parts() -> None:
+    usage, fan = Subaccounts(None), SliceFanOut(monotonic=lambda: 0.0, now=lambda: NOW)
+    service = AdminCapacityService(fan, subaccounts=usage, tier=Tier(None, hang=True))
+    task = asyncio.create_task(service.capacity())
+    await usage.entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_the_error_status_carries_the_error_detail_and_logs_only_part_and_class() -> None:
+    fan = SliceFanOut(monotonic=lambda: 0.0, now=lambda: NOW)
+    service = AdminCapacityService(fan, tier=Tier("vip"), now=lambda: NOW)  # usage unwired
+    with capture_logs() as logs:
+        sub = (await service.capacity()).subaccounts
+    assert (sub.status, sub.detail) == ("error", "tier: unrecognised value")
+    reasons = {e["reason"] for e in logs if e.get("source") == AdminSlice.SUBACCOUNTS}
+    assert reasons == {"tier:UnrecognisedTier"} and "vip" not in repr(logs)
+
+
+def test_the_part_budget_stays_inside_the_slice_budget() -> None:
+    assert PART_BUDGET_S < DEFAULT_BUDGET_S
+    with pytest.raises(ValueError):
+        AdminCapacityService(SliceFanOut(budget_s=0.1), part_budget_s=0.2)
 
 
 async def test_rate_budget_utilisation_and_the_exported_metrics() -> None:
@@ -195,9 +280,30 @@ async def test_rate_budget_utilisation_and_the_exported_metrics() -> None:
     assert gauge == 20 * GB and (timed or 0) >= 1
 
 
-def test_overview_and_capacity_slice_names_are_disjoint_and_cover_the_enum() -> None:
-    assert OVERVIEW_SLICES.isdisjoint(CAPACITY_SLICES)
-    assert OVERVIEW_SLICES | CAPACITY_SLICES == set(AdminSlice)
+class SpyFan(SliceFanOut):
+    """Records the slice name of every read, then reads as usual."""
+
+    def __init__(self) -> None:
+        super().__init__(monotonic=lambda: 0.0, now=lambda: NOW)
+        self.names: set[AdminSlice] = set()
+
+    async def read[T](
+        self,
+        name: AdminSlice,
+        load: Callable[[], Awaitable[T | Degraded[T]]],
+        *,
+        cached: bool = True,
+    ) -> SliceResult[T]:
+        self.names.add(name)
+        return await super().read(name, load, cached=cached)
+
+
+async def test_each_service_reads_exactly_its_own_slice_names() -> None:
+    overview_fan, capacity_fan = SpyFan(), SpyFan()
+    await AdminOverviewService(overview_fan).overview()
+    await AdminCapacityService(capacity_fan).capacity()
+    assert overview_fan.names == set(OVERVIEW_SLICES)
+    assert capacity_fan.names == set(CAPACITY_SLICES)
 
 
 async def test_ingestion_is_reported_and_storage_waits_for_the_first_disk_sample() -> None:

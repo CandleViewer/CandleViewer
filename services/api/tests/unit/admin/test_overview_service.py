@@ -56,7 +56,9 @@ class Recorder:
         return RecorderStatus(symbols_recording=3, symbols_degraded=0, lag_seconds_p99=0.042)
 
     async def storage_snapshot(self) -> StorageSnapshot | None:
-        return StorageSnapshot(41 * GB, 400 * GB, None, 187.5, ()) if self.sampled else None
+        return (
+            StorageSnapshot(41 * GB, 400 * GB, None, 187.5, (), 1000 * GB) if self.sampled else None
+        )
 
 
 class Oms:
