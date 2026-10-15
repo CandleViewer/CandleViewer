@@ -308,6 +308,8 @@ export interface paths {
      *     secrets — the key material is exported only as its wrapped form, so a restore on a host
      *     without the KEK cannot trade. `verify: "true` schedules an automatic restore-into-scratch"
      *     verification after the dump completes.
+     *     A run is a `backup` job (`GET /admin/jobs/{jobId}`), audited as `backup.run` ahead of the
+     *     response (E42-T05). `backups:write` needs a live step-up elevation.
      */
     post: operations["createBackup"];
     delete?: never;
@@ -336,6 +338,51 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/admin/backups/{backupId}/download": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        backupId: components["parameters"]["BackupId"];
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Issue a single-use, five-minute download link for a backup artefact
+     * @description Backup artefacts are secret-bearing (they hold envelope-encrypted key material), so a download is a link that works once and expires 5 minutes after issue (E42-T05). `backups:write` is a dangerous permission and needs a live step-up elevation. Issuing is audited at high severity as `backup.downloaded` before the response. The link is returned exactly once and is never logged or audited; it carries a one-time token, never a bearer credential, and fetching it is an authenticated `GET` by the same user. Only a backup with `status` `ok` or `verified` can be downloaded, else `409 conflict`.
+     */
+    post: operations["issueBackupDownload"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/backups/{backupId}/download/{token}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        backupId: components["parameters"]["BackupId"];
+        token: string;
+      };
+      cookie?: never;
+    };
+    /**
+     * Fetch a backup artefact through a link issued by issueBackupDownload
+     * @description Streams the artefact once (E42-T05). The token must have been issued to the calling user for this backup less than 5 minutes ago and not used before; it is consumed before the first byte is sent. An unknown, expired, used or foreign token is `404 not_found`, the same answer for each case so a token cannot be probed.
+     */
+    get: operations["downloadBackup"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/admin/backups/{backupId}/restore": {
     parameters: {
       query?: never;
@@ -349,7 +396,7 @@ export interface paths {
     put?: never;
     /**
      * Restore from a backup (owner, step-up `backups`)
-     * @description Restores into the running deployment. Trading is force-disabled for the duration and must be re-enabled explicitly afterwards, so a restore can never silently resume order flow against stale OMS state (21-database-schema.md section 8.2). Asynchronous. `backups` is a no-grace step-up class: each restore spends a fresh code, and without one the route answers `403 step_up_required` with `action_class` set to `backups`.
+     * @description Restores into the running deployment. Trading is force-disabled for the duration and must be re-enabled explicitly afterwards, so a restore can never silently resume order flow against stale OMS state (21-database-schema.md section 8.2). Asynchronous. `backups` is a no-grace step-up class: each restore spends a fresh code, and without one the route answers `403 step_up_required` with `action_class` set to `backups`. Preconditions (E42-T05), enforced in the backup service rather than the router so every caller inherits them, and never trusted from the client: maintenance mode (`maintenance.mode`) must be on, else `409 conflict` with rule `maintenance_mode_required`; when positions are open, `acknowledge_open_positions` must be `true`, else `409 conflict` with rule `open_positions_unacknowledged`; if the open-position state cannot be read, the call is refused the same way. A refused call creates no job. `backups:write` needs a live step-up elevation. An accepted restore is a `backup_restore` job, audited at high severity as `backup.restore` before the response.
      */
     post: operations["restoreBackup"];
     delete?: never;
@@ -371,7 +418,7 @@ export interface paths {
     put?: never;
     /**
      * Verify a backup by restoring it into a scratch namespace
-     * @description Restores into an isolated scratch database/namespace, runs integrity assertions (row counts, hash-chain verification, migration version) and discards it. Never touches live data.
+     * @description Restores into an isolated scratch database/namespace, runs integrity assertions (row counts, hash-chain verification, migration version) and discards it. Never touches live data. Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and sets `verified_at`, or ends `failed` with a stable `error` code (`checksum_mismatch` when the stored digest does not match) and records the failed verification on the backup row (`status: failed`, `error`). Either outcome is audited as `backup.verified`.
      */
     post: operations["verifyBackup"];
     delete?: never;
@@ -624,11 +671,33 @@ export interface paths {
     };
     /**
      * Open and recent operational incidents
-     * @description Read-model over `system_events` at `error` and `critical` severity, grouped into incidents with first/last occurrence and affected component.
+     * @description Read-model over `system_events` at `error` and `critical` severity, grouped into incidents with first/last occurrence and affected component. Grouping (E42-T05): one incident per `(component, signature)`, where `signature` is a stable hash of the component, the error class (`system_events.kind`) and the message normalised by stripping ids, timestamps, numbers and symbols, so one fault never fragments into thousands of incidents. The grouping is a materialised read model refreshed when an event is written, never aggregated per request. `occurrences` counts the grouped events. `title` is the normalised message and `detail` the latest event's message; both pass through the same redaction allowlist as the audit exporter. Ordered by `last_seen_at` descending; `status` filters.
      */
     get: operations["listIncidents"];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/incidents/{incidentId}/acknowledge": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        incidentId: string;
+      };
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Acknowledge an open incident
+     * @description Moves an `open` incident to `acknowledged` (E42-T05) and records who acknowledged it (`acknowledged_by`, `acknowledged_at`). The `incident.acknowledged` audit entry names the actor and is written ahead of the response; a denied attempt is audited as well. Acknowledging an already acknowledged incident returns it unchanged and writes no second entry. A `resolved` incident is `409 conflict`; an unknown id is `404 not_found`.
+     */
+    post: operations["acknowledgeIncident"];
     delete?: never;
     options?: never;
     head?: never;
@@ -5763,6 +5832,8 @@ export interface components {
       name: string;
     };
     Incident: {
+      /** Format: date-time */
+      acknowledged_at?: string | null;
       /** Format: uuid */
       acknowledged_by?: string | null;
       component: string;
@@ -5778,6 +5849,8 @@ export interface components {
       resolved_at?: string | null;
       runbook_ref?: string | null;
       severity: components["schemas"]["Severity"];
+      /** @description Stable grouping key (E42-T05): a hash of the component, the error class and the normalised message. Equal signatures in one component are the same fault. */
+      signature?: string;
       /** @enum {string} */
       status: "open" | "acknowledged" | "resolved";
       title?: string;
@@ -5897,6 +5970,7 @@ export interface components {
         | "audit_export"
         | "backup"
         | "backup_verify"
+        | "backup_restore"
         | "rule_simulation"
         | "retention_sweep"
         | "reconciliation"
@@ -8884,6 +8958,7 @@ export interface operations {
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
     };
   };
@@ -8925,6 +9000,7 @@ export interface operations {
           "application/json": components["schemas"]["Backup"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
     };
@@ -8983,6 +9059,72 @@ export interface operations {
       409: components["responses"]["Conflict"];
     };
   };
+  issueBackupDownload: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        backupId: components["parameters"]["BackupId"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Link issued. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": {
+            /** @description Relative API URL (`/api/v1/admin/backups/{backupId}/download/{token}`). */
+            download_url: string;
+            /** Format: date-time */
+            expires_at: string;
+          };
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
+    };
+  };
+  downloadBackup: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        backupId: components["parameters"]["BackupId"];
+        token: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The artefact bytes. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/octet-stream": string;
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+    };
+  };
   restoreBackup: {
     parameters: {
       query?: never;
@@ -9006,6 +9148,8 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": {
+          /** @description Explicit acknowledgement that positions are open while restoring (E42-T05). Absent means `false`. */
+          acknowledge_open_positions?: boolean;
           components?: ("postgres" | "questdb" | "parquet" | "config")[];
           /** Format: uuid */
           confirm_backup_id: string;
@@ -9026,8 +9170,18 @@ export interface operations {
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
-      409: components["responses"]["Conflict"];
+      404: components["responses"]["NotFound"];
+      /** @description A restore precondition is not met; no job was created. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
     };
   };
   verifyBackup: {
@@ -9062,6 +9216,7 @@ export interface operations {
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
     };
@@ -9247,6 +9402,43 @@ export interface operations {
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+    };
+  };
+  acknowledgeIncident: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path: {
+        incidentId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The incident after the transition. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Incident"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      409: components["responses"]["Conflict"];
     };
   };
   getJob: {
