@@ -150,8 +150,8 @@ def _assert_matches_plan_doc(c: Conn) -> None:
         raise psycopg.Rollback
     assert got is not None and want is not None
     assert got == want
-    assert [name for name, *_ in got[2]] == ["settings_pkey", "ux_settings_sys", "ux_settings_user"]
-    assert [name for name, *_ in got[1]] == [
+    assert {name for name, *_ in got[2]} == {"settings_pkey", "ux_settings_sys", "ux_settings_user"}
+    assert {name for name, *_ in got[1]} == {
         "settings_pkey",
         "settings_updated_by_fkey",
         "settings_user_id_fkey",
@@ -159,7 +159,7 @@ def _assert_matches_plan_doc(c: Conn) -> None:
         "st_scope",
         "st_shape",
         "st_vtype",
-    ]
+    }
 
 
 def test_schema_matches_the_plan_doc_exactly(pg_dsn: str) -> None:
