@@ -393,6 +393,19 @@ async def test_verify_an_empty_log_echoes_no_range(
     assert (result.verified, result.first_bad_id) == (checkpoint is None, checkpoint)
 
 
+async def test_verify_marks_only_a_run_from_genesis_to_the_head_as_the_full_chain(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """The gauge rule's input: a partial range is never the full chain, nor is an empty log."""
+    assert not (await AuditQueryService(repo).verify()).full_chain  # an empty log
+    await _seed(repo, 5, clock)
+    svc = AuditQueryService(repo)
+    assert (await svc.verify()).full_chain
+    assert not (await svc.verify(from_id=2)).full_chain
+    assert not (await svc.verify(to_id=4)).full_chain
+    assert "full_chain" not in (await svc.verify()).model_dump(mode="json")
+
+
 def _checkpoint(repo: FakeAuditRepository, head_id: int, head_hash: str | None = None) -> None:
     """A checkpoint naming `head_id`, by default with that entry's stored hash."""
     stored = next((r["entry_hash"] for r in repo.rows if r["id"] == head_id), "f" * 64)
