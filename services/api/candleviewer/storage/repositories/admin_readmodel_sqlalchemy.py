@@ -47,7 +47,8 @@ _INCIDENTS = sa.text("""
 _SUBACCOUNTS = sa.text("""
     SELECT coalesce(max(n), 0) AS used FROM (
       SELECT count(*) AS n FROM exchange_accounts
-      WHERE kind = 'sub' AND deleted_at IS NULL GROUP BY parent_account_id) AS per_main
+      WHERE kind = 'sub' AND env = 'live' AND deleted_at IS NULL
+      GROUP BY parent_account_id) AS per_main
     """)
 
 
@@ -92,5 +93,6 @@ class SqlAlchemyAdminCounts:
         return int((await self._row(_INCIDENTS))["open"])
 
     async def subaccounts_in_use(self) -> int:
-        """Most non-deleted sub-accounts under any one main account (the cap is per main)."""
+        """Most non-deleted live sub-accounts under any one main account: the cap binds live
+        exchange UIDs, per main (C-2.11); demo and testnet sub-accounts never count."""
         return int((await self._row(_SUBACCOUNTS))["used"])
