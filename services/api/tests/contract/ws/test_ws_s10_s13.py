@@ -360,8 +360,7 @@ def test_s13_a_client_offering_no_recognised_subprotocol_is_closed_1002() -> Non
     assert exc.value.code == 1002
 
 
-@pytest.mark.xfail(strict=True, reason="#2395: err frames omit the required p.message")
-def test_s10_xfail_f1_err_frame_validates_against_the_error_schema() -> None:
+def test_s10_f1_err_frame_validates_against_the_error_schema() -> None:
     with connect(World()) as c:
         c.send({"t": "bogus"})
         c.recv()  # validated: common#/$defs/error requires `message`

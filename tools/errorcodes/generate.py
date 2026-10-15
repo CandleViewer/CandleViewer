@@ -99,6 +99,7 @@ def render_py(entries: list[dict[str, Any]]) -> str:
         "    retryable: bool",
         "    rest_analogue: str | None",
         "    close_code: int | None",
+        "    title: str",
         "",
         "",
         "ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {",
@@ -113,7 +114,7 @@ def render_py(entries: list[dict[str, Any]]) -> str:
         rt = "True" if e["retryable"] else "False"
         out.append(
             f'    ErrorCode.{_member(e["code"])}: ErrorMeta({surf}, {scope.replace("null", "None")}, '
-            f'{rt}, {ra.replace("null", "None")}, {cc}),'
+            f'{rt}, {ra.replace("null", "None")}, {cc}, {json.dumps(e["title"])}),'
         )
     out += [
         "}",
