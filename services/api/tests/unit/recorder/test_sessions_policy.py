@@ -7,8 +7,8 @@ from datetime import UTC, datetime
 
 from candleviewer.recorder.policy import RecordingPolicy
 from candleviewer.recorder.sessions import SessionManager, startup_reconcile, to_dt, to_us
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
 from tests.unit.recorder._session_fakes import MemRecorderStore, UsClock
-from tests.unit.recorder.conftest import FakeAudit, FakeBus, FakeClock
 
 T0 = to_us(datetime(2026, 9, 14, tzinfo=UTC))
 

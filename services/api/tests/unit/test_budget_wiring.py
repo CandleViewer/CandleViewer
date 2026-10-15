@@ -29,7 +29,9 @@ from candleviewer.recorder.budget import US_PER_DAY, BudgetConfig, DiskBudget, P
 from candleviewer.recorder.metrics import recorder_bytes_written_total
 from candleviewer.recorder.models import DiskPressureLevel
 from candleviewer.settings import Settings
-from tests.unit.recorder._budget_fakes import CAP, NOW, Clock, FakeBus, FakeEvents
+from tests.unit.recorder._budget_fakes import CAP, NOW, FakeEvents
+from tests.unit.recorder._fakes import FakeBus
+from tests.unit.recorder._session_fakes import UsClock
 
 
 def _tree(root: Path, files: dict[str, int]) -> None:
@@ -98,7 +100,7 @@ async def test_a_hung_questdb_never_freezes_the_ladder(
         bus=FakeBus(),
         env="demo",
         config=BudgetConfig(cap_bytes=CAP, breakdown_timeout_s=0.05),
-        now_us=Clock(),
+        now_us=UsClock(NOW),
     )
     await budget.sample_once()
     assert budget.level is DiskPressureLevel.HALT

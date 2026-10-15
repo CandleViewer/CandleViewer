@@ -28,13 +28,14 @@ from tests.unit.recorder._budget_fakes import (
     GB,
     NOW,
     TOTAL,
-    Clock,
-    FakeBus,
     FakeEvents,
     FakeMeter,
-    FakeStore,
+    FakeSeriesStore,
     make_budget,
+    pressure_events,
 )
+from tests.unit.recorder._fakes import FakeBus
+from tests.unit.recorder._session_fakes import UsClock
 
 HOUR = 3_600 * US_PER_S
 _K01 = next(p for p in Path(__file__).resolve().parents if (p / "docs/plan/notes").is_dir())
@@ -70,7 +71,7 @@ async def test_growth_is_measured_from_the_series_within_20pct_of_k01() -> None:
     points, outage = _week(k01)
     size = points[-1].recorded_bytes
     meter = FakeMeter(used=size, symbols={"BTCUSDT": size})
-    budget, _, _ = make_budget(meter, store=FakeStore(points), gaps=[outage])
+    budget, _, _ = make_budget(meter, store=FakeSeriesStore(points), gaps=[outage])
     await budget.load_series()
     await budget.sample_once()
     report = budget.report()
@@ -87,7 +88,7 @@ async def test_warning_names_the_projected_date_and_actions_six_days_before_the_
         Point(t, used - 600_000 * (NOW - t) // US_PER_S, ())
         for t in range(NOW - US_PER_DAY, NOW, 600 * US_PER_S)
     ]
-    budget, events, bus = make_budget(FakeMeter(used=used), store=FakeStore(day))
+    budget, events, bus = make_budget(FakeMeter(used=used), store=FakeSeriesStore(day))
     await budget.load_series()
     await budget.sample_once()
     ((severity, code, detail),) = events.events
@@ -95,7 +96,7 @@ async def test_warning_names_the_projected_date_and_actions_six_days_before_the_
     assert detail["projected_full_at"] == "2026-09-27T14:13:20+00:00"  # NOW + 6 days
     assert (detail["trigger"], detail["runway_days"]) == ("projection", "6.0")
     assert set(str(detail["actions"]).split(",")) == {"reduce_depth", "shorten_retention", "unpin"}
-    assert [e.level for e in bus.events] == [L.WARN]
+    assert [e.level for e in pressure_events(bus)] == [L.WARN]
 
 
 async def test_pinned_dominant_consumer_is_named_and_no_path_leaks() -> None:
@@ -113,13 +114,13 @@ async def test_pinned_dominant_consumer_is_named_and_no_path_leaks() -> None:
 
 
 async def test_bus_sees_one_autostop_engagement_while_usage_oscillates_89_91() -> None:
-    meter, clock = FakeMeter(), Clock()
+    meter, clock = FakeMeter(), UsClock(NOW)
     budget, _, bus = make_budget(meter, clock=clock)
     for pct in [89, 91] * 5 + [84, 91]:
         meter.used = CAP * pct // 100
         clock.t += 60 * US_PER_S
         await budget.sample_once()
-    assert [e.level for e in bus.events] == [L.WARN, L.AUTOSTOP, L.WARN, L.AUTOSTOP]
+    assert [e.level for e in pressure_events(bus)] == [L.WARN, L.AUTOSTOP, L.WARN, L.AUTOSTOP]
 
 
 async def test_before_history_growth_is_zero_and_nothing_is_projected() -> None:
@@ -134,7 +135,7 @@ async def test_before_history_growth_is_zero_and_nothing_is_projected() -> None:
 
 
 async def test_series_is_thinned_persisted_and_pruned_to_the_window() -> None:
-    meter, clock, store = FakeMeter(), Clock(), FakeStore()
+    meter, clock, store = FakeMeter(), UsClock(NOW), FakeSeriesStore()
     short = BudgetConfig(cap_bytes=CAP, fit_window_s=3_600, fallback_window_s=1_800)
     budget, _, _ = make_budget(meter, clock=clock, store=store, config=short)
     for _ in range(120):
@@ -150,13 +151,13 @@ async def test_series_is_thinned_persisted_and_pruned_to_the_window() -> None:
 async def test_store_and_bus_failures_never_lose_the_announcement() -> None:
     bus = FakeBus(fail_next=True)
     budget, events, _ = make_budget(
-        FakeMeter(used=CAP * 96 // 100), store=FakeStore(broken=True), bus=bus
+        FakeMeter(used=CAP * 96 // 100), store=FakeSeriesStore(broken=True), bus=bus
     )
     await budget.load_series()
     with pytest.raises(OSError, match="bus unavailable"):
         await budget.sample_once()
     await budget.sample_once()
-    assert [(e.previous, e.level) for e in bus.events] == [(L.NORMAL, L.HALT)]
+    assert [(e.previous, e.level) for e in pressure_events(bus)] == [(L.NORMAL, L.HALT)]
     assert len(events.events) == 2  # the alert is at-least-once
 
 
@@ -184,7 +185,9 @@ async def test_hard_limit_alerts_first_then_publishes_halt() -> None:
     await budget.sample_once()
     assert (budget.level, budget.accelerate_retention) == (L.HALT, True)
     assert [(s, c) for s, c, _ in events.events] == [("CRITICAL", "recorder.disk_halt")]
-    assert [(e.previous, e.level, e.cap_bytes) for e in bus.events] == [(L.NORMAL, L.HALT, CAP)]
+    assert [(e.previous, e.level, e.cap_bytes) for e in pressure_events(bus)] == [
+        (L.NORMAL, L.HALT, CAP)
+    ]
 
 
 async def test_gap_and_pin_outages_never_block_the_ladder() -> None:
@@ -199,7 +202,7 @@ async def test_gap_and_pin_outages_never_block_the_ladder() -> None:
     async def gaps(lo: int, hi: int) -> Sequence[tuple[int, int]]:
         raise TimeoutError
 
-    meter, clock, events = FakeMeter(used=GB, symbols={"BTCUSDT": GB}), Clock(), FakeEvents()
+    meter, clock, events = FakeMeter(used=GB, symbols={"BTCUSDT": GB}), UsClock(NOW), FakeEvents()
     cfg = BudgetConfig(cap_bytes=CAP)
     budget = DiskBudget(
         meter=meter,
