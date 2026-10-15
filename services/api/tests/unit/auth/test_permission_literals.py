@@ -50,13 +50,13 @@ _ALLOWED_DOT_TWINS: dict[tuple[str, str], str] = {}
 #: until you do), and give every new permission constant a seeded code instead of a row here.
 _KNOWN_UNSEEDED: dict[tuple[str, str], str] = {
     ("rules/validator.py", "rules.loosen_stop"): (
-        "LOOSEN_STOP_PERMISSION, also declared by the widen_stop action and probed by "
+        "#2698: LOOSEN_STOP_PERMISSION, also declared by the widen_stop action and probed by "
         "api/rules.py: until rules:loosen_stop is seeded, only_tighten=false is a save-blocking "
         "safety error for everyone"
     ),
     ("storage/retention/policy.py", "retention.change"): (
-        "RETENTION_CHANGE_PERMISSION, also an audit action: require_retention_change has no "
-        "production caller yet"
+        "#2699: RETENTION_CHANGE_PERMISSION, also an audit action: require_retention_change has "
+        "no production caller yet"
     ),
 }
 
