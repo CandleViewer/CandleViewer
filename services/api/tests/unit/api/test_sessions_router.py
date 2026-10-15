@@ -12,7 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import candleviewer.api.sessions as sessions_module
+import candleviewer.api.query_allowlist as allowlist_module
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.sessions import (
     GET_SESSION_QUERY,
@@ -401,13 +401,13 @@ async def test_self_service_read_refusal_redacts_each_short_name_once(
     """#2573 review: the shared redaction backtracks on long input, so it must only ever see names
     within the echo bound, once each, however long the client-supplied names are."""
     seen: list[int] = []
-    redact = sessions_module.redact_text
+    redact = allowlist_module.redact_text
 
     def counting_redact(value: str) -> str:
         seen.append(len(value))
         return redact(value)
 
-    monkeypatch.setattr(sessions_module, "redact_text", counting_redact, raising=True)
+    monkeypatch.setattr(allowlist_module, "redact_text", counting_redact, raising=True)
     caller = await env.mint(uuid.uuid4())
     params = {f"{i:02d}" + "k" * 4094: "1" for i in range(6)} | {"short": "1", "x" * 64: "1"}
     r = env.client.get("/api/v1/auth/session", params=params, headers=_h(caller.access_token))
@@ -433,3 +433,46 @@ def test_self_service_read_allow_lists_match_the_contract() -> None:
 
     assert declared("/auth/session") == GET_SESSION_QUERY
     assert declared("/auth/sessions") == LIST_SESSIONS_QUERY
+
+
+# -- SR-026 (#2632): logout and DELETE /me/sessions/{id} refuse undeclared query parameters ----
+
+_SELF_MUTATIONS = ("POST /api/v1/auth/logout", "DELETE /api/v1/me/sessions/{sid}")
+
+
+@pytest.mark.parametrize("param", ("user_id", "userId", *_UNDECLARED))
+@pytest.mark.parametrize("route", _SELF_MUTATIONS)
+async def test_self_service_mutation_with_an_undeclared_query_parameter_is_422_revoking_nothing(
+    env: _Env, route: str, param: str
+) -> None:
+    user = uuid.uuid4()
+    caller, other = await env.mint(user), await env.mint(user)
+    method, path = route.split(" ")
+    r = env.client.request(
+        method,
+        path.format(sid=other.session_id),
+        params={param: str(uuid.uuid4())},
+        headers=_h(caller.access_token),
+    )
+    assert r.status_code == 422, f"{route}?{param}=: refused, not silently ignored"
+    assert r.headers["content-type"].startswith("application/problem+json")
+    body = r.json()
+    assert body["code"] == "validation_failed"
+    rule = "target_user_not_accepted" if param in ("user_id", "userId") else "undeclared_parameter"
+    assert [(e["field"], e["rule"]) for e in body["errors"]] == [(f"query.{param}", rule)]
+    assert param in body["detail"]
+    assert env.revoked == [] and env.audit.writer.events == [], "nothing revoked or audited"
+    for session in (caller, other):
+        alive = env.client.get("/api/v1/auth/session", headers=_h(session.access_token))
+        assert alive.status_code == 200
+
+
+@pytest.mark.parametrize("route", _SELF_MUTATIONS)
+async def test_self_service_mutation_with_a_target_user_parameter_unauthenticated_is_401(
+    env: _Env, route: str
+) -> None:
+    method, path = route.split(" ")
+    r = env.client.request(
+        method, path.format(sid=uuid.uuid4()), params={"user_id": str(uuid.uuid4())}
+    )
+    assert r.status_code == 401

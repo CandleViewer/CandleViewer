@@ -7,6 +7,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
@@ -127,9 +128,44 @@ def test_failing_and_slow_probes_degrade_only_their_step() -> None:
 
 def test_client_cannot_fake_a_step() -> None:
     c = _client({}, {}, _Store(), _M())
-    r = c.get("/onboarding/checklist?totp=ok", headers={**_H, "x-totp": "ok"})
+    r = c.get("/onboarding/checklist", headers={**_H, "x-totp": "ok"})
     item = next(i for i in r.json()["items"] if i["key"] == "totp")
     assert item["state"] == "pending"
+    # SR-026 (#2632): a step state in the query is not ignored but refused, like any undeclared key
+    assert c.get("/onboarding/checklist?totp=ok", headers=_H).status_code == 422
+
+
+@pytest.mark.parametrize("param", ["user_id", "userId", "USER_ID", "uid", "user-id", "email"])
+def test_checklist_with_an_undeclared_query_parameter_is_422_before_any_state_is_read(
+    param: str,
+) -> None:
+    seen: list[str] = []
+
+    class _Watched(_Store):
+        async def is_dismissed(self, user_id: Any) -> bool:
+            seen.append("store")
+            return False
+
+    async def probe(_u: Any) -> StepResult:
+        seen.append("probe")
+        return StepResult("ok")
+
+    m = _M()
+    c = _client({"totp": probe}, {}, _Watched(), m)
+    r = c.get("/onboarding/checklist", params={param: str(uuid.uuid4())}, headers=_H)
+    assert r.status_code == 422, f"?{param}=: refused, not silently ignored"
+    assert r.headers["content-type"] == "application/problem+json"
+    body = r.json()
+    assert body["code"] == "validation_failed"
+    rule = "target_user_not_accepted" if param in ("user_id", "userId") else "undeclared_parameter"
+    assert [(e["field"], e["rule"]) for e in body["errors"]] == [(f"query.{param}", rule)]
+    assert param in body["detail"] and "items" not in body
+    assert seen == [] and m.calls == [], "no probe, store read or metric for a refused request"
+
+
+def test_checklist_with_a_target_user_parameter_unauthenticated_is_401() -> None:
+    c = _client({}, {}, _Store(), _M())
+    assert c.get("/onboarding/checklist", params={"user_id": str(UID)}).status_code == 401
 
 
 def test_dismiss_rejected_until_complete_then_persists() -> None:
