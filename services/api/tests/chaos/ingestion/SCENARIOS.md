@@ -6,10 +6,11 @@ Run: `cd services/api && uv run pytest tests/chaos/ingestion -m chaos --no-cov`.
 **Harness.** `_stub_exchange.StubExchange` is the fault-injecting proxy at the transport seam:
 it is the `ConnectionManager` socket factory and the `httpx` transport of a real
 `BybitRestClient`. `inject(Fault)` arms a fault; `replay(frames)` / `_feed.Feeder` stream the
-recorded E08-T05 corpus (re-timed only). `_rig.Rig` wires the production composition
-(`IngestionService` pump, B13 `ws_conn` chart via the factory, `TradeStream`, `BookStream`,
-`InstrumentsRefreshScheduler`, bus) exactly as `app.wire_public_ws` does. Time is a
-`VirtualClock` (no wall-clock sleeps, C-13.7); jitter is seeded; `settle()` is the
+recorded E08-T05 corpus (re-timed only). `_rig.Rig` wires the production composition in
+`app.wire_public_ws` order (`InstrumentsRefreshScheduler`, `ClockGuard`, B13 `ws_conn` chart
+via the factory, `TradeStream`, `BookStream` with its B14 chart, `TickerStream`, frame router,
+bus) and starts it through `IngestionService.start()`; `test_rig_parity.py` pins each element.
+Time is a `VirtualClock` (no wall-clock sleeps, C-13.7); jitter is seeded; `settle()` is the
 quiescence barrier assertions run after. The venue keeps a book/trade **oracle** (the REST
 snapshot truth). No sockets are opened; the live host is asserted unreachable.
 
@@ -23,19 +24,17 @@ fix lands, so the fix PR removes the marker and the cell becomes `✅ (#NNNN fix
 
 ## Deviations from the composition root
 
-`Rig` is modelled on `app.wire_public_ws`, not identical to it:
+`Rig` is `app.wire_public_ws` over the stub exchange, started through
+`IngestionService.start()` (#1975). What remains are the seams:
 
-- Virtual clock/RNG and the stub transport replace the real ones.
+- Virtual clock, seeded RNG and the stub transport replace the real ones, through the seams
+  the production classes expose (`clock=`, `now_us=`, `sleep=`, `rand=`, `transport=`, ...).
+- Storage is outside the seam: `FlakyWriter` stands in for the hot-tier writers (s11's outage
+  switch) and a null double for the catalogue's Postgres repository. Not composed, as neither
+  touches the feed path: `_wire_klines`' request-path kline service and
+  `wire_instrument_catalogue`'s `instruments.*.updated` bus publisher.
 - s08's signed client wires `on_signature_failure` although production has no signed-client
   composition yet (#1949, #1911): s08 proves client + guard, not the app.
-- No `B14BookSupervisor`; no ticker stream.
-- Instrument launch-time callback is `lambda _s: None`.
-- `ClockGuard` feeds the `EventWindow` but is not attached to `IngestionService`.
-- The book timeout loop is replaced by `check_timeouts()` on the virtual clock.
-- `IngestionService.start()` is never called, so the rig registers `prune_unlisted`, the frame
-  router and the pump itself.
-
-Parity follow-up: #1975.
 
 ## Catalogue
 
