@@ -90,7 +90,10 @@ class AuditRepository(Protocol):
         Postgres with the exact casts `audit_chain()` uses (`::text`, jsonb `::text`, and
         the trigger's `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.USOF')` for `event_ts`),
         `None` for SQL NULL. Past its first row a batch also stops at the implementation's
-        byte budget for renderings, so a short batch does not mean the range is done.
+        byte budget for renderings, so a short batch does not mean the range is done. An
+        entry over the implementation's per-entry cap is never fetched: the batch before it
+        ends there, and the read that would start with it raises a storage error naming it
+        (`entry_id`), so the walk stops fail-closed after every row before it.
 
         This and `fetch_anchor_hash`/`read_head` bound each call in time; an overrun raises
         the builtin `TimeoutError`, and a database failure a storage error that carries

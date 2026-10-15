@@ -433,6 +433,7 @@ def _build_audit(settings: Settings) -> AuditHandle:
             SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "audit"),
             read_slots=settings.audit_query_global_max_concurrent,
             verify_read_timeout_ms=settings.audit_verify_statement_timeout_ms,
+            verify_max_entry_bytes=settings.audit_verify_max_entry_bytes,
         )
     )
 

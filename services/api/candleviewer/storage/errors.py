@@ -98,6 +98,18 @@ class UnknownIlpTable(IlpRowError, KeyError):
     code = "STORAGE_ILP_UNKNOWN_TABLE"
 
 
+class AuditEntryTooLarge(StorageError):
+    """An audit entry's renderings are over the verify per-entry cap (E42-T02), so a verify
+    run cannot check it within its memory bound and stops fail-closed: never a pass. Its
+    renderings are never fetched; `entry_id` names it."""
+
+    code = "STORAGE_AUDIT_ENTRY_TOO_LARGE"
+
+    def __init__(self, entry_id: int) -> None:
+        super().__init__(f"audit entry {entry_id} is over the verify entry size cap")
+        self.entry_id = entry_id
+
+
 #: Frozen mapping from exception class to its stable code, asserted by a
 #: unit test so a future rename cannot silently change a log/system_events
 #: value (ticket "Scope / Deliverables").
@@ -114,4 +126,5 @@ ERROR_CODES: dict[type[StorageError], str] = {
     MissingDesignatedTimestamp: MissingDesignatedTimestamp.code,
     InvalidSymbol: InvalidSymbol.code,
     UnknownIlpTable: UnknownIlpTable.code,
+    AuditEntryTooLarge: AuditEntryTooLarge.code,
 }
