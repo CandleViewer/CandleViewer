@@ -440,6 +440,9 @@ def test_verify_audit_chain_store_failure_is_503_without_a_result(
     r = TestClient(_app(service, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
     assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
     assert "verified" not in r.json() and "08006" not in r.text
+    # Every verify 503 carries Retry-After but an entry over the cap: no retry can pass it.
+    retry = None if isinstance(error, AuditEntryTooLarge) else "1"
+    assert r.headers.get("Retry-After") == retry
     # A run that stopped is recorded with why; nothing started when the plan failed.
     why = {
         TimeoutError: "timeout",
