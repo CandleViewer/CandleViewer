@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import time
 import tracemalloc
 import uuid
@@ -14,9 +17,11 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+import candleviewer.ws.codec as codec
 from candleviewer.ws.codec import (
-    MAX_MSGPACK_CONTAINER_LEN,
+    MAX_MSGPACK_ARRAY_LEN,
     MAX_MSGPACK_DEPTH,
+    MAX_MSGPACK_MAP_LEN,
     MAX_MSGPACK_VALUES,
     MsgpackFrameError,
     _require_c_unpacker,
@@ -26,10 +31,20 @@ from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_TOPICS_PER_SUB
 from candleviewer.ws.topics import FAMILIES, UNIVERSAL
 
 REPO = Path(__file__).resolve().parents[5]
-#: The worst `HOSTILE` shape peaks at about 4.8 MiB (open map levels holding short strings):
-#: the open levels' pre-sized slots and their scalars, which the 256 KiB input bounds, plus the
-#: budgeted values. 8 MiB leaves headroom; the JSON path's worst at the cap is about 6 MiB.
+#: SR-185: what one decode can hold live, from the codec's caps.
+#: - Open levels: at most 1 024 (the C unpacker's stack), each a list pre-sized to its cap:
+#:   1 024 x (56 + 8 x 128) B, about 1.05 MiB.
+#: - What open levels hold before they complete, at most 127 values per array level: the worst is
+#:   a 32 B int per input byte, 1 024 x 127 x 32 B, about 4 MiB. A map level holds at most 31
+#:   pairs, each a 56 B tuple plus its value: about 2.7 MiB in all, under the array case.
+#: - Completed containers, which the budget charges: at most 16 384 values, about 72 B each at
+#:   the densest (one-entry maps), about 1.1 MiB.
+#: That sums to about 6.2 MiB. The worst shape measured, open array levels each holding five
+#: one-entry maps and 122 ints (`HOSTILE`), peaks at 5.9 MiB. 8 MiB leaves headroom; the JSON
+#: path's worst at the cap is about 6 MiB.
 MAX_PEAK_BYTES: Final = 8 << 20
+#: A msgpack timestamp (ext type -1), which the unpacker decodes without calling `ext_hook`.
+TIMESTAMP: Final = b"\xd6\xff\x00\x00\x00\x01"
 CORPUS: Final[list[dict[str, str]]] = json.loads(
     (REPO / "tests/fuzz/ws-frames/msgpack-client.json").read_text(encoding="utf-8")
 )
@@ -162,22 +177,83 @@ def test_msgpack_fallback_unpacker_is_refused_at_import() -> None:
         _require_c_unpacker(fallback)
 
 
-def test_msgpack_container_cap_covers_every_list_the_server_accepts() -> None:
+def test_msgpack_codec_refuses_to_import_under_the_pure_python_fallback() -> None:
+    """The module-level check itself. With `MSGPACK_PUREPYTHON` set, msgpack loads its fallback,
+    which also hands `object_pairs_hook` a generator, so every map would raise a `TypeError`.
+    The import must fail first. This runs in a fresh interpreter, so this process is untouched."""
+    result = subprocess.run(  # fixed argv: this interpreter and a literal import, no shell
+        [sys.executable, "-c", "import candleviewer.ws.codec"],
+        cwd=Path(codec.__file__).resolve().parents[2],
+        env={**os.environ, "MSGPACK_PUREPYTHON": "1"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "the msgpack C extension is required" in result.stderr
+
+
+def test_msgpack_array_cap_covers_every_list_the_server_accepts() -> None:
     """#2509 review: the cap must never turn a valid JSON-path frame into `frame_malformed`."""
     options = [*UNIVERSAL.values(), *(o for f in FAMILIES.values() for o in f.options.values())]
     limits = [o.max_items for o in options if o.max_items is not None]
-    assert max([*limits, MAX_TOPICS_PER_SUB]) <= MAX_MSGPACK_CONTAINER_LEN
+    assert max([*limits, MAX_TOPICS_PER_SUB]) <= MAX_MSGPACK_ARRAY_LEN
+
+
+_CLIENT_SCHEMAS: Final = ("envelope", "hello", "heartbeat", "auth", "sub", "unsub", "ctl", "resync")
+
+
+def _client_objects() -> list[tuple[str, dict[str, Any]]]:
+    """(property name, object schema) for every object a client frame may carry. `if`, `then`,
+    `else` and `not` constrain the object they sit in, so they are not objects of their own."""
+    doc = json.loads((REPO / "docs/plan/ws-schema.json").read_text(encoding="utf-8"))["schemas"]
+    stack: list[tuple[str, Any]] = [
+        ("", doc[f"cv://ws/v1/{n}.schema.json"]) for n in _CLIENT_SCHEMAS
+    ]
+    found: list[tuple[str, dict[str, Any]]] = []
+    while stack:
+        name, node = stack.pop()
+        if isinstance(node, list):
+            stack.extend((name, item) for item in node)
+        elif isinstance(node, dict):
+            if "properties" in node or node.get("type") == "object":
+                found.append((name, node))
+            stack.extend(node.get("properties", {}).items())
+            skip = {"properties", "if", "then", "else", "not"}
+            stack.extend((name, v) for k, v in node.items() if k not in skip)
+    return found
+
+
+def test_msgpack_map_cap_covers_every_object_a_client_frame_may_carry() -> None:
+    """#2509 review: the widest closed client object in `ws-schema.json` (a topic's `opts`) and
+    the widest `opts` the server accepts fit the map cap. The one open object, `opts.params`, is
+    an option no family accepts, so the server refuses it at any width."""
+    objects = _client_objects()
+    closed = [
+        len(o.get("properties", {})) for _, o in objects if o.get("additionalProperties") is False
+    ]
+    assert max(closed) <= MAX_MSGPACK_MAP_LEN
+    opened = {name for name, o in objects if o.get("additionalProperties") is not False}
+    accepted = {*UNIVERSAL, *(key for f in FAMILIES.values() for key in f.options)}
+    assert opened == {"params"} and not opened & accepted
+    assert max(len({**UNIVERSAL, **f.options}) for f in FAMILIES.values()) <= MAX_MSGPACK_MAP_LEN
 
 
 @pytest.mark.parametrize(
-    "build",
-    [lambda n: [None] * n, lambda n: {str(i): None for i in range(n)}],
+    ("build", "cap"),
+    [
+        (lambda n: [None] * n, MAX_MSGPACK_ARRAY_LEN),
+        (lambda n: {str(i): None for i in range(n)}, MAX_MSGPACK_MAP_LEN),
+    ],
     ids=["array", "map"],
 )
-def test_msgpack_container_length_cap_exact_accepted_and_plus_one_rejected(build: Any) -> None:
-    assert decode_client_frame(_pack(build(MAX_MSGPACK_CONTAINER_LEN)))
+def test_msgpack_container_length_cap_exact_accepted_and_plus_one_rejected(
+    build: Any, cap: int
+) -> None:
+    assert decode_client_frame(_pack(build(cap)))
     with pytest.raises(MsgpackFrameError) as exc:
-        decode_client_frame(_pack(build(MAX_MSGPACK_CONTAINER_LEN + 1)))
+        decode_client_frame(_pack(build(cap + 1)))
     assert "exceeds max_" in str(exc.value.__cause__)  # the unpacker refused the header
 
 
@@ -195,17 +271,19 @@ def test_msgpack_value_budget_exact_accepted_and_plus_one_rejected() -> None:
 
 
 def test_msgpack_map_entries_count_twice_against_the_budget() -> None:
-    entries = {str(i): None for i in range(MAX_MSGPACK_CONTAINER_LEN)}  # 1 + 256 each
-    with pytest.raises(MsgpackFrameError, match="values"):  # 2 + 65 + 64 x 257 = 16 515
-        decode_client_frame(_pack([[entries] * 64]))  # (8 323 if an entry counted once)
+    """3 + (129 + 128 x 65) + (122 + 121 x 65) = 16 439, or 8 471 if an entry counted once."""
+    entries = {str(i): None for i in range(MAX_MSGPACK_MAP_LEN)}  # 1 + 64 each
+    with pytest.raises(MsgpackFrameError, match="values"):
+        decode_client_frame(_pack([[entries] * 128, [entries] * 121]))
 
 
 def test_msgpack_duplicate_map_keys_are_charged_as_read() -> None:
-    """128 pairs of one key decode to one entry, and still cost 1 + 256: 65 + 64 x 257."""
-    duplicates = b"\xde\x00\x80" + b"\xa0\xc0" * 128  # {"": None} written 128 times
+    """32 pairs of one key decode to one entry and still cost 1 + 64. Two arrays of 128 such
+    maps cost 3 + 2 x (129 + 128 x 65) = 16 901, or 1 029 if charged after keys collapse."""
+    duplicates = b"\xde\x00\x20" + b"\xa0\xc0" * 32  # {"": None} written 32 times
     assert decode_client_frame(duplicates) == {"": None}
     with pytest.raises(MsgpackFrameError, match="values"):
-        decode_client_frame(b"\xdc\x00\x40" + duplicates * 64)
+        decode_client_frame(b"\x92" + (b"\xdc\x00\x80" + duplicates * 128) * 2)
 
 
 def test_msgpack_every_container_costs_one_even_when_empty() -> None:
@@ -213,8 +291,10 @@ def test_msgpack_every_container_costs_one_even_when_empty() -> None:
         decode_client_frame(_pack([[[]] * 128] * 64))  # (8 256 with empty containers free)
 
 
-def test_msgpack_largest_schema_valid_sub_fits_the_budget() -> None:
-    """50 topics, each with every bounded option list full (`topics.py`)."""
+def test_msgpack_sub_with_every_option_list_full_fits_the_budget() -> None:
+    """An over-approximation of the largest valid `sub`: 50 topics whose `opts` hold every
+    bounded list any family accepts, each full (`topics.py`). It costs 10 961. No family accepts
+    all of these lists; the costliest one that a family does accept, `rules`, costs 7 511."""
     ids = [str(uuid.UUID(int=i)) for i in range(100)]
     opts = {
         "rule_ids": ids,
@@ -245,21 +325,26 @@ def _open_levels(child: bytes) -> bytes:
     return _at_cap((b"\xdc\x00\x80" + child * 127) * 2_000, b"")
 
 
-def _open_map_levels(value: bytes) -> bytes:
-    """Map levels of 127 distinct keys to `value`, the 128th key's value the next level."""
-    keys = [b"\xa2" + bytes([0x41 + i // 32, 0x41 + i % 32]) for i in range(128)]
-    level = b"\xde\x00\x80" + b"".join(k + value for k in keys[:127]) + keys[127]
+def _open_map_levels(value: bytes, distinct: bool = True) -> bytes:
+    """Map levels of 31 keys to `value` (distinct, or all `""`), the 32nd key's value the next
+    level."""
+    keys = [
+        b"\xa2" + bytes([0x41 + i // 32, 0x41 + i % 32]) if distinct else b"\xa0"
+        for i in range(MAX_MSGPACK_MAP_LEN)
+    ]
+    level = b"\xde\x00\x20" + b"".join(k + value for k in keys[:-1]) + keys[-1]
     return _at_cap(level * 2_000, b"")
 
 
 def _repeated_keys() -> bytes:
-    """31 x 64 x 64 duplicate-key entries `"": {}`: about 129 000 maps before keys collapse."""
-    inner = b"\xde\x00\x40" + b"\xa0\x80" * 64
-    return _at_cap(b"\xdc\x00\x1f" + (b"\xde\x00\x40" + (b"\xa0" + inner) * 64) * 31, b"")
+    """31 x 32 x 32 duplicate-key entries `"": {}`: about 31 700 maps before keys collapse."""
+    inner = b"\xde\x00\x20" + b"\xa0\x80" * 32
+    return _at_cap(b"\xdc\x00\x1f" + (b"\xde\x00\x20" + (b"\xa0" + inner) * 32) * 31, b"")
 
 
-#: #2509 security reviews: at-cap shapes that reserved 2 GiB, cost 160 ms per frame, or slipped
-#: past the round-1 budget (open levels, empty containers, duplicate keys).
+#: #2509 security reviews: at-cap shapes that reserved 2 GiB, cost 160 ms per frame, slipped
+#: past the round-1 budget (open levels, empty containers, duplicate keys), or peaked at
+#: 12 MiB under the round-3 map cap (open map levels of uncached ints).
 HOSTILE: Final[dict[str, bytes]] = {
     "1024-nested-array32-claiming-262144": _at_cap(b"\xdd\x00\x04\x00\x00" * 1024),
     "1024-nested-array16-claiming-128": _at_cap(b"\xdc\x00\x80" * 1024),
@@ -271,8 +356,20 @@ HOSTILE: Final[dict[str, bytes]] = {
     "open-levels-of-empty-maps": _open_levels(b"\x80"),
     "open-levels-of-short-strings": _open_levels(b"\xa2ab"),
     "open-levels-of-uint16": _open_levels(b"\xcd\x12\x34"),
+    "open-levels-of-negative-fixints": _open_levels(b"\xe0"),
+    "open-levels-of-timestamps": _open_levels(TIMESTAMP),
+    "open-levels-of-small-maps-and-ints": _at_cap(
+        (b"\xdc\x00\x80" + b"\x81\xa0\xe0" * 5 + b"\xe0" * 122) * 2_000, b""
+    ),
     "open-map-levels-of-empty-maps": _open_map_levels(b"\x80"),
     "open-map-levels-of-short-strings": _open_map_levels(b"\xa2ab"),
+    "open-map-levels-of-negative-fixints": _open_map_levels(b"\xe0", distinct=False),
+    "open-map-levels-of-nils": _open_map_levels(b"\xc0", distinct=False),
+    "open-map-levels-of-timestamps": _open_map_levels(TIMESTAMP),
+    # Round 3's 12 MiB shape: 128-wide levels of `"": -32`, refused now at the first header.
+    "128-wide-open-map-levels": _at_cap(
+        (b"\xde\x00\x80" + b"\xa0\xe0" * 127 + b"\xa0") * 2_000, b""
+    ),
     "duplicate-key-maps": _repeated_keys(),
 }
 
@@ -292,7 +389,8 @@ def test_msgpack_hostile_at_cap_frame_is_refused_within_the_allocation_bound(dat
 @pytest.mark.perf
 @pytest.mark.parametrize("data", HOSTILE.values(), ids=HOSTILE.keys())
 def test_msgpack_hostile_at_cap_frame_blocks_the_loop_far_below_c_2_17(data: bytes) -> None:
-    """C-2.17: no more than 50 ms on the event loop; the worst of these takes about 7 ms."""
+    """C-2.17: no more than 50 ms on the event loop. The worst of these, timestamps in open map
+    levels, takes about 10 ms."""
     started = time.perf_counter()
     with pytest.raises(MsgpackFrameError):
         decode_client_frame(data)

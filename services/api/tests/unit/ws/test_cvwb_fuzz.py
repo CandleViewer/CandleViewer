@@ -10,7 +10,7 @@ msgpack decoder returns a JSON-like value within ``MAX_MSGPACK_DEPTH`` or raises
 ``MsgpackFrameError``, within ``MSGPACK_MAX_PEAK_BYTES``. Its second target builds frames from
 array and map headers (claims up to 2^32 - 1, nesting past 1 024, padding to the inbound cap),
 which byte mutation of small seeds cannot reach; its third builds open levels, each holding up to
-the container cap of children before opening the next (distinct or duplicate map keys).
+its cap of children before opening the next (distinct or duplicate map keys).
 Failing inputs are written to ``CV_FUZZ_ARTIFACT_DIR`` (uploaded as a CI artefact, never the repo).
 """
 
@@ -32,7 +32,7 @@ from hypothesis import strategies as st
 
 from candleviewer.ws.binary import FrameMalformedError, decode
 from candleviewer.ws.codec import (
-    MAX_MSGPACK_CONTAINER_LEN,
+    MAX_MSGPACK_ARRAY_LEN,
     MAX_MSGPACK_DEPTH,
     MsgpackFrameError,
     decode_client_frame,
@@ -52,7 +52,7 @@ MSGPACK_SEEDS: Final[list[bytes]] = [
 ]
 EXAMPLES: Final[int] = int(os.environ.get("CV_FUZZ_EXAMPLES", "200"))
 MAX_PEAK_BYTES: Final[int] = 1 << 20
-#: The msgpack decoder's worst at-cap peak is about 4.8 MiB; the bound is derived next to
+#: The msgpack decoder's worst measured at-cap peak is about 5.9 MiB. The bound is derived at
 #: `test_msgpack_decode_bounds.py::MAX_PEAK_BYTES`.
 MSGPACK_MAX_PEAK_BYTES: Final[int] = 8 << 20
 _INTERESTING: Final[tuple[int, ...]] = (0, 1, 2, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 0xFFFFFFFE)
@@ -280,9 +280,19 @@ def _level(kind: str, width: int, child: bytes, distinct: bool) -> bytes:
 @_FUZZ_SETTINGS
 @given(
     kind=st.sampled_from(["array", "map"]),
-    width=st.integers(0, MAX_MSGPACK_CONTAINER_LEN),
+    width=st.integers(0, MAX_MSGPACK_ARRAY_LEN),
     child=st.sampled_from(
-        [b"\x80", b"\x90", b"\xc0", b"\xa2ab", b"\xcd\x12\x34", b"\xcb" + bytes(8)]
+        [
+            b"\x80",
+            b"\x90",
+            b"\xc0",
+            b"\xe0",  # an int CPython does not cache: 32 B per input byte
+            b"\xa2ab",
+            b"\xcd\x12\x34",
+            b"\xcb" + bytes(8),
+            b"\xd6\xff\x00\x00\x00\x01",  # a timestamp, decoded without `ext_hook`
+            b"\x81\xa0\xe0",  # a completed one-entry map
+        ]
     ),
     levels=st.integers(1, 1_100),
     distinct=st.booleans(),

@@ -4,17 +4,19 @@ A client frame reaches this decoder only below the 256 KiB inbound cap (SR-040),
 decoder checks the cap again first. The other limits hold *while* msgpack's C unpacker runs
 (the pure-Python fallback is refused at import: it would break the C-2.17 time bound):
 - its nesting stack stops at 1 024 levels;
-- no array or map may claim more than `MAX_MSGPACK_CONTAINER_LEN` entries, so a header never
-  reserves room for more (msgpack pre-sizes an array to the length its header claims);
-- ext types are refused on sight;
+- no array may claim more than `MAX_MSGPACK_ARRAY_LEN` entries and no map more than
+  `MAX_MSGPACK_MAP_LEN`, so a header never reserves room for more (msgpack pre-sizes a
+  container to the length its header claims);
+- ext types are refused on sight, except the timestamp (type -1), which msgpack decodes itself
+  and the check below refuses once the decode completes;
 - a value budget, `MAX_MSGPACK_VALUES`, charges every completed container: the container,
   its elements, and each map key and value (before duplicate keys collapse). The decode ends
   once the budget is spent, so the decoded value, and the check below, stay small.
 
 Live memory during a decode is bounded by the open levels (at most 1 024, each pre-sized to
-the container cap, plus the scalars read into them, which the 256 KiB input bounds) and by the
-budget. The worst shapes found peak at about 7 MiB for about 15 ms, the same order as the JSON
-path's worst case at the cap (`test_msgpack_decode_bounds.py::HOSTILE`).
+its cap, plus the scalars and map pairs read into them, which the 256 KiB input bounds) and by
+the budget. The derivation and the worst shapes measured are in
+`test_msgpack_decode_bounds.py` (`MAX_PEAK_BYTES`, `HOSTILE`).
 
 The decoded value must then be something a JSON frame could carry: maps with string keys,
 arrays, strings, finite numbers, booleans and nil, nested at most `MAX_MSGPACK_DEPTH` deep.
@@ -50,12 +52,18 @@ _require_c_unpacker(msgpack.unpackb)
 
 #: SR-185: the nesting cap SR-184 sets for JSON client frames.
 MAX_MSGPACK_DEPTH: Final = MAX_JSON_DEPTH
-#: SR-185: entries one array or map may claim. The longest list the server accepts in a client
-#: frame is a `rules` sub's 100 `rule_ids` (`topics.py`); a test keeps every server limit under
-#: this cap. A longer list is malformed here, where JSON would get the per-option error.
-MAX_MSGPACK_CONTAINER_LEN: Final = 128
-#: SR-185: values charged per frame (see `_Budget`). The largest schema-valid frames, a `sub` of
-#: 50 topics with every option list full, cost about 11 000.
+#: SR-185: entries one array may claim. The longest option list a topic accepts is a `rules`
+#: sub's 100 `rule_ids` (`topics.py`), and a test keeps every `topics.py` list limit under this
+#: cap. A longer list is malformed here, where JSON would answer per option or per topic: a
+#: `sub` or `unsub` naming more than 128 topics, or a `hello` / `auth` array the schema leaves
+#: unbounded. No conforming client sends one.
+MAX_MSGPACK_ARRAY_LEN: Final = 128
+#: SR-185: entries one map may claim: the widest client object in `ws-schema.json`, a topic's
+#: `opts` (32 properties, `additionalProperties: false`). The server accepts fewer keys in any
+#: one `opts` (`topics.py`); a test keeps both under this cap.
+MAX_MSGPACK_MAP_LEN: Final = 32
+#: SR-185: values charged per frame (see `_Budget`). A `sub` of 50 `rules` topics with every
+#: list that family accepts full costs about 7 500.
 MAX_MSGPACK_VALUES: Final = 16_384
 _SCALARS: Final = (str, int, type(None))  # a bool is an int
 
@@ -100,8 +108,8 @@ def decode_client_frame(raw: bytes) -> JsonValue:
             raw=False,
             strict_map_key=True,
             ext_hook=_refuse_ext,
-            max_array_len=MAX_MSGPACK_CONTAINER_LEN,
-            max_map_len=MAX_MSGPACK_CONTAINER_LEN,
+            max_array_len=MAX_MSGPACK_ARRAY_LEN,
+            max_map_len=MAX_MSGPACK_MAP_LEN,
             list_hook=budget.array,
             object_pairs_hook=budget.map,
         )
