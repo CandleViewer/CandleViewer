@@ -6,6 +6,9 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import pytest
 
 from candleviewer.admin.overview.fanout import SliceFanOut, SourceUnavailable
 from candleviewer.admin.overview.ports import (
@@ -55,12 +58,16 @@ class Recorder:
 
 
 class Oms:
-    def __init__(self, *, positions: bool = True) -> None:
+    def __init__(self, *, positions: str = "ok") -> None:
         self.positions, self.kill_switch_reads = positions, 0
 
     async def open_positions(self) -> int:
-        if not self.positions:
+        if self.positions == "unwired":
             raise SourceUnavailable("open_positions: no provider wired")
+        if self.positions == "hang":
+            await asyncio.Event().wait()
+        if self.positions == "raise":
+            raise OSError("postgresql://internal")
         return 2
 
     async def kill_switch_engaged(self) -> bool:
@@ -71,17 +78,11 @@ class Oms:
         return True
 
 
-def _service(
-    *, recorder: Recorder | None = None, oms: Oms | None = None, counts: Counts | None = None
-) -> AdminOverviewService:
-    fan = SliceFanOut(budget_s=0.01, monotonic=lambda: 0.0, now=lambda: NOW)
-    return AdminOverviewService(
-        fan,
-        counts=counts or Counts(),
-        recorder=recorder or Recorder(),
-        oms=oms or Oms(),
-        now=lambda: NOW,
-    )
+def _service(budget_s: float = 0.3, positions_s: float = 0.2, **ports: Any) -> AdminOverviewService:
+    """Default 300 ms budget: only the hang tests shrink a budget (no flakes under load)."""
+    fan = SliceFanOut(budget_s=budget_s, monotonic=lambda: 0.0, now=lambda: NOW)
+    merged: dict[str, Any] = {"counts": Counts(), "recorder": Recorder(), "oms": Oms()} | ports
+    return AdminOverviewService(fan, now=lambda: NOW, positions_budget_s=positions_s, **merged)
 
 
 async def test_every_slice_is_populated_when_every_source_answers() -> None:
@@ -98,7 +99,7 @@ async def test_every_slice_is_populated_when_every_source_answers() -> None:
 
 
 async def test_a_recorder_that_misses_its_budget_degrades_only_its_slice() -> None:
-    snap = await _service(recorder=Recorder(hang=True)).overview()
+    snap = await _service(recorder=Recorder(hang=True), budget_s=0.01).overview()
     assert (snap.recorder.status, snap.recorder.detail) == ("error", "timed out after 10 ms")
     others = (snap.users, snap.accounts, snap.storage, snap.trading, snap.incidents)
     assert {s.status for s in others} == {"ok"}
@@ -129,9 +130,22 @@ async def test_storage_before_the_first_disk_sample_is_unavailable() -> None:
 
 
 async def test_trading_without_a_positions_provider_keeps_kill_switch_and_flag() -> None:
-    snap = await _service(oms=Oms(positions=False)).overview()
+    snap = await _service(oms=Oms(positions="unwired")).overview()
     assert snap.trading.status == "unavailable"
     assert snap.trading.detail == "open_positions: no provider wired"
+    assert snap.trading.value == TradingState(True, False, None)
+
+
+@pytest.mark.parametrize(
+    ("mode", "detail"),
+    [("hang", "open_positions: timed out"), ("raise", "open_positions: source failed")],
+    ids=["timeout", "failure"],
+)
+async def test_trading_keeps_kill_switch_and_flag_when_positions_fail(
+    mode: str, detail: str
+) -> None:
+    snap = await _service(oms=Oms(positions=mode), positions_s=0.01).overview()
+    assert (snap.trading.status, snap.trading.detail) == ("error", detail)
     assert snap.trading.value == TradingState(True, False, None)
 
 
