@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 from pydantic import ValidationError
 
-from candleviewer.api.audit import make_audit_router
+from candleviewer.api.audit import _read_capped, make_audit_router
 from candleviewer.api.audit_budget import (
     FLUSH_REASON,
     SUMMARY_REASON,
@@ -1152,3 +1152,27 @@ def test_served_page_time_is_observed_under_a_closed_filter_class(
     assert _budgeted(principal())[0].get("/admin/audit", params=params).status_code == 200
     assert REGISTRY.get_sample_value(name, labels) == before + 1
     assert label in FILTER_CLASSES
+
+
+def test_verify_body_over_one_kib_is_422_without_a_run() -> None:
+    """Review of #2451: the body is read at most 1 KiB; past that it is refused."""
+    service = _FakeAuditService()
+    client = TestClient(_app(service, _FakeResolver(_owner())))
+    r = client.post("/admin/audit/verify", content=b'{"from_id": 1' + b" " * 1100 + b"}")
+    assert (r.status_code, r.json()["errors"]) == (422, [{"field": "", "rule": "max_body_bytes"}])
+    assert service.query_service.verify_calls == []
+    fits = b'{"from_id": 1' + b" " * 900 + b"}"
+    assert client.post("/admin/audit/verify", content=fits).status_code == 200
+
+
+async def test_capped_body_read_stops_once_past_the_limit() -> None:
+    pulled: list[int] = []
+
+    class _Request:
+        async def stream(self) -> Any:
+            for i in range(10):
+                pulled.append(i)
+                yield b"x" * 600
+
+    assert await _read_capped(_Request(), 1024) is None  # type: ignore[arg-type]  # fake
+    assert pulled == [0, 1]  # nothing read past the chunk that crossed the limit

@@ -205,6 +205,20 @@ def _invalid(exc: ValidationError, model: type[BaseModel], status_code: int = 42
     )
 
 
+#: The verify body holds two ids at most; a longer one is refused without reading the rest.
+_VERIFY_BODY_MAX_BYTES = 1024
+
+
+async def _read_capped(request: Request, limit: int) -> bytes | None:
+    """The request body, or `None` as soon as it passes `limit` bytes."""
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
 def _unavailable(detail: str = "audit record could not be written") -> JSONResponse:
     return _problem(503, "Service unavailable", detail, code="store_unavailable", retry_after_s=1)
 
@@ -521,8 +535,15 @@ def make_audit_router(
         except _HttpProblem as problem:
             return problem.response
         # The optional body is read only now: 401 and 403 come before its validation.
+        raw = await _read_capped(request, _VERIFY_BODY_MAX_BYTES)
+        if raw is None:
+            detail = f"the body is over {_VERIFY_BODY_MAX_BYTES} bytes"
+            errors = [{"field": "", "rule": "max_body_bytes"}]
+            return _problem(
+                422, "Request validation failed", detail, code="validation_failed", errors=errors
+            )
         try:
-            req = AuditVerifyRequest.model_validate_json(await request.body() or b"{}")
+            req = AuditVerifyRequest.model_validate_json(raw or b"{}")
         except ValidationError as exc:
             return _invalid(exc, AuditVerifyRequest)
         try:
