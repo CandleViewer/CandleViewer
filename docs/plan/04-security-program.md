@@ -348,6 +348,19 @@ held read lease (R-D5, High), purge-scope widening (R-E2, High), test/shared-vol
 (R-E3, High) and path traversal at every write/delete site (R-E4, High). Findings are tracked as issues
 linked from the model's section 7; abuse cases AC-01..AC-15 go to E16-Q01.
 
+**E26 replay engine, replay data access & simulated trading** (`docs/security/threat-models/E26-replay.md`, ticket
+E26-X01) models the flow client → REST control → session store → QuestDB and Parquet/DuckDB readers → clock →
+injector → bus → WS gateway, plus the paper-matcher branch, against the built E26-T02 read path and the unbuilt
+session, clock, seek, REST, router and PaperBridge work. S3 is re-confirmed High and held structurally (SR-097: no path
+parameter anywhere, registry-only partitions, resolved-path containment twice, DuckDB opens the resolved path). Of 50
+rows, the Critical one is a replay-origin order reaching an exchange (RP-E01): no contract route carries a replay order
+and no E29 ticket owns the OMS refusal (gap G2). High: replay CPU on the event loop the OMS shares, where speed is not a
+CPU bound (RP-D06, G1), seek amplification, a stalled consumer, sessions that cannot be destroyed while playing and
+hold partitions out of retention (RP-D07), simulated fills that are not distinguishable from real ones (RP-R01) or
+that reach a real account's grantees and risk state (RP-E05), stored bookmark and pane content, and live/replay
+provenance confusion. Gaps G1-G10 are filed as #2668-#2677 and listed in its section 12; the residuals are RSK-069..RSK-071 in
+`32-risk-register.md`; abuse cases AC-01..AC-29 go to E26-X02. Status Draft.
+
 **E22 big trades & bubbles** (`docs/security/threat-models/E22-big-trades.md`, ticket E22-X01) is
 availability-first: unbounded `/market/trades` window, `min_size=0`, extreme `cluster_window_ms`, per-user
 `trades.*` subscription fan-out, per-symbol cluster-state memory, slow-consumer queues and bubble-burst
