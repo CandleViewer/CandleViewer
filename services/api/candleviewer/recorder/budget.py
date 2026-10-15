@@ -394,10 +394,13 @@ class DiskBudget:
         return self._report
 
     def measured_growth(self) -> tuple[int | None, Mapping[str, int]]:
-        """The last fitted bytes/day (`None` = no fit yet) and the symbols that have a fit.
+        """`(net total bytes/day, gross write rate per fitted symbol)` from the last fit.
 
-        `report()` folds "not measured yet" into `daily_growth_bytes = 0`; the admin capacity
-        read model (E42-T01) must tell it apart from a measured zero to apply its estimate.
+        Element 0 is the *net* growth of everything recorded (`None` = no fit yet): retention
+        drops pull it down. The per-symbol values are *gross* write rates (each run restarts at
+        a drop) and the map is a read-only copy. `report()` folds "not measured yet" into
+        `daily_growth_bytes = 0`; the admin capacity read model (E42-T01) must tell it apart from
+        a measured zero to apply its estimate.
         """
         growth, rates = self._growth
         return growth, MappingProxyType(dict(rates))

@@ -3,6 +3,8 @@ growth, which `report()` folds together as `daily_growth_bytes = 0` before the f
 
 from __future__ import annotations
 
+import pytest
+
 from candleviewer.recorder.budget import US_PER_S, Point
 from tests.unit.recorder._budget_fakes import GB, NOW, FakeMeter, FakeStore, make_budget
 
@@ -31,4 +33,6 @@ async def test_a_fitted_series_reports_its_growth_and_the_fitted_symbols() -> No
     await budget.sample_once()
     growth, per_symbol = budget.measured_growth()
     assert growth is not None and abs(growth - 10 * GB) <= GB // 100
-    assert set(per_symbol) == {"BTCUSDT"}
+    assert set(per_symbol) == {"BTCUSDT"} and abs(per_symbol["BTCUSDT"] - 10 * GB) <= GB // 100
+    with pytest.raises(TypeError):  # a read-only copy: callers cannot corrupt the fit
+        per_symbol["BTCUSDT"] = 0  # type: ignore[index]  # deliberately mutating a Mapping
