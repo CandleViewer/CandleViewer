@@ -553,6 +553,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "PUT /admin/capacity/subaccount-tier": {
+      "reason": "contract-first operation; implementation lands with E42-T01",
+      "ticket": "E42-T01"
+    },
     "PUT /admin/feature-flags/{flagKey}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"

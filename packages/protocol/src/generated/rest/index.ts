@@ -200,6 +200,16 @@ export interface paths {
      *     `business_kyc`. Owner-only (`admin:write`). Every successful call is audited as
      *     `settings.change` with the before and after tier, written ahead of the response; a denied
      *     attempt is audited too. The tier cannot be cleared here, and nothing else ever sets it.
+     *
+     *     The tier is committed and audited before capacity is read. If the `used` source then
+     *     fails, the call still returns `200` with `status: error`, and `tier`, `cap`, `tier_source`
+     *     and `recorded_at` are populated. A successful write invalidates the cached `subaccounts`
+     *     slice, so the next `GET /admin/capacity` shows the new tier at once (E42-T01 AC3).
+     *
+     *     `Idempotency-Key` is not used: a repeat with the same tier returns `200` and is still
+     *     audited (before == after). No step-up: `admin:write` is not an SR-025 action class, and a
+     *     higher tier only widens a local cap on `createExchangeAccount`, which is itself step-up
+     *     gated (SR-E27-02).
      */
     put: operations["setSubaccountTier"];
     post?: never;
@@ -8548,6 +8558,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listFeatureFlags: {
