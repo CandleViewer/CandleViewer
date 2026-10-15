@@ -7477,7 +7477,7 @@ export interface components {
        * @enum {string}
        */
       tier_source?: "recorded" | "unrecorded";
-      /** @description Most non-deleted live sub-accounts (`exchange_accounts.kind = sub`, `env = live`) under any one main account: the cap binds live exchange UIDs, per main (C-2.11). */
+      /** @description Most non-deleted sub-accounts in the process environment (live in production; C-2.11) under any one main account (`exchange_accounts.kind = sub`): the cap binds exchange UIDs, per main. */
       used?: number;
     } & components["schemas"]["AdminSliceStatus"];
     /**
