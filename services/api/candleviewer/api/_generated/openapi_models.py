@@ -3665,30 +3665,66 @@ class ChartTemplate(ChartTemplateInput):
     updated_at: AwareDatetime | None = None
 
 
-class Point(BaseModel):
-    t: AwareDatetime | None = None
+class DrawingPoint(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    t: Annotated[
+        str,
+        Field(
+            description="RFC 3339 UTC instant with `Z`, at most millisecond precision, years 2000-2099.",
+            examples=["2026-09-13T12:00:00Z", "2026-09-13T12:00:00.250Z"],
+            pattern="^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,3})?Z$",
+        ),
+    ]
     p: Annotated[
+        str,
+        Field(
+            description="Chart-space price coordinate as a decimal string; may be negative. Stored and returned verbatim, never converted to a float.",
+            examples=["61200.00", "-12.5"],
+            pattern="^-?(0|[1-9][0-9]{0,14})(\\.[0-9]{1,12})?$",
+        ),
+    ]
+
+
+class Level(RootModel[float]):
+    root: Annotated[float, Field(ge=-1000.0, le=1000.0)]
+
+
+class DrawingGeometry(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    points: Annotated[list[DrawingPoint], Field(max_length=500, min_length=1)]
+    extend_left: bool | None = None
+    extend_right: bool | None = None
+    levels: Annotated[
+        list[Level] | None,
+        Field(
+            description="Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`.",
+            max_length=24,
+            min_length=1,
+        ),
+    ] = None
+    bands: Annotated[
+        list[Literal[1, 2, 3]] | None,
+        Field(
+            description="Standard-deviation bands (`anchored_vwap` only).",
+            max_length=3,
+            min_length=1,
+        ),
+    ] = None
+    text: Annotated[
         str | None,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
-            examples=["63120.50", "-0.0004", "0"],
-            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+            description="Text content (`text` and `callout` only), 1..1000 code points after control-character stripping (LF is kept).",
+            max_length=1000,
+            min_length=1,
         ),
     ] = None
 
 
-class Geometry(BaseModel):
-    model_config = ConfigDict(
-        extra="allow",
-    )
-    points: list[Point] | None = None
-    extend_left: bool | None = None
-    extend_right: bool | None = None
-    levels: list[float] | None = None
-    text: str | None = None
-
-
-class Style(BaseModel):
+class DrawingStyle(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
@@ -3697,11 +3733,82 @@ class Style(BaseModel):
     fill_opacity: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
     width: Annotated[int | None, Field(ge=1, le=8)] = None
     dash: Literal["solid", "dashed", "dotted"] | None = None
-    label: Annotated[str | None, Field(max_length=120)] = None
     font_size: Annotated[int | None, Field(ge=8, le=48)] = None
 
 
 class DrawingInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    symbol: Annotated[
+        str,
+        Field(
+            description="Bybit USDT linear perpetual symbol, at most 20 characters (the DB symbol_code domain).",
+            examples=["BTCUSDT", "ETHUSDT"],
+            pattern="^[A-Z0-9]{2,16}USDT$",
+        ),
+    ]
+    tool: Annotated[
+        Literal[
+            "trendline",
+            "horizontal_line",
+            "vertical_line",
+            "ray",
+            "extended_line",
+            "parallel_channel",
+            "rectangle",
+            "ellipse",
+            "triangle",
+            "fib_retracement",
+            "fib_extension",
+            "fib_timezone",
+            "pitchfork",
+            "gann_fan",
+            "text",
+            "arrow",
+            "callout",
+            "measure",
+            "long_position",
+            "short_position",
+            "price_range",
+            "date_range",
+            "brush",
+            "polyline",
+            "anchored_vwap",
+        ],
+        Field(
+            description="Drawing tool. **Open-ended for readers:** clients must tolerate values they do not know, so\nadding a tool is an additive change (C-6.3). Writers must send one of the listed values.\n\nRequired point count per tool (`geometry.points`):\n\n- exactly 1: `horizontal_line`, `vertical_line`, `text`, `anchored_vwap`\n- exactly 2: `trendline`, `ray`, `extended_line`, `rectangle`, `ellipse`, `fib_retracement`,\n  `fib_timezone`, `gann_fan`, `arrow`, `callout`, `measure`, `price_range`, `date_range`\n- exactly 3: `parallel_channel`, `triangle`, `fib_extension`, `pitchfork`, `long_position`,\n  `short_position`\n- 2..500: `brush`; 2..100: `polyline`\n\nTool-specific `geometry` keys (any other combination is `422` rule `property_not_allowed_for_tool`):\n`text` is required for `text` and `callout` (rule `text_required`) and forbidden elsewhere;\n`levels` only for `fib_retracement`, `fib_extension`, `fib_timezone`; `bands` only for\n`anchored_vwap`; `extend_left` / `extend_right` are allowed on every tool.\nA horizontal ray is a `horizontal_line` with `extend_left: false` and `extend_right: true`.\n"
+        ),
+    ]
+    layout_id: Annotated[
+        UUID | None,
+        Field(
+            description="Layout scope. A non-null value must be one of the caller's live layouts, else 422 rule `layout_not_found`; every non-null value is refused until layouts ship (E15-T01)."
+        ),
+    ] = None
+    geometry: DrawingGeometry
+    style: Annotated[
+        DrawingStyle | None,
+        Field(
+            description="Optional; omitted means no style overrides (stored as `{}`, returned as `{}`)."
+        ),
+    ] = None
+    label: Annotated[
+        str | None,
+        Field(
+            description="Display label, 1..120 code points after control-character stripping.",
+            max_length=120,
+            min_length=1,
+        ),
+    ] = None
+    locked: bool | None = False
+    visible: bool | None = True
+    z_index: Annotated[int | None, Field(ge=-32768, le=32767)] = 0
+
+
+class Drawing(BaseModel):
+    id: UUID
+    owner_user_id: UUID
     symbol: Annotated[
         str,
         Field(
@@ -3710,55 +3817,122 @@ class DrawingInput(BaseModel):
             pattern="^[A-Z0-9]{2,20}USDT$",
         ),
     ]
-    tool: Literal[
-        "trendline",
-        "horizontal_line",
-        "vertical_line",
-        "ray",
-        "extended_line",
-        "parallel_channel",
-        "rectangle",
-        "ellipse",
-        "triangle",
-        "fib_retracement",
-        "fib_extension",
-        "fib_timezone",
-        "pitchfork",
-        "gann_fan",
-        "text",
-        "arrow",
-        "callout",
-        "measure",
-        "long_position",
-        "short_position",
-        "price_range",
-        "date_range",
-        "brush",
-        "polyline",
-    ]
-    layout_id: UUID | None = None
-    bar_type_binding: Annotated[
-        str | None,
+    tool: Annotated[
+        Literal[
+            "trendline",
+            "horizontal_line",
+            "vertical_line",
+            "ray",
+            "extended_line",
+            "parallel_channel",
+            "rectangle",
+            "ellipse",
+            "triangle",
+            "fib_retracement",
+            "fib_extension",
+            "fib_timezone",
+            "pitchfork",
+            "gann_fan",
+            "text",
+            "arrow",
+            "callout",
+            "measure",
+            "long_position",
+            "short_position",
+            "price_range",
+            "date_range",
+            "brush",
+            "polyline",
+            "anchored_vwap",
+        ],
         Field(
-            description="`{bar_type}:{param}` when the drawing is pinned to one bar construction."
+            description="Drawing tool. **Open-ended for readers:** clients must tolerate values they do not know, so\nadding a tool is an additive change (C-6.3). Writers must send one of the listed values.\n\nRequired point count per tool (`geometry.points`):\n\n- exactly 1: `horizontal_line`, `vertical_line`, `text`, `anchored_vwap`\n- exactly 2: `trendline`, `ray`, `extended_line`, `rectangle`, `ellipse`, `fib_retracement`,\n  `fib_timezone`, `gann_fan`, `arrow`, `callout`, `measure`, `price_range`, `date_range`\n- exactly 3: `parallel_channel`, `triangle`, `fib_extension`, `pitchfork`, `long_position`,\n  `short_position`\n- 2..500: `brush`; 2..100: `polyline`\n\nTool-specific `geometry` keys (any other combination is `422` rule `property_not_allowed_for_tool`):\n`text` is required for `text` and `callout` (rule `text_required`) and forbidden elsewhere;\n`levels` only for `fib_retracement`, `fib_extension`, `fib_timezone`; `bands` only for\n`anchored_vwap`; `extend_left` / `extend_right` are allowed on every tool.\nA horizontal ray is a `horizontal_line` with `extend_left: false` and `extend_right: true`.\n"
+        ),
+    ]
+    layout_id: UUID | None
+    geometry: DrawingGeometry
+    style: DrawingStyle
+    label: str | None
+    locked: bool
+    visible: bool
+    z_index: Annotated[int, Field(ge=-32768, le=32767)]
+    created_at: AwareDatetime
+    updated_at: Annotated[
+        AwareDatetime,
+        Field(
+            description="Concurrency token (also the `ETag`). Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing on every write. Echo it exactly as received; never re-serialise it through a client date type."
+        ),
+    ]
+
+
+class DrawingBatchCreateOp(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    op: Literal["create"]
+    id: Annotated[
+        UUID | None,
+        Field(
+            description="Optional client-chosen id (UUIDv7 recommended); taken ids are `409 id_unavailable`."
         ),
     ] = None
-    geometry: Annotated[
-        Geometry,
+    drawing: DrawingInput
+
+
+class DrawingBatchUpdateOp(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    op: Literal["update"]
+    id: UUID
+    if_match: Annotated[
+        str,
         Field(
-            description="Chart-space geometry; points are `{t, p}` (time + price), never pixels."
+            description="`updated_at` of the version being replaced: echo it exactly as received (6 fractional digits plus `Z`); never re-serialise it through a client date type. A token that does not match is a 422 on `operations.N.if_match`.",
+            pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$",
         ),
     ]
-    style: Style | None = None
-    locked: bool | None = False
-    visible: bool | None = True
+    drawing: DrawingInput
 
 
-class Drawing(DrawingInput):
-    id: UUID | None = None
-    owner_user_id: UUID | None = None
-    created_at: AwareDatetime | None = None
-    updated_at: AwareDatetime | None = None
+class DrawingBatchDeleteOp(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    op: Literal["delete"]
+    id: UUID
+    if_match: Annotated[
+        str,
+        Field(
+            description="`updated_at` of the version being deleted: echo it exactly as received (6 fractional digits plus `Z`); never re-serialise it through a client date type. A token that does not match is a 422 on `operations.N.if_match`.",
+            pattern="^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$",
+        ),
+    ]
+
+
+class DrawingBatchRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    operations: Annotated[
+        list[
+            Annotated[
+                DrawingBatchCreateOp | DrawingBatchUpdateOp | DrawingBatchDeleteOp,
+                Field(discriminator="op"),
+            ]
+        ],
+        Field(
+            description="Applied in order. More than 200 items is `413 payload_too_large`.",
+            max_length=200,
+            min_length=1,
+        ),
+    ]
+
+
+class DrawingBatchResult(BaseModel):
+    created: list[Drawing]
+    updated: list[Drawing]
+    deleted: list[UUID]
 
 
 class IndicatorPresetInput(BaseModel):

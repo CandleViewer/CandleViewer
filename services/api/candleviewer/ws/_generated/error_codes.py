@@ -34,6 +34,7 @@ class ErrorCode(StrEnum):
     IDEMPOTENCY_KEY_REUSE = "idempotency_key_reuse"
     IDEMPOTENCY_IN_FLIGHT = "idempotency_in_flight"
     VERSION_CONFLICT = "version_conflict"
+    PAYLOAD_TOO_LARGE = "payload_too_large"
     GONE = "gone"
     ORDER_NOT_AMENDABLE = "order_not_amendable"
     RULE_IR_INVALID = "rule_ir_invalid"
@@ -105,6 +106,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.IDEMPOTENCY_KEY_REUSE: ErrorMeta(("rest",), None, False, None, None),
     ErrorCode.IDEMPOTENCY_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None),
     ErrorCode.VERSION_CONFLICT: ErrorMeta(("rest",), None, False, None, None),
+    ErrorCode.PAYLOAD_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None),
     ErrorCode.GONE: ErrorMeta(("rest",), None, False, None, None),
     ErrorCode.ORDER_NOT_AMENDABLE: ErrorMeta(("rest",), None, False, None, None),
     ErrorCode.RULE_IR_INVALID: ErrorMeta(("rest",), None, False, None, None),
