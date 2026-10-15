@@ -47,10 +47,18 @@ MAX_TS_SPAN_MS: Final = dict(_BOUNDS)["ts_offset_ms"][1]
 #: `heikin_ashi` is a wire name only (§6.1): no builder produces it yet.
 TIME_KINDS: Final[frozenset[WireBarType]] = frozenset({"time", "heikin_ashi"})
 _CONFIRM: Final = 0b1
-#: Exact arithmetic whatever the caller's context: no rounding, no exponent overflow, no traps.
-_EXACT: Final = Context(prec=MAX_PREC, Emax=MAX_EMAX, Emin=MIN_EMIN, traps=[])
-#: A scaled value above 10**20 fits no 64-bit field; refused before `int()` builds a huge int.
+#: Exact arithmetic whatever the caller's context: every field explicit, no rounding below the
+#: maximum precision, no traps. Read-only, and only for `scaleb`/`normalize`/`to_integral_value`:
+#: never for division or powers, where `MAX_PREC` would allocate.
+_EXACT: Final = Context(
+    prec=MAX_PREC, rounding=ROUND_HALF_EVEN, Emin=MIN_EMIN, Emax=MAX_EMAX, capitals=1, clamp=0,
+    flags=[], traps=[],
+)  # fmt: skip
+#: A scaled value at or above 10**20 fits no 64-bit field; refused before `int()` would build it.
 _MAX_ADJUSTED: Final = 19
+#: The structured twin's ceiling: no bar value reaches 10**39, and `format(.., "f")` grows with the
+#: exponent.
+_MAX_DEC_ADJUSTED: Final = 38
 
 
 def _key(bar: Bar, generation: int) -> str:
@@ -60,8 +68,12 @@ def _key(bar: Bar, generation: int) -> str:
 def _sendable(bar: Bar, generation: int) -> None:
     if bar.synthetic:
         raise FrameEncodeError(f"{_key(bar, generation)} is a densify() filler: never on the wire")
-    if generation < 0 or bar.index < 0 or bar.trade_count < 0:
-        raise FrameEncodeError(f"{_key(bar, generation)}: a key or trade count is negative")
+    if min(generation, bar.index, bar.trade_count, bar.open_time, bar.close_time) < 0:
+        fields = (("generation", generation), ("index", bar.index),
+                  ("trade_count", bar.trade_count), ("open_time", bar.open_time),
+                  ("close_time", bar.close_time))  # fmt: skip
+        name, value = next((n, v) for n, v in fields if v < 0)
+        raise _refuse(bar, generation, name, value, "is negative")
 
 
 def _open_ms(bar: Bar) -> int:
@@ -78,6 +90,8 @@ def _dec(value: Decimal, bar: Bar, generation: int, field: str) -> str:
     """The `common#/$defs/decimal` form: plain digits, never an exponent and never `-0`."""
     if not value.is_finite():
         raise _refuse(bar, generation, field, value, "is not finite")
+    if value and value.adjusted() > _MAX_DEC_ADJUSTED:
+        raise _refuse(bar, generation, field, value, "is too large to send")
     return format(value if value else value.copy_abs(), "f")
 
 
@@ -96,7 +110,7 @@ def _scaled(
     if not value.is_finite():
         raise _refuse(bar, generation, field, value, "is not finite")
     scaled = value.scaleb(scale, _EXACT)
-    if scaled.adjusted() > _MAX_ADJUSTED:
+    if not scaled.is_finite() or (scaled and scaled.adjusted() > _MAX_ADJUSTED):
         raise _refuse(bar, generation, field, value, f"overflows every field at scale {scale}")
     whole = scaled.to_integral_value(ROUND_HALF_EVEN, _EXACT)
     if exact and whole != scaled:

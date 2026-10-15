@@ -202,6 +202,34 @@ def test_both_forms_refuse_a_value_that_is_not_finite(field: str, value: str) ->
         bar_item(bar, generation=0, bar_kind="time", include_delta=True)
 
 
+@pytest.mark.parametrize("field", ["open", "turnover"])
+def test_kind_4_refuses_an_exponent_that_overflows_the_scaling(field: str) -> None:
+    """Near `MAX_EMAX`, scaling overflows to Infinity: still a classified refusal."""
+    bar = _bar().model_copy(update={field: Decimal("1E+999999999999999999")})
+    with pytest.raises(FrameEncodeError, match=f"{field} .* overflows every field"):
+        _record(bar)
+
+
+def test_kind_4_sends_a_zero_with_a_positive_exponent_as_zero() -> None:
+    assert _record(_bar().model_copy(update={"volume": Decimal("0E+17")}))[7] == 0
+
+
+@pytest.mark.parametrize(
+    ("value", "why"), [("1E+17", "overflows every field"), ("1E+16", "is outside")]
+)
+def test_kind_4_overflow_guard_sits_just_above_every_field(value: str, why: str) -> None:
+    """At qty_scale 3, 1E+17 scales to adjusted 20 (no field) and 1E+16 to 19 (the range check)."""
+    with pytest.raises(FrameEncodeError, match=why):
+        _record(_bar().model_copy(update={"delta": Decimal(value)}))
+
+
+def test_bar_item_refuses_a_value_too_large_to_send() -> None:
+    assert bar_item(_bar(open=Decimal("1E+38")), generation=0, bar_kind="time",
+                    include_delta=False)["o"] == "1" + "0" * 38  # fmt: skip
+    with pytest.raises(FrameEncodeError, match="open 1E\\+39 is too large to send"):
+        bar_item(_bar(open=Decimal("1E+39")), generation=0, bar_kind="time", include_delta=False)
+
+
 def test_kind_4_refuses_a_huge_exponent_before_building_the_integer() -> None:
     bar = _bar().model_copy(update={"volume": Decimal("1E+999999")})
     with pytest.raises(FrameEncodeError, match="volume 1E\\+999999 overflows every field"):
@@ -209,8 +237,10 @@ def test_kind_4_refuses_a_huge_exponent_before_building_the_integer() -> None:
 
 
 @pytest.mark.parametrize(
-    ("generation", "update"), [(-1, {}), (0, {"trade_count": -1}), (0, {"index": -1})]
-)
+    ("generation", "update"),
+    [(-1, {}), (0, {"trade_count": -1}), (0, {"index": -1}), (0, {"open_time": -1}),
+     (0, {"close_time": -1})],
+)  # fmt: skip
 def test_both_forms_refuse_a_negative_key_or_trade_count(
     generation: int, update: dict[str, Any]
 ) -> None:
@@ -298,7 +328,7 @@ def test_covering_scales_widen_for_each_field_alone(
 
 
 def test_covering_scales_take_no_places_from_a_positive_exponent_or_a_nan() -> None:
-    bars = [_bar(volume=Decimal("1E+2")), _bar().model_copy(update={"open": Decimal("NaN")})]
+    bars = [_bar(volume=Decimal("1E+2")), _bar().model_copy(update={"volume": Decimal("NaN")})]
     assert covering_scales(bars, price_scale=0, qty_scale=0) == (1, 0)
 
 
