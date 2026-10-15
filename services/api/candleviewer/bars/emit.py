@@ -14,9 +14,10 @@ A sink that raises is counted (`bar_emit_sink_errors_total{reason=<sink>}`) and 
 other sinks still get the emission, and
 `CancelledError` is never swallowed.
 
-`generation` is stamped on every emission: 0 for the live series. That matches the
-`(bar_param, generation, index)` identity proposed in #2019 and the ADR-0033 rebuild hook. A
-rebuild would emit under a higher generation through this same path.
+`generation` is stamped on every emission: the series' epoch (`BarBuilderSet._Entry.generation`).
+A restored series keeps its blob's, a cold start begins a new one (#2662), so
+`(bar_param, generation, index)` (#2019) never repeats. `WriterSink` stores it on every row. An
+ADR-0033 rebuild would emit under a higher generation through this same path.
 """
 
 from __future__ import annotations
@@ -52,7 +53,14 @@ class BarSink(Protocol):
 class BarSubmitter(Protocol):
     """The slice of E12-T02 `BarWriter` this module needs."""
 
-    async def submit(self, bars: Sequence[Bar], spec: BarSpec, *, source: str = ...) -> None: ...
+    async def submit(
+        self,
+        bars: Sequence[Bar],
+        spec: BarSpec,
+        *,
+        source: str = ...,
+        generation: int = LIVE_GENERATION,
+    ) -> None: ...
 
 
 class WriterSink:
@@ -70,7 +78,9 @@ class WriterSink:
     async def emit(self, emission: BarEmission) -> None:
         closed = [u.bar for u in emission.updates if u.kind == "close"]
         if closed:
-            await self._writer.submit(closed, emission.spec, source="tape")
+            await self._writer.submit(
+                closed, emission.spec, source="tape", generation=emission.generation
+            )
 
 
 class EmitRouter:

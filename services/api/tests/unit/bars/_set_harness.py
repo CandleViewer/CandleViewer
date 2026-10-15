@@ -62,9 +62,13 @@ class FakeWriter:
 
     def __init__(self) -> None:
         self.rows: list[tuple[str, int, str]] = []
+        self.generations: list[int] = []  # one per row in `rows`
 
-    async def submit(self, bars: Sequence[Bar], spec: BarSpec, *, source: str = "tape") -> None:
+    async def submit(
+        self, bars: Sequence[Bar], spec: BarSpec, *, source: str = "tape", generation: int = 0
+    ) -> None:
         self.rows.extend((spec.spec_hash, b.index, source) for b in bars)
+        self.generations.extend(generation for _ in bars)
 
 
 class FakeTape:

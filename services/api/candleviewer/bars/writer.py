@@ -28,6 +28,7 @@ from candleviewer.bars.errors import BarsError
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import (
     BAR_PARAM_CAPACITY,
+    LIVE_GENERATION,
     SOURCE_RANK,
     BarParamCapacityExceeded,
     BarPersistError,
@@ -185,13 +186,25 @@ class BarWriter:
         while len(self._sources) > MAX_TRACKED_ROWS:
             self._sources.popitem(last=False)
 
-    async def submit(self, bars: Sequence[Bar], spec: BarSpec, *, source: str = "tape") -> None:
+    async def submit(
+        self,
+        bars: Sequence[Bar],
+        spec: BarSpec,
+        *,
+        source: str = "tape",
+        generation: int = LIVE_GENERATION,
+    ) -> None:
         """Queue rows (validates all first: one bad, synthetic or lower-precedence bar rejects all).
+        `generation` is the series epoch stamped on every row (`WriterSink` passes the emission's).
 
         Precedence is enforced against rows written by this process; a read-side check against
         the stored row's `source` is the E12-T05 backfill caller's job (it owns the read path).
         """
-        await self.submit_rows([bar_row(b, spec, source=source) for b in bars], spec, source=source)
+        await self.submit_rows(
+            [bar_row(b, spec, source=source, generation=generation) for b in bars],
+            spec,
+            source=source,
+        )
 
     async def submit_rows(
         self, rows: list[dict[str, object]], spec: BarSpec, *, source: str

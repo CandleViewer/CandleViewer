@@ -73,7 +73,7 @@ export interface BarsSymbolBarTypeParam {
   param: string;
   bars: {
     /**
-     * ADR-0033 series generation (= epoch); 0 until ratified. Part of the coalescing key (§8.2).
+     * ADR-0033 series generation (= epoch): an opaque, monotonic id that a builder cold start or a rebuild replaces; index restarts inside it. Compare it, never read it as a time. Part of the coalescing key (§8.2).
      */
     generation: number;
     /**

@@ -102,7 +102,8 @@ def table_for(spec: BarSpec) -> str:
     return f"bars_{spec.kind}"
 
 
-#: ADR-0033 series generation; every live series is generation 0 until ADR-0033 is ratified.
+#: Generation of a row with no builder epoch: the default of `bar_row`, kline-sourced rows and
+#: direct `BarWriter.submit` callers. A live series stamps its own epoch (`builder_set`, #2662).
 LIVE_GENERATION: Final = 0
 
 

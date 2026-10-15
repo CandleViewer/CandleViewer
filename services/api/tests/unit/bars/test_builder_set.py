@@ -170,6 +170,7 @@ async def test_set_writer_and_ws_sinks_get_one_sequence(tmp_path: Path) -> None:
     assert (
         [(h, i) for h, i, _ in writer.rows] == ws_closes == [(T3.spec_hash, 0), (T3.spec_hash, 1)]
     )
+    assert writer.generations == [g for _, g, k, *_ in ws.seen if k == "close"]  # same epoch
     await s.stop()
 
 

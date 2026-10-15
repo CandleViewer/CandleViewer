@@ -16,14 +16,23 @@ no catalogue lifecycle (B1-B20), so lease state is plain bookkeeping in `leases.
   injected clock) closes time bars on the clock, tears down expired series after writing their
   final blob, and persists every series each `persist_every_us` (60 s). Caps: see `leases.py`.
 - **Restart.** A new series loads its blob (`state_store.py`). If the blob is usable it
-  restores, then replays from the tape only the trades after the watermark, then goes live.
-  Live trades the watermark covers are skipped once, so nothing is applied twice (BI-5). A
-  missing or refused blob cold-starts the series (fresh builder, partial first bar). A
-  refused blob is also deleted, counted and logged with its `spec_hash`, and it sets
-  `health_reasons()`. A refused blob never raises.
+  restores (keeping the generation the blob recorded), then replays from the tape only the
+  trades after the watermark, then goes live. Live trades the watermark covers are skipped once,
+  so nothing is applied twice (BI-5). A missing or refused blob cold-starts the series (fresh
+  builder, partial first bar, new generation). A refused blob is also deleted, counted and
+  logged with its `spec_hash`, and it sets `health_reasons()`. A refused blob never raises.
+- **Generation (#2662).** A fresh builder restarts `index` at 0, so a cold start begins a new
+  generation (epoch): `max(now_ms, floor + 1)`. `now_ms` is the set's injected UTC wall clock
+  (`now_us // 1000`); `floor` is the generation of the discarded blob when it still parsed
+  (`ahead_of_tape`, `restore_failed`), else -1. The new value is never below the cold-start time
+  and never at or below an epoch the store knew, so no two bars of a series share
+  `(generation, index)`. Residual, accepted: it repeats only if the wall clock stepped back past
+  an earlier cold start of the same series and that series' blob was unreadable. A generation is
+  compared, never read as a time.
 - **Emit.** Live and replayed emissions both go through `EmitRouter` (`emit.py`), stamped with
-  `generation` 0. An ADR-0033 rebuild would register a series under a new generation; the
-  hook is `_Entry.generation` and is not implemented here.
+  the series' generation (`_Entry.generation`), which `WriterSink` stores on every row. An
+  ADR-0033 rebuild would register a series under a new generation the same way; that is not
+  implemented here.
 """
 
 from __future__ import annotations
@@ -392,6 +401,7 @@ class BarBuilderSet:
         t0 = time.perf_counter()
         h = spec.spec_hash
         stored, reason = await self._store.load(symbol, h)
+        recorded = -1 if stored is None else stored.generation  # -1: no blob parsed
         wm = None if stored is None else stored.watermark
         if wm is not None and self._tape is not None:
             head = await self._tape.head_us(symbol)
@@ -407,9 +417,21 @@ class BarBuilderSet:
             _log().warning("bars_state_blob_discarded", symbol=symbol, spec_hash=h, reason=reason)
             await self._store.delete(symbol, h)
             self._reasons.add(STATE_COLD_STARTED)
-        entry = _Entry(spec, builder, saved_at=self._now())
+        now = self._now()
+        # A restored series keeps its blob's generation. A cold start begins a new one: the wall
+        # time in ms, above `recorded` (the epoch of a blob discarded above, which a clock that
+        # stepped back must not reuse). `index` restarts at 0 in the fresh builder.
+        generation = stored.generation if stored is not None else max(now // 1000, recorded + 1)
+        entry = _Entry(spec, builder, saved_at=now, generation=generation)
         if stored is None:
             bar_builder_cold_starts_total.inc()
+            _log().info(
+                "bars_series_cold_started",
+                symbol=symbol,
+                spec_hash=h,
+                reason=reason,
+                generation=generation,
+            )
         elif wm is not None:
             entry.skip = skip = _Mark(wm.ts_us, wm.ids)
             if self._tape is not None:
@@ -523,7 +545,7 @@ class BarBuilderSet:
     def _stored(self, lane: _Lane, e: _Entry) -> StoredState:
         mark = e.skip if e.skip is not None and e.skip.ts > lane.mark.ts else lane.mark
         wm = None if mark.ts == _Mark().ts else mark.frozen()
-        return StoredState(e.builder.snapshot(), wm)
+        return StoredState(e.builder.snapshot(), wm, e.generation)
 
     async def _save(self, stored: StoredState) -> None:
         try:

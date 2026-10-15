@@ -4589,7 +4589,7 @@ export interface components {
       delta?: components["schemas"]["Decimal"] | null;
       /**
        * Format: int64
-       * @description ADR-0033 series generation (= epoch); 0 until ADR-0033 is ratified. Always present on /market/bars.
+       * @description ADR-0033 series generation (= epoch): an opaque, monotonic id that a builder cold start or a rebuild replaces; index restarts inside it. Compare it, never read it as a time. Always present on /market/bars.
        */
       generation?: number;
       h: components["schemas"]["Decimal"];
