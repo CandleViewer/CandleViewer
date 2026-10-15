@@ -105,6 +105,18 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "GET /admin/statecharts": {
+      "reason": "contract-first operation (E42-T07 contract slice); the inspector route slice serves it",
+      "ticket": "E42-T07"
+    },
+    "GET /admin/statecharts/{machineKey}": {
+      "reason": "contract-first operation (E42-T07 contract slice); the inspector route slice serves it",
+      "ticket": "E42-T07"
+    },
+    "GET /admin/statecharts/{machineKey}/export": {
+      "reason": "contract-first operation (E42-T07 contract slice); the inspector route slice serves it",
+      "ticket": "E42-T07"
+    },
     "GET /alerts/deliveries": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"

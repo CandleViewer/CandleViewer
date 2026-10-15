@@ -563,7 +563,7 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). */
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so each machine has exactly one key. */
         machineKey: components["parameters"]["MachineKey"];
       };
       cookie?: never;
@@ -586,14 +586,14 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). */
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so each machine has exactly one key. */
         machineKey: components["parameters"]["MachineKey"];
       };
       cookie?: never;
     };
     /**
      * Stately-compatible export of a machine's registered chart
-     * @description The chart registered in `statechart/registry.py` for the key's kind, projected for Stately Studio (`export_stately`: the CV policy keys removed), with its `machine_hash` (E42-T07). `machineKey` may also be a bare catalogue `machine_kind`, which covers every B1-B20 chart, live or not. The export reveals chart structure only: no instance is read, so the answer is the same for any id of a registered kind. A kind that is not registered is `404 not_found`.
+     * @description The chart registered in `statechart/registry.py` for the key's kind, projected for Stately Studio (`export_stately`: the CV policy keys removed), with its `machine_hash` (E42-T07). `machineKey` may also be a bare catalogue `machine_kind`, which covers every B1-B20 chart, live or not. The export reveals chart structure only: no instance is read, so the answer is the same for any id of a registered kind. An `algo:{id}` key is `404 not_found`, because without reading the instance the export cannot tell which of the four algo charts it is; export by the bare kind (`oco`, `iceberg`, `twap` or `chase`) instead. A key outside the grammar (a singleton with an id, an empty id) or a kind that is not registered is `404 not_found` too.
      */
     get: operations["exportStatechart"];
     put?: never;
@@ -7601,12 +7601,12 @@ export interface components {
     StatechartMachine: {
       /** @description The snapshot's `chain_trips` count; above 0 the machine is latched degraded. */
       chain_trips: number;
-      /** @description Deferred events held in the snapshot (`onUnhandled: defer`). */
-      deferred_depth?: number;
+      /** @description Deferred events held in the snapshot (`onUnhandled: defer`); `null` if it carries no deferred list. */
+      deferred_depth: number | null;
       /** @description `chain_trips > 0`; cleared only by an operator. */
       degraded: boolean;
       /** @description `cv_machine_dropped_receipts_total` for this machine's kind since process start. The library counts dropped receipts per interpreter and never persists them, so the value is per kind, not per machine; `null` when the metric cannot be read. */
-      dropped_receipts?: number | null;
+      dropped_receipts: number | null;
       /** @enum {string} */
       environment: "live" | "demo" | "testnet";
       /** @description Whether `machine_hash` equals the committed `machine_hashes.lock` entry. */
@@ -8270,7 +8270,7 @@ export interface components {
     LayoutId: string;
     /** @description Page size. */
     Limit: number;
-    /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). */
+    /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so each machine has exactly one key. */
     MachineKey: string;
     /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (open time is unique there). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
     MarketCursor: string;
@@ -9253,7 +9253,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). */
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so each machine has exactly one key. */
         machineKey: components["parameters"]["MachineKey"];
       };
       cookie?: never;
@@ -9279,7 +9279,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). */
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so each machine has exactly one key. */
         machineKey: components["parameters"]["MachineKey"];
       };
       cookie?: never;
