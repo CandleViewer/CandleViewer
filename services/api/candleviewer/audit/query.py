@@ -401,6 +401,8 @@ class AuditQueryService:
             if unvisited:
                 return replace(walk, bad_id=min(unvisited), kind=missing)
             if hi == plan.head_id:
+                if walk.last_id != hi:  # the head entry vanished during the run
+                    return replace(walk, bad_id=hi, kind=ChainBreakKind.TAIL_TRUNCATED)
                 above = await self._repository.fetch_checkpoint_above(hi)
         kind = ChainBreakKind.TAIL_TRUNCATED
         return walk if above is None else replace(walk, bad_id=above, kind=kind)
