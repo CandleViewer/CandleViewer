@@ -132,12 +132,15 @@ def _walk_batch(
 class VerifyPlan:
     """A verify range after defaulting (contract #2392/#2446). `head_id` is the one head read
     (0 for an empty log). `from_id`/`to_id` are `None` for an empty log; `from_id > to_id`
-    only with `truncated_at`, a checkpoint `head_id` above the head found at defaulting."""
+    only with `truncated_at`, a checkpoint `head_id` above the head found at defaulting.
+    `full_chain`: the range runs from the first entry to that head (the gauge rule's input
+    when a run stops before it has a result)."""
 
     from_id: int | None
     to_id: int | None
     head_id: int
     truncated_at: int | None = None
+    full_chain: bool = False
 
 
 class VerifyRangeBeyondHead(AuditError):
@@ -328,10 +331,10 @@ class AuditQueryService:
             return VerifyPlan(from_id, head, head, above)
         hi = head if to_id is None else min(to_id, head)
         if from_id is None:
-            return VerifyPlan(max(hi - max_span + 1, min(first, hi), 1), hi, head)
-        if to_id is None:
+            from_id = max(hi - max_span + 1, min(first, hi), 1)
+        elif to_id is None:
             hi = min(head, from_id + max_span - 1)
-        return VerifyPlan(from_id, hi, head)
+        return VerifyPlan(from_id, hi, head, full_chain=from_id <= first and hi == head)
 
     async def run_verify(
         self, plan: VerifyPlan, *, batch_size: int = VERIFY_BATCH_SIZE

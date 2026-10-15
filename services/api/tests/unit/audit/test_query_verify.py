@@ -625,6 +625,32 @@ async def test_plan_fills_in_down_to_the_first_entry_not_to_id_one(
     assert (plan.from_id, plan.to_id) == (3, 4)
 
 
+@pytest.mark.parametrize(
+    ("from_id", "to_id", "max_span", "full"),
+    [
+        (None, None, 10, True),  # the whole log fits the span
+        (1, None, 10, True),  # below the first entry
+        (None, None, 2, False),  # the newest span only
+        (4, None, 10, False),
+        (None, 4, 10, False),  # short of the head
+    ],
+)
+async def test_plan_marks_a_range_from_the_first_entry_to_the_head_as_the_full_chain(
+    repo: FakeAuditRepository,
+    clock: FakeClock,
+    from_id: int | None,
+    to_id: int | None,
+    max_span: int,
+    full: bool,
+) -> None:
+    repo.burn_ids(2)  # the first entry is id 3
+    await _seed(repo, 3, clock)  # ids 3-5
+    plan = await AuditQueryService(repo).plan_verify(
+        from_id=from_id, to_id=to_id, max_span=max_span
+    )
+    assert plan.full_chain is full
+
+
 async def test_verify_echoes_the_anchor_and_the_last_entry_that_passed(
     repo: FakeAuditRepository, clock: FakeClock
 ) -> None:
