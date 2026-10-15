@@ -11,19 +11,19 @@ rather than accept float/str drift on the backend.
 
 It also writes `candleviewer/api/_generated/contract_subset.json` (#2555): the pruned copy of
 the REST contract that the app reads at runtime, since the API image ships no `docs/plan`.
-`candleviewer.api.contract_conformance.render_contract_subset` defines its content.
+`render_contract_subset` in `candleviewer/api/contract_conformance.py` defines its content.
 
 Usage: uv run python scripts/generate_protocol_models.py [--check]
 """
 
 from __future__ import annotations
 
+import importlib.util
 import re
 import subprocess
 import sys
 from pathlib import Path
-
-from candleviewer.api.contract_conformance import render_contract_subset
+from types import ModuleType
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +33,7 @@ WS_SCHEMA = REPO_ROOT / "docs" / "plan" / "ws-schema.json"
 REST_OUT = SERVICE_ROOT / "candleviewer" / "api" / "_generated" / "openapi_models.py"
 WS_OUT = SERVICE_ROOT / "candleviewer" / "ws" / "_generated" / "ws_models.py"
 CONTRACT_OUT = SERVICE_ROOT / "candleviewer" / "api" / "_generated" / "contract_subset.json"
+CONTRACT_BUILDER = SERVICE_ROOT / "candleviewer" / "api" / "contract_conformance.py"
 
 HEADER_MARKER = "GENERATED FILE — DO NOT EDIT BY HAND"
 
@@ -172,6 +173,18 @@ def _write(path: Path, header: str, source: str) -> None:
     path.write_text(header + body, encoding="utf-8", newline="\n")
 
 
+def _contract_builder() -> ModuleType:
+    """`candleviewer/api/contract_conformance.py`, loaded by file path. Importing it as
+    `candleviewer.api.contract_conformance` would first run `candleviewer/api/__init__.py`,
+    which imports every router; the module itself needs only the stdlib at import."""
+    spec = importlib.util.spec_from_file_location("_cv_contract_builder", CONTRACT_BUILDER)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"generate_protocol_models: cannot load {CONTRACT_BUILDER}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def generate() -> None:
     _run_datamodel_codegen(input_path=OPENAPI_SPEC, input_file_type="openapi", output_path=REST_OUT)
     raw_rest = REST_OUT.read_text(encoding="utf-8")
@@ -181,7 +194,7 @@ def generate() -> None:
     raw_ws = WS_OUT.read_text(encoding="utf-8")
     _write(WS_OUT, WS_HEADER, raw_ws)
 
-    subset = render_contract_subset(OPENAPI_SPEC.read_bytes())
+    subset = _contract_builder().render_contract_subset(OPENAPI_SPEC.read_bytes())
     CONTRACT_OUT.write_text(subset, encoding="utf-8", newline="\n")
 
 
