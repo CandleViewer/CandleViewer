@@ -2,9 +2,10 @@
 
 The catalog equals 21-database-schema.md Sec.3.9's `settings` DDL; every invalid row is rejected by
 its NAMED constraint (scope, scope/user shape, key format, value type) and the unique system key by
-`ux_settings_sys`; the two user FKs, the `value` classification comment and the downgrade guard are
-exercised on the real engine. Uses `testcontainers` like the other migration suites; CI-only (no
-docker socket in WSL) -- every statement was run on a scratch Postgres 16.4 first.
+`ux_settings_sys`; the two user FKs, the `value` classification comment, the downgrade guard and the
+5 s `lock_timeout` brackets (a held lock makes either direction give up) are exercised on the real
+engine. Uses `testcontainers` like the other migration suites; CI-only (no docker socket in WSL) --
+every statement was run on a scratch Postgres 16.4 first.
 """
 
 from __future__ import annotations
@@ -28,12 +29,13 @@ pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
-_PREV = "0024_api_keys_write_once"
+_REV, _PREV = "0025_settings", "0024_api_keys_write_once"
 
 Conn = psycopg.Connection[tuple[Any, ...]]
 
 
 def _alembic(dsn: str, *args: str) -> subprocess.CompletedProcess[str]:
+    """Bounded, so a lost `lock_timeout` fails the test instead of hanging it."""
     return subprocess.run(  # noqa: S603 -- fixed argv, literal alembic subcommands, no shell
         [sys.executable, "-m", "alembic", *args],
         cwd=_ROOT,
@@ -41,6 +43,7 @@ def _alembic(dsn: str, *args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=False,
+        timeout=120,
     )
 
 
@@ -54,6 +57,12 @@ def pg_dsn() -> Iterator[str]:
 
 def _conn(dsn: str) -> Conn:
     return psycopg.connect(dsn.replace("postgresql+asyncpg", "postgresql"), autocommit=True)
+
+
+def _heal(dsn: str) -> None:
+    """Back to head whatever a test did, so one failure cannot cascade into the others."""
+    done = _alembic(dsn, "upgrade", "head")
+    assert done.returncode == 0, done.stderr
 
 
 def _user(c: Conn) -> str:
@@ -182,21 +191,64 @@ def test_only_value_carries_the_secret_classification_comment(pg_dsn: str) -> No
 def test_round_trip_leaves_no_residue_and_restores_the_exact_schema(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
         c.execute("DELETE FROM settings")
-        assert _alembic(pg_dsn, "downgrade", _PREV).returncode == 0
-        for obj in ("settings", "ux_settings_sys", "ux_settings_user", "settings_pkey"):
-            assert c.execute("SELECT to_regclass(%s)", (obj,)).fetchone() == (None,)
-        assert _alembic(pg_dsn, "upgrade", "head").returncode == 0
+        try:
+            assert _alembic(pg_dsn, "downgrade", _PREV).returncode == 0
+            for obj in ("settings", "ux_settings_sys", "ux_settings_user", "settings_pkey"):
+                assert c.execute("SELECT to_regclass(%s)", (obj,)).fetchone() == (None,)
+        finally:
+            _heal(pg_dsn)  # the upgrade half of the round trip, even when a check above failed
         _assert_matches_plan_doc(c)
 
 
 def test_downgrade_refuses_while_settings_exist(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
         sid = _setting(c)
-        refused = _alembic(pg_dsn, "downgrade", _PREV)
-        assert refused.returncode != 0
-        assert "0025_settings downgrade refused" in refused.stderr
-        assert c.execute("SELECT to_regclass('settings')").fetchone() == ("settings",)
-        c.execute("DELETE FROM settings WHERE id = %s", (sid,))
+        try:
+            refused = _alembic(pg_dsn, "downgrade", _PREV)
+            assert refused.returncode != 0
+            assert "0025_settings downgrade refused" in refused.stderr
+            assert c.execute("SELECT to_regclass('settings')").fetchone() == ("settings",)
+        finally:
+            _heal(pg_dsn)  # a regressed guard would have dropped the table; keep that local
+            c.execute("DELETE FROM settings WHERE id = %s", (sid,))
+
+
+def test_upgrade_gives_up_on_a_held_lock_instead_of_queueing(pg_dsn: str) -> None:
+    """The two FKs need SHARE ROW EXCLUSIVE on `users`, which an open writer blocks; the 5 s
+    `lock_timeout` bounds that wait and the failed upgrade leaves the database at 0024."""
+    with _conn(pg_dsn) as c:
+        c.execute("DELETE FROM settings")
+        try:
+            assert _alembic(pg_dsn, "downgrade", _PREV).returncode == 0
+            with _conn(pg_dsn) as holder, holder.transaction():
+                # What an open writer on `users` holds; it conflicts with the FK lock.
+                holder.execute("LOCK TABLE users IN ROW EXCLUSIVE MODE")
+                refused = _alembic(pg_dsn, "upgrade", _REV)
+            assert refused.returncode != 0
+            assert "lock timeout" in refused.stderr
+            assert c.execute("SELECT version_num FROM alembic_version").fetchone() == (_PREV,)
+            assert c.execute("SELECT to_regclass('settings')").fetchone() == (None,)
+        finally:
+            _heal(pg_dsn)
+
+
+def test_downgrade_gives_up_on_a_reader_lock_instead_of_queueing(pg_dsn: str) -> None:
+    """DROP TABLE needs ACCESS EXCLUSIVE on `users` (it removes the FK triggers there), so even an
+    open reader blocks the rollback; `lock_timeout` bounds that wait too and nothing changes."""
+    with _conn(pg_dsn) as c:
+        c.execute("DELETE FROM settings")
+        try:
+            before = c.execute("SELECT version_num FROM alembic_version").fetchone()
+            with _conn(pg_dsn) as holder, holder.transaction():
+                # What an open reader of `users` holds; it conflicts with the DROP.
+                holder.execute("LOCK TABLE users IN ACCESS SHARE MODE")
+                refused = _alembic(pg_dsn, "downgrade", _PREV)
+            assert refused.returncode != 0
+            assert "lock timeout" in refused.stderr
+            assert c.execute("SELECT version_num FROM alembic_version").fetchone() == before
+            assert c.execute("SELECT to_regclass('settings')").fetchone() == ("settings",)
+        finally:
+            _heal(pg_dsn)
 
 
 # --- Every invalid row is rejected by its NAMED constraint -------------------------------------

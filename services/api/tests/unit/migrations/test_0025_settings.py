@@ -54,9 +54,10 @@ def _doc_ddl() -> str:
     return block.split("CREATE TABLE feature_flags (", 1)[0]
 
 
-def test_revision_follows_0024_and_is_the_head() -> None:
-    """`test_single_head.py` owns "exactly one head"; this pins where 0025 sits in the chain."""
-    assert f"{_PREV} -> {_REV} (head)" in _alembic("history", "-r", f"{_PREV}:{_REV}")
+def test_revision_chains_onto_0024() -> None:
+    """`test_single_head.py` owns "exactly one head"; this pins only that 0025 hangs off 0024,
+    which keeps holding once a later revision stacks on top and 0025 stops being the head."""
+    assert f"{_PREV} -> {_REV}" in _alembic("history", "-r", f"{_PREV}:{_REV}")
 
 
 def test_upgrade_ddl_is_the_plan_doc_ddl_verbatim() -> None:

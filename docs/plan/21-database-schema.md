@@ -2145,7 +2145,7 @@ Conflict detection (two actions on one chord) is a save-time application check w
 
 ### 3.9 Settings & feature flags
 
-> Shipped as Alembic `0025_settings` (E42-T01 #963; the register's `0012_governance` number was taken by `0012_onboarding_dismissals`). It creates `settings` only, DDL below verbatim; `feature_flags` and `feature_flag_overrides` are not part of that revision. `value` is class S when `is_secret` (§12) and carries a `SECRET:` column comment; the table ships empty. Downgrade refuses while the table holds rows.
+> Shipped as Alembic `0025_settings` (E42-T01 #963; the register's `0012_governance` number was taken by `0012_onboarding_dismissals`). It creates `settings` only, DDL below verbatim; `feature_flags` and `feature_flag_overrides` are not part of that revision. `value` is class S when `is_secret` (§12) and carries a `SECRET:` column comment; the table ships empty. Downgrade refuses while the table holds rows. `updated_at` is set by the repository; no `trg_settings_touch` (deviation from §1.4, as 0022).
 
 ```sql
 CREATE TABLE settings (
