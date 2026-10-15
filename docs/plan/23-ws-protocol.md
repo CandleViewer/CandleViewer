@@ -80,6 +80,8 @@ Sec-WebSocket-Protocol: cv.v1.msgpack, cv.v1.json
 
 The server echoes exactly one. A client offering no recognised subprotocol is closed with `1002` before the handshake completes.
 
+**As built (#2486).** The gateway refuses such an upgrade before `accept`. A real server therefore answers it with HTTP `403` and no WebSocket close code; only an in-process test client reports `1002`.
+
 **Decision — why MessagePack and not a bespoke binary envelope.** The envelope must stay human-inspectable in DevTools, must tolerate additive schema evolution, and must decode fast in the browser. MessagePack gives all three with a mature, small (~8 kB) decoder, and lets us carry raw `bin` fields with **zero-copy** access to their `ArrayBuffer` — so the _hot_ payloads (book deltas, bars, footprint cells, heatmap columns) get a hand-rolled fixed-layout binary format (§3.4) _inside_ a self-describing envelope. A fully bespoke envelope was rejected: it would save ~20 bytes per frame while costing every debugging session and every schema change. JSON-only was rejected: measured decode cost of a 200-level book delta is ~4× MessagePack and produces GC garbage on every frame, which the 100 ms heatmap cadence cannot afford.
 
 ### 2.3 Protocol version
@@ -396,6 +398,15 @@ Rules:
 - Only `cv.v1.json` is negotiated today; `cv.v1.msgpack` follows its dependency PR.
 - `welcome.server_version` / `git_sha` come from settings (`CV_VERSION`, `CV_GIT_SHA`). `auth_ok.kill_switch` reflects the live kill-switch state at the time of the `auth`.
 - Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_SHUTDOWN_GRACE_MS` (5 000) and `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000). The defaults are the values in this section and §9.4.
+- `auth_ok` carries `user_id`, `roles`, `permissions`, `account_scope`, `session_id`, `token_expires_at_ms` and `kill_switch`. It does not carry `username` or `allowed_environments`, which the examples above show and §13.4 marks optional (#2486).
+- When an authenticated connection ends, one `ws.connection.closed` audit row is written (#2486):
+  - its reason is the close reason: the `bye`'s, else `client_closed`, or `internal_error` after a fault;
+  - it is `warning` for `auth_failed` and `slow_consumer`, and `info` otherwise;
+  - it carries E04's `request_id` and never the token;
+  - it is best effort, bounded at 2 s.
+
+  An unauthenticated close writes no row; its 3rd failed `auth` is already audited.
+- Gateway metrics as built: connections in use are `cv_ws_connections_in_use` (the ticket's `cv_ws_clients`), and `cv_ws_closes_total` is labelled by `reason` alone, because each reason has one close code (#2486).
 
 ### 4.4 Close codes
 
@@ -429,6 +440,8 @@ A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It i
   },
 }
 ```
+
+**As built (#2486): one exception.** A frame over the transport limit (`SERVER_WS_MAX_SIZE`, 260 KiB: the 256 KiB cap plus 4 KiB of headroom, #2182) is closed with `1009` by the server layer before the gateway sees it, so no `bye` comes first. A frame between 256 KiB and 260 KiB gets the gateway's `bye frame_too_big`, then `1009`.
 
 ---
 

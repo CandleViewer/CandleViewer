@@ -52,7 +52,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.net import RESOLVED_SOURCE_KEY
-from candleviewer.observability.context import spawn
+from candleviewer.observability.context import current_request_id, spawn
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.lifecycle import (
     CLOSE_REASONS,
@@ -107,6 +107,11 @@ OUTBOUND_QUEUE_MAX: Final = 1024
 WATCHDOG_TICK_S: Final = 0.05
 #: Upper bound for the writer to flush `bye` + close once the reader stopped.
 CLOSE_FLUSH_TIMEOUT_S: Final = 2.0
+#: Upper bound on writing a connection's `ws.connection.closed` row; the teardown never waits
+#: longer on the audit sink.
+CLOSE_AUDIT_TIMEOUT_S: Final = 2.0
+#: Close reasons audited at `warning` rather than `info` (E17-S01 Security notes).
+WARNING_CLOSES: Final = frozenset({"auth_failed", "slow_consumer"})
 
 #: (raw access token) -> (session_id, user_id, token expires_at); raises on any
 #: invalid token. The expiry is mandatory and timezone-aware: the first instant
@@ -232,6 +237,14 @@ class GatewayHub:
 def close_reason_label(reason: str) -> str:
     """Bounded `reason` label: a known §13.6 close/bye reason, else "other"."""
     return reason if reason in CLOSE_REASONS else "other"
+
+
+def closed_reason(conn: _Connection, fault: BaseException | None) -> str:
+    """Why a connection ended, for its audit row: the `bye`'s reason (bounded like the metric
+    label), else `internal_error` after a fault, else `client_closed`."""
+    if conn.bye_frame is not None:
+        return close_reason_label(str(conn.bye_frame["p"].get("reason", "")))
+    return "internal_error" if fault is not None else "client_closed"
 
 
 def _source_ip(scope: Mapping[str, Any]) -> str | None:
@@ -517,6 +530,34 @@ def make_ws_router(
             )
         except Exception:
             _log().warning("ws auth-failure audit not written", exc_info=True)
+
+    async def audit_close(conn: _Connection, fault: BaseException | None) -> None:
+        """`ws.connection.closed` for a socket that authenticated (E17-S01, #2486): `warning`
+        for `WARNING_CLOSES`, `info` otherwise. An unauthenticated close is not audited, so a
+        peer without a session cannot flood the log (its 3rd failed `auth` already is). Never
+        the token. Best effort and bounded: the teardown never waits on the sink."""
+        if audit is None or conn.user_id is None:
+            return
+        reason = closed_reason(conn, fault)
+        try:
+            async with asyncio.timeout(CLOSE_AUDIT_TIMEOUT_S):
+                await audit.emit(
+                    "ws.connection.closed",
+                    actor_label="ws",
+                    actor_user_id=conn.user_id,
+                    actor_ip=_source_ip(conn.ws.scope),
+                    session_id=conn.session_id,
+                    object_kind="ws_connection",
+                    object_id=conn.connection_id,
+                    outcome=AuditOutcome.SUCCESS,
+                    severity=Severity.WARNING if reason in WARNING_CLOSES else Severity.INFO,
+                    reason=reason,
+                    request_id=current_request_id(),
+                )
+        except Exception:
+            _log().warning(
+                "ws close audit not written", connection_id=conn.connection_id, exc_info=True
+            )
 
     async def do_auth(conn: _Connection, frame: dict[str, Any]) -> None:
         body = frame.get("p")
@@ -825,6 +866,7 @@ def make_ws_router(
             if conn.lifecycle.can(ConnEvent.CLOSE):
                 conn.lifecycle.fire(ConnEvent.CLOSE)
             conn.lifecycle.fire(ConnEvent.CLOSED)
+            await audit_close(conn, fault)
             structlog.contextvars.unbind_contextvars("connection_id", "user_id", "session_id")
 
     return router
