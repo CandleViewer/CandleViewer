@@ -71,6 +71,7 @@ from candleviewer.auth.models import (
 )
 from candleviewer.auth.step_up import grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.observability.redaction import redact_text
 
 REFRESH_COOKIE = "cv_refresh"
 REFRESH_COOKIE_PATH = "/api/v1/auth"
@@ -170,6 +171,72 @@ def _problem(status_code: int, title: str, detail: str) -> JSONResponse:
 def _unauthorized(detail: str = "authentication required") -> JSONResponse:
     # One uniform 401 for unknown/expired/revoked tokens: no session oracle.
     return _problem(401, "Unauthorized", detail)
+
+
+#: SR-026: a self-service read answers only for the authenticated caller, so it takes only the
+#: query parameters its contract operation declares. A target user under any spelling, or any other
+#: undeclared key, is refused, never silently ignored (#2573). `userId` is the contract's own name
+#: for a target user (`components/parameters/UserId`, the owner-only `/users/{userId}` routes).
+_TARGET_USER_PARAMS = frozenset({"user_id", "userId"})
+#: Declared query parameters (22-api-openapi.yaml): `authGetSession` has none; `authListSessions`
+#: has `Cursor` and `Limit`.
+GET_SESSION_QUERY: frozenset[str] = frozenset()
+LIST_SESSIONS_QUERY = frozenset({"cursor", "limit"})
+#: Echo bounds for client-supplied parameter names, which also pass the shared redaction rules.
+_MAX_ECHOED_PARAMS = 8
+_MAX_ECHOED_NAME_LEN = 64
+
+
+def _echoed(name: str) -> str:
+    """A client-supplied parameter name as echoed. A name over the bound is never echoed, only its
+    length: the shared redaction then only ever scans short names (cheap, and a secret shape is
+    seen whole), and no prefix of a long token can leak through a cut (#2573 review)."""
+    if len(name) > _MAX_ECHOED_NAME_LEN:
+        return f"<{len(name)}-character name>"
+    return redact_text(name)
+
+
+def _undeclared_query_refusal(request: Request, declared: frozenset[str]) -> JSONResponse | None:
+    """422 `validation_failed` when a self-service read gets an undeclared query key (SR-026).
+
+    Decided on the parameter names alone, so the answer is identical for any value (no existence
+    oracle). It echoes at most `_MAX_ECHOED_PARAMS` redacted, bounded names and never a value.
+    """
+    undeclared = sorted(set(request.query_params) - declared)
+    if not undeclared:
+        return None
+    named = undeclared[:_MAX_ECHOED_PARAMS]
+    more = len(undeclared) - len(named)
+    shown = {p: _echoed(p) for p in named}  # redact each name once, reuse in detail and errors
+    listed = ", ".join(shown[p] for p in named) + (f" (+{more} more)" if more else "")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "type": "https://candleviewer.local/errors/validation_failed",
+            "title": "Request body or parameters failed schema validation",
+            "status": 422,
+            "code": "validation_failed",
+            "detail": f"Query parameter not accepted: {listed}. This route answers only for the "
+            "authenticated caller and takes no target-user or undeclared parameter.",
+            "errors": [
+                (
+                    {
+                        "field": f"query.{p}",
+                        "rule": "target_user_not_accepted",
+                        "message": "self-service routes do not accept a target-user parameter",
+                    }
+                    if p in _TARGET_USER_PARAMS
+                    else {
+                        "field": f"query.{shown[p]}",
+                        "rule": "undeclared_parameter",
+                        "message": "not a declared parameter of this route",
+                    }
+                )
+                for p in named
+            ],
+        },
+        media_type="application/problem+json",
+    )
 
 
 def _bearer(request: Request) -> str | None:
@@ -542,6 +609,8 @@ def make_session_router(
         record = await _authenticate(request)
         if record is None:
             return _unauthorized()
+        if (refusal := _undeclared_query_refusal(request, GET_SESSION_QUERY)) is not None:
+            return refusal  # SR-026: before any session data is read
         if identity is None:
             return _problem(
                 501, "Not implemented", "identity provider not wired (E09-T03); disabled"
@@ -581,6 +650,8 @@ def make_session_router(
         record = await _authenticate(request)
         if record is None:
             return _unauthorized()
+        if (refusal := _undeclared_query_refusal(request, LIST_SESSIONS_QUERY)) is not None:
+            return refusal  # SR-026: before any session data is read
         try:
             offset = int(cursor) if cursor else 0
         except ValueError:

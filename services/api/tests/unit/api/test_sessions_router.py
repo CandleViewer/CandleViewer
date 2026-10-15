@@ -12,7 +12,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from candleviewer.api.sessions import REFRESH_COOKIE, make_session_router
+import candleviewer.api.sessions as sessions_module
+from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.sessions import (
+    GET_SESSION_QUERY,
+    LIST_SESSIONS_QUERY,
+    REFRESH_COOKIE,
+    make_session_router,
+)
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
@@ -76,12 +83,13 @@ class _Env:
         async def publish(sid: str, reason: str) -> None:
             self.revoked.append((sid, reason))
 
+        self.identity = _Identity() if identity else None
         app = FastAPI()
         app.include_router(
             make_session_router(
                 _Auth(self.svc),
                 self.audit,
-                identity=_Identity() if identity else None,
+                identity=self.identity,
                 publish_revocation=publish,
                 allowed_origins=origins,
                 ip_throttle=PerIpLoginThrottle(
@@ -233,3 +241,192 @@ async def test_logout_rejects_unknown_body_fields(env: _Env) -> None:
     a = await env.mint(uuid.uuid4())
     r = env.client.post("/api/v1/auth/logout", json={"x": 1}, headers=_h(a.access_token))
     assert r.status_code == 422
+
+
+# -- SR-026 (#2573): self-service reads refuse a target-user parameter ------------------------
+
+_SELF_READS = ("/api/v1/auth/session", "/api/v1/auth/sessions")
+
+
+@pytest.mark.parametrize("param", ["user_id", "userId"])
+@pytest.mark.parametrize("path", _SELF_READS)
+async def test_self_service_read_with_a_target_user_parameter_is_422_naming_it(
+    env: _Env, path: str, param: str
+) -> None:
+    caller = await env.mint(uuid.uuid4())
+    other = uuid.uuid4()
+    await env.mint(other)
+    r = env.client.get(path, params={param: str(other)}, headers=_h(caller.access_token))
+    assert r.status_code == 422, f"{path}?{param}=: refused, not silently ignored"
+    assert r.headers["content-type"].startswith("application/problem+json")
+    body = r.json()
+    assert body["code"] == "validation_failed"
+    assert body["type"] == "https://candleviewer.local/errors/validation_failed"
+    assert [e["field"] for e in body["errors"]] == [f"query.{param}"]
+    assert [e["rule"] for e in body["errors"]] == ["target_user_not_accepted"]
+    assert param in body["detail"]
+    assert str(other) not in r.text, "the supplied value is never echoed"
+    assert not {"user", "session", "items"} & set(body), "a refusal carries no session data"
+
+
+@pytest.mark.parametrize("path", _SELF_READS)
+async def test_self_service_read_target_user_refusal_reads_no_session_data(
+    env: _Env, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    caller = await env.mint(uuid.uuid4())
+
+    async def _must_not_read(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("session data was read for a request that must be refused")
+
+    assert env.identity is not None
+    monkeypatch.setattr(env.identity, "session_info", _must_not_read)
+    monkeypatch.setattr(env.identity, "user", _must_not_read)
+    monkeypatch.setattr(env.svc, "list_sessions", _must_not_read)
+    r = env.client.get(path, params={"user_id": ""}, headers=_h(caller.access_token))
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("path", _SELF_READS)
+async def test_self_service_read_target_user_refusal_does_not_depend_on_the_value(
+    env: _Env, path: str
+) -> None:
+    """No existence oracle: own id, another user's id, an unknown id and garbage look alike."""
+    me, other = uuid.uuid4(), uuid.uuid4()
+    caller = await env.mint(me)
+    await env.mint(other)
+    values = (str(me), str(other), str(uuid.uuid4()), "", "not-a-uuid")
+    answers = [
+        env.client.get(path, params={"user_id": v}, headers=_h(caller.access_token)) for v in values
+    ]
+    assert {r.status_code for r in answers} == {422}
+    assert len({r.content for r in answers}) == 1, "the answer must not depend on the value"
+
+
+@pytest.mark.parametrize("path", _SELF_READS)
+async def test_self_service_read_with_a_target_user_parameter_unauthenticated_is_401(
+    env: _Env, path: str
+) -> None:
+    """Authentication still comes first: an anonymous caller gets the uniform 401."""
+    r = env.client.get(path, params={"user_id": str(uuid.uuid4())})
+    assert r.status_code == 401
+
+
+async def test_list_sessions_declared_parameters_are_still_accepted(env: _Env) -> None:
+    caller = await env.mint(uuid.uuid4())
+    r = env.client.get(
+        "/api/v1/auth/sessions", params={"cursor": "0", "limit": 1}, headers=_h(caller.access_token)
+    )
+    assert r.status_code == 200
+    assert r.json()["meta"]["count"] == 1
+
+
+#: Spellings no contract operation declares. Before the allow-list each was silently ignored and
+#: the read answered 200 with the caller's own data (review of #2573).
+_UNDECLARED = (
+    "USER_ID",
+    "User_Id",
+    "user-id",
+    "uid",
+    "userid",
+    "user",
+    "username",
+    "email",
+    "user_id[]",
+    "user_ids",
+)
+
+
+@pytest.mark.parametrize("param", _UNDECLARED)
+@pytest.mark.parametrize("path", _SELF_READS)
+async def test_self_service_read_with_an_undeclared_query_parameter_is_422_naming_it(
+    env: _Env, path: str, param: str
+) -> None:
+    caller = await env.mint(uuid.uuid4())
+    r = env.client.get(path, params={param: str(uuid.uuid4())}, headers=_h(caller.access_token))
+    assert r.status_code == 422, f"{path}?{param}=: refused, not silently ignored"
+    body = r.json()
+    assert body["code"] == "validation_failed"
+    assert [e["field"] for e in body["errors"]] == [f"query.{param}"]
+    assert [e["rule"] for e in body["errors"]] == ["undeclared_parameter"]
+    assert param in body["detail"]
+    assert not {"user", "session", "items"} & set(body), "a refusal carries no session data"
+
+
+@pytest.mark.parametrize(
+    ("path", "param"),
+    [
+        ("/api/v1/auth/session", "cursor"),  # authGetSession declares no parameter at all
+        ("/api/v1/auth/session", "limit"),
+        ("/api/v1/auth/sessions", "Limit"),  # only the exact declared name binds
+    ],
+)
+async def test_self_service_read_accepts_only_its_own_declared_parameters(
+    env: _Env, path: str, param: str
+) -> None:
+    caller = await env.mint(uuid.uuid4())
+    r = env.client.get(path, params={param: "1"}, headers=_h(caller.access_token))
+    assert r.status_code == 422
+    assert [e["field"] for e in r.json()["errors"]] == [f"query.{param}"]
+
+
+async def test_self_service_read_refusal_redacts_a_secret_shaped_parameter_name(env: _Env) -> None:
+    caller = await env.mint(uuid.uuid4())
+    shaped = "x" * 24  # the shared key-shape rule: an 18-36 character alphanumeric run
+    r = env.client.get(
+        "/api/v1/auth/session", params={shaped: "1"}, headers=_h(caller.access_token)
+    )
+    assert r.status_code == 422
+    assert shaped not in r.text, "a client-supplied name passes the shared redaction rules"
+    assert "[redacted:key-shape]" in r.json()["detail"]
+
+
+async def test_self_service_read_refusal_bounds_what_it_echoes(env: _Env) -> None:
+    caller = await env.mint(uuid.uuid4())
+    params = {"a" * 200: "1"} | {f"p{i:02d}": "1" for i in range(40)}
+    r = env.client.get("/api/v1/auth/session", params=params, headers=_h(caller.access_token))
+    assert r.status_code == 422
+    body = r.json()
+    assert len(body["errors"]) == 8, "at most eight names are echoed"
+    assert "(+33 more)" in body["detail"]
+    assert body["errors"][0]["field"] == "query.<200-character name>"
+    assert "a" * 20 not in r.text, "no prefix of a name over the bound is echoed"
+
+
+async def test_self_service_read_refusal_redacts_each_short_name_once(
+    env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2573 review: the shared redaction backtracks on long input, so it must only ever see names
+    within the echo bound, once each, however long the client-supplied names are."""
+    seen: list[int] = []
+    redact = sessions_module.redact_text
+
+    def counting_redact(value: str) -> str:
+        seen.append(len(value))
+        return redact(value)
+
+    monkeypatch.setattr(sessions_module, "redact_text", counting_redact, raising=True)
+    caller = await env.mint(uuid.uuid4())
+    params = {f"{i:02d}" + "k" * 4094: "1" for i in range(6)} | {"short": "1", "x" * 64: "1"}
+    r = env.client.get("/api/v1/auth/session", params=params, headers=_h(caller.access_token))
+    assert r.status_code == 422
+    assert seen and max(seen) <= 64, seen
+    assert len(seen) == 2, "only the two names within the bound are redacted, once each"
+    assert "query.<4096-character name>" in r.text
+
+
+def test_self_service_read_allow_lists_match_the_contract() -> None:
+    """The allow-lists are the operations' declared query parameters (22-api-openapi.yaml), so a
+    parameter the contract adds is accepted only once the handler is taught it."""
+    spec = load_openapi_spec()
+
+    def declared(path: str) -> frozenset[str]:
+        names: set[str] = set()
+        for p in spec["paths"][path]["get"].get("parameters", []):
+            if "$ref" in p:
+                p = spec["components"]["parameters"][p["$ref"].rsplit("/", 1)[-1]]
+            if p["in"] == "query":
+                names.add(p["name"])
+        return frozenset(names)
+
+    assert declared("/auth/session") == GET_SESSION_QUERY
+    assert declared("/auth/sessions") == LIST_SESSIONS_QUERY
