@@ -187,6 +187,10 @@ INVARIANTS: dict[str, str] = {
     "INV-B16-c": "deferred:E09",
     "INV-B16-d": "test_b16_revoked_is_terminal",
     "INV-B16-e": "deferred:E09",
+    # #2301 contract-first: the idle-lock chart and its property tests land in slice 2/2
+    # (#2391). The gate accepts only `deferred:E<nn>` here (membership._DEFERRED).
+    "INV-B16-f": "deferred:E09",
+    "INV-B16-g": "deferred:E09",
 }
 
 
