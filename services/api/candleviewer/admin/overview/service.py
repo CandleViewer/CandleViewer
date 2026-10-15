@@ -20,7 +20,7 @@ from candleviewer.admin.overview.fanout import (
     SliceFanOut,
     SliceResult,
     SourceUnavailable,
-    _utc_now,
+    utc_now,
 )
 from candleviewer.admin.overview.ports import (
     AccountCounts,
@@ -64,6 +64,11 @@ class OverviewSnapshot:
     incidents: SliceResult[int]
 
 
+def _why(exc: BaseException | str) -> str:
+    """The logged-only reason of a partial failure: part and exception class, never a message."""
+    return f"open_positions:{exc if isinstance(exc, str) else type(exc).__name__}"
+
+
 def _unwired(source: str) -> SourceUnavailable:
     return SourceUnavailable(f"{source}: no provider wired")
 
@@ -76,9 +81,11 @@ class AdminOverviewService:
         counts: CountsPort | None = None,
         recorder: RecorderPort | None = None,
         oms: OmsPort | None = None,
-        now: Callable[[], datetime] = _utc_now,
+        now: Callable[[], datetime] = utc_now,
         positions_budget_s: float = POSITIONS_BUDGET_S,
     ) -> None:
+        if not 0 < positions_budget_s < fan.budget_s:  # the flags must survive a slow OMS
+            raise ValueError("positions budget must be inside the slice budget")
         self._fan, self._now, self._positions_budget_s = fan, now, positions_budget_s
         self._counts, self._recorder, self._oms = counts, recorder, oms
 
@@ -125,16 +132,16 @@ class AdminOverviewService:
     async def _trading(self) -> TradingState | Degraded[TradingState]:
         if self._oms is None:
             raise _unwired("trading")
+        killed = await self._oms.kill_switch_engaged()  # the kill switch first, then the flag
         live = await self._oms.live_enabled()
-        killed = await self._oms.kill_switch_engaged()
         flags_only = TradingState(live, killed, None)  # kill switch and flag always shown
         try:
             async with asyncio.timeout(self._positions_budget_s):
                 positions = await self._oms.open_positions()
         except SourceUnavailable as exc:
-            return Degraded(flags_only, "unavailable", exc.detail)
+            return Degraded(flags_only, "unavailable", exc.detail, "open_positions:unwired")
         except TimeoutError:
-            return Degraded(flags_only, "error", "open_positions: timed out")
-        except Exception:  # the message may carry internals: never forwarded
-            return Degraded(flags_only, "error", "open_positions: source failed")
+            return Degraded(flags_only, "error", "open_positions: timed out", _why("TimeoutError"))
+        except Exception as exc:  # the message may carry internals: only the class is logged
+            return Degraded(flags_only, "error", "open_positions: source failed", _why(exc))
         return TradingState(live, killed, positions)
