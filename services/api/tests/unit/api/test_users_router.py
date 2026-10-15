@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 from candleviewer.api.users import make_users_router
 from candleviewer.auth.errors import SessionNotFound, StepUpRequired
@@ -365,3 +366,39 @@ def test_put_roles_bad_bearer_is_401_with_code() -> None:
     )
     assert r.status_code == 401
     assert r.json()["code"] == "unauthorized"
+
+
+# -- SR-125 / #2117: `authz_denied_total` on the real route -------------------------------------
+
+
+def _users_write_denied() -> float:
+    labels = {"permission": Permission.USERS_WRITE.value}
+    return float(REGISTRY.get_sample_value("authz_denied_total", labels) or 0.0)
+
+
+def test_put_roles_manager_forbidden_moves_authz_denied_total_with_the_audit_row() -> None:
+    store, em, n = _Store({"viewer"}, 1), _Emitter(), _Notifier()
+    before = _users_write_denied()
+    r = _client(store, _manager(), em, n).put(f"/users/{TARGET}/roles", json={"roles": ["owner"]})
+    assert r.status_code == 403
+    assert [c["action"] for c in em.calls] == ["rbac.denied"]
+    assert _users_write_denied() == before + 1
+
+
+def test_put_roles_owner_floor_conflict_is_audited_but_is_not_a_permission_denial() -> None:
+    store, em, n = _Store({"owner"}, 1), _Emitter(), _Notifier()
+    before = _users_write_denied()
+    r = _client(store, _admin(), em, n).put(f"/users/{TARGET}/roles", json={"roles": ["viewer"]})
+    assert r.status_code == 409
+    assert [c["action"] for c in em.calls] == ["rbac.denied"]  # audited as a denial ...
+    assert _users_write_denied() == before  # ... but the permission check passed
+
+
+def test_put_roles_step_up_challenge_is_not_a_permission_denial() -> None:
+    store, em, n = _Store({"viewer"}, 2), _Emitter(), _Notifier()
+    before = _users_write_denied()
+    r = _client(store, _admin(), em, n, elevated=False).put(
+        f"/users/{TARGET}/roles", json={"roles": ["manager"]}
+    )
+    assert (r.status_code, r.json()["code"]) == (403, "step_up_required")
+    assert _users_write_denied() == before

@@ -24,6 +24,7 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.metrics import authz_denied_total, normalise_permission
 
 #: Mirrors the database `role_name` ENUM (`'owner','manager','viewer'`,
 #: migration `0001_identity_rbac_sessions_mfa.py`) — the *only* three role
@@ -230,6 +231,8 @@ async def enforce(
     )
     if isinstance(decision, Allow):
         return
+    # SR-125: counted before the audit write, so a denial is never lost to an audit failure.
+    authz_denied_total.labels(permission=normalise_permission(decision.permission)).inc()
     if emitter is not None:
         await emitter.emit(
             "rbac.denied",

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, Hasher
+from candleviewer.auth.metrics import auth_lockouts_total
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, UserRecord, UserStatus
 from candleviewer.auth.repository import UserRepository
 from candleviewer.auth.throttle import PerIpLoginThrottle
@@ -184,9 +185,15 @@ class LoginService:
         # UPDATE would actually observe count=4, silently losing a failure
         # and letting an attacker get more than `LOCKOUT_THRESHOLD` guesses
         # in before the account locks).
-        await self._repository.record_login_failure(
+        locked_until = await self._repository.record_login_failure(
             str(user.id),
             lockout_threshold=LOCKOUT_THRESHOLD,
             lock_duration=LOCKOUT_DURATION,
             now=self._clock(),
         )
+        if locked_until is not None:
+            # SR-125: this failure left the account locked: the fifth, or the first after an
+            # expired lock. The repository returns the lock for every count at or above the
+            # threshold, so a burst of parallel failures counts each. Attempts refused while
+            # locked never get here; `StepUpService` counts the locks its own failures apply.
+            auth_lockouts_total.inc()

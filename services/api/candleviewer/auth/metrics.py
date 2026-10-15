@@ -1,11 +1,13 @@
-"""Prometheus metrics for session lifetime (E09-S03 "Observability").
+"""Prometheus metrics for session lifetime (E09-S03 "Observability") and the SR-125
+security counters (`auth_lockouts_total`, `authz_denied_total`, `auth_stepup_failures_total`).
 
-Labels are closed sets (revocation `reason` is normalised by
-`normalise_reason`) so cardinality stays bounded.
+Labels are closed sets (revocation `reason` is normalised by `normalise_reason`, the denied
+`permission` by `normalise_permission`) so cardinality stays bounded.
 """
 
 from __future__ import annotations
 
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.observability.metrics import (
     CollectorRegistry,
     Counter,
@@ -44,6 +46,22 @@ auth_csrf_refused_total = Counter(
     ["reason"],
 )
 auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets performed.")
+# SR-125 (#2117), catalogued `live` and re-exported below. Each is incremented at the decision
+# that makes it true; none carries a user, account, IP or free-form label.
+auth_lockouts_total = Counter(
+    "auth_lockouts_total",
+    "Account lockouts applied by repeated wrong passwords (SR-016), from login or step-up.",
+)
+auth_stepup_failures_total = Counter(
+    "auth_stepup_failures_total",
+    "Failed step-up re-authentications (wrong password or code, or a locked account).",
+)
+authz_denied_total = Counter(
+    "authz_denied_total",
+    "Permission-check denials decided by auth.scopes.enforce (the rbac.denied decisions).",
+    # closed set: the generated `Permission` vocabulary, or `other` (see `normalise_permission`)
+    ["permission"],
+)
 auth_session_fixation_attempts_total = Counter(
     "auth_session_fixation_attempts_total",
     "Session credentials never issued here, or another user's, presented (U6/SR-013), by reason.",
@@ -79,6 +97,22 @@ def normalise_reason(reason: str | None) -> str:
     return reason if reason in _KNOWN_REASONS else "other"
 
 
+_KNOWN_PERMISSIONS = frozenset(permission.value for permission in Permission)
+
+
+def normalise_permission(permission: str) -> str:
+    """Clamp a permission code to the generated vocabulary (else `other`), so the
+    `authz_denied_total` label set stays closed whatever a caller passes."""
+    return str(permission) if permission in _KNOWN_PERMISSIONS else "other"
+
+
+# Bind every value now: the series then exist from process start, so the `absent()` guard
+# (`ExpectedMetricMissingAuthzDeniedTotal`) cannot fire on a healthy system that has simply
+# not denied anything yet, and the first denial is a visible 0 -> 1 `increase()`.
+for _permission in (*sorted(_KNOWN_PERMISSIONS), "other"):
+    authz_denied_total.labels(permission=_permission)
+
+
 users_invites_created_total = Counter(
     "users_invites_created_total", "Invites minted (incl. re-issues), by role.", ["role"]
 )
@@ -96,7 +130,13 @@ users_invites_pending = Gauge(
 #: Series re-exported onto the scraped app registry (#2090): module-level counters
 #: land on the library default registry, which Prometheus never scrapes.
 AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
-    {"auth_csrf_refused_total", "auth_session_fixation_attempts_total"}
+    {
+        "auth_csrf_refused_total",
+        "auth_session_fixation_attempts_total",
+        "auth_lockouts_total",
+        "auth_stepup_failures_total",
+        "authz_denied_total",
+    }
 )
 
 
