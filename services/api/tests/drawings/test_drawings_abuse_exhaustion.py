@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 from _drawings_api_env import BATCH, TRENDLINE, USER_A, USER_B, Env, wire
-from fastapi.testclient import TestClient
 
 from candleviewer.api.drawings import IDEMPOTENCY_USER_MAX_ENTRIES
 from candleviewer.api.drawings_models import (
@@ -48,7 +47,7 @@ def _pad_to(text: str, size: int) -> bytes:
 
 
 @pytest.fixture
-def env() -> Env:
+def env() -> Env:  # each drawings test module defines its own; no shared one exists
     return Env()
 
 
@@ -160,27 +159,33 @@ def test_a_batch_of_maximum_size_geometry_is_413_before_validation(env: Env) -> 
     assert env.repo.calls == []
 
 
-def _fill(c: TestClient, n: int) -> list[str]:
+def _post(env: Env, key: str) -> Any:
+    return env.c.post("/drawings", json=wire(TRENDLINE), headers={"Idempotency-Key": key})
+
+
+def _fill(env: Env, n: int) -> list[str]:
     keys = [str(uuid.UUID(int=i + 1, version=4)) for i in range(n)]
     for k in keys:
-        assert (
-            c.post("/drawings", json=wire(TRENDLINE), headers={"Idempotency-Key": k}).status_code
-            == 201
-        )
+        r = _post(env, k)
+        assert r.status_code == 201 and "idempotency-replayed" not in r.headers
     return keys
 
 
 def test_idempotency_pressure_evicts_the_oldest_key_of_the_flooding_user_only() -> None:
     env = Env()
+    first_key = str(uuid.UUID(int=1, version=4))  # shared with A on purpose
     env.user = USER_B
-    b_key = _fill(env.c, 1)[0]
+    b_first = _post(env, first_key).json()
     env.user = USER_A
-    keys = _fill(env.c, IDEMPOTENCY_USER_MAX_ENTRIES + 1)
+    keys = _fill(env, IDEMPOTENCY_USER_MAX_ENTRIES + 1)  # A's first post must not replay B's
+    assert keys[0] == first_key
     before = len(env.repo.rows)
-    replay = env.c.post("/drawings", json=wire(TRENDLINE), headers={"Idempotency-Key": keys[-1]})
+    replay = _post(env, keys[-1])
     assert replay.headers.get("idempotency-replayed") == "true" and len(env.repo.rows) == before
-    evicted = env.c.post("/drawings", json=wire(TRENDLINE), headers={"Idempotency-Key": keys[0]})
+    evicted = _post(env, keys[0])
     assert evicted.status_code == 201 and "idempotency-replayed" not in evicted.headers  # re-ran
     env.user = USER_B
-    kept = env.c.post("/drawings", json=wire(TRENDLINE), headers={"Idempotency-Key": b_key})
+    kept = _post(env, first_key)
     assert kept.headers.get("idempotency-replayed") == "true"  # B was never evicted by A
+    assert kept.json()["id"] == b_first["id"]  # B's own response, not A's under the shared key
+    assert kept.json()["owner_user_id"] == str(USER_B)  # fails if the cache ignored the user
