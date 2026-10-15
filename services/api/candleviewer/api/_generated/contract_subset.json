@@ -2,7 +2,7 @@
   "x-cv-generated": {
     "notice": "GENERATED FILE — DO NOT EDIT BY HAND. Regenerate from services/api with `uv run python scripts/generate_protocol_models.py`.",
     "source": "docs/plan/22-api-openapi.yaml",
-    "source_sha256": "88717636935664655a64a6ee6c13a9abf302be582c01a71bf228fa9b13df386e"
+    "source_sha256": "e027ca33e5cec6a061c811bdc156e927a8682b2e396c37c518d4bf615ffaa1d4"
   },
   "components": {
     "headers": {
@@ -2009,6 +2009,16 @@
         "x-rbac": {
           "permissions": [
             "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/capacity/subaccount-tier": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "admin:write"
           ],
           "scope": "none"
         }
