@@ -174,7 +174,7 @@ export interface paths {
     };
     /**
      * Ingestion, storage and rate-budget headroom
-     * @description Projects disk exhaustion from the current recorded-symbol set and retention policy (~0.5-0.75 GB/day/symbol at 200-depth) and reports per-UID rate-budget utilisation, so the owner can see a limit approaching instead of discovering it at a rejection.
+     * @description Projects disk exhaustion from the current recorded-symbol set and retention policy (~0.5-0.75 GB/day/symbol at 200-depth) and reports per-UID rate-budget utilisation, so the owner can see a limit approaching instead of discovering it at a rejection. Read from the backend's own accounting only; never queries Bybit. Same partial-result rules as `/admin/overview`: every section carries `AdminSliceStatus` (`rate_budget_status` for the `rate_budget` list). The sub-account tier is a recorded fact (`SubaccountCapacity`).
      */
     get: operations["getCapacity"];
     put?: never;
@@ -328,7 +328,7 @@ export interface paths {
     };
     /**
      * Admin landing dashboard roll-up
-     * @description Counts and headline state across users, accounts, keys nearing expiry, recorder health, storage headroom and open incidents.
+     * @description Counts and headline state across users, accounts, keys nearing expiry, recorder health, storage headroom and open incidents. Partial results (E42-T01): each slice is read from its own source under its own 300 ms budget, concurrently, and cached for 5 s. A source that times out or fails turns only its slice into `status: error` (see `AdminSliceStatus`); the response is still `200`, never all-or-nothing. Kill-switch and flag state (`trading`) is never served from the cache.
      */
     get: operations["getAdminOverview"];
     put?: never;
@@ -4072,36 +4072,53 @@ export interface components {
       streams: components["schemas"]["StreamKind"][];
       symbol: components["schemas"]["Symbol"];
     };
+    /** @description Partial-result roll-up (E42-T01): every slice carries `AdminSliceStatus`. `generated_at` is when the response was assembled. `incidents_open` mirrors `incidents.open`. */
     AdminOverview: {
       accounts?: {
         enabled?: number;
         keys_expiring_30d?: number;
         keys_invalid?: number;
         total?: number;
-      };
+      } & components["schemas"]["AdminSliceStatus"];
+      /** Format: date-time */
+      generated_at?: string;
+      incidents?: {
+        open?: number;
+      } & components["schemas"]["AdminSliceStatus"];
       incidents_open?: number;
       recorder?: {
         lag_seconds_p99?: number;
         symbols_degraded?: number;
         symbols_recording?: number;
-      };
+      } & components["schemas"]["AdminSliceStatus"];
       storage?: {
         days_until_full?: number | null;
         /** Format: int64 */
         free_bytes?: number;
         /** Format: int64 */
         used_bytes?: number;
-      };
+      } & components["schemas"]["AdminSliceStatus"];
       trading?: {
         kill_switch_engaged?: boolean;
         live_enabled?: boolean;
         open_positions?: number;
-      };
+      } & components["schemas"]["AdminSliceStatus"];
       users?: {
         active?: number;
         total?: number;
         without_mfa?: number;
-      };
+      } & components["schemas"]["AdminSliceStatus"];
+    };
+    /** @description Outcome and freshness of one slice of an admin read model (E42-T01). `ok`: every field of the slice was read. `error`: a source timed out (300 ms budget) or failed. `unavailable`: no provider is wired for a source yet. Fields that could not be read are omitted; fields that were read are still returned. `detail` is a short fixed reason naming the source; it never carries an exception message, connection string or key material. */
+    AdminSliceStatus: {
+      detail?: string | null;
+      /**
+       * Format: date-time
+       * @description When the slice was read; at most 5 s older than the response (slice cache).
+       */
+      generated_at?: string;
+      /** @enum {string} */
+      status?: "ok" | "error" | "unavailable";
     };
     AggregatePosition: {
       accounts?: {
@@ -4442,12 +4459,15 @@ export interface components {
       intents?: components["schemas"]["OrderIntent"][];
       symbol?: components["schemas"]["Symbol"] | null;
     };
+    /** @description Partial-result capacity read model (E42-T01): every section carries `AdminSliceStatus`, and `rate_budget_status` covers the `rate_budget` list. `generated_at` is when the response was assembled. */
     CapacityReport: {
+      /** Format: date-time */
+      generated_at?: string;
       ingestion?: {
         dropped_last_hour?: number;
         messages_per_sec?: number;
         queue_depth?: number;
-      };
+      } & components["schemas"]["AdminSliceStatus"];
       rate_budget?: {
         /** Format: uuid */
         exchange_account_id?: string;
@@ -4456,10 +4476,12 @@ export interface components {
         peak_used_per_minute?: number;
         utilisation_pct?: number;
       }[];
+      rate_budget_status?: components["schemas"]["AdminSliceStatus"];
       storage?: {
         /** Format: int64 */
         daily_growth_bytes?: number;
         days_until_full?: number | null;
+        estimated?: boolean;
         /** Format: int64 */
         free_bytes?: number;
         per_symbol?: {
@@ -4471,9 +4493,15 @@ export interface components {
           /** Format: int64 */
           used_bytes?: number;
         }[];
+        /**
+         * @description Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day (7.5e8 bytes, the upper bound of the 0.5-0.75 GB/day/symbol band at 200-depth) per recorded symbol; `estimated` is `true` (C10). `nothing_recorded`: no symbol is recorded, so growth is `0` by fact, not unknown, and `days_until_full` is `null`.
+         * @enum {string}
+         */
+        projection_basis?: "measured" | "estimated" | "nothing_recorded";
         /** Format: int64 */
         used_bytes?: number;
-      };
+      } & components["schemas"]["AdminSliceStatus"];
+      subaccounts?: components["schemas"]["SubaccountCapacity"];
     };
     ChangePasswordRequest: {
       /** Format: password */
@@ -7391,6 +7419,22 @@ export interface components {
       | "liquidations"
       | "open_interest"
       | "funding";
+    /** @description Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact: it is read from the system-scope setting `accounts.subaccount_tier` (21-database-schema.md 3.9), never inferred from the account count or `exchange_accounts.max_sub_accounts_hint`. Never recorded: `tier` and `cap` are `null`, `tier_source` is `unrecorded`, `used` still counts. */
+    SubaccountCapacity: {
+      /** @description 5 for `regular`, 20 for `business_kyc`, `null` while unrecorded. */
+      cap?: number | null;
+      /**
+       * Format: date-time
+       * @description When the tier was recorded (the setting's `updated_at`); `null` if never.
+       */
+      recorded_at?: string | null;
+      /** @enum {string|null} */
+      tier?: "regular" | "business_kyc" | null;
+      /** @enum {string} */
+      tier_source?: "recorded" | "unrecorded";
+      /** @description Most non-deleted sub-accounts (`exchange_accounts.kind = sub`) under any one main account; the exchange applies the cap per main account. */
+      used?: number;
+    } & components["schemas"]["AdminSliceStatus"];
     /**
      * @description Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.
      * @example BTCUSDT

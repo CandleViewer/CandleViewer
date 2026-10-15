@@ -5013,44 +5013,61 @@ class BuildInfo(BaseModel):
     electron_version: str | None = None
 
 
-class Users(BaseModel):
+class AdminSliceStatus(BaseModel):
+    status: Literal["ok", "error", "unavailable"] | None = None
+    detail: Annotated[str | None, Field(max_length=200)] = None
+    generated_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="When the slice was read; at most 5 s older than the response (slice cache)."
+        ),
+    ] = None
+
+
+class Users(AdminSliceStatus):
     total: int | None = None
     active: int | None = None
     without_mfa: int | None = None
 
 
-class Accounts(BaseModel):
+class Accounts(AdminSliceStatus):
     total: int | None = None
     enabled: int | None = None
     keys_expiring_30d: int | None = None
     keys_invalid: int | None = None
 
 
-class Recorder(BaseModel):
+class Recorder(AdminSliceStatus):
     symbols_recording: int | None = None
     symbols_degraded: int | None = None
     lag_seconds_p99: float | None = None
 
 
-class Storage(BaseModel):
+class Storage(AdminSliceStatus):
     used_bytes: int | None = None
     free_bytes: int | None = None
     days_until_full: float | None = None
 
 
-class Trading1(BaseModel):
+class Trading1(AdminSliceStatus):
     live_enabled: bool | None = None
     kill_switch_engaged: bool | None = None
     open_positions: int | None = None
 
 
+class Incidents(AdminSliceStatus):
+    open: int | None = None
+
+
 class AdminOverview(BaseModel):
+    generated_at: AwareDatetime | None = None
     users: Users | None = None
     accounts: Accounts | None = None
     recorder: Recorder | None = None
     storage: Storage | None = None
     trading: Trading1 | None = None
     incidents_open: int | None = None
+    incidents: Incidents | None = None
 
 
 class PerSymbolItem(BaseModel):
@@ -5068,15 +5085,22 @@ class PerSymbolItem(BaseModel):
     retention_days: int | None = None
 
 
-class Storage1(BaseModel):
+class Storage1(AdminSliceStatus):
     used_bytes: int | None = None
     free_bytes: int | None = None
     daily_growth_bytes: int | None = None
     days_until_full: float | None = None
     per_symbol: list[PerSymbolItem] | None = None
+    projection_basis: Annotated[
+        Literal["measured", "estimated", "nothing_recorded"] | None,
+        Field(
+            description="Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day (7.5e8 bytes, the upper bound of the 0.5-0.75 GB/day/symbol band at 200-depth) per recorded symbol; `estimated` is `true` (C10). `nothing_recorded`: no symbol is recorded, so growth is `0` by fact, not unknown, and `days_until_full` is `null`.\n"
+        ),
+    ] = None
+    estimated: bool | None = None
 
 
-class Ingestion(BaseModel):
+class Ingestion(AdminSliceStatus):
     messages_per_sec: float | None = None
     queue_depth: int | None = None
     dropped_last_hour: int | None = None
@@ -5090,10 +5114,26 @@ class RateBudgetItem(BaseModel):
     utilisation_pct: float | None = None
 
 
-class CapacityReport(BaseModel):
-    storage: Storage1 | None = None
-    ingestion: Ingestion | None = None
-    rate_budget: list[RateBudgetItem] | None = None
+class SubaccountCapacity(AdminSliceStatus):
+    tier: Literal["regular", "business_kyc"] | None = None
+    cap: Annotated[
+        int | None,
+        Field(description="5 for `regular`, 20 for `business_kyc`, `null` while unrecorded."),
+    ] = None
+    used: Annotated[
+        int | None,
+        Field(
+            description="Most non-deleted sub-accounts (`exchange_accounts.kind = sub`) under any one main account; the exchange applies the cap per main account.\n",
+            ge=0,
+        ),
+    ] = None
+    tier_source: Literal["recorded", "unrecorded"] | None = None
+    recorded_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="When the tier was recorded (the setting's `updated_at`); `null` if never."
+        ),
+    ] = None
 
 
 class Incident(BaseModel):
@@ -5387,6 +5427,15 @@ class Watchlist(WatchlistInput):
     id: UUID | None = None
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
+
+
+class CapacityReport(BaseModel):
+    generated_at: AwareDatetime | None = None
+    storage: Storage1 | None = None
+    ingestion: Ingestion | None = None
+    rate_budget: list[RateBudgetItem] | None = None
+    rate_budget_status: AdminSliceStatus | None = None
+    subaccounts: SubaccountCapacity | None = None
 
 
 class RuleArithmeticNode(BaseModel):

@@ -2174,6 +2174,12 @@ CREATE UNIQUE INDEX ux_ffo_role ON feature_flag_overrides (feature_flag_id, role
 
 Resolution order: user override → role override → percentage rollout (hash of `user_id||flag_key`) → default value. Kill-switch flags (`is_killswitch`) bypass caching and are re-read every 5 s.
 
+System-scope keys with a fixed meaning (`scope = 'system'`, at most one row per key via `ux_settings_sys`; no migration, the table already allows them):
+
+| Key                        | `value_type` | Values                                           | Semantics                                                                                                                                                                                                                                                                       |
+| -------------------------- | ------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accounts.subaccount_tier` | `string`     | `"regular"` (cap 5) \| `"business_kyc"` (cap 20) | The Bybit sub-account tier as a recorded fact (US-ADMIN-014), read by `GET /admin/capacity` (`SubaccountCapacity`, E42-T01). No row means "unrecorded": the tier is never inferred from the account count or `max_sub_accounts_hint`. Changes are audited as `settings.change`. |
+
 ### 3.10 Audit log (hash chain), system events, backups
 
 #### 3.10.1 `audit_log`
