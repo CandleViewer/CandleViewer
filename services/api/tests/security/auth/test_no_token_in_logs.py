@@ -35,7 +35,14 @@ from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _GITLEAKS = Path(__file__).resolve().parents[5] / ".gitleaks.toml"
-_SHAPE_IDS = ("cv-session-token", "cv-refresh-token", "cv-totp-secret")
+# Every cv-* rule in .gitleaks.toml; the drift guard at the end of this module enforces it.
+_SHAPE_IDS = (
+    "cv-session-token",
+    "cv-refresh-token",
+    "cv-invite-token",
+    "cv-recovery-code",
+    "cv-totp-secret",
+)
 _PASSWORD = "pw-canary-7"  # noqa: S105 - test-only literal
 _ORIGIN = "https://app.example.test"
 _T0 = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
@@ -67,6 +74,11 @@ def _shape_regexes() -> list[re.Pattern[str]]:
     found = {r["id"]: re.compile(r["regex"]) for r in rules if r["id"] in _SHAPE_IDS}
     assert set(found) == set(_SHAPE_IDS), "gitleaks cv-* secret shapes missing"
     return list(found.values())
+
+
+def _gitleaks_cv_rule_ids() -> list[str]:
+    rules = tomllib.loads(_GITLEAKS.read_text(encoding="utf-8"))["rules"]
+    return [r["id"] for r in rules if r["id"].startswith("cv-")]
 
 
 class _Sink(logging.Handler):
@@ -292,3 +304,8 @@ def test_login_mfa_refresh_stepup_never_log_a_credential(
         len(v) >= 6 for v in literals.values() if v
     )  # guard: literals are not trivially short
     assert uuid.UUID(uid)  # keep the user id (not a secret) out of the literal set
+
+
+@pytest.mark.parametrize("rule_id", _gitleaks_cv_rule_ids())
+def test_leak_check_applies_every_gitleaks_cv_rule(rule_id: str) -> None:
+    assert rule_id in _SHAPE_IDS, f"{rule_id} is in .gitleaks.toml but not in _SHAPE_IDS"
