@@ -80,3 +80,23 @@ def test_put_reports_a_missing_drawing_before_its_layout(env: Env) -> None:
     """The documented PUT order (router docstring): the 404 precedes `layout_not_found`."""
     r = env.c.put(f"/drawings/{uuid.uuid4()}", json=wire(TRENDLINE | {"layout_id": GONE}))
     assert r.status_code == 404 and r.json()["code"] == "not_found"
+
+
+def test_put_reports_a_stale_token_before_its_layout(env: Env) -> None:
+    """The documented PUT order: a stale `If-Match` (412) precedes `layout_not_found`."""
+    d = env.create(layout_id=OWN)
+    stale = {"If-Match": '"2026-01-01T00:00:00.000000Z"'}
+    body = wire(TRENDLINE | {"layout_id": GONE})
+    r = env.c.put(f"/drawings/{d['id']}", json=body, headers=stale)
+    assert r.status_code == 412 and r.json()["code"] == "version_conflict", r.text
+    assert "update" not in [name for name, _ in env.repo.calls]  # refused before the write
+
+
+def test_put_reports_an_immutable_field_before_its_layout(env: Env) -> None:
+    """The documented PUT order: `immutable_field` (422) precedes `layout_not_found`."""
+    d = env.create(layout_id=OWN)
+    body = wire(TRENDLINE | {"symbol": "ETHUSDT", "layout_id": GONE})
+    r = env.c.put(f"/drawings/{d['id']}", json=body)
+    assert r.status_code == 422, r.text
+    assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [("symbol", "immutable_field")]
+    assert "update" not in [name for name, _ in env.repo.calls]  # refused before the write
