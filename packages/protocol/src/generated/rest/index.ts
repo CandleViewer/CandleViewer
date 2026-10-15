@@ -309,7 +309,10 @@ export interface paths {
      *     without the KEK cannot trade. `verify: "true` schedules an automatic restore-into-scratch"
      *     verification after the dump completes.
      *     A run is a `backup` job (`GET /admin/jobs/{jobId}`), audited as `backup.run` ahead of the
-     *     response (E42-T05). `backups:write` needs a live step-up elevation.
+     *     response (E42-T05). Every `backups:write` operation (run, verify, restore, download,
+     *     delete) needs a fresh `backups` step-up elevation (no grace, single use); the route slice
+     *     registers the class in `ACTION_CLASSES`, `DANGEROUS_ROUTES` and `DANGEROUS_PATH_PATTERN`
+     *     (`^/admin/backups`).
      */
     post: operations["createBackup"];
     delete?: never;
@@ -351,7 +354,7 @@ export interface paths {
     put?: never;
     /**
      * Issue a single-use, five-minute download link for a backup artefact
-     * @description Backup artefacts are secret-bearing (they hold envelope-encrypted key material), so a download is a link that works once and expires 5 minutes after issue (E42-T05). `backups:write` is a dangerous permission and needs a live step-up elevation. Issuing is audited at high severity as `backup.downloaded` before the response. The link is returned exactly once and is never logged or audited; it carries a one-time token, never a bearer credential, and fetching it is an authenticated `GET` by the same user. Only a backup with `status` `ok` or `verified` can be downloaded, else `409 conflict`.
+     * @description Backup artefacts are secret-bearing (they hold envelope-encrypted key material), so a download is a link that works once and expires 5 minutes after issue (E42-T05). `backups:write` needs a fresh `backups` step-up elevation (no grace, single use). Issuing is audited as `backup.downloaded` with `after_state.stage: issued` at severity `error` before the response. The link is returned exactly once and is never logged or audited; it carries a one-time token, never a bearer credential, and fetching it is an authenticated `GET` by the same user (`downloadBackup`). Only a backup with `status` `ok`, `verified` or `restored` can be downloaded; any other status is `409 conflict` with rule `backup_not_usable`. A user may issue at most 10 links per hour, after which the call is `429 rate_limited` with `Retry-After`. This adapts E42-T02's audit-export download rather than following it: the link here is single-use and expires after 5 minutes, issuing it needs a step-up, the fetch is rate limited, and both the issue and the fetch are audited.
      */
     post: operations["issueBackupDownload"];
     delete?: never;
@@ -372,7 +375,7 @@ export interface paths {
     };
     /**
      * Fetch a backup artefact through a link issued by issueBackupDownload
-     * @description Streams the artefact once (E42-T05). The token must have been issued to the calling user for this backup less than 5 minutes ago and not used before; it is consumed before the first byte is sent. An unknown, expired, used or foreign token is `404 not_found`, the same answer for each case so a token cannot be probed.
+     * @description Streams the artefact once (E42-T05). The token must have been issued to the calling user for this backup less than 5 minutes ago and not used before; it is consumed before the first byte is sent. Serving it is audited as `backup.downloaded` with `after_state.stage: served` at severity `error`; the token is never recorded or logged. The calling user's own expired or already used token is `410 gone`; an unknown token or another user's is `404 not_found`, so a token cannot be probed. At most 10 fetches per user per hour, else `429 rate_limited`.
      */
     get: operations["downloadBackup"];
     put?: never;
@@ -396,7 +399,7 @@ export interface paths {
     put?: never;
     /**
      * Restore from a backup (owner, step-up `backups`)
-     * @description Restores into the running deployment. Trading is force-disabled for the duration and must be re-enabled explicitly afterwards, so a restore can never silently resume order flow against stale OMS state (21-database-schema.md section 8.2). Asynchronous. `backups` is a no-grace step-up class: each restore spends a fresh code, and without one the route answers `403 step_up_required` with `action_class` set to `backups`. Preconditions (E42-T05), enforced in the backup service rather than the router so every caller inherits them, and never trusted from the client: maintenance mode (`maintenance.mode`) must be on, else `409 conflict` with rule `maintenance_mode_required`; when positions are open, `acknowledge_open_positions` must be `true`, else `409 conflict` with rule `open_positions_unacknowledged`; if the open-position state cannot be read, the call is refused the same way. A refused call creates no job. `backups:write` needs a live step-up elevation. An accepted restore is a `backup_restore` job, audited at high severity as `backup.restore` before the response.
+     * @description Restores into the running deployment. Trading is force-disabled for the duration and must be re-enabled explicitly afterwards, so a restore can never silently resume order flow against stale OMS state (21-database-schema.md section 8.2). Asynchronous. `backups` is a no-grace step-up class: each restore spends a fresh code, and without one the route answers `403 step_up_required` with `action_class` set to `backups`. Preconditions (E42-T05), enforced in the backup service rather than the router so every caller inherits them, and never trusted from the client: maintenance mode (`maintenance.mode`) must be on, else `409 conflict` with rule `maintenance_mode_required`; when positions are open, `acknowledge_open_positions` must be `true`, else `409 conflict` with rule `open_positions_unacknowledged`; if the open-position state cannot be read, the call is refused the same way; and the backup's `status` must be `ok`, `verified` or `restored`, else `409 conflict` with rule `backup_not_usable`. A refused call creates no job. `backups:write` needs a fresh `backups` step-up elevation (no grace, single use). An accepted restore is a `backup_restore` job, audited as `backup.restore` at severity `error` before the response (`critical` stays reserved for security events such as refresh-token reuse).
      */
     post: operations["restoreBackup"];
     delete?: never;
@@ -418,7 +421,7 @@ export interface paths {
     put?: never;
     /**
      * Verify a backup by restoring it into a scratch namespace
-     * @description Restores into an isolated scratch database/namespace, runs integrity assertions (row counts, hash-chain verification, migration version) and discards it. Never touches live data. Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and sets `verified_at`, or ends `failed` with a stable `error` code (`checksum_mismatch` when the stored digest does not match) and records the failed verification on the backup row (`status: failed`, `error`). Either outcome is audited as `backup.verified`.
+     * @description Restores into an isolated scratch database/namespace, runs integrity assertions (row counts, hash-chain verification, migration version) and discards it. Never touches live data. Outcome (E42-T05): the `backup_verify` job (`GET /admin/jobs/{jobId}`) ends `succeeded` and sets `verified_at`, or ends `failed` with a stable `error` code (`checksum_mismatch` when the stored digest does not match) and records the failed verification on the backup row (`status: failed`, `error`). Either outcome is audited as `backup.verified`. Needs a fresh `backups` step-up elevation.
      */
     post: operations["verifyBackup"];
     delete?: never;
@@ -671,7 +674,7 @@ export interface paths {
     };
     /**
      * Open and recent operational incidents
-     * @description Read-model over `system_events` at `error` and `critical` severity, grouped into incidents with first/last occurrence and affected component. Grouping (E42-T05): one incident per `(component, signature)`, where `signature` is a stable hash of the component, the error class (`system_events.kind`) and the message normalised by stripping ids, timestamps, numbers and symbols, so one fault never fragments into thousands of incidents. The grouping is a materialised read model refreshed when an event is written, never aggregated per request. `occurrences` counts the grouped events. `title` is the normalised message and `detail` the latest event's message; both pass through the same redaction allowlist as the audit exporter. Ordered by `last_seen_at` descending; `status` filters.
+     * @description Read-model over `system_events` at `error` and `critical` severity, grouped into incidents with first/last occurrence and affected component. Grouping (E42-T05): one incident per `(component, signature)`, where `signature` is a stable hash of the component, the error class (`system_events.kind`) and the message normalised by stripping ids, timestamps, numbers and symbols, so one fault never fragments into thousands of incidents. The grouping is a materialised read model refreshed when an event is written, never aggregated per request. `occurrences` counts the grouped events. `title` is the normalised message and `detail` the latest event's message; both pass through the same redaction allowlist as the audit exporter. A new occurrence reopens a `resolved` incident; an `acknowledged` one stays acknowledged. Ordered by `last_seen_at` descending; `status` filters.
      */
     get: operations["listIncidents"];
     put?: never;
@@ -5964,7 +5967,10 @@ export interface components {
       finished_at?: string | null;
       /** Format: uuid */
       id?: string;
-      /** @enum {string} */
+      /**
+       * @description **Open-ended for readers:** clients must tolerate values they do not know, so adding a kind is an additive change (C-6.3).
+       * @enum {string}
+       */
       kind?:
         | "instrument_refresh"
         | "audit_export"
@@ -9097,6 +9103,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
+      429: components["responses"]["RateLimited"];
     };
   };
   downloadBackup: {
@@ -9111,9 +9118,12 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description The artefact bytes. */
+      /** @description The artefact bytes, never cached and always saved as a file. */
       200: {
         headers: {
+          "Cache-Control"?: "no-store";
+          "Content-Disposition"?: string;
+          "X-Content-Type-Options"?: "nosniff";
           [name: string]: unknown;
         };
         content: {
@@ -9123,6 +9133,16 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      /** @description The caller's own link expired or was already used (`code: gone`). */
+      410: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      429: components["responses"]["RateLimited"];
     };
   };
   restoreBackup: {
@@ -9173,7 +9193,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
-      /** @description A restore precondition is not met; no job was created. */
+      /** @description A restore precondition is not met (no job was created), or the `Idempotency-Key` was reused with another body (`idempotency_key_reuse`) or is still in flight (`idempotency_in_flight`). */
       409: {
         headers: {
           [name: string]: unknown;

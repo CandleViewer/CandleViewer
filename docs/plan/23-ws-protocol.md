@@ -3773,8 +3773,10 @@ here and checked against the charts by the contract test, never restated (C-2.19
 names of `GET /admin/health` (`HealthReport.components[].name`), so a snapshot read over REST and
 the deltas pushed here agree. A component name the client does not know is passed through, never
 dropped. `not_deployed` exists only in the REST report; here it is sent as `state: "healthy"` with
-`detail: "not deployed"`, matching its rank for `overall`. This uses the existing schema; no
-schema change.
+`detail: "not deployed"`, matching its rank for `overall`. `detail` may name internal
+dependencies, so it is sent to Owner sessions only; manager and viewer sessions get each
+component's `name` and `state` with `detail` omitted. This uses the existing schema; no schema
+change.
 
 ---
 

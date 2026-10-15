@@ -5663,7 +5663,7 @@ class LayoutGridTabset(BaseModel):
 
 class Job(BaseModel):
     id: UUID | None = None
-    kind: (
+    kind: Annotated[
         Literal[
             "instrument_refresh",
             "audit_export",
@@ -5676,8 +5676,11 @@ class Job(BaseModel):
             "archive_import",
             "retention_purge",
         ]
-        | None
-    ) = None
+        | None,
+        Field(
+            description="**Open-ended for readers:** clients must tolerate values they do not know, so adding a kind is an additive change (C-6.3)."
+        ),
+    ] = None
     status: Literal["queued", "running", "succeeded", "failed", "cancelled"] | None = None
     progress_pct: Annotated[float | None, Field(ge=0.0, le=100.0)] = None
     started_at: AwareDatetime | None = None
