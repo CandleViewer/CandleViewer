@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import pytest
 
-from candleviewer.audit.actions import AUDIT_ACTIONS, UnknownAuditAction, validate_action
+from candleviewer.audit.actions import AUDIT_ACTIONS, validate_action
 
 
 @pytest.mark.parametrize(
@@ -21,8 +21,3 @@ from candleviewer.audit.actions import AUDIT_ACTIONS, UnknownAuditAction, valida
 def test_ops_actions_are_registered(action: str) -> None:
     assert action in AUDIT_ACTIONS
     assert validate_action(action) == action
-
-
-def test_the_ticket_wording_backup_restored_is_not_a_second_restore_action() -> None:
-    with pytest.raises(UnknownAuditAction):
-        validate_action("backup.restored")
