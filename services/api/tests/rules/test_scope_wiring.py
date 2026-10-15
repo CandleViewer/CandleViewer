@@ -12,6 +12,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from candleviewer.api.rules import make_rules_router
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.rules.ir.models import RuleScope
 from candleviewer.rules.scope import ScopeInstanceRef, summarize_scope
 from candleviewer.rules.service import RulesService
@@ -91,7 +92,7 @@ def test_live_requires_arm_permission_through_app_wiring() -> None:
     c = _client(_svc(src, audits))
     live = _body(account_ids=[str(A)], environments=["demo", "live"])
     assert c.post("/rules/validate", json=live).status_code == 403
-    src.perms = frozenset({"rules:read", "rules.arm_live"})
+    src.perms = frozenset({"rules:read", Permission.RULES_ARM_LIVE})  # seeded code, #2624
     assert c.post("/rules/validate", json=live).status_code == 200
     assert "rule_live_scope_armed" not in audits  # a dry run is not an arming
 

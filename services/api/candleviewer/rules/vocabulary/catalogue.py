@@ -53,6 +53,9 @@ _STOP_PARAMS = _obj(
     },
 )
 _OW = ("orders:write",)
+#: Declared permission for arming a rule live, surfaced on the catalogue: the seeded RBAC code
+#: (migration 0015). `rules` may not import `auth` (M15); tests pin it to `Permission` (#2624).
+ARM_LIVE_PERMISSION = "rules:arm_live"
 ACTIONS: tuple[ActionSpec, ...] = (
     ActionSpec("place_order", "Place order", _obj(["side", "order_type", "qty_mode"], {"side": _SIDE, "order_type": _ORDER_TYPE, "qty_mode": {"type": "string"}, "qty": _QTY, "profile": {"type": "string"}, "price": {"type": "number"}, "stop_loss": {"type": "object"}, "take_profits": {"type": "array"}, "algo": {"type": "object"}}), _OW, True, False, True, "Full trade-group path including sizing and native SL."),
     ActionSpec("modify_stop_loss", "Modify stop loss", _STOP_PARAMS, _OW, False, True, True, "only_tighten=false needs rules.loosen_stop.", True),
@@ -66,7 +69,7 @@ ACTIONS: tuple[ActionSpec, ...] = (
     ActionSpec("cancel_order", "Cancel order", _obj([], {"purpose": {"type": "string"}}), _OW, False, True, False),
     ActionSpec("cancel_all_orders", "Cancel all orders", _obj([], {"purpose": {"type": "string"}}), _OW, False, True, False),
     ActionSpec("halt_new_orders", "Halt new orders", _obj(["scope", "until"], {"scope": {"type": "string"}, "until": {"type": "string", "enum": ["next_utc_day", "duration_ms", "manual"]}}), (), False, True, False, "Circuit breaker."),
-    ActionSpec("resume_new_orders", "Resume new orders", _obj([], {"scope": {"type": "string"}}), ("rules.arm_live",), False, True, True),
+    ActionSpec("resume_new_orders", "Resume new orders", _obj([], {"scope": {"type": "string"}}), (ARM_LIVE_PERMISSION,), False, True, True),
     ActionSpec("reduce_leverage", "Reduce leverage", _obj([], {"target": {"type": "number"}, "by": {"type": "number"}}), _OW, False, True, True),
     ActionSpec("widen_stop", "Widen stop", _STOP_PARAMS, (*_OW, "rules.loosen_stop"), False, False, True, "Loosens risk; owner-only permission.", True),
     ActionSpec("tighten_stop", "Tighten stop", _STOP_PARAMS, _OW, False, True, True, "Never loosens."),
@@ -81,8 +84,6 @@ ACTIONS: tuple[ActionSpec, ...] = (
     ActionSpec("enable_rule", "Enable rule", _obj(["rule_id"], {"rule_id": {"type": "string"}}), (), False, True, False, "Cannot target itself."),
 )  # fmt: skip
 
-#: Declared permission for arming a rule live (`rules.arm_live`) - surfaced on the catalogue.
-ARM_LIVE_PERMISSION = "rules.arm_live"
 TARGET_SEMANTICS = {
     "scope_accounts": "every account in the rule scope",
     "originating_account": "the account whose event fired the rule",

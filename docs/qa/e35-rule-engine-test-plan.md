@@ -25,8 +25,8 @@ Ticket: E35-Q01 (#941). Status: v1.0 (draft for QA/SDET + rule-engine backend le
 
 | Handle | Meaning |
 |---|---|
-| OWNER | Owner role, TOTP enrolled, `rules.arm_live` |
-| MGR-A | Manager granted ACC-1, ACC-2; no `rules.arm_live` |
+| OWNER | Owner role, TOTP enrolled, `rules:arm_live` |
+| MGR-A | Manager granted ACC-1, ACC-2; no `rules:arm_live` |
 | MGR-B | Manager granted ACC-3 only |
 | ACC-1..ACC-3 | demo accounts; ACC-4 demo account granted to nobody but OWNER |
 | SYM-REC | BTCUSDT, recorded window REC-W1 present |
@@ -238,7 +238,7 @@ another manager; WS subscribe with foreign `rule_ids`. CH-2: float formats, key 
 nodes, comment-only edits, concurrent tabs. CH-3: window with a data gap, estimated metrics, symbol with
 partial recording. CH-4: pause the feed 4.9 s vs 5.1 s, cross a restart, first `crosses_above`. CH-5: kill
 the API mid-fire, two rules firing in one tick, failed action with `abort_remaining`. CH-6: edit after
-simulate, version restore, import of armed export, missing `rules.arm_live`, expired step-up token.
+simulate, version restore, import of armed export, missing `rules:arm_live`, expired step-up token.
 
 ## 6. Test-data seeding plan
 

@@ -46,7 +46,7 @@ class ScopeState(Protocol):
     def account(self, account_id: UUID) -> AccountState | None: ...
     def owner_frozen(self, owner: UUID) -> bool: ...  # E39 manager freeze / kill switch
     def live_gate_open(self) -> bool: ...  # M1 backend configuration layer
-    def can_arm_live(self, owner: UUID) -> bool: ...  # rules.arm_live permission
+    def can_arm_live(self, owner: UUID) -> bool: ...  # seeded rules:arm_live permission
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +185,7 @@ class ScopeResolver:
     async def authorize_environments(
         self, caller: UUID, scope: RuleScope, *, audit_armed: bool = True
     ) -> None:
-        """Including live needs rules.arm_live; denial is always audited, the high-severity
+        """Including live needs rules:arm_live; denial is always audited, the high-severity
         `rule_live_scope_armed` only when `audit_armed` (the real arm transition / dry run)."""
         if "live" in scope.environments:
             if not self._state.can_arm_live(caller):
