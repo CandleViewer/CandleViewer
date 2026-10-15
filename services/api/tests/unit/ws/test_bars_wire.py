@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from itertools import accumulate
 from pathlib import Path
 from typing import Any
@@ -174,13 +174,75 @@ def test_kind_4_scales_prices_and_sizes_and_keeps_signs() -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     [("open", Decimal("100.15")), ("close", Decimal("100.55")), ("volume", Decimal("10.0005")),
-     ("delta", Decimal("2.0005")), ("open", Decimal("NaN")), ("volume", Decimal("Infinity"))],
+     ("delta", Decimal("2.0005")), ("open", Decimal("1.0000000000000000000000000001"))],
 )  # fmt: skip
 def test_kind_4_refuses_a_value_its_scale_cannot_hold_exactly(field: str, value: Decimal) -> None:
-    """A price finer than price_scale is never rounded to one that did not trade (§16.4)."""
+    """A price finer than price_scale is never rounded to one that did not trade (§16.4), and a
+    29-digit value is not rounded by the default 28-digit context into passing."""
     bar = _bar().model_copy(update={field: value})  # skips validation: a builder's frozen draft
     with pytest.raises(FrameEncodeError, match=rf"bars \(0, 3\): {field} .* not exact at scale"):
         _record(bar)
+
+
+def test_kind_4_exactness_ignores_the_callers_decimal_context() -> None:
+    with localcontext() as ctx:
+        ctx.prec = 3
+        assert _record(_bar())[3] == 1_001
+        with pytest.raises(FrameEncodeError, match="not exact"):
+            _record(_bar(open=Decimal("100.15")))
+
+
+@pytest.mark.parametrize("value", ["NaN", "sNaN", "Infinity", "-Infinity"])
+@pytest.mark.parametrize("field", ["open", "volume", "delta"])
+def test_both_forms_refuse_a_value_that_is_not_finite(field: str, value: str) -> None:
+    bar = _bar().model_copy(update={field: Decimal(value)})
+    with pytest.raises(FrameEncodeError, match=rf"{field} .*{value.lstrip('-s')} is not finite"):
+        _record(bar)
+    with pytest.raises(FrameEncodeError, match=rf"{field} .* is not finite"):
+        bar_item(bar, generation=0, bar_kind="time", include_delta=True)
+
+
+def test_kind_4_refuses_a_huge_exponent_before_building_the_integer() -> None:
+    bar = _bar().model_copy(update={"volume": Decimal("1E+999999")})
+    with pytest.raises(FrameEncodeError, match="volume 1E\\+999999 overflows every field"):
+        _record(bar)
+
+
+@pytest.mark.parametrize(
+    ("generation", "update"), [(-1, {}), (0, {"trade_count": -1}), (0, {"index": -1})]
+)
+def test_both_forms_refuse_a_negative_key_or_trade_count(
+    generation: int, update: dict[str, Any]
+) -> None:
+    bar = _bar().model_copy(update=update)
+    with pytest.raises(FrameEncodeError, match="negative"):
+        bar_item(bar, generation=generation, bar_kind="time", include_delta=False)
+    with pytest.raises(FrameEncodeError, match="negative"):
+        bar_record(bar, generation=generation, include_delta=False, price_scale=1, qty_scale=3,
+                   ts_base_ms=T0_MS)  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("update", "index", "accepted"),
+    [({"volume": Decimal("18446744073709551.615")}, 7, 2**64 - 1),
+     ({"turnover": Decimal("18446744073709551.615")}, 8, 2**64 - 1),
+     ({"delta": Decimal("-9223372036854775.808")}, 10, -(2**63)),
+     ({"delta": Decimal("9223372036854775.807")}, 10, 2**63 - 1)],
+)  # fmt: skip
+def test_kind_4_accepts_each_width_up_to_its_edge(
+    update: dict[str, Any], index: int, accepted: int
+) -> None:
+    assert _record(_bar().model_copy(update=update))[index] == accepted
+
+
+@pytest.mark.parametrize(
+    "update",
+    [{"volume": Decimal("18446744073709551.616")}, {"delta": Decimal("-9223372036854775.809")},
+     {"delta": Decimal("9223372036854775.808")}],
+)  # fmt: skip
+def test_kind_4_refuses_one_past_each_width(update: dict[str, Any]) -> None:
+    with pytest.raises(FrameEncodeError, match="is outside"):
+        _record(_bar().model_copy(update=update))
 
 
 def test_kind_4_ignores_the_delta_scale_without_include_delta() -> None:
@@ -221,6 +283,28 @@ def test_covering_scales_keep_history_finer_than_the_instrument_exact() -> None:
     (frame,) = bars_frames([old], generation=0, include_delta=True, price_scale=2, qty_scale=4)
     (got,) = structured(decode(encode(frame)))["bars"]
     assert (got["o"], got["v"], got["delta"]) == ("100.15", "10.0005", "2.1000")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "scales"),
+    [("open", "100.15", (2, 3)), ("high", "101.25", (2, 3)), ("low", "99.55", (2, 3)),
+     ("close", "100.45", (2, 3)), ("volume", "10.0005", (1, 4)), ("delta", "2.0005", (1, 4))],
+)  # fmt: skip
+def test_covering_scales_widen_for_each_field_alone(
+    field: str, value: str, scales: tuple[int, int]
+) -> None:
+    bar = _bar().model_copy(update={field: Decimal(value)})
+    assert covering_scales([bar], price_scale=1, qty_scale=3) == scales
+
+
+def test_covering_scales_take_no_places_from_a_positive_exponent_or_a_nan() -> None:
+    bars = [_bar(volume=Decimal("1E+2")), _bar().model_copy(update={"open": Decimal("NaN")})]
+    assert covering_scales(bars, price_scale=0, qty_scale=0) == (1, 0)
+
+
+def test_covering_scales_count_every_digit_of_a_29_digit_price() -> None:
+    bar = _bar().model_copy(update={"open": Decimal("1.0000000000000000000000000001")})
+    assert covering_scales([bar], price_scale=1, qty_scale=3) == (28, 3)
 
 
 def test_covering_scales_never_go_below_the_instrument() -> None:
