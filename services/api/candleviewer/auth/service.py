@@ -23,7 +23,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import InviteService
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.mfa_service import MfaService
-from candleviewer.auth.session_service import SessionService
+from candleviewer.auth.session_service import RevocationSink, SessionService
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.settings import Environment
@@ -71,6 +71,9 @@ class AuthService:
         self._login: LoginService | None = None
         self._mfa: MfaService | None = None
         self._step_up: StepUpService | None = None
+        #: #2272: where every session this module revokes is published (the
+        #: WS `RevocationHub`); attached by the composition root.
+        self._revocation_sink: RevocationSink | None = None
 
     @property
     def is_active(self) -> bool:
@@ -122,6 +125,16 @@ class AuthService:
             raise RuntimeError("AuthService.start() has not wired a SessionRepository")
         return self._sessions
 
+    def attach_revocation_sink(self, sink: RevocationSink) -> None:
+        """Publish every session this module revokes to *sink*
+        (`23-ws-protocol.md` §9.5). Looked up per publish, so it reaches the
+        services whether it is attached before or after `start()`."""
+        self._revocation_sink = sink
+
+    async def _publish_revocation(self, session_id: str, reason: str) -> None:
+        if self._revocation_sink is not None:
+            await self._revocation_sink(session_id, reason)
+
     async def start(self, ctx: AppContext) -> None:
         """Start the module. Wires `LoginService`/`MfaService` only when a
         concrete repository was injected by the composition root;
@@ -136,7 +149,10 @@ class AuthService:
             )
         if self._session_repository is not None:
             self._sessions = SessionService(
-                self._session_repository, Hasher(pepper=self._pepper), clock=self._clock
+                self._session_repository,
+                Hasher(pepper=self._pepper),
+                clock=self._clock,
+                publish_revocation=self._publish_revocation,
             )
         if self._mfa_repository is not None:
             # `totp_encryption_key` stands in for the real M2 KEK wiring
@@ -195,6 +211,7 @@ class AuthService:
                     encryptor,
                     self._repository,
                     Hasher(pepper=self._pepper),
+                    publish_revocation=self._publish_revocation,
                     clock=self._clock,
                 )
         self._started = True

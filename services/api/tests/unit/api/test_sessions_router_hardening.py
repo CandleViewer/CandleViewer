@@ -41,7 +41,7 @@ async def test_refresh_reuse_propagates_revocation_for_whole_family() -> None:
     assert _refresh(env, m.refresh_token).status_code == 401
     family = {str(m.session_id), str(successor.id)}
     assert {sid for sid, _ in env.revoked} == family
-    assert {reason for _, reason in env.revoked} == {"session_revoked"}
+    assert {reason for _, reason in env.revoked} == {"rotation_reuse"}  # the service publishes
     reuse = [e for e in env.audit.writer.events if e["action"] == "auth.refresh_reuse_detected"]
     assert len(reuse) == 1
     assert reuse[0]["severity"] == Severity.CRITICAL
@@ -115,7 +115,7 @@ async def test_logout_audit_record_precedes_revocation() -> None:
     order = _record_order(env)
     assert env.client.post("/api/v1/auth/logout", headers=_h(m.access_token)).status_code == 204
     assert order == ["audit:auth.logout", "audit:auth.session_revoked", "revoke:logout"]
-    assert env.revoked == [(str(m.session_id), "session_revoked")]
+    assert env.revoked == [(str(m.session_id), "logout")]
 
 
 async def test_refresh_n_plus_one_within_window_is_429_with_retry_after() -> None:
@@ -193,7 +193,7 @@ async def test_session_list_and_logout_edge_inputs() -> None:
     r = env.client.delete(f"/api/v1/me/sessions/{m.session_id}", headers=h)
     assert r.status_code == 204
     assert "max-age=0" in r.headers["set-cookie"].lower()
-    assert env.revoked == [(str(m.session_id), "session_revoked")]
+    assert env.revoked == [(str(m.session_id), "user_revoked")]
 
 
 async def test_session_info_exposes_step_up_expires_at() -> None:

@@ -611,8 +611,13 @@ class Supervisor:
 
 
 def _hub_publisher(hub: RevocationHub) -> Callable[[str, str], Awaitable[None]]:
+    """The auth module's revocation sink (#2272): close every socket of a revoked
+    session. The revoke reason is internal; the client gets the §9.5 closed set:
+    `user_disabled` for the SR-029 disable cascade, `session_revoked` otherwise."""
+
     async def _publish(session_id: str, reason: str) -> None:
-        await hub.revoke(session_id, reason)
+        bye = "user_disabled" if reason == "user_disabled" else "session_revoked"
+        await hub.revoke(session_id, bye)
 
     return _publish
 
@@ -984,17 +989,19 @@ def create_app(
     csrf_audits = RefusalAuditTracker()
     app.state.csrf_refusal_audits = csrf_audits
     app.include_router(make_auth_router(ctx.auth, ctx.audit, identity=identity, csrf=csrf_codec))
-    # E09-S03: session routes; revocation is pushed to sockets via the hub
-    # (4401). Identity provider is E09-T03, so refresh/session return 501 and
-    # every route answers 503 until a session repository is wired.
+    # E09-S03: session routes. Identity provider is E09-T03, so refresh/session
+    # return 501 and every route answers 503 until a session repository is wired.
+    # #2272: every session the auth module revokes (logout, revoke, sign-out
+    # everywhere, refresh reuse, failed unlock, absolute expiry, owner TOTP
+    # reset) closes its sockets through the hub (`bye` + 4401).
     revocation_hub = RevocationHub()
     app.state.revocation_hub = revocation_hub
+    ctx.auth.attach_revocation_sink(_hub_publisher(revocation_hub))
     app.include_router(
         make_session_router(
             ctx.auth,
             ctx.audit,
             identity=identity,
-            publish_revocation=_hub_publisher(revocation_hub),
             allowed_origins=resolved.allowed_origin_set,
             csrf=csrf_codec,
             audit_tracker=csrf_audits,  # one in-flight cap + shutdown drain for refusal audits

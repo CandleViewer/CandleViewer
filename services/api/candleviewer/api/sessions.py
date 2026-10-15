@@ -20,9 +20,10 @@ checks this *before* rotating anything, so no token is burned). Wiring the
 provider — like wiring `principal_resolver` for #1596 — is composition-root
 work owned elsewhere; this module does not touch `app.py`.
 
-Revocation propagation (`23-ws-protocol.md` §9.5): every revoke path calls
-the injected `publish_revocation(session_id, reason)`; the ws gateway
-(`candleviewer.ws.revocation`) closes the matching socket with `4401`.
+Revocation propagation (`23-ws-protocol.md` §9.5) is the session service's:
+every revoke path publishes the revoked ids to the sink the composition root
+wires to the ws `RevocationHub`, which closes the sockets with `4401` (#2272).
+This router publishes nothing itself.
 
 Session fixation (U6/SR-013, E09-X02 AC2): a bearer or refresh token that was
 never issued here is refused with the same 401 as any other, and counted
@@ -36,7 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any, Protocol
 
@@ -152,7 +153,6 @@ class AuditServiceLike(Protocol):
     def writer(self) -> AuditEmitter: ...
 
 
-RevocationPublisher = Callable[[str, str], Awaitable[None]]
 Clock = Callable[[], Any]
 
 
@@ -344,7 +344,6 @@ def make_session_router(
     audit_service: AuditServiceLike | None = None,
     *,
     identity: IdentityProvider | None = None,
-    publish_revocation: RevocationPublisher | None = None,
     allowed_origins: frozenset[str] = frozenset(),
     ip_throttle: PerIpLoginThrottle | None = None,
     session_throttle: PerIpLoginThrottle | None = None,
@@ -445,10 +444,6 @@ def make_session_router(
             _log().error(
                 "auth.session_fixation_attempt.audit_unavailable", error=type(exc).__name__
             )
-
-    async def _propagate(session_id: str | uuid.UUID, reason: str) -> None:
-        if publish_revocation is not None:
-            await publish_revocation(str(session_id), reason)
 
     def _audit_down() -> JSONResponse:
         # Write-ahead audit failed: nothing has been mutated yet (C-2.9).
@@ -568,7 +563,7 @@ def make_session_router(
             outcome = await auth_service.sessions.refresh(
                 presented, ip=ip, user_agent=request.headers.get("user-agent")
             )
-        except RefreshReuseDetected as exc:
+        except RefreshReuseDetected:
             if not reuse:
                 # Concurrent-refresh race detected inside the service; the
                 # intent record above is followed by the critical outcome.
@@ -580,10 +575,7 @@ def make_session_router(
                     severity=Severity.CRITICAL,
                     reason="rotation_reuse",
                 )
-            # Same propagation helper as logout/revoke: every family member's
-            # sockets are closed with 4401 (US-ONB-009).
-            for sid in exc.revoked_session_ids:
-                await _propagate(sid, "session_revoked")
+            # The service already closed every family member's sockets (#2272).
             return _unauthorized("refresh_token_invalid")
         except (SessionNotFound, SessionRevoked, SessionIdleLocked):
             return _unauthorized("refresh_token_invalid")
@@ -716,12 +708,9 @@ def make_session_router(
         except AuditUnavailableError:
             return _audit_down()
         if all_sessions:
-            revoked = await auth_service.sessions.revoke_all(str(record.user_id), reason=reason)
+            await auth_service.sessions.revoke_all(str(record.user_id), reason=reason)
         else:
-            one = await auth_service.sessions.revoke(str(record.id), reason=reason)
-            revoked = (one,) if one is not None else ()
-        for r in revoked:
-            await _propagate(r.id, "session_revoked")
+            await auth_service.sessions.revoke(str(record.id), reason=reason)
         response = Response(status_code=204)
         _clear_refresh_cookie(response)
         clear_csrf_cookie(response)
@@ -755,9 +744,7 @@ def make_session_router(
             )
         except AuditUnavailableError:
             return _audit_down()
-        revoked = await auth_service.sessions.revoke(str(session_id), reason="user_revoked")
-        if revoked is not None:
-            await _propagate(revoked.id, "session_revoked")
+        await auth_service.sessions.revoke(str(session_id), reason="user_revoked")
         response = Response(status_code=204)
         if session_id == record.id:  # only the caller's own session ends its cookies
             _clear_refresh_cookie(response)
