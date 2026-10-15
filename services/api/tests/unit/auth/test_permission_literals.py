@@ -54,10 +54,6 @@ _KNOWN_UNSEEDED: dict[tuple[str, str], str] = {
         "api/rules.py: until rules:loosen_stop is seeded, only_tighten=false is a save-blocking "
         "safety error for everyone"
     ),
-    ("storage/retention/policy.py", "retention.change"): (
-        "#2699: RETENTION_CHANGE_PERMISSION, also an audit action: require_retention_change has "
-        "no production caller yet"
-    ),
 }
 
 _Literal = tuple[int, str]  # (line, value)
