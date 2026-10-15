@@ -146,7 +146,6 @@ def test_sub_frame_with_too_many_topics_rejects_the_excess() -> None:
     res = asyncio.run(_collect_sub(authz, topics))
     assert [r["error"]["code"] for r in res if not r["ok"]] == ["too_many_topics"] * 3
     assert len(authz.by_id) == limits.MAX_TOPICS_PER_SUB
-    assert asyncio.run(_collect_sub(authz, "notalist")) == []  # type: ignore[arg-type]  # malformed frame
 
 
 def test_roles_changed_stalled_socket_is_evicted_and_does_not_block_others() -> None:

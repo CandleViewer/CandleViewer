@@ -485,6 +485,8 @@ A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It i
 | `snapshot`          | bool      | `true`  | When false, the client attaches to deltas only — valid _only_ if it already holds consistent state for that topic from a REST bootstrap and supplies `from_seq`. |
 | `replay_session_id` | uuid/null | `null`  | Routes market-data topics from a replay clock (§11).                                                                                                             |
 
+**As built (#2399):** a `topics` entry may also be a bare topic name (`"ticker.BTCUSDT"`), read as `{ "ch": "ticker.BTCUSDT" }`. The §13.5 schema lists only the object form, and clients should send that.
+
 **Universal options** accepted on every topic:
 
 | Option        | Type                       | Default                | Notes                                                                                                                                              |
@@ -496,6 +498,15 @@ A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It i
 ### 5.2 `sub_ok`
 
 Every requested topic gets exactly one result. Partial success is normal — one bad topic never fails the batch.
+
+**A malformed `sub` is refused whole (#2396, #2399).** The rule above covers topics, not entries that are not topics. A `sub` whose shape breaks §13.5 gets one `err` `invalid_options` instead of a `sub_ok`: nothing is subscribed, and it is not a protocol strike (§4.3). The shape breaks when:
+
+- the payload is not an object, or has a key other than `topics`, `snapshot` and `replay_session_id` (`field`: `p`);
+- `topics` is missing or not a non-empty array (`field`: `topics`);
+- an entry is neither an object nor a string, or a string that is not a topic name (`field`: `topics[i]`);
+- an entry object's `ch` is missing or not a topic name (`field`: `topics[i].ch`).
+
+A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what the client sent. So every `sub_ok.results[].ch` is a valid topic name. A well-formed topic the server cannot serve (unknown, unsupported symbol, bad `opts`, denied) still gets its own result. This is an orchestrator contract decision (2026-10-15); the owner may override it.
 
 ```jsonc
 {
