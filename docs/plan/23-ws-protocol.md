@@ -912,6 +912,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 | `ticker`, `wallet`, `positions` | Whole-object last-write-wins.                                                                                                                                 | Snapshot-shaped.                                               |
 | `trades`, `liquidations`        | **Append, never merge** — throttling batches them into arrays.                                                                                                | Every print matters for the tape and CVD.                      |
 | `orders`, `executions`          | **Never coalesced, never throttled.**                                                                                                                         | State-machine transitions and fills must be seen individually. |
+| `system`                        | `feature_flags`: per flag key, last-write-wins, a key is never dropped. `notice`, `kill_switch`, `shutdown_notice`: **never coalesced**.                      | A flag delta carries only changed keys; notices are events.    |
 
 **Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts when ADR-0033 starts a new generation/epoch. A channel streams one generation at a time; a generation swap arrives as a new snapshot (ADR-0033 client ingestion). Clients key their bar stores the same way.
 
