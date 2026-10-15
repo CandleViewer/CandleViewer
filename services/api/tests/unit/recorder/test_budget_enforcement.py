@@ -11,6 +11,7 @@ from pathlib import Path
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 import candleviewer
 from candleviewer.observability.metrics import Gauge
@@ -19,6 +20,8 @@ from candleviewer.recorder.metrics import (
     disk_free_bytes,
     disk_used_ratio,
     recorder_bytes_per_day,
+    recorder_disk_budget_breakdown_age_seconds,
+    recorder_disk_budget_last_sample_timestamp_seconds,
     recorder_disk_pressure_level,
     recorder_projected_full_timestamp,
 )
@@ -111,37 +114,66 @@ async def test_gate_lifts_on_release_and_rows_flow_again() -> None:
 
 
 @settings(max_examples=60, deadline=None)
-@given(st.lists(st.tuples(st.sampled_from(["BTCUSDT", "ETHUSDT"]), st.booleans(), st.booleans())))
-def test_an_open_position_never_loses_a_row_or_gets_a_gap(
-    steps: list[tuple[str, bool, bool]],
+@given(
+    st.lists(
+        st.tuples(
+            st.sampled_from(["BTCUSDT", "ETHUSDT"]), st.booleans(), st.booleans(), st.booleans()
+        )
+    )
+)
+def test_an_open_position_never_loses_a_row_and_no_gap_spans_a_written_row(
+    steps: list[tuple[str, bool, bool, bool]],
 ) -> None:
-    """ETHUSDT holds a position throughout; BTCUSDT's opens and closes mid-sequence."""
+    """ETHUSDT holds a position throughout; BTCUSDT's opens and closes mid-sequence; gaps
+    are flushed at random points (C-2.14: a gap never contains a written `exch_ts`)."""
 
-    async def run() -> tuple[FakeStore, list[str]]:
+    async def run() -> tuple[FakeStore, list[dict[str, object]]]:
         gate = Gate(positions={"ETHUSDT"})
         w, sink, store, clock = _writer(gate)
-        for i, (symbol, halted, btc_open) in enumerate(steps, start=1):
+        for i, (symbol, halted, btc_open, flush) in enumerate(steps, start=1):
             gate.halted_now = halted
             gate.positions ^= {"BTCUSDT"} if btc_open != ("BTCUSDT" in gate.positions) else set()
             await w.on_trade(trade(i, symbol))
+            if flush:
+                await w.flush_gaps()
         await _drain(w, clock)
-        return store, [str(r["trade_id"]) for r in sink.rows("trades")]
+        return store, sink.rows("trades")
 
-    store, written = asyncio.run(run())
+    store, rows = asyncio.run(run())
     kept = [
         f"t{i}"
-        for i, (symbol, halted, btc_open) in enumerate(steps, start=1)
+        for i, (symbol, halted, btc_open, _) in enumerate(steps, start=1)
         if not halted or symbol == "ETHUSDT" or btc_open
     ]
-    assert written == kept  # a row is dropped only when halted and its symbol has no position
+    assert [r["trade_id"] for r in rows] == kept  # dropped only when halted and no position
     assert all(g["symbol"] != "ETHUSDT" for g in store.gaps)
+    for gap in store.gaps:
+        written = [_at(int(str(r["ts"]))) for r in rows if r["symbol"] == gap["symbol"]]
+        assert not any(gap["start"] <= at < gap["end"] for at in written), (gap, written)
 
 
-async def test_a_failing_gate_check_keeps_writing() -> None:
-    w, sink, store, clock = _writer(Gate(broken=True))
+async def test_an_admitted_row_seals_the_gate_window() -> None:
+    gate = Gate()
+    w, sink, store, clock = _writer(gate)
     await w.on_trade(trade(1))
+    gate.halted_now = False
+    await w.on_trade(trade(2))  # sealed here: the next drop opens a new window
+    gate.halted_now = True
+    await w.on_trade(trade(3))
     await _drain(w, clock)
-    assert [r["trade_id"] for r in sink.rows("trades")] == ["t1"] and store.gaps == []
+    assert [r["trade_id"] for r in sink.rows("trades")] == ["t2"]
+    spans = [(g["start"], g["end"]) for g in store.gaps]
+    assert spans == [(_at(T0 + 1), _at(T0 + 2)), (_at(T0 + 3), _at(T0 + 4))]
+
+
+async def test_a_failing_gate_check_keeps_writing_and_logs_once() -> None:
+    w, sink, store, clock = _writer(Gate(broken=True))
+    with capture_logs() as logs:
+        await w.on_trade(trade(1))
+        await w.on_trade(trade(2))
+    await _drain(w, clock)
+    assert [r["trade_id"] for r in sink.rows("trades")] == ["t1", "t2"] and store.gaps == []
+    assert [e["event"] for e in logs].count("recorder_disk_gate_failed") == 1
 
 
 async def test_disk_pressure_refuses_new_chart_recording_only(
@@ -205,6 +237,8 @@ async def test_budget_bools_and_metrics_follow_the_ladder_and_a_refused_volume()
     assert (_gauge(disk_free_bytes), _gauge(recorder_projected_full_timestamp)) == (TOTAL // 2, 0)
     budget.recording_refused = True  # SR-096: a shared volume keeps the gate closed
     assert (budget.refuses_auto_record, budget.halted) == (True, True)
+    await budget.sample_once()
+    assert _gauge(recorder_disk_pressure_level) == 3.0  # so the halt pages
 
 
 def _gauge(metric: Gauge) -> float | None:
@@ -264,3 +298,14 @@ async def test_rate_labels_follow_the_reported_symbols_and_future_points_are_ign
 def _labelled(metric: Gauge, **labels: str) -> float | None:
     found = [x.value for f in metric.collect() for x in f.samples if x.labels == labels]
     return found[0] if found else None
+
+
+async def test_a_stale_breakdown_never_commits_and_its_age_is_exported() -> None:
+    meter, clock, store = FakeMeter(used=GB, symbols={"BTCUSDT": GB}), Clock(), SeriesStoreFake()
+    budget, _, _ = make_budget(meter, clock=clock, store=store)
+    await budget.sample_once()  # fresh: committed
+    meter.breakdown_fail, clock.t = True, clock.t + 600 * US_PER_S
+    await budget.sample_once()  # stale: no point, no refit, the ladder still runs
+    assert [p.ts_us for p in store.appended] == [NOW]
+    assert _gauge(recorder_disk_budget_breakdown_age_seconds) == 600.0
+    assert _gauge(recorder_disk_budget_last_sample_timestamp_seconds) == (NOW // US_PER_S) + 600

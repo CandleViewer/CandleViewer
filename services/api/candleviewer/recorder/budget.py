@@ -29,6 +29,7 @@ from candleviewer.recorder.metrics import (
     disk_free_bytes,
     disk_used_ratio,
     recorder_bytes_per_day,
+    recorder_disk_budget_breakdown_age_seconds,
     recorder_disk_budget_last_sample_timestamp_seconds,
     recorder_disk_pressure_level,
     recorder_projected_full_timestamp,
@@ -362,6 +363,8 @@ class DiskBudget:
         self._report: StorageUsage | None = None
         self._last_pins: frozenset[str] = frozenset()
         self._breakdown = Breakdown({}, {})
+        #: Last fresh breakdown (construction until the first): its age is exported.
+        self._fresh_at = now_us()
         self._rate_labels: set[str] = set()
         self._task: asyncio.Task[None] | None = None
 
@@ -395,7 +398,9 @@ class DiskBudget:
         try:
             async with asyncio.timeout(cfg.breakdown_timeout_s):
                 self._breakdown = await self._meter.breakdown()
+            fresh, self._fresh_at = True, now
         except Exception as exc:  # best effort: the last sizes and the free-space path go on
+            fresh = False  # stale sizes never reach the series or the fit
             logger().warning("disk_budget_breakdown_unavailable", error=type(exc).__name__)
         m = Measurement(total, free, self._breakdown.tiers, self._breakdown.symbols)
         pinned = await self._pins()
@@ -403,9 +408,9 @@ class DiskBudget:
         named = ((s, b) for s, b in m.symbols.items() if _SYMBOL_RE.match(s))
         top = tuple(sorted(named, key=lambda sb: (-sb[1], sb[0]))[: cfg.max_symbols])
         point = Point(now, used, top)
-        if self._commit(point):
+        if fresh and self._commit(point):
             await self._persist(point)
-        if self._stale:
+        if fresh and self._stale:
             self._growth = await self._refit(now)
         growth, fitted = self._growth
         rates = {s: fitted[s] for s, _ in top if s in fitted}  # labels <= max_symbols
@@ -422,6 +427,7 @@ class DiskBudget:
             await self._announce(m, used, full_at, runway, top, pinned, now)
             self._announced = state
         recorder_disk_budget_last_sample_timestamp_seconds.set(now // US_PER_S)
+        recorder_disk_budget_breakdown_age_seconds.set((now - self._fresh_at) // US_PER_S)
 
     def _build_report(
         self,
@@ -462,7 +468,9 @@ class DiskBudget:
     ) -> None:
         disk_used_ratio.set(used / self._cfg.cap_bytes)
         disk_free_bytes.set(free)
-        recorder_disk_pressure_level.set(int(self._ladder.level))
+        # A refused volume closes the gate: the level must say so, or nothing pages.
+        level = DiskPressureLevel.HALT if self.recording_refused else self._ladder.level
+        recorder_disk_pressure_level.set(int(level))
         recorder_projected_full_timestamp.set(0 if full_at is None else full_at // US_PER_S)
         for gone in self._rate_labels - rates.keys():
             recorder_bytes_per_day.remove(gone)

@@ -22,6 +22,7 @@ class FakeMeter:
     free: int = TOTAL // 2
     symbols: dict[str, int] = field(default_factory=dict)
     fail: bool = False
+    breakdown_fail: bool = False
     closed: bool = False
 
     async def volume(self) -> tuple[int, int]:
@@ -30,6 +31,8 @@ class FakeMeter:
         return TOTAL, self.free
 
     async def breakdown(self) -> Breakdown:
+        if self.breakdown_fail:
+            raise TimeoutError("questdb slow")
         half = self.used // 2
         tiers: dict[TierName, int] = {"questdb": half, "parquet": self.used - half, "postgres": GB}
         return Breakdown(tiers, dict(self.symbols))

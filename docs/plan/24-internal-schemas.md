@@ -3062,7 +3062,8 @@ authority stays with retention (E16-T06).
 consumer and whether it is pinned. Order placement never reads the budget (SR-096). Free space
 (`statvfs`) is read first and alone drives the free-space path; the per-tier / per-symbol
 breakdown is best effort (own timeout and worker thread, last sizes kept), so a stalled QuestDB
-or a slow walk never freezes the ladder.
+or a slow walk never freezes the ladder. A stale breakdown never commits a series point or
+refits; its age is `recorder_disk_budget_breakdown_age_seconds`.
 
 **Deviations (orchestrator decision on #491, 2026-10-13).**
 
@@ -3074,7 +3075,8 @@ or a slow walk never freezes the ladder.
    position and manual starts never are. The gate lifts with the level-3 release (used < 90 %,
    free ≥ 10 %). Both hooks are required arguments; `RecordingPolicy.position_open` answers
    True until `positions_reloaded()` (warm-up assumes a position), and a failing gate check
-   keeps writing.
+   keeps writing. A gate window is sealed by the next row the gate admits for its (symbol,
+   stream), so no gap spans written data (C-2.14). A refused volume reports level 3.
 
 **`DiskPressureChanged`** (bus topic `{env}.recorder.disk_pressure`, consumed by `RecordingPolicy`
 E16-T02 and `RetentionManager` E16-T06) is published after the system event on every change of

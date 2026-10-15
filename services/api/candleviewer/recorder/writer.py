@@ -484,6 +484,11 @@ class StreamWriter:
         self._counters: dict[str, _Counters] = {}
         #: (symbol, stream) -> [first, last] dropped exch_ts (µs), not yet persisted.
         self._gaps: dict[tuple[str, Stream], list[int]] = {}
+        #: E16-T07 gate windows, kept apart from the WAL-drop ones: the first row the gate
+        #: admits again seals its window, so no gap ever spans written data (C-2.14).
+        self._gate_gaps: dict[tuple[str, Stream], list[int]] = {}
+        self._sealed: list[tuple[str, Stream, int, int]] = []
+        self._gate_failing = False
         #: Last observed delta update_id per symbol (seq jumps are E16-T04's to convert).
         self._last_update_id: dict[str, int] = {}
         self.seq_jumps: deque[tuple[str, int, int]] = deque(maxlen=1024)
@@ -572,13 +577,23 @@ class StreamWriter:
             return
         try:
             gated = self._gate.halted() and not self._gate.position_open(symbol)
-        except Exception:  # a failing check never stops recording: keep writing
-            gated = False
+        except Exception as exc:  # a failing check never stops recording: keep writing
+            gated, failing = False, True
+            if not self._gate_failing:  # once per failure episode, never per row
+                logger().error("recorder_disk_gate_failed", error=type(exc).__name__)
+        else:
+            failing = False
+        self._gate_failing = failing
+        key = (symbol, stream)
         if gated:
             self._ctr(symbol).dropped += len(records)
             stamps = [r.exch_ts for r in records]
-            self._widen(symbol, stream, min(stamps), max(stamps))
+            window = self._gate_gaps.setdefault(key, [min(stamps), max(stamps)])
+            window[0], window[1] = min(window[0], *stamps), max(window[1], *stamps)
             return
+        sealed = self._gate_gaps.pop(key, None)
+        if sealed is not None:  # the gate admits this key again: its window ends here
+            self._sealed.append((symbol, stream, sealed[0], sealed[1]))
         ts = records[0].exch_ts
         b = self._bounds.get(symbol)
         if b is None:
@@ -854,31 +869,40 @@ class StreamWriter:
     # -- periodic: gaps + counters (kept until a live session accepts them) --------------------
 
     async def flush_gaps(self) -> None:
-        for (symbol, stream), (first, last) in list(self._gaps.items()):
-            gap_start = _EPOCH + timedelta(microseconds=first)
-            gap_end = _EPOCH + timedelta(microseconds=max(last, first + 1))
-            try:
-                async with asyncio.timeout(self._cfg.store_timeout_s):
-                    ok = await self._store.record_live_gap(
-                        symbol=symbol,
-                        stream=STREAM_KIND[stream],
-                        gap_start=gap_start,
-                        gap_end=gap_end,
-                        cause=GAP_CAUSE,
-                    )
-            except Exception as exc:
-                logger().error("recorder_gap_write_failed", symbol=symbol, error=str(exc))
-                continue
-            if not ok:
-                # No live session yet (E16-T04 opens it): keep the window and retry.
-                logger().warning("recorder_gap_awaiting_session", symbol=symbol, stream=stream)
-                continue
-            window = self._gaps.get((symbol, stream))
-            if window == [first, last]:
-                del self._gaps[(symbol, stream)]
-            elif window is not None:
-                # Widened while the insert was in flight: keep only the part not yet written.
-                window[0] = max(window[0], last)
+        sealed, self._sealed = self._sealed, []
+        for symbol, stream, first, last in sealed:  # sealed gate windows: written as they are
+            if not await self._record_gap(symbol, stream, first, last):
+                self._sealed.append((symbol, stream, first, last))
+        for windows in (self._gaps, self._gate_gaps):
+            for (symbol, stream), (first, last) in list(windows.items()):
+                if not await self._record_gap(symbol, stream, first, last):
+                    continue
+                window = windows.get((symbol, stream))
+                if window == [first, last]:
+                    del windows[(symbol, stream)]
+                elif window is not None:
+                    # Widened while the insert was in flight: keep only the part not yet written.
+                    window[0] = max(window[0], last)
+
+    async def _record_gap(self, symbol: str, stream: Stream, first: int, last: int) -> bool:
+        gap_start = _EPOCH + timedelta(microseconds=first)
+        gap_end = _EPOCH + timedelta(microseconds=max(last, first + 1))
+        try:
+            async with asyncio.timeout(self._cfg.store_timeout_s):
+                ok = await self._store.record_live_gap(
+                    symbol=symbol,
+                    stream=STREAM_KIND[stream],
+                    gap_start=gap_start,
+                    gap_end=gap_end,
+                    cause=GAP_CAUSE,
+                )
+        except Exception as exc:
+            logger().error("recorder_gap_write_failed", symbol=symbol, error=str(exc))
+            return False
+        if not ok:
+            # No live session yet (E16-T04 opens it): keep the window and retry.
+            logger().warning("recorder_gap_awaiting_session", symbol=symbol, stream=stream)
+        return ok
 
     async def flush_counters(self) -> None:
         for symbol, ctr in list(self._counters.items()):
