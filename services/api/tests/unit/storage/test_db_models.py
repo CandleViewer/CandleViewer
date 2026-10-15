@@ -62,6 +62,10 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "kek_versions",
         # E14-T01 (0021_drawings)
         "drawings",
+        # E15-T01 (0022_workspaces)
+        "workspaces",
+        "layouts",
+        "layout_panes",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected
