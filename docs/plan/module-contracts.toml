@@ -313,6 +313,15 @@ rule = "C-2.20"
 source_modules = ["candleviewer.book", "candleviewer.bars", "candleviewer.orderflow", "candleviewer.orderbook_wiring"]
 forbidden_modules = ["candleviewer.statechart", "xstate_statemachine"]
 
+[cross_cutting.inspector_runtime_free]
+# C-2.22 / MUSTNOT-03 (E42-T07): the statechart inspector reads persisted state and the chart
+# registry only; it never imports the runtime or the modules that build, restore or route to an
+# interpreter. Indirect imports are allowed because `candleviewer.statechart` re-exports
+# `factory` from its package `__init__`, which the registry API is imported through.
+rule = "C-2.22"
+source_modules = ["candleviewer.admin.inspector"]
+forbidden_modules = ["xstate_statemachine", "candleviewer.statechart.factory", "candleviewer.statechart.persistence", "candleviewer.statechart.gateway"]
+
 # Frontend module boundaries (§3 "Frontend module boundaries" table).
 # dependency-cruiser (`.dependency-cruiser.js`) reads this table; there is no
 # frontend import-linter equivalent, so this section is descriptive only —

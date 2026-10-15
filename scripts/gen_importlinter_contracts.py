@@ -187,6 +187,16 @@ def render(manifest: dict) -> str:
     lines.append("forbidden_modules =\n    " + "\n    ".join(hot["forbidden_modules"]))
     lines.append("")
 
+    # C-2.22 / MUSTNOT-03 (E42-T07): the inspector never imports the runtime directly.
+    insp = cc["inspector_runtime_free"]
+    lines.append("[importlinter:contract:forbidden-inspector-runtime]")
+    lines.append(f"name = {insp['rule']} — the statechart inspector never imports the runtime")
+    lines.append("type = forbidden")
+    lines.append("source_modules =\n    " + "\n    ".join(insp["source_modules"]))
+    lines.append("forbidden_modules =\n    " + "\n    ".join(insp["forbidden_modules"]))
+    lines.append("allow_indirect_imports = True")
+    lines.append("")
+
     return "\n".join(lines) + "\n"
 
 

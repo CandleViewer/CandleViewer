@@ -1208,3 +1208,15 @@ forbidden_modules =
     candleviewer.statechart
     xstate_statemachine
 
+[importlinter:contract:forbidden-inspector-runtime]
+name = C-2.22 — the statechart inspector never imports the runtime
+type = forbidden
+source_modules =
+    candleviewer.admin.inspector
+forbidden_modules =
+    xstate_statemachine
+    candleviewer.statechart.factory
+    candleviewer.statechart.persistence
+    candleviewer.statechart.gateway
+allow_indirect_imports = True
+
