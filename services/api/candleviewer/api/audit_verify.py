@@ -3,9 +3,12 @@ design §9).
 
 Records go straight to the audit writer, never through the 3a record budget, so a verify
 record is never suppressed or folded into a summary. Each run writes at most two: a
-write-ahead `started` record, then the result or the reason it stopped. A record that cannot
-be written in `WRITE_TIMEOUT_S` makes the call `503` with nothing served (fail closed,
-C-2.9). The writer's `emit` is cancellation-safe, so the timeout never tears an append.
+write-ahead `started` record, then the result or the reason it stopped. A run cancelled
+while it walks (a client that goes away, a shutdown) leaves only its `started` record. A
+record that cannot be written in `WRITE_TIMEOUT_S` makes the call `503` with nothing served
+(fail closed, C-2.9). The writer's `emit` is cancellation-safe, so the timeout never tears
+an append. Outside the budget, these records are bounded only by verify's own run limits
+(the per-user rate limit and single-flight that follow in the stack).
 """
 
 from __future__ import annotations
@@ -36,7 +39,9 @@ async def write_verify_record(
     reason: str,
     after_state: dict[str, Any],
 ) -> bool:
-    """One `admin.audit_verify` record. False when it could not be written in time."""
+    """One `admin.audit_verify` record. False when the writer refused it or had not taken it
+    within `WRITE_TIMEOUT_S`; `emit` is WAL-first and finishes an append it has started, so
+    a record counted here as unwritten may still land (it errs toward recording more)."""
     try:
         async with asyncio.timeout(WRITE_TIMEOUT_S):
             await emit(

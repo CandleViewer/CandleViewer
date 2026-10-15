@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 from pydantic import ValidationError
+from structlog.testing import capture_logs
 
 from candleviewer.api.audit import _read_capped, make_audit_router
 from candleviewer.api.audit_budget import (
@@ -1332,6 +1333,27 @@ def test_verify_record_that_cannot_be_written_is_503_with_nothing_served(ok: int
     r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
     assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
     assert "verified" not in r.json() and svc.query_service.runs == ok
+
+
+def test_verify_that_fails_unexpectedly_is_503_and_recorded_as_an_internal_error() -> None:
+    """Review of #2461: an unexpected error (here a `MemoryError`) is never a 500 with only
+    the `started` record: it is recorded `internal_error`, logged by class only, and 503."""
+    svc = _FakeAuditService()
+
+    async def failing(*_a: Any, **_kw: Any) -> VerifyResult:
+        raise MemoryError("entry 41 at 0x7f")
+
+    svc.query_service.run_verify = failing  # type: ignore[method-assign]  # fault injection
+    with capture_logs() as logs:
+        r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
+    assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
+    span = {"from_id": 1, "to_id": 1}
+    assert _verify_records(svc) == [
+        ("success", "info", "started", span),
+        ("failure", "warning", "internal_error", span),
+    ]
+    failed = [e for e in logs if e["event"] == "audit.verify.failed"]
+    assert failed == [{"event": failed[0]["event"], "error": "MemoryError", "log_level": "error"}]
 
 
 def test_verify_records_a_break_when_the_owners_record_budget_is_spent() -> None:
