@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -58,7 +59,10 @@ class InstrumentsPrincipal:
 
 
 class PrincipalResolver(Protocol):
-    def resolve(self, request: Request) -> InstrumentsPrincipal | None: ...
+    """Sync or async resolver (`resolve(request)` may return an awaitable), as in `ticker.py`;
+    the deployed app wires the session-backed one (#2561)."""
+
+    def resolve(self, request: Request) -> Any: ...
 
 
 class CatalogueReader(Protocol):
@@ -136,10 +140,13 @@ def make_instruments_router(
     `create_app()`); `None` -> `503`, never an empty catalogue."""
     router = APIRouter(tags=["instruments"])
 
-    def _authorize(request: Request) -> JSONResponse | None:
+    async def _authorize(request: Request) -> JSONResponse | None:
         if principal_resolver is None:
             return _problem(501, "Not implemented", "no principal resolver wired")
-        principal = principal_resolver.resolve(request)
+        resolved = principal_resolver.resolve(request)
+        principal: InstrumentsPrincipal | None = (
+            await resolved if inspect.isawaitable(resolved) else resolved
+        )
         if principal is None:
             return _problem(401, "Unauthorized", "no verified session for this request")
         if not principal.has(_REQUIRED_PERMISSION):
@@ -160,7 +167,7 @@ def make_instruments_router(
         recorded_only: bool = Query(default=False),
         sort: str = Query(default="symbol"),
     ) -> JSONResponse:
-        denied = _authorize(request)
+        denied = await _authorize(request)
         if denied is not None:
             return denied
         if status is not None and status not in _STATUS_WIRE.values():
@@ -201,7 +208,7 @@ def make_instruments_router(
 
     @router.get("/instruments/{symbol}")
     async def get_instrument(request: Request, symbol: str) -> JSONResponse:
-        denied = _authorize(request)
+        denied = await _authorize(request)
         if denied is not None:
             return denied
         if not (4 <= len(symbol) <= 20 and symbol.isascii() and symbol.isalnum()):

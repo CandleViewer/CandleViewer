@@ -53,3 +53,21 @@ async def test_ingestion_missing_sample_raises_clear_error() -> None:
     service = IngestionService()
     with pytest.raises(Exception, match="not found"):
         await service.start(ctx)
+
+
+async def test_ingestion_stop_stops_the_catalogue_before_closing_its_resources() -> None:
+    """#2561: the catalogue scheduler uses the REST client and pool that the closers release."""
+    order: list[str] = []
+
+    class _Catalogue:
+        async def stop(self, grace_s: float) -> None:
+            order.append("catalogue")
+
+    async def close() -> None:
+        order.append("closer")
+
+    service = IngestionService()
+    service.attach_instruments(_Catalogue())  # type: ignore[arg-type]  # only `stop` is used
+    service.attach_closer(close)
+    await service.stop(grace_s=1.0)
+    assert order == ["catalogue", "closer"]
