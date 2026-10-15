@@ -102,8 +102,8 @@ async def test_s08_signature_failure_remeasures_and_the_retry_succeeds(rig: Rig)
     client = _signed(rig, guard)
     try:
         body = await rig.call(client.signed_request("GET", PATH))
-    except ClockDriftError as exc:  # the retry failed too: report why, not the venue text
-        pytest.fail(f"10002 retry failed again: no clock re-measure before re-signing ({exc})")
+    except ClockDriftError as exc:  # the retry failed too: say so, not just the venue text
+        pytest.fail(f"10002 retry still rejected: clock re-measure missing or ineffective ({exc})")
     finally:
         await client.aclose()
     assert metric(clock_resync_triggered_total, reason="signature_failure") == triggered + 1
