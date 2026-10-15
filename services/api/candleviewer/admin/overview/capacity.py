@@ -14,21 +14,29 @@ The sub-account tier is a recorded fact read through `TierPort`, never inferred.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
+from types import MappingProxyType
 from typing import Final, Literal
 from uuid import UUID
 
-from candleviewer.admin.overview.fanout import Degraded, SliceFanOut, SliceResult, SourceUnavailable
+from candleviewer.admin.overview.fanout import (
+    Degraded,
+    SliceFanOut,
+    SliceResult,
+    SourceUnavailable,
+    _utc_now,
+)
 from candleviewer.admin.overview.metrics import capacity_projection_bytes
 from candleviewer.admin.overview.ports import (
-    CountsPort,
     IngestionPort,
     IngestionStats,
     RateLimitPort,
+    RecordedTier,
     RecorderPort,
     StorageSnapshot,
+    SubaccountPort,
     TierPort,
 )
 from candleviewer.admin.overview.slices import AdminSlice
@@ -36,9 +44,10 @@ from candleviewer.admin.overview.slices import AdminSlice
 #: 0.75 GB/day/symbol (GB = 1e9 bytes, as the recorder's DiskBudget measures).
 ESTIMATED_DAILY_GROWTH_BYTES: Final = 750_000_000
 #: The exchange's sub-account cap per recorded tier (US-ADMIN-014).
-TIER_CAPS: Final[dict[str, int]] = {"regular": 5, "business_kyc": 20}
-Basis = Literal["measured", "estimated", "nothing_recorded"]
 Tier = Literal["regular", "business_kyc"]
+TIER_CAPS: Final[Mapping[Tier, int]] = MappingProxyType({"regular": 5, "business_kyc": 20})
+Basis = Literal["measured", "estimated", "nothing_recorded"]
+Problem = tuple[Literal["error", "unavailable"], str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,10 +82,12 @@ class RateBudgetRow:
 
 @dataclass(frozen=True, slots=True)
 class SubaccountCapacity:
+    """`used` and the tier are read independently; a part that failed is `None` (omitted)."""
+
     tier: Tier | None
     cap: int | None
-    used: int
-    tier_source: Literal["recorded", "unrecorded"]
+    used: int | None
+    tier_source: Literal["recorded", "unrecorded"] | None
     recorded_at: datetime | None
 
 
@@ -100,15 +111,17 @@ def project(snap: StorageSnapshot) -> DiskProjection:
         elif s.daily_growth_bytes is None:
             growth, estimated = ESTIMATED_DAILY_GROWTH_BYTES, True
         else:
-            growth = s.daily_growth_bytes
+            growth = max(s.daily_growth_bytes, 0)  # a negative fit (shrinking data) adds no growth
         if s.retention_days is None:
             unbounded = unbounded or growth > 0
         else:
             projected += growth * s.retention_days
         rows.append(SymbolProjection(s.symbol, s.used_bytes, growth, s.pinned, s.retention_days))
     growth_total = sum(r.daily_growth_bytes for r in rows)
-    fills = growth_total > 0 and (unbounded or projected > snap.used_bytes + snap.free_bytes)
-    days = round(snap.free_bytes / growth_total, 2) if fills else None
+    room = snap.free_bytes if snap.cap_bytes is None else snap.cap_bytes - snap.used_bytes
+    headroom = max(min(room, snap.free_bytes), 0)  # as DiskBudget.project_full_at
+    fills = growth_total > 0 and (unbounded or projected > snap.used_bytes + headroom)
+    days = round(headroom / growth_total, 2) if fills else None
     basis: Basis = "nothing_recorded" if not recording else "estimated" if estimated else "measured"
     return DiskProjection(
         snap.used_bytes,
@@ -134,13 +147,13 @@ class AdminCapacityService:
         recorder: RecorderPort | None = None,
         ingestion: IngestionPort | None = None,
         rate_limit: RateLimitPort | None = None,
-        counts: CountsPort | None = None,
+        subaccounts: SubaccountPort | None = None,
         tier: TierPort | None = None,
-        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        now: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._fan, self._now = fan, now
         self._recorder, self._ingestion, self._rate_limit = recorder, ingestion, rate_limit
-        self._counts, self._tier = counts, tier
+        self._subaccounts_port, self._tier = subaccounts, tier
 
     async def capacity(self) -> CapacitySnapshot:
         read = self._fan.read
@@ -186,16 +199,40 @@ class AdminCapacityService:
         )
 
     async def _subaccounts(self) -> SubaccountCapacity | Degraded[SubaccountCapacity]:
-        if self._counts is None:
+        used, used_problem = await _part("subaccounts", self._used)
+        recorded, tier_problem = await _part("tier", self._recorded_tier)
+        if recorded is not None:
+            tier: Tier = "regular" if recorded.tier == "regular" else "business_kyc"
+            at = recorded.recorded_at
+            value = SubaccountCapacity(tier, TIER_CAPS[tier], used, "recorded", at)
+        else:  # never recorded is a fact; a failed tier read leaves the tier fields unknown
+            source: Literal["unrecorded"] | None = None if tier_problem else "unrecorded"
+            value = SubaccountCapacity(None, None, used, source, None)
+        problems = [p for p in (used_problem, tier_problem) if p is not None]
+        if not problems:
+            return value
+        failed = any(status == "error" for status, _ in problems)
+        return Degraded(value, "error" if failed else "unavailable", problems[0][1])
+
+    async def _used(self) -> int:
+        if self._subaccounts_port is None:
             raise _unwired("subaccounts")
-        used = await self._counts.subaccounts_in_use()
-        unrecorded = SubaccountCapacity(None, None, used, "unrecorded", None)
-        if self._tier is None:  # no settings store yet: say so, keep the count, never infer
-            return Degraded(unrecorded, "unavailable", "tier: no provider wired")
+        return await self._subaccounts_port.subaccounts_in_use()
+
+    async def _recorded_tier(self) -> RecordedTier | None:
+        if self._tier is None:  # no settings store yet: say so, never infer
+            raise _unwired("tier")
         recorded = await self._tier.recorded_tier()
-        if recorded is None:
-            return unrecorded
-        if recorded.tier not in TIER_CAPS:  # a corrupt value is an error, never a guess
-            raise ValueError("unknown sub-account tier")
-        tier: Tier = "regular" if recorded.tier == "regular" else "business_kyc"
-        return SubaccountCapacity(tier, TIER_CAPS[tier], used, "recorded", recorded.recorded_at)
+        if recorded is not None and recorded.tier not in TIER_CAPS:
+            raise ValueError("unknown sub-account tier")  # a corrupt value is an error
+        return recorded
+
+
+async def _part[T](what: str, load: Callable[[], Awaitable[T]]) -> tuple[T | None, Problem | None]:
+    """One independently degradable part of a slice: `(value, None)` or `(None, problem)`."""
+    try:
+        return await load(), None
+    except SourceUnavailable as exc:
+        return None, ("unavailable", exc.detail)
+    except Exception:  # the message may carry internals: never forwarded
+        return None, ("error", f"{what}: source failed")
