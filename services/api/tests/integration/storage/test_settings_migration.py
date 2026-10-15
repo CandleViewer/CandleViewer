@@ -133,10 +133,10 @@ _INDEXES = (
 
 
 def _doc_ddl() -> str:
-    """Sec.3.9's `settings` table + both indexes, verbatim (the block also holds feature flags)."""
+    """Sec.3.9's `settings` table + both indexes, verbatim: its first ```sql block, to the fence."""
     text = _DOC.read_text(encoding="utf-8")
     block = text.split("### 3.9 Settings & feature flags", 1)[1].split("```sql", 1)[1]
-    return block.split("CREATE TABLE feature_flags (", 1)[0]
+    return block.split("```", 1)[0].split("CREATE TABLE feature_flags (", 1)[0]
 
 
 def _catalog(c: Conn, schema: str) -> tuple[list[Any], list[Any], list[Any]]:

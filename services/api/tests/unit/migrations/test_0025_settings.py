@@ -46,12 +46,12 @@ def _norm(sql: str) -> str:
 def _doc_ddl() -> str:
     """The `settings` table and its two indexes, verbatim from 21-database-schema.md Sec.3.9.
 
-    Sec.3.9 shares one ```sql block with `feature_flags` and `feature_flag_overrides`; only the
-    part before `CREATE TABLE feature_flags` belongs to this revision.
+    That is Sec.3.9's first ```sql block, cut at its closing fence; the key table and the
+    `feature_flags` / `feature_flag_overrides` DDL that follow it are not part of this revision.
     """
     text = _DOC.read_text(encoding="utf-8")
     block = text.split("### 3.9 Settings & feature flags", 1)[1].split("```sql", 1)[1]
-    return block.split("CREATE TABLE feature_flags (", 1)[0]
+    return block.split("```", 1)[0].split("CREATE TABLE feature_flags (", 1)[0]
 
 
 def test_revision_chains_onto_0024() -> None:

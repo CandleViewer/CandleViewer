@@ -2168,7 +2168,7 @@ CREATE UNIQUE INDEX ux_settings_sys  ON settings (key) WHERE scope = 'system';
 CREATE UNIQUE INDEX ux_settings_user ON settings (user_id, key) WHERE scope = 'user';
 ```
 
-System-scope keys with a fixed meaning (`scope = 'system'`, at most one row per key via `ux_settings_sys`; the table itself lands with the planned `0012_governance` revision, §9.4):
+System-scope keys with a fixed meaning (`scope = 'system'`, at most one row per key via `ux_settings_sys`; the table itself lands as Alembic `0025_settings`, above):
 
 | Key                        | `value_type` | Values                                           | Semantics                                                                                                                                                                                                                                                                       |
 | -------------------------- | ------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
