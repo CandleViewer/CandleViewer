@@ -876,13 +876,14 @@ CREATE TABLE kek_versions (
 
 **Envelope layout written by M2 into `api_keys` (§3.2.2).** Every sealed field uses one layout,
 `nonce(12) ‖ ciphertext ‖ tag(16)`, each with a fresh nonce:
+
 - `key_id_enc`, `secret_enc`: API key id / secret under the row DEK. `enc_nonce` repeats the nonce
   prefix of `secret_enc` (the column is `NOT NULL` with the 12-byte CHECK); M2 verifies they match
   on read.
 - `dek_ref`: `v1:` + hex of the DEK sealed under the KEK of `kek_version` (the wrapped DEK itself;
   useless without the KEK, which never touches the database).
 - AADs are length-prefixed (u16 big-endian per part): data layer `cv-cred-v2 ‖ environment ‖
-  account_id ‖ id ‖ field` (SR-003; `environment` is the account's `exchange_accounts.env`); wrap
+account_id ‖ id ‖ field` (SR-003; `environment` is the account's `exchange_accounts.env`); wrap
   layer `cv-dek-v1 ‖ id ‖ kek_version`.
 - SR-003 `key_version`: recorded deviation — there is no key-version column; each Bybit key
   rotation inserts a new `api_keys` row (linked by `api_key_rotations`), so the row id already
@@ -2021,21 +2022,28 @@ CREATE TABLE drawings (
   id            uuid PRIMARY KEY,
   owner_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   symbol        symbol_code NOT NULL,
-  tool          text NOT NULL,       -- trendline | hline | ray | rect | fib | pitchfork | text | measure | zone
-  geometry      jsonb NOT NULL,      -- {"points":[{"t":"…Z","p":"64000.5"}…]}
+  layout_id     uuid,               -- NULL = not layout-scoped; FK to layouts(id) ON DELETE CASCADE is added by E15-T01
+  tool          text NOT NULL,      -- 25 API names, see dr_tool (trendline … anchored_vwap)
+  geometry      jsonb NOT NULL,
   style         jsonb NOT NULL DEFAULT '{}'::jsonb,
-  label         text,
+  label         text,               -- sanitised, 1..120 code points
   locked        boolean NOT NULL DEFAULT false,
   visible       boolean NOT NULL DEFAULT true,
-  interval_scope text,               -- NULL = all intervals
+  interval_scope text,              -- NULL = all intervals (not exposed by the API yet)
   z_index       smallint NOT NULL DEFAULT 0,
-  anchor_start  timestamptz,         -- denormalised from geometry for range queries
+  anchor_start  timestamptz,
   anchor_end    timestamptz,
-  alert_id      uuid REFERENCES alerts(id) ON DELETE SET NULL,  -- line-cross alerts
+  alert_id      uuid REFERENCES alerts(id) ON DELETE SET NULL,  -- E40; not exposed
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
   deleted_at    timestamptz,
-  CONSTRAINT dr_tool CHECK (tool IN ('trendline','hline','vline','ray','rect','ellipse','fib','pitchfork','text','measure','zone','arrow')),
+  CONSTRAINT dr_tool CHECK (tool IN (
+    'trendline','horizontal_line','vertical_line','ray','extended_line',
+    'parallel_channel','rectangle','ellipse','triangle','fib_retracement',
+    'fib_extension','fib_timezone','pitchfork','gann_fan','text',
+    'arrow','callout','measure','long_position','short_position',
+    'price_range','date_range','brush','polyline','anchored_vwap'
+  )),
   CONSTRAINT dr_geom CHECK (jsonb_typeof(geometry) = 'object' AND geometry ? 'points')
 );
 CREATE INDEX ix_dr_user_symbol ON drawings (owner_user_id, symbol) WHERE deleted_at IS NULL;
@@ -3098,7 +3106,7 @@ NAMING_CONVENTION = {
 | `0008_rules`                  | `rules`, `rule_versions`, `rule_runs`, `rule_events`                                                                                                                                                                                       |
 | `0009_alerts`                 | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                     |
 | `0010_journal`                | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                            |
-| `0011_workspace`              | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles`                                                                                                                             |
+| `0011_workspace`              | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` landed in E14-T01 as `0021_drawings` (#357)                                                                    |
 | `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups`                                                                                                        |
 | `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                              |
 
@@ -3382,6 +3390,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `audit_log`                                            | `actor_ip`                              | P2         | plaintext                                       | Cannot be deleted (append-only); erase requests are satisfied by key destruction of the actor mapping, documented in `04-security-program.md`   |
 | `audit_log`                                            | `before_state`, `after_state`           | P1/S mixed | jsonb                                           | Writer redacts any key matching `secret                                                                                                         | password | token | api_key | seed | nonce`to`"[redacted]"` before insert — enforced by a shared serializer and a unit test with a hostile fixture |
 | `notes`                                                | `body`, `title`                         | P1         | plaintext                                       | User content; exported on data-export request                                                                                                   |
+| `drawings`                                             | `label`, `geometry`, `style`            | P0         | text / jsonb                                    | User-authored chart annotations; free text, no credentials or PII intended                                                                      |
 | `journal_trades`                                       | all P&L columns                         | P1         | plaintext                                       | Financial personal data                                                                                                                         |
 | `exchange_accounts`                                    | `exchange_uid`, `label`                 | P1         | plaintext                                       | Account identifiers                                                                                                                             |
 | `positions`, `orders`, `executions`, `wallet_balances` | monetary columns                        | P1         | plaintext                                       | Financial personal data; never sent to third parties                                                                                            |

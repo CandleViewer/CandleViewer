@@ -60,6 +60,8 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "api_key_rotations",
         # E27-T02 (0020_kek_versions)
         "kek_versions",
+        # E14-T01 (0021_drawings)
+        "drawings",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected
