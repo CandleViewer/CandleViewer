@@ -35,7 +35,7 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Context, Decimal, Inexact
 from typing import Any, Final
 
 from candleviewer.ws.bar_coalescer import BarCoalescer, BarKey, bar_key
@@ -113,6 +113,11 @@ def _dec(value: Any) -> Decimal:
 _MAX_EXPONENT: Final = 40
 
 
+#: Footprint increments are summed exactly: an inexact sum raises `Inexact` (refused), never
+#: rounds. The precision covers two values at the exponent bound and their fraction digits.
+_EXACT: Final = Context(prec=4 * _MAX_EXPONENT, traps=[Inexact])
+
+
 def _plain(value: Decimal) -> str:
     """Wire decimal form (`^-?[0-9]+(\\.[0-9]+)?$`): never an exponent, never absurdly long."""
     if abs(value.adjusted()) > _MAX_EXPONENT:
@@ -154,6 +159,11 @@ class _Merge(ABC):
     def splits(self, body: Payload) -> bool:
         """True when `body` cannot join the pending merge and must start a new frame."""
         return False
+
+    def validate(self, body: Payload) -> None:
+        """Raise one of `_REFUSED` if `body` is queued as a whole frame that `emitted` cannot
+        read. The merge path checks the same fields as it merges."""
+        return None
 
     def emitted(self, body: Payload) -> None:
         """Called with each emitted payload; only a family that remembers what it sent uses it."""
@@ -335,8 +345,13 @@ class _HeatmapMerge(_KeyedMerge):
     def add(self, body: Payload) -> bool:
         root = {k: v for k, v in body.items() if k not in self.lists}
         root_changed = any(k not in self.known or self.known[k] != v for k, v in root.items())
+        trimmed = self.trimmed
         changed = self.merge(body) or root_changed
+        if not changed:
+            self.trimmed = trimmed  # a discarded update trims nothing that is emitted
         self.known.update(root)
+        if len(self.known) > self.limit:  # bounded like every other buffer here
+            raise _BufferFullError
         if changed:
             self.root.update(root)
             self.root_bytes = _size(self.root)
@@ -352,6 +367,12 @@ class _HeatmapMerge(_KeyedMerge):
         columns = sorted(self.items.values(), key=lambda col: int(col["t_ms"]))
         return {**self.root, "columns": columns}
 
+    def validate(self, body: Payload) -> None:
+        for col in body.get("columns") or ():
+            if not isinstance(col, Mapping):
+                raise TypeError("a heatmap column is an object")
+            _t_key(col)
+
     def emitted(self, body: Payload) -> None:
         for col in body.get("columns") or ():
             if col.get("complete") is True:
@@ -362,8 +383,13 @@ class _HeatmapMerge(_KeyedMerge):
 
 class _FootprintMerge(_Merge):
     """§8.2 `footprint`: per (bar, price) cell the volume fields are increments summed within the
-    same bar, never across bars; every other bar and cell field is last-write-wins. The bar key is
-    `t_ms`, the only bar identity the §14.4 payload carries."""
+    same bar, never across bars; every other bar and cell field is last-write-wins.
+
+    The bar key is `t_ms`, the only bar identity the §14.4 payload carries, but non-time bars can
+    share an open time (§8.2 "Bar key"). So instead of fusing two bars, an update that names one
+    open time twice, or that touches a bar already confirmed in this window, is refused, and the
+    topic is re-snapshotted. A new bar opening at the time of a bar that was neither repeated nor
+    confirmed in the window cannot be told apart until §14.4 carries the bar key (#2529)."""
 
     def __init__(self, limit: int) -> None:
         super().__init__(limit, ("bars",))
@@ -372,9 +398,15 @@ class _FootprintMerge(_Merge):
 
     def merge(self, body: Payload) -> bool:
         bars = body.get("bars") or ()
+        opened: set[int] = set()
         for bar in bars:
             t_ms = int(bar["t_ms"])
+            if t_ms in opened:
+                raise ValueError("two bars share an open time in one update")
+            opened.add(t_ms)
             entry = self.bars.get(t_ms)
+            if entry is not None and entry[0].get("confirm") is True:
+                raise ValueError("an update to a bar already confirmed in this window")
             if entry is None:
                 self._grow()
                 entry = self.bars[t_ms] = ({}, {})
@@ -400,7 +432,7 @@ class _FootprintMerge(_Merge):
         before = _size(cur)
         for key, value in cell.items():
             if key in _SUMMED_DECIMALS:
-                cur[key] = _plain(_dec(cur.get(key, 0)) + _dec(value))
+                cur[key] = _plain(_EXACT.add(_dec(cur.get(key, 0)), _dec(value)))
             elif key in _SUMMED_COUNTS:
                 cur[key] = int(cur.get(key, 0)) + int(value)
             else:
@@ -572,6 +604,8 @@ class CoalescingQueue:
                 emission = Emission(_own(body), part, 1, ts_ms)
                 try:
                     size = _size(emission.body)
+                    if merge is not None:
+                        merge.validate(emission.body)  # `take` never meets a frame it can't read
                 except _REFUSED:
                     self._overflowed = True
                     return False
@@ -621,8 +655,12 @@ class CoalescingQueue:
             self._close_window(merge)
         out, self._frames, self._frame_bytes = self._frames, [], 0
         if merge is not None:
-            for emission in out:
-                merge.emitted(emission.body)
+            try:
+                for emission in out:
+                    merge.emitted(emission.body)
+            except (*_REFUSED, AttributeError):  # `offer` validated these; never raise here
+                self._overflowed = True
+                return []
         return out
 
     def _close_window(self, merge: _Merge) -> None:
