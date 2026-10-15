@@ -309,6 +309,35 @@ def test_integration_upstream_u_gap_produces_snap_with_reason_upstream_desync() 
         assert c.recv()["s"] == 4
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason="#2517: ctl paused:false sends no resnapshot and drops the paused updates; "
+    "fixed by #2556 (remove this marker when it merges)",
+)
+def test_integration_ctl_pause_resume_resnapshots_with_the_paused_updates() -> None:
+    """Scenario S1 (#409): resuming a paused book yields `ctl_ok resnapshot:true`, then a
+    `snap reason:reconfigure` holding the paused updates, before any `d`; next `d` is `snap.s+1`."""
+    w = World()
+    ch = "book.BTCUSDT.50"
+    with connect(w) as c:
+        c.sub(ch)
+        n = c.recv()["s"]
+        c.send({"t": "ctl", "id": "p1", "ch": ch, "p": {"paused": True}})
+        assert "resnapshot" not in c.next_of("ctl_ok")["p"]
+        w.source.books[SYM].apply([["99.5", "7.000"]], [["101.5", "8.000"]])  # producer moves on
+        assert publish(w, "book", ch) == 0  # paused: no d crosses
+        assert publish(w, "book", ch) == 0
+        c.send({"t": "ctl", "id": "p2", "ch": ch, "p": {"paused": False}})
+        assert c.next_of("ctl_ok")["p"]["resnapshot"] is True
+        snap = c.recv()
+        assert snap["t"] == "snap" and snap["meta"]["reason"] == "reconfigure"
+        assert snap["s"] > n
+        assert ["99.5", "7.000"] in structured_of(snap)["bids"]  # the paused update is inside
+        publish(w, "book", ch)
+        d = c.recv()
+        assert d["t"] == "d" and d["s"] == snap["s"] + 1
+
+
 def test_integration_token_expiry_reauth_in_place_preserves_subscriptions_and_sequences() -> None:
     w = World()
     with connect(w) as c:
