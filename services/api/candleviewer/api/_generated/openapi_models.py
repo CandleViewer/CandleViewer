@@ -5014,7 +5014,12 @@ class BuildInfo(BaseModel):
 
 
 class AdminSliceStatus(BaseModel):
-    status: Literal["ok", "error", "unavailable"] | None = None
+    status: Annotated[
+        Literal["ok", "error", "unavailable"] | None,
+        Field(
+            description="**Open-ended for readers:** clients must tolerate values they do not know, so adding an outcome is an additive change (C-6.3).\n"
+        ),
+    ] = None
     detail: Annotated[str | None, Field(max_length=200)] = None
     generated_at: Annotated[
         AwareDatetime | None,
@@ -5064,7 +5069,12 @@ class AdminOverview(BaseModel):
     users: Users | None = None
     accounts: Accounts | None = None
     recorder: Recorder | None = None
-    storage: Storage | None = None
+    storage: Annotated[
+        Storage | None,
+        Field(
+            description="`days_until_full` is `null` unless growth is measured; the estimated fallback exists only in `CapacityReport.storage`."
+        ),
+    ] = None
     trading: Trading1 | None = None
     incidents_open: int | None = None
     incidents: Incidents | None = None
@@ -5094,10 +5104,15 @@ class Storage1(AdminSliceStatus):
     projection_basis: Annotated[
         Literal["measured", "estimated", "nothing_recorded"] | None,
         Field(
-            description="Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day (7.5e8 bytes, the upper bound of the 0.5-0.75 GB/day/symbol band at 200-depth) per recorded symbol; `estimated` is `true` (C10). `nothing_recorded`: no symbol is recorded, so growth is `0` by fact, not unknown, and `days_until_full` is `null`.\n"
+            description="Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day per recorded symbol (7.5e8 bytes, upper bound of the 0.5-0.75 band at 200-depth); `estimated` is `true` (convention C10). `nothing_recorded`: no symbol recorded, so growth is `0` by fact and `days_until_full` is `null`. **Open-ended for readers:** clients must tolerate values they do not know, so adding a basis is an additive change (C-6.3).\n"
         ),
     ] = None
-    estimated: bool | None = None
+    estimated: Annotated[
+        bool | None,
+        Field(
+            description="`true` iff `projection_basis` is `estimated`; otherwise `false` or omitted."
+        ),
+    ] = None
 
 
 class Ingestion(AdminSliceStatus):
@@ -5115,7 +5130,12 @@ class RateBudgetItem(BaseModel):
 
 
 class SubaccountCapacity(AdminSliceStatus):
-    tier: Literal["regular", "business_kyc"] | None = None
+    tier: Annotated[
+        Literal["regular", "business_kyc"] | None,
+        Field(
+            description="**Open-ended for readers:** clients must tolerate values they do not know, so adding a tier is an additive change (C-6.3).\n"
+        ),
+    ] = None
     cap: Annotated[
         int | None,
         Field(description="5 for `regular`, 20 for `business_kyc`, `null` while unrecorded."),
@@ -5123,11 +5143,14 @@ class SubaccountCapacity(AdminSliceStatus):
     used: Annotated[
         int | None,
         Field(
-            description="Most non-deleted sub-accounts (`exchange_accounts.kind = sub`) under any one main account; the exchange applies the cap per main account.\n",
+            description="Most non-deleted live sub-accounts (`exchange_accounts.kind = sub`, `env = live`) under any one main account: the cap binds live exchange UIDs, per main (C-2.11).\n",
             ge=0,
         ),
     ] = None
-    tier_source: Literal["recorded", "unrecorded"] | None = None
+    tier_source: Annotated[
+        Literal["recorded", "unrecorded"] | None,
+        Field(description="Deliberately closed; readers may rely on these two values."),
+    ] = None
     recorded_at: Annotated[
         AwareDatetime | None,
         Field(

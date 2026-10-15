@@ -4072,7 +4072,7 @@ export interface components {
       streams: components["schemas"]["StreamKind"][];
       symbol: components["schemas"]["Symbol"];
     };
-    /** @description Partial-result roll-up (E42-T01): every slice carries `AdminSliceStatus`. `generated_at` is when the response was assembled. `incidents_open` mirrors `incidents.open`. */
+    /** @description Partial-result roll-up (E42-T01): every slice carries `AdminSliceStatus`; `generated_at` is when it was assembled; `incidents_open` mirrors `incidents.open` (omitted if not `ok`). */
     AdminOverview: {
       accounts?: {
         enabled?: number;
@@ -4091,6 +4091,7 @@ export interface components {
         symbols_degraded?: number;
         symbols_recording?: number;
       } & components["schemas"]["AdminSliceStatus"];
+      /** @description `days_until_full` is `null` unless growth is measured; the estimated fallback exists only in `CapacityReport.storage`. */
       storage?: {
         days_until_full?: number | null;
         /** Format: int64 */
@@ -4109,7 +4110,7 @@ export interface components {
         without_mfa?: number;
       } & components["schemas"]["AdminSliceStatus"];
     };
-    /** @description Outcome and freshness of one slice of an admin read model (E42-T01). `ok`: every field of the slice was read. `error`: a source timed out (300 ms budget) or failed. `unavailable`: no provider is wired for a source yet. Fields that could not be read are omitted; fields that were read are still returned. `detail` is a short fixed reason naming the source; it never carries an exception message, connection string or key material. */
+    /** @description One admin read-model slice (E42-T01); servers always populate `status` and `generated_at`. `ok`: every field read. `error`: a source timed out (300 ms budget) or failed. `unavailable`: no provider wired yet. Unread fields are omitted, read ones still returned. `detail` is a non-empty fixed reason naming the source iff `status` is not `ok` (else `null` or omitted), never an exception message, connection string or key material. */
     AdminSliceStatus: {
       detail?: string | null;
       /**
@@ -4117,7 +4118,10 @@ export interface components {
        * @description When the slice was read; at most 5 s older than the response (slice cache).
        */
       generated_at?: string;
-      /** @enum {string} */
+      /**
+       * @description **Open-ended for readers:** clients must tolerate values they do not know, so adding an outcome is an additive change (C-6.3).
+       * @enum {string}
+       */
       status?: "ok" | "error" | "unavailable";
     };
     AggregatePosition: {
@@ -4481,6 +4485,7 @@ export interface components {
         /** Format: int64 */
         daily_growth_bytes?: number;
         days_until_full?: number | null;
+        /** @description `true` iff `projection_basis` is `estimated`; otherwise `false` or omitted. */
         estimated?: boolean;
         /** Format: int64 */
         free_bytes?: number;
@@ -4494,7 +4499,7 @@ export interface components {
           used_bytes?: number;
         }[];
         /**
-         * @description Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day (7.5e8 bytes, the upper bound of the 0.5-0.75 GB/day/symbol band at 200-depth) per recorded symbol; `estimated` is `true` (C10). `nothing_recorded`: no symbol is recorded, so growth is `0` by fact, not unknown, and `days_until_full` is `null`.
+         * @description Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day per recorded symbol (7.5e8 bytes, upper bound of the 0.5-0.75 band at 200-depth); `estimated` is `true` (convention C10). `nothing_recorded`: no symbol recorded, so growth is `0` by fact and `days_until_full` is `null`. **Open-ended for readers:** clients must tolerate values they do not know, so adding a basis is an additive change (C-6.3).
          * @enum {string}
          */
         projection_basis?: "measured" | "estimated" | "nothing_recorded";
@@ -7419,7 +7424,7 @@ export interface components {
       | "liquidations"
       | "open_interest"
       | "funding";
-    /** @description Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact: it is read from the system-scope setting `accounts.subaccount_tier` (21-database-schema.md 3.9), never inferred from the account count or `exchange_accounts.max_sub_accounts_hint`. Never recorded: `tier` and `cap` are `null`, `tier_source` is `unrecorded`, `used` still counts. */
+    /** @description Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact (setting `accounts.subaccount_tier`, `21-database-schema.md` §3.9), never inferred from counts or `max_sub_accounts_hint`; `tier` and `cap` are `null` iff `tier_source` is `unrecorded`. */
     SubaccountCapacity: {
       /** @description 5 for `regular`, 20 for `business_kyc`, `null` while unrecorded. */
       cap?: number | null;
@@ -7428,11 +7433,17 @@ export interface components {
        * @description When the tier was recorded (the setting's `updated_at`); `null` if never.
        */
       recorded_at?: string | null;
-      /** @enum {string|null} */
+      /**
+       * @description **Open-ended for readers:** clients must tolerate values they do not know, so adding a tier is an additive change (C-6.3).
+       * @enum {string|null}
+       */
       tier?: "regular" | "business_kyc" | null;
-      /** @enum {string} */
+      /**
+       * @description Deliberately closed; readers may rely on these two values.
+       * @enum {string}
+       */
       tier_source?: "recorded" | "unrecorded";
-      /** @description Most non-deleted sub-accounts (`exchange_accounts.kind = sub`) under any one main account; the exchange applies the cap per main account. */
+      /** @description Most non-deleted live sub-accounts (`exchange_accounts.kind = sub`, `env = live`) under any one main account: the cap binds live exchange UIDs, per main (C-2.11). */
       used?: number;
     } & components["schemas"]["AdminSliceStatus"];
     /**
