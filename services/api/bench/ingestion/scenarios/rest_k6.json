@@ -1,0 +1,10 @@
+{
+  "title": "k6 REST profile: instruments, klines (cold/warm/page-boundary), trades, orderbook, data-coverage (budget #13)",
+  "kind": "rest",
+  "common": {"min_cache_speedup": 2.0},
+  "full": {"driver": "k6", "k6_duration": "10m", "k6_vus": 5,
+           "scaling": "none: k6, 5 VUs (§9 realistic peak), 10 min, uvicorn on 127.0.0.1 over the fixture backend"},
+  "smoke": {"driver": "inprocess", "iterations": 40, "concurrency": 5,
+            "scaling": "in-process httpx ASGI driver (no sockets, no k6) issuing the same request plan, 40 rounds at concurrency 5 (nearest-rank p95 is not the max)"},
+  "tolerances": {"rest_klines_cold_ms": 0.25, "rest_klines_warm_ms": 0.25}
+}

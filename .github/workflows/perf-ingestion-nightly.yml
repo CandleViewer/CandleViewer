@@ -2,10 +2,20 @@ name: perf-ingestion-nightly
 # E08-T06: ingestion soak (30-minute canary) + 5x burst regression. Recorded-not-gating
 # in R0 (30-release-roadmap 4.4): runs nightly, never on PRs. Synthetic feed only - no
 # network egress to the exchange (C-13.5). The 24 h demo soak is a manual run (exception #1778 A).
+# E08-Q04: + the six-scenario perf pack (bench/ingestion) vs bench/baselines/e08 (WARN > 10 %,
+# FAIL > per-metric band, only against a same-machine-profile, non-warn-only baseline: the
+# committed baselines are laptop numbers, so this only WARNs until a CI-runner baseline is
+# recorded). Weekly (Sun) and on dispatch with profile=full: 24 h soak + k6. Never on PRs.
 on:
   schedule:
     - cron: "37 3 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "E08-Q04 pack profile (smoke = scaled nightly; full = 24 h soak + k6 10 min)"
+        type: choice
+        options: [smoke, full]
+        default: smoke
 permissions:
   contents: read
   issues: write
@@ -36,6 +46,30 @@ jobs:
           gh issue create --title "perf: ingestion nightly soak/burst regression ($(date -u +%F))" \
             --label perf --label area/ingestion \
             --body "perf-ingestion-nightly failed. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Artifact: ingestion-soak-results."
+      - name: E08-Q04 harness self-tests + scenario smokes (harness marker)
+        id: pack_tests
+        if: always() && steps.sync.outcome == 'success'
+        working-directory: services/api
+        run: uv run pytest tests/unit/bench -m harness -q -p no:randomly --no-cov
+      - name: E08-Q04 perf pack (six scenarios, smoke profile) + regression gate
+        id: pack
+        if: always() && steps.sync.outcome == 'success'
+        working-directory: services/api
+        env:
+          CV_BENCH_MACHINE_PROFILE: ci-ubuntu-latest
+        run: uv run python -m bench.ingestion.runner all --profile smoke --out-dir bench/reports
+      - name: Open defect on perf-pack regression (diff attached)
+        if: failure() && (steps.pack.outcome == 'failure' || steps.pack_tests.outcome == 'failure') && steps.sync.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: services/api
+        run: |
+          { echo "E08-Q04 perf pack failed (budget breach or regression vs bench/baselines/e08)."
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID (artifact: ingestion-soak-results)."
+            echo "Baselines were not modified by this run."; echo
+            cat bench/reports/gate-diff.md 2>/dev/null || echo "(no gate diff produced)"; } > /tmp/body.md
+          gh issue create --title "perf: E08-Q04 ingestion perf pack regression ($(date -u +%F))" \
+            --label perf --label area/ingestion --label type/bug --body-file /tmp/body.md
       - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         if: always()
         with:
@@ -43,3 +77,42 @@ jobs:
           path: |
             services/api/ingestion-soak.json
             services/api/ingestion-burst.json
+            services/api/bench/reports/
+          if-no-files-found: ignore
+
+  perf-pack-full:
+    # E08-Q04 full profile: 24 h 1x soak (3 symbols) + 10-symbol aggregate + burst + k6 REST.
+    # GitHub-hosted jobs cap at 6 h, so this targets the self-hosted bench runner (E04 bench
+    # environment); dispatch-only until that runner is registered.
+    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'full'
+    runs-on: [self-hosted, bench]
+    timeout-minutes: 1740  # 24 h soak + 1 h aggregate + latency 30 m + rest/burst; report must run
+    env:
+      CV_ENV: test
+      CV_BENCH_MACHINE_PROFILE: bench-runner
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: grafana/setup-k6-action@43b9fc21641a76002687994433dd586f56e791b1 # v1.2.2
+      - id: sync
+        run: uv sync --project services/api
+      - name: E08-Q04 perf pack, full profile
+        id: pack
+        working-directory: services/api
+        run: uv run python -m bench.ingestion.runner all --profile full --out-dir bench/reports
+      - name: Open defect on full-profile failure (diff attached)
+        if: failure() && steps.pack.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: services/api
+        run: |
+          { echo "E08-Q04 full-profile perf pack failed. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"; echo
+            cat bench/reports/gate-diff.md 2>/dev/null; } > /tmp/body.md
+          gh issue create --title "perf: E08-Q04 full perf pack failed ($(date -u +%F))" \
+            --label perf --label area/ingestion --label type/bug --body-file /tmp/body.md
+      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: e08-perf-pack-full
+          path: services/api/bench/reports/
+          if-no-files-found: ignore

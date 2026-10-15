@@ -1,0 +1,35 @@
+{
+  "gate": "warn-only",
+  "harness_version": "e08-q04/1",
+  "machine_profile": "laptop-i7-8550U",
+  "metrics": {
+    "loaded_symbol_lag_ms": {
+      "count": 800.0,
+      "max": 2000.270499999715,
+      "p50": 1000.0269000001936,
+      "p95": 1900.036100000216
+    },
+    "max_backlog": {
+      "count": 1.0,
+      "max": 200.0,
+      "p50": 200.0,
+      "p95": 200.0
+    },
+    "recovery_s": {
+      "count": 1.0,
+      "max": 3.3000000000000007,
+      "p50": 3.3000000000000007,
+      "p95": 3.3000000000000007
+    },
+    "unaffected_lag_loaded_ms": {
+      "count": 1800.0,
+      "max": 1.4586000006602262,
+      "p50": 0.07389999973383965,
+      "p95": 0.25009999990288634
+    }
+  },
+  "note": "Laptop (i7-8550U, 16 GB, Windows 11) smoke-profile numbers. WARN-only until a CI-runner baseline is recorded on ubuntu-latest (same caveat as bench/bar_determinism).",
+  "profile_scaling": "burst shortened to 10 s (15-25 s) on a virtual clock, backlog bound scaled with it; same assertions",
+  "run_profile": "smoke",
+  "scenario": "burst_5x"
+}

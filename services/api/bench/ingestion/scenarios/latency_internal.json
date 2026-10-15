@@ -1,0 +1,11 @@
+{
+  "title": "Backend-internal latency: ingestion receipt -> internal publish (§5.1 spans, E08 slice of #6)",
+  "kind": "latency",
+  "common": {"symbols": 3, "trades_per_s": 50, "book_deltas_per_s": 10, "tick_s": 0.1,
+             "capacity_factor": 4, "inbound_queue": 64, "seed": 17, "budget_ms": 20.0},
+  "full": {"duration_s": 1800, "sample_every_s": 60,
+           "scaling": "none: 30 min, 3 symbols, every trade frame stage-stamped"},
+  "smoke": {"duration_s": 30, "sample_every_s": 5,
+            "scaling": "30 s virtual clock, 3 symbols, every trade frame stage-stamped"},
+  "tolerances": {"receipt_to_publish_ms": 0.05}
+}

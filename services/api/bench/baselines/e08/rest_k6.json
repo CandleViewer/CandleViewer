@@ -1,0 +1,53 @@
+{
+  "gate": "warn-only",
+  "harness_version": "e08-q04/1",
+  "machine_profile": "laptop-i7-8550U",
+  "metrics": {
+    "rest_data_coverage_ms": {
+      "count": 12.0,
+      "max": 108.32340000069962,
+      "p50": 2.2287000001597335,
+      "p95": 108.32340000069962
+    },
+    "rest_instruments_ms": {
+      "count": 12.0,
+      "max": 99.18210000068939,
+      "p50": 2.0893999999316293,
+      "p95": 99.18210000068939
+    },
+    "rest_klines_cold_ms": {
+      "count": 12.0,
+      "max": 527.5094000007812,
+      "p50": 412.0210999999472,
+      "p95": 527.5094000007812
+    },
+    "rest_klines_page_boundary_ms": {
+      "count": 12.0,
+      "max": 467.7193999996234,
+      "p50": 388.76150000032794,
+      "p95": 467.7193999996234
+    },
+    "rest_klines_warm_ms": {
+      "count": 12.0,
+      "max": 63.64880000000994,
+      "p50": 6.052499999896099,
+      "p95": 63.64880000000994
+    },
+    "rest_orderbook_ms": {
+      "count": 12.0,
+      "max": 3.418299999793817,
+      "p50": 2.3249999994732207,
+      "p95": 3.418299999793817
+    },
+    "rest_trades_ms": {
+      "count": 12.0,
+      "max": 12.418299999808369,
+      "p50": 3.297999999631429,
+      "p95": 12.418299999808369
+    }
+  },
+  "note": "Laptop (i7-8550U, 16 GB, Windows 11) smoke-profile numbers. WARN-only until a CI-runner baseline is recorded on ubuntu-latest (same caveat as bench/bar_determinism).",
+  "profile_scaling": "in-process httpx ASGI driver (no sockets, no k6) issuing the same request plan, 12 rounds at concurrency 5",
+  "run_profile": "smoke",
+  "scenario": "rest_k6"
+}

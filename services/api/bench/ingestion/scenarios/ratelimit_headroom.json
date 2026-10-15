@@ -1,0 +1,11 @@
+{
+  "title": "Rate-limit headroom: catalogue refresh + backfill paging under the per-UID bucket (C-12.7)",
+  "kind": "ratelimit",
+  "common": {"symbols": 3, "refresh_every_s": 60, "backfill_pages_per_s": 1.0,
+             "bucket_capacity": 10, "bucket_refill_per_s": 5},
+  "full": {"duration_s": 3600,
+           "scaling": "none: 1 h virtual time, 3 symbols paging 1 page/s each + 1 catalogue refresh/min"},
+  "smoke": {"duration_s": 120,
+            "scaling": "120 s virtual time, same rates"},
+  "tolerances": {"uid_tokens": 0.25}
+}
