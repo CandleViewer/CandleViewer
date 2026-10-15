@@ -1,8 +1,8 @@
 """Per-topic coalescing queue (E17-T03, `23-ws-protocol.md` §8.1-§8.2).
 
 One `CoalescingQueue` per (connection, topic) holds what the topic produced since its last
-emission. A family merged by its §8.2 rule keeps a merge buffer keyed by level, bar or entity, so
-a merge is O(changes) and memory is O(state), not O(updates). `trades` and
+emission. A family merged by its §8.2 rule keeps a merge buffer keyed by level, bar, cell, column
+or entity, so a merge is O(changes) and memory is O(state), not O(updates). `trades` and
 `liquidations` keep an append list (§8.2 "append, never merge"). Every other throttled family,
 and a merged family whose subscriber set `coalesce: false`, queues whole frames; a merged family
 folds them into its merge at the frame bound rather than overflow. `never_throttled` families
@@ -12,7 +12,8 @@ Exactly one pending update leaves verbatim, with its binary `part` and its own r
 or more leave as one merged structured payload with `coalesced_count` and the latest `ts_ms` (the
 emitter adds the §8.2 disclosure). The producer's CVWB parts cannot be merged here, so a merged
 frame is structured even for a binary subscriber. An update that carries nothing new is discarded
-as the client would discard it: an entity older than the pending one (§15 `updated_at_ms`).
+as the client would discard it: an entity older than the pending one (§15 `updated_at_ms`), or a
+column for a heatmap bucket already sent complete.
 
 `pending_bytes` estimates the JSON size of what `take()` would emit, so the connection budget
 (§8.4) counts pending state as well as queued frames; every buffer is also bounded by count. A
@@ -46,15 +47,20 @@ Payload = Mapping[str, Any]
 #: §8.2: append, never merge; throttling batches them into arrays.
 APPENDED_FAMILIES: Final = frozenset({"trades", "liquidations"})
 
-#: Distinct keys (levels, bars, entities) one merge buffer may hold.
+#: Distinct keys (levels, bars, cells, columns, entities) one merge buffer may hold.
 MAX_PENDING_KEYS: Final = 4096
 #: Items one append list may hold before the topic is re-snapshotted instead of truncated.
 MAX_PENDING_ITEMS: Final = 20_000
 #: Whole frames one frame queue may hold.
 MAX_PENDING_FRAMES: Final = 256
+#: Complete heatmap columns remembered as already sent (one snapshot's worth, §6.1.1).
+SENT_COLUMNS_MEMORY: Final = 2000
 
 #: Wire disclosure fields belong to the emitter (§8.2); a producer's copy is never kept.
 _DISCLOSURE: Final = frozenset({"coalesced", "coalesced_count"})
+#: Footprint cell fields that are increments within one bar (§8.2 "values summed").
+_SUMMED_DECIMALS: Final = ("bid_volume", "ask_volume", "delta", "total_volume")
+_SUMMED_COUNTS: Final = ("trades",)
 
 
 class _BufferFullError(Exception):
@@ -103,6 +109,11 @@ def _dec(value: Any) -> Decimal:
     return key
 
 
+def _plain(value: Decimal) -> str:
+    """Wire decimal form (`^-?[0-9]+(\\.[0-9]+)?$`): never an exponent."""
+    return format(value, "f")
+
+
 class _Merge(ABC):
     """Root fields are last-write-wins; subclasses merge their list fields, keep `bytes` (the
     estimated size of the merged lists) current, return False when an update changed nothing (the
@@ -135,6 +146,10 @@ class _Merge(ABC):
     def splits(self, body: Payload) -> bool:
         """True when `body` cannot join the pending merge and must start a new frame."""
         return False
+
+    def emitted(self, body: Payload) -> None:
+        """Called with each emitted payload; only a family that remembers what it sent uses it."""
+        return None
 
     def reset(self) -> None:
         """Forget the pending state after an emission."""
@@ -297,6 +312,102 @@ class _PositionsMerge(_KeyedMerge):
         self.removed = {}
 
 
+class _HeatmapMerge(_KeyedMerge):
+    """§8.2 `heatmap`: per time-bucket column, last write wins; once a bucket's complete column
+    was sent, any later column for that bucket is dropped, so a final column is never re-sent or
+    regressed, unless the update also changes a root field (e.g. `max_value`). Columns leave in
+    time order."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(limit, "columns", _t_key)
+        self.sent: dict[int, None] = {}
+        self.known: dict[str, Any] = {}  # root fields as last seen, across emissions
+
+    def add(self, body: Payload) -> bool:
+        root = {k: v for k, v in body.items() if k not in self.lists}
+        root_changed = any(k not in self.known or self.known[k] != v for k, v in root.items())
+        self.known.update(root)
+        changed = self.merge(body) or root_changed
+        if changed:
+            self.root.update(root)
+            self.root_bytes = _size(self.root)
+        return changed
+
+    def upsert(self, key: Hashable, item: Payload) -> bool:
+        if key in self.sent:
+            return False
+        return super().upsert(key, item)
+
+    def result(self) -> dict[str, Any]:
+        columns = sorted(self.items.values(), key=lambda col: int(col["t_ms"]))
+        return {**self.root, "columns": columns}
+
+    def emitted(self, body: Payload) -> None:
+        for col in body.get("columns") or ():
+            if col.get("complete") is True:
+                self.sent[int(col["t_ms"])] = None
+        while len(self.sent) > SENT_COLUMNS_MEMORY:
+            del self.sent[next(iter(self.sent))]
+
+
+class _FootprintMerge(_Merge):
+    """§8.2 `footprint`: per (bar, price) cell the volume fields are increments summed within the
+    same bar, never across bars; every other bar and cell field is last-write-wins. The bar key is
+    `t_ms`, the only bar identity the §14.4 payload carries."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(limit, ("bars",))
+        self.bars: dict[int, tuple[dict[str, Any], dict[Decimal, dict[str, Any]]]] = {}
+        self.keys = 0
+
+    def merge(self, body: Payload) -> bool:
+        for bar in body.get("bars") or ():
+            t_ms = int(bar["t_ms"])
+            entry = self.bars.get(t_ms)
+            if entry is None:
+                self._grow()
+                entry = self.bars[t_ms] = ({}, {})
+            fields, cells = entry
+            before = _size(fields)
+            fields.update((k, v) for k, v in bar.items() if k != "cells")
+            self.bytes += _size(fields) - before
+            for cell in bar.get("cells") or ():
+                self._cell(cells, cell)
+        return True
+
+    def _grow(self) -> None:
+        if self.keys >= self.limit:
+            raise _BufferFullError
+        self.keys += 1
+
+    def _cell(self, cells: dict[Decimal, dict[str, Any]], cell: Payload) -> None:
+        price = _dec(cell["price"])
+        cur = cells.get(price)
+        if cur is None:
+            self._grow()
+            cur = cells[price] = {}
+        before = _size(cur)
+        for key, value in cell.items():
+            if key in _SUMMED_DECIMALS:
+                cur[key] = _plain(_dec(cur.get(key, 0)) + _dec(value))
+            elif key in _SUMMED_COUNTS:
+                cur[key] = int(cur.get(key, 0)) + int(value)
+            else:
+                cur[key] = value
+        self.bytes += _size(cur) - before
+
+    def result(self) -> dict[str, Any]:
+        bars = []
+        for t_ms in sorted(self.bars):
+            fields, cells = self.bars[t_ms]
+            bars.append({**fields, "cells": [cells[price] for price in sorted(cells)]})
+        return {**self.root, "bars": bars}
+
+    def reset(self) -> None:
+        super().reset()
+        self.bars, self.keys = {}, 0
+
+
 class _AppendMerge(_Merge):
     """§8.2 `trades` / `liquidations`: items appended in arrival order, never merged; `summed`
     counters (the trades `dropped` count since the previous frame) add up."""
@@ -332,6 +443,10 @@ def _id_key(item: Payload) -> Hashable:
     return str(item["id"])
 
 
+def _t_key(item: Payload) -> Hashable:
+    return int(item["t_ms"])
+
+
 def _symbol_key(item: Payload) -> Hashable:
     return str(item["symbol"])
 
@@ -350,6 +465,8 @@ def _metric_key(item: Payload) -> Hashable:
 _RULES: Final[Mapping[str, Callable[[int, int], _Merge]]] = {
     "book": lambda keys, _: _BookMerge(keys),
     "bars": lambda keys, _: _BarsMerge(keys),
+    "footprint": lambda keys, _: _FootprintMerge(keys),
+    "heatmap": lambda keys, _: _HeatmapMerge(keys),
     "metrics": lambda keys, _: _KeyedMerge(keys, "series", _metric_key),
     "ticker": lambda keys, _: _KeyedMerge(keys, "tickers", _symbol_key),
     "wallet": lambda keys, _: _KeyedMerge(keys, "balances", _balance_key, newer=_not_older),
@@ -489,6 +606,9 @@ class CoalescingQueue:
         if merge is not None:
             self._close_window(merge)
         out, self._frames, self._frame_bytes = self._frames, [], 0
+        if merge is not None:
+            for emission in out:
+                merge.emitted(emission.body)
         return out
 
     def _close_window(self, merge: _Merge) -> None:
