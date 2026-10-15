@@ -775,10 +775,10 @@ the 30-minute canary meanwhile.
 
 ### RSK-070 · A replay-origin order reaches an exchange adapter
 
-`Risk: R4` · Category **Security** · L 2 · I 5 · **Score 10 — High** · Owner **Security engineer** · Epics E26, E29 · Status **Open**
+`Risk: R4` · Category **Security** · L 2 · I 5 · **Score 10 — High** · Owner **Security engineer** · Epics E26, E29, E38 · Status **Open**
 
-- **Description** — Introduced by E26-X01 (RP-E01, RP-R03; inherent Critical). Replay presents a trading interface over stale data (E26-S07), but the API contract has no route or field for a replay order and no E29 ticket owns refusing one at the order system. A replay ticket that reuses the live order path, or a client field the server trusts, would send a real order priced on historical data.
-- **Mitigation** — Contract-first replay order path, with the replay origin bound to server-side session state and refused synchronously at the E29-T04 submission boundary before any adapter call, proven by adapter-method spies (#2669, G2; proposed SR (b)); the `source="replay"` injection invariant (E26-T03); abuse cases AC-06 and AC-28 in E26-X02.
+- **Description** — Introduced by E26-X01 (RP-E01, RP-R03; the model rates RP-E01 Critical as inherent risk). Replay presents a trading interface over stale data (E26-S07), but the API contract has no route or field for a replay order and no E29 ticket owns refusing one at the order system. A replay ticket that reuses the live order path, or a client field the server trusts, would send a real order priced on historical data. L 2 reflects that no replay order path exists yet and E26-S07 is unbuilt; the Trigger "E26-S07 starting while #2669 is open" re-scores this entry to L 3, Score 15, Critical.
+- **Mitigation** — Contract-first replay order path, with the replay origin bound to server-side session state and refused synchronously at the E29-T04 submission boundary before any adapter call, proven by adapter-method spies (#2669, G2; requirement (b) in the model's section 12); E38-S03's no-transport interlock and routing, re-checked by E38-X02, keep the simulator from reaching a transport but do not refuse a replay-origin order on the live path; the `source="replay"` injection invariant (E26-T03); abuse cases AC-06 and AC-28 in E26-X02.
 - **Trigger** — Any adapter call carrying a replay-origin intent (must be zero); E26-S07 starting while #2669 is open.
 - **Contingency** — Disable replay trading by config, run the kill switch on the affected account, and audit the exposure window against the exchange.
 
@@ -847,7 +847,7 @@ Each of the 66 entries appears in **exactly one** category row below — the cat
 
 #### 10.1.1 Numeric reconciliation (auditor's check)
 
-This subsection exists so an auditor does not have to re-derive the arithmetic. Three independent partitions of the same 66 entries are published in this document; all three were checked to sum to 63 with **no ID appearing twice within a partition and no ID missing from any partition**:
+This subsection exists so an auditor does not have to re-derive the arithmetic. Three independent partitions of the same 66 entries are published in this document; all three were checked to sum to 66 with **no ID appearing twice within a partition and no ID missing from any partition**:
 
 | Partition                  | Rows                     | Sum                                    | Duplicates within the partition | Entries not covered |
 | -------------------------- | ------------------------ | -------------------------------------- | ------------------------------- | ------------------- |
@@ -897,12 +897,12 @@ This is the second of the three partitions reconciled in §10.1.1. Each of the 6
 | ----- | ---------------------------------------------------------------------------------------------------- |
 | R0    | RSK-001 (spike result), RSK-012 (hot-tier decision), RSK-003, RSK-029                                |
 | R1    | RSK-001, RSK-002, RSK-004, RSK-011, RSK-026, RSK-040                                                 |
-| R2    | RSK-004, RSK-005, RSK-010, RSK-027, RSK-028, RSK-044, RSK-049, RSK-069                               |
+| R2    | RSK-004, RSK-005, RSK-010, RSK-027, RSK-028, RSK-044, RSK-049, RSK-069, RSK-070, RSK-071             |
 | R3    | RSK-013, RSK-014, RSK-016, RSK-017, RSK-018, RSK-019, RSK-020, RSK-034, RSK-050, RSK-056             |
 | R4    | RSK-013, RSK-014, RSK-016, RSK-019, RSK-020, RSK-022, RSK-023, RSK-043, RSK-046, RSK-047             |
 | R5    | RSK-040, RSK-044, RSK-046, RSK-047, RSK-048, plus every accepted risk re-reviewed against its expiry |
 
-Distinct IDs referenced at least once as a gating item: 30 of 46. The remaining 16 are tracked and reviewed per §1.3 but do not by themselves hold a train gate closed; they are RSK-015, 021, 024, 025, 030, 031, 032, 033, 035, 036, 037, 038, 039, 041, 042, 051 — predominantly schedule, team and vendor-contingency risks whose consequence is a date or a contingency plan, not a gate, and gates are never waived for dates (`33-raci.md` §10, `07-release-and-prr.md`).
+Distinct IDs referenced at least once as a gating item: 34 of 66. The remaining 32 are tracked and reviewed per §1.3 but do not by themselves hold a train gate closed; they are RSK-015, 021, 024, 025, 030, 031, 032, 033, 035, 036, 037, 038, 039, 041, 042, 051, 052, 053, 054, 055, 057, 058, 059, 060, 061, 062, 063, 064, 065, 066, 067, 068 — the schedule, team, scope and vendor-contingency risks, whose consequence is a date or a contingency plan, not a gate (RSK-015, 024, 025, 031–033, 035–039, 041, 042), and the security, technical and operational risks that no train row names (RSK-021, 030, 051–055, 057–068). Gates are never waived for dates (`33-raci.md` §10, `07-release-and-prr.md`).
 
 ---
 

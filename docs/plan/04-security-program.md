@@ -352,14 +352,16 @@ linked from the model's section 7; abuse cases AC-01..AC-15 go to E16-Q01.
 E26-X01) models the flow client → REST control → session store → QuestDB and Parquet/DuckDB readers → clock →
 injector → bus → WS gateway, plus the paper-matcher branch, against the built E26-T02 read path and the unbuilt
 session, clock, seek, REST, router and PaperBridge work. S3 is re-confirmed High and held structurally (SR-097: no path
-parameter anywhere, registry-only partitions, resolved-path containment twice, DuckDB opens the resolved path). Of 50
+parameter anywhere, registry-only partitions, resolved-path containment twice, DuckDB opens the resolved path). Of 53
 rows, the Critical one is a replay-origin order reaching an exchange (RP-E01): no contract route carries a replay order
 and no E29 ticket owns the OMS refusal (gap G2). High: replay CPU on the event loop the OMS shares, where speed is not a
 CPU bound (RP-D06, G1), seek amplification, a stalled consumer, sessions that cannot be destroyed while playing and
 hold partitions out of retention (RP-D07), simulated fills that are not distinguishable from real ones (RP-R01) or
 that reach a real account's grantees and risk state (RP-E05), stored bookmark and pane content, and live/replay
-provenance confusion. Gaps G1-G10 are filed as #2668-#2677 and listed in its section 12; the residuals are RSK-069..RSK-071 in
-`32-risk-register.md`; abuse cases AC-01..AC-29 go to E26-X02. Status Draft.
+provenance confusion. Gaps G1-G10 are filed as #2668-#2677 and listed in its section 12. The open residuals RR1-RR3 (replay CPU on the
+shared loop, a replay-origin order, simulated fills reaching a real account) are RSK-069..RSK-071 in
+`32-risk-register.md`, and RR4 (sessions that cannot be destroyed while playing) is tracked through G6 and G7; all four
+are open and not accepted. Abuse cases AC-01..AC-29 go to E26-X02. Status Draft.
 
 **E22 big trades & bubbles** (`docs/security/threat-models/E22-big-trades.md`, ticket E22-X01) is
 availability-first: unbounded `/market/trades` window, `min_size=0`, extreme `cluster_window_ms`, per-user
@@ -552,7 +554,10 @@ KV1, KV2 and KV3 (E27-X01) are rated Low contingent on #2338 and #2270, KV14 on 
 of Area 13 on the open E27 tickets that build their controls (`docs/security/threat-models/E27-accounts.md`
 §11.1); the same re-triage applies. KV6 is Medium contingent on SR-E27-19 or #2279 and stays High, not accepted,
 until one ships (RSK-068). KV9 is a Medium residual awaiting Owner acceptance (that model's §11.2); KV13 stays
-Medium until E27-Q03 measures it.
+Medium until E27-Q03 measures it. The open High and Critical residuals of the replay model (E26-X01), RR1 to RR4, are
+not in the counts above and are not accepted: they are release blockers for R2 under the rule at the head of this
+paragraph; RR1 to RR3 are tracked as RSK-069..RSK-071 and RR4 through G6 and G7
+(`docs/security/threat-models/E26-replay.md` §13).
 
 ---
 
