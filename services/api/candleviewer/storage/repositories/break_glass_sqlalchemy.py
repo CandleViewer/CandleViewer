@@ -8,14 +8,14 @@ and match the owner-floor predicate of migration 0001, consume the code, revoke
 every unrevoked method and live session, insert the critical event, commit once.
 A refusal or any error rolls back and changes zero rows. In M10 so `auth` imports
 no storage driver (ADR-0003). Static, parameterised statements; the recovery code
-arrives as its keyed hash, never in clear.
+arrives as its keyed hash, never in clear, and only the consume statement binds it.
 """
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 import sqlalchemy as sa
 
@@ -51,6 +51,10 @@ _MESSAGE = (
     "the Owner must enrol TOTP again"
 )
 
+#: The port's refusal channel (`auth.break_glass.BreakGlassStoreRefusal`), typed here
+#: as a `Literal` because `storage` may not import the `auth` enum.
+BreakGlassStoreRefusal = Literal["not_owner", "recovery_code_invalid"]
+
 
 class BreakGlassResetRow(NamedTuple):
     methods_revoked: int
@@ -69,15 +73,18 @@ class SqlAlchemyBreakGlassRepository:
         now: datetime,
         recovery_code_hash: str | None,
         correlation_id: str,
-    ) -> BreakGlassResetRow | str:
+    ) -> BreakGlassResetRow | BreakGlassStoreRefusal:
         """`not_owner` / `recovery_code_invalid` after rolling back, else the counts."""
-        params = {"u": target_user_id, "now": now, "h": recovery_code_hash}
+        params = {"u": target_user_id, "now": now}  # the lock and revokes: no hash bind
         async with self._relational.unit_of_work() as uow:
             run = uow.session.execute
-            refusal = None
+            refusal: BreakGlassStoreRefusal | None = None
             if (await run(_LOCK_OWNER, params)).first() is None:
                 refusal = "not_owner"
-            elif recovery_code_hash is not None and not (await run(_CONSUME_CODE, params)).all():
+            elif (
+                recovery_code_hash is not None
+                and not (await run(_CONSUME_CODE, {**params, "h": recovery_code_hash})).all()
+            ):
                 refusal = "recovery_code_invalid"
             if refusal is not None:
                 await uow.rollback()
@@ -93,10 +100,10 @@ class SqlAlchemyBreakGlassRepository:
             event = await run(
                 _INSERT_EVENT,
                 {
-                    **params,
                     "message": _MESSAGE,
                     "details": json.dumps(details, sort_keys=True),
                     "corr": correlation_id,
+                    "now": now,
                 },
             )
             row = BreakGlassResetRow(methods, sessions, int(event.scalar_one()))

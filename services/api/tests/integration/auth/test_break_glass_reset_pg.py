@@ -36,6 +36,7 @@ from candleviewer.auth.break_glass import (
 )
 from candleviewer.auth.errors import BreakGlassRefused
 from candleviewer.auth.recovery_codes import generate_recovery_code, hash_recovery_code
+from candleviewer.settings import Environment
 from candleviewer.storage.repositories.break_glass_sqlalchemy import (
     SqlAlchemyBreakGlassRepository,
 )
@@ -234,13 +235,10 @@ async def test_code_consumed_once_concurrently(pg_dsn: str) -> None:
     async with _env(pg_dsn) as (engine, store):
         uid, code = await _user(engine)
         # The live rule sits in the service, which hands the store only the keyed hash.
-        svc = BreakGlassResetService(store, recovery_code_key=_KEY)
+        svc = BreakGlassResetService(store, recovery_code_key=_KEY, environment=Environment.LIVE)
         target = uuid.UUID(uid)
         runs = await asyncio.gather(
-            *(
-                svc.reset(target, live=True, recovery_code=code, correlation_id=uuid.uuid4())
-                for _ in range(6)
-            ),
+            *(svc.reset(target, recovery_code=code, correlation_id=uuid.uuid4()) for _ in range(6)),
             return_exceptions=True,
         )
         assert sum(isinstance(r, BreakGlassResetResult) for r in runs) == 1
