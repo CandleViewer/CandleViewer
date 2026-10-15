@@ -16,6 +16,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Coroutine
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Final, Literal, Protocol
 from uuid import UUID
@@ -27,6 +28,13 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from candleviewer.api.drawings_models import MAX_JSON_DEPTH, format_errors
+from candleviewer.api.idempotency import (
+    IdempotencyCache,
+    IdempotencyKeyReuse,
+    remember,
+    replay,
+    request_fingerprint,
+)
 from candleviewer.api.workspaces_models import (
     MAX_LAYOUT_BODY_BYTES,
     MAX_WORKSPACE_BODY_BYTES,
@@ -62,6 +70,7 @@ _CODES: Final[dict[str, tuple[int, str]]] = {
     "forbidden": (403, "Authenticated but lacking the required permission"),
     "not_found": (404, "Resource does not exist or is out of the caller's scope"),
     "conflict": (409, "Concurrent modification or state conflict"),
+    "idempotency_key_reuse": (409, "Idempotency-Key reused with a different request payload"),
     "version_conflict": (412, "If-Match / ETag precondition failed"),
     "payload_too_large": (413, "Request body or batch exceeds the operation's size ceiling"),
     "validation_failed": (422, "Request body or parameters failed schema validation"),
@@ -477,14 +486,17 @@ def make_workspaces_router(
     new_id: Callable[[], UUID] = _new_id,
     metrics: WorkspacesMetricsLike | None = None,
     timer: Callable[[], float] = time.perf_counter,
+    idempotency: IdempotencyCache | None = None,
 ) -> APIRouter:
     """`audit` is mandatory (a denial must leave its `rbac.denied` record). No resolver (no
     identity store: nothing can verify a session) fails closed with 401; no store with 503.
     `metrics` records 412s, panes per changed layout write and per-operation duration
     (stands in for `http_request_duration_seconds` until platform gap #2421); `None` records
-    nothing."""
+    nothing. `idempotency` is this router's own Idempotency-Key LRU (D23; the helper is shared,
+    ruling Q5, the instance is not): a new one if None, separate from the /drawings cache."""
     if audit is None:
         raise TypeError("make_workspaces_router: an audit emitter is required")
+    cache = IdempotencyCache() if idempotency is None else idempotency
 
     class _TimedRoute(_ProblemRoute):
         def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
@@ -532,6 +544,22 @@ def make_workspaces_router(
             raise _Problem("forbidden", f"Requires {permission.value}.",
                            required_permissions=[permission.value]) from None  # fmt: skip
         return got
+
+    def keyed(request: Request, owner: str, operation: str, raw: bytes = b"") -> _Keyed:
+        """D23/D13: the optional `Idempotency-Key` (malformed: 422, at the header step) and the
+        fingerprint, method + path + body. After every 422 and before any 404: a stored 2xx for
+        this key and fingerprint is replayed; the key with another fingerprint is a 409."""
+        header = request.headers.get("idempotency-key")
+        key = None if header is None else f"{operation}:{_uuid('Idempotency-Key', header)}"
+        digest = request_fingerprint(request.method, request.url.path, raw)
+        try:
+            return _Keyed(owner, key, digest, replay(cache, owner, key, digest))
+        except IdempotencyKeyReuse:
+            msg = "The key was first used with another request."
+            raise _Problem("idempotency_key_reuse", msg) from None
+
+    def kept(k: _Keyed, out: Response) -> Response:
+        return remember(cache, k.owner, k.key, k.digest, out)  # 2xx only
 
     def store() -> WorkspaceRepository:
         repo = repo_provider()
@@ -585,14 +613,16 @@ def make_workspaces_router(
     @router.post("/workspaces")
     async def create_workspace(request: Request) -> Response:
         owner = str((await caller(request, Permission.WORKSPACES_WRITE)).user_id)
-        body = _parse(WorkspaceIn, _text(await _read_capped(request, MAX_WORKSPACE_BODY_BYTES)))
-        _idempotency_key(request)  # replay arrives with the shared cache (ruling Q5)
+        raw = await _read_capped(request, MAX_WORKSPACE_BODY_BYTES)
+        body = _parse(WorkspaceIn, _text(raw))
+        if (k := keyed(request, owner, "createWorkspace", raw)).hit is not None:
+            return k.hit
         try:
             row = await store().create_workspace(owner, str(new_id()), _workspace_fields(body))
         except WorkspaceConflictError as exc:
             raise _conflict(exc) from None
         _log().info("workspace_created", user_id=owner, workspace_id=row.id)
-        return _respond(_dump_workspace(row), row.token, 201)
+        return kept(k, _respond(_dump_workspace(row), row.token, 201))
 
     @router.put("/workspaces/{workspaceId}")
     async def update_workspace(
@@ -625,7 +655,8 @@ def make_workspaces_router(
     ) -> Response:
         principal = await caller(request, Permission.WORKSPACES_WRITE)
         owner, wid = str(principal.user_id), _uuid("workspaceId", workspace_id)
-        _idempotency_key(request)
+        if (k := keyed(request, owner, "deleteWorkspace")).hit is not None:
+            return k.hit
         try:
             await store().soft_delete_workspace(owner, wid)
         except WorkspaceNotFoundError:
@@ -633,7 +664,7 @@ def make_workspaces_router(
         except WorkspaceConflictError as exc:
             raise _conflict(exc) from None
         _log().info("workspace_deleted", user_id=owner, workspace_id=wid)
-        return Response(status_code=204)
+        return kept(k, Response(status_code=204))
 
     async def miss(p: AuditPrincipal, wid: str, lid: str | None, mode: str) -> _Problem:
         """The same 404 whatever is wrong with the path; the first live foreign object on it
@@ -698,7 +729,8 @@ def make_workspaces_router(
         raw = await _read_capped(request, MAX_LAYOUT_BODY_BYTES)
         wid = _uuid("workspaceId", workspace_id)
         body = _parse(LayoutIn, _text(raw))
-        _idempotency_key(request)  # replay arrives with the shared cache (ruling Q5)
+        if (k := keyed(request, owner, "createLayout", raw)).hit is not None:
+            return k.hit
         try:
             row = await store().create_layout(owner, wid, str(new_id()), _layout_fields(body))
         except WorkspaceNotFoundError:
@@ -708,7 +740,7 @@ def make_workspaces_router(
         panes_written(len(row.panes))
         _log().info("layout_created", user_id=owner, workspace_id=wid, layout_id=row.id,
                     pane_count=len(row.panes))  # fmt: skip
-        return _respond(_dump_layout(row), row.token, 201)
+        return kept(k, _respond(_dump_layout(row), row.token, 201))
 
     @router.get("/workspaces/{workspaceId}/layouts/{layoutId}")
     async def get_layout(
@@ -761,23 +793,26 @@ def make_workspaces_router(
         principal = await caller(request, Permission.WORKSPACES_WRITE)
         owner, wid = str(principal.user_id), _uuid("workspaceId", workspace_id)
         lid = _uuid("layoutId", layout_id)
-        _idempotency_key(request)
+        if (k := keyed(request, owner, "deleteLayout")).hit is not None:
+            return k.hit
         try:
             await store().soft_delete_layout(owner, wid, lid)
         except WorkspaceNotFoundError:
             raise await miss(principal, wid, lid, "write") from None
         _log().info("layout_deleted", user_id=owner, workspace_id=wid, layout_id=lid)
-        return Response(status_code=204)
+        return kept(k, Response(status_code=204))
 
     return router
 
 
-def _idempotency_key(request: Request) -> None:
-    """Accepted, never required; a malformed value violates the parameter (422). Replay needs the
-    shared cache (ruling Q5) and is a later slice, so a valid key is currently ignored."""
-    raw = request.headers.get("idempotency-key")
-    if raw is not None:
-        _uuid("Idempotency-Key", raw)
+@dataclass(frozen=True, slots=True)
+class _Keyed:
+    """One keyed write: `hit` is the replay to return, else `kept()` stores the 2xx outcome."""
+
+    owner: str
+    key: str | None
+    digest: str
+    hit: Response | None
 
 
 __all__ = [

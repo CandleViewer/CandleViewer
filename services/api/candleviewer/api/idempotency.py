@@ -27,7 +27,7 @@ IDEMPOTENCY_ENTRY_OVERHEAD: Final = 512
 
 @dataclass(frozen=True, slots=True)
 class StoredResponse:
-    digest: str  # sha256 of the raw request body
+    digest: str  # request fingerprint: `body_digest` (/drawings), `request_fingerprint`
     status: int
     body: bytes
     etag: str | None
@@ -108,6 +108,12 @@ def body_digest(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def request_fingerprint(method: str, path: str, raw: bytes) -> str:
+    """D23: sha256(method + "\\n" + path + "\\n" + raw body), so a key reused on another path (two
+    DELETEs, two workspaces) is a reuse, not a replay."""
+    return hashlib.sha256(f"{method}\n{path}\n".encode() + raw).hexdigest()
+
+
 def idempotency_key(request: Request, operation: str) -> str | None:
     """`operationId:<uuid>` from the optional header; `ValueError` when it is not a UUID."""
     raw = request.headers.get("idempotency-key")
@@ -123,14 +129,15 @@ def replay(cache: IdempotencyCache, owner: str, key: str | None, digest: str) ->
     if hit.digest != digest:
         raise IdempotencyKeyReuse(key)
     headers = {"Idempotency-Replayed": "true"} | ({"ETag": hit.etag} if hit.etag else {})
-    return Response(hit.body, hit.status, headers, media_type="application/json")
+    media_type = "application/json" if hit.body else None  # a stored 204 stays bodiless
+    return Response(hit.body, hit.status, headers, media_type=media_type)
 
 
 def remember(
     cache: IdempotencyCache, owner: str, key: str | None, digest: str, out: Response
 ) -> Response:
-    """Keep `out` (a 2xx: callers pass successes only) for replay when a key was sent."""
-    if key is not None:
+    """Keep `out` for replay when a key was sent and it is a 2xx; returns `out` unchanged."""
+    if key is not None and 200 <= out.status_code < 300:
         etag = out.headers.get("etag")
         cache.put(owner, key, StoredResponse(digest, out.status_code, bytes(out.body), etag))
     return out
@@ -140,5 +147,5 @@ __all__ = [
     "IDEMPOTENCY_ENTRY_OVERHEAD", "IDEMPOTENCY_MAX_BYTES", "IDEMPOTENCY_MAX_ENTRIES",
     "IDEMPOTENCY_MAX_ENTRY_BYTES", "IDEMPOTENCY_TTL_S", "IDEMPOTENCY_USER_MAX_BYTES",
     "IDEMPOTENCY_USER_MAX_ENTRIES", "IdempotencyCache", "IdempotencyKeyReuse", "StoredResponse",
-    "body_digest", "idempotency_key", "remember", "replay",
+    "body_digest", "idempotency_key", "remember", "replay", "request_fingerprint",
 ]  # fmt: skip
