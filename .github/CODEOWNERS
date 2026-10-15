@@ -153,65 +153,41 @@
 # ---------------------------------------------------------------------------
 # Backend monolith
 # ---------------------------------------------------------------------------
-# future: E02/later scaffolding; directory does not exist yet.
+# Module rules name the real package root `services/api/candleviewer/<module>/`
+# (E02-T11 layout); they used to name `services/api/<module>/`, which matches no
+# file (#2706). `config/`, `http/`, `storage/migrations/` and `storage/schemas/`
+# (the C-5.8 path) are still placeholders: no module of that name exists yet.
 /services/                              @CandleViewer/backend
-# future: E02/later scaffolding; directory does not exist yet.
 /services/api/                          @CandleViewer/backend
 # future: E02/later scaffolding; directory does not exist yet.
 /services/api/config/                   @CandleViewer/backend @CandleViewer/devsecops
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/secrets/                  @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/auth/                     @CandleViewer/security
+/services/api/candleviewer/secrets/     @CandleViewer/security
+/services/api/candleviewer/auth/        @CandleViewer/security
 /services/api/tests/contract/rbac/matrix.yaml  @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/audit/                    @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/admin/                    @CandleViewer/backend @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/exchange/                 @CandleViewer/backend @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/exchange/base/            @CandleViewer/architecture @CandleViewer/backend
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/exchange/bybit/           @CandleViewer/backend @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/oms/                      @CandleViewer/backend @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/risk/                     @CandleViewer/backend @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/rules/                    @CandleViewer/backend @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/paper/                    @CandleViewer/backend
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/accounts/                 @CandleViewer/backend @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/bus/                      @CandleViewer/backend @CandleViewer/architecture
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/ingestion/                @CandleViewer/backend
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/book/                     @CandleViewer/backend
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/bars/                     @CandleViewer/backend
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/orderflow/                @CandleViewer/backend
-# future: E22-T01 (SR-E22 constants module); file does not exist yet.
-/services/api/orderflow/limits.py     @CandleViewer/backend @CandleViewer/security
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/recorder/                 @CandleViewer/backend @CandleViewer/devsecops
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/replay/                   @CandleViewer/backend
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/journal/                  @CandleViewer/backend
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/alerts/                   @CandleViewer/backend
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/observability/            @CandleViewer/devsecops @CandleViewer/backend
+/services/api/candleviewer/audit/       @CandleViewer/security
+/services/api/candleviewer/admin/       @CandleViewer/backend @CandleViewer/security
+/services/api/candleviewer/exchange/    @CandleViewer/backend @CandleViewer/security
+/services/api/candleviewer/exchange/base/  @CandleViewer/architecture @CandleViewer/backend
+/services/api/candleviewer/exchange/bybit/  @CandleViewer/backend @CandleViewer/security
+/services/api/candleviewer/oms/         @CandleViewer/backend @CandleViewer/security
+/services/api/candleviewer/risk/        @CandleViewer/backend @CandleViewer/security
+/services/api/candleviewer/rules/       @CandleViewer/backend @CandleViewer/security
+/services/api/candleviewer/paper/       @CandleViewer/backend
+/services/api/candleviewer/accounts/    @CandleViewer/backend @CandleViewer/security
+/services/api/candleviewer/bus/         @CandleViewer/backend @CandleViewer/architecture
+/services/api/candleviewer/ingestion/   @CandleViewer/backend
+/services/api/candleviewer/book/        @CandleViewer/backend
+/services/api/candleviewer/bars/        @CandleViewer/backend
+/services/api/candleviewer/orderflow/   @CandleViewer/backend
+/services/api/candleviewer/recorder/    @CandleViewer/backend @CandleViewer/devsecops
+/services/api/candleviewer/replay/      @CandleViewer/backend
+/services/api/candleviewer/journal/     @CandleViewer/backend
+/services/api/candleviewer/alerts/      @CandleViewer/backend
+/services/api/candleviewer/observability/  @CandleViewer/devsecops @CandleViewer/backend
 # future: E02/later scaffolding; directory does not exist yet.
 /services/api/http/                     @CandleViewer/backend @CandleViewer/architecture
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/ws/                       @CandleViewer/backend @CandleViewer/architecture
-# future: E02/later scaffolding; directory does not exist yet.
-/services/api/storage/                  @CandleViewer/backend @CandleViewer/architecture
+/services/api/candleviewer/ws/          @CandleViewer/backend @CandleViewer/architecture
+/services/api/candleviewer/storage/     @CandleViewer/backend @CandleViewer/architecture
 # future: E02/later scaffolding; directory does not exist yet.
 /services/api/storage/migrations/       @CandleViewer/backend @CandleViewer/architecture @CandleViewer/security
 # future: E02/later scaffolding; directory does not exist yet.
@@ -227,8 +203,8 @@
 # these two entries are what makes that gate fire in practice.
 /services/api/candleviewer/db/          @CandleViewer/backend @CandleViewer/architecture @CandleViewer/security
 /services/api/candleviewer/migrations/  @CandleViewer/backend @CandleViewer/architecture @CandleViewer/security
-# E22-T01: the SR-E22 constants module at its real path (the `/services/api/orderflow/limits.py`
-# entry above predates the `candleviewer/` package layout). Threat model E22 §7.
+# E22-T01: the SR-E22 constants module at its real path. Threat model E22 §7. (Its pre-`candleviewer/`
+# placeholder `/services/api/orderflow/limits.py` was removed with the others in #2706.)
 /services/api/candleviewer/orderflow/limits.py  @CandleViewer/backend @CandleViewer/security
 /services/api/pyproject.toml            @CandleViewer/backend @CandleViewer/devsecops @CandleViewer/security
 
