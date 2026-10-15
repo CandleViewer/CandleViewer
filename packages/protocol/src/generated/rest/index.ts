@@ -203,13 +203,16 @@ export interface paths {
      *
      *     The tier is committed and audited before capacity is read. If the `used` source then
      *     fails, the call still returns `200` with `status: error`, and `tier`, `cap`, `tier_source`
-     *     and `recorded_at` are populated. A successful write invalidates the cached `subaccounts`
-     *     slice, so the next `GET /admin/capacity` shows the new tier at once (E42-T01 AC3).
+     *     and `recorded_at` are populated. `503 store_unavailable` when storage fails: the tier is
+     *     unchanged and no `settings.change` row is written. Its `detail` is a fixed reason, never
+     *     the driver error. A successful write invalidates the cached `subaccounts` slice, so the
+     *     next `GET /admin/capacity` shows the new tier at once (E42-T01 AC3).
      *
      *     `Idempotency-Key` is not used: a repeat with the same tier returns `200` and is still
      *     audited (before == after). No step-up: `admin:write` is not an SR-025 action class, and a
-     *     higher tier only widens a local cap on `createExchangeAccount`, which is itself step-up
-     *     gated (SR-E27-02).
+     *     higher tier only widens a local cap on `createExchangeAccount`, which SR-E27-02 requires
+     *     to be step-up gated; its accounts are inert until keys are attached via the step-up-gated
+     *     key routes (SR-025).
      */
     put: operations["setSubaccountTier"];
     post?: never;
@@ -7539,7 +7542,7 @@ export interface components {
        * @enum {string}
        */
       tier_source?: "recorded" | "unrecorded";
-      /** @description Most non-deleted sub-accounts in the process environment (live in production; C-2.11) under any one main account (`exchange_accounts.kind = sub`): the cap binds exchange UIDs, per main. */
+      /** @description Most non-deleted sub-accounts in the process environment (live in production; C-2.11) under any one main account (`exchange_accounts.kind = sub`): the cap binds exchange UIDs, per main. The process environment is `CV_ENV`, the process-scope key (`20-architecture.md` §7.2), not the per-session `/session/environment` switch. */
       used?: number;
     } & components["schemas"]["AdminSliceStatus"];
     /**

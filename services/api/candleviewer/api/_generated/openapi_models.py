@@ -5186,7 +5186,7 @@ class SubaccountCapacity(AdminSliceStatus):
     used: Annotated[
         int | None,
         Field(
-            description="Most non-deleted sub-accounts in the process environment (live in production; C-2.11) under any one main account (`exchange_accounts.kind = sub`): the cap binds exchange UIDs, per main.\n",
+            description="Most non-deleted sub-accounts in the process environment (live in production; C-2.11) under any one main account (`exchange_accounts.kind = sub`): the cap binds exchange UIDs, per main. The process environment is `CV_ENV`, the process-scope key (`20-architecture.md` §7.2), not the per-session `/session/environment` switch.\n",
             ge=0,
         ),
     ] = None
