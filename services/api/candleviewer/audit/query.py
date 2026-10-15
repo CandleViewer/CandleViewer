@@ -283,7 +283,10 @@ class AuditQueryService:
         so entries appended during the run are not checked; a range past the head checks
         nothing. Keyset batches of `batch_size` rows, hashed off the event loop; the walk
         stops at the first divergence (`kind` says which check failed). A database failure,
-        a read over its time budget or a full hasher raises and returns nothing."""
+        a read over its time budget or a full hasher raises and returns nothing; a
+        `batch_size` below 1 is a `ValueError`, never an empty "verified" walk."""
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
         head = await self._repository.read_head()
         last_id = 0 if head is None else head[0]
         if to_id is not None:

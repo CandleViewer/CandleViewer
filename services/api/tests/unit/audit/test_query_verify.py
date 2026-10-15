@@ -366,12 +366,24 @@ async def test_verify_cancelled_mid_run_leaves_no_fetch_running(
         return await fetch(**kw)
 
     repo.fetch_verify_batch = stalled  # type: ignore[method-assign]  # spy on the fake
-    run = asyncio.ensure_future(AuditQueryService(repo).verify(batch_size=3))
+    svc = AuditQueryService(repo)
+    run = asyncio.ensure_future(svc.verify(batch_size=3))
     await gate.wait()
     run.cancel()
     with pytest.raises(asyncio.CancelledError):
         await run
     assert pending and all(task.done() for task in pending)
+    assert svc._hasher.pending == 0  # the hashing job finished, too
+
+
+@pytest.mark.parametrize("batch_size", [0, -1])
+async def test_verify_with_no_room_in_a_batch_is_refused_not_verified(
+    repo: FakeAuditRepository, clock: FakeClock, batch_size: int
+) -> None:
+    """Review of #2450: a batch of 0 rows used to walk nothing and report `verified`."""
+    await _seed(repo, 2, clock)
+    with pytest.raises(ValueError, match="batch_size"):
+        await AuditQueryService(repo).verify(batch_size=batch_size)
 
 
 _FIELDS = ["actor_label", "action", "reason", "before_state", "object_id", "event_ts", "severity"]
@@ -508,3 +520,4 @@ async def test_verify_a_deleted_predecessor_breaks_at_from_id(
     del repo.rows[3]  # id 4
     result = await AuditQueryService(repo).verify(from_id=5)
     assert (result.verified, result.first_bad_id, result.entries_checked) == (False, 5, 1)
+    assert result.kind is ChainBreakKind.PREV_HASH_MISMATCH
