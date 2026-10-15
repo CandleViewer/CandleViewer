@@ -372,6 +372,42 @@ repository's secret settings, never from an agent session.
   is no shared credential to rotate.
 - **Secret scanning.** If a fixture secret leaks, follow `SECURITY.md` and rotate immediately.
 
+## 9. A user says their correct TOTP code is refused (clock skew)
+
+The server accepts the current 30 s step and one step either side (SR-021, `TOTP_SKEW_STEPS` in
+`auth/totp.py`). A code from a clock further off is refused exactly like a typo: the one generic
+`401` at login (`api/auth.py`), the same refusal at enrolment confirmation and step-up. **The user
+is never told it is a clock problem** (a distinct answer would be an oracle). The operator is, in
+two places (#2146):
+
+- `auth_totp_clock_skew_total{kind}` on the private `/metrics` listener; `kind` is
+  `authenticator_behind` or `authenticator_ahead`.
+- One `system_events` row per occurrence: `component` `auth`, `kind` `totp_clock_skew`, `severity`
+  `warning`, `details` `{surface, kind, offset_steps, offset_seconds}` (`surface`: `login`,
+  `enrolment` or `step_up`; a step is 30 s). It holds no user id, code or secret: match it to the
+  user by time with the `auth.mfa_failed` audit entry. The log line `auth.totp_clock_skew` carries
+  the `request_id`.
+
+It fires only for a code that is right for a step 2 to 10 steps (1 to 5 min) from the server's; a
+wrong guess or a code further off stays silent.
+
+1. Confirm: `curl -s http://127.0.0.1:9108/metrics | grep auth_totp_clock_skew_total` is non-zero
+   and rising. Read the events from the support bundle (`POST $API/admin/support-bundle`,
+   `system_events.json`, which carries `message`) or with direct database access:
+
+   ```sql
+   SELECT event_ts, message, details FROM system_events
+   WHERE component = 'auth' AND kind = 'totp_clock_skew' ORDER BY event_ts DESC LIMIT 20;
+   ```
+
+2. Whose clock? One user, always the same side: that user's device. Several users at once, or
+   everyone after the host slept and resumed: the **server**. Check `exchange_clock_drift_ms`, the
+   `BybitClockDrift*` alerts (`docs/plan/runbooks/clock-sync.md`) and the host time source first.
+3. Fix the clock, not the tolerance. Device: automatic time on (or the authenticator app's time
+   correction), then sign in again from the password step. Server: correct the host time. No
+   setting widens the window and none may be added (SR-021).
+4. Verify: a fresh sign-in succeeds and the counter stops rising.
+
 ## Known gaps referenced above
 
 | Gap                                                                       | Reference            |

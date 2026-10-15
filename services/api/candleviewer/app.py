@@ -383,6 +383,8 @@ def build_auth_service(
         session_repository=SqlAlchemySessionRepository(relational, _record_factory(SessionRecord)),
         clock=clock,
         invite_repository=SqlAlchemyInviteRepository(relational, _record_factory(InviteRecord)),
+        # #2146: a TOTP clock-skew event is a `system_events` row (the health board's table).
+        system_events=PgSystemEventWriter(relational),
     )
 
 

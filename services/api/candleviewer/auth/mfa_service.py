@@ -44,6 +44,7 @@ from candleviewer.auth.models import (
 )
 from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recovery_code
 from candleviewer.auth.totp import generate_secret, otpauth_uri, secret_to_base32, verify_code
+from candleviewer.auth.totp_skew import TotpSkewReporter
 
 #: Ticket "Technical notes": "attempts capped at 5" (tighter than the
 #: schema's own `mfa_ch_attempts CHECK BETWEEN 0 AND 10`, which is a wider
@@ -76,6 +77,7 @@ class MfaService:
         recovery_code_key: bytes,
         clock: Clock = _utc_now,
         issuer: str = "CandleViewer",
+        skew_reporter: TotpSkewReporter | None = None,
     ) -> None:
         self._repository = repository
         self._encryptor = encryptor
@@ -84,6 +86,7 @@ class MfaService:
         self._recovery_code_key = recovery_code_key
         self._clock = clock
         self._issuer = issuer
+        self._skew_reporter = skew_reporter or TotpSkewReporter()
 
     # -- verification (login step 2) --------------------------------------
 
@@ -109,10 +112,12 @@ class MfaService:
         now = self._clock()
         accepted_step: int | None = None
         matched_method_id: str | None = None
+        seeds: list[bytes] = []
         for method in methods:
             if method.secret_enc is None:
                 continue  # mfa_totp_shape CHECK should prevent this; defend anyway
             seed = self._encryptor.decrypt(method.secret_enc)
+            seeds.append(seed)
             step = verify_code(seed, request.code, unix_time=now.timestamp())
             if step is not None:
                 accepted_step = step
@@ -120,6 +125,11 @@ class MfaService:
                 break
 
         if accepted_step is None or matched_method_id is None:
+            # #2146: names a skewed authenticator clock; never changes the answer or the attempt
+            # count, and runs first so the attempt that locks the challenge reports too.
+            await self._skew_reporter.report_rejection(
+                seeds, request.code, unix_time=now.timestamp(), surface="login"
+            )
             await self._record_failed_attempt(challenge)
             raise MfaCodeInvalid("invalid TOTP code")
 
@@ -204,6 +214,9 @@ class MfaService:
         now = self._clock()
         accepted_step = verify_code(seed, code, unix_time=now.timestamp())
         if accepted_step is None:
+            await self._skew_reporter.report_rejection(
+                [seed], code, unix_time=now.timestamp(), surface="enrolment"
+            )
             raise MfaCodeInvalid("invalid TOTP code")
 
         confirmed = await self._repository.confirm_method(method_id, now=now)

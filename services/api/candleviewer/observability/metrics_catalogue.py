@@ -1542,6 +1542,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_totp_clock_skew_total",
+        "counter",
+        "rejections",
+        ("kind",),
+        "Rejected TOTP codes valid for a step beyond the accepted window, by authenticator side.",
+        "none yet (diagnostic; also a totp_clock_skew system event; runbook auth-rbac section 9)",
+        _L,
+        "E09",
+        max_series=4,
+        exported=True,
+    ),
+    _s(
         "authz_denied_total",
         "counter",
         "denials",

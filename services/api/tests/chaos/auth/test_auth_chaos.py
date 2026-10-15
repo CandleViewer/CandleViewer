@@ -22,11 +22,15 @@ import asyncpg
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from starlette.websockets import WebSocketDisconnect
 
-from candleviewer.auth.errors import SessionNotFound, SessionRevoked
+from candleviewer.auth.envelope import TotpEncryptor
+from candleviewer.auth.errors import MfaCodeInvalid, SessionNotFound, SessionRevoked
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
+from candleviewer.auth.mfa_service import MfaService, _hash_token
+from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, MfaVerifyRequest
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_service import (
     ABSOLUTE_LIFETIME,
@@ -34,10 +38,12 @@ from candleviewer.auth.session_service import (
     access_token_expires_at,
 )
 from candleviewer.auth.totp import generate_code, time_step_for, verify_code
+from candleviewer.auth.totp_skew import TotpSkewReporter
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, RevocationHub
 from tests.chaos.storage import _stack as st
+from tests.unit.auth.mfa_fakes import FakeMfaRepository, RecordingSystemEvents
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 pytestmark = [pytest.mark.chaos, pytest.mark.integration]
@@ -190,6 +196,58 @@ def test_s2_totp_step_skew_pm1_accepted_pm3_rejected_replay_refused() -> None:
         assert verify_code(secret, generate_code(secret, step + k), unix_time=server_t) is None
     # Replay refusal (SR-021) is enforced by MfaService via the atomic record_time_step; it is
     # covered by tests/unit/auth/test_mfa_service.py::test_verify_reused_code_is_rejected.
+    # The system event and the metric for a skew beyond tolerance are asserted by s2b below.
+
+
+def _skew_metric(kind: str) -> float:
+    return REGISTRY.get_sample_value("auth_totp_clock_skew_total", {"kind": kind}) or 0.0
+
+
+@pytest.mark.parametrize(
+    ("steps", "kind"), [(-3, "authenticator_behind"), (3, "authenticator_ahead")]
+)
+async def test_s2b_totp_skew_beyond_tolerance_raises_system_event_and_metric(
+    steps: int, kind: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #296 "Chaos - clock skew beyond tolerance": the host clock is 3 steps off the authenticator,
+    # the user submits a valid code. It is refused with the generic answer (no skew oracle), a
+    # system event names clock skew and the metric moves, so the operator can diagnose it without
+    # reading logs. A code inside +-1 is still accepted and raises nothing (SR-021).
+    seed = bytes(range(1, 21))  # its codes for steps -13..+13 are distinct at `_NOW`
+    monkeypatch.setattr("candleviewer.auth.mfa_service.generate_secret", lambda: seed)
+    clock, repo, events = _Clock(), FakeMfaRepository(), RecordingSystemEvents()
+    reporter = TotpSkewReporter(events)
+    key = TotpEncryptor(os.urandom(32))
+    svc = MfaService(repo, key, recovery_code_key=b"k" * 32, clock=clock, skew_reporter=reporter)
+    user, now_step = str(uuid.uuid4()), time_step_for(clock.now.timestamp())
+    request = MfaEnrollRequest(method=MfaMethodKind.TOTP, label="")
+    method_id = str((await svc.enroll(user, request, account_name="a")).method_id)
+    await svc.confirm_enrollment(user, method_id=method_id, code=generate_code(seed, now_step - 1))
+
+    async def login(token: str, offset: int) -> None:
+        await repo.create_challenge(
+            user,
+            purpose="login",
+            mfa_token_hash=_hash_token(token),
+            expires_at=clock.now + timedelta(minutes=5),
+        )
+        code = generate_code(seed, now_step + offset)
+        await svc.verify(MfaVerifyRequest(mfa_token=token, method=MfaMethodKind.TOTP, code=code))
+
+    moved = _skew_metric(kind)
+    with pytest.raises(MfaCodeInvalid, match="invalid TOTP code"):
+        await login("t-skew", steps)
+    assert _skew_metric(kind) == moved + 1
+    (event,) = events.written
+    assert (event.component, event.kind, event.severity) == ("auth", "totp_clock_skew", "warning")
+    assert event.details == {
+        "surface": "login",
+        "kind": kind,
+        "offset_steps": str(steps),
+        "offset_seconds": str(steps * 30),
+    }
+    await login("t-ok", 1)  # within +-1: accepted, nothing more raised
+    assert len(events.written) == 1 and _skew_metric(kind) == moved + 1
 
 
 def test_s3_gateway_restart_closes_old_sockets_and_requires_reauth_on_new_gateway() -> None:

@@ -1,4 +1,4 @@
-"""In-memory `MfaRepository` fake for E09-S02 unit tests. No database."""
+"""In-memory `MfaRepository` and `SystemEventWriter` fakes for E09 MFA unit tests. No database."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 
 from candleviewer.auth.models import MfaChallengeRecord, MfaMethodKind, MfaMethodRecord
+from candleviewer.observability.health_probes import SystemEvent
 
 
 class FakeMfaRepository:
@@ -173,3 +174,16 @@ class FakeMfaRepository:
         for method_id, method in list(self.methods.items()):
             if str(method.user_id) == user_id and method.kind == MfaMethodKind.TOTP:
                 self.methods[method_id] = method.model_copy(update={"confirmed_at": None})
+
+
+class RecordingSystemEvents:
+    """`SystemEventWriter` that keeps what it was given; `fail_with` makes every write raise."""
+
+    def __init__(self, fail_with: BaseException | None = None) -> None:
+        self.written: list[SystemEvent] = []
+        self._fail_with = fail_with
+
+    async def write(self, event: SystemEvent) -> None:
+        if self._fail_with is not None:
+            raise self._fail_with
+        self.written.append(event)

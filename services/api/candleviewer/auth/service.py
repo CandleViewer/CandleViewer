@@ -25,7 +25,9 @@ from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.session_service import RevocationSink, SessionService
 from candleviewer.auth.step_up import StepUpService
+from candleviewer.auth.totp_skew import TotpSkewReporter
 from candleviewer.observability.health import HealthReport, HealthStatus
+from candleviewer.observability.health_probes import SystemEventWriter
 from candleviewer.settings import Environment
 
 if TYPE_CHECKING:
@@ -54,8 +56,11 @@ class AuthService:
         session_repository: SessionRepository | None = None,
         clock: Callable[[], datetime] | None = None,
         invite_repository: InviteRepository | None = None,
+        system_events: SystemEventWriter | None = None,
     ) -> None:
         self._started = False
+        #: Where a TOTP clock-skew event goes (#2146); `None` still counts the metric.
+        self._system_events = system_events
         self._invite_repository = invite_repository
         self._invites: InviteService | None = None
         #: One injected clock for login/MFA/session (QA #1658: the e2e test
@@ -189,11 +194,13 @@ class AuthService:
                     )
                 rc_key = _process_local_key()
             encryptor = TotpEncryptor(key, key_ref=LOCAL_KEY_REF)
+            skew_reporter = TotpSkewReporter(self._system_events)
             self._mfa = MfaService(
                 self._mfa_repository,
                 encryptor,
                 recovery_code_key=rc_key,
                 clock=self._clock,
+                skew_reporter=skew_reporter,
             )
             if self._invite_repository is not None:
                 self._invites = InviteService(
@@ -213,6 +220,7 @@ class AuthService:
                     Hasher(pepper=self._pepper),
                     publish_revocation=self._publish_revocation,
                     clock=self._clock,
+                    skew_reporter=skew_reporter,
                 )
         self._started = True
 

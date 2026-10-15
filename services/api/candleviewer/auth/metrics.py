@@ -62,6 +62,12 @@ authz_denied_total = Counter(
     # closed set: the generated `Permission` vocabulary, or `other` (see `normalise_permission`)
     ["permission"],
 )
+auth_totp_clock_skew_total = Counter(
+    "auth_totp_clock_skew_total",
+    "Rejected TOTP codes valid for a step beyond the accepted window, by authenticator side.",
+    # closed set: authenticator_behind | authenticator_ahead
+    ["kind"],
+)
 auth_session_fixation_attempts_total = Counter(
     "auth_session_fixation_attempts_total",
     "Session credentials never issued here, or another user's, presented (U6/SR-013), by reason.",
@@ -136,6 +142,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_lockouts_total",
         "auth_stepup_failures_total",
         "authz_denied_total",
+        "auth_totp_clock_skew_total",
     }
 )
 

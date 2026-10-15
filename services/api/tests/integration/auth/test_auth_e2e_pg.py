@@ -192,6 +192,45 @@ async def test_wrong_totp_is_rejected_and_no_session_minted(
     assert v.status_code == 401 and "set-cookie" not in v.headers
 
 
+async def test_skewed_totp_is_refused_like_a_wrong_code_and_raises_a_system_event(
+    pg_dsn: str, client: httpx.AsyncClient
+) -> None:
+    """#2146: a valid code from an authenticator 3 steps (90 s) behind the server is refused with
+    the answer a wrong code gets, and the real `system_events` table gets one `auth` skew row."""
+    _, secret = await _seed_owner_with_totp(pg_dsn, "e2e_skew")
+
+    async def verify(code: str) -> httpx.Response:
+        r = await client.post("/auth/login", json={"identifier": "e2e_skew", "password": _PASSWORD})
+        body = {"mfa_token": r.json()["mfa_token"], "method": "totp", "code": code}
+        return await client.post("/auth/mfa/verify", json=body)
+
+    rows = sa.text(
+        "SELECT kind, severity::text AS severity, message, details FROM system_events "
+        "WHERE component = 'auth' AND id > :before ORDER BY id"
+    )
+    engine = create_async_engine(pg_dsn)
+    try:
+        async with engine.connect() as conn:
+            before: int = (
+                await conn.execute(sa.text("SELECT coalesce(max(id), 0) FROM system_events"))
+            ).scalar_one()
+            skewed = await verify(_code(secret, _NOW - timedelta(seconds=90)))
+            wrong = await verify(_code(secret, _NOW + timedelta(minutes=10)))  # 20 steps: no skew
+            events = (await conn.execute(rows, {"before": before})).mappings().all()
+    finally:
+        await engine.dispose()
+    assert skewed.status_code == wrong.status_code == 401
+    assert skewed.json() == wrong.json() and "set-cookie" not in skewed.headers
+    assert [(e["kind"], e["severity"]) for e in events] == [("totp_clock_skew", "warning")]
+    assert "clock skew" in events[0]["message"]
+    assert events[0]["details"] == {
+        "surface": "login",
+        "kind": "authenticator_behind",
+        "offset_steps": "-3",
+        "offset_seconds": "-90",
+    }
+
+
 async def test_audit_rows_for_login_failure_totp_failure_success_and_logout(
     pg_dsn: str, client: httpx.AsyncClient
 ) -> None:
