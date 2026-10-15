@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from candleviewer.exchange.base import Ticker, Trade
 from candleviewer.exchange.base.frame_guard import FrameRejectedError, json_depth_exceeds
+from candleviewer.ingestion._logging import get_logger
 from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.ingestion.connection import PHASE_OPEN, ConnectionManager
 from candleviewer.ingestion.dispatch import FrameRoute, LaneSet
@@ -345,16 +346,28 @@ class IngestionService:
 
     async def stop(self, grace_s: float) -> None:
         """Stop the module within `grace_s` seconds. The closers (REST clients,
-        pools) and the generator are released even if a stop step raises (#2599)."""
+        pools) and the generator are released even if a stop step raises, each
+        best effort: one that raises is logged and the rest still run (#2599)."""
         try:
             await self._stop_components(grace_s)
         finally:
-            closers, self._closers = self._closers, []
-            for close in closers:
-                await close()
-            if self._generator is not None:
-                await self._generator.stop()
-                self._generator = None
+            await self._release()
+
+    async def _release(self) -> None:
+        releases, self._closers = self._closers, []
+        generator, self._generator = self._generator, None
+        if generator is not None:
+            releases.append(generator.stop)
+        try:
+            for release in releases:
+                try:
+                    await release()
+                except Exception:  # never skips the rest; a CancelledError still propagates
+                    get_logger(__name__).exception(
+                        "ingestion_release_failed",
+                        resource=getattr(release, "__qualname__", type(release).__name__),
+                    )
+        finally:
             self._started = False
 
     async def _stop_components(self, grace_s: float) -> None:

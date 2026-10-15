@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import structlog
 
 from candleviewer.app import build_app_context
 from candleviewer.exchange.base.instruments import InstrumentsFetchResult
@@ -125,6 +126,53 @@ async def test_ingestion_stop_closes_its_resources_even_when_a_stop_step_fails()
     with pytest.raises(RuntimeError, match="stop failed"):
         await service.stop(grace_s=1.0)
     assert closed == ["closer"]
+
+
+async def test_ingestion_stop_runs_every_closer_when_one_closer_fails() -> None:
+    """#2599 review: the release is best effort per resource: a closer that raises (a torn
+    transport) is logged, the later closers still run, and the module reports stopped."""
+    closed: list[str] = []
+
+    async def torn() -> None:
+        closed.append("rest")
+        raise OSError("transport torn")
+
+    async def pool() -> None:
+        closed.append("pool")
+
+    service = IngestionService()
+    service.attach_closer(torn)
+    service.attach_closer(pool)
+    await service.start(_LIVE_CTX)
+    with structlog.testing.capture_logs() as logs:
+        await service.stop(grace_s=1.0)
+    assert closed == ["rest", "pool"]
+    assert service.health().status.value == "stopped"
+    assert [e["event"] for e in logs if e["log_level"] == "error"] == ["ingestion_release_failed"]
+
+
+async def test_ingestion_stop_keeps_the_stop_step_error_when_a_closer_also_fails() -> None:
+    """#2599 review: a closer failing during the release never replaces the stop step's own
+    error, and never skips the closers after it."""
+    closed: list[str] = []
+
+    class _Catalogue:
+        async def stop(self, grace_s: float) -> None:
+            raise RuntimeError("stop failed")
+
+    async def torn() -> None:
+        raise OSError("transport torn")
+
+    async def pool() -> None:
+        closed.append("pool")
+
+    service = IngestionService()
+    service.attach_instruments(_Catalogue())  # type: ignore[arg-type]  # only `stop` is used
+    service.attach_closer(torn)
+    service.attach_closer(pool)
+    with pytest.raises(RuntimeError, match="stop failed"):
+        await service.stop(grace_s=1.0)
+    assert closed == ["pool"]
 
 
 class _EmptyRepo:

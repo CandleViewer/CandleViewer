@@ -89,10 +89,17 @@ class Clock:
         return self.us
 
 
+#: The shortest wait the refresh schedule can choose (#2599: the first retry backoff with no
+#: jitter); the TTL wait is far longer. In-refresh retry backoffs are shorter: 0 s under
+#: `make()`, which pins `random_fn` to 0.
+_SHORTEST_SCHEDULE_WAIT_S = retry_backoff_s(1, 0.0)
+
+
 async def _no_sleep(delay: float) -> None:
-    """Retry backoffs return immediately; the 12 h TTL wait blocks until the
-    task is cancelled by `stop()` (never a real sleep — C-13.7)."""
-    if delay > 1_000:
+    """In-refresh retry backoffs return at once; every schedule wait (the TTL, or the #2599
+    retry backoff) parks until `stop()` cancels the task, so a failing schedule never spins
+    without yielding to the event loop (never a real sleep, C-13.7)."""
+    if delay >= _SHORTEST_SCHEDULE_WAIT_S:
         await asyncio.Event().wait()
 
 
@@ -234,6 +241,29 @@ async def test_start_loads_persisted_when_fetch_fails() -> None:
     try:
         snap = sched.snapshot()
         assert snap is not None and snap.get("BTCUSDT") is not None
+    finally:
+        await sched.stop(grace_s=1.0)
+
+
+async def test_no_sleep_parks_the_retry_schedule_after_a_failed_start() -> None:
+    """#2599 review (C-13.7): `make()`'s default sleep parks every schedule wait, the short
+    retry backoff included; returning at once would spin a failing schedule without ever
+    yielding. This fetch yields, so a regression fails on the count instead of hanging."""
+    calls = 0
+
+    async def fetch(_now_us: Callable[[], int]) -> InstrumentsFetchResult:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0)
+        raise RuntimeError("exchange down")
+
+    sched = InstrumentsRefreshScheduler(
+        fetch_instruments_info=fetch, repository=FakeRepo(), sleep=_no_sleep, random_fn=lambda: 0.0
+    )
+    await sched.start()
+    try:
+        await _settle()
+        assert calls == 3  # the startup refresh's attempts only: the schedule is parked
     finally:
         await sched.stop(grace_s=1.0)
 
