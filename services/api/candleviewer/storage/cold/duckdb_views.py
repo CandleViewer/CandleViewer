@@ -136,6 +136,7 @@ def build_views(db_path: Path, registry: DatasetRegistry, *, pg_dsn: str | None 
     try:
         con.execute("SET TimeZone = 'UTC'")
         con.execute("SET autoinstall_known_extensions = false")
+        con.execute("SET autoload_known_extensions = false")
         for view_name, stream in VIEW_STREAMS.items():
             if not _create_parquet_view(con, view_name, registry.dataset_glob(stream)):
                 # Not yet exported: a typed empty view so queries return 0 rows.
@@ -156,7 +157,8 @@ def build_views(db_path: Path, registry: DatasetRegistry, *, pg_dsn: str | None 
         journal_parts = ["SELECT * FROM journal_cold"] if oms_ok["journal_cold"] else []
         if checked_dsn:
             try:
-                con.execute("LOAD postgres")  # preinstalled in the image; no runtime INSTALL
+                # The image must preinstall it (#2255); it is never INSTALLed at runtime.
+                con.execute("LOAD postgres")
             except duckdb.Error as exc:
                 raise PostgresExtensionUnavailable(
                     "duckdb postgres extension is not preinstalled; it is never downloaded"

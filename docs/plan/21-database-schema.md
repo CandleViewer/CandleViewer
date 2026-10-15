@@ -2862,7 +2862,8 @@ Small files kill DuckDB scan performance. The compactor runs weekly (Sundays 03:
 A single DuckDB database file `cold/analytics.duckdb` holds views (not data) over the Parquet lake, plus attached Postgres for joins.
 
 ```sql
-INSTALL httpfs; INSTALL postgres; LOAD postgres;
+-- LOAD only, never INSTALL at runtime (C-13.5); see "Extension provisioning" below
+LOAD postgres;
 ATTACH 'dbname=candleviewer user=cv_ro host=127.0.0.1' AS pg (TYPE postgres, READ_ONLY);
 
 CREATE OR REPLACE VIEW trades AS
@@ -2900,6 +2901,13 @@ CREATE OR REPLACE VIEW v_session_tape_stats AS
          sum(CASE WHEN side='Buy' THEN size ELSE -size END) AS delta
   FROM trades GROUP BY 1,2;
 ```
+
+> **Extension provisioning (C-13.5, #2194).** `build_views` only `LOAD`s `postgres` and sets
+> `autoinstall_known_extensions = false` and `autoload_known_extensions = false` on its connection,
+> so nothing is downloaded at runtime; a missing extension raises `PostgresExtensionUnavailable`.
+> **Pending (#2255):** `infra/images/Dockerfile.api` does not pre-install the pinned extension yet,
+> so the attach path cannot succeed in the image until that lands. No production caller of
+> `build_views` exists yet.
 
 Query-routing rule used by the API (`source_tier='auto'`): if `range_start >= now() - hot_retention(stream)` → QuestDB; if fully older → DuckDB; if straddling → both, merged by `ts` with dedup on the natural key. The merge is implemented once in `backend/storage/router.py` and contract-tested with an overlap fixture.
 

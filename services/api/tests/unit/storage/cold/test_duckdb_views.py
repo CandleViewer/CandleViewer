@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import pytest
@@ -237,3 +238,48 @@ def test_validated_dsn_reaches_attach_as_escaped_literal(
     build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn=_OK_DSN)
     attach = next(q for q in con.sql if q.startswith("ATTACH"))
     assert attach == "ATTACH 'dbname=x user=cv_ro host=localhost' AS pg (TYPE postgres, READ_ONLY)"
+
+
+def test_build_views_disables_extension_autoload_and_autoinstall(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression (#2194): a LOAD of a missing extension must never autoload/download."""
+    con = _RecordingCon(fail_load=False)
+    _patch_connect(monkeypatch, con)
+    build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path))
+    assert "SET autoinstall_known_extensions = false" in con.sql
+    assert "SET autoload_known_extensions = false" in con.sql
+
+
+def test_real_connection_has_autoload_off_and_missing_extension_is_typed(tmp_path: Path) -> None:
+    """Real DuckDB, empty extension dir: typed error, nothing downloaded."""
+    from candleviewer.storage.cold import duckdb_views
+    from candleviewer.storage.cold.duckdb_views import PostgresExtensionUnavailable
+
+    ext_dir = tmp_path / "ext"
+    ext_dir.mkdir()
+    seen: list[object] = []
+    real = duckdb.connect
+
+    class _Spy:
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def close(self) -> None:
+            row = self._inner.execute("SELECT current_setting('autoload_known_extensions')")
+            seen.append(row.fetchone())
+            self._inner.close()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+    def connect(path: str) -> object:
+        return _Spy(real(path, config={"extension_directory": str(ext_dir)}))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(duckdb_views.duckdb, "connect", connect)
+        with pytest.raises(PostgresExtensionUnavailable):
+            build_views(tmp_path / "a.duckdb", DatasetRegistry(tmp_path), pg_dsn=_OK_DSN)
+    assert not any(ext_dir.iterdir())
+    assert seen
+    assert all(row == (False,) for row in seen)
