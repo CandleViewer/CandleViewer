@@ -22,9 +22,10 @@ market-data frames (`d` / `snap` of a throttled topic) can be dropped; control f
 Every step comes back as a `LadderEvent`; the caller records step 4 (`cv_ws_overflow_total`, and
 the warning audit entry when step 3 fires) and performs the close. The bound holds only if the
 caller runs `check` after every push and every pacer update; recovery needs `drain` after every
-send and after every `check` that dropped. A `check` run by the pushes of a snapshot that `drain`
-is queuing waits until the whole snapshot is queued, then runs once, and `drain` returns its
-events: a snapshot is dropped whole, and that drop counts as a redrop.
+send and after every `check` that dropped. `drain` queues one snapshot per call; a `check` from its
+pushes runs once it is whole, its events returned by `drain` (a drop is whole, and a redrop).
+`drain` is the only sender of `backpressure` snapshots: the wiring must keep
+`TopicEmitter.flush_pending` and `SequencingHub.resnapshot` off them.
 """
 
 from __future__ import annotations
@@ -277,8 +278,7 @@ class Backpressure:
         return looping
 
     def drain(self) -> list[LadderEvent]:
-        """Step 2: below `DRAIN_PCT`, one `backpressure` snap per marked topic, one at a time.
-        A `check` from the snapshot's own pushes runs once it is queued (module doc)."""
+        """Step 2: below `DRAIN_PCT`, one `backpressure` snap per call (module docstring)."""
         self._settle()  # before a new snapshot replaces the record of a sent one
         sent: list[str] = []
         held: list[LadderEvent] = []
@@ -297,6 +297,6 @@ class Backpressure:
             deferred, self._deferred = self._deferred, None
             if deferred is not None:
                 held += self.check(deferred)
-                if any(event.action == "close" for event in held):
-                    break
+            if queued:
+                break
         return ([LadderEvent("resnapshot", tuple(sent))] if sent else []) + held
