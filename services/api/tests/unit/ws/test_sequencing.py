@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any
 
@@ -13,6 +14,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.ws.binary import (
     BOOK_DELTA,
     FLAG_PARTIAL,
@@ -42,7 +44,7 @@ from candleviewer.ws.sequencing import (
     window_delta,
 )
 from tests._corpus import frames as corpus_frames
-from tests.unit.ws._seq_support import ACC_A, ACC_B, Book, Conn, Source
+from tests.unit.ws._seq_support import ACC_A, ACC_B, PERMS, USER, Book, Conn, Source
 
 RS = "bb000000-0000-4000-8000-000000000001"
 
@@ -684,3 +686,71 @@ def test_property_sequence_contiguous_per_subscription(ops: list[tuple[str, str]
         assert f["ch"] not in last or f["s"] == last[f["ch"]] + 1
         last[f["ch"]] = f["s"]
     assert last == {ch: s.seq for ch, s in subs.items()}
+
+
+# -- Scenario: account-less private topics reach their own scope (#2398) ----------------------
+
+_OTHER_USER = uuid.UUID(int=0x200)
+_ALERT = {
+    "deliveries": [
+        {
+            "id": 1,
+            "alert_id": "00000000-0000-4000-8000-0000000000aa",
+            "channel": "in_app",
+            "status": "queued",
+            "message": "m",
+            "fired_at_ms": 1,
+        }
+    ]
+}
+_RECORDER = {"overall": "healthy", "symbols": []}
+
+
+def _scoped(hub: SequencingHub, ch: str, user: uuid.UUID = USER) -> Conn:
+    """A connection of `user`, subscribed to the account-less `ch`, with its snapshot taken."""
+    src = Source()
+    src.bodies["alerts"] = SnapshotBody({"deliveries": []})
+    src.bodies["recorder"] = SnapshotBody({"overall": "healthy", "symbols": []})
+    conn = Conn(src)
+    perms = PERMS | {Permission.ALERTS_READ, Permission.RECORDING_READ}
+    conn.authz.principal = replace(conn.authz.principal, user_id=user, permissions=perms)
+    hub.register(conn.authz, conn.emitter)
+    conn.sub(ch)
+    assert [f["t"] for f in conn.take()] == ["snap"]
+    return conn
+
+
+def test_alerts_delta_reaches_only_the_owning_users_connections() -> None:
+    hub = SequencingHub()
+    mine, theirs = _scoped(hub, "alerts"), _scoped(hub, "alerts", _OTHER_USER)
+    assert hub.publish("alerts", _ALERT, user=USER) == 1
+    (delta,) = mine.take()
+    assert (delta["t"], delta["s"], delta["p"]["deliveries"]) == ("d", 2, _ALERT["deliveries"])
+    assert theirs.take() == []  # another user's alert never crosses over
+
+
+def test_alerts_delta_naming_no_owner_reaches_nobody() -> None:
+    hub = SequencingHub()
+    conn = _scoped(hub, "alerts")
+    assert hub.publish("alerts", _ALERT) == 0  # fail closed
+    assert hub.publish("alerts", _ALERT, account=ACC_A) == 0  # an account is not an owner
+    assert conn.take() == []
+
+
+def test_recorder_delta_reaches_every_subscription() -> None:
+    hub = SequencingHub()
+    first, second = _scoped(hub, "recorder"), _scoped(hub, "recorder", _OTHER_USER)
+    assert hub.publish("recorder", _RECORDER) == 2
+    assert [f["t"] for f in first.take() + second.take()] == ["d", "d"]
+
+
+def test_account_scoped_delta_is_not_widened_by_a_user() -> None:
+    hub = SequencingHub()
+    conn = Conn(Source(), ACC_A)
+    hub.register(conn.authz, conn.emitter)
+    _, sub = conn.authz.admit({"ch": "positions", "opts": {"exchange_account_ids": [str(ACC_A)]}})
+    assert sub is not None
+    sub.snapshot_pending = False
+    assert hub.publish("positions", {"positions": []}, user=USER) == 0  # no account: nobody
+    assert hub.publish("positions", {"positions": []}, account=ACC_B, user=USER) == 0
+    assert hub.publish("positions", {"positions": []}, account=ACC_A) == 1
