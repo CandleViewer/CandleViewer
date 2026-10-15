@@ -48,19 +48,27 @@ def _parse_record(raw: dict[str, Any]) -> Trade | Ticker:
     raise SyntheticFeedError(f"unknown synthetic feed record kind: {kind!r}")
 
 
-# Monorepo layout: services/api/candleviewer/ingestion/synthetic_feed.py ->
-# repo root is four `.parent` hops up. Used only as a *fallback* resolution
-# for the documented default `CV_FEED_SAMPLE_PATH` when the process's cwd is
-# `services/api` (the `AGENTS.md` §4 "Run API locally" cwd) rather than the
-# repo root (the Docker image's `/app`, where the relative path already
-# resolves) — an absolute `CV_FEED_SAMPLE_PATH` always wins outright.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+def _checkout_root(module: Path) -> Path | None:
+    """Monorepo layout: services/api/candleviewer/ingestion/synthetic_feed.py ->
+    repo root is four `.parent` hops up. Used only as a *fallback* resolution
+    for the documented default `CV_FEED_SAMPLE_PATH` when the process's cwd is
+    `services/api` (the `AGENTS.md` §4 "Run API locally" cwd) rather than the
+    repo root (the Docker image's `/app`, where the relative path already
+    resolves) — an absolute `CV_FEED_SAMPLE_PATH` always wins outright.
+
+    `None` outside a checkout (#2555): the image installs this module at
+    `/app/candleviewer/ingestion/`, which has only four parents, and indexing
+    `parents[4]` at import raised `IndexError`, so `candleviewer.app` could not load.
+    """
+    parents = module.resolve().parents
+    return parents[4] if len(parents) > 4 else None
 
 
 def _resolve_sample_path(path: Path) -> Path:
-    if path.is_absolute() or path.exists():
+    root = _checkout_root(Path(__file__))
+    if path.is_absolute() or path.exists() or root is None:
         return path
-    fallback = _REPO_ROOT / path
+    fallback = root / path
     return fallback if fallback.exists() else path
 
 
