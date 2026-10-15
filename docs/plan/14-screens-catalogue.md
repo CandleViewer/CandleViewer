@@ -80,7 +80,7 @@ Replay does not have its own topic. A replay session re-uses the **same market-d
 
 1. **Demo vs Live is never colour-only.** A persistent chrome band carries the text `DEMO` (blue accent) or `LIVE` (red accent) plus an icon; every trading-capable surface repeats the badge locally (SCR-074/075).
 2. **"(estimated)" labelling.** Any value derived from a heuristic proxy (iceberg, stop-run, order-count footprint, regime, queue position) renders an `(estimated)` chip with a tooltip linking the methodology drawer (SCR-058).
-3. **Recorder-dependent emptiness is a designed state**, never a blank canvas: profiles, replay, journal back-fill and composite look-backs show "History starts <ts> — recording began then" with a CTA to the recorder admin screen (SCR-140) when the user is the owner, and an explanatory read-only message otherwise.
+3. **Recorder-dependent emptiness is a designed state**, never a blank canvas: profiles, replay, journal back-fill and composite look-backs show "History starts <ts> — recording began then" with a CTA to the recorder admin screen (SCR-140) when the user is the owner, and an explanatory read-only message otherwise. Wording under review, not yet adopted: [E16-D01 §4](../design/research/e16-recorder-mental-model.md).
 4. **Disconnection is global and local.** A single reconnect overlay (SCR-152) plus per-panel stale-data shading after 2 s without an expected update; last-good timestamp always shown.
 5. **RBAC denies server-side.** Controls the user may not use are rendered **disabled with a reason tooltip**, not hidden (except whole admin areas, which are hidden from navigation and hard-404 for non-owners). Server returns 403 + audit entry regardless of UI state.
 6. **WCAG 2.2 AA.** Every canvas surface has an equal-status non-canvas alternative (data table / tree), full keyboard operation, visible focus, ≥4.5:1 text contrast, ≥3:1 non-text, respects `prefers-reduced-motion`, and no information by colour alone.
@@ -997,6 +997,7 @@ Drag preview                Drop zones
 - **A11y:** Empty state is a heading + paragraph + action, not an icon alone; the recording-start timestamp is text; the CTA is a real button (owner) or an explanatory sentence (manager/viewer).
 - **Performance:** The empty state renders without initialising the GL context for the data layer, so an empty chart costs no GPU budget.
 - **Analytics/audit:** `chart.empty_state_shown` with `{reason: 'not_recorded'|'no_data_in_range'|'symbol_delisted'}` (analytics).
+- **UX research:** [e16-recorder-mental-model.md](../design/research/e16-recorder-mental-model.md) §4 (E16-D01; proposes scoping the live-data sentence and naming the cause; copy owned by E16-D05).
 - **Design sign-off acceptance checklist:** [ ] three distinct reasons drawn (never recorded / no data in this range / instrument not trading) [ ] owner CTA to SCR-140 and non-owner explanatory copy both drawn [ ] live-data-still-works note present where true [ ] no infinite spinner path
 
 ### SCR-048 — Chart error state
@@ -2538,6 +2539,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 
 ### SCR-140 — Admin: recorder & storage
 
+- **UX research (E16-D01):** [recorder mental model, auto-record disclosure and disk framing](../design/research/e16-recorder-mental-model.md) — heuristic research, recommendations pending confirmation: owner decisions on the linger default and toast vs silent auto-record, a state-first disk headline, and the recorder contract asks (`lingering`, disk level and gate, `cap_bytes`).
 - **Type:** Page. **Route:** `/admin/recorder`.
 
 ```
@@ -2732,6 +2734,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **A11y:** The pattern mandates: a heading, one sentence of explanation naming the cause, and either an action button or an explicit statement that no action is available to this role. Never an icon alone, never a bare 'No data'.
 - **Performance:** Empty states render without initialising heavy resources (no GL context, no subscriptions) so an empty panel costs nothing.
 - **Analytics/audit:** `empty_state_shown` `{surface, reason}` (analytics - used to find states users hit often and should not).
+- **UX research:** [e16-recorder-mental-model.md](../design/research/e16-recorder-mental-model.md) §4 (E16-D01; recorder-dependent variant: cause sentence per cause, live-data sentence only where true).
 - **Design sign-off acceptance checklist:** [ ] the three empty-state classes drawn (nothing created yet / nothing matches the filter / data not recorded yet) [ ] role-aware action vs explanation variants [ ] the recorder-dependent variant carries the recording-start timestamp [ ] copy for each class written and reviewed [ ] the pattern is applied consistently in every panel that can be empty
 
 ### SCR-152 — Disconnected / reconnecting state
