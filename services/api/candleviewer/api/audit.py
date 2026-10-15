@@ -49,6 +49,7 @@ from candleviewer.api.audit_budget import (
     filters_digest,
 )
 from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditQueryRefused
+from candleviewer.api.audit_verify import result_record, write_verify_record
 from candleviewer.audit.access import (
     AuditAccessDenied,
     AuditPrincipal,
@@ -228,6 +229,22 @@ async def _read_capped(request: Request, limit: int) -> bytes | None:
 
 def _unavailable(detail: str = "audit record could not be written") -> JSONResponse:
     return _problem(503, "Service unavailable", detail, code="store_unavailable", retry_after_s=1)
+
+
+#: Why a verify stopped early: the record's reason and the 503 detail. A store error carries
+#: only its SQLSTATE and is logged where it is raised.
+_VERIFY_STOPS: tuple[tuple[type[Exception], str, str], ...] = (
+    (TimeoutError, "timeout", "audit verify exceeded its time budget"),
+    (ChainHasherBusy, "hasher_busy", "audit read capacity reached"),
+    (StorageTierUnavailable, "store_unavailable", "audit store unavailable"),
+)
+_VERIFY_STOP_ERRORS = tuple(kind for kind, _, _ in _VERIFY_STOPS)
+_SUCCESS, _FAILURE = AuditOutcome.SUCCESS, AuditOutcome.FAILURE
+_INFO, _WARNING = Severity.INFO, Severity.WARNING
+
+
+def _verify_stop(exc: Exception) -> tuple[str, str]:
+    return next((reason, detail) for kind, reason, detail in _VERIFY_STOPS if isinstance(exc, kind))
 
 
 def _budget_actor(principal: AuditPrincipal) -> BudgetActor:
@@ -539,7 +556,7 @@ def make_audit_router(
     @router.post("/verify")
     async def verify_audit_chain(request: Request) -> JSONResponse:
         try:
-            service, _, _ = await _authorize_or_raise(request, "verify")
+            service, principal, _ = await _authorize_or_raise(request, "verify")
         except _HttpProblem as problem:
             return problem.response
         # The optional body is read only now: 401 and 403 come before its validation.
@@ -563,19 +580,42 @@ def make_audit_router(
                     code="validation_failed",
                     errors=[{"field": "to_id", "rule": "max_verify_span"}],
                 )
-        try:  # one head read at range defaulting (#2446), then the run
+        try:  # one head read at range defaulting (#2446)
             plan = await service.query.plan_verify(
                 from_id=req.from_id, to_id=req.to_id, max_span=verify_max_span
             )
-            result = await service.query.run_verify(plan)
         except VerifyRangeBeyondHead:
             return _problem(404, "Not found", "from_id is beyond the chain head", code="not_found")
-        except TimeoutError:
-            return _unavailable("audit verify exceeded its time budget")
-        except ChainHasherBusy:
-            return _unavailable("audit read capacity reached")
-        except StorageTierUnavailable:
-            return _unavailable("audit store unavailable")  # logged where it is raised
+        except _VERIFY_STOP_ERRORS as exc:
+            return _unavailable(_verify_stop(exc)[1])
+        return await _run_verify(service, principal, plan)
+
+    async def _run_verify(
+        service: AuditServiceLike, principal: AuditPrincipal, plan: VerifyPlan
+    ) -> JSONResponse:
+        """Write-ahead `started` record, the run, then its result record (#2392). The
+        records go straight to the writer, never through the budget; one that cannot be
+        written makes the call 503 and serves nothing. A run that stops early is recorded
+        as failure/warning with the reason it stopped."""
+        emit, fields = service.writer.emit, _request_fields(principal)
+        span = {"from_id": plan.from_id, "to_id": plan.to_id}
+        if not await write_verify_record(
+            emit, fields, outcome=_SUCCESS, severity=_INFO, reason="started", after_state=span
+        ):
+            return _unavailable()
+        try:
+            result = await service.query.run_verify(plan)
+        except _VERIFY_STOP_ERRORS as exc:
+            reason, detail = _verify_stop(exc)
+            await write_verify_record(
+                emit, fields, outcome=_FAILURE, severity=_WARNING, reason=reason, after_state=span
+            )
+            return _unavailable(detail)
+        outcome, severity, reason, after = result_record(result)
+        if not await write_verify_record(
+            emit, fields, outcome=outcome, severity=severity, reason=reason, after_state=after
+        ):
+            return _unavailable()
         return JSONResponse(status_code=200, content=_jsonable(result))
 
     @router.post("/export")
