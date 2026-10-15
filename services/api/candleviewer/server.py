@@ -9,15 +9,18 @@ defaults. The server runs the §9.4 planned WebSocket shutdown before uvicorn's 
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import socket
 import sys
 from collections.abc import Sequence
 from typing import Any
 
+import structlog
 import uvicorn
 from uvicorn.config import STARTUP_FAILURE
 
+from candleviewer.observability.context import spawn
 from candleviewer.settings import Settings, get_settings
 from candleviewer.ws import limits
 from candleviewer.ws.lifecycle import HEARTBEAT_INTERVAL_S, HEARTBEAT_TIMEOUT_S
@@ -44,6 +47,11 @@ def uvicorn_kwargs(settings: Settings | None = None) -> dict[str, Any]:
     }
 
 
+def logger() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
+
 class PlannedShutdownServer(uvicorn.Server):
     """uvicorn's `Server.shutdown` fails every open WebSocket with `1012` before it sends the
     lifespan `shutdown` event (#2546), so the §9.4 planned shutdown in the lifespan teardown
@@ -56,8 +64,23 @@ class PlannedShutdownServer(uvicorn.Server):
             server.close()  # a connection opened during the grace would miss the notice
         runtime = _ws_runtime(self.config.loaded_app)
         if runtime is not None and not self.force_exit:
-            await runtime.stop()
+            await self._planned(runtime)
         await super().shutdown(sockets)
+
+    async def _planned(self, runtime: Any) -> None:
+        """`runtime.stop()`, cut short by a second Ctrl+C (`force_exit`), which uvicorn's own
+        drain also polls every 0.1 s. A failure is logged and never skips uvicorn's shutdown or
+        the module teardown after it."""
+        logger().info("planned ws shutdown")
+        task = spawn(runtime.stop(), name="ws-planned-shutdown")
+        try:
+            while not task.done() and not self.force_exit:
+                await asyncio.wait({task}, timeout=0.1)
+        finally:
+            task.cancel()  # a no-op once done; else force_exit, or this coroutine was cancelled
+        outcome: list[object] = await asyncio.gather(task, return_exceptions=True)
+        if isinstance(outcome[0], Exception):
+            logger().error("planned ws shutdown failed", error=type(outcome[0]).__name__)
 
 
 def _ws_runtime(app: Any) -> Any:

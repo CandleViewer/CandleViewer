@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 import uvicorn
+from structlog.testing import capture_logs
 from uvicorn.config import STARTUP_FAILURE
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
@@ -23,6 +24,7 @@ from websockets.typing import Origin, Subprotocol
 from candleviewer import server as entry
 from candleviewer.app import create_app
 from candleviewer.server import PlannedShutdownServer, uvicorn_kwargs
+from candleviewer.ws_wiring import WsRuntime
 from tests.unit.ws.test_app_wiring import JSON, ORIGIN, _authenticate, _Kill, _settings
 
 _DEADLINE_S = 10.0
@@ -108,6 +110,39 @@ async def test_no_connection_opens_during_the_planned_shutdown() -> None:
             _, code = await _until_closed(ws)
             await stopping
     assert code == 1001
+
+
+async def test_a_second_ctrl_c_cuts_the_grace_short() -> None:
+    """`force_exit` during a 60 s grace ends the planned shutdown within uvicorn's 0.1 s poll;
+    the client got the notice, then uvicorn's `1012`."""
+    async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer, 60_000) as (server, url):
+        async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
+            await _open(ws)
+            stopping = asyncio.create_task(server.shutdown())
+            assert json.loads(await ws.recv())["p"]["kind"] == "shutdown_notice"
+            server.force_exit = True
+            frames, code = await _until_closed(ws)
+            await stopping
+    assert (frames, code) == ([], 1012)
+
+
+async def test_a_failing_planned_shutdown_still_runs_uvicorns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def boom(self: WsRuntime) -> int:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(WsRuntime, "stop", boom)
+    with capture_logs() as logs:
+        async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer) as (server, url):
+            async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
+                await _open(ws)
+                stopping = asyncio.create_task(server.shutdown())
+                frames, code = await _until_closed(ws)
+                await stopping
+    assert (frames, code) == ([], 1012)  # uvicorn's own shutdown still ran
+    events = [(e["log_level"], e["event"]) for e in logs if "planned ws" in e["event"]]
+    assert events == [("info", "planned ws shutdown"), ("error", "planned ws shutdown failed")]
 
 
 def test_main_runs_the_planned_shutdown_server(monkeypatch: pytest.MonkeyPatch) -> None:
