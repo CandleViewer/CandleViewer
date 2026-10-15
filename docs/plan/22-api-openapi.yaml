@@ -71,8 +71,9 @@ info:
     * **Issue, rotate and re-issue.** `POST /auth/login` (when `status=authenticated`),
       `POST /auth/mfa/verify` and `POST /auth/mfa/recovery` issue a token for the new session.
       `POST /auth/refresh` validates the presented token against the session bound to
-      `cv_refresh`, then rotates both cookies. `GET /auth/session` re-issues the cookie for the
-      current session when it is absent or does not verify (the bootstrap recovery path).
+      `cv_refresh`, then rotates both cookies. A successful `POST /auth/step-up` rotates the
+      session (SR-013) and both cookies with it. `GET /auth/session` re-issues the cookie for
+      the current session when it is absent or does not verify (the bootstrap recovery path).
       `POST /auth/logout` expires it.
     * **Multi-tab.** After a rotation in another tab, a request carrying the old token may get
       `403 csrf_token_invalid`. The client then re-reads the cookie and retries the request
@@ -8227,6 +8228,19 @@ paths:
         succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`,
         `auth.step_up_failed`, `auth.step_up_mismatch`,
         `auth.session_readonly_downgrade`).
+
+        **Session rotation (SR-013).** A successful step-up also rotates the session, the way
+        `POST /auth/refresh` does: the server mints a replacement session with a new id, access
+        token and refresh token. The replacement keeps the old session's absolute expiry and
+        idle timeout, so rotation never extends the session's lifetime; it carries over the live
+        step-up grants, including the one just granted, and drops the pending challenge. The old
+        session is revoked as `rotated` and linked into the refresh-token family, so its access
+        and refresh tokens stop working at once and replaying that refresh token at
+        `POST /auth/refresh` revokes the whole family (reuse detection). The `200` carries the
+        new access token in `tokens` (the `TokenBundle` of `POST /auth/mfa/verify`; the refresh
+        token travels only in the cookie, so `refresh_token` is null) and sets rotated
+        `cv_refresh` and `__Host-cv_csrf` cookies bound to the new session (SR-041). The client
+        continues with the returned access token.
       x-rbac: { permissions: [], scope: self }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
@@ -8281,12 +8295,18 @@ paths:
                     ]
       responses:
         "200":
-          description: Elevated.
+          description: Elevated; the session was rotated.
+          headers:
+            Set-Cookie:
+              {
+                description: "Rotated `cv_refresh` cookie and a rotated `__Host-cv_csrf` cookie bound to the new session (SR-041)",
+                schema: { type: string },
+              }
           content:
             application/json:
               schema:
                 type: object
-                required: [elevated_until, action_class, single_use]
+                required: [elevated_until, action_class, single_use, tokens]
                 properties:
                   elevated_until: { type: string, format: date-time }
                   action_class: { type: string }
@@ -8295,6 +8315,7 @@ paths:
                     type: ["string", "null"]
                     format: date-time
                     description: End of the grace window shown in the dialog; null for no-grace classes.
+                  tokens: { $ref: "#/components/schemas/TokenBundle" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
@@ -9712,10 +9733,10 @@ components:
         SR-041 double-submit CSRF token, `<nonce>.<mac>` (rules in the CSRF section of
         `info.description`). `Secure; SameSite=Strict; Path=/`, no `Domain`, `Max-Age` equal to
         the `cv_refresh` lifetime, deliberately **not** `HttpOnly` so the client can echo it in
-        `X-CSRF-Token`. Issued at login/MFA completion, rotated on every `/auth/refresh`,
-        re-issued by `GET /auth/session`, expired on logout. It is not an authentication
-        credential on its own and is listed here only to document the cookie. Enforcement is per
-        operation via `components.parameters.CsrfToken`.
+        `X-CSRF-Token`. Issued at login/MFA completion, rotated on every `/auth/refresh` and on a
+        successful `/auth/step-up`, re-issued by `GET /auth/session`, expired on logout. It is not
+        an authentication credential on its own and is listed here only to document the cookie.
+        Enforcement is per operation via `components.parameters.CsrfToken`.
 
   # ---------------------------------------------------------------------------
   parameters:
