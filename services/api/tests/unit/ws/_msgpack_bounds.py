@@ -32,13 +32,22 @@ MAX_PEAK_BYTES: Final = 8 << 20
 MAX_FRAME_KEYS: Final = 40_000
 
 
-def interned_resize_bytes() -> int:
-    """The largest table one resize of the interned-string table can allocate now: CPython 3.12
-    grows a dict to the next power of two above 3 x its entries, with a 4 B index per slot and a
-    16 B entry for two slots in three (a dict keyed by strings)."""
-    used = sys.getunicodeinternedsize() + MAX_FRAME_KEYS
-    slots = 1 << (3 * used - 1).bit_length()
+def _table_bytes(entries: int) -> int:
+    """The table CPython 3.12 allocates when a dict keyed by strings resizes at `entries`: the
+    next power of two above 3 x entries slots, a 4 B index per slot and a 16 B entry for two
+    slots in three."""
+    slots = 1 << (3 * entries - 1).bit_length()
     return slots * 4 + (2 * slots // 3) * 16
+
+
+def interned_resize_bytes() -> int:
+    """The largest table one resize of the interned-string table can allocate now."""
+    return _table_bytes(sys.getunicodeinternedsize() + MAX_FRAME_KEYS)
+
+
+def smallest_resize_bytes() -> int:
+    """The smallest table a resize of the interned-string table can allocate now."""
+    return _table_bytes(sys.getunicodeinternedsize())
 
 
 def peak_bound() -> int:

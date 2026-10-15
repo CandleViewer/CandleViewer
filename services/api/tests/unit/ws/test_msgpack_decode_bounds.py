@@ -31,7 +31,7 @@ from candleviewer.ws.codec import (
 )
 from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_TOPICS_PER_SUB
 from candleviewer.ws.topics import FAMILIES, UNIVERSAL
-from tests.unit.ws._msgpack_bounds import peak_bound
+from tests.unit.ws._msgpack_bounds import peak_bound, smallest_resize_bytes
 
 REPO = Path(__file__).resolve().parents[5]
 #: A msgpack timestamp (ext type -1), which the unpacker decodes without calling `ext_hook`.
@@ -404,8 +404,12 @@ def test_msgpack_hostile_at_cap_frame_is_refused_within_the_allocation_bound(dat
 
 
 def test_msgpack_frames_of_new_keys_stay_bounded_through_an_interned_table_resize() -> None:
-    """#2509 round 4: about 31 000 keys per frame, new to the process, until one decode resizes
-    the interned-string table (a jump in its peak). That decode is still within the bound."""
+    """#2509 round 4: about 31 000 keys per frame, new to the process. A released key's entry in
+    the interned-string table is only reclaimed when the table resizes, so 24 such frames must
+    resize it. A resize adds a whole new table to that decode's peak, at least
+    `smallest_resize_bytes()`, while same-shape frames otherwise peak alike: half of it is an
+    unambiguous sign. Every decode, the resizing ones included, is within the bound."""
+    floor = smallest_resize_bytes()
     peaks = []
     for salt in range(2, 26):
         data = _unique_key_levels(salt, maps=True)
@@ -418,7 +422,7 @@ def test_msgpack_frames_of_new_keys_stay_bounded_through_an_interned_table_resiz
             tracemalloc.stop()
         assert peak <= peak_bound()
         peaks.append(peak)
-    assert max(peaks) - min(peaks) > 2 << 20, "no interned-table resize was reached"
+    assert max(peaks) - min(peaks) >= floor // 2, "no interned-table resize was reached"
 
 
 @pytest.mark.perf
