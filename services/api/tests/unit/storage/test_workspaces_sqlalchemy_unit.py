@@ -92,3 +92,18 @@ async def test_purge_rejects_unsafe_arguments_before_touching_the_database(
     unused: Any = object()  # never touched: the ValueError fires first
     with pytest.raises(ValueError, match="purge needs"):
         await mod.SqlAlchemyWorkspaceRepository(unused).purge_deleted(days, limit)
+
+
+def test_purges_skip_parents_that_still_have_live_children() -> None:
+    """D21 defence in depth: a stuck parent stays visible; FK cascades never reach live rows."""
+    lay, ws = (
+        " ".join(str(_STATEMENTS[n]).split()) for n in ("_PURGE_LAYOUTS", "_PURGE_WORKSPACES")
+    )
+    assert (
+        "AND NOT EXISTS (SELECT 1 FROM drawings d WHERE d.layout_id = layouts.id "
+        "AND d.deleted_at IS NULL) ORDER BY deleted_at LIMIT :limit"
+    ) in lay
+    assert (
+        "AND NOT EXISTS (SELECT 1 FROM layouts l WHERE l.workspace_id = workspaces.id) "
+        "ORDER BY deleted_at LIMIT :limit"
+    ) in ws
