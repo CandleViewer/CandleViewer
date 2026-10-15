@@ -173,6 +173,23 @@ async def test_purge_day_shared_after_plan_is_kept_and_outcome_audit_names_reaso
     assert action == "retention.purge" and outcome["after_state"]["result"]["skipped"] == skipped
 
 
+async def test_purge_plan_time_holds_are_listed_in_the_job_result_and_outcome_audit() -> None:
+    """Review round 5 (Low): a day held while PLANNING (shared with another symbol) never reaches
+    the delete-time re-check, so `skipped` stays empty. The write-ahead record carries only its
+    count (`window.protected`); the job result and the closing `retention.purge` list it."""
+    env = _Env()
+    env.w.add_hot(T, 3, {"BTCUSDT": 4, "ETHUSDT": 2})  # already shared when the plan is made
+    r = await env.post(BODY)
+    assert r.status_code == 202
+    job = await env.wait(r.json()["job_id"])
+    held = [{"partition": day_key(day(3)), "reason": "shared_partition"}]
+    assert job["result"]["protected"] == held and job["result"]["skipped"] == []
+    assert env.audit.calls[0][1]["before_state"]["window"]["protected"] == 1
+    action, outcome = env.audit.calls[-1]
+    assert action == "retention.purge" and outcome["after_state"]["result"]["protected"] == held
+    assert day(3) in env.w.hot[T] and [d["tier"] for d in env.w.data_deleted()] == ["cold", "cold"]
+
+
 async def test_purge_without_step_up_is_403_and_nothing_deleted() -> None:
     env = _Env(elevated=False)
     r = await env.post(BODY)

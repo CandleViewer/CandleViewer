@@ -6,7 +6,9 @@ step-up (`recorder` class, server-side elevation) -> Idempotency-Key -> body (re
 `confirm_symbol == symbol`) -> pinned check (`include_pinned` required) -> plan the exact
 window -> `retention.purge` audit with that window -> job. If the audit cannot be written the
 answer is 503 and no job starts (C-2.9). The job executes exactly the audited plan; each
-deletion inside it writes its own write-ahead `data.deleted`.
+deletion inside it writes its own write-ahead `data.deleted`. The job result (and so the closing
+`retention.purge` record) lists `skipped` (held at delete time) and `protected` (held while
+planning), each as `{partition, reason}`.
 """
 
 from __future__ import annotations
@@ -34,11 +36,17 @@ from candleviewer.api.recorder_admin import (
     logger,
 )
 from candleviewer.audit.models import AuditOutcome, Severity
-from candleviewer.recorder.retention import PrunePlan, RetentionBusy, RunReport
+from candleviewer.recorder.retention import Protected, PrunePlan, RetentionBusy, RunReport
 
 PURGE_JOB_KIND = "retention_purge"
 STEP_UP_CLASS = "recorder"
 _SYMBOL = r"^[A-Z0-9]{2,20}USDT$"
+
+
+def _holds(held: list[Protected]) -> list[dict[str, str]]:
+    """`[{partition, reason}]`: how the job result and the closing `retention.purge` record
+    name partitions the purge kept (no paths beyond the partition key)."""
+    return [{"partition": p.item.key, "reason": p.reason} for p in held]
 
 
 class PurgeRequest(BaseModel):
@@ -110,7 +118,7 @@ def make_recorder_purge_router(
         if not principal.has(RECORDING_WRITE):  # RBAC before anything else (C-12.4)
             await denied(f"missing_permission:{RECORDING_WRITE}")
             return _problem(403, "Forbidden", f"requires {RECORDING_WRITE}")
-        # Capability 9a (04-security-program §13) is owner-only even though managers hold
+        # Capability 9a (04-security-program §7.2 row 9a) is owner-only even though managers hold
         # `recording:write`; `is_owner` is resolved via `PrincipalSnapshot.is_owner` (SR-017).
         if not principal.is_owner:
             await denied("purge_owner_only")
@@ -216,7 +224,8 @@ def make_recorder_purge_router(
             return {
                 "deleted": len(report.deleted),
                 "freed_bytes": report.freed_bytes,
-                "skipped": [{"partition": p.item.key, "reason": p.reason} for p in report.skipped],
+                "skipped": _holds(report.skipped),  # held at delete time (the re-check)
+                "protected": _holds(report.protected),  # held while planning (never an item)
                 "failed": len(report.failed),
             }
 
