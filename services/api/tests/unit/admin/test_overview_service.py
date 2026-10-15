@@ -9,8 +9,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
-from candleviewer.admin.overview.fanout import SliceFanOut, SourceUnavailable
+from candleviewer.admin.overview.fanout import DEFAULT_BUDGET_S, SliceFanOut, SourceUnavailable
 from candleviewer.admin.overview.ports import (
     AccountCounts,
     RecorderStatus,
@@ -18,6 +19,7 @@ from candleviewer.admin.overview.ports import (
     UserCounts,
 )
 from candleviewer.admin.overview.service import (
+    POSITIONS_BUDGET_S,
     AdminOverviewService,
     StorageHeadroom,
     TradingState,
@@ -58,8 +60,8 @@ class Recorder:
 
 
 class Oms:
-    def __init__(self, *, positions: str = "ok") -> None:
-        self.positions, self.kill_switch_reads = positions, 0
+    def __init__(self, *, positions: str = "ok", kill: str = "ok", live: str = "ok") -> None:
+        self.positions, self.kill, self.live, self.kill_switch_reads = positions, kill, live, 0
 
     async def open_positions(self) -> int:
         if self.positions == "unwired":
@@ -72,9 +74,13 @@ class Oms:
 
     async def kill_switch_engaged(self) -> bool:
         self.kill_switch_reads += 1
+        if self.kill == "raise":
+            raise OSError("kill-switch store down")
         return False
 
     async def live_enabled(self) -> bool:
+        if self.live == "hang":
+            await asyncio.Event().wait()
         return True
 
 
@@ -82,6 +88,7 @@ def _service(budget_s: float = 0.3, positions_s: float = 0.2, **ports: Any) -> A
     """Default 300 ms budget: only the hang tests shrink a budget (no flakes under load)."""
     fan = SliceFanOut(budget_s=budget_s, monotonic=lambda: 0.0, now=lambda: NOW)
     merged: dict[str, Any] = {"counts": Counts(), "recorder": Recorder(), "oms": Oms()} | ports
+    positions_s = min(positions_s, budget_s / 2)  # always inside the slice budget
     return AdminOverviewService(fan, now=lambda: NOW, positions_budget_s=positions_s, **merged)
 
 
@@ -155,3 +162,23 @@ async def test_trading_is_read_live_while_the_other_slices_are_cached() -> None:
     await service.overview()
     await service.overview()
     assert (counts.user_reads, oms.kill_switch_reads) == (1, 2)
+
+
+async def test_a_failing_flag_read_leaves_no_task_behind() -> None:
+    before = asyncio.all_tasks()
+    snap = await _service(oms=Oms(kill="raise", live="hang")).overview()
+    assert (snap.trading.status, snap.trading.detail) == ("error", "source failed")
+    assert asyncio.all_tasks() == before  # the old nested gather leaked one task per call
+
+
+def test_the_positions_budget_stays_inside_the_slice_budget() -> None:
+    assert POSITIONS_BUDGET_S < DEFAULT_BUDGET_S
+    with pytest.raises(ValueError):
+        AdminOverviewService(SliceFanOut(budget_s=0.1), positions_budget_s=0.2)
+
+
+async def test_a_partial_trading_failure_logs_part_and_class_never_the_message() -> None:
+    with capture_logs() as logs:
+        await _service(oms=Oms(positions="raise"), positions_s=0.01).overview()
+    assert [e["reason"] for e in logs] == ["open_positions:OSError"]
+    assert "postgresql" not in repr(logs)
