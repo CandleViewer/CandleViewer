@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import functools
 import json
 import os
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TextIO
 
 CODEOWNERS_PATH = ".github/CODEOWNERS"
 ALLOWLIST_PATH = "scripts/codeowners-allowlist.txt"
@@ -132,7 +135,9 @@ def compile_pattern(pattern: str) -> tuple[bool, str]:
     return anchored, norm
 
 
-def _fnmatch_segments(path_segments: list[str], pat_segments: list[str]) -> bool:
+def _fnmatch_segments(
+    path_segments: Sequence[str], pat_segments: Sequence[str]
+) -> bool:
     """Match path segments against pattern segments; `**` crosses `/`."""
     if not pat_segments:
         return not path_segments
@@ -151,10 +156,16 @@ def _fnmatch_segments(path_segments: list[str], pat_segments: list[str]) -> bool
     return _fnmatch_segments(path_segments[1:], rest)
 
 
-def pattern_matches(pattern: str, rel_path: str) -> bool:
+@functools.cache
+def _pattern_segments(pattern: str) -> tuple[bool, tuple[str, ...]]:
+    """compile_pattern() plus the segment split, once per distinct pattern."""
     anchored, norm = compile_pattern(pattern)
+    return anchored, tuple(norm.split("/"))
+
+
+def pattern_matches(pattern: str, rel_path: str) -> bool:
+    anchored, pat_segments = _pattern_segments(pattern)
     path_segments = rel_path.split("/")
-    pat_segments = norm.split("/")
 
     if anchored:
         return _fnmatch_segments(path_segments, pat_segments)
@@ -166,13 +177,10 @@ def pattern_matches(pattern: str, rel_path: str) -> bool:
     return False
 
 
-def resolve_owner(rules: list[Rule], rel_path: str) -> Rule | None:
-    """Last matching rule wins (GitHub semantics)."""
-    winner: Rule | None = None
-    for rule in rules:
-        if pattern_matches(rule.pattern, rel_path):
-            winner = rule
-    return winner
+def matching_rules(rules: list[Rule], rel_path: str) -> list[Rule]:
+    """Every rule whose pattern matches `rel_path`, in file order. The last one
+    owns the path (GitHub semantics: last matching rule wins)."""
+    return [rule for rule in rules if pattern_matches(rule.pattern, rel_path)]
 
 
 def load_allowlist(repo_root: str) -> dict[str, str]:
@@ -233,15 +241,15 @@ def check(repo_root: str) -> tuple[Violations, list[MatchResult]]:
     violations = Violations()
 
     for rel_path in tracked:
-        winner = resolve_owner(rules, rel_path)
+        # One matching pass per path serves both the owner (the last match)
+        # and dead-rule detection (a rule is live if it matches any path,
+        # winning or shadowed).
+        matched = matching_rules(rules, rel_path)
+        winner = matched[-1] if matched else None
         results.append(MatchResult(rel_path, winner))
         if (winner is None or winner.is_catch_all) and rel_path not in allowlist:
             violations.catch_all.append(MatchResult(rel_path, winner))
-        for rule in rules:
-            if rule.line_no in any_matched_lines:
-                continue
-            if pattern_matches(rule.pattern, rel_path):
-                any_matched_lines.add(rule.line_no)
+        any_matched_lines.update(rule.line_no for rule in matched)
 
     for rule in rules:
         if rule.is_catch_all:
@@ -314,11 +322,11 @@ def emit(violations: Violations, as_json: bool, github_actions: bool) -> None:
             print(f"  {CODEOWNERS_PATH}:{r.line_no} {r.pattern}")
 
 
-def emit_report(results: list[MatchResult]) -> None:
+def emit_report(results: list[MatchResult], out: TextIO | None = None) -> None:
     for m in results:
         owners = " ".join(m.rule.owners) if m.rule else "(unowned)"
         rule_desc = m.rule.pattern if m.rule else "(none)"
-        print(f"{m.path}\t{rule_desc}\t{owners}")
+        print(f"{m.path}\t{rule_desc}\t{owners}", file=out)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -329,6 +337,11 @@ def main(argv: list[str] | None = None) -> int:
         "--report",
         action="store_true",
         help="print a full path -> rule -> owners table and exit 0",
+    )
+    parser.add_argument(
+        "--report-file",
+        metavar="PATH",
+        help="also write the --report table to PATH (exit code still from the check)",
     )
     args = parser.parse_args(argv)
 
@@ -341,6 +354,10 @@ def main(argv: list[str] | None = None) -> int:
     except subprocess.CalledProcessError as exc:
         print(f"GOV-001 internal error: git ls-files failed: {exc}", file=sys.stderr)
         return 2
+
+    if args.report_file:
+        with open(args.report_file, "w", encoding="utf-8") as report:
+            emit_report(results, report)
 
     if args.report:
         emit_report(results)
