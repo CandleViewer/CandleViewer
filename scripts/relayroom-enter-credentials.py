@@ -6,9 +6,20 @@ into `.claude/settings.local.json` -> "env", preserving everything else in that 
 
 Usage:  python scripts/relayroom-enter-credentials.py
 Refuses to run without a real TTY (so values cannot be piped or logged).
+Exit codes: 0 = written; 2 = refused (no TTY, missing file or an invalid value), nothing written.
+
+The write goes through a temp file next to the target (`.claude/.settings.local.*.tmp`, listed in
+.gitignore) and `os.replace`; the temp file is removed on every failure path, so no copy of the
+secrets is left behind.
+
+Windows caveat: NTFS has no POSIX mode 0600. Access to the file is governed only by the inherited
+NTFS ACL of the profile directory the checkout lives in (`.claude/` inherits it); this script
+neither sets nor verifies it, so keep the checkout inside your user profile, not a shared folder.
+On POSIX the temp file is created 0600 and `os.replace` keeps that mode.
 """
 from __future__ import annotations
 
+import contextlib
 import getpass
 import json
 import os
@@ -23,11 +34,35 @@ TARGET = ROOT / ".claude" / "settings.local.json"
 ORIGIN = "https://relay.candleviewer.com"
 PART = "main-orchestrator"
 DEFAULT_LABEL = "cv-main-desktop-win-l01"
+# The temp file name must match `.claude/.settings.local.*.tmp` in .gitignore.
+TMP_PREFIX = ".settings.local."
+TMP_SUFFIX = ".tmp"
 
 
 def die(msg: str) -> None:
     print(f"refused: {msg}", file=sys.stderr)
     sys.exit(2)
+
+
+def atomic_write_json(target: Path, data: dict) -> None:
+    """Write `data` to `target` via a same-directory temp file; never leave the temp file behind."""
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=TMP_PREFIX, suffix=TMP_SUFFIX)
+    try:
+        try:
+            f = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            # fdopen failed before taking ownership of the descriptor
+            with contextlib.suppress(OSError):
+                os.close(fd)
+            raise
+        with f:  # closes the descriptor on every path out of this block
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def main() -> None:
@@ -43,12 +78,13 @@ def main() -> None:
 
     if not code or not token:
         die("empty value")
+    # Before the whitespace check: "Bearer <token>" contains whitespace and would never reach it.
+    if token.lower().startswith("bearer "):
+        die("enter the raw token, without the 'Bearer ' prefix")
     if re.search(r"\s", code) or re.search(r"\s", token):
         die("whitespace in a secret value")
     if re.search(r"<[^>]+>|\$\{", code + token):
         die("placeholder text entered instead of a value")
-    if token.lower().startswith("bearer "):
-        die("enter the raw token, without the 'Bearer ' prefix")
     if "/" in code or "?" in code or "%" in code:
         # dashboard supplies a bare code; percent-encode once as a path segment
         if "%" in code:
@@ -64,11 +100,7 @@ def main() -> None:
     env["CANDLEVIEWER_RELAYROOM_API_KEY"] = token
     env["CANDLEVIEWER_RELAYROOM_MACHINE_LABEL"] = label
 
-    fd, tmp = tempfile.mkstemp(dir=str(TARGET.parent), prefix=".settings.local.", suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
-        f.write("\n")
-    os.replace(tmp, TARGET)
+    atomic_write_json(TARGET, data)
     print("written: 3 env keys merged into .claude/settings.local.json (values not shown).")
     print("next: python scripts/relayroom-main-doctor.py  then reconnect MCP in the Code session (/mcp).")
 

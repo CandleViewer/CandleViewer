@@ -5,7 +5,8 @@ JSON validity, Git exclusion, scope, URL structure, placeholder/whitespace rejec
 vs intended binding. Output is an allowlisted set of PASS/FAIL lines only.
 
 Usage:  python scripts/relayroom-main-doctor.py [--config-root PATH]
-Exit 0 = ready to activate; 1 = at least one FAIL.
+Exit codes: 0 = ready to activate; 1 = at least one FAIL; 2 = the doctor itself crashed (it
+prints only the exception class name, never its message, which could echo a secret value).
 """
 from __future__ import annotations
 
@@ -50,48 +51,55 @@ def git_tracked(root: Path, rel: str) -> bool:
 
 
 def load_json(p: Path) -> dict | None:
+    """Parse `p` as a JSON object; None if missing, unreadable, invalid or not an object."""
     try:
-        return json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return None
+    return data if isinstance(data, dict) else None
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--config-root", default=str(Path(__file__).resolve().parents[1]))
-    root = Path(ap.parse_args().config_root).resolve()
-
+def run(root: Path) -> int:
+    """Run every check against `root`, print the allowlisted report, return the exit code."""
     # --- shared template --------------------------------------------------
     mcp = load_json(root / ".mcp.json")
-    check(".mcp.json parses", mcp is not None)
-    srv = (mcp or {}).get("mcpServers", {}).get(EXPECTED["mcpServer"])
-    check("alias candleviewer-relayroom present", srv is not None)
-    if srv:
+    check(".mcp.json parses as a JSON object", mcp is not None)
+    servers = mcp.get("mcpServers") if mcp is not None else None
+    srv = servers.get(EXPECTED["mcpServer"]) if isinstance(servers, dict) else None
+    check("alias candleviewer-relayroom present", isinstance(srv, dict))
+    if isinstance(srv, dict):
+        headers = srv.get("headers")
+        auth = headers.get("Authorization") if isinstance(headers, dict) else None
         check("template uses env placeholders only (no literal secret)",
               srv.get("url") == "${CANDLEVIEWER_RELAYROOM_MCP_URL}"
-              and srv.get("headers", {}).get("Authorization") == "Bearer ${CANDLEVIEWER_RELAYROOM_API_KEY}")
+              and auth == "Bearer ${CANDLEVIEWER_RELAYROOM_API_KEY}")
 
     # --- private identity -------------------------------------------------
     ident_p = root / ".claude" / "relayroom" / "identity.local.json"
     ident = load_json(ident_p)
-    check("identity.local.json parses", ident is not None)
+    check("identity.local.json parses as a JSON object", ident is not None)
     check("identity.local.json git-ignored", git_ignored(root, ".claude/relayroom/identity.local.json"))
-    if ident:
+    if ident is not None:
         for k in ("project", "part", "persona", "mcpServer"):
             check(f"identity.{k} == {EXPECTED[k]}", ident.get(k) == EXPECTED[k])
         check("identity.expectedIsMain is true", ident.get("expectedIsMain") is True)
         check("identity.clientInstanceId is a UUID", bool(UUID_RE.match(str(ident.get("clientInstanceId", "")))))
-        check("identity.configRoot matches this checkout", Path(str(ident.get("configRoot", ""))).resolve() == root)
+        # Path("") resolves to the cwd, so a missing/empty configRoot must not be treated as a match
+        config_root = ident.get("configRoot")
+        check("identity.configRoot matches this checkout",
+              isinstance(config_root, str) and config_root.strip() != ""
+              and Path(config_root).resolve() == root)
         secretish = json.dumps(ident).lower()
         check("identity carries no token/url/connect-code", not any(s in secretish for s in ("bearer", "/mcp/", "token", "connect")))
 
     # --- private credentials (presence/shape only; values never printed) ---
     sl_rel = ".claude/settings.local.json"
     sl = load_json(root / sl_rel)
-    check("settings.local.json parses", sl is not None)
+    check("settings.local.json parses as a JSON object", sl is not None)
     check("settings.local.json NOT tracked", not git_tracked(root, sl_rel))
     check("settings.local.json git-ignored", git_ignored(root, sl_rel))
-    env = (sl or {}).get("env", {}) if isinstance(sl, dict) else {}
+    raw_env = sl.get("env") if sl is not None else None
+    env = raw_env if isinstance(raw_env, dict) else {}
     for k in ENV_KEYS:
         v = env.get(k)
         present = isinstance(v, str) and v.strip() != ""
@@ -101,13 +109,17 @@ def main() -> int:
             check(f"env.{k} has no whitespace", v == v.strip() and not re.search(r"\s", v))
     url = env.get("CANDLEVIEWER_RELAYROOM_MCP_URL")
     if isinstance(url, str) and url.strip():
-        u = urlsplit(url)
-        check("MCP URL origin is the hub (https, exact host)", f"{u.scheme}://{u.netloc}" == EXPECTED["origin"])
-        check("MCP URL path is /mcp/<connect-code>", bool(re.fullmatch(r"/mcp/[^/]+", u.path)))
-        check("MCP URL query is exactly part=main-orchestrator", u.query == "part=main-orchestrator")
-        check("MCP URL connect code is not double-encoded", "%25" not in u.path)
+        try:
+            u = urlsplit(url)
+        except ValueError:
+            check("MCP URL parses", False)
+        else:
+            check("MCP URL origin is the hub (https, exact host)", f"{u.scheme}://{u.netloc}" == EXPECTED["origin"])
+            check("MCP URL path is the MCP prefix plus one connect-code segment", bool(re.fullmatch(r"/mcp/[^/]+", u.path)))
+            check("MCP URL query is exactly part=main-orchestrator", u.query == "part=main-orchestrator")
+            check("MCP URL connect code is not double-encoded", "%25" not in u.path)
     label = env.get("CANDLEVIEWER_RELAYROOM_MACHINE_LABEL")
-    if ident and isinstance(label, str) and label.strip():
+    if ident is not None and isinstance(label, str) and label.strip():
         check("env machine label == identity.machineLabel", label == ident.get("machineLabel"))
 
     # --- runs -------------------------------------------------------------
@@ -121,6 +133,19 @@ def main() -> int:
     fails = sum(1 for s, _ in results if s == "FAIL")
     print(f"\nrelayroom-main-doctor: {'READY' if fails == 0 else f'{fails} FAIL'}  (part=main-orchestrator, alias=candleviewer-relayroom)")
     return 0 if fails == 0 else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="RelayRoom main-orchestrator client doctor")
+    ap.add_argument("--config-root", default=str(Path(__file__).resolve().parents[1]))
+    args = ap.parse_args(argv)
+    results.clear()  # `results` is module-level: a second main() in one process starts clean
+    try:
+        return run(Path(args.config_root).resolve())
+    except Exception as e:
+        # Last-resort guard. Never print str(e) or a traceback: a message can embed a secret value.
+        print(f"FAIL  doctor crashed: {type(e).__name__}")
+        return 2
 
 
 if __name__ == "__main__":
