@@ -28,14 +28,14 @@ def _frame(t: str, ch: str | None = None, **p: Any) -> dict[str, Any]:
 
 
 def _setup(
-    max_bytes: int = 6_000, max_frames: int = 40
+    max_bytes: int = 6_000, max_frames: int = 40, max_frame_bytes: int | None = None
 ) -> tuple[Conn, Pacer, OutboundQueue, Source]:
     """A connection whose emitter writes into a small outbound queue (every frame validated)."""
     source = Source()
     for symbol in ("BTCUSDT", "ETHUSDT"):
         source.books[symbol] = Book(symbol)
     source.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
-    conn = Conn(source, ACC_A)
+    conn = Conn(source, ACC_A, max_frame_bytes=max_frame_bytes)
     conn.clock.now = 100.0
     queue = OutboundQueue(max_bytes=max_bytes, max_frames=max_frames)
 
@@ -229,7 +229,7 @@ def test_backpressure_undroppable_backlog_closes_after_the_drop_naming_costs() -
     events = Backpressure(queue, pacer).check([book, orders])
     assert events == [
         LadderEvent("drop", ("book.BTCUSDT.50",)),
-        LadderEvent("close", ("book.BTCUSDT.50",)),
+        LadderEvent("close", ("book.BTCUSDT.50",), "budget"),
     ]
     assert all(json.loads(f.text)["ch"] == "orders" for f in list(queue._priority))
     assert not orders.snapshot_pending  # never dropped
@@ -322,7 +322,7 @@ def test_backpressure_nothing_droppable_over_budget_closes_without_a_drop() -> N
     book = _sub(conn, queue, "book.BTCUSDT.50")
     for _ in range(2):
         queue.push(encode(_frame("err")))
-    assert Backpressure(queue, pacer).check([book]) == [LadderEvent("close", ())]
+    assert Backpressure(queue, pacer).check([book]) == [LadderEvent("close", (), "budget")]
     assert not book.snapshot_pending
 
 
@@ -352,7 +352,7 @@ def test_backpressure_close_hint_counts_pending_state() -> None:
     for _ in range(3):
         pacer.offer(orders, {"orders": []})
     events = Backpressure(queue, pacer).check([book, other, orders])
-    assert events[-1] == LadderEvent("close", ("book.BTCUSDT.50", "book.ETHUSDT.50"))
+    assert events[-1] == LadderEvent("close", ("book.BTCUSDT.50", "book.ETHUSDT.50"), "budget")
 
 
 def test_backpressure_close_hint_names_at_most_five_topics_largest_first() -> None:
@@ -363,7 +363,9 @@ def test_backpressure_close_hint_names_at_most_five_topics_largest_first() -> No
     for _ in range(8):
         pacer.offer(orders, {"orders": []})
     events = Backpressure(queue, pacer).check([orders])
-    assert events == [LadderEvent("close", tuple(f"trades.SYM{i}" for i in (6, 5, 4, 3, 2)))]
+    assert events == [
+        LadderEvent("close", tuple(f"trades.SYM{i}" for i in (6, 5, 4, 3, 2)), "budget")
+    ]
 
 
 def test_backpressure_snapshot_that_never_fits_ends_in_a_close() -> None:
@@ -380,7 +382,7 @@ def test_backpressure_snapshot_that_never_fits_ends_in_a_close() -> None:
         events = ladder.check([book])
     assert events == [
         LadderEvent("drop", ("book.BTCUSDT.50",)),
-        LadderEvent("close", ("book.BTCUSDT.50",)),
+        LadderEvent("close", ("book.BTCUSDT.50",), "redrop"),
     ]
 
 
@@ -439,3 +441,49 @@ def test_backpressure_forgets_the_counts_of_ended_subscriptions() -> None:
     queue.push(encode(_frame("d", "book.ETHUSDT.50", pad="x" * 700)))
     assert [e.action for e in ladder.check([other])] == ["drop"]
     assert (ladder._redrops, ladder._snapped) == ({}, {})
+
+
+# -- #2503 fable review: a check run by the pushes of the snapshot `drain` is queuing ---------
+
+
+def _checking_push(conn: Conn, ladder: Backpressure, subs: list[Subscription]) -> None:
+    """The wiring the module asks for: `check` after every push, the snapshot's included."""
+    pushed = conn.emitter.push
+
+    def push(frame: dict[str, Any]) -> None:
+        pushed(frame)
+        ladder.check(subs)
+
+    conn.emitter.push = push
+
+
+def test_backpressure_check_from_the_snapshot_pushes_never_stalls_and_still_closes() -> None:
+    conn, pacer, queue, source = _setup(max_bytes=600)
+    book = _sub(conn, queue, "book.BTCUSDT.50")
+    source.books["BTCUSDT"].apply([[str(p), "1"] for p in range(100, 150)], [])
+    source.gen += 1
+    ladder = Backpressure(queue, pacer)
+    _checking_push(conn, ladder, [book])
+    pacer.drop(book)
+    events: list[LadderEvent] = []
+    for _ in range(MAX_REDROPS):
+        assert book.snapshot_pending and book.sub_id in pacer.resnapshot_required  # not stuck
+        events = ladder.drain()
+    assert events == [
+        LadderEvent("resnapshot", ("book.BTCUSDT.50",)),
+        LadderEvent("drop", ("book.BTCUSDT.50",)),
+        LadderEvent("close", ("book.BTCUSDT.50",), "redrop"),
+    ]
+
+
+def test_backpressure_held_check_drops_a_chunked_snapshot_whole() -> None:
+    conn, pacer, queue, source = _setup(max_bytes=600, max_frame_bytes=450)
+    book = _sub(conn, queue, "book.BTCUSDT.50")
+    source.books["BTCUSDT"].apply([[str(p), "1"] for p in range(100, 150)], [])
+    source.gen += 1
+    ladder = Backpressure(queue, pacer)
+    _checking_push(conn, ladder, [book])
+    pacer.drop(book)
+    assert [e.action for e in ladder.drain()] == ["resnapshot", "drop"]
+    assert _drain(queue) == []  # no chunk of the dropped snapshot is left behind
+    assert ladder._redrops == {book.sub_id: 1} and book.sub_id in pacer.resnapshot_required

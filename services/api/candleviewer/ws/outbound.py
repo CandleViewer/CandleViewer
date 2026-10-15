@@ -22,7 +22,9 @@ market-data frames (`d` / `snap` of a throttled topic) can be dropped; control f
 Every step comes back as a `LadderEvent`; the caller records step 4 (`cv_ws_overflow_total`, and
 the warning audit entry when step 3 fires) and performs the close. The bound holds only if the
 caller runs `check` after every push and every pacer update; recovery needs `drain` after every
-send and after every `check` that dropped.
+send and after every `check` that dropped. A `check` run by the pushes of a snapshot that `drain`
+is queuing waits until the whole snapshot is queued, then runs once, and `drain` returns its
+events: a snapshot is dropped whole, and that drop counts as a redrop.
 """
 
 from __future__ import annotations
@@ -85,10 +87,13 @@ def encode(frame: Mapping[str, Any]) -> Queued:
 @dataclass(frozen=True, slots=True)
 class LadderEvent:
     """One §8.4 step that fired: `drop`, `resnapshot` or `close`, and the topics it concerned
-    (for `close`, the most expensive ones)."""
+    (for `close`, the most expensive ones). A `close` names its step-3 `trigger`: `budget` (still
+    over budget after the drop) or `redrop` (`MAX_REDROPS`), for the metric label and the audit
+    entry."""
 
     action: str
     topics: tuple[str, ...]
+    trigger: str | None = None
 
 
 class OutboundQueue:
@@ -189,6 +194,9 @@ class Backpressure:
         self._snapped: dict[str, str] = {}
         #: Consecutive drops that found a subscription's `backpressure` snapshot unsent.
         self._redrops: dict[str, int] = {}
+        #: While `drain` queues a snapshot, a `check` from its pushes is held here (module doc).
+        self._draining = False
+        self._deferred: list[Subscription] | None = None
 
     def over_budget(self) -> bool:
         return self.queue.over_budget(self.pacer.pending_bytes)
@@ -196,6 +204,9 @@ class Backpressure:
     def check(self, subs: Iterable[Subscription]) -> list[LadderEvent]:
         """Steps 1 and 3, when the connection is over its budget. `subs` is the connection's full
         subscription set."""
+        if self._draining:
+            self._deferred = list(subs)
+            return []
         if not self.over_budget():
             return []
         subs = list(subs)
@@ -225,8 +236,10 @@ class Backpressure:
         events = []
         if offending:
             events.append(LadderEvent("drop", tuple(sorted(sub.ch for sub in offending))))
-        if self.over_budget() or self._looping(offending):
-            events.append(LadderEvent("close", hint))
+        if self.over_budget():
+            events.append(LadderEvent("close", hint, "budget"))
+        elif self._looping(offending):
+            events.append(LadderEvent("close", hint, "redrop"))
         return events
 
     def _pending(self, sub: Subscription) -> bool:
@@ -264,14 +277,26 @@ class Backpressure:
         return looping
 
     def drain(self) -> list[LadderEvent]:
-        """Step 2: below `DRAIN_PCT`, one `backpressure` snap per marked topic, one at a time."""
+        """Step 2: below `DRAIN_PCT`, one `backpressure` snap per marked topic, one at a time.
+        A `check` from the snapshot's own pushes runs once it is queued (module doc)."""
         self._settle()  # before a new snapshot replaces the record of a sent one
         sent: list[str] = []
+        held: list[LadderEvent] = []
         for sub_id, sub in list(self.pacer.resnapshot_required.items()):
             if self.queue.pct(self.pacer.pending_bytes) >= DRAIN_PCT:
                 break
-            if self.pacer.emitter.snapshot(sub, "backpressure"):
+            self._draining = True
+            try:
+                queued = self.pacer.emitter.snapshot(sub, "backpressure")
+            finally:
+                self._draining = False
+            if queued:
                 del self.pacer.resnapshot_required[sub_id]
-                self._snapped[sub_id] = sub.ch
+                self._snapped[sub_id] = sub.ch  # before the held check, so a drop is a redrop
                 sent.append(sub.ch)
-        return [LadderEvent("resnapshot", tuple(sent))] if sent else []
+            deferred, self._deferred = self._deferred, None
+            if deferred is not None:
+                held += self.check(deferred)
+                if any(event.action == "close" for event in held):
+                    break
+        return ([LadderEvent("resnapshot", tuple(sent))] if sent else []) + held
