@@ -3915,7 +3915,7 @@ class DrawingGeometry(BaseModel):
     levels: Annotated[
         list[Level] | None,
         Field(
-            description="Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`.",
+            description="Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`. Non-zero items must have |x| ≥ 1e-6 (`number_out_of_range`).",
             max_length=24,
             min_length=1,
         ),

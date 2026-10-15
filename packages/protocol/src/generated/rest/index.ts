@@ -4985,7 +4985,7 @@ export interface components {
       bands?: (1 | 2 | 3)[];
       extend_left?: boolean;
       extend_right?: boolean;
-      /** @description Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`. */
+      /** @description Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`. Non-zero items must have |x| ≥ 1e-6 (`number_out_of_range`). */
       levels?: number[];
       points: components["schemas"]["DrawingPoint"][];
       /** @description Text content (`text` and `callout` only), 1..1000 code points after control-character stripping (LF is kept). */

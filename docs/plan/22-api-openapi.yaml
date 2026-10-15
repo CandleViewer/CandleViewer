@@ -13394,7 +13394,7 @@ components:
         extend_right: { type: boolean }
         levels:
           type: array
-          description: "Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`."
+          description: "Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`. Non-zero items must have |x| ≥ 1e-6 (`number_out_of_range`)."
           minItems: 1
           maxItems: 24
           uniqueItems: true
