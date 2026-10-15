@@ -85,8 +85,11 @@ _ANCHOR_SQL = sa.text(
 )
 #: The first and the head id in one statement (both ends of the primary key index).
 _BOUNDS_SQL = sa.text("SELECT min(id), max(id) FROM audit_log")
+#: A checkpoint above `:head_id` whose entry is missing or has another hash: a truncated tail.
+#: A checkpoint written after the head was read names an existing entry with its own hash.
 _CHECKPOINT_ABOVE_SQL = sa.text(
-    "SELECT min(head_id) FROM audit_checkpoints WHERE head_id > :head_id"
+    "SELECT min(c.head_id) FROM audit_checkpoints c LEFT JOIN audit_log a ON a.id = c.head_id "
+    "WHERE c.head_id > :head_id AND a.entry_hash IS DISTINCT FROM c.head_hash"
 )
 #: Per-statement budget for verify's reads (the head, the anchor, each batch), client-side
 #: and as `statement_timeout`: a backstop far above one keyset batch. An overrun is 503.

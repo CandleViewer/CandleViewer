@@ -107,8 +107,9 @@ class AuditRepository(Protocol):
         ...
 
     async def fetch_checkpoint_above(self, head_id: int) -> int | None:
-        """Return the smallest checkpoint `head_id` above `head_id` (a truncated tail), or
-        `None` when no checkpoint names an id above it."""
+        """Return the smallest checkpoint `head_id` above `head_id` whose entry is missing or
+        has another hash (a truncated tail, or a reused id), or `None`. A checkpoint written
+        after `head_id` was read names an existing entry with its own hash, so it is not one."""
         ...
 
     async def count(self) -> int:
