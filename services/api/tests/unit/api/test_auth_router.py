@@ -6,6 +6,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -29,6 +30,7 @@ from candleviewer.auth.models import (
     MfaVerifyRequest,
     MintedSession,
 )
+from tests.unit.auth.totp_code_cases import NON_ASCII_DIGIT_CODES
 
 _CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
 
@@ -384,6 +386,27 @@ def test_mfa_enroll_confirm_disabled_even_without_headers() -> None:
         "/auth/mfa/enroll/confirm", json={"method_id": str(uuid.uuid4()), "code": "123456"}
     )
     assert response.status_code == 501
+
+
+@pytest.mark.parametrize("code", NON_ASCII_DIGIT_CODES)
+def test_mfa_enroll_confirm_refuses_a_non_ascii_digit_code_with_422(code: str) -> None:
+    """#2605: the body is validated before the fail-closed stub answers, so a code that is not
+    six ASCII digits never reaches `verify_code` once the route is wired."""
+    client = TestClient(_mfa_app(None))
+    response = client.post(
+        "/auth/mfa/enroll/confirm", json={"method_id": str(uuid.uuid4()), "code": code}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize("code", NON_ASCII_DIGIT_CODES)
+def test_mfa_verify_refuses_a_non_ascii_digit_code_with_422(code: str) -> None:
+    """`/auth/mfa/verify` was never exposed to #2605 (ASCII pattern); the service is not reached."""
+    client = TestClient(_mfa_app(MfaVerifiedResult(user_id=uuid.uuid4())))
+    response = client.post(
+        "/auth/mfa/verify", json={"mfa_token": "tok", "method": "totp", "code": code}
+    )
+    assert response.status_code == 422
 
 
 def test_mfa_verify_with_session_backend_mints_session_and_sets_cookie() -> None:

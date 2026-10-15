@@ -63,12 +63,16 @@ class MfaEnrollRequest(BaseModel):
 
 
 class MfaEnrollConfirmRequest(BaseModel):
-    """`docs/plan/22-api-openapi.yaml` `MfaEnrollConfirmRequest`."""
+    """`docs/plan/22-api-openapi.yaml` `MfaEnrollConfirmRequest`.
+
+    `code` is the six-digit TOTP code, ASCII digits only: a looser check let other scripts'
+    digits reach `verify_code` (#2605).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     method_id: uuid.UUID
-    code: str = Field(min_length=6, max_length=32)
+    code: str = Field(pattern=r"^[0-9]{6}$")
 
 
 class MfaRecoveryRequest(BaseModel):

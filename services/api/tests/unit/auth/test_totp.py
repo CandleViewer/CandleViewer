@@ -10,7 +10,12 @@ skew window, replay-adjacent step math) rather than re-deriving the RFC's
 
 from __future__ import annotations
 
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
+
 from candleviewer.auth.totp import (
+    TOTP_DIGITS,
     TOTP_STEP_SECONDS,
     base32_to_secret,
     generate_code,
@@ -20,6 +25,8 @@ from candleviewer.auth.totp import (
     time_step_for,
     verify_code,
 )
+
+from .totp_code_cases import NON_ASCII_DIGIT_CODES
 
 
 def test_generate_secret_returns_20_random_bytes() -> None:
@@ -92,6 +99,33 @@ def test_verify_code_rejects_non_digit_or_wrong_length() -> None:
     assert verify_code(secret, "12345", unix_time=0.0) is None
     assert verify_code(secret, "abcdef", unix_time=0.0) is None
     assert verify_code(secret, "1234567", unix_time=0.0) is None
+
+
+@pytest.mark.parametrize("code", NON_ASCII_DIGIT_CODES)
+def test_verify_code_refuses_non_ascii_digits_instead_of_raising(code: str) -> None:
+    """#2605: `str.isdigit()` admits other scripts' digits and `hmac.compare_digest(str, str)`
+    then raises `TypeError`; such a code is refused like any other wrong one."""
+    # Each case passed the old guard: `isdigit()` and six characters.
+    assert code.isdigit() and len(code) == TOTP_DIGITS and not code.isascii()
+    assert verify_code(generate_secret(), code, unix_time=1_700_000_000.0) is None
+
+
+_FIXED_SECRET = b"\x07" * 20
+_FIXED_TIME = 1_700_000_000.0
+_NON_ASCII_DECIMAL = st.characters(categories=["Nd"], min_codepoint=0x80)
+
+
+@given(
+    code=st.one_of(
+        st.text(),
+        st.text(alphabet=_NON_ASCII_DECIMAL, min_size=TOTP_DIGITS, max_size=TOTP_DIGITS),
+        st.text(alphabet=st.characters(categories=["Nd"]), max_size=2 * TOTP_DIGITS),
+    )
+)
+def test_verify_code_never_raises_and_accepts_only_ascii_digit_strings(code: str) -> None:
+    accepted = verify_code(_FIXED_SECRET, code, unix_time=_FIXED_TIME)
+    if accepted is not None:
+        assert code.isascii() and code.isdigit() and len(code) == TOTP_DIGITS
 
 
 def test_verify_code_never_tries_a_negative_time_step() -> None:

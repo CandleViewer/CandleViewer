@@ -77,7 +77,10 @@ def verify_code(
     this function is stateless and would happily accept the same code
     twice on its own.
     """
-    if not code.isdigit() or len(code) != TOTP_DIGITS:
+    # `str.isdigit()` is true for other scripts' digits too (for example Arabic-Indic), and
+    # `hmac.compare_digest(str, str)` raises `TypeError` on non-ASCII text: refuse those like any
+    # other wrong code instead of crashing the caller (#2605).
+    if not code.isascii() or not code.isdigit() or len(code) != TOTP_DIGITS:
         return None
     current_step = time_step_for(unix_time, step_seconds=step_seconds)
     for delta in range(-skew_steps, skew_steps + 1):
