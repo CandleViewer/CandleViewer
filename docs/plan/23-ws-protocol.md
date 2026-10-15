@@ -1116,7 +1116,7 @@ The UI uses `expected_downtime_ms` to show a countdown instead of a bare "discon
 3. After the grace period, every connection gets `bye` `shutdown` with `retry_after_ms` = `expected_downtime_ms`, then close `1001`.
 4. uvicorn's shutdown and the application's teardown follow.
 
-The grace and downtime come from `CV_WS_SHUTDOWN_GRACE_MS` and `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS`. Three cases still close with uvicorn's own `1012`, and no `bye`:
+The grace and downtime come from `CV_WS_SHUTDOWN_GRACE_MS` and `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS`. The grace must fit the api stop budget (`CV_API_STOP_BUDGET_S`, 30 s by default) together with the 2 s socket flush, the bounded uvicorn drain and the module teardown, so it is at most 8 s at the defaults; settings refuse a larger one. Three cases still close with uvicorn's own `1012`, and no `bye`:
 
 - the development reloader (`--reload`), which runs a plain uvicorn server;
 - a forced exit: a second Ctrl+C (SIGINT), before or during the grace, cuts the planned shutdown short and uvicorn then skips the application's teardown. A cut-short shutdown logs the warning `planned ws shutdown cut short` (reason `force_exit`, lifespan teardown skipped, and `started` for whether the planned shutdown had begun);

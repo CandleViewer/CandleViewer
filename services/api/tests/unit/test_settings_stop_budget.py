@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 import yaml
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from candleviewer import ws_wiring
 from candleviewer.app import Supervisor
@@ -113,8 +113,8 @@ def test_the_budget_and_the_drain_timeout_come_from_the_environment(
 
 
 def test_the_refusal_message_never_includes_a_secret_value() -> None:
-    """The message names terms and numbers only. (pydantic appends a truncated `input_value` of the
-    raw input after the message, for every `Settings` validator alike; it is not the message.)"""
+    """The message names terms and numbers only, and `Settings` sets `hide_input_in_errors` (#2086),
+    so pydantic appends no `input_value` of the raw input either."""
     sentinels = ("sentinel-api-key", "sentinel-api-secret", "sentinel-dsn-pw", "sentinel-pepper")
     with pytest.raises(ValidationError) as exc_info:
         Settings.model_validate(
@@ -257,3 +257,11 @@ def test_the_guard_accepts_every_compose_spelling_of_a_matching_budget(
     api: dict[str, Any], budget_s: int
 ) -> None:
     assert stop_budget_problems(api, budget_s) == []
+
+
+def test_a_refused_setting_never_echoes_a_secret_input() -> None:
+    """C-12.6: the validator's error must not trail the env as `input_value=...`."""
+    probe = "NOT-A-REAL-KEY-ECHO-PROBE"
+    with pytest.raises(ValidationError) as err:
+        Settings(ws_shutdown_grace_ms=60_000, bybit_api_key=SecretStr(probe))
+    assert probe[:6] not in str(err.value) and "input_value" not in str(err.value)
