@@ -18,6 +18,9 @@ This script is the single implementation invoked by
    against a committed schema change).
 3. Runs ``git status --porcelain -- packages/protocol`` (CI-GEN-002:
    untracked generated output the first check cannot see).
+4. Checks that the packaged contract subset (#2555) was cut from the committed
+   ``docs/plan/22-api-openapi.yaml`` (CI-GEN-001), by the SHA-256 the artifact
+   records: its generator needs the backend venv, which this job does not have.
 
 Exit codes: 0 clean, 1 a CI-GEN-* violation was found, 2 internal error
 (generator command failed to run at all).
@@ -29,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import shutil
 import subprocess
 import sys
@@ -51,6 +55,17 @@ EXTRA_GENERATED: tuple[Path, ...] = (
     Path("tests/fuzz/ws-frames"),
 )
 GENERATED_PATHS: tuple[Path, ...] = (GENERATED_ROOT, *EXTRA_GENERATED)
+# #2555: services/api/scripts/generate_protocol_models.py writes the packaged
+# contract subset the API reads at runtime. Its `--check` (py lane) compares the
+# content; this always-on job only compares the source hash the artifact records,
+# so a YAML-only PR cannot leave the runtime contract stale.
+CONTRACT_SOURCE = Path("docs/plan/22-api-openapi.yaml")
+CONTRACT_ARTIFACT = Path(
+    "services/api/candleviewer/api/_generated/contract_subset.json"
+)
+CONTRACT_REGENERATE = (
+    "cd services/api && uv run python scripts/generate_protocol_models.py"
+)
 # shutil.which resolves pnpm.cmd on Windows (a bare "pnpm" is not executable there).
 GENERATE_CMD = [shutil.which("pnpm") or "pnpm", "generate"]
 
@@ -154,6 +169,28 @@ def check_untracked() -> None:
         )
 
 
+def check_contract_subset() -> None:
+    """CI-GEN-001: the packaged contract subset was generated from the committed YAML."""
+    try:
+        artifact = json.loads(CONTRACT_ARTIFACT.read_text(encoding="utf-8"))
+        recorded = artifact["x-cv-generated"]["source_sha256"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise GenGateError(
+            "CI-GEN-001",
+            f"{CONTRACT_ARTIFACT} is missing or records no source hash ({exc!r}). "
+            f"Regenerate it with `{CONTRACT_REGENERATE}` and commit the result.",
+        ) from exc
+    source = CONTRACT_SOURCE.read_bytes().replace(b"\r\n", b"\n")
+    committed = hashlib.sha256(source).hexdigest()
+    if recorded != committed:
+        raise GenGateError(
+            "CI-GEN-001",
+            f"{CONTRACT_ARTIFACT} is stale: it was generated from a {CONTRACT_SOURCE} with "
+            f"sha256 {recorded}, but the committed one has sha256 {committed}. "
+            f"Regenerate it with `{CONTRACT_REGENERATE}` and commit the result.",
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.parse_args(argv)
@@ -164,6 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         check_determinism()
         check_freshness()
         check_untracked()
+        check_contract_subset()
     except GenGateError as exc:
         print(f"{exc.code}: {exc.message}", file=sys.stderr)
         return 1
