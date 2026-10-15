@@ -55,6 +55,14 @@ def test_pacer_lateness_beyond_max_lag_slows_the_clock_and_returns_the_lost_time
     assert pacer.due(4 * US_PER_S) == pytest.approx(5.0)  # no burst: 2 s of replay is 1 s
 
 
+def test_pacer_lateness_behind_an_anchor_a_speed_change_moved_ahead_stays_measurable() -> None:
+    pacer = Pacer(1.0, wall=0.0, ts_us=0)
+    pacer.set_speed(2.0, wall=2.0, position_us=pacer.position(2.0))  # 2 s of replay reached
+    assert pacer.due(US_PER_S) == pytest.approx(1.5)  # the event at 1 s is still late
+    assert pacer.late(US_PER_S, wall=2.0, max_lag_s=0.25) == pytest.approx(0.5)
+    assert (pacer.anchor_wall, pacer.anchor_ts) == (2.0, US_PER_S)  # slowed: re-anchored at it
+
+
 def test_pacer_late_event_inside_a_skipped_stretch_never_moves_the_anchor_back() -> None:
     pacer = Pacer(1.0, wall=0.0, ts_us=0)
     pacer.skip_to(60 * US_PER_S, wall=5.0)

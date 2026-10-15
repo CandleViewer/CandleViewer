@@ -360,8 +360,8 @@ async def test_backpressure_at_half_rate_slows_the_clock_and_drops_nothing() -> 
     ratios = await _play_sampling(r)
     assert r.sink.events == items
     assert ratios and all(0.4 < ratio < 0.6 for ratio in ratios)
-    stats = r.clock.stats()
-    assert (stats.events_emitted, stats.backpressured, r.obs.edges) == (600, True, [True])
+    stats = r.clock.stats()  # backpressure ends with playback
+    assert (stats.events_emitted, stats.backpressured, r.obs.edges) == (600, False, [True, False])
     assert stats.backpressure_s > 0
 
 
@@ -400,3 +400,37 @@ def test_playback_never_drops_reorders_or_runs_early_and_the_cursor_never_goes_b
     if speed > 0:
         for event, at in zip(r.sink.events, r.sink.at, strict=True):
             assert at - start >= (event.ts_us - T0) / (speed * SECOND) - 0.001 - 1e-9
+
+
+@pytest.mark.parametrize("resent", [(1.0,), (1.01, 1.0)], ids=["same", "alternating"])
+async def test_speed_resends_never_forgive_lateness_or_hide_backpressure(
+    resent: tuple[float, ...],
+) -> None:
+    """Regression: the UI re-sends a speed after every event while the sink falls 50 ms behind
+    per event. The same speed is a no-op, and a real change re-anchors from the schedule's own
+    position, so the lateness builds up and is booked. Before the fix every re-send forgave it."""
+    time, speeds = FakeTime(), itertools.cycle(resent)
+
+    class ResendingSink(RecordingSink):
+        clock: ReplayClock | None = None
+
+        async def deliver(self, event: RecordedEvent) -> None:
+            await super().deliver(event)
+            if self.clock is not None:
+                self.clock.set_speed(next(speeds))
+
+    sink = ResendingSink(time, cost_s=0.15)
+    items = [trade(i * 100_000, trade_id=f"t{i}") for i in range(30)]
+    r = rig(items, end_s=3, time=time, sink=sink)
+    sink.clock = r.clock
+    async with r.clock as clock:
+        assert await clock.play() == "range_end"
+    assert r.clock.stats().backpressure_s > 0 and r.obs.edges[:1] == [True]
+
+
+async def test_an_event_exactly_at_the_range_end_is_not_delivered() -> None:
+    """The range is half-open: `[start, end)`."""
+    r = rig([*every_second(2), trade(2 * SECOND, trade_id="at-end")], end_s=2, speed=UNBOUNDED)
+    async with r.clock as clock:
+        assert await clock.play() == "range_end"
+    assert r.sink.events == every_second(2)

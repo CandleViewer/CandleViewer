@@ -7,8 +7,9 @@ speed change re-anchors at the current position, so it takes effect continuously
 jumping. An event later than `max_lag_s` behind schedule re-anchors at that event: the clock slows
 instead of bursting to catch up. `late()` returns that lateness; the clock books it as lost time.
 
-Replay time at or before the anchor is due at the anchor. After a skipped gap (`skip_to`), the
-stretch it compressed plays without waits and never early.
+A skipped gap (`skip_to`) compresses replay time: everything before `skip_until` is due at once,
+never early and never late. Anywhere else lateness stays measurable, even behind an anchor that a
+speed change moved ahead of the next undelivered event.
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ class Pacer:
 
     Wall times are `MonotonicTime.now()` seconds; replay times are integer µs."""
 
-    __slots__ = ("_rate", "anchor_ts", "anchor_wall", "speed")
+    __slots__ = ("_rate", "anchor_ts", "anchor_wall", "skip_until", "speed")
 
     def __init__(self, speed: float, *, wall: float, ts_us: int) -> None:
         if speed <= 0:
@@ -31,12 +32,11 @@ class Pacer:
         self.speed = speed
         self._rate = speed * US_PER_S
         self.anchor_wall = wall
-        self.anchor_ts = ts_us
+        self.anchor_ts = self.skip_until = ts_us
 
     def due(self, ts_us: int) -> float:
-        """Wall time at which replay time `ts_us` is due."""
-        ahead = ts_us - self.anchor_ts
-        return self.anchor_wall + ahead / self._rate if ahead > 0 else self.anchor_wall
+        """Wall time at which replay time `ts_us` is due (inside a skipped stretch: at once)."""
+        return self.anchor_wall + (max(ts_us, self.skip_until) - self.anchor_ts) / self._rate
 
     def position(self, wall: float) -> int:
         """Replay time the schedule has reached at `wall` (the anchor until then)."""
@@ -56,16 +56,16 @@ class Pacer:
     def skip_to(self, ts_us: int, *, wall: float) -> None:
         """Compress replay time up to `ts_us` (a skipped gap's end): it is due at `wall`. Never
         moves the schedule back."""
-        self.anchor_ts = max(ts_us, self.position(wall))
+        self.anchor_ts = self.skip_until = max(ts_us, self.position(wall))
         self.anchor_wall = wall
 
     def late(self, ts_us: int, *, wall: float, max_lag_s: float) -> float:
         """Lateness in seconds of the event at `ts_us` delivered at `wall`. Beyond `max_lag_s`
-        the clock slows: it re-anchors at the event (never back in replay time), and the caller
-        books the returned lateness as lost wall time."""
+        the clock slows: it re-anchors at the event (never back into a skipped stretch), and the
+        caller books the returned lateness as lost wall time."""
         lag = wall - self.due(ts_us)
         if lag > max_lag_s:
-            self.anchor_wall, self.anchor_ts = wall, max(ts_us, self.anchor_ts)
+            self.anchor_wall, self.anchor_ts = wall, max(ts_us, self.skip_until)
         return lag
 
 

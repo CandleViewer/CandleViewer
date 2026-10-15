@@ -166,24 +166,29 @@ class ReplayClock:
             await asyncio.wait({task})
 
     def set_speed(self, speed: float) -> None:
-        """Change speed (B12 `set_speed`). While paced, the schedule continues from the current
-        position, so the change is continuous; `STEP` pauses."""
+        """Change speed (B12 `set_speed`); the current speed again is a no-op. While paced, the
+        schedule continues from its own position, so a change is continuous and never forgives
+        lateness. Leaving the schedule (unbounded, or `STEP`, which pauses) books that lateness as
+        lost time, so it never hides backpressure."""
         speed = check_speed(speed)
+        if speed == self._speed:
+            return
         _log().info("replay_speed_changed", speed_from=self._speed, speed_to=speed)
         self._speed = speed
-        if self.playing:
-            now = self._time.now()
-            self._cursor = here = self._position(now)
+        if not self.playing:
+            return
+        now, pacer, pending = self._time.now(), self._pacer, self._pending
+        self._cursor = self._position(now)  # the clamped position: what the session reports
+        if pacer is not None and speed > 0:
+            pacer.set_speed(speed, wall=now, position_us=pacer.position(now))
+        else:
+            if pacer is not None and pending is not None:
+                self._lost_s += max(0.0, now - pacer.due(pending.ts_us))
+            self._pacer = Pacer(speed, wall=now, ts_us=self._cursor) if speed > 0 else None
             if speed == STEP:
                 self._stop = True
-            elif speed < 0:
-                self._pacer = None
-            elif self._pacer is None:
-                self._pacer = Pacer(speed, wall=now, ts_us=here)
-            else:
-                self._pacer.set_speed(speed, wall=now, position_us=here)
-            self._window.restart(wall=now, lost_s=self._lost_s, position_us=here)
-            self._wake.set()
+        self._window.restart(wall=now, lost_s=self._lost_s, position_us=self._cursor)
+        self._wake.set()
 
     def now_us(self) -> int:
         """Replay "now" for downstream clocks: one clock for every pane (US-RPL-005)."""
@@ -224,6 +229,9 @@ class ReplayClock:
         finally:  # keep the position reached, even on destroy: the cursor never moves back
             self._cursor = self._position(self._time.now())
             self._pacer = None
+            if self._backpressured:  # backpressure is a state of playback, not of the session
+                self._backpressured = False
+                self._obs.on_backpressure(False)
         self._obs.on_stop(reason, error)
         return reason
 
@@ -289,8 +297,8 @@ class ReplayClock:
 
     def _gap(self, gap: ReplayGap, now: float) -> bool:
         """Count and report a gap; `True` if the policy stops at it. `skip` compresses the gap's
-        empty time: the clock jumps to its end, and whatever other streams recorded inside it is
-        delivered without waits, never dropped."""
+        empty time: the clock jumps to its end. A gap belongs to one (symbol, stream), so what
+        other streams recorded inside it arrives in one burst, without waits, never dropped."""
         self._gaps += 1
         stop = self._cfg.gap_policy == "stop"
         self._cursor = max(self._cursor, gap.ts_us)
