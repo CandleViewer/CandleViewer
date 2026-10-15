@@ -577,6 +577,20 @@ def test_public_snapshot_built_once_per_topic_generation() -> None:
     assert src.builds == 3
 
 
+def test_pause_and_resume_do_not_split_the_public_snapshot_cache() -> None:
+    """`paused` gates deltas, not the rendered state (#2517): at one generation, a resumed
+    subscription and a fresh one share the cached snapshot."""
+    src = _book_source()
+    cache = SnapshotCache()
+    a, b = Conn(src, cache=cache), Conn(src, cache=cache)
+    _, sub = a.sub("book.BTCUSDT.50")
+    a.authz.ctl("book.BTCUSDT.50", {"paused": True})
+    a.authz.ctl("book.BTCUSDT.50", {"paused": False})
+    assert a.emitter.flush_pending([sub]) == 1
+    b.sub("book.BTCUSDT.50")
+    assert src.builds == 1 and len(cache) == 1
+
+
 # -- Scenario: coalescing does not look like loss ----------------------------------------------
 
 

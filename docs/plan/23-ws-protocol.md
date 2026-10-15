@@ -560,9 +560,9 @@ Changing throttle or depth without tearing down and re-snapshotting:
 { "t": "ctl_ok", "id": "c-0030", "ch": "book.BTCUSDT.50", "ts": 1789133000000, "p": { "effective": { "throttle_ms": 200 } } }
 ```
 
-Changing `depth`, `price_grouping`, `bar_type`/`param`, or the `metrics` list **invalidates the current state**, so the server answers `ctl_ok` with `"resnapshot": true` and immediately sends a fresh `snap` that restarts the sequence. The client must discard its prior state on seeing that flag.
+Changing `depth`, `price_grouping`, `bar_type`/`param`, or the `metrics` list **invalidates the current state**, so the server answers `ctl_ok` with `"resnapshot": true` and immediately sends a fresh `snap` that continues the sequence: it takes the next number and carries `meta.previous_seq` (§7.7). Its reason is `reconfigure`, unless a snapshot was already pending for another reason. The client must discard its prior state on seeing that flag.
 
-**Pause and resume (#2517).** While `paused: true`, the server emits no `d` for the subscription and consumes no sequence number. So a `ctl` that resumes it (`paused: false` after `paused: true`) also answers `"resnapshot": true`, and a `snap` with reason `reconfigure` comes before any further `d`. Otherwise the updates published during the pause would be lost with no gap to show it. Pausing, or resuming a subscription that is not paused, does not re-snapshot.
+**Pause and resume (#2517).** While `paused: true`, the server emits no `d` for the subscription and consumes no sequence number. The pause holds until a `ctl` sets `paused: false`: a `ctl` that omits `paused` (a hidden window's throttle change, §8.5) leaves it in place, and its `ctl_ok.effective` echoes `paused: true`. A `ctl` that resumes the subscription (`paused: false` after `paused: true`) also answers `"resnapshot": true`, and a `snap` comes before any further `d`, as for an identity change. Otherwise the updates published during the pause would be lost with no gap to show it. Pausing, or resuming a subscription that is not paused, does not re-snapshot.
 
 **As built (E17-S02, #2159):** a `sub` that would take a connection past 40 distinct symbols is refused per topic with `subscription_limit`. More than 50 topics in one `sub` gives `too_many_topics` for the excess entries.
 
