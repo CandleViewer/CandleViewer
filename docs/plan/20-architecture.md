@@ -910,10 +910,11 @@ never imports `candleviewer.net` directly, per its CONSTITUTION §3 allow-list. 
 configured via `Settings.mesh_cidrs_csv` (comma-separated, parsed into `Settings.mesh_cidrs`); a trusted
 reverse proxy (if any) is configured via `Settings.mesh_trusted_proxy_header` /
 `Settings.mesh_trusted_proxy_address` — unset by default, so MeshOnly reads no forwarded header and
-judges the ASGI `scope["client"]` address. That address is not always the socket peer: uvicorn's default
-`proxy_headers=True` (`forwarded_allow_ips` `127.0.0.1,::1`) rewrites it from `X-Forwarded-For` when the
-peer is loopback, so a loopback peer can choose it (#2275 makes forwarded-header trust one explicit
-setting, with MeshOnly as the only interpreter). `make audit-net`
+judges the ASGI `scope["client"]` address, which is the TCP peer: `candleviewer.server.uvicorn_kwargs()`
+sets `proxy_headers=False`, so uvicorn never rewrites it from `X-Forwarded-For` (whatever
+`FORWARDED_ALLOW_IPS` says) and MeshOnly is the only interpreter of forwarded headers (#2275). With
+both settings set, MeshOnly reads the right-most hop of that header, and only when the TCP peer is the
+configured proxy address (runbook: `docs/ops/runbooks/ws-server-limits.md`). `make audit-net`
 (`tools/ci/audit_net.py`) runs the identical `BindingSelfCheck` against the host's real listening
 sockets — host-wide via `psutil.net_connections()` plus the Windows `netsh interface portproxy` table,
 catching a `portproxy` leak that neither the process's own sockets nor a per-process `psutil` scope can

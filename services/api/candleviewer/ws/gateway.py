@@ -255,8 +255,8 @@ def closed_reason(conn: _Connection, fault: BaseException | None) -> str:
 def _source_ip(scope: Mapping[str, Any]) -> str | None:
     """The address MeshOnly admitted (trusted-proxy aware), else `scope["client"]`.
 
-    Not a verified identity: under uvicorn's default `proxy_headers` a loopback peer can
-    set it through `X-Forwarded-For` (#2275 makes that trust one explicit setting)."""
+    `scope["client"]` is the TCP peer: uvicorn does not rewrite it from `X-Forwarded-For`
+    (#2275), so only MeshOnly's configured trusted proxy can name another address."""
     admitted = (scope.get("state") or {}).get(RESOLVED_SOURCE_KEY)
     if admitted:
         return str(admitted)

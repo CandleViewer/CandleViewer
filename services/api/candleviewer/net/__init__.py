@@ -16,8 +16,8 @@ internet, independent of and enforced *before* authentication:
 - `middleware.MeshOnlyMiddleware` — ASGI middleware rejecting off-mesh
   requests with a generic 403 before any credential is evaluated, for both
   REST and the WS upgrade. `middleware.RESOLVED_SOURCE_KEY` names the
-  `scope["state"]` entry holding the address it admitted (not a verified
-  identity; see the middleware docstring and #2275).
+  `scope["state"]` entry holding the address it admitted: the TCP peer, or
+  the configured trusted proxy's right-most hop (#2275).
 - `audit.AuditSink` — narrow protocol this module emits
   `net.off_mesh_request` events through; a `NullAuditSink` no-op default and
   an `InMemoryAuditSink` test double are provided. The real audit module

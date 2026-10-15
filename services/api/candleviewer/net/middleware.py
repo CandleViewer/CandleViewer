@@ -6,9 +6,9 @@ Applies to both HTTP and the WS upgrade (ASGI `scope["type"]` in
 client-controllable header (`X-Forwarded-For` and friends) unless an explicitly
 configured trusted proxy sits in front — and even then only that proxy's
 own immediate peer address is trusted to supply it, never an arbitrary
-downstream hop. `scope["client"]` is what the ASGI server reports, which is not
-always the socket peer: under uvicorn's default `proxy_headers` a loopback peer
-can set it through `X-Forwarded-For` (#2275 makes that trust one explicit setting).
+downstream hop. `scope["client"]` is the TCP peer: `candleviewer.server` turns
+uvicorn's own proxy-header handling off (#2275), so this middleware is the only
+reader of forwarded headers.
 
 This middleware only guards the *mesh-membership* check (per-request CIDR
 match on the source address); it does not consult or mutate
@@ -25,9 +25,9 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from .audit import AuditSink, NullAuditSink
 from .cidr import CidrAllowList
 
-#: `scope["state"]` key holding the source address MeshOnly admitted (#2090): whatever
-#: `scope["client"]` says. Not a verified identity: under uvicorn's default `proxy_headers`
-#: a loopback peer can set it through `X-Forwarded-For` (#2275).
+#: `scope["state"]` key holding the source address MeshOnly admitted (#2090): the TCP peer,
+#: or the right-most hop of the configured header when that peer is the configured trusted
+#: proxy. uvicorn does not rewrite `scope["client"]` (#2275).
 RESOLVED_SOURCE_KEY = "cv_mesh_source"
 
 _GENERIC_403_BODY = b'{"detail":"Forbidden"}'
@@ -66,8 +66,7 @@ class MeshOnlyMiddleware:
         source = self._resolve_source_address(scope)
         if source is not None and self._allow_list.is_allowed(source):
             # #2090: downstream logs and audits (the CSRF guard, the WS Origin check)
-            # record the address this check admitted. A loopback peer can set it through
-            # `X-Forwarded-For` (uvicorn's default `proxy_headers`) until #2275.
+            # record the address this check admitted.
             scope.setdefault("state", {})[RESOLVED_SOURCE_KEY] = source
             await self._app(scope, receive, send)
             return
