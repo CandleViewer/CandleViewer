@@ -19,7 +19,7 @@
     "priority": "P1 High",
     "perspective": "Architecture",
     "risk": "R5 Scope",
-    "estimate": 65,
+    "estimate": 69,
     "parent": null,
     "blocked_by": [
       "E35",
@@ -276,7 +276,7 @@
     "priority": "P0 Critical",
     "perspective": "Development",
     "risk": "R7 Data accuracy",
-    "estimate": 5,
+    "estimate": 8,
     "parent": "E37",
     "blocked_by": [
       "E37-S01"
@@ -376,7 +376,7 @@
     "priority": "P2 Medium",
     "perspective": "Development",
     "risk": "R2 Render performance",
-    "estimate": 2,
+    "estimate": 3,
     "parent": "E37",
     "blocked_by": [
       "E37-S01",
@@ -396,7 +396,7 @@
     ],
     "component": "docs",
     "phase": "P3 Drawing & Alerts",
-    "sprint": "Sprint 17",
+    "sprint": "Sprint 19",
     "priority": "P2 Medium",
     "perspective": "Architecture",
     "risk": "R5 Scope",
