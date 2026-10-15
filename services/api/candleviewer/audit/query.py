@@ -349,8 +349,11 @@ class AuditQueryService:
         deadline_s: float | None = None,
     ) -> VerifyResult:
         """`deadline_s` bounds the whole run: past it the run is cancelled, its statements
-        and prefetch with it, and `TimeoutError` is raised. A `batch_size` below 1 is a
-        `ValueError`, never an empty "verified" walk. See `_run_verify`."""
+        and prefetch with it, and `TimeoutError` is raised. The cancel cannot interrupt a
+        batch already on the hasher's thread (`ChainHasher.run` waits for the thread): the
+        run ends once that one batch is hashed, so `TimeoutError` can come that much after
+        the deadline. A `batch_size` below 1 is a `ValueError`, never an empty "verified"
+        walk. See `_run_verify`."""
         if batch_size < 1:
             raise ValueError("batch_size must be at least 1")
         if deadline_s is None:
