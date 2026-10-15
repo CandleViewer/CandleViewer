@@ -1,10 +1,12 @@
 """E14-X02 (#474) abuse cases, part A: stored XSS corpus and IDOR enumeration on /drawings.
 
-Pins threat-model rows DR20/DR21 (IDOR), DR28 (cursor), DR25 (no echo) and DR39 (idempotency key
-across users), plus the stored half of the XSS tabletop: hostile text is stored as inert JSON,
-only `_STRIP` characters are removed, nothing is HTML-decoded or encoded. DR22 is not pinned here.
+Pins threat-model rows DR13 (version vs ownership order), DR20/DR21 (IDOR), DR28 (cursor),
+DR25 (no echo) and DR39 (idempotency key across users), plus the stored half of the XSS
+tabletop: hostile text is stored as inert JSON, only `_STRIP` characters are removed, nothing is
+HTML-decoded or encoded. DR22 is not pinned here.
 Rendering sinks (SR-E14-01..03: DOM, aria-label, SDF text) are unbuilt: residual RR6.
-Router-level only (in-memory repository); the Postgres leg lives in `tests/contract/drawings`.
+Router-level only (in-memory repository): none of these cases has a Postgres leg (only the
+existing batch pack in `tests/contract/drawings` does); hostile corpus through real JSONB is open.
 No `nosniff` header exists in the repo: the JSON content type is the only inertness signal
 (finding for E14-X03).
 Tripwire: `layout_id` is unknown today (no layouts table, every non-null value is refused); when
@@ -19,12 +21,15 @@ from typing import Any
 import pytest
 from _drawings_api_env import BATCH, TRENDLINE, USER_A, USER_B, Env, wire
 
+from candleviewer.storage.repositories.drawings import format_token
+
 CORPUS = json.loads(
     (Path(__file__).parents[1] / "fixtures/drawings_abuse/corpus.v1.json").read_text("utf-8")
 )
-assert CORPUS["version"] == 1
+# contract caps (OpenAPI Drawing.label / geometry.text), in code points
+MAX_LABEL, MAX_TEXT = 120, 1000
 CASES = [pytest.param(c, id=c["id"]) for c in CORPUS["payloads"]]
-LONG = [pytest.param(c, id=c["id"]) for c in CORPUS["payloads"] if len(c["payload"]) > 120]
+LONG = [pytest.param(c, id=c["id"]) for c in CORPUS["payloads"] if len(c["payload"]) > MAX_LABEL]
 TEXT = {"symbol": "BTCUSDT", "tool": "text", "style": {}}
 PT = TRENDLINE["geometry"]["points"][0]
 SEQUENTIAL = "00000000-0000-4000-8000-000000000001"  # id classes: counter-like and random-like
@@ -32,6 +37,31 @@ RANDOM = "9b2f6c1e-5d47-4a8e-b3c0-7e1d2a4f8c65"
 KEY = "4d9f1c2e-8a7b-4c3d-9e1f-0a1b2c3d4e5f"
 STALE = "2026-10-14T12:00:00.000000Z"
 JSON_CT = "application/json"
+MAX_LABEL, MAX_TEXT = (
+    120,
+    1000,
+)  # contract caps (OpenAPI Drawing.label / geometry.text), code points
+
+
+def test_corpus_is_the_pinned_version() -> None:
+    assert CORPUS["version"] == 1
+
+
+def _strings(node: Any) -> list[str]:
+    """Every decoded string (keys and values) of a JSON document."""
+    if isinstance(node, str):
+        return [node]
+    if isinstance(node, dict):
+        return [t for k, v in node.items() for t in (*_strings(k), *_strings(v))]
+    if isinstance(node, list):
+        return [t for v in node for t in _strings(v)]
+    return []
+
+
+def _no_echo(response: Any, needle: str) -> None:
+    """`needle` (the sanitised form: what could be echoed) appears in no decoded string."""
+    assert len(needle) >= 2  # an empty needle would pass vacuously
+    assert not any(needle in t for t in _strings(response.json()))
 
 
 def _text(payload: str, label: str | None = None) -> dict[str, Any]:
@@ -40,7 +70,7 @@ def _text(payload: str, label: str | None = None) -> dict[str, Any]:
 
 
 def _label(c: dict[str, str]) -> str | None:
-    return c["payload"] if len(c["payload"]) <= 120 else None
+    return c["payload"] if len(c["payload"]) <= MAX_LABEL else None
 
 
 def _stored(env: Env, c: dict[str, str], path: str) -> Any:
@@ -94,14 +124,14 @@ def test_a_label_over_the_raw_cap_is_string_too_long_with_no_echo(case: dict[str
     r = env.c.post("/drawings", json=TRENDLINE | {"label": case["payload"]})
     assert r.status_code == 422 and r.headers["content-type"].startswith("application/problem+json")
     assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [("label", "string_too_long")]
-    assert case["payload"][:20] not in str(r.json())  # decoded comparison
+    _no_echo(r, case["label"][:20])
     assert env.repo.rows == {}
 
 
-ANCHORS = ["#5B8DEF;background:url(x)", "#5B8DEF\n", '#5B8DEF"onload=']
-STYLE_INPUTS = [pytest.param(c["payload"], id=c["id"]) for c in CORPUS["payloads"]] + [
-    pytest.param(a, id=f"anchor{i}") for i, a in enumerate(ANCHORS)
-]
+ANCHORS = [  # suffix anchors, then prefix anchors (a dropped `^` or `$` must fail)
+    "#5B8DEF;background:url(x)", "#5B8DEF\n", '#5B8DEF"onload=',
+    "x#5B8DEF", "\n#5B8DEF", "url(x)#5B8DEF", "x;background:url(x);#5B8DEF",
+]  # fmt: skip
 
 
 @pytest.mark.parametrize("key", ["colour", "fill_colour"])
@@ -117,20 +147,24 @@ def test_style_colours_accept_only_a_bare_hex_colour(key: str, payload: str) -> 
     assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [
         (f"style.{key}", "string_pattern_mismatch")
     ]
-    assert payload[:20] not in str(r.json()) and env.repo.rows == {}
+    _no_echo(r, "".join(c for c in payload if c.isprintable() and c != " ")[:20] or "xxxx")
+    assert env.repo.rows == {}
 
 
-@pytest.mark.parametrize("ch", ["\U0001f680", "é", "م"], ids=["4byte", "combining", "rtl"])
+@pytest.mark.parametrize(
+    "ch", ["\U0001f680", "e\u0301", "\u0645"], ids=["4byte", "combining", "rtl"]
+)
 def test_unicode_amplification_counts_code_points_at_both_caps(ch: str) -> None:
     env = Env()
     n = len(ch)  # a combining pair is 2 code points
-    ok = env.c.post("/drawings", json=wire(_text(ch * (1000 // n), ch * (120 // n))))
-    assert ok.status_code == 201 and ok.json()["geometry"]["text"] == ch * (1000 // n)
-    text = env.c.post("/drawings", json=_text(ch * (1000 // n + 1)))
+    assert n == (2 if ch == "e\u0301" else 1)
+    ok = env.c.post("/drawings", json=wire(_text(ch * (MAX_TEXT // n), ch * (MAX_LABEL // n))))
+    assert ok.status_code == 201 and ok.json()["geometry"]["text"] == ch * (MAX_TEXT // n)
+    text = env.c.post("/drawings", json=_text(ch * (MAX_TEXT // n + 1)))
     assert [(e["field"], e["rule"]) for e in text.json()["errors"]] == [
         ("geometry.text", "string_too_long")
     ]
-    label = env.c.post("/drawings", json=TRENDLINE | {"label": ch * (120 // n + 1)})
+    label = env.c.post("/drawings", json=TRENDLINE | {"label": ch * (MAX_LABEL // n + 1)})
     assert [(e["field"], e["rule"]) for e in label.json()["errors"]] == [
         ("label", "string_too_long")
     ]
@@ -145,34 +179,45 @@ def test_a_lone_surrogate_is_refused_at_parse_and_nothing_is_persisted() -> None
 
 
 def _victim(env: Env, kind: str) -> tuple[str, str]:
-    """(id, updated_at token) of a foreign, soft-deleted or never-existing drawing."""
+    """(id, token) of a foreign, foreign-with-stale-token, soft-deleted or missing drawing."""
     if kind == "missing":
         return RANDOM, STALE
     d = env.create()  # user A's
     if kind == "deleted":
         env.c.delete(f"/drawings/{d['id']}")
-        return d["id"], str(env.repo.rows[d["id"]].updated_at.isoformat().replace("+00:00", "Z"))
-    return d["id"], d["updated_at"]
+        return d["id"], format_token(env.repo.rows[d["id"]].updated_at)
+    return d["id"], STALE if kind == "foreign_stale" else d["updated_at"]
 
 
 def _put(env: Env, did: str, **headers: str) -> Any:
     return env.c.put(f"/drawings/{did}", json=wire(TRENDLINE), headers=headers)
 
 
-@pytest.mark.parametrize("kind", ["foreign", "deleted", "missing"])
-def test_put_delete_probes_return_one_identical_404_body(kind: str) -> None:
+KINDS = ["foreign", "foreign_stale", "deleted", "missing"]
+PER_REQUEST = {"date", "x-request-id", "traceparent", "x-trace-id"}
+
+
+def _shape(r: Any) -> tuple[int, str, dict[str, str]]:
+    """Status, body and headers minus per-request ids: what an enumerator can compare."""
+    return r.status_code, r.text, {k: v for k, v in r.headers.items() if k not in PER_REQUEST}
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_put_delete_probes_return_one_identical_404_and_change_nothing(kind: str) -> None:
     env = Env()
     did, token = _victim(env, kind)
-    reference = Env()
-    reference.user = USER_B
-    ref = _put(reference, RANDOM).text
+    ref_env = Env()
+    ref_env.user = USER_B
+    ref_put = _shape(_put(ref_env, RANDOM))
+    ref_delete = _shape(ref_env.c.delete(f"/drawings/{RANDOM}"))
     env.user = USER_B
-    sent = [{}, {"If-Match": token}, {"If-Match": f'"{token}"'}, {"If-Match": STALE}]
-    attempts = [_put(env, did, **h) for h in sent]
-    for r in attempts:
-        assert r.status_code == 404 and r.text == ref, (kind, r.text)
+    rows, deleted = dict(env.repo.rows), dict(env.repo.deleted)
+    for h in [{}, {"If-Match": token}, {"If-Match": f'"{token}"'}, {"If-Match": STALE}]:
+        r = _put(env, did, **h)
+        assert r.status_code == 404 and _shape(r) == ref_put, (kind, r.text)
     gone = env.c.delete(f"/drawings/{did}")
-    assert gone.status_code == 404 and gone.json()["code"] == "not_found"
+    assert gone.status_code == 404 and _shape(gone) == ref_delete
+    assert env.repo.rows == rows and env.repo.deleted == deleted  # nothing moved
 
 
 @pytest.mark.parametrize("value", ["*", "garbage", '"', "W/"])
@@ -199,7 +244,7 @@ def test_enumerated_id_classes_are_404_for_every_method(did: str) -> None:
     assert env.repo.deleted == {}
 
 
-@pytest.mark.parametrize("kind", ["foreign", "deleted", "missing"])
+@pytest.mark.parametrize("kind", KINDS)
 @pytest.mark.parametrize("verb", ["update", "delete"])
 def test_a_batch_with_one_unavailable_target_rolls_back_the_attackers_own_ops(
     kind: str, verb: str
@@ -227,15 +272,15 @@ def test_a_batch_with_one_unavailable_target_rolls_back_the_attackers_own_ops(
 
 
 def test_batch_bodies_are_identical_for_foreign_deleted_and_missing_targets() -> None:
-    texts = set()
-    for kind in ("foreign", "deleted", "missing"):
+    shapes = []
+    for kind in KINDS:
         env = Env()
         vid, token = _victim(env, kind)
         env.user = USER_B
         op = {"op": "delete", "id": vid, "if_match": token}
         r = env.c.post("/drawings/batch", json=wire({"operations": [op]}, BATCH))
-        texts.add(r.text)
-    assert len(texts) == 1  # full body, no per-class oracle
+        shapes.append(_shape(r))
+    assert all(x == shapes[0] for x in shapes)  # full response, no per-class oracle
 
 
 def test_a_cursor_minted_for_another_user_opens_nothing() -> None:
