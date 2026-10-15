@@ -10142,6 +10142,41 @@ paths:
                         items: { $ref: "#/components/schemas/StatechartMachine" }
                       snapshots: { $ref: "#/components/schemas/AdminSliceStatus" }
                       metrics: { $ref: "#/components/schemas/AdminSliceStatus" }
+              examples:
+                degradedOrder:
+                  summary: One latched order machine; the metrics source timed out
+                  value:
+                    items:
+                      - machine_key: kill_switch
+                        machine_kind: kill_switch
+                        environment: demo
+                        state: clear
+                        machine_hash: "17b59ac925050940b6ae4c05cf34d6bab5f8345db7141157f106077b0e76dd40"
+                        lock_matches: true
+                        chain_trips: 0
+                        degraded: false
+                        deferred_depth: 0
+                        dropped_receipts: 0
+                        updated_at: "2026-10-15T18:00:00Z"
+                      - machine_key: "order:0a000000-0000-4000-8000-000000000001"
+                        machine_kind: order
+                        environment: demo
+                        state: submitted
+                        machine_hash: "743dfaada4e382a4c29d40a582e454285aa3f4d5142b1ade45603086c8087255"
+                        lock_matches: true
+                        chain_trips: 1
+                        degraded: true
+                        deferred_depth: 2
+                        dropped_receipts: null
+                        updated_at: "2026-10-15T18:00:02Z"
+                    meta: { next_cursor: null, has_more: false, count: 2 }
+                    snapshots: { status: ok, generated_at: "2026-10-15T18:00:05Z" }
+                    metrics:
+                      {
+                        status: error,
+                        detail: "metrics timed out after 300 ms",
+                        generated_at: "2026-10-15T18:00:05Z",
+                      }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -10168,6 +10203,34 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StatechartMachineDetail" }
+              examples:
+                killSwitch:
+                  summary: The kill-switch machine (chart config trimmed for the example)
+                  value:
+                    snapshots: { status: ok, generated_at: "2026-10-15T18:00:05Z" }
+                    events: { status: ok, generated_at: "2026-10-15T18:00:05Z" }
+                    machine:
+                      machine_key: kill_switch
+                      machine_kind: kill_switch
+                      environment: demo
+                      state: clear
+                      machine_hash: "17b59ac925050940b6ae4c05cf34d6bab5f8345db7141157f106077b0e76dd40"
+                      lock_matches: true
+                      chain_trips: 0
+                      degraded: false
+                      deferred_depth: 0
+                      dropped_receipts: 0
+                      updated_at: "2026-10-15T18:00:00Z"
+                    context_summary: { scope: global, cancel_working: true, flatten: false }
+                    configuration: [kill_switch, kill_switch.clear]
+                    config: { id: kill_switch, initial: clear }
+                    recent_events:
+                      - event_type: RELEASE
+                        phase: commit
+                        from_states: [kill_switch.engaged]
+                        to_states: [kill_switch.clear]
+                        faulted: false
+                        occurred_at: "2026-10-15T17:59:00Z"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -10184,8 +10247,11 @@ paths:
         Stately Studio (`export_stately`: the CV policy keys removed), with its `machine_hash`
         (E42-T07). `machineKey` may also be a bare catalogue `machine_kind`, which covers every
         B1-B20 chart, live or not. The export reveals chart structure only: no instance is read,
-        so the answer is the same for any id of a registered kind. A kind that is not registered
-        is `404 not_found`.
+        so the answer is the same for any id of a registered kind. An `algo:{id}` key is
+        `404 not_found`, because without reading the instance the export cannot tell which of
+        the four algo charts it is; export by the bare kind (`oco`, `iceberg`, `twap` or
+        `chase`) instead. A key outside the grammar (a singleton with an id, an empty id) or a
+        kind that is not registered is `404 not_found` too.
       x-rbac: { permissions: [admin:read], scope: none }
       responses:
         "200":
@@ -10193,6 +10259,13 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StatechartExport" }
+              examples:
+                killSwitch:
+                  summary: The kill-switch chart (states trimmed for the example)
+                  value:
+                    machine_kind: kill_switch
+                    machine_hash: "17b59ac925050940b6ae4c05cf34d6bab5f8345db7141157f106077b0e76dd40"
+                    stately: { id: kill_switch, initial: clear, states: { clear: {} } }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -10713,8 +10786,12 @@ components:
       description: >
         A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton
         (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol
-        (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`).
-      schema: { type: string, maxLength: 80, pattern: "^[a-z_]{1,32}(:[A-Za-z0-9-]{1,40})?$" }
+        (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the
+        lowercase canonical form, so each machine has exactly one key.
+      schema:
+        type: string
+        maxLength: 80
+        pattern: "^[a-z_]{1,32}(:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Z0-9]{2,30}))?$"
     BackupId:
       name: backupId
       in: path
@@ -15747,7 +15824,18 @@ components:
       description: >
         One live machine (E42-T07), read from its persisted quiescent snapshot and the
         `cv_machine_*` metric families, never from a live interpreter.
-      required: [machine_key, machine_kind, environment, state, machine_hash, chain_trips, degraded]
+      required:
+        [
+          machine_key,
+          machine_kind,
+          environment,
+          state,
+          machine_hash,
+          chain_trips,
+          degraded,
+          deferred_depth,
+          dropped_receipts,
+        ]
       properties:
         machine_key: { type: string, description: "The `machineKey` of this machine." }
         machine_kind: { type: string, description: "Catalogue id (`28-statechart-catalogue.md`)." }
@@ -15770,9 +15858,9 @@ components:
           description: The snapshot's `chain_trips` count; above 0 the machine is latched degraded.
         degraded: { type: boolean, description: "`chain_trips > 0`; cleared only by an operator." }
         deferred_depth:
-          type: integer
+          type: ["integer", "null"]
           minimum: 0
-          description: "Deferred events held in the snapshot (`onUnhandled: defer`)."
+          description: "Deferred events held in the snapshot (`onUnhandled: defer`); `null` if it carries no deferred list."
         dropped_receipts:
           type: ["integer", "null"]
           minimum: 0

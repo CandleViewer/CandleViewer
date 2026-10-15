@@ -5415,15 +5415,18 @@ class StatechartMachine(BaseModel):
     degraded: Annotated[bool, Field(description="`chain_trips > 0`; cleared only by an operator.")]
     deferred_depth: Annotated[
         int | None,
-        Field(description="Deferred events held in the snapshot (`onUnhandled: defer`).", ge=0),
-    ] = None
+        Field(
+            description="Deferred events held in the snapshot (`onUnhandled: defer`); `null` if it carries no deferred list.",
+            ge=0,
+        ),
+    ]
     dropped_receipts: Annotated[
         int | None,
         Field(
             description="`cv_machine_dropped_receipts_total` for this machine's kind since process start. The library counts dropped receipts per interpreter and never persists them, so the value is per kind, not per machine; `null` when the metric cannot be read.\n",
             ge=0,
         ),
-    ] = None
+    ]
     updated_at: Annotated[
         AwareDatetime | None, Field(description="When the snapshot was written.")
     ] = None
