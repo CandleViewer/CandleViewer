@@ -383,3 +383,14 @@ def test_sqlstate_extraction_and_timeout_mapping() -> None:
     assert mod._sqlstate(sa.exc.DBAPIError("s", {}, _Orig())) == "57014"
     assert mod._sqlstate(sa.exc.DBAPIError("s", {}, _Wrapped())) == "57014"
     assert mod._sqlstate(sa.exc.DBAPIError("s", {}, Exception())) is None
+
+
+async def test_verify_a_deleted_predecessor_breaks_at_from_id(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Review of #2449: with row `from_id - 1` deleted out of band, the anchor is the
+    greatest id below it, so `from_id`'s link is wrong and the break is `from_id`."""
+    await _seed(repo, 6, clock)
+    del repo.rows[3]  # id 4
+    result = await AuditQueryService(repo).verify(from_id=5)
+    assert (result.verified, result.first_bad_id, result.entries_checked) == (False, 5, 1)
