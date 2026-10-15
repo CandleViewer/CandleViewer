@@ -1544,11 +1544,14 @@ def test_verify_frees_the_slot_however_the_run_ends(ending: str) -> None:
 
 
 class _SystemEvents:
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, fail: bool = False, svc: _FakeAuditService | None = None) -> None:
         self.written: list[Any] = []
-        self.fail = fail
+        self.fail, self.svc = fail, svc
+        self.records_before: list[int] = []  # verify records already written, per event
 
     async def write(self, event: Any) -> None:
+        if self.svc is not None:
+            self.records_before.append(len(_verify_records(self.svc)))
         if self.fail:
             raise RuntimeError("system_events unavailable")
         self.written.append(event)
@@ -1569,6 +1572,20 @@ def test_verify_break_raises_the_system_event_and_a_verified_run_none() -> None:
     assert client.post(_VERIFY, json={}).json()["first_bad_id"] == 3
     [event] = events.written
     assert (event.kind, event.details["kind"]) == ("audit_chain_break", "entry_hash_mismatch")
+
+
+@pytest.mark.parametrize("recorded", [True, False])
+def test_verify_break_event_follows_the_result_record_even_an_unwritten_one(
+    recorded: bool,
+) -> None:
+    """Review of #2468: the fail-closed record first, then the best-effort event."""
+    svc = _FakeAuditService()
+    svc.writer_service = _FakeWriter() if recorded else _WriterFailingAfter(1)
+    svc.query_service.verify_result = _broken()
+    events = _SystemEvents(svc=svc)
+    r = _evented(svc, events).post(_VERIFY, json={})
+    assert r.status_code == (200 if recorded else 503) and len(events.written) == 1
+    assert events.records_before == [2 if recorded else 1]  # started, and the result if any
 
 
 def test_verify_event_that_fails_changes_neither_the_response_nor_the_record() -> None:
