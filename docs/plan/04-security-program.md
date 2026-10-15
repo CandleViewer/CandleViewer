@@ -513,8 +513,8 @@ Scope: the repository itself, `main` branch integrity, branch-protection configu
 (W3-W5) to the gateway as built by E17-S01/S02/T02. Three concerns get dedicated analysis: the bounded 10 s
 unauthenticated window (pre-auth slots are capped only by the auth timeout until #2155), continuous topic
 authorisation (synchronous drop/narrow before any send; snapshot ordering requirement SR-189), and resource
-exhaustion, where every DoS limit is also a performance budget and must not be relaxed in isolation. 49 rows
-(WS-S01..E06, incl. WS-D15/D16), two inherent Highs (slow consumer WG2; audit-store flooding WG9 = WS-D15); residual High on WG9 until #2292 merges
+exhaustion, where every DoS limit is also a performance budget and must not be relaxed in isolation. 50 rows
+(WS-S01..E06, incl. WS-D15..D17), two inherent Highs (slow consumer WG2; audit-store flooding WG9 = WS-D15); residual High on WG9 until #2292 merges
 (release blocker, RR-08 in §16.1); residual Medium on WG1, WG3 and WG8. Controls SR-183..
 SR-193 (§6.18); abuse cases AC-01..AC-30 go to E17-X02 (see RSK-063, RSK-064). Status Approved (2026-10-13).
 

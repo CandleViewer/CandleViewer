@@ -106,11 +106,20 @@ services:
       CV_QUESTDB_ILP: questdb:9009
       CV_QUESTDB_PG: questdb:8812
       CV_GIT_SHA: ${CV_GIT_SHA:-unknown}
+      # #2565: the planned shutdown (WS grace + close flush + uvicorn drain + module teardown)
+      # must finish inside `stop_grace_period` below, or Docker SIGKILLs the storage flushes and
+      # secrets zeroing. Keep the two equal: Settings refuses a CV_WS_SHUTDOWN_GRACE_MS that
+      # cannot fit this value, and services/api/tests/unit/test_settings_stop_budget.py checks
+      # that they match.
+      CV_API_STOP_BUDGET_S: "30"
     ports:
       - "127.0.0.1:${CV_BIND_PORT:-8000}:8000"
     read_only: true
     tmpfs:
       - /tmp
+    # #2565: SIGTERM -> SIGKILL budget; equals CV_API_STOP_BUDGET_S in the environment above
+    # (Docker's 10 s default cannot cover the planned shutdown).
+    stop_grace_period: 30s
     healthcheck:
       test:
         [

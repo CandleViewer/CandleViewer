@@ -32,7 +32,10 @@ def uvicorn_kwargs(settings: Settings | None = None) -> dict[str, Any]:
     """Keyword arguments for `uvicorn.run`/`uvicorn.Config`.
 
     Host/port come from `Settings` (`CV_BIND_HOST` is validated against the wildcard
-    address, C-12.9); WS limits from `ws/limits.py` (single source).
+    address, C-12.9); WS limits from `ws/limits.py` (single source). `timeout_graceful_shutdown`
+    bounds uvicorn's drain of open connections and tasks (#2565): past it uvicorn cancels what is
+    left and still sends the lifespan `shutdown`, so the module teardown always runs. It is one
+    term of the stop budget `Settings` checks (`api_stop_budget_s`).
 
     `proxy_headers=False` (#2275): uvicorn never rewrites `scope["client"]` or the scheme
     from forwarded headers, whatever `FORWARDED_ALLOW_IPS` says, so `scope["client"]` is the
@@ -50,6 +53,7 @@ def uvicorn_kwargs(settings: Settings | None = None) -> dict[str, Any]:
         "ws_ping_interval": HEARTBEAT_INTERVAL_S,
         "ws_ping_timeout": HEARTBEAT_TIMEOUT_S,
         "limit_concurrency": limits.SERVER_LIMIT_CONCURRENCY,
+        "timeout_graceful_shutdown": cfg.uvicorn_drain_timeout_s,
     }
 
 
@@ -66,7 +70,9 @@ class PlannedShutdownServer(uvicorn.Server):
     shutdown. The lifespan's later `stop()` then only stops the sweeper. It first marks the
     gateway's hub as shutting down, so a `1012` that reaches a socket afterwards is attributed to
     the server (`closed_reason`) however the planned shutdown ends: done, cut short, never
-    started (a second Ctrl+C first) or failed."""
+    started (a second Ctrl+C first) or failed. The sequence (grace, close flush, uvicorn's bounded
+    drain, module teardown) must fit the container's stop budget; `Settings` refuses a config that
+    does not (#2565)."""
 
     async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
         for server in self.servers:

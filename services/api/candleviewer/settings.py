@@ -21,7 +21,7 @@ import os
 import re
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
@@ -31,6 +31,17 @@ _QUESTDB_DEV_PASSWORD = "quest"  # noqa: S105 - the QuestDB OSS default, refused
 _REDACT_NAME_RE = re.compile(r"(key|secret|token|password|dsn)", re.IGNORECASE)
 #: QuestDB PGWire default port, for a `questdb_pg` `host[:port]` that omits the port.
 QUESTDB_PG_DEFAULT_PORT = 8812
+
+# #2565: two terms of the planned-shutdown budget are code constants, not settings. They live in
+# M1 because `Settings` sums them with the configured terms (`_refuse_unfittable_stop_budget`) and
+# M1 may not import `ws` or `app`; the code that spends them imports them from here, so the check
+# and the shutdown share one value.
+#: The grace `Supervisor.stop_all` gives each module's `stop()`: one module's allowance, not the
+#: sum over modules (each stop is bounded at this plus one second).
+TEARDOWN_BUDGET_S: Final = 15.0
+#: How long a closing WS connection, and `WsRuntime.stop`, wait for `bye` and the close frame to
+#: flush.
+CLOSE_FLUSH_TIMEOUT_S: Final = 2.0
 
 
 class Environment(StrEnum):
@@ -304,6 +315,12 @@ class Settings(BaseSettings):
     ws_max_connections_per_user: int = Field(default=8, ge=1, le=64)
     ws_shutdown_grace_ms: int = Field(default=5000, ge=0, le=60_000)
     ws_shutdown_expected_downtime_ms: int = Field(default=20_000, ge=0, le=600_000)
+    # #2565: the api container's SIGTERM -> SIGKILL budget (`CV_API_STOP_BUDGET_S`; the compose
+    # files set `stop_grace_period` to the same value) and the bound on uvicorn's drain of open
+    # connections (`timeout_graceful_shutdown`). With the WS grace they are the terms
+    # `_refuse_unfittable_stop_budget` sums.
+    api_stop_budget_s: int = Field(default=30, ge=10, le=120)
+    uvicorn_drain_timeout_s: int = Field(default=5, ge=1, le=30)
     # E12 #2031: run the BarBuilderSet + BarWriter in the app (C-4.13: off by default; removal
     # with E12-T05 #398 / E12-T06 #399, the first consumers). Never gates a safety invariant.
     # `bars_state_root` holds the 60 s state blobs, created owner-only (0700) where the platform
@@ -471,6 +488,39 @@ class Settings(BaseSettings):
         if os.path.realpath(path) != str(path):
             raise ValueError("CV_TEST_CLOCK_FILE must not be under a symlinked directory")
         return value
+
+    @model_validator(mode="after")
+    def _refuse_unfittable_stop_budget(self) -> Settings:
+        """#2565: refuse a config whose planned shutdown cannot finish inside the container's stop
+        budget. `candleviewer.server.PlannedShutdownServer` runs the WS grace, the close flush,
+        uvicorn's drain and then the lifespan teardown one after another; a sum above
+        `api_stop_budget_s` means the runtime SIGKILLs the teardown, so storage flushes and
+        secrets zeroing never run. Only names and numbers go into the message, never a value that
+        could be a secret.
+
+        The teardown term is one module's grace (`TEARDOWN_BUDGET_S`): a clean stop is far
+        quicker, but several modules that each hang to their own timeout still outrun any budget.
+        A sum exactly at the budget passes with no slack for uvicorn's 0.1 s settle sleep; the
+        defaults keep a 3 s margin."""
+        grace_s = self.ws_shutdown_grace_ms / 1000
+        flush_s, drain_s, teardown_s = (
+            CLOSE_FLUSH_TIMEOUT_S,
+            self.uvicorn_drain_timeout_s,
+            TEARDOWN_BUDGET_S,
+        )
+        needed_s = grace_s + flush_s + drain_s + teardown_s
+        if needed_s > self.api_stop_budget_s:
+            raise ValueError(
+                f"the planned shutdown needs {needed_s:g} s but "
+                f"CV_API_STOP_BUDGET_S={self.api_stop_budget_s}: "
+                f"CV_WS_SHUTDOWN_GRACE_MS={self.ws_shutdown_grace_ms} ({grace_s:g} s) "
+                f"+ WS close flush CLOSE_FLUSH_TIMEOUT_S ({flush_s:g} s) "
+                f"+ CV_UVICORN_DRAIN_TIMEOUT_S={drain_s} "
+                f"+ module teardown TEARDOWN_BUDGET_S ({teardown_s:g} s). Lower the grace or the "
+                "drain timeout, or raise CV_API_STOP_BUDGET_S together with the api service's "
+                "stop_grace_period (infra/compose)"
+            )
+        return self
 
     @field_validator("bind_host")
     @classmethod

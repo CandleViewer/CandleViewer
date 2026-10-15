@@ -197,7 +197,7 @@ from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.service import RulesService
 from candleviewer.rules_store_pg import PostgresRuleStore
-from candleviewer.settings import Environment, FeedMode, Settings, get_settings
+from candleviewer.settings import TEARDOWN_BUDGET_S, Environment, FeedMode, Settings, get_settings
 from candleviewer.statechart.bindings.b16_session import set_audit_sink as set_b16_audit_sink
 from candleviewer.statechart.gateway import Gateway, GatewayOverloadedError
 from candleviewer.storage.cold.archive_import import FileImportLedger
@@ -680,7 +680,9 @@ class Supervisor:
             await self._stop_each(reversed(started), 1.0)
             raise
 
-    async def stop_all(self, grace_s: float = 15.0) -> None:
+    async def stop_all(self, grace_s: float = TEARDOWN_BUDGET_S) -> None:
+        """Stop every module in reverse start order. The default grace is the teardown term of
+        the container stop budget (`Settings.api_stop_budget_s`, #2565)."""
         await self._stop_each(reversed(_SUPERVISOR_ORDER), grace_s)
 
     async def _stop_each(self, names: Iterable[str], grace_s: float) -> None:

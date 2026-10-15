@@ -15,6 +15,12 @@ services:
           memory: 2g
     environment:
       CV_PARQUET_ROOT: /data/parquet
+      # #2565: the api stop budget, restated from docker-compose.yml so this override stands on
+      # its own. It must equal `stop_grace_period` below (the planned shutdown has to finish
+      # inside it, or Docker SIGKILLs the storage flushes and secrets zeroing);
+      # services/api/tests/unit/test_settings_stop_budget.py checks they match.
+      CV_API_STOP_BUDGET_S: "30"
+    stop_grace_period: 30s
 
   minio:
     profiles: ["cold-disabled-on-vps"]
