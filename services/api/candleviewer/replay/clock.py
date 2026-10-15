@@ -2,9 +2,9 @@
 
 Plain code on the hot path: it never calls a statechart (C-2.20). The session layer (E26-T01)
 drives it from B12's actions (`28-statechart-catalogue.md` Sec.B12): `start_clock` calls `play()`,
-`stop_clock` calls `pause()` and `set_speed` calls `set_speed()`. The layer maps what the
-`PlaybackObserver` hears to B12 events: a stop to `RANGE_END`/`SOURCE_ERROR`, a backpressure edge
-to `CONSUMER_SLOW`.
+`stop_clock` calls `pause()`, `set_speed` calls `set_speed()`, the `emit_one_step` service calls a
+`step_*` and `seek_and_prime` ends in `reposition()`. The layer maps what the `PlaybackObserver`
+hears to B12 events: a stop to `RANGE_END`/`SOURCE_ERROR`, a backpressure edge to `CONSUMER_SLOW`.
 
 **Ownership.** `async with ReplayClock(...)` opens the session's `asyncio.TaskGroup`
 (`20-architecture.md` Sec.4.1 "TaskGroup: replay sessions"), held by the session's runner task.
@@ -18,9 +18,15 @@ first read is not lateness. A sink that holds an event back past `max_lag_s` slo
 gives the achieved rate (`stats()`). An event due within `min_wait_s` goes out without a wait;
 after `yield_slice_s` of work without one the clock yields to the loop (C-2.17).
 
-**Cursor.** `cursor_us` is the replay time reached and only moves forward during playback
-(INV-B12-b). `now_us()` is the replay "now" for downstream clocks; it never passes an event not
-yet delivered, so a bar never closes ahead of its own trades.
+**Steps** (`24-internal-schemas.md` Sec.13.7) deliver at once while not playing: `step_events(n)`
+the next n market events, `step_ms(n)` everything in the next n ms of replay time, and
+`step_bar()` everything until the session's `BarProbe` closes exactly one bar (US-RPL-001). At a
+gap, `stop` ends the step at its boundary; `skip` reports it and steps on.
+
+**Cursor.** `cursor_us` is the replay time reached and only moves forward; only `reposition`
+(a seek, or a loop wrap back to the loop start, US-RPL-008) moves it back (INV-B12-b). `now_us()`
+is the replay "now" for downstream clocks; it never passes an event not yet delivered, so a bar
+never closes ahead of its own trades.
 
 **Failures.** A source `ReplayError` stops playback (`error`) after every event before it, and the
 clock then refuses to play from that source. If the sink raises, playback stops (`error`) with the
@@ -30,8 +36,9 @@ event still pending, and the next `play()` delivers it first: nothing is lost.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
-from collections.abc import Coroutine
+from collections.abc import AsyncIterator, Coroutine
 from contextlib import AsyncExitStack
 from types import TracebackType
 from typing import Any, Self
@@ -39,11 +46,12 @@ from typing import Any, Self
 import structlog
 
 from candleviewer.observability import spawn
-from candleviewer.replay.errors import ReplayClockStateError, ReplayError
+from candleviewer.replay.errors import ReplayClockStateError, ReplayError, ReplayRequestInvalid
 from candleviewer.replay.models import ReplayGap, ReplayItem
 from candleviewer.replay.pacing import Pacer, RateWindow
 from candleviewer.replay.playback import (
     STEP,
+    BarProbe,
     ClockConfig,
     MonotonicTime,
     PlaybackObserver,
@@ -89,10 +97,11 @@ class ReplayClock:
             raise ValueError("the replay range must end after it starts")
         self._source, self._sink, self._obs, self._time = source, sink, observer, time
         self._cfg = config or ClockConfig()
+        self._range = (start_us, end_us)
         self._end_us, self._cursor, self._speed = end_us, start_us, check_speed(speed)
         self._pending: ReplayItem | None = None
         self._failed: ReplayError | None = None
-        self._drained = self._stop = self._closed = False
+        self._drained = self._stop = self._closed = self._stepping = False
         self._pacer: Pacer | None = None
         self._window = RateWindow(self._cfg.rate_window_s)
         self._wake = asyncio.Event()
@@ -103,6 +112,8 @@ class ReplayClock:
         self._emitted = self._gaps = 0
         self._lost_s = 0.0
         self._backpressured = self._slow_in_window = False
+        #: The session's active-`BarSpec` probe: `step_bar` needs it; every delivery feeds it.
+        self.bar_probe: BarProbe | None = None
 
     async def __aenter__(self) -> Self:
         if self._closed or self._stack is not None:
@@ -148,7 +159,7 @@ class ReplayClock:
             raise ReplayClockStateError("the replay clock is not open")
         if self._failed is not None:
             raise ReplayClockStateError("the replay source failed: replay cannot continue from it")
-        if self.playing:
+        if self.playing or self._stepping:
             raise ReplayClockStateError("playback is already running or still stopping")
         if self._speed == STEP:
             raise ReplayClockStateError("speed 0 is step mode: step instead of playing")
@@ -189,6 +200,70 @@ class ReplayClock:
                 self._stop = True
         self._window.restart(wall=now, lost_s=self._lost_s, position_us=self._cursor)
         self._wake.set()
+
+    async def step_events(self, count: int = 1) -> StopReason:
+        """Deliver the next `count` market events at once (B12 `emit_one_step`)."""
+        if count < 1:
+            raise ReplayRequestInvalid("a step covers at least one event")
+        async with self._step():
+            for _ in range(count):
+                item = await self._step_item()
+                if not isinstance(item, RecordedEvent):
+                    return "range_end" if item is None else item
+                await self._deliver(item)
+            return "step"
+
+    async def step_ms(self, ms: int) -> StopReason:
+        """Deliver everything in the next `ms` of replay time; the cursor lands at its end."""
+        if ms < 1:
+            raise ReplayRequestInvalid("a step covers at least 1 ms")
+        async with self._step():
+            target = min(self._cursor + ms * 1_000, self._end_us)
+            while isinstance(item := await self._step_item(before_us=target), RecordedEvent):
+                await self._deliver(item)
+            if item == "gap":
+                return "gap"
+            self._cursor = max(self._cursor, target)
+            return "range_end" if self._cursor >= self._end_us else "step"
+
+    async def step_bar(self) -> StopReason:
+        """Deliver until the active `BarSpec` closes exactly one bar: on an event (a count bar)
+        or when replay time reaches its close (a time bar, closed by `BarProbe.tick`)."""
+        probe = self.bar_probe
+        if probe is None:
+            raise ReplayClockStateError("step_bar needs the session's bar probe")
+        async with self._step():
+            probe.tick(self._cursor)  # a close already due at the cursor is not this step's
+            while True:
+                due = probe.due_us()
+                due = None if due is None or due > self._end_us else due
+                item = await self._step_item(before_us=due)
+                if isinstance(item, RecordedEvent):
+                    if await self._deliver(item):
+                        return "step"
+                elif item == "gap":
+                    return "gap"
+                elif due is None:
+                    return "range_end"
+                else:  # replay time reaches the open bar's close before any later event
+                    self._cursor = max(self._cursor, due)
+                    probe.tick(due)
+                    return "step"
+
+    async def reposition(
+        self, source: ReplayStream, *, at_us: int, end_us: int | None = None
+    ) -> None:
+        """Continue from `source`, positioned at `at_us`, up to `end_us` (default: the current
+        end). It is the seek hook (B12 `seek_and_prime`, E26-T04, which rebuilds downstream state
+        first) and the loop wrap (US-RPL-008: back to the loop start, `end_us` the loop end). The
+        old source is closed. Only this moves the cursor back (INV-B12-b)."""
+        end = self._end_us if end_us is None else end_us
+        if not self._range[0] <= at_us < end <= self._range[1]:
+            raise ReplayRequestInvalid("a reposition must stay inside the session's range")
+        async with self._step():
+            old, self._source = self._source, source
+            self._cursor, self._end_us, self._pending, self._drained = at_us, end, None, False
+            await old.aclose()
 
     def now_us(self) -> int:
         """Replay "now" for downstream clocks: one clock for every pane (US-RPL-005)."""
@@ -270,6 +345,34 @@ class ReplayClock:
                 await asyncio.sleep(0)
                 sliced = time.now()
 
+    @contextlib.asynccontextmanager
+    async def _step(self) -> AsyncIterator[None]:
+        """Steps and repositions run alone: never while playing, never two at once."""
+        if self._group is None or self._closed:
+            raise ReplayClockStateError("the replay clock is not open")
+        if self.playing or self._stepping:
+            raise ReplayClockStateError("pause playback before stepping")
+        self._stepping = True
+        try:
+            yield
+        finally:
+            self._stepping = False
+
+    async def _step_item(
+        self, *, before_us: int | None = None
+    ) -> RecordedEvent | StopReason | None:
+        """The next market event of a step, if before `before_us`: `"gap"` at a gap the policy
+        stops at, `None` at the bound or the end of the range (nothing past them is consumed)."""
+        while (item := await self._peek()) is not None:
+            if before_us is not None and item.ts_us >= before_us:
+                return None
+            self._pending = None
+            if not isinstance(item, ReplayGap):
+                return item
+            if self._gap(item, self._time.now()):
+                return "gap"
+        return None
+
     async def _peek(self) -> ReplayItem | None:
         """The next item before the range end, read ahead by one and kept until consumed."""
         item = self._pending
@@ -287,13 +390,15 @@ class ReplayClock:
             self._pending = item
         return item if item.ts_us < self._end_us else None
 
-    async def _deliver(self, event: RecordedEvent) -> None:
-        """Hand `event` to the sink. It stays pending until the sink returns: if the sink raises,
-        the next `play()` delivers it again instead of losing it."""
+    async def _deliver(self, event: RecordedEvent) -> bool:
+        """Hand `event` to the sink; `True` if it closed a bar of the active probe. It stays pending
+        until the sink returns: if the sink raises, the next `play()` delivers it again."""
         await self._sink.deliver(event)
         self._pending = None
         self._cursor = max(self._cursor, event.ts_us)
         self._emitted += 1
+        probe = self.bar_probe
+        return probe is not None and probe.apply(event)
 
     def _gap(self, gap: ReplayGap, now: float) -> bool:
         """Count and report a gap; `True` if the policy stops at it. `skip` compresses the gap's

@@ -5,7 +5,8 @@ event to a `ReplaySink`. It reads time only through the injected `MonotonicTime`
 `LoopTime`, tests a fake. Gap markers never reach the sink. The clock reports them, with
 backpressure edges and the reason it stopped, to a `PlaybackObserver`. That observer is the
 session layer (E26-T01), which turns them into B12 events (`28-statechart-catalogue.md` Sec.B12):
-the hot path is plain code and never calls a statechart (C-2.20, C-2.21).
+the hot path is plain code and never calls a statechart (C-2.20, C-2.21). `step_bar` asks a
+`BarProbe`, built by the session layer over the bars engine, where the active bar closes.
 
 Speeds follow `24-internal-schemas.md` Sec.13.7: 0.1 to 100 is paced, `STEP` (0) is step mode
 and `UNBOUNDED` (-1) emits as fast as the sink accepts.
@@ -104,6 +105,22 @@ class PlaybackObserver(Protocol):
         """Playback ended. `error` is set only for `reason == "error"`: the source's `ReplayError`
         (the source is done, so the clock refuses to play until repositioned), or whatever the
         sink raised (its event stays pending for a retry)."""
+        ...
+
+
+class BarProbe(Protocol):
+    """Where the session's active `BarSpec` closes a bar, for `step_bar`."""
+
+    def due_us(self) -> int | None:
+        """Replay time at which the open bar closes on time alone (a time bar), else `None`."""
+        ...
+
+    def apply(self, event: RecordedEvent) -> bool:
+        """Account one delivered event; `True` if it closed a bar."""
+        ...
+
+    def tick(self, now_us: int) -> bool:
+        """Replay time reached `now_us`; `True` if that closed a bar."""
         ...
 
 

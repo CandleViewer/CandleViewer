@@ -171,6 +171,7 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "ReplayClock",
         "STEP",
         "UNBOUNDED",
+        "BarProbe",
         "ClockConfig",
         "GapPolicy",
         "LoopTime",
