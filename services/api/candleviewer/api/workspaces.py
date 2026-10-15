@@ -7,6 +7,7 @@ same 404 (D18); a live foreign id is also audited (`object_kind` workspace|layou
 Writes are not audited (D20). Bodies are read raw so the byte and depth caps run before pydantic.
 Evaluation order (D13): 401, 403, 413, 422, 404, no-op 200, 412, 409, write (the last four
 are the repository's, in one transaction). Logs carry ids, counts and outcomes, never content.
+Viewer writes return 403: Viewer is read-only (owner decision on #1778).
 """
 
 import inspect
@@ -57,7 +58,6 @@ _CODES: Final[dict[str, tuple[int, str]]] = {
 _TOKEN: Final = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}Z")
 _PERMISSIONS: Final = {p.value: p for p in Permission}
 _LENGTH: Final = re.compile(r"[0-9]{1,19}")
-#: A token no stored `updated_at` can equal: an unparseable `If-Match` is "stale" (D12, D13).
 _RETRY_AFTER_S: Final = 5
 #: Driver errors that mean "the database is unreachable or timed out". `api` may not import a
 #: storage driver (ADR-0003), so they are recognised by class identity, not imported; the
@@ -106,6 +106,7 @@ def _is_outage(exc: Exception) -> bool:
     return state is not None and (state[:2] in _OUTAGE_SQLSTATE_CLASSES or state == "55P03")
 
 
+#: A token no stored `updated_at` can equal: an unparseable `If-Match` is "stale" (D12, D13).
 _NEVER_MATCHES: Final = datetime(1, 1, 1, tzinfo=UTC)
 _CONFLICTS: Final = {
     "name_taken": "That name is already in use.",
