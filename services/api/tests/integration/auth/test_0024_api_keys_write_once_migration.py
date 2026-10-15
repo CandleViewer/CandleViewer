@@ -222,19 +222,22 @@ def test_changing_a_protected_column_is_refused_atomically(
     pg: str, column: str, value: Any
 ) -> None:
     """One cv_app statement renames two rows and changes `column` on one: refused as a whole
-    (SQLSTATE 23514), naming the column and no value; both rows stay byte-identical."""
+    (SQLSTATE 23514), naming the column and no value; both rows stay byte-identical. Each row
+    takes the change once, so whatever order the scan visits them in, one statement has already
+    updated the other row when the trigger refuses."""
     _at(pg, _REV)
-    victim, other = _insert(pg), _insert(pg)
-    before = _rows(pg, victim, other)
+    rows = _insert(pg), _insert(pg)
+    before = _rows(pg, *rows)
     change = sql.SQL(
         "UPDATE api_keys SET label = label || '~', {c} = CASE WHEN id = %s THEN %s ELSE {c} END "
         "WHERE id IN (%s, %s)"
     ).format(c=sql.Identifier(column))
-    with pytest.raises(psycopg.errors.CheckViolation) as refused:
-        _exec(_as(pg, "cv_app"), change, (victim, value, victim, other))
-    assert refused.value.diag.message_primary == _refusal(column)
-    assert refused.value.diag.message_detail is None
-    assert _rows(pg, victim, other) == before
+    for victim in rows:
+        with pytest.raises(psycopg.errors.CheckViolation) as refused:
+            _exec(_as(pg, "cv_app"), change, (victim, value, *rows))
+        assert refused.value.diag.message_primary == _refusal(column)
+        assert refused.value.diag.message_detail is None
+    assert _rows(pg, *rows) == before
 
 
 def test_other_columns_and_unchanged_values_stay_writable(pg: str) -> None:
@@ -326,7 +329,7 @@ def test_account_delete_by_cv_app_still_cascades_to_its_keys(pg: str) -> None:
     assert _rows(pg, key_id) == []
 
 
-def test_guard_is_the_last_before_update_row_trigger_and_fires_in_replica_mode(pg: str) -> None:
+def test_guard_is_the_last_before_update_row_trigger(pg: str) -> None:
     """Same-event triggers fire in name order; a later BEFORE UPDATE trigger could rewrite NEW
     after the check. tgtype 19 = ROW | BEFORE | UPDATE."""
     _at(pg, _REV)
@@ -336,11 +339,17 @@ def test_guard_is_the_last_before_update_row_trigger_and_fires_in_replica_mode(p
         'AND NOT tgisinternal AND tgtype & 19 = 19 ORDER BY tgname COLLATE "C"',
     )
     assert order[-1] == ("trg_api_keys_write_once", "A")
+
+
+def test_guard_fires_in_replica_mode(pg: str) -> None:
+    """`ENABLE ALWAYS`: a `session_replication_role = replica` session is refused too."""
+    _at(pg, _REV)
     key_id = _insert(pg)
     with psycopg.connect(pg, autocommit=True) as c:
         c.execute("SET session_replication_role = replica")
-        with pytest.raises(psycopg.errors.CheckViolation):
+        with pytest.raises(psycopg.errors.CheckViolation) as refused:
             c.execute("UPDATE api_keys SET secret_enc = 'x'::bytea WHERE id = %s", (key_id,))
+    assert refused.value.diag.message_primary == _refusal("secret_enc")
 
 
 def test_round_trip_empty_then_seeded(pg: str) -> None:
@@ -367,3 +376,15 @@ def test_upgrade_gives_up_on_a_held_lock_instead_of_queueing(pg: str) -> None:
     assert "lock timeout" in refused.stderr
     assert _exec(pg, "SELECT version_num FROM alembic_version") == [(_PREV,)]
     _at(pg, _REV)
+
+
+def test_downgrade_gives_up_on_a_reader_lock_instead_of_queueing(pg: str) -> None:
+    """DROP TRIGGER needs ACCESS EXCLUSIVE, so even an open reader blocks the rollback; the
+    `lock_timeout` bounds that wait too, and the failed downgrade leaves the guard in place."""
+    _at(pg, _REV)
+    with psycopg.connect(pg, autocommit=True) as holder, holder.transaction():
+        holder.execute("LOCK TABLE api_keys IN ACCESS SHARE MODE")  # what an open reader holds
+        refused = _alembic(pg, "downgrade", _PREV)
+    assert refused.returncode != 0
+    assert "lock timeout" in refused.stderr
+    assert _guard(pg) == ("A", True, False)

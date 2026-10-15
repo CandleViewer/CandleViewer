@@ -843,9 +843,9 @@ UPDATE row trigger on `api_keys` (tested). The same revision revokes DELETE on `
 `cv_app` where the role exists. What the trigger does not cover is in §3.2.3a.
 
 > **Landed:** `0024_api_keys_write_once` (#2336), the condition of the #835 Security sign-off on
-> SR-003. `lock_timeout` (5 s) bounds the wait for the SHARE ROW EXCLUSIVE lock. The downgrade
-> re-grants DELETE and drops the trigger and function, which re-opens the rollback (KV-T02); use
-> it only to roll back.
+> SR-003. `lock_timeout` (5 s) bounds each lock wait: the upgrade waits for SHARE ROW EXCLUSIVE,
+> the downgrade's `DROP TRIGGER` for ACCESS EXCLUSIVE. The downgrade re-grants DELETE and drops
+> the trigger and function, which re-opens the rollback (KV-T02); use it only to roll back.
 
 #### 3.2.3 `api_key_rotations`
 

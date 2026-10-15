@@ -20,6 +20,8 @@ from candleviewer.db import models
 _ROOT = Path(__file__).resolve().parents[3]
 _REV, _PREV = "0024_api_keys_write_once", "0023_replay_sessions"
 _UP, _DOWN = f"{_PREV}:{_REV}", f"{_REV}:{_PREV}"
+# TODO(#2336): this slice merges after #2607. On that rebase, add `key_id_last4` to #2607's
+# `tests/unit/credentials_m2/_write_once.PROTECTED_COLUMNS` and import it here instead of this copy.
 #: The ticket's six columns plus `key_id_last4`, the display tail derived from the sealed key id.
 PROTECTED = frozenset(
     {

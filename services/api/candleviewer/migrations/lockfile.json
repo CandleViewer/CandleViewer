@@ -114,7 +114,7 @@
     },
     "0024_api_keys_write_once": {
       "path": "services/api/candleviewer/migrations/versions/0024_api_keys_write_once.py",
-      "sha256": "6c1ed1778a979d15c5ca4741206aa06a0d6ce2e99ed5ee0212f7ee52a34874ac",
+      "sha256": "459c34a276ae41e6437988b1aa9e6539d026b45a4e0a3d22ba234e579ff1eb9a",
       "down_revision": "0023_replay_sessions"
     }
   }

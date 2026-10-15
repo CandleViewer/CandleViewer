@@ -30,7 +30,8 @@ UPDATE:
 
 Additive (C-5.1) and reversible (C-5.2): `downgrade()` re-grants DELETE (the `pg_bootstrap.sql`
 default) and drops the trigger and function. That re-opens KV-T02, so it is a rollback-only path.
-Both directions bound the wait for SHARE ROW EXCLUSIVE on api_keys with `lock_timeout` (C-5.6).
+`lock_timeout` (5 s) bounds every lock wait on api_keys (C-5.6): the upgrade's CREATE TRIGGER and
+ENABLE ALWAYS wait for SHARE ROW EXCLUSIVE, the downgrade's DROP TRIGGER for ACCESS EXCLUSIVE.
 """
 
 from __future__ import annotations
@@ -73,26 +74,29 @@ CREATE TRIGGER trg_api_keys_write_once BEFORE UPDATE ON api_keys
 ALTER TABLE api_keys ENABLE ALWAYS TRIGGER trg_api_keys_write_once;
 """
 
-
-def _if_cv_app(statement: str) -> str:
-    """Run `statement` only where `pg_bootstrap.sql` created `cv_app` (0003/0011 pattern)."""
-    return (
-        "DO $BODY$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'cv_app') THEN "
-        f"EXECUTE '{statement}'; END IF; END $BODY$;"
-    )
+# Each runs only where `pg_bootstrap.sql` created `cv_app` (0003/0011 pattern). Static literals:
+# SQL built from strings at runtime trips bandit B608 in the `sast` gate.
+_REVOKE_DELETE = (
+    "DO $BODY$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'cv_app') THEN "
+    "EXECUTE 'REVOKE DELETE ON api_keys FROM cv_app'; END IF; END $BODY$;"
+)
+_GRANT_DELETE = (
+    "DO $BODY$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'cv_app') THEN "
+    "EXECUTE 'GRANT DELETE ON api_keys TO cv_app'; END IF; END $BODY$;"
+)
 
 
 def upgrade() -> None:
     op.execute("SET LOCAL lock_timeout = '5s';")
     op.execute(_FUNCTION)
     op.execute(_TRIGGER)
-    op.execute(_if_cv_app("REVOKE DELETE ON api_keys FROM cv_app"))
+    op.execute(_REVOKE_DELETE)
     op.execute("SET LOCAL lock_timeout = DEFAULT;")
 
 
 def downgrade() -> None:
     op.execute("SET LOCAL lock_timeout = '5s';")
-    op.execute(_if_cv_app("GRANT DELETE ON api_keys TO cv_app"))
+    op.execute(_GRANT_DELETE)
     op.execute("DROP TRIGGER IF EXISTS trg_api_keys_write_once ON api_keys;")
     op.execute("DROP FUNCTION IF EXISTS api_keys_write_once_check();")
     op.execute("SET LOCAL lock_timeout = DEFAULT;")
