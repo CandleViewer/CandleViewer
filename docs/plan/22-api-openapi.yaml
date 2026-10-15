@@ -1095,20 +1095,30 @@ paths:
       tags: [users]
       operationId: getUser
       summary: Get a user
+      description: "`ETag` versions the whole representation, roles included; send it as `If-Match` on `PATCH`."
       x-rbac: { permissions: [users:read], scope: none }
       responses:
         "200":
           description: User.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       tags: [users]
       operationId: updateUser
       summary: Update a user (status, roles, MFA requirement, display name)
-      description: "The owner cannot demote or disable their own account — the last `owner` is protected (`conflict`)."
+      description: >
+        Requires step-up `users`. The owner cannot demote or disable their own account, and the
+        last active `owner` is protected (`409 conflict`). `status` moves only between `active`
+        and `disabled`; enabling never restores grants or sessions and cancels a pending purge.
+        `mfa_required: false` is refused (`400 validation_failed`, C-12.2). A stale `If-Match`
+        is `412 version_conflict`. Audited write-ahead; when the audit record cannot be written
+        nothing changes (`503 audit_unavailable`).
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters:
@@ -1126,30 +1136,48 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [users]
       operationId: deleteUser
       summary: Disable a user (soft delete)
-      description: |
-        Sets `status=disabled`, revokes all sessions and all account grants. Rows are never
-        hard-deleted — the audit log and journal reference them. Passing `?purge=true`
-        additionally anonymises PII after the 90-day retention window.
+      description: >
+        Requires step-up `users`. Sets `status=disabled` and, within 5 seconds, every session of
+        the user is invalid (REST answers `401 unauthenticated`; sockets get `bye` with
+        `user_disabled` and close `4403`, 23-ws-protocol.md section 9.5). Every account grant
+        is soft-revoked (freeze state and risk caps are kept), the user's rules are disarmed and
+        an open invite is revoked. Rows are never hard-deleted — the audit log and journal
+        reference them. Positions and orders are never flattened or cancelled: the audit record
+        carries `positions_decision: leave` and the open-position count, and while that count
+        is unavailable the request must carry `acknowledge_unknown_positions=true`, otherwise
+        `409 positions_unknown`. The caller's own account is refused (`403 forbidden`) and so is
+        the last active owner (`409 conflict`). Audited write-ahead as `users.disable` with one
+        `auth.session_revoked` per session; when the audit record cannot be written nothing
+        changes (`503 audit_unavailable`). Disabling a disabled user is a no-op `204` with no
+        new audit record. Passing `?purge=true` additionally anonymises PII after the 90-day
+        retention window.
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/AcknowledgeUnknownPositions"
         - name: purge
           in: query
           schema: { type: boolean, default: false }
       responses:
         "204": { description: "Disabled." }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /users/{userId}/roles:
     parameters: [{ $ref: "#/components/parameters/UserId" }]
@@ -1157,6 +1185,11 @@ paths:
       tags: [users]
       operationId: setUserRoles
       summary: Replace a user's role set
+      description: >
+        Requires step-up `users`. The last active `owner` cannot be demoted (`409 conflict`,
+        re-checked under a lock on the owner rows). Audited as `roles.grant` / `roles.revoke`;
+        when the audit record cannot be written nothing changes (`503 audit_unavailable`). Live
+        sockets of the user are re-evaluated (23-ws-protocol.md section 9.5).
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -1175,12 +1208,21 @@ paths:
                   items: { $ref: "#/components/schemas/RoleName" }
       responses:
         "200":
-          description: Roles replaced.
+          description: Roles replaced; the body carries only the user id and the new role set.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/User" }
+              schema:
+                type: object
+                required: [id, roles]
+                properties:
+                  id: { type: string, format: uuid }
+                  roles: { type: array, items: { $ref: "#/components/schemas/RoleName" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /users/{userId}/account-access:
     parameters: [{ $ref: "#/components/parameters/UserId" }]
@@ -1203,10 +1245,24 @@ paths:
       tags: [users]
       operationId: setUserAccountAccess
       summary: Replace a user's account-access grants
-      description: "This is the isolation boundary between managers. Changes take effect on the next request; existing WS subscriptions for revoked accounts are force-closed with an `unsubscribed` frame (see 23-ws-protocol.md §9)."
+      description: >
+        This is the isolation boundary between managers. Requires step-up `users`. Changes take
+        effect on the next request. A removed account is soft-revoked, so its freeze state and
+        risk caps survive a later re-grant. Within 2 seconds every live WS subscription that
+        depended on a removed account ends with a `revoked` frame (`reason:
+        account_scope_changed`, 23-ws-protocol.md section 9.5), and resubscribing is refused
+        with `account_scope_denied`. Removing an account never flattens positions or cancels
+        orders; while the user's open-position state is unavailable the request must carry
+        `acknowledge_unknown_positions=true`, otherwise `409 positions_unknown`. The caller's
+        own grants cannot be changed (`403 forbidden`), and a user that is not `active` answers
+        `409 conflict`. An `exchange_account_id` that does not exist is `404 not_found`.
+        Audited write-ahead as `users.access_change`; when the audit record cannot be written
+        nothing changes (`503 audit_unavailable`).
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/AcknowledgeUnknownPositions"
       requestBody:
         required: true
         content:
@@ -1234,8 +1290,60 @@ paths:
                 type: object
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/AccountAccessGrant" } }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /users/{userId}/sessions:
+    parameters: [{ $ref: "#/components/parameters/UserId" }]
+    get:
+      tags: [users]
+      operationId: listUserSessions
+      summary: List a user's active sessions (the owner's view of `/me/sessions`)
+      description: "Same items as `listMySessions`; no token material is ever returned."
+      x-rbac: { permissions: [users:read], scope: none }
+      responses:
+        "200":
+          description: Active sessions of the user.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/UserSession" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /users/{userId}/sessions/{sessionId}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+      - name: sessionId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [users]
+      operationId: revokeUserSession
+      summary: Revoke one of a user's sessions
+      description: >
+        Requires step-up `users`. Only an active session of `userId` is addressable; an unknown
+        or ended session, or another user's session, is `404 not_found`. Audited write-ahead as
+        `auth.session_revoked`; when the audit record cannot be written nothing changes
+        (`503 audit_unavailable`). Within 5 seconds a REST call on the session answers
+        `401 unauthenticated` and its sockets close `4401` (23-ws-protocol.md section 9.5).
+      x-rbac: { permissions: [users:write], scope: none }
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      responses:
+        "204": { description: Revoked. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /roles:
     get:
@@ -9821,6 +9929,12 @@ components:
       in: path
       required: true
       schema: { type: string, format: uuid }
+    AcknowledgeUnknownPositions:
+      name: acknowledge_unknown_positions
+      in: query
+      required: false
+      description: "Must be `true` while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`."
+      schema: { type: boolean, default: false }
     MethodId:
       name: methodId
       in: path
@@ -10304,6 +10418,17 @@ components:
                   detail: "The relational store is unavailable.",
                   instance: "urn:cv:req:0193f2bb-ffff",
                   code: store_unavailable,
+                  retry_after_seconds: 5,
+                }
+            auditUnavailable:
+              value:
+                {
+                  type: "https://candleviewer.local/errors/audit_unavailable",
+                  title: "Audit log unavailable; the write-ahead audited change was not applied",
+                  status: 503,
+                  detail: "The audit record could not be written; nothing was changed.",
+                  instance: "urn:cv:req:0193f2bb-fffe",
+                  code: audit_unavailable,
                   retry_after_seconds: 5,
                 }
             stale:
@@ -10948,9 +11073,15 @@ components:
       additionalProperties: false
       properties:
         display_name: { type: ["string", "null"], maxLength: 80 }
-        status: { $ref: "#/components/schemas/UserStatus" }
+        status:
+          type: string
+          enum: [active, disabled]
+          description: "`invited` and `locked` are not settable (`400 validation_failed`)."
         roles: { type: array, minItems: 1, items: { $ref: "#/components/schemas/RoleName" } }
-        mfa_required: { type: boolean }
+        mfa_required:
+          type: boolean
+          enum: [true]
+          description: "TOTP is mandatory for every user (C-12.2); `false` is `400 validation_failed`."
     Role:
       type: object
       properties:

@@ -342,9 +342,17 @@ class UpdateUserRequest(BaseModel):
         extra="forbid",
     )
     display_name: Annotated[str | None, Field(max_length=80)] = None
-    status: Literal["invited", "active", "disabled", "locked"] | None = None
+    status: Annotated[
+        Literal["active", "disabled"] | None,
+        Field(description="`invited` and `locked` are not settable (`400 validation_failed`)."),
+    ] = None
     roles: Annotated[list[Literal["owner", "manager", "viewer"]] | None, Field(min_length=1)] = None
-    mfa_required: bool | None = None
+    mfa_required: Annotated[
+        Literal[True] | None,
+        Field(
+            description="TOTP is mandatory for every user (C-12.2); `false` is `400 validation_failed`."
+        ),
+    ] = None
 
 
 class Role(BaseModel):

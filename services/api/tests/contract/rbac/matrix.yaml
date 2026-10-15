@@ -1477,6 +1477,20 @@ operations:
     public: false
     state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+  GET /users/{userId}/sessions:
+    permissions: ['users:read']
+    scope: none
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml (E42-T04 S1); the admin-sessions slice mounts it
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
+  DELETE /users/{userId}/sessions/{sessionId}:
+    permissions: ['users:write']
+    scope: none
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml (E42-T04 S1); the admin-sessions slice mounts it
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /watchlists:
     permissions: ['workspaces:read']
     scope: self
