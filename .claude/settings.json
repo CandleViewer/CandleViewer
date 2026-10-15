@@ -27,8 +27,7 @@
       "Read(./.env.*)",
       "Read(./**/secrets/*.key)",
       "Read(./.claude/settings.local.json)",
-      "Read(./.claude/relayroom/**)",
-      "Bash(cat ./.claude/settings.local.json)"
+      "Bash(*settings.local.json*)"
     ]
   },
   "hooks": {

@@ -35,6 +35,13 @@ doctor = _load("relayroom_main_doctor", "relayroom-main-doctor.py")
 creds = _load("relayroom_enter_credentials", "relayroom-enter-credentials.py")
 
 FAKE_CODE = "FAKECODE123"
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_real_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`creds.TARGET` resolves at import to the checkout's live settings.local.json; point it at a
+    non-existent tmp file for every test so a test that forgets the `target` fixture cannot write there."""
+    monkeypatch.setattr(creds, "TARGET", tmp_path / "unset" / "settings.local.json")
 FAKE_TOKEN = "FAKETOKENxyz"
 FAKE_URL = f"https://relay.candleviewer.com/mcp/{FAKE_CODE}?part=main-orchestrator"
 FAKE_LABEL = "cv-test-machine-l01"
@@ -905,13 +912,14 @@ def test_doctor_docstring_documents_all_three_exit_codes():
 
 
 def test_project_settings_deny_reads_of_the_relayroom_secret_files():
+    """Two deny rules, both on the secret-bearing file only: the nonsecret identity/run records
+    under `.claude/relayroom/` stay readable because the skill and the worker policy read them."""
     settings = json.loads((REPO_ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))
     permissions = settings["permissions"]
 
     for rule in (
         "Read(./.claude/settings.local.json)",
-        "Read(./.claude/relayroom/**)",
-        "Bash(cat ./.claude/settings.local.json)",
+        "Bash(*settings.local.json*)",
     ):
         assert rule in permissions["deny"]
     assert permissions["ask"] == []  # owner policy: deny rules only, never prompts
