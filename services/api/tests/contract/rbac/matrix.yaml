@@ -585,9 +585,7 @@ operations:
     permissions: ['instruments:read']
     scope: none
     public: false
-    state: not_executable
-    reason: 'authorisation is unreachable in the CI app: every actor gets 501 (identity/backend not wired
-      or fail-closed stub)'
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /instruments/refresh:
     permissions: ['instruments:write']
@@ -600,9 +598,7 @@ operations:
     permissions: ['instruments:read']
     scope: none
     public: false
-    state: not_executable
-    reason: 'authorisation is unreachable in the CI app: every actor gets 501 (identity/backend not wired
-      or fail-closed stub)'
+    state: executed
     request:
       path: {symbol: BTCUSDT}
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}

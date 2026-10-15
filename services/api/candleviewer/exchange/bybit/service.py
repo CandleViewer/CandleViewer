@@ -18,6 +18,7 @@ from candleviewer.exchange.bybit.archive import (
 )
 from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.funding import BybitFundingFetcher
+from candleviewer.exchange.bybit.instruments import make_instruments_info_fetcher
 from candleviewer.exchange.bybit.klines import BybitKlineFetcher, TickSizeFor
 from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
 from candleviewer.exchange.bybit.public_ws import (
@@ -81,6 +82,8 @@ class ExchangeBybitService:
         )
         return BybitTradeArchive(cfg)
 
+    #: E08-S01-2: the neutral instruments-info fetcher over a public client (#2561).
+    instruments_fetcher = staticmethod(make_instruments_info_fetcher)
     #: E08-S05: order-book topic naming + frame parser.
     book_topic = staticmethod(book_topic)
     parse_book_frame = staticmethod(parse_book_frame)

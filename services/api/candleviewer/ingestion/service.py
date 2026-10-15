@@ -356,11 +356,11 @@ class IngestionService:
                 await self.ws.stop()
         if self.clock is not None:
             await self.clock.stop()
+        if self.instruments is not None:  # before the closers: it uses their client and pool
+            await self.instruments.stop(grace_s)
         for close in self._closers:
             await close()
         self._closers.clear()
-        if self.instruments is not None:
-            await self.instruments.stop(grace_s)
         if self._generator is not None:
             await self._generator.stop()
             self._generator = None

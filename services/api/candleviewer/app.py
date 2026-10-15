@@ -177,7 +177,7 @@ from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.service import RulesService
 from candleviewer.rules_store_pg import PostgresRuleStore
-from candleviewer.settings import Environment, Settings, get_settings
+from candleviewer.settings import Environment, FeedMode, Settings, get_settings
 from candleviewer.statechart.bindings.b16_session import set_audit_sink as set_b16_audit_sink
 from candleviewer.statechart.gateway import GatewayOverloadedError
 from candleviewer.storage.cold.archive_import import FileImportLedger
@@ -1232,9 +1232,14 @@ def create_app(
         )
     )
     # E08-S01-2: served from the scheduler's in-memory snapshot; `503` until
-    # `wire_instrument_catalogue()` attaches one (needs a real Postgres +
-    # exchange REST client). Resolver `None` -> fail-closed `501` (see above).
-    app.include_router(make_instruments_router(lambda: ctx.ingestion.instruments))
+    # `wire_instrument_catalogue()` attaches one (`_compose_instrument_catalogue`).
+    # #2561: the same session-backed resolver as the routes above (501 only without identity).
+    app.include_router(
+        make_instruments_router(
+            lambda: ctx.ingestion.instruments, principal_resolver=audit_resolver
+        )
+    )
+    _compose_instrument_catalogue(ctx, resolved)
     # E08-S03: merged ticker snapshot; session-backed resolver (501 only without identity).
     app.include_router(
         make_ticker_router(lambda: ctx.ingestion.tickers, principal_resolver=audit_resolver)
@@ -1501,6 +1506,25 @@ def _compose_funding(ctx: AppContext, settings: Settings) -> Any:
     return wire_funding(
         ctx, store=store, fetcher=None, closer=None, now_us=lambda: time.time_ns() // 1000
     )
+
+
+def _compose_instrument_catalogue(ctx: AppContext, settings: Settings) -> None:
+    """#2561: attach the E08-S01-2 catalogue on the real backend whenever the app talks to the
+    exchange: `CV_FEED=live`, or the public WS behind `ingestion_ws_enabled`, which admits only
+    catalogue symbols. The dev and CI defaults (synthetic feed, flag off) make no exchange call
+    (C-13.5), and `/instruments` keeps answering 503 there. Ingestion stops the scheduler, then
+    closes its client and pool."""
+    if settings.storage_backend != "real" or not (
+        settings.feed is FeedMode.LIVE or settings.ingestion_ws_enabled
+    ):
+        return
+    rest = ctx.exchange_bybit.public_rest_client(settings.environment.value)
+    relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "instruments")
+    wire_instrument_catalogue(
+        ctx, fetch_instruments=ctx.exchange_bybit.instruments_fetcher(rest), relational=relational
+    )
+    ctx.ingestion.attach_closer(rest.aclose)
+    ctx.ingestion.attach_closer(relational.dispose)
 
 
 def wire_instrument_catalogue(
