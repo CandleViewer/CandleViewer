@@ -1,14 +1,15 @@
-"""Integration: the break-glass Owner reset store on real Postgres 16 (E09-S11 #2119 slice 3a).
+"""Integration: the break-glass Owner reset on real Postgres 16 (E09-S11 #2119 slice 3).
 
 The plan's named tests drive `SqlAlchemyBreakGlassRepository` through its
 `BreakGlassResetStore` port: S1 one transaction, S10 a failed reset changes zero rows,
-S5 refusals for non-Owners (forbidden role) and the cross-Owner (IDOR) case. The live
-recovery-code rule and its concurrency test are slice 3b. Not run locally (no docker);
-exercised by CI `integration`.
+S5 refusals for non-Owners (forbidden role) and the cross-Owner (IDOR) case. S6: under
+the live recovery-code rule of `BreakGlassResetService`, concurrent runs consume one
+code once. Not run locally (no docker); exercised by CI `integration`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -29,8 +30,11 @@ from candleviewer.auth.break_glass import (
     BREAK_GLASS_EVENT_KIND,
     BREAK_GLASS_REVOKED_REASON,
     BreakGlassRefusal,
+    BreakGlassResetResult,
+    BreakGlassResetService,
     BreakGlassResetStore,
 )
+from candleviewer.auth.errors import BreakGlassRefused
 from candleviewer.auth.recovery_codes import generate_recovery_code, hash_recovery_code
 from candleviewer.storage.repositories.break_glass_sqlalchemy import (
     SqlAlchemyBreakGlassRepository,
@@ -224,3 +228,22 @@ async def test_touches_only_named_owner(pg_dsn: str) -> None:
         assert [await _state(engine, u) for u in everyone] == [_UNTOUCHED] * 3
         assert not isinstance(await _reset(store, a, code_a), str)
         assert [await _state(engine, u) for u in everyone] == [_RESET, _UNTOUCHED, _UNTOUCHED]
+
+
+async def test_code_consumed_once_concurrently(pg_dsn: str) -> None:
+    async with _env(pg_dsn) as (engine, store):
+        uid, code = await _user(engine)
+        # The live rule sits in the service, which hands the store only the keyed hash.
+        svc = BreakGlassResetService(store, recovery_code_key=_KEY)
+        target = uuid.UUID(uid)
+        runs = await asyncio.gather(
+            *(
+                svc.reset(target, live=True, recovery_code=code, correlation_id=uuid.uuid4())
+                for _ in range(6)
+            ),
+            return_exceptions=True,
+        )
+        assert sum(isinstance(r, BreakGlassResetResult) for r in runs) == 1
+        refused = [r.reason for r in runs if isinstance(r, BreakGlassRefused)]
+        assert refused == [BreakGlassRefusal.RECOVERY_CODE_INVALID] * 5  # the row lock serialises
+        assert await _state(engine, uid) == _RESET
