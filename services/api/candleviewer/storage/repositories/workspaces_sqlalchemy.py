@@ -219,14 +219,21 @@ _CHART_SYMBOLS = sa.text(
     "SELECT DISTINCT lp.symbol FROM layout_panes lp JOIN layouts l ON l.id = lp.layout_id "
     "WHERE lp.symbol IS NOT NULL AND l.deleted_at IS NULL ORDER BY lp.symbol"
 )
+# Retention purge, layouts first. Defence in depth (D21): a parent is purged only once nothing
+# live hangs below it, so a broken soft-delete cascade leaves a visible stuck row instead of an
+# FK cascade silently deleting live data; workspaces wait for their layouts, so every layout row
+# is removed (and counted) by `_PURGE_LAYOUTS` itself.
 _PURGE_LAYOUTS = sa.text(
     "DELETE FROM layouts WHERE id IN (SELECT id FROM layouts WHERE deleted_at IS NOT NULL "
     "AND deleted_at < now() - make_interval(days => CAST(:days AS integer)) "
+    "AND NOT EXISTS (SELECT 1 FROM drawings d WHERE d.layout_id = layouts.id "
+    "AND d.deleted_at IS NULL) "
     "ORDER BY deleted_at LIMIT :limit)"
 )
 _PURGE_WORKSPACES = sa.text(
     "DELETE FROM workspaces WHERE id IN (SELECT id FROM workspaces WHERE deleted_at IS NOT NULL "
     "AND deleted_at < now() - make_interval(days => CAST(:days AS integer)) "
+    "AND NOT EXISTS (SELECT 1 FROM layouts l WHERE l.workspace_id = workspaces.id) "
     "ORDER BY deleted_at LIMIT :limit)"
 )
 _USERS_BY_BUCKET = sa.text(
