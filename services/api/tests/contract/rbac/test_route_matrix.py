@@ -284,8 +284,12 @@ def test_undeclared_served_route_fails_the_build(world: World) -> None:
 # -- tripwire: not_executable rows for every logged-in actor (D1) -------------------------------
 
 #: Status the fail-closed stub returns today, identical for every actor. A route that becomes
-#: reachable, or whose permission widens, changes a status here and turns the pack red; update a
-#: value only together with the matrix row (and a Security review of matrix.yaml).
+#: reachable changes a status here and turns the pack red; update a value only together with the
+#: matrix row (and a Security review of matrix.yaml). Every value must stay inside
+#: `_REFUSAL_STATUSES`: a pin can never be bumped to a success status, so a route that becomes
+#: reachable without authorisation cannot be parked here (it must move to `executed`).
+_REFUSAL_STATUSES: frozenset[int] = frozenset({401, 422, 501, 503})
+
 _STUB_STATUS: dict[str, int] = {
     "GET /admin/health": 501,
     "PUT /admin/log-level": 501,
@@ -311,6 +315,13 @@ def test_stub_status_table_covers_exactly_the_not_executable_rows() -> None:
         f"not_executable rows without a stub status: {sorted(declared - set(_STUB_STATUS))}; "
         f"stale stub statuses: {sorted(set(_STUB_STATUS) - declared)}"
     )
+
+
+def test_stub_statuses_are_refusals_never_successes() -> None:
+    """A parked route may only pin a pre-authorisation refusal; pinning a success status would let
+    a route that is reachable without authorisation hide in this table."""
+    offenders = {k: v for k, v in _STUB_STATUS.items() if v not in _REFUSAL_STATUSES}
+    assert not offenders, f"stub statuses outside {sorted(_REFUSAL_STATUSES)}: {offenders}"
 
 
 @pytest.mark.parametrize("actor", [a for a in ACTORS if a != "unauthenticated"])
