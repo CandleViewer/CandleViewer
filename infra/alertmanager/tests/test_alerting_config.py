@@ -89,6 +89,8 @@ def test_required_rules_present() -> None:
         "EgressIpChanged",
         "CsrfRefusalsHigh",  # #2090 SR-041
         "CsrfRefusalAuditUnavailable",
+        "AuthRecoveryCodeUsed",  # #2496 SR-022
+        "NetBindingUnsafe",  # #2496 E09-T04
     }
     assert required <= names
 
@@ -276,3 +278,30 @@ def test_ws_origin_refusal_alert_watches_the_bounded_close_reason() -> None:
     assert rule["labels"] == {"severity": "ticket", "component": "auth"}
     url = rule["annotations"]["runbook_url"]
     assert url == "docs/plan/07-release-and-prr.md#alert-wsoriginrefusalshigh"
+
+
+def test_recovery_code_alert_tickets_the_owner_on_any_use() -> None:
+    """#2496 (SR-022: each use "alerts the Owner"): any accepted recovery code raises a
+    ticket at once. The counter carries no user label; the runbook reads the audit log."""
+    rule = {r["alert"]: r for r in _rules()}["AuthRecoveryCodeUsed"]
+    assert rule["expr"] == "sum by (env) (increase(auth_recovery_codes_used_total[15m])) > 0"
+    assert rule["for"] == "0m"
+    assert rule["labels"] == {"severity": "ticket", "component": "auth"}
+    url = rule["annotations"]["runbook_url"]
+    assert url == "docs/plan/07-release-and-prr.md#alert-authrecoverycodeused"
+
+
+def test_net_binding_alert_pages_as_soon_as_the_guard_trips() -> None:
+    """#2496 (E09-T04: "an alert that fires immediately when the gauge goes to 0"). The
+    component is its own, so this page never inhibits another component's ticket (the
+    page-over-ticket rule matches on component), e.g. `EgressIpChanged` (network)."""
+    rules = _rules()
+    rule = {r["alert"]: r for r in rules}["NetBindingUnsafe"]
+    assert rule["expr"] == "min by (env) (net_binding_safe) == 0"
+    assert rule["for"] == "0m"
+    assert rule["labels"] == {"severity": "page", "component": "net"}
+    url = rule["annotations"]["runbook_url"]
+    assert url == "docs/plan/07-release-and-prr.md#alert-netbindingunsafe"
+    assert [r["alert"] for r in rules if r["labels"]["component"] == "net"] == [
+        "NetBindingUnsafe"
+    ]

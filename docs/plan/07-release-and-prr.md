@@ -1244,6 +1244,48 @@ curl -s "http://${CV_METRICS_BIND:-127.0.0.1:9108}/metrics" | grep '^auth_csrf_r
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep 'auth.csrf_refused' | tail -20
 ```
 
+<a id="alert-netbindingunsafe"></a>
+
+### NetBindingUnsafe
+
+| Element               | Detail                                                                                                                                                                                                                                                                                  |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | The mesh-only binding guard (E09-T04, US-ONB-008) reports unsafe: `net_binding_safe` is 0. A listener is on `0.0.0.0`/`::` or outside the mesh/loopback CIDR allow-list, or the check failed or timed out (fail-closed). Page, no hold time.                                            |
+| 2. User impact        | The process-wide read-only gate is tripped: the OMS validator refuses order placement until a passing check clears it. No flag, config or role overrides it. The `system` WS topic carries the reason code.                                                                             |
+| 3. What is still safe | Native stop-losses already on the exchange. Off-mesh requests are still refused by `MeshOnlyMiddleware` before any credential is read. Market data and reads continue.                                                                                                                  |
+| 5. Remediation        | Follow `docs/ops/runbooks/auth-rbac.md` section 6: read the reason code, list the API process's listening sockets on the host, fix the bind or the WSL port-proxy rule, then restart the API or wait for the hourly re-check. Nothing clears the gate by hand. Never disable the check. |
+| 6. Escalation         | Owner now. A public listener you cannot explain is an exposure incident: follow `SECURITY.md`.                                                                                                                                                                                          |
+| 7. Verify recovery    | `net_binding_safe` is 1 again for the env and the alert resolves; a `system` event with reason `net.binding_safe` ends the read-only state.                                                                                                                                             |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: 1 for every env, and `"mesh_binding_safe":true`.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=min by (env) (net_binding_safe)'
+curl -s "http://${CV_METRICS_BIND:-127.0.0.1:9108}/metrics" | grep '^net_binding_safe'  # the private metrics listener, not the API port
+curl -s http://127.0.0.1:8000/readyz  # mesh_binding_safe and mesh_reason_code
+```
+
+<a id="alert-authrecoverycodeused"></a>
+
+### AuthRecoveryCodeUsed
+
+| Element               | Detail                                                                                                                                                                                                                                                                     |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | A recovery code was accepted at `/auth/mfa/recovery`: `auth_recovery_codes_used_total` rose, one per `auth.recovery_code_used` audit row (SR-022, each use alerts the Owner). Ticket.                                                                                      |
+| 2. User impact        | The user who used it must re-enrol TOTP. If the account holder did not use it, someone has that user's password and a recovery code: treat the account as compromised.                                                                                                     |
+| 3. What is still safe | The code is spent and cannot be reused. Other users and trading are unaffected. The series carries no user, IP or code value.                                                                                                                                              |
+| 5. Remediation        | Find the use in the audit log (`auth.recovery_code_used`: the user id and `actor_ip`) and confirm it with that user out of band. If it was not them: follow `SECURITY.md`, reset their TOTP (`docs/ops/runbooks/auth-rbac.md` section 2) and disable the user (section 4). |
+| 6. Escalation         | Owner; security reviewer if the account holder did not use it.                                                                                                                                                                                                             |
+| 7. Verify recovery    | Every use in the window is confirmed by its user or handled as a compromise, and the increase is back to 0.                                                                                                                                                                |
+
+**4. First three diagnostic commands** (run from the repo root, as an Owner; expected healthy result: increase 0, and each `auth.recovery_code_used` entry confirmed by its user.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (env) (increase(auth_recovery_codes_used_total[1h]))'
+curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.recovery_code_used"
+curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.mfa_failed"  # failed guesses before the use
+```
+
 <a id="observability-stack-is-down"></a>
 
 ### Observability stack is down

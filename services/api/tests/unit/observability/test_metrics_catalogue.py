@@ -28,7 +28,8 @@ from candleviewer.observability.metrics_runtime import (
 
 #: `_ms`/`_mb`: frontend-pushed names fixed by 20-architecture.md §12.1 (E04-T06).
 #: `_rows`: `recorder_write_backlog_rows`, named by E16-T03 (a gauge of queued rows).
-_UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows)$")
+#: `_safe`: `net_binding_safe`, the 1/0 mesh-guard gauge named by E09-T04 (US-ONB-008).
+_UNIT_SUFFIX = re.compile(r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|safe)$")
 #: Exact names fixed by the E16-T07 ticket (`disk_used_ratio` predates it in the alert rules).
 _SUFFIX_EXCEPTIONS = frozenset(
     {
@@ -41,7 +42,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "308e649eb63153f3f54eef9c7dafb1a5e54cba2fae6f5c51b9509b1374a1491a"
+GOLDEN_CATALOGUE_SHA256 = "eaac6ca3d13bc6b9d4e78eeb4885191f08288986c63c857289476e1e36bb65c8"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -195,12 +196,20 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
+    from candleviewer.net.metrics import NET_EXPORTED_NAMES
     from candleviewer.recorder.metrics import EXPORTED_NAMES as RECORDER_NAMES
     from candleviewer.secrets.metrics import EXPORTED_NAMES as SECRETS_NAMES
     from candleviewer.ws.metrics import CV_WS_NAMES
     from candleviewer.ws.metrics import EXPORTED_NAMES as CVWB_NAMES
 
-    others = CVWB_NAMES | RECORDER_NAMES | CV_WS_NAMES | AUTH_EXPORTED_NAMES | SECRETS_NAMES
+    others = (
+        CVWB_NAMES
+        | RECORDER_NAMES
+        | CV_WS_NAMES
+        | AUTH_EXPORTED_NAMES
+        | SECRETS_NAMES
+        | NET_EXPORTED_NAMES
+    )
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")

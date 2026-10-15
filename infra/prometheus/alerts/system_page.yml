@@ -69,6 +69,18 @@ groups:
         annotations:
           summary: "KEK unavailable: credential broker degraded, trading disabled"
           runbook_url: "docs/ops/runbooks/kek-custody.md#alert-kekunavailable"
+      - alert: NetBindingUnsafe
+        # #2496 (E09-T04: fires as soon as the gauge goes to 0). The mesh guard found a public or
+        # off-mesh listener, or could not check, and tripped the read-only gate: no new orders.
+        # Its own component, so this page inhibits no other component's ticket.
+        expr: min by (env) (net_binding_safe) == 0
+        for: 0m
+        labels:
+          severity: page
+          component: net
+        annotations:
+          summary: "Mesh binding guard tripped: order placement is read-only"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-netbindingunsafe"
       - alert: SyntheticAlert
         expr: cv_synthetic_alert == 1
         for: 1m
