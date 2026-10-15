@@ -10,7 +10,8 @@ and a successful `security.kek_loaded` audit. No runtime re-load; recovery is a 
 Capabilities (C-3.2): `AppContext.secrets` is `SecretsLifecycle` (start/stop/health only);
 `admin` is injected `SecretsMetadata`; the M4 signing capability is minted once in
 `admin.wiring` (`SecretsBundle.exchange_borrower`) — callers never declare their identity.
-It returns a MAC and the key id, never the API secret (C-2.7, #2339).
+It returns a MAC and the key id, never the API secret (C-2.7, #2339). The offline break-glass
+proof (`prove_kek_possession`, admin only, #2119) shares the custody path but never enrols.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from candleviewer.secrets.store import AuditSink, CredentialStore, KcvStore
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.settings import Settings
 
 REMEDIATION = (
     "KEK unavailable (reason={reason}): trading disabled. Ensure the host launcher/systemd "
@@ -225,9 +227,11 @@ class SecretsService:
         except TimeoutError:
             raise KekLoadError("kek_unavailable") from None
 
-    async def _check_versions(self, kek: _kek.LoadedKek, prev: _kek.LoadedKek | None) -> None:
+    async def _check_versions(
+        self, kek: _kek.LoadedKek, prev: _kek.LoadedKek | None
+    ) -> dict[int, tuple[bytes, bool]]:
         """Version policy: no KCV reused across versions, no retired KEK, current is max or
-        max+1 (then prev must be max)."""
+        max+1 (then prev must be max). Returns the `kek_versions` rows it checked against."""
         if self._kcv is None:  # pragma: no cover - start() checked
             raise KekLoadError("kcv_store_unavailable")
         try:
@@ -247,6 +251,39 @@ class SecretsService:
         )
         if not ok:
             raise KekLoadError("kek_version_out_of_sequence")
+        return known
+
+    async def _acquire_keks(
+        self, settings: Settings, srcs: _source.KekSources, held: list[_kek.LoadedKek]
+    ) -> tuple[_kek.LoadedKek, _kek.LoadedKek | None]:
+        """The custody path `start()` and the break-glass proof share: SR-009 hardening (fatal
+        in live), the handoff nonce read before any FIFO opens, every handle drained in order,
+        one ack after the last. Each KEK joins `held` once loaded; the caller zeroes them."""
+        live = settings.environment.value == "live"
+        hardened = await self._bounded(asyncio.to_thread(self._harden))
+        if not hardened:
+            m.process_hardening_failures_total.inc()
+            _log().warning("secrets.process_hardening_failed", live=live)
+            if live:
+                raise KekLoadError("process_hardening_failed")
+        nonce = None
+        handles = [p for p in (settings.kek_handle, settings.kek_prev_handle) if p]
+        if srcs.ack_path is not None and any(map(_kek.is_fifo, handles)):
+            # before any FIFO is opened (the launcher unlinks the handoff dir afterwards)
+            handoff = Path(settings.kek_handle).parent
+            nonce = await self._bounded(asyncio.to_thread(_kek.read_handoff, handoff))
+        kek = await self._load(srcs.current)
+        held.append(kek)
+        prev = None
+        if srcs.previous is not None:
+            prev = await self._load(srcs.previous)
+            held.append(prev)
+        fifo = kek.is_fifo or (prev is not None and prev.is_fifo)
+        if live and fifo and nonce is None:
+            raise KekLoadError("kek_handle_permissions")
+        if fifo and nonce is not None and srcs.ack_path is not None:
+            await self._bounded(asyncio.to_thread(_kek.write_ack, nonce, srcs.ack_path))
+        return kek, prev
 
     async def start(self, ctx: AppContext) -> None:
         settings = ctx.settings
@@ -258,31 +295,10 @@ class SecretsService:
             if live:
                 await self._degrade(ctx, "no_credential_store")
             return
-        kek: _kek.LoadedKek | None = None
-        prev: _kek.LoadedKek | None = None
+        held: list[_kek.LoadedKek] = []
         started = time.perf_counter()
         try:
-            hardened = await self._bounded(asyncio.to_thread(self._harden))
-            if not hardened:
-                m.process_hardening_failures_total.inc()
-                _log().warning("secrets.process_hardening_failed", live=live)
-                if live:
-                    raise KekLoadError("process_hardening_failed")
-            nonce = None
-            handles = [p for p in (settings.kek_handle, settings.kek_prev_handle) if p]
-            if srcs.ack_path is not None and any(map(_kek.is_fifo, handles)):
-                # before any FIFO is opened (the launcher unlinks the handoff dir afterwards)
-                handoff = Path(settings.kek_handle).parent
-                nonce = await self._bounded(asyncio.to_thread(_kek.read_handoff, handoff))
-            kek = await self._load(srcs.current)
-            if srcs.previous is not None:
-                prev = await self._load(srcs.previous)
-            fifo = kek.is_fifo or (prev is not None and prev.is_fifo)
-            if live and fifo and nonce is None:
-                raise KekLoadError("kek_handle_permissions")
-            if fifo and nonce is not None and srcs.ack_path is not None:
-                ack = srcs.ack_path
-                await self._bounded(asyncio.to_thread(_kek.write_ack, nonce, ack))
+            kek, prev = await self._acquire_keks(settings, srcs, held)
             await self._check_versions(kek, prev)
             broker = RotatingBroker(
                 self._store, self._audit, kek, prev_kek=prev,
@@ -301,11 +317,11 @@ class SecretsService:
                 await self._audit("security.kek_enrolled", fields)
             await self._audit("security.kek_loaded", fields)
         except GeneratorExit:
-            self._close(kek, prev)
+            self._close(*held)
             self._latch(ctx, "kek_unavailable")
             raise
         except BaseException as exc:
-            self._close(kek, prev)
+            self._close(*held)
             if isinstance(exc, KekSourceNotPermitted):
                 raise
             if not isinstance(exc, Exception):  # cancelled boot: latch, no failure audit
@@ -320,10 +336,9 @@ class SecretsService:
         self._broker = broker
 
     @staticmethod
-    def _close(*keks: _kek.LoadedKek | None) -> None:
+    def _close(*keks: _kek.LoadedKek) -> None:
         for k in keks:
-            if k is not None:
-                k.close()
+            k.close()
 
     def _latch(self, ctx: AppContext, reason: str) -> str:
         text = REMEDIATION.format(reason=reason)
@@ -353,6 +368,27 @@ class SecretsService:
         if self._broker is None:
             return KekCheckResult(None, False, self._reason or "kek_unavailable")
         return KekCheckResult(self._kek_version, True, None)
+
+    async def _prove_possession(self, settings: Settings) -> KekCheckResult:
+        """`prove_kek_possession`: the shared custody path, then a KCV check that never enrols."""
+        held: list[_kek.LoadedKek] = []
+        try:
+            kek, prev = await self._acquire_keks(settings, self._sources(settings), held)
+            known = await self._check_versions(kek, prev)
+            for k in held:
+                if k.version not in known:
+                    raise KekLoadError("kek_not_enrolled")
+                if not _kek.kcv_matches(k, known[k.version][0]):
+                    raise KekLoadError("kek_mismatch")
+        except KekSourceNotPermitted as exc:
+            return KekCheckResult(None, False, exc.code)
+        except KekLoadError as exc:
+            return KekCheckResult(None, False, exc.reason)
+        except Exception:  # fail closed; the detail may name a host path, so it is dropped
+            return KekCheckResult(None, False, "kek_unavailable")
+        finally:
+            self._close(*held)
+        return KekCheckResult(kek.version, True, None)
 
     async def rewrap_deks(
         self, to_version: int, *, actor_user_id: str, actor_role: str
@@ -386,3 +422,26 @@ def mint_borrower(service: SecretsService, caller_module: str) -> CredentialBorr
     """Wiring-time signing capability bound to `caller_module`. Called once, in
     `admin.wiring.build_secrets_service`; fails closed while degraded."""
     return _sealed_borrower(service._require, caller_module)
+
+
+async def prove_kek_possession(
+    settings: Settings,
+    kcv_store: KcvStore,
+    *,
+    sources: Callable[[Any], _source.KekSources] = _source.sources_from_settings,
+    harden: Callable[[], bool] = _kek.harden_process,
+    load_timeout_s: float = 10.0 + _LOAD_MARGIN_S,
+) -> KekCheckResult:
+    """Offline break-glass proof of KEK possession (E09-S11 #2119, decision O1); `admin` only.
+
+    Runs `start()`'s custody path in the calling process, then requires the KCV of every KEK
+    supplied to be enrolled in `kek_versions` already: an unknown one is `kek_not_enrolled` in
+    every environment (where `start()` would enrol it). Metadata only: nothing is enrolled,
+    audited, latched or published (the caller audits), and every KEK loaded is zeroed before
+    this returns. Refusals come back as `reason`, never raised; cancellation propagates.
+    `sources`, `harden` and `load_timeout_s` are the `SecretsService` seams.
+    """
+    svc = SecretsService(
+        kcv_store=kcv_store, sources=sources, harden=harden, load_timeout_s=load_timeout_s
+    )
+    return await svc._prove_possession(settings)

@@ -219,3 +219,27 @@ def test_reveal_allowed_only_for_the_signer_header_value() -> None:
 def test_self_own_private_attributes_are_not_flagged() -> None:
     src = "class S:\n    def f(self):\n        return self._broker, self._cache, self.__dict__"
     assert not m2_violations("oms/x.py", ast.parse(src))
+
+
+#: The offline break-glass proof (#2119) is admin-only metadata like `verify_kek_possession`:
+#: the exchange adapter, the other M2 importer, reaches it by no name, alias, attribute or literal.
+ADMIN_ONLY_PROBES: dict[str, str] = {
+    "proof_name": "from candleviewer.secrets import prove_kek_possession\n"
+    "r = await prove_kek_possession(s, k)",
+    "proof_alias": "from candleviewer.secrets import prove_kek_possession as p\nr = await p(s, k)",
+    "proof_star": "from candleviewer.secrets import *\nr = await prove_kek_possession(s, k)",
+    "proof_attr": "import candleviewer.secrets as m\nr = await m.prove_kek_possession(s, k)",
+    "proof_getattr": "import candleviewer.secrets as m\n"
+    "r = await getattr(m, 'prove_kek_possession')(s, k)",
+}
+
+
+@pytest.mark.parametrize("where", ["exchange/bybit/x.py", "oms/x.py"])
+@pytest.mark.parametrize("name", sorted(ADMIN_ONLY_PROBES))
+def test_admin_only_probe_is_flagged_outside_admin(name: str, where: str) -> None:
+    assert m2_violations(where, _free(ADMIN_ONLY_PROBES[name])), name
+
+
+@pytest.mark.parametrize("name", sorted(ADMIN_ONLY_PROBES))
+def test_admin_may_prove_kek_possession(name: str) -> None:
+    assert not m2_violations("admin/wiring.py", _free(ADMIN_ONLY_PROBES[name])), name
