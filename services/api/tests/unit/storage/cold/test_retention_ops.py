@@ -291,10 +291,10 @@ async def test_cold_delete_timeout_bounds_only_lock_acquisition(tmp_path: Path) 
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
-    for _ in range(200):
-        if not is_locked(part_dir):
-            break
-        await asyncio.sleep(0.005)
+    # Event-driven (no sleep loop, C-13.7): the lock is acquirable only once the delete thread
+    # has FINISHED, so taking it proves the delete completed before the release.
+    async with asyncio.timeout(30), partition_write_lock(part_dir):
+        pass
     assert not is_locked(part_dir) and not part_dir.exists()
 
 
