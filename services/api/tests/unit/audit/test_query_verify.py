@@ -483,6 +483,67 @@ async def test_verify_a_range_ending_at_the_head_breaks_on_a_checkpoint_above_it
     assert (await svc.verify(to_id=3)).verified  # ends below the head: not a truncation
 
 
+async def _append_with_checkpoint(
+    repo: FakeAuditRepository, clock: FakeClock, head_hash: str | None = None
+) -> None:
+    """The checkpoint job during a run: one more entry, then a checkpoint naming it."""
+    await _seed(repo, 1, clock, first=100 + len(repo.rows))
+    new = repo.rows[-1]
+    repo.checkpoints[new["id"]] = {
+        "head_id": new["id"],
+        "head_hash": head_hash or new["entry_hash"],
+    }
+
+
+@pytest.mark.parametrize(("head_hash", "first_bad_id"), [(None, None), ("e" * 64, 6)])
+async def test_a_checkpoint_written_during_the_walk_breaks_only_if_its_entry_differs(
+    repo: FakeAuditRepository, clock: FakeClock, head_hash: str | None, first_bad_id: int | None
+) -> None:
+    """Review of #2460: a checkpoint naming an entry written during the run is no truncation;
+    one whose entry has another hash (a reused id) is reported."""
+    await _seed(repo, 5, clock)
+    fetch = repo.fetch_verify_batch
+
+    async def fetch_then_checkpoint(**kw: Any) -> list[tuple[Any, ...]]:
+        rows = await fetch(**kw)
+        if len(repo.rows) == 5:  # once, while the walk runs
+            await _append_with_checkpoint(repo, clock, head_hash)
+        return rows
+
+    repo.fetch_verify_batch = fetch_then_checkpoint  # type: ignore[method-assign]  # spy
+    result = await AuditQueryService(repo).verify()
+    assert (result.verified, result.first_bad_id) == (first_bad_id is None, first_bad_id)
+    assert result.kind is (None if first_bad_id is None else ChainBreakKind.TAIL_TRUNCATED)
+
+
+async def test_a_checkpoint_written_between_plan_and_run_is_no_break(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 5, clock)
+    svc = AuditQueryService(repo)
+    plan = await svc.plan_verify(from_id=None, to_id=None)
+    await _append_with_checkpoint(repo, clock)  # names id 6, past the head the plan read
+    assert (await svc.run_verify(plan)).verified
+
+
+async def test_a_checkpointed_entry_deleted_during_the_run_is_missing(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Review of #2460: the last checkpointed entry, deleted once the run started, leaves no
+    next row whose link would break; the walk never visited it, so it is missing."""
+    await _seed(repo, 5, clock)
+    _checkpoint(repo, 5)
+    fetch = repo.fetch_verify_batch
+
+    async def delete_then_fetch(**kw: Any) -> list[tuple[Any, ...]]:
+        repo.rows[:] = [r for r in repo.rows if r["id"] != 5]
+        return await fetch(**kw)
+
+    repo.fetch_verify_batch = delete_then_fetch  # type: ignore[method-assign]  # spy
+    result = await AuditQueryService(repo).verify()
+    assert (result.first_bad_id, result.kind) == (5, ChainBreakKind.CHECKPOINT_MISSING)
+
+
 async def test_verify_beyond_the_head_reports_an_earlier_checkpoint_break_first(
     repo: FakeAuditRepository, clock: FakeClock
 ) -> None:
