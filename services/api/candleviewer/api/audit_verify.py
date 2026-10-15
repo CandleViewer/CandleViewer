@@ -32,11 +32,12 @@ from candleviewer.observability.audit_query_metrics import (
     audit_chain_verification_failures_total,
     cv_audit_chain_verified_state,
 )
+from candleviewer.settings import Settings
 
 VERIFY_ACTION = "admin.audit_verify"
-#: `audit_verify_deadline_s`: how long one run may take before it is stopped (503) and the
-#: single-flight slot is free again; well above a full `audit_verify_max_span` run.
-VERIFY_DEADLINE_S = 60.0
+#: The `audit_verify_deadline_s` default: how long one run may take before it is stopped
+#: (503) and the single-flight slot is free again; well above a full `audit_verify_max_span` run.
+VERIFY_DEADLINE_S: float = Settings.model_fields["audit_verify_deadline_s"].default
 
 
 def _log() -> Any:

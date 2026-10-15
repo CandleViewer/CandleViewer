@@ -22,6 +22,7 @@ import structlog
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, INET, TIMESTAMP, UUID
 
 from candleviewer.observability.audit_query_metrics import cv_audit_query_timeouts_total
+from candleviewer.settings import Settings
 from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -97,13 +98,13 @@ _CHECKPOINTS_SQL = sa.text(
     "SELECT c.head_id, c.head_hash, a.entry_hash FROM audit_checkpoints c "
     "LEFT JOIN audit_log a ON a.id = c.head_id WHERE c.head_id <= :to_id ORDER BY c.head_id"
 )
-#: Rendered bytes per verify batch past its first row: two batches in memory stay far under
-#: the design's 256 MB RSS, whatever one entry's states hold (the writer caps no size).
+#: Rendered UTF-8 bytes per verify batch: a batch stops before a row once the rows before it
+#: reach this, so it holds at most the budget plus one entry (the first row always goes in).
 VERIFY_BATCH_MAX_BYTES = 8 * 1024 * 1024
 #: Default per-statement budget for verify's reads (the head, the anchor, each batch),
-#: client-side and as `statement_timeout` (`audit_verify_statement_timeout_ms`): a backstop far
-#: above one keyset batch. An overrun is 503.
-VERIFY_READ_TIMEOUT_MS = 10_000
+#: client-side and as `statement_timeout`: the `audit_verify_statement_timeout_ms` default, a
+#: backstop far above one keyset batch. An overrun is 503.
+VERIFY_READ_TIMEOUT_MS: int = Settings.model_fields["audit_verify_statement_timeout_ms"].default
 
 #: Every hashed column is rendered to text *by Postgres*, with exactly the
 #: casts `audit_chain()` uses, so the Python verifier encodes the same bytes
