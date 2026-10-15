@@ -184,7 +184,12 @@ class FakeLock:
         yield self.w.lock_free
 
 
-def manager(w: World, ckpt: MemoryCheckpoint | None = None) -> RetentionManager:
+def manager(
+    w: World, ckpt: MemoryCheckpoint | None = None, config: RetentionConfig | None = None
+) -> RetentionManager:
+    """`config` replaces the default (trades only, 7 d / 30 d hard default) for a test that needs
+    other streams; pass it here rather than poking the manager's private `_cfg`."""
+
     async def lease(symbol: str, lo: int, hi: int) -> str | None:
         for a, b in w.leases.get(symbol, []):
             if a < hi and b > lo:
@@ -205,7 +210,7 @@ def manager(w: World, ckpt: MemoryCheckpoint | None = None) -> RetentionManager:
         lock=FakeLock(w),
         checkpoint=ckpt or MemoryCheckpoint(),
         lease=lease,
-        config=RetentionConfig(hot_streams=(T,), cold_streams=(T,), hard_default=(7, 30)),
+        config=config or RetentionConfig(hot_streams=(T,), cold_streams=(T,), hard_default=(7, 30)),
         clock=lambda: NOW,
         sleep=no_sleep,
     )

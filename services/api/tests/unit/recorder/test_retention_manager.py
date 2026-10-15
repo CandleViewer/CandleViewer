@@ -427,6 +427,30 @@ async def test_late_rows_present_at_plan_time_are_held_reported_and_critical() -
     assert run_end["protected"] == 1
 
 
+async def test_run_of_a_plan_holding_a_late_row_day_reports_it_and_raises_critical() -> None:
+    """Review round 5 (1): `run(plan, False)` is its own entry point, not `run_nightly`. The
+    same late-row world, driven through `run(await preview(), False)`: the day held while
+    PLANNING never reaches the delete-time re-check, so `run` itself must copy the plan's holds
+    into `report.protected` and raise the CRITICAL alert. Without either it is a silent skip."""
+    w = _world()
+    w.add_hot(T, 10, {"BTCUSDT": 5})
+    w.archived[("BTCUSDT", T)] = day(9)
+    w.late_rows[("BTCUSDT", day(10))] = 3  # landed after the export, before this plan
+    w.add_cold("BTCUSDT", T, 40)  # an expired cold partition still goes
+    m = manager(w)
+    plan = await m.preview()
+    assert [p.reason for p in plan.protected] == ["archive_mismatch"] and w.events == []
+    report = await m.run(plan, False)
+    assert [i.tier for i in report.deleted] == ["cold"] and day(10) in w.hot[T]
+    assert report.skipped == [] and report.failed == [] and not report.resumed
+    assert [(p.item.tier, p.reason, p.info) for p in report.protected] == [
+        ("hot", "archive_mismatch", "BTCUSDT hot=8 cold=5")
+    ]
+    assert w.events == [("CRITICAL", "archive.verification_failed")]
+    (run_end,) = [d for a, d in w.audit if a == "retention.run" and d["phase"] == "end"]
+    assert run_end["protected"] == 1 and run_end["dry_run"] == 0
+
+
 async def test_hot_day_without_cold_manifest_is_kept() -> None:
     w = _world()
     w.add_hot(T, 10, {"BTCUSDT": 5})
@@ -491,8 +515,7 @@ async def test_no_stream_without_rows_is_deleted_before_its_section7_horizon() -
     w = World()
     for stream in StreamKind:
         w.add_cold("BTCUSDT", stream, 40)
-    m = manager(w)
-    m._cfg = RetentionConfig(hot_streams=(), cold_streams=tuple(StreamKind))
+    m = manager(w, config=RetentionConfig(hot_streams=(), cold_streams=tuple(StreamKind)))
     report = await m.run_nightly()
     assert report.deleted == []  # every §7 total is >= 90 d or forever
     assert all(STREAM_DEFAULTS[s.value][1] in (None, 90, 365, 730) for s in StreamKind)
@@ -510,8 +533,7 @@ async def test_bars_time_partitions_are_kept_forever_other_families_expire() -> 
     keys = {f: f"bars/family={f}/symbol=BTCUSDT/bar_param=1m/ym=2024-01" for f in ("time", "tick")}
     for key in keys.values():
         w.cold.setdefault(("BTCUSDT", b), {})[key] = (day(800), 100)
-    m = manager(w)
-    m._cfg = RetentionConfig(hot_streams=(), cold_streams=(b,))
+    m = manager(w, config=RetentionConfig(hot_streams=(), cold_streams=(b,)))
     assert [i.key for i in (await m.preview()).items] == [keys["tick"]]  # never planned
     report = await m.run_nightly()
     assert [i.key for i in report.deleted] == [keys["tick"]] and report.skipped == []

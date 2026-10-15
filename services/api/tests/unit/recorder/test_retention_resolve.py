@@ -161,7 +161,9 @@ def test_bars_family_policy_keeps_time_and_unlisted_families_forever(
     assert (p.total_days, p.source) == (total, source)
 
 
-def test_family_policy_never_shortens_and_leaves_unsplit_streams_alone() -> None:
+def test_family_policy_never_shortens_and_leaves_unsplit_streams_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seed_row = {(None, "bars"): PolicyRow(None, "bars", 90, 730)}  # the seed's stream-wide row
     eff = resolve_policy("BTCUSDT", "bars", pinned=False, policies=seed_row, elevated=False)
     assert eff.source == "default"
@@ -172,6 +174,22 @@ def test_family_policy_never_shortens_and_leaves_unsplit_streams_alone() -> None
     pinned = resolve_policy("BTCUSDT", "bars", pinned=True, policies={}, elevated=False)
     assert family_policy(pinned, "bars/family=tick/symbol=BTCUSDT/ym=2024-01") == pinned
     assert partition_family("bars/family=renko/symbol=BTCUSDT/ym=2024-01") == "renko"
+
+    # Review round 5 (2): no family in today's §7 table is shorter than its stream's horizon, so
+    # the "never shorter" guard is unreachable with it. Swap in a table with a family that is
+    # shorter than, equal to and longer than the stream-wide 730 d, and the guard must hold.
+    monkeypatch.setattr(
+        "candleviewer.recorder.retention.FAMILY_DEFAULTS",
+        {
+            ("bars", "time"): (30, 100),
+            ("bars", "pnf"): (30, 730),
+            ("bars", "heikin_ashi"): (45, 1000),
+        },
+    )
+    for family in ("time", "pnf"):  # 100 d < 730 d and 730 d == 730 d: the stream horizon stays
+        assert family_policy(eff, f"bars/family={family}/symbol=BTCUSDT/ym=2024-01") == eff
+    longer = family_policy(eff, "bars/family=heikin_ashi/symbol=BTCUSDT/ym=2024-01")
+    assert (longer.hot_days, longer.total_days, longer.source) == (45, 1000, "family_default")
 
 
 def test_stream_defaults_load_from_the_package_not_the_repo() -> None:
