@@ -253,11 +253,11 @@ a `retired` ticket · call the statechart library outside `cv.statechart.factory
 ## 7. Current open items you may bump into
 
 - **Penpot bridge flapping** → design lane paused; irrelevant to your tickets.
-- **Metrics catalogue golden hash** collides across #2316, #2318, #2271, #2248, #2229. If your PR
-  adds a metric, expect to recompute after rebasing.
+- **Metrics catalogue golden hash** (`GOLDEN_CATALOGUE_SHA256`) is a single-writer file: if your PR adds a metric,
+  expect to recompute it after every rebase (via the golden test's own `_catalogue_digest()`, never by hand).
 - **`pr-metadata` gate** rejects `test/` branch names and `docs(security)` scope; see §3.1(4).
 - **Open owner decisions** (do not resolve yourself): F-4 WS auth-frame replay (#298), E16-T07 95%
-  semantics (recorded on #491 by Agent A — follow it), ADR-0035 acceptance (#2226), password-policy
+  semantics (recorded on #491 by the orchestrator — follow it), password-policy
   contract #2330, Penpot tab.
 - **Private security advisory** GHSA-wxvj-xh4h-mpg2 (mid-handshake WS revocation gap) — never
   discuss its content on public issues (C-12.13, `SECURITY.md`).
