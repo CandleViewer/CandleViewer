@@ -5,14 +5,17 @@ through `SliceFanOut.read`: under its own `asyncio.timeout` budget (300 ms); wit
 contained (a timeout or exception becomes an `error` slice, `SourceUnavailable` an `unavailable`
 one, and only cancellation propagates); and through a per-slice 5 s TTL cache on an injected
 monotonic clock. Every outcome is cached, errors too, so reloads never hammer a struggling
-source; kill-switch and flag reads opt out (`cached=False`). Callers fan out with
-`asyncio.gather(fan.read(...), ...)`, which owns the reads and cancels them with the request.
+source; kill-switch and flag reads opt out (`cached=False`). Concurrent reads of one slice share
+a single in-flight source call; `invalidate` makes the next read refetch (read-after-write).
+Callers fan out with `asyncio.gather(fan.read(...), ...)`, which owns the reads and cancels
+them with the request; a stray `CancelledError` from a source only fails its own slice.
 A degraded run logs `source`, `reason` and `request_id`; every run is timed, errors counted.
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -22,6 +25,7 @@ from typing import Final, Literal, cast
 import structlog
 
 from candleviewer.admin.overview.metrics import source_duration_seconds, source_errors_total
+from candleviewer.admin.overview.slices import AdminSlice
 from candleviewer.observability.context import current_request_id
 
 SliceStatus = Literal["ok", "error", "unavailable"]
@@ -30,6 +34,15 @@ DEFAULT_BUDGET_S: Final = 0.3
 DEFAULT_TTL_S: Final = 5.0
 #: The only `detail` for an exception: its message may carry a DSN or a key, so it never leaves.
 FAILED_DETAIL: Final = "source failed"
+#: `AdminSliceStatus.detail`: non-empty, at most 200 chars, and a charset no DSN or key fits.
+_DETAIL_RE: Final = re.compile(r"[A-Za-z0-9 _:.-]{1,200}")
+
+
+def _checked(detail: str) -> str:
+    """A violation raises inside the source, so the slice becomes `error` / "source failed"."""
+    if not _DETAIL_RE.fullmatch(detail):
+        raise ValueError("slice detail must be 1-200 chars of [A-Za-z0-9 _:.-]")
+    return detail
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -39,6 +52,11 @@ def logger() -> structlog.stdlib.BoundLogger:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _cancelling() -> bool:
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,12 +77,15 @@ class Degraded[T]:
     status: Literal["error", "unavailable"]
     detail: str
 
+    def __post_init__(self) -> None:
+        _checked(self.detail)
+
 
 class SourceUnavailable(Exception):
     """Raised by a source whose provider is not wired yet: its slice is `unavailable`."""
 
     def __init__(self, detail: str) -> None:
-        super().__init__(detail)
+        super().__init__(_checked(detail))
         self.detail = detail
 
 
@@ -82,31 +103,70 @@ class SliceFanOut:
         self._budget_s, self._ttl_s = budget_s, ttl_s
         self._monotonic, self._now = monotonic, now
         self._timeout_detail = f"timed out after {round(budget_s * 1000)} ms"
-        #: Bounded by the fixed set of slice names in code: (expires_at, result).
-        self._cache: dict[str, tuple[float, SliceResult[object]]] = {}
+        #: Both bounded by `AdminSlice`: (expires_at, result) and the one in-flight read.
+        self._cache: dict[AdminSlice, tuple[float, SliceResult[object]]] = {}
+        self._inflight: dict[AdminSlice, asyncio.Future[SliceResult[object]]] = {}
 
     async def read[T](
-        self, name: str, load: Callable[[], Awaitable[T | Degraded[T]]], *, cached: bool = True
+        self,
+        name: AdminSlice,
+        load: Callable[[], Awaitable[T | Degraded[T]]],
+        *,
+        cached: bool = True,
     ) -> SliceResult[T]:
         """The slice `name`: from the cache while fresh, else from `load` under the budget."""
         hit = self._cache.get(name) if cached else None
         if hit is not None and self._monotonic() < hit[0]:
             return cast(SliceResult[T], hit[1])
-        result = await self._run(name, load)
-        if cached:
-            self._cache[name] = (self._monotonic() + self._ttl_s, result)
-        return result
+        if (shared := self._inflight.get(name)) is not None:
+            try:
+                return cast(SliceResult[T], await asyncio.shield(shared))
+            except asyncio.CancelledError:
+                if _cancelling():
+                    raise
+                return await self.read(name, load, cached=cached)  # the leader was cancelled
+        fut: asyncio.Future[SliceResult[object]] = asyncio.get_running_loop().create_future()
+        self._inflight[name] = fut
+        try:
+            result = await self._run(name, load)
+            if cached and self._inflight.get(name) is fut:  # not invalidated meanwhile
+                self._cache[name] = (
+                    self._monotonic() + self._ttl_s,
+                    cast(SliceResult[object], result),
+                )
+            fut.set_result(cast(SliceResult[object], result))
+            return result
+        except BaseException:
+            fut.cancel()
+            raise
+        finally:
+            if self._inflight.get(name) is fut:
+                del self._inflight[name]
+
+    def invalidate(self, name: AdminSlice) -> None:
+        """Drop the cached slice and detach a read already running (it may predate a write)."""
+        self._cache.pop(name, None)
+        self._inflight.pop(name, None)
 
     async def _run[T](
-        self, name: str, load: Callable[[], Awaitable[T | Degraded[T]]]
+        self, name: AdminSlice, load: Callable[[], Awaitable[T | Degraded[T]]]
     ) -> SliceResult[T]:
         started = self._monotonic()
         result: SliceResult[T]
+        budget = asyncio.timeout(self._budget_s)
         try:
-            async with asyncio.timeout(self._budget_s):
+            async with budget:
                 got = await load()
-        except TimeoutError:
-            result = self._degraded(name, "error", self._timeout_detail, "timeout", None)
+        except TimeoutError:  # our budget expired, or the source raised its own TimeoutError
+            expired = budget.expired()
+            detail = self._timeout_detail if expired else FAILED_DETAIL
+            result = self._degraded(
+                name, "error", detail, "timeout" if expired else "TimeoutError", None
+            )
+        except asyncio.CancelledError:
+            if _cancelling():  # the request itself is being cancelled: never swallow it
+                raise
+            result = self._degraded(name, "error", FAILED_DETAIL, "CancelledError", None)
         except SourceUnavailable as exc:
             result = self._degraded(name, "unavailable", exc.detail, "unavailable", None)
         except Exception as exc:  # contained by design (E42-T01): never all-or-nothing
@@ -122,7 +182,7 @@ class SliceFanOut:
 
     def _degraded[T](
         self,
-        name: str,
+        name: AdminSlice,
         status: Literal["error", "unavailable"],
         detail: str,
         reason: str,
