@@ -562,6 +562,8 @@ Changing throttle or depth without tearing down and re-snapshotting:
 
 Changing `depth`, `price_grouping`, `bar_type`/`param`, or the `metrics` list **invalidates the current state**, so the server answers `ctl_ok` with `"resnapshot": true` and immediately sends a fresh `snap` that restarts the sequence. The client must discard its prior state on seeing that flag.
 
+**Pause and resume (#2517).** While `paused: true`, the server emits no `d` for the subscription and consumes no sequence number. So a `ctl` that resumes it (`paused: false` after `paused: true`) also answers `"resnapshot": true`, and a `snap` with reason `reconfigure` comes before any further `d`. Otherwise the updates published during the pause would be lost with no gap to show it. Pausing, or resuming a subscription that is not paused, does not re-snapshot.
+
 **As built (E17-S02, #2159):** a `sub` that would take a connection past 40 distinct symbols is refused per topic with `subscription_limit`. More than 50 topics in one `sub` gives `too_many_topics` for the excess entries.
 
 **Why `ctl` exists.** The UI changes throttle constantly: a pane that scrolls out of view drops to 1 000 ms, a maximised DOM goes to 20 ms, a backgrounded Electron window goes to 1 000 ms for everything. Doing that with unsub/sub would re-snapshot a 200-level book every time the user switches tabs.

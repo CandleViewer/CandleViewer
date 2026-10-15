@@ -347,6 +347,21 @@ def test_ctl_paused_is_echoed() -> None:
     assert _ctl(conn, "trades.BTCUSDT", {"paused": True})["p"]["effective"]["paused"] is True
 
 
+def test_ctl_resume_after_a_pause_forces_resnapshot() -> None:
+    """#2517: deltas dropped while paused took no sequence number, so a resume re-snapshots."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    _sub(conn, "book.BTCUSDT.50")
+    sub = conn.find("book.BTCUSDT.50")
+    assert sub is not None
+    sub.seq, sub.snapshot_pending = 10, False
+    assert "resnapshot" not in _ctl(conn, "book.BTCUSDT.50", {"paused": False})["p"]
+    assert "resnapshot" not in _ctl(conn, "book.BTCUSDT.50", {"paused": True})["p"]
+    assert not sub.snapshot_pending  # pausing keeps the subscription as it is
+    ok = _ctl(conn, "book.BTCUSDT.50", {"paused": False})
+    assert ok["p"]["resnapshot"] is True and ok["p"]["effective"]["paused"] is False
+    assert (sub.seq, sub.snapshot_pending, sub.pending_reason) == (10, True, "reconfigure")
+
+
 @pytest.mark.parametrize(
     ("body", "code"),
     [({}, "invalid_options"), ({"history": 5}, "invalid_options"), ({"throttle_ms": -1},

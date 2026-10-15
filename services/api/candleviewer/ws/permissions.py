@@ -476,7 +476,10 @@ class ConnectionAuthz:
             changes[key] = spec.check(key, body[key])
         opts = {**sub.opts, **{k: v for k, v in changes.items() if k != "paused"}}
         effective = effective_options(sub.topic, opts)
-        resnapshot = any(
+        # #2517: a delta suppressed while paused never took a sequence number, so a resume
+        # re-snapshots like an identity change instead of losing that state silently.
+        resumed = changes.get("paused") is False and sub.effective.get("paused") is True
+        resnapshot = resumed or any(
             k in IDENTITY_OPTIONS and sub.effective.get(k) != effective.get(k) for k in changes
         )
         if "paused" in changes:
