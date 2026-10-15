@@ -109,6 +109,7 @@ class ReplayClock:
         self._stack: AsyncExitStack | None = None
         self._group: asyncio.TaskGroup | None = None
         self._closing: asyncio.Task[None] | None = None
+        self._closers: set[asyncio.Task[None]] = set()  # old sources closing after a reposition
         self._sliced = 0.0  # when a step last yielded
         self._emitted = self._gaps = 0
         self._lost_s = 0.0
@@ -159,7 +160,7 @@ class ReplayClock:
         if group is None or self._closed:
             raise ReplayClockStateError("the replay clock is not open")
         if self._failed is not None:
-            raise ReplayClockStateError("the replay source failed: replay cannot continue from it")
+            raise ReplayClockStateError("the replay source failed: reposition (seek) to recover")
         if self.playing or self._stepping:
             raise ReplayClockStateError("playback is already running or still stopping")
         if self._speed == STEP:
@@ -215,6 +216,10 @@ class ReplayClock:
                 await self._breathe()
             return "step"
 
+    async def step_event(self) -> StopReason:
+        """The ticket's `step_event`: `step_events(1)`."""
+        return await self.step_events(1)
+
     async def step_ms(self, ms: int) -> StopReason:
         """Deliver everything in the next `ms` of replay time; the cursor lands at its end."""
         if ms < 1:
@@ -260,14 +265,21 @@ class ReplayClock:
         """Continue from `source`, positioned at `at_us`, up to `end_us` (default: the current
         end). It is the seek hook (B12 `seek_and_prime`, E26-T04, which rebuilds downstream state
         first) and the loop wrap (US-RPL-008: back to the loop start, `end_us` the loop end). The
-        old source is closed. Only this moves the cursor back (INV-B12-b)."""
+        old source is closed, in its own tracked task, so a caller cancelled meanwhile cannot leave
+        it open. It clears a source failure. Only this moves the cursor back (INV-B12-b). If it is
+        refused (outside the range, while playing or stepping, or once closed), `source` was not
+        taken: the caller still owns it and closes it."""
         end = self._end_us if end_us is None else end_us
         if not self._range[0] <= at_us < end <= self._range[1]:
             raise ReplayRequestInvalid("a reposition must stay inside the session's range")
-        async with self._step():
+        async with self._step(recovering=True):
             old, self._source = self._source, source
             self._cursor, self._end_us, self._pending, self._drained = at_us, end, None, False
-            await old.aclose()
+            self._failed = None
+            closing = spawn(old.aclose(), name="replay-source-close")
+            self._closers.add(closing)
+            closing.add_done_callback(self._closers.discard)
+            await asyncio.shield(closing)
 
     def now_us(self) -> int:
         """Replay "now" for downstream clocks: one clock for every pane (US-RPL-005)."""
@@ -350,10 +362,13 @@ class ReplayClock:
                 sliced = time.now()
 
     @contextlib.asynccontextmanager
-    async def _step(self) -> AsyncIterator[None]:
-        """Steps and repositions run alone: never while playing, never two at once."""
+    async def _step(self, *, recovering: bool = False) -> AsyncIterator[None]:
+        """Steps and repositions run alone: never while playing, never two at once. Only a
+        reposition may follow a source failure."""
         if self._group is None or self._closed:
             raise ReplayClockStateError("the replay clock is not open")
+        if self._failed is not None and not recovering:
+            raise ReplayClockStateError("the replay source failed: reposition (seek) to recover")
         if self.playing or self._stepping:
             raise ReplayClockStateError("pause playback before stepping")
         self._stepping, self._sliced = True, self._time.now()
@@ -372,16 +387,19 @@ class ReplayClock:
         self, *, before_us: int | None = None
     ) -> RecordedEvent | StopReason | None:
         """The next market event of a step, if before `before_us`: `"gap"` at a gap the policy
-        stops at, `None` at the bound or the end of the range (nothing past them is consumed)."""
-        while (item := await self._peek()) is not None:
-            if before_us is not None and item.ts_us >= before_us:
+        stops at, `None` at the bound or the end of the range (nothing past them is consumed). The
+        event stays pending until delivered; a destroy during the step raises."""
+        while True:
+            item = await self._peek()
+            if self._closed:  # destroyed meanwhile: its closed source must not read as range end
+                raise ReplayClockStateError("the replay clock was destroyed during the step")
+            if item is None or (before_us is not None and item.ts_us >= before_us):
                 return None
-            self._pending = None
             if not isinstance(item, ReplayGap):
                 return item
+            self._pending = None
             if self._gap(item, self._time.now()):
                 return "gap"
-        return None
 
     async def _peek(self) -> ReplayItem | None:
         """The next item before the range end, read ahead by one and kept until consumed."""

@@ -443,7 +443,7 @@ async def test_an_event_exactly_at_the_range_end_is_not_delivered() -> None:
 async def test_step_events_delivers_exactly_that_many_at_once() -> None:
     r = rig(every_second(10), end_s=10, speed=STEP)
     async with r.clock as clock:
-        assert await clock.step_events() == "step"
+        assert await clock.step_event() == "step"
         assert await clock.step_events(3) == "step"
         assert (len(r.sink.events), clock.now_us()) == (4, T0 + 3 * SECOND)
         assert await clock.step_events(100) == "range_end"
@@ -615,3 +615,55 @@ async def test_a_long_step_yields_to_the_event_loop(kind: str) -> None:
             await clock.step_bar()
     background.cancel()
     assert len(r.sink.events) == 5_000 and ticks >= 1_000
+
+
+async def test_a_destroy_during_a_step_raises_instead_of_reporting_the_range_end() -> None:
+    gate = asyncio.Event()
+
+    class ParkedStream(ListStream):
+        async def __anext__(self) -> ReplayItem:
+            if self._next == 1:  # the step's second read parks
+                await gate.wait()
+            return await super().__anext__()
+
+    r = rig([], end_s=5, speed=STEP, stream=ParkedStream(every_second(5)))
+    async with r.clock as clock:
+        stepping = asyncio.ensure_future(clock.step_events(3))
+        await settle()
+        await clock.aclose()  # the session is destroyed while the step's read is parked
+        gate.set()
+        with pytest.raises(ReplayClockStateError, match="destroyed during the step"):
+            await stepping
+
+
+async def test_steps_refuse_after_a_source_failure_until_a_reposition() -> None:
+    error = ReplaySourceUnavailable(tier="parquet", symbol=SYM, stream=None, reason="io")
+    r = rig([], end_s=5, speed=STEP, stream=ListStream(every_second(5), fail_at=1, error=error))
+    async with r.clock as clock:
+        with pytest.raises(ReplaySourceUnavailable):
+            await clock.step_events(3)
+        with pytest.raises(ReplayClockStateError, match="reposition"):
+            await clock.step_events()
+        await clock.reposition(ListStream(every_second(5)[2:]), at_us=T0 + 2 * SECOND)
+        assert await clock.step_events(3) == "step"
+    assert len(r.sink.events) == 4
+
+
+async def test_a_reposition_closes_the_old_source_even_if_its_caller_is_cancelled() -> None:
+    gate = asyncio.Event()
+
+    class SlowClose(ListStream):
+        async def aclose(self) -> None:
+            await gate.wait()
+            await super().aclose()
+
+    old = SlowClose(every_second(3))
+    r = rig([], end_s=5, speed=STEP, stream=old)
+    async with r.clock as clock:
+        moving = asyncio.ensure_future(clock.reposition(ListStream([]), at_us=T0 + SECOND))
+        await settle()
+        moving.cancel()
+        await settle()
+        gate.set()
+        await settle()
+        assert moving.cancelled() and old.closes == 1
