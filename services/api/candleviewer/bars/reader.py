@@ -5,6 +5,8 @@ kinds its `(ts, generation, index)` key, #2017), parameterised queries only
 (`symbol`/`bar_param` come from the client). Rows whose `row_checksum` does not verify are
 dropped and counted (SR-E12-11). Rows at an older `build_version` than the running code are
 served as-is and a rebuild is scheduled **once** per `(symbol, spec_hash)` window, not per poll.
+`read_tail` (E12-T06, #2195) is the WS snapshot store's one bounded newest-first read: closed,
+tape-built bars only, oldest first.
 """
 
 from __future__ import annotations
@@ -13,14 +15,14 @@ import asyncio
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Final, Protocol
 
 import structlog
 
 from candleviewer.bars.metrics import bars_tape_read_degraded_total
-from candleviewer.bars.models import BarSpec
+from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import BUILD_VERSIONS, bar_param_for, row_checksum
 from candleviewer.domain.sql_names import column_identifier, ts_param, ts_us_from_row
 from candleviewer.observability.metrics import Counter
@@ -133,6 +135,29 @@ def build_range_query(
         ts_us, gen, idx = (int(v) for v in at_key)
         params += (ts_param(ts_us), ts_param(ts_us), gen, gen, max(idx, 0))
     return sql, params
+
+
+#: `read_tail` cap: a WS `bars` snapshot holds at most 1 000 bars (`23-ws-protocol.md` §6.1).
+MAX_TAIL: Final = 1_000
+_ORDER_BY_KEY_DESC = ", ".join(
+    f"{column_identifier(c)} DESC" for c in ("ts", "generation", "index")
+)
+
+
+def build_tail_query(
+    kind: str, symbol: str, bar_param: str, limit: int
+) -> tuple[str, tuple[object, ...]]:
+    """The newest `limit` builder rows of one series, newest first by the full bar key (the
+    caller reverses). Kline rows (NULL `index`) carry no bar key and are left out."""
+    if kind not in _FAMILIES:
+        raise ValueError(f"unknown bar kind {kind!r}")
+    if not 1 <= limit <= MAX_TAIL:
+        raise ValueError(f"limit must be between 1 and {MAX_TAIL}")
+    sql = (
+        f"SELECT * FROM bars_{kind} WHERE symbol = $1 AND bar_param = $2 "  # noqa: S608  # nosec B608 reason=table-from-closed-allowlist owner=@CandleViewer/backend
+        f"AND {_IDX} IS NOT NULL ORDER BY {_ORDER_BY_KEY_DESC} LIMIT {int(limit)}"
+    )
+    return sql, (symbol, bar_param)
 
 
 def row_key(row: dict[str, object]) -> BarKey:
@@ -252,20 +277,8 @@ class BarReader:
             spec.kind, symbol, bar_param_for(spec), from_us, to_us, after_us, limit, at_key=at_key
         )
         raw = await self._conn.fetch(sql, *params)
-        table = f"bars_{spec.kind}"
-        rows: list[dict[str, object]] = []
-        dropped = 0
-        for r in raw:
-            reason = _integrity_failure(r)
-            if reason is None:
-                rows.append(r)
-                continue
-            dropped += 1
-            bars_checksum_mismatch_total.labels(table, reason).inc()
-            _log().warning(
-                "bars_row_integrity_event", table=table, reason=reason,
-                spec_hash=spec.spec_hash, ts=r.get("ts"),
-            )  # fmt: skip
+        rows = [r for r in raw if not _untrusted(r, spec)]
+        dropped = len(raw) - len(rows)
         current = BUILD_VERSIONS[spec.kind]
         stale = any(int(str(r.get("build_version") or 0)) < current for r in rows)
         if stale:
@@ -277,6 +290,69 @@ class BarReader:
         return BarPage(
             rows, cursor, stale, integrity_degraded=dropped > 0, dropped=dropped, next_key=key
         )
+
+    async def read_tail(self, symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        """The newest `limit` closed, tape-built bars of a series, oldest first (WS `bars`
+        snapshot hydration, #2195): one `build_tail_query` read, reversed. Untrusted rows are
+        dropped and counted as in `read_bars`; stale `build_version` rows are served as-is."""
+        sql, params = build_tail_query(spec.kind, symbol, bar_param_for(spec), limit)
+        raw = await self._conn.fetch(sql, *params)
+        current = BUILD_VERSIONS[spec.kind]
+        bars: list[tuple[int, Bar]] = []
+        builds: dict[tuple[int, int], int] = {}
+        trusted = [r for r in reversed(raw) if not _untrusted(r, spec)]
+        for row in trusted:
+            got = _tail_bar(row, spec)
+            if got is None:
+                continue
+            bars.append(got)
+            built = max(1, int(str(row.get("build_version") or 0)))  # NULL: a pre-0003 v1 row
+            if built < current:
+                builds[got[0], got[1].index] = built
+        return BarTail(bars, skipped=len(trusted) - len(bars), builds=builds)
+
+
+@dataclass(frozen=True, slots=True)
+class BarTail:
+    """`read_tail` result: `(generation, bar)` pairs, oldest first. `skipped` counts the rows
+    left out for lacking a §8.2 `(generation, index)` key or order flow (kline-sourced rows,
+    BR-07) or for not being closed; nothing is fabricated for them."""
+
+    bars: list[tuple[int, Bar]]
+    skipped: int = 0
+    #: `(generation, index) -> build_version` of the rows built below the running code (§6.1
+    #: `meta.build_version` is the lowest among the bars a snapshot sends).
+    builds: dict[tuple[int, int], int] = field(default_factory=dict)
+
+
+def _tail_bar(row: dict[str, object], spec: BarSpec) -> tuple[int, Bar] | None:
+    """A tape-built closed row as `(generation, Bar)`, in the REST row semantics of `stored_bar`
+    (turnover is `vwap * volume`); `partial`/`gap_before` are not stored and read as False."""
+    s = stored_bar(row)
+    if (
+        not (s.tape_built and s.confirmed)
+        or s.index is None
+        or s.generation is None
+        or s.delta is None
+        or s.min_delta is None
+        or s.max_delta is None
+    ):
+        return None
+    bar = Bar.model_construct(
+        spec_hash=spec.spec_hash, symbol=str(row["symbol"]), index=s.index, open_time=s.ts_us,
+        close_time=s.ts_us if s.close_ts_us is None else s.close_ts_us, open=Decimal(s.open),
+        high=Decimal(s.high), low=Decimal(s.low), close=Decimal(s.close),
+        volume=Decimal(s.volume), buy_volume=_dec(row.get("buy_volume")),
+        sell_volume=_dec(row.get("sell_volume")), delta=Decimal(s.delta),
+        min_delta=Decimal(s.min_delta), max_delta=Decimal(s.max_delta), trade_count=s.trades,
+        turnover=Decimal(s.turnover), vwap=_dec(row.get("vwap")), closed=True, partial=False,
+        gap_before=False,
+    )  # fmt: skip
+    return s.generation, bar
+
+
+def _dec(value: object) -> Decimal:
+    return Decimal(_num(value or 0))
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,3 +470,17 @@ def _integrity_failure(row: dict[str, object]) -> str | None:
     if checksum is None:
         return None if row.get("source") is None else "missing"
     return None if checksum == row_checksum(row) else "mismatch"
+
+
+def _untrusted(row: dict[str, object], spec: BarSpec) -> bool:
+    """SR-E12-11: True, counted and logged, when `row` fails its integrity check."""
+    reason = _integrity_failure(row)
+    if reason is None:
+        return False
+    table = f"bars_{spec.kind}"
+    bars_checksum_mismatch_total.labels(table, reason).inc()
+    _log().warning(
+        "bars_row_integrity_event", table=table, reason=reason,
+        spec_hash=spec.spec_hash, ts=row.get("ts"),
+    )  # fmt: skip
+    return True
