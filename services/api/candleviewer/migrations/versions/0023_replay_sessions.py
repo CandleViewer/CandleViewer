@@ -21,6 +21,10 @@ chart (28-statechart-catalogue.md, C-2.19), so every chart state is a value.
   (`DELETE /replay/sessions/{id}`), unlike the append-only recorder tables.
 * Downgrade refuses (clear error) while `replay_sessions` holds rows, and drops
   the table, then the type, cleanly when empty.
+* Both `upgrade()` and `downgrade()` bracket their statements with
+  `SET LOCAL lock_timeout = '5s'` (0019/0022 pattern, C-5.6), so the SHARE ROW
+  EXCLUSIVE locks the new FKs take on `users`, `recording_sessions` and
+  `exchange_accounts` are bounded instead of queueing behind a long writer.
 """
 
 from __future__ import annotations
@@ -36,13 +40,17 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.execute("SET LOCAL lock_timeout = '5s';")
     op.execute(_ENUM_SQL)
     op.execute(_TABLE_SQL)
     op.execute(_COMMENTS_SQL)
+    op.execute("SET LOCAL lock_timeout = DEFAULT;")
 
 
 def downgrade() -> None:
+    op.execute("SET LOCAL lock_timeout = '5s';")
     op.execute(_DOWNGRADE_SQL)
+    op.execute("SET LOCAL lock_timeout = DEFAULT;")
 
 
 _ENUM_SQL = """

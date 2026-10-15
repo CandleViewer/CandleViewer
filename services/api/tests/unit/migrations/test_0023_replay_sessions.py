@@ -105,6 +105,28 @@ def test_downgrade_refuses_while_populated_then_drops_table_before_type() -> Non
     assert drop_table < sql.index("DROP TYPE IF EXISTS replay_state;")
 
 
+def test_upgrade_bounds_every_lock_with_lock_timeout() -> None:
+    """C-5.6 (0019/0022 pattern): the FKs on users, recording_sessions and exchange_accounts
+    take SHARE ROW EXCLUSIVE locks, so every statement sits inside a 5 s lock_timeout."""
+    sql = _norm(_sql("upgrade", f"{_PREV}:{_REV}"))
+    first = sql.index("SET LOCAL lock_timeout = '5s';")
+    assert first < sql.index("CREATE TYPE replay_state")
+    assert sql.index("CREATE TYPE replay_state") < sql.index("CREATE TABLE replay_sessions (")
+    assert sql.rindex("COMMENT ON COLUMN replay_sessions.") < sql.index(
+        "SET LOCAL lock_timeout = DEFAULT;"
+    )
+
+
+def test_downgrade_bounds_every_lock_with_lock_timeout() -> None:
+    sql = _norm(_sql("downgrade", f"{_REV}:{_PREV}"))
+    assert sql.index("SET LOCAL lock_timeout = '5s';") < sql.index(
+        "IF EXISTS (SELECT 1 FROM replay_sessions) THEN"
+    )
+    assert sql.index("DROP TYPE IF EXISTS replay_state;") < sql.index(
+        "SET LOCAL lock_timeout = DEFAULT;"
+    )
+
+
 _COLUMNS = [
     # (name, nullable, server_default) in DDL order (Sec.3.6.4).
     ("id", False, None),

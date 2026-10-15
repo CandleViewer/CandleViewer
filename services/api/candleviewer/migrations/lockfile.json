@@ -109,7 +109,7 @@
     },
     "0023_replay_sessions": {
       "path": "services/api/candleviewer/migrations/versions/0023_replay_sessions.py",
-      "sha256": "b6ef7e94a2140bb268098d3afdaf86390682cdefe44593e6b3619ef3b14b4554",
+      "sha256": "f27bfa74b3e157156fc9240196ec4ec053bbe9705212c8800bd4c822fa0df54a",
       "down_revision": "0022_workspaces"
     }
   }
