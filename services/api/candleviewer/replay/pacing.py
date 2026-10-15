@@ -79,17 +79,20 @@ class RateWindow:
     ratio`. Skipped gaps never inflate it. Unbounded (`requested <= 0`), `speed` is the replay
     time covered per wall second and `ratio` is `None`."""
 
-    __slots__ = ("_lost", "_pos", "_wall", "ratio", "span_s", "speed")
+    __slots__ = ("_lost", "_pos", "_wall", "closes_at", "ratio", "span_s", "speed")
 
     def __init__(self, span_s: float) -> None:
         self.span_s = span_s
         self._wall, self._lost, self._pos = 0.0, 0.0, 0
+        #: Wall time the open window can close at: one comparison per event on the hot path.
+        self.closes_at = span_s
         self.speed: float | None = None
         self.ratio: float | None = None
 
     def restart(self, *, wall: float, lost_s: float, position_us: int) -> None:
         """Open a new window at `wall`, keeping the last closed window's figures."""
         self._wall, self._lost, self._pos = wall, lost_s, position_us
+        self.closes_at = wall + self.span_s
 
     def update(self, *, wall: float, lost_s: float, position_us: int, requested: float) -> bool:
         """Close the window if `span_s` elapsed; `True` if it did."""
