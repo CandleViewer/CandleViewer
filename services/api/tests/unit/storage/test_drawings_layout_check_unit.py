@@ -117,16 +117,25 @@ async def _write(rel: _Rel, call: str, layout: str | None = "l1") -> Any:
         return await repo.create("o", "d", _f(layout))
     if call == "update":
         return await repo.update("o", "d", _f(layout), if_match=None)
+    if call == "batch_update":
+        return await repo.apply_batch("o", [UpdateOp("d", _T, _f(layout))])
     return await repo.apply_batch("o", [CreateOp("d", _f(layout))])
 
 
-_FIELD = {"create": "layout_id", "update": "layout_id", "batch": "operations.0.drawing.layout_id"}
-_WRITE = {"create": "_INSERT", "update": "_UPDATE", "batch": "_SNAPSHOT"}
+CALLS = ["create", "update", "batch", "batch_update"]  # POST, PUT, batch create, batch update
+_OP = "operations.0.drawing.layout_id"
+_FIELD = {"create": "layout_id", "update": "layout_id", "batch": _OP, "batch_update": _OP}
+_WRITE = {"create": "_INSERT", "update": "_UPDATE", "batch": "_SNAPSHOT",
+          "batch_update": "_SNAPSHOT"}  # fmt: skip
+#: The batch snapshot of drawing "d" as the update op expects it (live, own, token `_T`).
+_SNAP = {"id": "d", "owner_user_id": "o", "symbol": "BTCUSDT", "tool": "trendline",
+         "deleted_at": None, "updated_at": _T}  # fmt: skip
 
 
 def _ok(call: str) -> list[Step]:
     """One successful attempt: the layout lock, the batch snapshot, the write."""
-    return [[{"id": "l1"}], [], [_row()]] if call == "batch" else [[{"id": "l1"}], [_row()]]
+    snapshot = {"batch": [[]], "batch_update": [[_SNAP]]}.get(call, [])
+    return [[{"id": "l1"}], *snapshot, [_row()]]
 
 
 def test_the_layout_lock_is_owner_scoped_live_and_in_id_order() -> None:
@@ -134,7 +143,7 @@ def test_the_layout_lock_is_owner_scoped_live_and_in_id_order() -> None:
     assert str(mod._LAYOUTS_SHARE).endswith(tail)
 
 
-@pytest.mark.parametrize("call", ["create", "update", "batch"])
+@pytest.mark.parametrize("call", CALLS)
 async def test_the_layout_lock_comes_before_any_drawings_statement(call: str) -> None:
     rel = _Rel(*_ok(call))
     await _write(rel, call)
@@ -159,7 +168,7 @@ async def test_missing_layouts_refuse_the_whole_batch_with_their_request_fields(
     assert rel.commits == 0
 
 
-@pytest.mark.parametrize("call", ["create", "update", "batch"])
+@pytest.mark.parametrize("call", CALLS)
 async def test_a_missing_layout_stops_the_write_before_any_drawings_statement(call: str) -> None:
     rel = _Rel([])
     with pytest.raises(DrawingLayoutNotFoundError) as err:
@@ -168,7 +177,7 @@ async def test_a_missing_layout_stops_the_write_before_any_drawings_statement(ca
     assert rel.names() == ["_LAYOUTS_SHARE"] and rel.commits == 0
 
 
-@pytest.mark.parametrize("call", ["create", "update", "batch"])
+@pytest.mark.parametrize("call", CALLS)
 async def test_the_layout_fk_backstop_maps_to_the_same_refusal(call: str) -> None:
     rel = _Rel(*_ok(call)[:-1], _fk())  # the check passed, the write then hit the FK
     with pytest.raises(DrawingLayoutNotFoundError) as err:
@@ -182,7 +191,7 @@ async def test_another_integrity_error_is_not_a_layout_refusal() -> None:
         await _write(rel, "create")
 
 
-@pytest.mark.parametrize("call", ["create", "update", "batch"])
+@pytest.mark.parametrize("call", CALLS)
 async def test_a_deadlock_reruns_the_whole_transaction_once(call: str) -> None:
     rel = _Rel([{"id": "l1"}], _deadlock(), *_ok(call))
     await _write(rel, call)
@@ -190,7 +199,7 @@ async def test_a_deadlock_reruns_the_whole_transaction_once(call: str) -> None:
     assert rel.names()[:3] == ["_LAYOUTS_SHARE", _WRITE[call], "_LAYOUTS_SHARE"]
 
 
-@pytest.mark.parametrize("call", ["create", "update", "batch"])
+@pytest.mark.parametrize("call", CALLS)
 async def test_a_second_deadlock_is_a_store_outage(call: str) -> None:
     rel = _Rel([{"id": "l1"}], _deadlock(), [{"id": "l1"}], _deadlock())
     with pytest.raises(StorageTierUnavailable):

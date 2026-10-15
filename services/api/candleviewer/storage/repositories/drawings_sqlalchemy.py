@@ -24,7 +24,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
-from typing import Any, assert_never
+from typing import Any, TypeVar, assert_never
 
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError, IntegrityError
@@ -327,7 +327,10 @@ def _is_deadlock(exc: DBAPIError) -> bool:
     return any(getattr(src, "sqlstate", None) == "40P01" for src in sources)
 
 
-async def _deadlock_retry[T](run: Callable[[], Awaitable[T]]) -> T:
+_T = TypeVar("_T")  # not PEP 695 `[T]`: Semgrep 1.99.0 (CI) would skip the rest of this file
+
+
+async def _deadlock_retry(run: Callable[[], Awaitable[_T]]) -> _T:  # noqa: UP047 (see _T)
     """Run one whole transaction; after a `40P01` (rolled back by the unit of work's exit) run
     it once more. A second deadlock is a store outage (503, retryable), never a 500."""
     try:
