@@ -76,12 +76,13 @@ class _Env:
         async def publish(sid: str, reason: str) -> None:
             self.revoked.append((sid, reason))
 
+        self.identity = _Identity() if identity else None
         app = FastAPI()
         app.include_router(
             make_session_router(
                 _Auth(self.svc),
                 self.audit,
-                identity=_Identity() if identity else None,
+                identity=self.identity,
                 publish_revocation=publish,
                 allowed_origins=origins,
                 ip_throttle=PerIpLoginThrottle(
@@ -233,3 +234,79 @@ async def test_logout_rejects_unknown_body_fields(env: _Env) -> None:
     a = await env.mint(uuid.uuid4())
     r = env.client.post("/api/v1/auth/logout", json={"x": 1}, headers=_h(a.access_token))
     assert r.status_code == 422
+
+
+# -- SR-026 (#2573): self-service reads refuse a target-user parameter ------------------------
+
+_SELF_READS = ("/api/v1/auth/session", "/api/v1/auth/sessions")
+
+
+@pytest.mark.parametrize("param", ["user_id", "userId"])
+@pytest.mark.parametrize("path", _SELF_READS)
+async def test_self_service_read_with_a_target_user_parameter_is_422_naming_it(
+    env: _Env, path: str, param: str
+) -> None:
+    caller = await env.mint(uuid.uuid4())
+    other = uuid.uuid4()
+    await env.mint(other)
+    r = env.client.get(path, params={param: str(other)}, headers=_h(caller.access_token))
+    assert r.status_code == 422, f"{path}?{param}=: refused, not silently ignored"
+    assert r.headers["content-type"].startswith("application/problem+json")
+    body = r.json()
+    assert body["code"] == "validation_failed"
+    assert body["type"] == "https://candleviewer.local/errors/validation_failed"
+    assert [e["field"] for e in body["errors"]] == [f"query.{param}"]
+    assert param in body["detail"]
+    assert str(other) not in r.text, "the supplied value is never echoed"
+    assert not {"user", "session", "items"} & set(body), "a refusal carries no session data"
+
+
+@pytest.mark.parametrize("path", _SELF_READS)
+async def test_self_service_read_target_user_refusal_reads_no_session_data(
+    env: _Env, path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    caller = await env.mint(uuid.uuid4())
+
+    async def _must_not_read(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("session data was read for a request that must be refused")
+
+    assert env.identity is not None
+    monkeypatch.setattr(env.identity, "session_info", _must_not_read)
+    monkeypatch.setattr(env.identity, "user", _must_not_read)
+    monkeypatch.setattr(env.svc, "list_sessions", _must_not_read)
+    r = env.client.get(path, params={"user_id": ""}, headers=_h(caller.access_token))
+    assert r.status_code == 422
+
+
+@pytest.mark.parametrize("path", _SELF_READS)
+async def test_self_service_read_target_user_refusal_does_not_depend_on_the_value(
+    env: _Env, path: str
+) -> None:
+    """No existence oracle: own id, another user's id, an unknown id and garbage look alike."""
+    me, other = uuid.uuid4(), uuid.uuid4()
+    caller = await env.mint(me)
+    await env.mint(other)
+    values = (str(me), str(other), str(uuid.uuid4()), "", "not-a-uuid")
+    answers = [
+        env.client.get(path, params={"user_id": v}, headers=_h(caller.access_token)) for v in values
+    ]
+    assert {r.status_code for r in answers} == {422}
+    assert len({r.content for r in answers}) == 1, "the answer must not depend on the value"
+
+
+@pytest.mark.parametrize("path", _SELF_READS)
+async def test_self_service_read_with_a_target_user_parameter_unauthenticated_is_401(
+    env: _Env, path: str
+) -> None:
+    """Authentication still comes first: an anonymous caller gets the uniform 401."""
+    r = env.client.get(path, params={"user_id": str(uuid.uuid4())})
+    assert r.status_code == 401
+
+
+async def test_list_sessions_declared_parameters_are_still_accepted(env: _Env) -> None:
+    caller = await env.mint(uuid.uuid4())
+    r = env.client.get(
+        "/api/v1/auth/sessions", params={"limit": 1}, headers=_h(caller.access_token)
+    )
+    assert r.status_code == 200
+    assert r.json()["meta"]["count"] == 1

@@ -179,14 +179,32 @@ def test_self_service_routes_reject_a_target_user_id_in_the_body(
 
 
 def test_self_service_reads_are_always_about_the_caller(world: World) -> None:
-    mgr = world.client.get(
-        "/auth/session", params={"user_id": str(user_id_of("owner"))},
-        headers=bearer("manager_with_grant"),
-    )  # fmt: skip
+    mgr = world.client.get("/auth/session", headers=bearer("manager_with_grant"))
     assert mgr.status_code == 200
-    assert mgr.json()["user"]["id"] == str(user_id_of("manager_with_grant")), (
-        "a user_id query parameter must never retarget a self-scoped read"
+    assert mgr.json()["user"]["id"] == str(user_id_of("manager_with_grant"))
+
+
+#: The executed self-service reads (x-rbac `permissions: []`, `scope: self`). `GET
+#: /onboarding/checklist` is `not_executable` in this pack (501 in the CI app), so it is not listed.
+_SELF_SERVICE_READS = ["/auth/session", "/auth/sessions"]
+
+
+@pytest.mark.parametrize("path", _SELF_SERVICE_READS)
+@pytest.mark.parametrize("actor", ACTORS[:4])  # every authenticated role
+def test_self_service_reads_reject_a_target_user_query_parameter(
+    world: World, path: str, actor: str
+) -> None:
+    """SR-026 (#2573): a target-user parameter is refused (422), never silently ignored, for
+    every role and whichever other user it names; the refusal carries no session data."""
+    target = next(a for a in ACTORS[:4] if a != actor)
+    resp = world.client.get(
+        path, params={"user_id": str(user_id_of(target))}, headers=bearer(actor)
     )
+    assert resp.status_code == 422, f"GET {path} as {actor}: got {resp.status_code}"
+    body = resp.json()
+    assert body["code"] == "validation_failed"
+    assert "user_id" in body["detail"]
+    assert not {"user", "session", "items"} & set(body), "a refusal carries no session data"
 
 
 _ADMIN_MUTATIONS = [

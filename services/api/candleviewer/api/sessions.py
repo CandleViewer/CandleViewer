@@ -172,6 +172,43 @@ def _unauthorized(detail: str = "authentication required") -> JSONResponse:
     return _problem(401, "Unauthorized", detail)
 
 
+#: SR-026: a self-service read answers only for the authenticated caller, so a target-user
+#: parameter is refused, never silently ignored (#2573). `userId` is the contract's own name for
+#: a target user (`components/parameters/UserId`, the owner-only `/users/{userId}` routes).
+_TARGET_USER_PARAMS = ("user_id", "userId")
+
+
+def _target_user_refusal(request: Request) -> JSONResponse | None:
+    """422 `validation_failed` when a self-service read names a target user (SR-026).
+
+    Decided on the parameter's presence alone, so the answer is identical for any value (no
+    existence oracle), and it echoes only the parameter name, never the supplied value.
+    """
+    named = [p for p in _TARGET_USER_PARAMS if p in request.query_params]
+    if not named:
+        return None
+    return JSONResponse(
+        status_code=422,
+        content={
+            "type": "https://candleviewer.local/errors/validation_failed",
+            "title": "Request body or parameters failed schema validation",
+            "status": 422,
+            "code": "validation_failed",
+            "detail": f"Target-user parameter not accepted: {', '.join(named)}. "
+            "This route answers only for the authenticated caller.",
+            "errors": [
+                {
+                    "field": f"query.{p}",
+                    "rule": "target_user_not_accepted",
+                    "message": "self-service routes do not accept a target-user parameter",
+                }
+                for p in named
+            ],
+        },
+        media_type="application/problem+json",
+    )
+
+
 def _bearer(request: Request) -> str | None:
     header = request.headers.get("authorization", "")
     scheme, _, value = header.partition(" ")
@@ -542,6 +579,8 @@ def make_session_router(
         record = await _authenticate(request)
         if record is None:
             return _unauthorized()
+        if (refusal := _target_user_refusal(request)) is not None:
+            return refusal  # SR-026: before any session data is read
         if identity is None:
             return _problem(
                 501, "Not implemented", "identity provider not wired (E09-T03); disabled"
@@ -581,6 +620,8 @@ def make_session_router(
         record = await _authenticate(request)
         if record is None:
             return _unauthorized()
+        if (refusal := _target_user_refusal(request)) is not None:
+            return refusal  # SR-026: before any session data is read
         try:
             offset = int(cursor) if cursor else 0
         except ValueError:
