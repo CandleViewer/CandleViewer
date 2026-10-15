@@ -7,7 +7,9 @@ Deselected from the default lane by `addopts` (`-m "not fuzz and not perf"`); ru
 Invariant: ``decode`` returns a ``Frame`` or raises ONLY ``FrameMalformedError``, and one decode
 never allocates more than ``MAX_PEAK_BYTES`` (SR-128: wire counts never size an allocation). The
 msgpack decoder returns a JSON-like value within ``MAX_MSGPACK_DEPTH`` or raises ONLY
-``MsgpackFrameError``, under the same allocation bound.
+``MsgpackFrameError``, within ``MSGPACK_MAX_PEAK_BYTES``. Its second target builds frames from
+array and map headers (claims up to 2^32 - 1, nesting past 1 024, padding to the inbound cap),
+which byte mutation of small seeds cannot reach.
 Failing inputs are written to ``CV_FUZZ_ARTIFACT_DIR`` (uploaded as a CI artefact, never the repo).
 """
 
@@ -29,6 +31,7 @@ from hypothesis import strategies as st
 
 from candleviewer.ws.binary import FrameMalformedError, decode
 from candleviewer.ws.codec import MAX_MSGPACK_DEPTH, MsgpackFrameError, decode_client_frame
+from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES
 
 REPO = Path(__file__).resolve().parents[5]
 SEEDS: Final[list[bytes]] = [
@@ -43,6 +46,8 @@ MSGPACK_SEEDS: Final[list[bytes]] = [
 ]
 EXAMPLES: Final[int] = int(os.environ.get("CV_FUZZ_EXAMPLES", "200"))
 MAX_PEAK_BYTES: Final[int] = 1 << 20
+#: The msgpack decoder's worst at-cap peak is about 1.2 MiB (`test_msgpack_decode_bounds.py`).
+MSGPACK_MAX_PEAK_BYTES: Final[int] = 2 << 20
 _INTERESTING: Final[tuple[int, ...]] = (0, 1, 2, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 0xFFFFFFFE)
 
 _op = st.one_of(
@@ -139,35 +144,79 @@ def _json_like_depth(value: object) -> int:
     return deepest
 
 
-@pytest.mark.fuzz
-@seed(SEED)
-@settings(
+def _check_msgpack(data: bytes) -> None:
+    """The SR-185 invariant for one input: a typed refusal or a bounded JSON-like value."""
+    tracemalloc.start()
+    try:
+        try:
+            value, refused = decode_client_frame(data), False
+        except MsgpackFrameError:
+            value, refused = None, True
+        except BaseException as exc:
+            raise AssertionError(f"untyped {exc!r}: {_save_failure(data, 'msgpack')}") from exc
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    if not refused and not 0 <= _json_like_depth(value) <= MAX_MSGPACK_DEPTH:
+        pytest.fail(f"decoded beyond the SR-185 bounds: {_save_failure(data, 'msgpack')}")
+    if peak > MSGPACK_MAX_PEAK_BYTES:
+        pytest.fail(f"msgpack decode peaked at {peak} B: {_save_failure(data, 'msgpack')}")
+
+
+_FUZZ_SETTINGS = settings(
     max_examples=EXAMPLES,
     deadline=None,
     suppress_health_check=list(HealthCheck),
     database=None,
     print_blob=True,
 )
+
+
+@pytest.mark.fuzz
+@seed(SEED)
+@_FUZZ_SETTINGS
 @given(i=st.integers(0, len(MSGPACK_SEEDS) - 1), ops=st.lists(_op, min_size=1, max_size=6))
 def test_msgpack_client_decode_mutated_corpus_raises_only_the_typed_error(
     i: int, ops: list[tuple[str, int, int]]
 ) -> None:
-    data = mutate(MSGPACK_SEEDS[i], ops)
-    tracemalloc.start()
-    try:
-        try:
-            value = decode_client_frame(data)
-        except MsgpackFrameError:
-            value = None
-        except BaseException as exc:
-            raise AssertionError(f"untyped {exc!r}: {_save_failure(data, 'msgpack')}") from exc
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-    if not 0 <= _json_like_depth(value) <= MAX_MSGPACK_DEPTH:
-        pytest.fail(f"decoded beyond the SR-185 bounds: {_save_failure(data, 'msgpack')}")
-    if peak > MAX_PEAK_BYTES:
-        pytest.fail(f"msgpack decode peaked at {peak} B: {_save_failure(data, 'msgpack')}")
+    _check_msgpack(mutate(MSGPACK_SEEDS[i], ops))
+
+
+_CLAIMS: Final[tuple[int, ...]] = (0, 1, 2, 15, 16, 63, 64, 65, 255, 0xFFFF, 1 << 31, 0xFFFFFFFF)
+
+
+def _header(kind: str, n: int) -> bytes:
+    """An array or map header claiming `n` entries, in its shortest form."""
+    small, h16, h32 = (0x90, b"\xdc", b"\xdd") if kind == "array" else (0x80, b"\xde", b"\xdf")
+    if n < 16:
+        return bytes([small | n])
+    return h16 + n.to_bytes(2, "big") if n <= 0xFFFF else h32 + n.to_bytes(4, "big")
+
+
+_token = st.one_of(
+    st.builds(_header, st.sampled_from(["array", "map"]), st.sampled_from(_CLAIMS)),
+    st.sampled_from(
+        [b"\xc0", b"\xc3", b"\x01", b"\xa1t", b"\xa4ping", b"\xcb\x7f\xf8" + bytes(6), b"\xc4\x00"]
+    ),
+)
+
+
+@pytest.mark.fuzz
+@seed(SEED)
+@_FUZZ_SETTINGS
+@given(
+    nest=st.integers(0, 1_100),
+    claim=st.sampled_from(_CLAIMS),
+    kind=st.sampled_from(["array", "map"]),
+    body=st.lists(_token, max_size=64),
+    repeat=st.integers(1, 4_096),
+    pad=st.integers(0, MAX_INBOUND_FRAME_BYTES),
+)
+def test_msgpack_client_decode_structured_frames_stay_bounded(
+    nest: int, claim: int, kind: str, body: list[bytes], repeat: int, pad: int
+) -> None:
+    frame = _header(kind, claim) * nest + b"".join(body) * repeat + b"\xc0" * pad
+    _check_msgpack(frame[:MAX_INBOUND_FRAME_BYTES])
 
 
 # SR-128 (targeted): every count field that cannot fit is rejected up front by `_fits`. Removing
