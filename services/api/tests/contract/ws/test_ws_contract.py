@@ -325,6 +325,7 @@ def test_integration_ctl_pause_resume_resnapshots_with_the_paused_updates() -> N
         c.send({"t": "ctl", "id": "p1", "ch": ch, "p": {"paused": True}})
         assert "resnapshot" not in c.next_of("ctl_ok")["p"]
         w.source.books[SYM].apply([["99.5", "7.000"]], [["101.5", "8.000"]])  # producer moves on
+        w.source.gen += 1  # the shared snapshot cache is keyed by generation
         assert publish(w, "book", ch) == 0  # paused: no d crosses
         assert publish(w, "book", ch) == 0
         c.send({"t": "ctl", "id": "p2", "ch": ch, "p": {"paused": False}})
