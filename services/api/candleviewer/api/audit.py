@@ -517,19 +517,24 @@ def make_audit_router(
         return JSONResponse(status_code=200, content=_jsonable(page), headers=_NO_STORE)
 
     @router.post("/verify")
-    async def verify_audit_chain(
-        request: Request,
-        body: dict[str, Any] | None = None,
-    ) -> JSONResponse:
+    async def verify_audit_chain(request: Request) -> JSONResponse:
         try:
             service, _, _ = await _authorize_or_raise(request, "verify")
         except _HttpProblem as problem:
             return problem.response
+        # The optional body is read only now: 401 and 403 come before its validation.
         try:
-            req = AuditVerifyRequest.model_validate(body or {})
+            req = AuditVerifyRequest.model_validate_json(await request.body() or b"{}")
         except ValidationError as exc:
-            return _invalid(exc, AuditVerifyRequest, 400)
-        result = await service.query.verify(from_id=req.from_id, to_id=req.to_id)
+            return _invalid(exc, AuditVerifyRequest)
+        try:
+            result = await service.query.verify(from_id=req.from_id, to_id=req.to_id)
+        except TimeoutError:
+            return _unavailable("audit verify exceeded its time budget")
+        except ChainHasherBusy:
+            return _unavailable("audit read capacity reached")
+        except StorageTierUnavailable:
+            return _unavailable("audit store unavailable")  # logged where it is raised
         return JSONResponse(status_code=200, content=_jsonable(result))
 
     @router.post("/export")
