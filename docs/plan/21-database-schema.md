@@ -2145,6 +2145,8 @@ Conflict detection (two actions on one chord) is a save-time application check w
 
 ### 3.9 Settings & feature flags
 
+> Shipped as Alembic `0025_settings` (E42-T01 #963; the register's `0012_governance` number was taken by `0012_onboarding_dismissals`). It creates `settings` only, DDL below verbatim; `feature_flags` and `feature_flag_overrides` are not part of that revision. `value` is class S when `is_secret` (§12) and carries a `SECRET:` column comment; the table ships empty. Downgrade refuses while the table holds rows.
+
 ```sql
 CREATE TABLE settings (
   id          uuid PRIMARY KEY,
@@ -3169,7 +3171,7 @@ NAMING_CONVENTION = {
 | `0009_alerts`                 | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                     |
 | `0010_journal`                | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                            |
 | `0011_workspace`              | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; rest pending                   |
-| `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups`                                                                                                        |
+| `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings` (E42-T01)                                                               |
 | `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                              |
 
 ---

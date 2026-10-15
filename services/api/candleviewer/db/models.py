@@ -1646,3 +1646,41 @@ layout_panes = Table(
     Index("ix_lp_layout", "layout_id", "slot_index"),
     Index("ix_lp_symbol", "symbol", postgresql_where=text("symbol IS NOT NULL")),
 )
+
+#: `settings` (E42-T01, revision 0025_settings): 21-database-schema.md Sec.3.9, `settings` only.
+settings = Table(
+    "settings",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("scope", Text, nullable=False),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE")),
+    Column("key", Text, nullable=False),
+    Column(
+        "value",
+        JSONB,
+        nullable=False,
+        comment=(
+            "SECRET: when is_secret, AES-256-GCM ciphertext only (21 Sec.12); "
+            "API returns it masked; never logged"
+        ),
+    ),
+    Column("value_type", Text, nullable=False),
+    Column("is_secret", Boolean, nullable=False, server_default=text("false")),
+    Column("updated_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("scope IN ('system','user')", name="st_scope"),
+    CheckConstraint("(scope = 'user') = (user_id IS NOT NULL)", name="st_shape"),
+    CheckConstraint("key ~ '^[a-z0-9_]+([.][a-z0-9_]+){0,4}$'", name="st_key_fmt"),
+    CheckConstraint(
+        "value_type IN ('string','number','boolean','object','array')", name="st_vtype"
+    ),
+    Index("ux_settings_sys", "key", unique=True, postgresql_where=text("scope = 'system'")),
+    Index(
+        "ux_settings_user",
+        "user_id",
+        "key",
+        unique=True,
+        postgresql_where=text("scope = 'user'"),
+    ),
+)
