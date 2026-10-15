@@ -58,6 +58,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.password_change",
         "ws.subscribe.denied",
         "ws.subscription.revoked",
+        # E17-S01 (#2486): an authenticated WS connection ended (`ws/gateway.py`).
+        "ws.connection.closed",
         "users.create",
         "users.invited",
         "users.invite_redeemed",
