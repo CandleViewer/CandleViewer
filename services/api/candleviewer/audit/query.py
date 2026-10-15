@@ -460,7 +460,10 @@ class AuditQueryService:
     ) -> _Walk:
         """Keyset batches `after_id < id <= last_id`; batch n+1 is fetched while batch n
         is hashed, and batch n+2 only after batch n is done (at most two held). A batch may
-        stop short on the repository's byte budget, so only an empty batch ends the walk."""
+        stop short on the repository's byte budget, so only an empty batch ends the walk.
+        The statement renders every row it may return before it cuts, so the next batch asks
+        for at most twice the rows the last one held: after a cut the database renders at most
+        about twice what it returns, and full batches double back up to `batch_size`."""
         checked = passed = passed_id = 0
         pending: asyncio.Future[list[tuple[Any, ...]]] | None
         pending = spawn(self._fetch(after_id, last_id, batch_size), name=_PREFETCH)
@@ -471,7 +474,8 @@ class AuditQueryService:
                 if not rows:
                     break
                 if rows[-1][0] < last_id:
-                    pending = spawn(self._fetch(rows[-1][0], last_id, batch_size), name=_PREFETCH)
+                    limit = min(batch_size, 2 * len(rows))
+                    pending = spawn(self._fetch(rows[-1][0], last_id, limit), name=_PREFETCH)
                 check = functools.partial(_walk_batch, expected, rows, checkpoints)
                 walk = await self._hasher.run(check)
                 checked, passed = checked + walk.checked, passed + walk.passed
