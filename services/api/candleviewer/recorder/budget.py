@@ -49,6 +49,7 @@ US_PER_S: Final = 1_000_000
 US_PER_DAY: Final = 86_400 * US_PER_S
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _MAX_RUNWAY_DAYS: Final = 36_500
+_PCT: Final = 100  # every threshold is an integer percentage
 _LADDER: Final = (DiskPressureLevel.WARN, DiskPressureLevel.AUTOSTOP, DiskPressureLevel.HALT)
 #: Suggested actions named by every ladder event: codes only, never host paths.
 SUGGESTED_ACTIONS: Final = "reduce_depth,shorten_retention,unpin"
@@ -99,9 +100,9 @@ class BudgetConfig:
     retention_days: int = 30
 
     def __post_init__(self) -> None:
-        cap_path = self.rearm_pct < self.warn_pct < self.autostop_pct < self.halt_pct <= 100
+        cap_path = self.rearm_pct < self.warn_pct < self.autostop_pct < self.halt_pct <= _PCT
         free_path = 0 < self.halt_free_pct < self.autostop_free_pct < self.accelerate_until_free_pct
-        free_path = free_path and self.autostop_free_pct + self.rearm_pct <= 100
+        free_path = free_path and self.autostop_free_pct + self.rearm_pct <= _PCT
         if self.cap_bytes <= 0 or not (cap_path and free_path) or self.sample_interval_s <= 0:
             raise ValueError(
                 "disk budget: cap > 0, rearm < warn < autostop < halt <= 100,"
@@ -267,10 +268,10 @@ class PressureLadder:
         c, r = self._cfg, self._cfg.rearm_pct
 
         def at(pct: int) -> bool:
-            return used * 100 >= cap * pct
+            return used * _PCT >= cap * pct
 
         def below(pct: int) -> bool:
-            return free * 100 < total * pct
+            return free * _PCT < total * pct
 
         soon = runway_days is not None and runway_days <= c.warn_runway_days
         far = runway_days is None or runway_days > c.warn_runway_days + c.warn_runway_rearm_days
@@ -285,7 +286,7 @@ class PressureLadder:
         a = c.accelerate_until_free_pct
         if self._on[DiskPressureLevel.AUTOSTOP]:
             self.accelerate = True
-        elif not at(100 - a) and free * 100 > total * a:
+        elif not at(_PCT - a) and free * _PCT > total * a:
             self.accelerate = False
 
     def _latch(self, level: DiskPressureLevel, engage: bool, release: bool) -> None:
@@ -500,14 +501,14 @@ class DiskBudget:
             if level > previous:
                 severity, code = _LEVEL_EVENT[level]
                 detail: dict[str, str | int] = {
-                    "used_pct": used * 100 // cfg.cap_bytes,
-                    "free_pct": m.free_bytes * 100 // m.total_bytes,
+                    "used_pct": used * _PCT // cfg.cap_bytes,
+                    "free_pct": m.free_bytes * _PCT // m.total_bytes,
                     "projected_full_at": "" if full_at is None else _utc(full_at).isoformat(),
                     "runway_days": _days(runway),
                     "actions": SUGGESTED_ACTIONS,
                 }
                 if level is DiskPressureLevel.WARN:
-                    over = used * 100 >= cfg.cap_bytes * cfg.warn_pct
+                    over = used * _PCT >= cfg.cap_bytes * cfg.warn_pct
                     detail["trigger"] = "threshold" if over else "projection"
                 if top:
                     detail["dominant_symbol"], detail["dominant_symbol_bytes"] = top[0]
