@@ -9,13 +9,15 @@ that the app builds from a copy of the package with no repository around it.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
 import subprocess
 import sys
+import warnings
 from importlib.resources import files
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import pytest
@@ -26,6 +28,8 @@ from candleviewer.api.deny_by_default import declared_operations
 from candleviewer.api.rbac_conformance import find_undeclared_routes, spec_permission_codes
 
 _REGENERATE = "cd services/api && uv run python scripts/generate_protocol_models.py"
+#: Where `infra/images/Dockerfile.api` installs the package (`WORKDIR /app`).
+_IMAGE_PACKAGE = PurePosixPath("/app/candleviewer")
 
 
 @pytest.fixture(scope="module")
@@ -246,3 +250,45 @@ def test_create_app_builds_from_a_package_copy_without_a_checkout(
     )
     assert result.returncode == 0, result.stderr[-4000:]
     assert f"declared {len(declared_operations(spec))}" in result.stdout.splitlines()
+
+
+class _ImportTimeParents(ast.NodeVisitor):
+    """`….parents[N]` evaluated at import (module and class level), with N >= `depth`."""
+
+    def __init__(self, depth: int) -> None:
+        self.depth = depth
+        self.lines: list[int] = []
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        """A function body runs when called, not at import."""
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        """As `visit_FunctionDef`."""
+
+    def visit_Subscript(self, node: ast.Subscript) -> None:
+        index = node.slice
+        if (
+            isinstance(node.value, ast.Attribute)
+            and node.value.attr == "parents"
+            and isinstance(index, ast.Constant)
+            and isinstance(index.value, int)
+            and index.value >= self.depth
+        ):
+            self.lines.append(node.lineno)
+        self.generic_visit(node)
+
+
+def test_no_module_indexes_past_the_image_root_at_import() -> None:
+    """#2555: under `/app/candleviewer/` a module has only as many parents as its depth, so an
+    import-time `parents[N]` past that raises `IndexError` and the image cannot import the app.
+    `main` had two: `api/contract_conformance.py` and `ingestion/synthetic_feed.py`."""
+    package = Path(candleviewer.__file__).resolve().parent
+    offenders: list[str] = []
+    for module in sorted(package.rglob("*.py")):
+        relative = module.relative_to(package)
+        visitor = _ImportTimeParents(len((_IMAGE_PACKAGE / relative.as_posix()).parents))
+        with warnings.catch_warnings():  # an applied migration has an invalid escape (C-5.4)
+            warnings.simplefilter("ignore", SyntaxWarning)
+            visitor.visit(ast.parse(module.read_text(encoding="utf-8")))
+        offenders += [f"{relative}:{line}" for line in visitor.lines]
+    assert offenders == []
