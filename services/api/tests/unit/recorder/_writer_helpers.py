@@ -17,9 +17,11 @@ from candleviewer.exchange.base.models import (
     TradeEvent,
 )
 from candleviewer.observability.health_probes import SystemEvent
-from candleviewer.recorder.writer import StreamWriter, WriterConfig
+from candleviewer.recorder.writer import DiskGate, StreamWriter, WriterConfig
 
 T0 = 1_700_000_000_000_000
+#: E16-T07: the gate is required; tests that do not exercise it keep it open.
+OPEN_GATE = DiskGate(halted=lambda: False, position_open=lambda _symbol: True)
 
 
 class FakeClock:
@@ -121,6 +123,7 @@ async def make_writer(
         clock=clock,
         wall_clock_us=lambda: T0 + int(clock.t * 1e6),
         fsync=FsyncCounter(),
+        disk_gate=OPEN_GATE,
     )
     await w.open()
     w.seed(["BTCUSDT"])

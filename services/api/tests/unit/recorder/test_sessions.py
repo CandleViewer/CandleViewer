@@ -229,12 +229,13 @@ async def test_writer_buffered_gaps_flush_once_session_opens(tmp_path: Path) -> 
     """#2203 pending-gap path: the writer's backpressure gap waits for a live session, then
     lands on the session this module opened."""
     from candleviewer.recorder.writer import StreamWriter, WriterConfig
-    from tests.unit.recorder._writer_helpers import FakeEvents, FakeSink, FsyncCounter
+    from tests.unit.recorder._writer_helpers import OPEN_GATE, FakeEvents, FakeSink, FsyncCounter
 
     store = MemRecorderStore()
     w = StreamWriter(
         lambda _s: FakeSink(), store, FakeEvents(), WriterConfig(wal_dir=tmp_path / "wal"),
         clock=lambda: 0.0, wall_clock_us=lambda: T0, fsync=FsyncCounter(),
+        disk_gate=OPEN_GATE,
     )  # fmt: skip
     await w.open()
     w._gaps[("BTCUSDT", "trades")] = [T0, T0 + 1_000]  # a dropped window (see writer tests)

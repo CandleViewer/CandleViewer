@@ -3050,16 +3050,33 @@ authority stays with retention (E16-T06).
 - **Ladder.** `used` = recorded bytes / `CV_DISK_CAP_GB`, `free` = volume free / total. A level
   engages at its trigger and re-arms only past its release (5 points on the safe side):
 
-| Level        | Engages when                                      | Releases when                          | Effect                                                                             |
-| ------------ | ------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
-| 1 `WARN`     | used ≥ `CV_DISK_WARN_PCT` (80) or runway ≤ 7 d    | used < 75 % and runway > 8 d (or none) | WARNING `recorder.disk_budget_warning`: projected date and actions                 |
-| 2 `AUTOSTOP` | used ≥ `CV_DISK_AUTOSTOP_PCT` (90) or free < 15 % | used < 85 % and free ≥ 20 %            | new auto-record starts refused; `accelerate_retention` on                          |
-| 3 `HALT`     | used ≥ `CV_DISK_HALT_PCT` (95) or free < 5 %      | used < 90 % and free ≥ 10 %            | non-pinned auto-recorded paused, then all recording; CRITICAL `recorder.disk_halt` |
+| Level        | Engages when                                      | Releases when                          | Effect                                                                         |
+| ------------ | ------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------ |
+| 1 `WARN`     | used ≥ `CV_DISK_WARN_PCT` (80) or runway ≤ 7 d    | used < 75 % and runway > 8 d (or none) | WARNING `recorder.disk_budget_warning`: projected date and actions             |
+| 2 `AUTOSTOP` | used ≥ `CV_DISK_AUTOSTOP_PCT` (90) or free < 15 % | used < 85 % and free ≥ 20 %            | new auto-record starts refused; `accelerate_retention` on                      |
+| 3 `HALT`     | used ≥ `CV_DISK_HALT_PCT` (95) or free < 5 %      | used < 90 % and free ≥ 10 %            | write gate: no-position symbols dropped as gaps; CRITICAL `recorder.disk_halt` |
 
 `accelerate_retention` engages with level 2 and holds until used < 75 % and free > 25 %
 (`21-database-schema.md` §6). Events name actions as codes (`reduce_depth`, `shorten_retention`,
 `unpin`) and carry symbols and numbers only, never host paths; the level-3 event names the largest
-consumer and whether it is pinned. Order placement never reads the budget (SR-096).
+consumer and whether it is pinned. Order placement never reads the budget (SR-096). Free space
+(`statvfs`) is read first and alone drives the free-space path; the per-tier / per-symbol
+breakdown is best effort (own timeout and worker thread, last sizes kept), so a stalled QuestDB
+or a slow walk never freezes the ladder. A stale breakdown never commits a series point or
+refits; its age is `recorder_disk_budget_breakdown_age_seconds`.
+
+**Deviations (orchestrator decision on #491, 2026-10-13).**
+
+1. _Level 3 does not stop B11 sessions._ INV-B11-a (a symbol with an open position never stops
+   recording) outranks ADR-0015's "recording halts". `DiskBudget.halted` closes a
+   `StreamWriter` write gate instead: rows of symbols without an open position are dropped into
+   `backpressure_drop` gaps (counted, visible in coverage); open positions keep writing. New
+   chart-open recording is refused from level 2 (`RecorderCapRefused`, `cause="disk_pressure"`);
+   position and manual starts never are. The gate lifts with the level-3 release (used < 90 %,
+   free ≥ 10 %). Both hooks are required arguments; `RecordingPolicy.position_open` answers
+   True until `positions_reloaded()` (warm-up assumes a position), and a failing gate check
+   keeps writing. A gate window is sealed by the next row the gate admits for its (symbol,
+   stream), so no gap spans written data (C-2.14). A refused volume reports level 3.
 
 **`DiskPressureChanged`** (bus topic `{env}.recorder.disk_pressure`, consumed by `RecordingPolicy`
 E16-T02 and `RetentionManager` E16-T06) is published after the system event on every change of

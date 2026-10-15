@@ -15,6 +15,7 @@ from candleviewer.recorder.writer import STREAMS, Stream, StreamWriter, WriterCo
 from candleviewer.storage.questdb.ilp_writer import IlpWriter
 from candleviewer.storage.questdb.schemas import ALL_SCHEMAS
 from tests.unit.recorder._writer_helpers import (
+    OPEN_GATE,
     T0,
     FakeClock,
     FakeEvents,
@@ -62,6 +63,7 @@ async def test_stalled_lane_on_real_ilp_writer_does_not_block_trades(tmp_path: P
         clock=clock,
         wall_clock_us=lambda: T0,
         fsync=FsyncCounter(),
+        disk_gate=OPEN_GATE,
     )
     await w.open()
     w.seed(["BTCUSDT"])

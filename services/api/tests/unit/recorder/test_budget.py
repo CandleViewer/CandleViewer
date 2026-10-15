@@ -161,6 +161,14 @@ def test_projection_within_seven_days_warns_and_rearms_past_eight() -> None:
         assert ladder.level is want
 
 
-def test_config_rejects_unordered_thresholds() -> None:
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"warn_pct": 90, "autostop_pct": 90},
+        {"rearm_pct": 80},  # warn would never re-arm
+        {"autostop_free_pct": 96, "accelerate_until_free_pct": 97},  # 96 + 5 > 100
+    ],
+)
+def test_config_rejects_thresholds_that_cannot_engage_or_rearm(bad: dict[str, int]) -> None:
     with pytest.raises(ValueError, match="warn < autostop < halt"):
-        BudgetConfig(cap_bytes=1, warn_pct=90, autostop_pct=90)
+        BudgetConfig(cap_bytes=1, **bad)

@@ -12,7 +12,8 @@ timers, so a restart re-derives deadlines). The chart only records.
 
 Cap (`CV_RECORDER_MAX_SYMBOLS`): manual adds are rejected (422); an auto-start is
 refused with a `RecorderCapRefused` warning, a metric and a denied audit record, then
-retried every tick. A `position_open` start may pre-empt one evictable symbol.
+retried every tick. A `position_open` start may pre-empt one evictable symbol. Disk pressure
+(E16-T07) refuses a new chart-open start the same way (cause `disk_pressure`), nothing else.
 
 Pin semantics (`set_pin`, audited `retention.change`): a pinned symbol's data is never
 deleted by retention (E16-T06), and a pinned symbol is never a pre-emption victim and
@@ -69,6 +70,7 @@ _ACTIVE: Final = frozenset({"starting", "recording", "degraded", "lingering"})
 _SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{2,30}$")
 _SETTLE_YIELDS: Final = 64
 Change = Literal["added", "removed", "reason_changed"]
+RefusalCause = Literal["symbol_cap", "disk_pressure"]
 #: Backoff between `RETRY`s of a B11 machine in `error` (same shape as
 #: `ingestion.clock._STEP_RETRY_BACKOFF_S`); the last step repeats.
 _RETRY_BACKOFF_S: Final = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
@@ -204,9 +206,12 @@ class RecordingPolicy:
         audit: AuditSink,
         env: str,
         now: Callable[[], float],
+        disk_refuses: Callable[[], bool],
         config: PolicyConfig | None = None,
     ) -> None:
         self._bus, self._audit, self._env, self._now = bus, audit, env, now
+        #: E16-T07 `DiskBudget.refuses_auto_record`: a plain bool, read on each new start.
+        self._disk_refuses = disk_refuses
         self._cfg = config or PolicyConfig()
         self._syms: dict[str, _Sym] = {}
         self._charts: dict[str, _Interp] = {}
@@ -345,6 +350,12 @@ class RecordingPolicy:
     def _at_cap(self) -> bool:
         return len(self._active()) >= self._cfg.max_symbols
 
+    def position_open(self, symbol: str) -> bool:
+        """The `StreamWriter` gate's plain predicate (E16-T07): True until the warm-up gate
+        opens (the position cache may not be authoritative yet), then the positions set."""
+        s = self._syms.get(symbol)
+        return not self._positions_ready or (s is not None and bool(s.positions))
+
     def positions_reloaded(self) -> None:
         """Open the warm-up gate: the position cache now reflects the exchange."""
         self._positions_ready = True
@@ -424,7 +435,11 @@ class RecordingPolicy:
     async def _add(self, symbol: str, s: _Sym, reason: Reason) -> None:
         if self.leaf(symbol) == "error":
             return  # retried by `_retry_error`; the chart keeps its reasons
-        if symbol not in self._active() and reason != "manual" and self._at_cap():
+        new = symbol not in self._active()
+        if new and reason == "chart_open" and self._disk_refuses():
+            await self._refuse(symbol, s, reason, cause="disk_pressure")
+            return
+        if new and reason != "manual" and self._at_cap():
             if reason != "position_open" or not await self._preempt_for(symbol):
                 await self._refuse(symbol, s, reason)
                 return
@@ -439,23 +454,29 @@ class RecordingPolicy:
             s.refused.discard(reason)
             s.linger_deadline = None
 
-    async def _refuse(self, symbol: str, s: _Sym, reason: Reason) -> None:
-        """Cap refusal: warning event + metric + audit, once per (symbol, reason) until it
-        starts; `_due` keeps it queued so every tick retries it."""
+    async def _refuse(
+        self, symbol: str, s: _Sym, reason: Reason, cause: RefusalCause = "symbol_cap"
+    ) -> None:
+        """Cap or disk refusal: warning event + metric + audit, once per (symbol, reason) until
+        it starts; `_due` keeps it queued so every tick retries it."""
         if reason in s.refused:
             return
         s.refused.add(reason)
         recorder_cap_refused_total.labels(reason=reason).inc()
-        logger().warning("recorder_cap_refused", symbol=symbol, reason=reason, env=self._env)
+        logger().warning(
+            "recorder_cap_refused", symbol=symbol, reason=reason, cause=cause, env=self._env
+        )
         await self._audit_emit(
             "recorder.start",
             symbol,
             SYSTEM_ACTOR,
-            reason="cap_refused",
+            reason="cap_refused" if cause == "symbol_cap" else cause,
             extra={"trigger": reason},
             outcome="denied",
         )
-        ev = RecorderCapRefused(symbol=symbol, reason=reason, ts_event=int(self._now() * 1e6))
+        ev = RecorderCapRefused(
+            symbol=symbol, reason=reason, ts_event=int(self._now() * 1e6), cause=cause
+        )
         await self._bus.publish(self._refused_topic, ev)
 
     async def _preempt_for(self, symbol: str) -> bool:

@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
 from candleviewer.bus.models import Topic
-from candleviewer.recorder.budget import US_PER_S, BudgetConfig, DiskBudget, Measurement, Point
+from candleviewer.recorder.budget import US_PER_S, Breakdown, BudgetConfig, DiskBudget, Point
 from candleviewer.recorder.models import DiskPressureChanged, TierName
 
 GB = 10**9
@@ -22,13 +22,23 @@ class FakeMeter:
     free: int = TOTAL // 2
     symbols: dict[str, int] = field(default_factory=dict)
     fail: bool = False
+    breakdown_fail: bool = False
+    closed: bool = False
 
-    async def measure(self) -> Measurement:
+    async def volume(self) -> tuple[int, int]:
         if self.fail:
             raise OSError("statvfs failed")
+        return TOTAL, self.free
+
+    async def breakdown(self) -> Breakdown:
+        if self.breakdown_fail:
+            raise TimeoutError("questdb slow")
         half = self.used // 2
         tiers: dict[TierName, int] = {"questdb": half, "parquet": self.used - half, "postgres": GB}
-        return Measurement(TOTAL, self.free, tiers, dict(self.symbols))
+        return Breakdown(tiers, dict(self.symbols))
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 @dataclass

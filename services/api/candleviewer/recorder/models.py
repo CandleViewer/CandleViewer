@@ -67,13 +67,15 @@ class RecorderSetChanged(BaseModel):
 
 class RecorderCapRefused(BaseModel):
     """Warning event on `{env}.recorder.cap_refused`: a desired start was refused by
-    `CV_RECORDER_MAX_SYMBOLS`; it stays queued and is retried every tick."""
+    `CV_RECORDER_MAX_SYMBOLS` (`symbol_cap`) or by disk pressure (`disk_pressure`, E16-T07);
+    it stays queued and is retried every tick."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     symbol: str
     reason: Reason
     ts_event: int
+    cause: Literal["symbol_cap", "disk_pressure"] = "symbol_cap"
 
 
 class DiskPressureLevel(IntEnum):

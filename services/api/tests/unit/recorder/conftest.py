@@ -64,7 +64,9 @@ def audit() -> FakeAudit:
 async def policy(
     clock: FakeClock, bus: FakeBus, audit: FakeAudit
 ) -> AsyncIterator[RecordingPolicy]:
-    p = RecordingPolicy(bus=bus, audit=audit, env="demo", now=clock, config=PolicyConfig())
+    p = RecordingPolicy(
+        disk_refuses=bool, bus=bus, audit=audit, env="demo", now=clock, config=PolicyConfig()
+    )
     p.positions_reloaded()
     yield p
     await p.stop()
