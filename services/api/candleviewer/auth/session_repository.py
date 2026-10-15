@@ -50,6 +50,15 @@ class SessionRepository(Protocol):
         revoked (caller must not resurrect a dead session's idle clock)."""
         ...
 
+    async def lift_idle_lock(self, session_id: str, *, now: datetime) -> SessionRecord | None:
+        """The successful unlock of an idle-locked row (#2301, B16.7): in one
+        write, stamp `last_seen_at = now` and clear `step_up_elevations` (grace
+        windows, `once:` grants, `pending:` challenges), keeping
+        `step_up_failures` and `readonly_until`. A one-factor unlock never
+        inherits a two-factor elevation. Same `None` contract as
+        `touch_last_seen`."""
+        ...
+
     async def revoke(self, session_id: str, *, reason: str, now: datetime) -> SessionRecord | None:
         """Atomically set `revoked_at`/`revoked_reason` iff the row is not
         already revoked (idempotent — a session is never un-revoked, INV-

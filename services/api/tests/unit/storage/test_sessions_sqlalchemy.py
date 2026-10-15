@@ -135,3 +135,18 @@ async def test_save_step_up_state_is_conditional_and_round_trips_elevations() ->
     assert params["elevations"] == stored
     assert got["step_up_elevations"] == {"keys": until}
     assert got["step_up_failures"] == 1
+
+
+async def test_lift_idle_lock_restamps_and_clears_elevations_in_one_conditional_write() -> None:
+    """#2301 (B16.7): one UPDATE re-stamps `last_seen_at` and clears
+    `step_up_elevations`; `step_up_failures` and `readonly_until` are kept."""
+    repo, rel = _repo([_row(step_up_failures=2)])
+    got = await repo.lift_idle_lock("sid", now=_NOW)
+    ((sql, params),) = rel.session.calls
+    assignments = sql.split("WHERE", 1)[0]
+    assert "last_seen_at = :now" in assignments
+    assert "step_up_elevations = '{}'::jsonb" in assignments
+    assert "step_up_failures" not in assignments and "readonly_until" not in assignments
+    assert "revoked_at IS NULL" in sql and "RETURNING" in sql
+    assert params == {"id": "sid", "now": _NOW}
+    assert rel.commits == 1 and got["step_up_failures"] == 2

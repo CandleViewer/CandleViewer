@@ -60,6 +60,10 @@ _TOUCH_SQL = _sql(
     "UPDATE sessions SET last_seen_at = :now WHERE id = CAST(:id AS uuid) "
     "AND revoked_at IS NULL RETURNING @COLS@"
 )
+_LIFT_IDLE_LOCK_SQL = _sql(
+    "UPDATE sessions SET last_seen_at = :now, step_up_elevations = '{}'::jsonb "
+    "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING @COLS@"
+)
 _REVOKE_SQL = _sql(
     "UPDATE sessions SET revoked_at = :now, revoked_reason = :reason "
     "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING @COLS@"
@@ -180,6 +184,9 @@ class SqlAlchemySessionRepository:
 
     async def touch_last_seen(self, session_id: str, *, now: datetime) -> Any:
         return await self._one(_TOUCH_SQL, {"id": session_id, "now": now})
+
+    async def lift_idle_lock(self, session_id: str, *, now: datetime) -> Any:
+        return await self._one(_LIFT_IDLE_LOCK_SQL, {"id": session_id, "now": now})
 
     async def revoke(self, session_id: str, *, reason: str, now: datetime) -> Any:
         return await self._one(_REVOKE_SQL, {"id": session_id, "reason": reason, "now": now})
