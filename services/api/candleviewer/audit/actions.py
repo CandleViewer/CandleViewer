@@ -117,6 +117,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "flags.change",
         "settings.change",
         "hotkey.trading_binding_changed",
+        # E09-S06 (#2323): a client-supplied body on the self-scope checklist dismissal
+        # (`api/onboarding.py`). Unregistered, the real writer refused it (500, no row).
+        "onboarding.checklist_tamper_rejected",
         "backup.run",
         "backup.restore",
         "env.switch_live",
