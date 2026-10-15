@@ -9,13 +9,14 @@ E26-T02 adds the replay read path: the validated `ReplayRequest`, the in-stream 
 marker, the storage ports (`ReplayTiers`), the typed errors and `ReplaySource`, the ordered,
 bounded read the replay clock (E26-T03) and seek engine (E26-T04) consume.
 
-E26-T03 adds the playback ports the replay clock drives: `MonotonicTime` (production
-`LoopTime`), the `ReplaySink` it delivers to, the `PlaybackObserver` it reports gaps,
-backpressure and stops to, and its `ClockConfig`.
+E26-T03 adds `ReplayClock`, the paced playback of one session, and the playback ports it drives:
+`MonotonicTime` (production `LoopTime`), the `ReplaySink` it delivers to, the `PlaybackObserver`
+it reports gaps, backpressure and stops to, and `ClockConfig`.
 """
 
 from __future__ import annotations
 
+from candleviewer.replay.clock import ReplayClock
 from candleviewer.replay.errors import (
     ReplayClockStateError,
     ReplayError,
@@ -52,6 +53,7 @@ __all__ = [
     "PlaybackObserver",
     "PlaybackStats",
     "ReadAheadConfig",
+    "ReplayClock",
     "ReplayClockStateError",
     "ReplayError",
     "ReplayGap",
