@@ -1381,6 +1381,8 @@ def create_app(
                 tracked_users=resolved.audit_budget_tracked_users,
             ),
             verify_deadline_s=resolved.audit_verify_deadline_s,
+            # A chain break also raises a critical system event, as the recorder's job does.
+            verify_events=PgSystemEventWriter(health_pg) if health_pg is not None else None,
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))
