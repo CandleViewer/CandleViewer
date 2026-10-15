@@ -95,3 +95,52 @@ def test_full_text_document_is_the_index_expression() -> None:
         "coalesce(after_state::text, '') || ' ' || coalesce(object_label, ''))"
     )
     assert "'simple'" in _compile(q="x")[0]
+
+
+#: The select list of every view's page statement, then what the Owner's raw view adds.
+_PAGE_SELECT = [
+    "audit_log.id", "audit_log.event_ts", "audit_log.actor_user_id", "audit_log.actor_label",
+    "audit_log.action", "audit_log.object_kind", "audit_log.object_id", "audit_log.outcome",
+    "audit_log.severity", "audit_log.request_id", "audit_log.entry_hash", "audit_log.prev_hash",
+]  # fmt: skip
+_RAW_SELECT = [
+    "audit_log.actor_ip", "audit_log.session_id", "audit_log.object_label", "audit_log.reason",
+    "audit_log.env", "audit_log.before_state IS NULL AS before_state_is_null",
+    "audit_log.after_state IS NULL AS after_state_is_null",
+]  # fmt: skip
+_OWNER_ONLY = {
+    f"audit_log.{c}" for c in ("actor_ip", "session_id", "object_label", "reason", "env")
+}
+#: Every per-shape statement: unfiltered, each filter alone, all of them, a continuation,
+#: and a narrowed scope.
+_SHAPES: dict[str, dict[str, Any]] = {
+    "none": {},
+    **{name: {name: value} for name, (value, _, _) in _FILTERS.items()},
+    "all": {name: value for name, (value, _, _) in _FILTERS.items()},
+    "after": {"after": (_T0, 42)},
+    "scoped": {"restrict_to_actor": str(_ME)},
+}
+
+
+def _select_list(sql: str) -> list[str]:
+    head, _, _ = sql.partition(" FROM audit_log")
+    assert head.startswith("SELECT ")
+    return head.removeprefix("SELECT ").split(", ")
+
+
+@pytest.mark.parametrize("raw", [False, True], ids=["redacted", "raw"])
+@pytest.mark.parametrize("shape", sorted(_SHAPES))
+def test_no_shape_selects_a_state_and_only_raw_selects_owner_only_columns(
+    shape: str, raw: bool
+) -> None:
+    """The page select is bounded in SQL: no view fetches `before_state`/`after_state`
+    (only, for the Owner, whether each is null), and the Owner-only columns are fetched for
+    the raw view alone. The `q` document reads the states in the `WHERE` clause only."""
+    columns = _select_list(_compile(raw=raw, **_SHAPES[shape])[0])
+    states = [c for c in columns if "before_state" in c or "after_state" in c]
+    assert all(" IS NULL AS " in c for c in states)
+    if raw:
+        assert _OWNER_ONLY <= set(columns)
+    else:
+        assert _OWNER_ONLY.isdisjoint(columns) and states == []
+    assert columns == _PAGE_SELECT + (_RAW_SELECT if raw else [])

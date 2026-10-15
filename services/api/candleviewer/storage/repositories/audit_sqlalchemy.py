@@ -84,9 +84,10 @@ _ENTRY_HASH_SQL = sa.text("SELECT entry_hash FROM audit_log WHERE id = :id")
 #: casts `audit_chain()` uses, so the Python verifier encodes the same bytes
 #: the trigger hashed (see `_VERIFY_BATCH_SQL`).
 
-#: The `audit_log` columns the page query reads or filters on, typed so that every bound
-#: value carries its Postgres type. The enum columns are read as text: an enum type built
-#: without its values would refuse them on read, and the values are owned by the schema.
+#: The `audit_log` columns the page query reads, tests or filters on, typed so that every
+#: bound value carries its Postgres type. The enum columns are read as text: an enum type
+#: built without its values would refuse them on read, and the values are owned by the
+#: schema. Which of them a page selects is `_PAGE_COLUMNS` / `_RAW_COLUMNS`, never the table.
 _AUDIT = sa.table(
     "audit_log",
     sa.column("id", sa.BigInteger),
@@ -111,6 +112,36 @@ _AUDIT = sa.table(
 )
 _OUTCOME = ENUM(name="audit_outcome", create_type=False)
 _SEVERITY = ENUM(name="severity", create_type=False)
+
+#: What every view's page select reads: the Manager projection's allow-list
+#: (`OWN_REDACTED_FIELDS`), the paging key, and the two hashes the page chain check
+#: compares. No Owner-only column and no state.
+_PAGE_COLUMNS: tuple[sa.ColumnElement[Any], ...] = (
+    _AUDIT.c.id,
+    _AUDIT.c.event_ts,
+    _AUDIT.c.actor_user_id,
+    _AUDIT.c.actor_label,
+    _AUDIT.c.action,
+    _AUDIT.c.object_kind,
+    _AUDIT.c.object_id,
+    _AUDIT.c.outcome,
+    _AUDIT.c.severity,
+    _AUDIT.c.request_id,
+    _AUDIT.c.entry_hash,
+    _AUDIT.c.prev_hash,
+)
+#: Added for the Owner's raw view only. A state is never selected, only whether it is null:
+#: the Owner's `detail` comes from the capped chain renderings, so a state stays bounded by
+#: `CHAIN_FIELD_MAX_CHARS` / `CHAIN_PAGE_MAX_CHARS`, and one not fetched in full is withheld.
+_RAW_COLUMNS: tuple[sa.ColumnElement[Any], ...] = (
+    _AUDIT.c.actor_ip,
+    _AUDIT.c.session_id,
+    _AUDIT.c.object_label,
+    _AUDIT.c.reason,
+    _AUDIT.c.env,
+    _AUDIT.c.before_state.is_(None).label("before_state_is_null"),
+    _AUDIT.c.after_state.is_(None).label("after_state_is_null"),
+)
 
 #: The `q` document. The full-text index planned in ADR-0025 must use this exact expression
 #: (the planner matches the expression, and `'simple'` must stay a literal, not a parameter).
@@ -188,6 +219,7 @@ def _json_or_null(value: dict[str, Any] | None) -> str | None:
 def _page_statement(
     *,
     restrict_to_actor: str | None,
+    raw: bool,
     actor_user_id: str | None,
     actions: list[str] | None,
     subject_type: str | None,
@@ -205,7 +237,8 @@ def _page_statement(
     string-built SQL, Semgrep/Bandit B608), and no `IS NULL OR` placeholder, so every shape
     gets its own plan. Ordered `(event_ts DESC, id DESC)`, the order every audit index
     ends in; `after` resumes strictly after that position. A set `restrict_to_actor`
-    replaces `actor_user_id`, so a narrowed caller can never widen its rows."""
+    replaces `actor_user_id`, so a narrowed caller can never widen its rows. `raw` (the
+    Owner's raw view) adds the Owner-only columns; no view selects a state."""
     t = _AUDIT
     actor = restrict_to_actor if restrict_to_actor is not None else actor_user_id
     where: list[sa.ColumnElement[bool]] = []
@@ -234,7 +267,8 @@ def _page_statement(
         ts, last_id = after
         where += [t.c.event_ts <= ts, sa.or_(t.c.event_ts < ts, t.c.id < last_id)]
     order = (t.c.event_ts.desc(), t.c.id.desc())
-    return sa.select(t).where(*where).order_by(*order).limit(limit)
+    columns = _PAGE_COLUMNS + _RAW_COLUMNS if raw else _PAGE_COLUMNS
+    return sa.select(*columns).where(*where).order_by(*order).limit(limit)
 
 
 _CHAIN_KEYS = frozenset({"id", "chain_prev_hash"})
@@ -310,6 +344,7 @@ class SqlAlchemyAuditRepository:
         self,
         *,
         restrict_to_actor: str | None,
+        raw: bool,
         actor_user_id: str | None,
         actions: list[str] | None,
         subject_type: str | None,
@@ -327,6 +362,7 @@ class SqlAlchemyAuditRepository:
     ) -> list[dict[str, Any]]:
         statement = _page_statement(
             restrict_to_actor=restrict_to_actor,
+            raw=raw,
             actor_user_id=actor_user_id,
             actions=actions,
             subject_type=subject_type,

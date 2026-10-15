@@ -10,6 +10,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 GENESIS = "0" * 64
+#: A page row's columns, as `SqlAlchemyAuditRepository`'s page select returns them: every
+#: view's, then those only the Owner's raw view adds. No row ever carries a state.
+_PAGE_COLUMNS = (
+    "id", "event_ts", "actor_user_id", "actor_label", "action", "object_kind", "object_id",
+    "outcome", "severity", "request_id", "entry_hash", "prev_hash",
+)  # fmt: skip
+_RAW_COLUMNS = ("actor_ip", "session_id", "object_label", "reason", "env")
+_STATE_COLUMNS = ("before_state", "after_state")
 
 
 def _pg_ts(raw: str) -> str:
@@ -19,15 +27,6 @@ def _pg_ts(raw: str) -> str:
 
 def _ts(row: dict[str, Any]) -> datetime:
     return datetime.fromisoformat(row["event_ts"][:-3] + "+00:00")
-
-
-def _parsed(text: str | None) -> Any:
-    """JSONB read-back. Tests that tamper with the stored text out of band (to break the
-    chain) leave it unparseable; that is passed through as the text."""
-    try:
-        return None if text is None else json.loads(text)
-    except ValueError:
-        return text
 
 
 def _doc(row: dict[str, Any]) -> str:
@@ -102,7 +101,8 @@ class FakeAuditRepository:
     async def query_page(self, **kw: Any) -> list[dict[str, Any]]:
         """As `SqlAlchemyAuditRepository.query_page`: AND-ed filters, newest first by
         `(event_ts, id)`, `after` exclusive, `to_ts` exclusive, a set `restrict_to_actor`
-        replacing `actor_user_id`, and `q` as every term in the document."""
+        replacing `actor_user_id`, `q` as every term in the document, and each row with
+        the columns of its view (`raw`)."""
         self.page_calls.append(kw)
         restrict = kw["restrict_to_actor"]
         exact = {
@@ -127,21 +127,29 @@ class FakeAuditRepository:
             out = [r for r in out if all(t.lower() in _doc(r) for t in kw["q"].split())]
         if kw["after"] is not None:
             out = [r for r in out if (_ts(r), r["id"]) < kw["after"]]
-        # As the real repository: the state columns come back parsed (JSONB), not as text.
-        return [
-            {
-                **r,
-                "event_ts": _ts(r),
-                "before_state": _parsed(r["before_state"]),
-                "after_state": _parsed(r["after_state"]),
-                "chain": self._chain(r),
-            }
-            for r in out[: kw["limit"]]
-        ]
+        return [self._page_row(r, raw=kw["raw"]) for r in out[: kw["limit"]]]
+
+    def _page_row(self, row: dict[str, Any], *, raw: bool) -> dict[str, Any]:
+        """The selected columns only: an Owner-only column a non-raw read touched would be a
+        `KeyError`. A state never comes back, only (raw) whether it is null."""
+        out = {name: row[name] for name in _PAGE_COLUMNS}
+        out["event_ts"] = _ts(row)
+        if raw:
+            out |= {name: row[name] for name in _RAW_COLUMNS}
+            out |= {f"{name}_is_null": row[name] is None for name in _STATE_COLUMNS}
+        out["chain"] = self._chain(row)
+        return out
 
     def _chain(self, row: dict[str, Any]) -> dict[str, Any] | None:
         """The stored renderings and the chain predecessor's hash; `None` for an id in
-        `over_cap` (a rendering over the repository's caps)."""
+        `over_cap` (a rendering over the repository's caps). Strict like a jsonb column:
+        state text that is not JSON (a test tampering with it) is refused, never passed on."""
+        for name in _STATE_COLUMNS:
+            if row[name] is not None:
+                try:
+                    json.loads(row[name])
+                except ValueError as exc:
+                    raise ValueError(f"{name} of id {row['id']} is not jsonb text") from exc
         if row["id"] in self.over_cap:
             return None
         earlier = [r for r in self.rows if r["id"] < row["id"]]
