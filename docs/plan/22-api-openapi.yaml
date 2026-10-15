@@ -7960,26 +7960,39 @@ paths:
         **Challenges (#2304).** Every `403 step_up_required` is a challenge for the one request it
         refused. Its problem body carries `challenge_id`, `challenge_expires_at` (5 minutes after
         issue), `action_class`, `action_summary` and `target` (see `Problem`). The server composes
-        `action_summary` from the validated request, so it names what would execute; the client
-        shows it verbatim and never composes its own. A session has at most one live challenge. A
-        newer `403 step_up_required` supersedes it, and it also ends when a step-up uses it, at
-        `challenge_expires_at`, when the session turns read-only and when it idle-locks (#2300).
-        This operation elevates against the live challenge: `challenge_id`, when sent, must name
-        it, and `action_class` alone never elevates a no-grace class (without a live challenge
-        the answer is `400`). Audit: `auth.step_up_required` records the `challenge_id`;
-        `auth.step_up_granted` records it too, plus the bound request's SHA-256 fingerprint for a
-        no-grace class; `auth.step_up_mismatch` records the bound and the refused request's
-        fingerprints. No audit record carries a request body, the password or the code.
+        `action_summary` from the validated request with a fixed per-route template, so it names
+        what would execute. Request values appear in it only as validated enum values or as
+        identifiers and server-resolved labels, never as free text such as a `reason` and never as
+        credential material; the client shows it verbatim and never composes its own. A session
+        has at most one live challenge. A newer `403 step_up_required` supersedes it, and it also
+        ends when a step-up uses it, at `challenge_expires_at`, when the session turns read-only
+        and when it idle-locks (#2301). This operation elevates against the live challenge:
+        `challenge_id`, when sent, must name it. A step-up for a no-grace class (named by the live
+        challenge or by `action_class`) must send it: without it, or without a live challenge,
+        the answer is `400`, so `action_class` alone never elevates a no-grace class. Audit:
+        `auth.step_up_required` records the `challenge_id`; `auth.step_up_granted` records it
+        too, plus the bound request's SHA-256 fingerprint for a no-grace class;
+        `auth.step_up_mismatch` records the bound and the refused request's fingerprints. No
+        audit record carries `action_summary`, `target`, a request body, the password or the
+        code.
 
         **Binding (no-grace classes).** For `live_enablement` and `killswitch` the one-shot grant
         is bound to the challenged request: its method, its path including any query string, and
-        its canonical JSON body (member order and insignificant whitespace are ignored; every
-        value counts). Headers, `Idempotency-Key` included, are not part of the binding. Only that
-        identical request can use the grant. Any other request of the class is refused with
-        `403 step_up_required`, which is a new challenge for that request, and audited as
-        `auth.step_up_mismatch`. The refusal does not use up the grant: it stays bound to the
-        challenged request until that request uses it or it expires, 5 minutes after the
-        step-up. Grace classes keep the unbound 5-minute window described below.
+        its canonical JSON body. The fingerprint is the hex SHA-256 of the method, a line feed,
+        the raw request target (path and query string exactly as received, with no
+        percent-decoding and no trailing-slash or parameter-order normalisation), a line feed,
+        and the RFC 8785 (JCS) serialisation of the body as the operation validated it (empty
+        when the operation takes no body). The server parses and validates the body once, and
+        `action_summary`, the fingerprint and the executed action all come from that one object,
+        so number forms, string escapes and duplicate member names cannot make them disagree; no
+        Unicode normalisation is applied. Headers, `Idempotency-Key` included, are not part of
+        the binding. Only that identical request can use the grant. Any other request of the
+        class is refused with `403 step_up_required`, which is a new challenge for that request,
+        and audited as `auth.step_up_mismatch`. The refusal does not use up the grant: it stays
+        bound to the challenged request until that request uses it, a newer step-up for the
+        class replaces it, or it expires 5 minutes after the step-up. A session holds at most
+        one grant per no-grace class. Grace classes keep the unbound 5-minute window described
+        below.
 
         **Holding the refused request.** The client keeps the refused request unchanged (method,
         path, body and `Idempotency-Key`) and re-sends it as is after a successful step-up. The
@@ -7994,7 +8007,8 @@ paths:
         `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the
         session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints
         that require elevation return `403` with `code: step_up_required` until this
-        succeeds. Always audited (`auth.step_up_granted`, `auth.step_up_failed`,
+        succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`,
+        `auth.step_up_failed`, `auth.step_up_mismatch`,
         `auth.session_readonly_downgrade`).
       x-rbac: { permissions: [], scope: self }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -8012,14 +8026,17 @@ paths:
                 challenge_id:
                   description: >
                     The `challenge_id` of the `403 step_up_required` being answered (#2304).
-                    Optional: without it the server uses the session's live challenge. A value
+                    Required for a no-grace class (`live_enablement` or `killswitch`, named by
+                    the live challenge or by `action_class`): omitting it is
+                    `400 validation_failed` with
+                    `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a
+                    grace class: without it the server uses the session's live challenge. A value
                     that does not name the live challenge (expired, superseded, already used or
-                    unknown) gets `400 validation_failed` with
-                    `errors: [{field: challenge_id, rule: challenge_expired}]`. So does a request
-                    with no live challenge to answer, unless its `action_class` is a grace class.
-                    That `400` is decided before the password and code are checked: no factor is
-                    verified, no failure is counted and nothing is elevated. The client then
-                    drops the held request without sending it.
+                    unknown), or that is sent when there is none, gets `400 validation_failed`
+                    with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400`
+                    is decided before the password and code are checked: no factor is verified,
+                    no failure is counted and nothing is elevated. The client then drops the held
+                    request without sending it.
                   type: string
                   format: uuid
                 action_class:
@@ -10085,9 +10102,10 @@ components:
           type: string
           format: uuid
           description: >
-            `step_up_required` only: the challenge this refusal issued (#2304). One challenge is
-            live per session; a newer refusal supersedes it. Send it as `challenge_id` to
-            `POST /auth/step-up`.
+            `step_up_required` only: the challenge this refusal issued (#2304), a random UUIDv4
+            scoped to the issuing session, so a value from another session is unknown. One
+            challenge is live per session; a newer refusal supersedes it. Send it as
+            `challenge_id` to `POST /auth/step-up`; a step-up for a no-grace class must send it.
         challenge_expires_at:
           type: string
           format: date-time
@@ -10099,13 +10117,19 @@ components:
           description: >
             `step_up_required` only: server-composed text naming exactly what the refused request
             would execute, built from the validated request (for example "Release kill switch,
-            scope global"). The step-up dialog shows it verbatim as its accessible description;
-            a client never composes its own.
+            scope global"). It comes from a fixed per-route template. Request values appear in it
+            only as validated enum values (bare) or as identifiers and server-resolved labels
+            (quoted, each bounded by its own schema's `maxLength` or `format`), never as free
+            text such as a `reason`, and never as key material, a password, a token, a TOTP or
+            recovery code or any field the redaction deny-list names (C-12.6). The step-up dialog
+            shows it verbatim as its accessible description; a client never composes its own.
         target:
           type: ["string", "null"]
           description: >
             `step_up_required` only: the exact, case-sensitive text a typed confirmation must
-            equal when the action asks for one (for example the account name), else null.
+            equal when the action asks for one (for example the account name), else null. Like
+            `action_summary`, it is an identifier or a server-resolved label of the validated
+            request, never free text or credential material.
     PageMeta:
       type: object
       required: [has_more, count]

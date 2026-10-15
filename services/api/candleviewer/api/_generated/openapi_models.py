@@ -119,7 +119,7 @@ class Problem(BaseModel):
     challenge_id: Annotated[
         UUID | None,
         Field(
-            description="`step_up_required` only: the challenge this refusal issued (#2304). One challenge is live per session; a newer refusal supersedes it. Send it as `challenge_id` to `POST /auth/step-up`.\n"
+            description="`step_up_required` only: the challenge this refusal issued (#2304), a random UUIDv4 scoped to the issuing session, so a value from another session is unknown. One challenge is live per session; a newer refusal supersedes it. Send it as `challenge_id` to `POST /auth/step-up`; a step-up for a no-grace class must send it.\n"
         ),
     ] = None
     challenge_expires_at: Annotated[
@@ -131,13 +131,13 @@ class Problem(BaseModel):
     action_summary: Annotated[
         str | None,
         Field(
-            description='`step_up_required` only: server-composed text naming exactly what the refused request would execute, built from the validated request (for example "Release kill switch, scope global"). The step-up dialog shows it verbatim as its accessible description; a client never composes its own.\n'
+            description='`step_up_required` only: server-composed text naming exactly what the refused request would execute, built from the validated request (for example "Release kill switch, scope global"). It comes from a fixed per-route template. Request values appear in it only as validated enum values (bare) or as identifiers and server-resolved labels (quoted, each bounded by its own schema\'s `maxLength` or `format`), never as free text such as a `reason`, and never as key material, a password, a token, a TOTP or recovery code or any field the redaction deny-list names (C-12.6). The step-up dialog shows it verbatim as its accessible description; a client never composes its own.\n'
         ),
     ] = None
     target: Annotated[
         str | None,
         Field(
-            description="`step_up_required` only: the exact, case-sensitive text a typed confirmation must equal when the action asks for one (for example the account name), else null.\n"
+            description="`step_up_required` only: the exact, case-sensitive text a typed confirmation must equal when the action asks for one (for example the account name), else null. Like `action_summary`, it is an identifier or a server-resolved label of the validated request, never free text or credential material.\n"
         ),
     ] = None
 
