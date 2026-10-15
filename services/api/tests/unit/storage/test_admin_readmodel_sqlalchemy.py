@@ -23,11 +23,15 @@ NOW = datetime(2026, 10, 15, 18, 0, tzinfo=UTC)
 class _Rel:
     def __init__(self, row: dict[str, Any]) -> None:
         self.row = row
-        self.calls: list[dict[str, Any]] = []
+        self.calls: list[dict[str, Any] | None] = []
+        self.timeouts = 0
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
-        async def execute(stmt: Any, params: dict[str, Any]) -> Any:
+        async def execute(stmt: Any, params: dict[str, Any] | None = None) -> Any:
+            if stmt is repo._TIMEOUT:
+                self.timeouts += 1
+                return None
             self.calls.append(params)
             return SimpleNamespace(mappings=lambda: SimpleNamespace(first=lambda: self.row))
 
@@ -35,7 +39,7 @@ class _Rel:
 
 
 def _counts(rel: _Rel) -> SqlAlchemyAdminCounts:
-    return SqlAlchemyAdminCounts(rel)  # type: ignore[arg-type]  # structural fake
+    return SqlAlchemyAdminCounts(rel, env="live")  # type: ignore[arg-type]  # structural fake
 
 
 async def test_user_totals_map_the_aggregate_row() -> None:
@@ -43,15 +47,21 @@ async def test_user_totals_map_the_aggregate_row() -> None:
     assert await _counts(rel).user_totals() == UserTotals(total=4, active=3, without_mfa=2)
 
 
-async def test_account_totals_bind_the_expiry_horizon() -> None:
+async def test_account_totals_bind_the_horizon_and_the_process_environment() -> None:
     rel = _Rel({"total": 6, "enabled": 5, "keys_expiring": 1, "keys_invalid": 1})
     assert await _counts(rel).account_totals(NOW) == AccountTotals(6, 5, 1, 1)
-    assert rel.calls == [{"expiring_before": NOW}]
+    assert rel.calls == [{"expiring_before": NOW, "env": "live"}]
+    assert rel.timeouts == 1  # every read caps server work first
 
 
-async def test_incidents_and_subaccounts_are_single_counts() -> None:
+async def test_subaccounts_bind_the_process_environment() -> None:
+    rel = _Rel({"used": 3})
+    assert await _counts(rel).subaccounts_in_use() == 3
+    assert rel.calls == [{"env": "live"}]
+
+
+async def test_open_incidents_is_a_single_count() -> None:
     assert await _counts(_Rel({"open": 2})).open_incidents() == 2
-    assert await _counts(_Rel({"used": 3})).subaccounts_in_use() == 3
 
 
 def test_every_statement_is_aggregate_only_and_reads_no_secret_column() -> None:
