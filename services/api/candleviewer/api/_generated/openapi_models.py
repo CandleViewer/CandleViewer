@@ -275,6 +275,15 @@ class ChangePasswordRequest(BaseModel):
     new_password: Annotated[SecretStr, Field(max_length=512, min_length=12)]
 
 
+class Argon2Params(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    m: Annotated[int, Field(description="Memory cost in KiB (65536 = 64 MiB).", ge=1)]
+    t: Annotated[int, Field(description="Time cost (passes over memory).", ge=1)]
+    p: Annotated[int, Field(description="Parallelism (lanes).", ge=1)]
+
+
 class UserSession(BaseModel):
     id: UUID | None = None
     device_name: str | None = None
