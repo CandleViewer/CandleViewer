@@ -185,6 +185,7 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["cv_accounts_rows"].labels("main").set(1)
     r["cv_api_keys_rows"].labels("active").set(1)
     r["cv_audit_verify_runs_total"].labels("ok").inc()
+    r["cv_http_request_duration_seconds"].labels("/v1/x", "GET", "2xx").observe(0.01)
     text = generate_latest(m.registry).decode()
     families = {f.name: f for f in text_string_to_metric_families(text)}
     for spec in registered_specs():

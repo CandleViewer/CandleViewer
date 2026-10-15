@@ -130,6 +130,8 @@ FE_SCREEN_MAX_SERIES: Final = 8
 #: Frontend pushed histograms (client pre-buckets on the same edges).
 FE_FRAME_BUCKETS: Final = (4.0, 8.0, 12.0, 16.0, 20.0, 33.0, 50.0, 100.0)
 FE_DECODE_BUCKETS: Final = (0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 5.0, 10.0)
+#: HTTP request duration: edges on the 150 ms read / 300 ms write p95 budgets (#2421).
+HTTP_DURATION_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.15, 0.25, 0.3, 0.5, 1.0, 2.5, 5.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2199,6 +2201,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E04",
         max_series=FE_SCREEN_MAX_SERIES,
+    ),
+    _s(
+        "cv_http_request_duration_seconds",
+        "histogram",
+        "seconds",
+        ("route", "method", "status_class"),
+        "HTTP request duration by route template, method and status class (refusals included).",
+        "read p95 > 0.15s / write p95 > 0.3s (06-performance budget #13)",
+        _L,
+        "E04",
+        buckets=HTTP_DURATION_BUCKETS,
+        max_series=1000,
     ),
 )
 

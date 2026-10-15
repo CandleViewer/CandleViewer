@@ -75,6 +75,7 @@
 ["cv_drawings_rows", "gauge", ["tool"], "planned", "E14"]
 ["cv_feature_flag_evaluations_total", "counter", ["flag"], "live", "E42"]
 ["cv_feature_flag_unreadable_overrides_total", "counter", ["flag"], "live", "E42"]
+["cv_http_request_duration_seconds", "histogram", ["route", "method", "status_class"], "live", "E04"]
 ["cv_kek_degraded_state", "gauge", [], "live", "E27"]
 ["cv_kek_load_failures_total", "counter", ["reason"], "live", "E27"]
 ["cv_kek_load_seconds", "histogram", [], "live", "E27"]
