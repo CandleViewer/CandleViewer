@@ -18,6 +18,11 @@ Deviations from the composition root (keep in sync with SCENARIOS.md):
 * s08's signed client wires `on_signature_failure=ClockGuard.resync_after_signature_failure`
   although production has no signed-client composition yet (#1949 / #1911): s08 proves
   client + guard, not the app.
+* Intended, not deployed, composition: `create_app()` does not call `wire_instrument_catalogue`
+  yet (#2561), so a deployed `_is_listed`, `_tick_size` and `_launch_us` see no catalogue and
+  no topic can be acquired; the rig attaches the catalogue as that function would.
+* Not composed: the E04-T06 stage-latency recorder (`create_app` -> `attach_latency`), so the
+  WS reader never takes its 1-in-N sampled `_record_sampled` branch.
 """
 
 from __future__ import annotations
