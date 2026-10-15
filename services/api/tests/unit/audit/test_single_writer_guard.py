@@ -10,8 +10,10 @@ of id order, and `verify` would then report a break that is not one. So no code 
 The scan reads the parsed code (`ast`), not raw text: string constants arrive with adjacent
 literals merged and escapes decoded, and SQL comments are dropped before matching. It flags
 a statement that writes to `audit_log` (`INSERT INTO`, `COPY`, `MERGE INTO`; quoted or
-schema-qualified names), an asyncpg bulk copy into it, a Core `insert()` on it, and a table
-or ORM object naming it outside the two files that define one for reading.
+schema-qualified names), an asyncpg bulk copy into it, a Core `insert()` on it (aliases such
+as `pg_insert` too; positional or keyword table arguments), and a table or ORM object naming
+it, an import of the schema's `audit_log` or a `.tables["audit_log"]` lookup, outside the
+two files that define one for reading.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ _NAME = r'(?:"?\w+"?\s*\.\s*)?"?audit_log"?(?![\w"])'
 _WRITE = re.compile(rf"\b(?:INSERT\s+INTO|COPY|MERGE\s+INTO)\s+{_NAME}", re.IGNORECASE)
 _COMMENT = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
 _COPIES = frozenset({"copy_records_to_table", "copy_to_table"})
+_TABLE_KEYWORDS = frozenset({"table_name", "name", "table"})
 
 
 def _name(node: ast.AST) -> str:
@@ -62,17 +65,25 @@ def _findings(source: str) -> list[str]:
         if text is not None and _WRITE.search(_COMMENT.sub(" ", text)):
             found.append("statement")
         if isinstance(node, ast.Call):
-            func, first = _name(node.func), node.args[0] if node.args else None
+            named = {k.arg: k.value for k in node.keywords if k.arg in _TABLE_KEYWORDS}
+            first = node.args[0] if node.args else next(iter(named.values()), None)
+            func = _name(node.func)
             receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
             if func in _COPIES and _audit_log(first):
                 found.append("copy")
-            elif func == "insert" and (_audit_log(first) or _audit_log(receiver)):
-                found.append("insert")
+            elif func.endswith("insert") and (_audit_log(first) or _audit_log(receiver)):
+                found.append("insert")  # `insert`, and aliases such as `pg_insert`
             elif func in ("Table", "table") and _audit_log(first):
                 found.append("table")
         elif isinstance(node, ast.Assign) and _audit_log(node.value):
             if any(_name(target) == "__tablename__" for target in node.targets):
                 found.append("table")
+        elif isinstance(node, ast.Subscript) and _name(node.value) == "tables":
+            if _audit_log(node.slice):  # `metadata.tables["audit_log"]`
+                found.append("table")
+        elif isinstance(node, ast.ImportFrom):
+            if any(alias.name == "audit_log" for alias in node.names):
+                found.append("table")  # the schema's Table object, imported to use
     return found
 
 
@@ -94,6 +105,10 @@ def _findings(source: str) -> list[str]:
         ('stmt = sa.table("audit_log", sa.column("x")).insert()', "table"),
         ('t = Table("audit_log", metadata)', "table"),
         ('class A(Base):\n    __tablename__ = "audit_log"', "table"),
+        ("stmt = pg_insert(audit_log).values(record_id=r)", "insert"),
+        ('await conn.copy_records_to_table(table_name="audit_log", records=rows)', "copy"),
+        ('t = metadata.tables["audit_log"]', "table"),
+        ("from candleviewer.db.models import audit_log", "table"),
     ],
 )
 def test_the_guard_finds_every_form(snippet: str, finding: str) -> None:

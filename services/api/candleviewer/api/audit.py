@@ -212,12 +212,16 @@ _VERIFY_BODY_MAX_BYTES = 1024
 
 
 async def _read_capped(request: Request, limit: int) -> bytes | None:
-    """The request body, or `None` as soon as it passes `limit` bytes."""
+    """The request body, or `None` once it would pass `limit` bytes: a declared
+    `Content-Length` over it is refused unread, and no chunk past it is kept."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limit:
+        return None
     body = bytearray()
     async for chunk in request.stream():
-        body += chunk
-        if len(body) > limit:
+        if len(body) + len(chunk) > limit:
             return None
+        body += chunk
     return bytes(body)
 
 
