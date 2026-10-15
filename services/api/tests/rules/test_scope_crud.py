@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.rules_crud import make_rules_crud_router
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RulesManager
+from candleviewer.rules.scope_state import ARM_LIVE
 from candleviewer.rules.service import RulesService
 from candleviewer.rules.vocabulary import default_registry
 from tests.rules.test_rules_routes import BASE, _ir
@@ -82,10 +83,13 @@ async def _no_grants(_o: uuid.UUID) -> list[tuple[uuid.UUID, bool, bool]]:
 
 def test_active_version_scope_precheck_still_refuses_on_a_visible_rule() -> None:
     """#2574: visibility now runs first, but a rule the caller CAN see still gets the scope
-    pre-check on the target version: a live-scoped version without `rules.arm_live` is an
-    audited 403 and the active version does not move."""
+    pre-check on the target version: a live-scoped version without the arm-live permission is
+    an audited 403 and the active version does not move."""
     c, audits, src, _m = _setup()
-    src.perms = frozenset({"rules:read", "rules.arm_live"})
+    # The scope gate's own constant, not a literal: it is still the dot form while the DB seed
+    # (migration 0015) is `rules:arm_live`. That mismatch is a separate defect; this test
+    # follows its fix without an edit.
+    src.perms = frozenset({"rules:read", ARM_LIVE})
     rid = c.post("/rules", json={"ir": _scoped(A, environments=["demo", "live"])}).json()["id"]
     demo_only = {"ir": _ir("7", scope={"level": "account", "account_ids": [str(A)]})}
     assert c.put(f"/rules/{rid}", json=demo_only, headers={"If-Match": "1"}).status_code == 200
