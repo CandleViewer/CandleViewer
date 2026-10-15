@@ -48,6 +48,40 @@ info:
     use. Login is two-legged when MFA is enabled: `POST /auth/login` returns an `mfa_required`
     challenge, `POST /auth/mfa/verify` exchanges it for tokens.
 
+    ### Enrolment-only session (#2295, #2344)
+    TOTP is mandatory for every user (C-12.2, SR-020). A user who has `mfa_required` set and no
+    confirmed MFA method (`user.mfa_enabled` false) must enrol one before doing anything else, so
+    every session of that user is **enrolment-only**. The restriction is derived from the user's
+    state on every request; the session carries no flag. It holds for a user who has never
+    enrolled and for one left without a confirmed method by an owner TOTP reset (which also sets
+    `mfa_required`) or by any recovery sign-in. It ends when `POST /auth/mfa/enroll/confirm`
+    succeeds.
+
+    * **Minting.** For such a user, `POST /auth/login` with the right password answers
+      `200 AuthenticatedResponse` with the `cv_refresh` and `__Host-cv_csrf` cookies instead of an
+      MFA challenge, and the session is enrolment-only. `POST /auth/mfa/recovery` puts the user in
+      this state and answers the same way. The client sees `user.mfa_required` true and
+      `user.mfa_enabled` false and opens TOTP enrolment (R-006 `/login/2fa/enroll`, SCR-003),
+      which has no skip.
+    * **Allowed operations.** Only `POST /auth/mfa/enroll`, `POST /auth/mfa/enroll/confirm`,
+      `GET /auth/session`, `POST /auth/refresh` and `POST /auth/logout`. Every other operation
+      that needs a session answers `403 mfa_enrollment_required` and changes nothing. The
+      WebSocket refuses the session at `auth` (`23-ws-protocol.md` section 4.3).
+    * **Lifetime.** A session minted enrolment-only lives at most 15 minutes from sign-in.
+      `POST /auth/refresh` rotates it as usual, but the successor keeps the same absolute expiry,
+      so refresh never extends it; `refresh_expires_in` and the cookies' `Max-Age` count down to
+      that expiry. After it the user signs in again.
+    * **Completion.** `POST /auth/mfa/enroll/confirm` activates the new TOTP method, revokes every
+      other TOTP method of the user and replaces the user's recovery codes with 10 new ones, as one
+      step: the old method and codes stop working at the instant the new ones start. It then
+      rotates the session (SR-013): the enrolment-only session is revoked, so its access and
+      refresh tokens stop working at once, and a full session with new tokens and cookies
+      replaces it.
+    * **Users without `mfa_required`.** Production has none: C-12.2 makes TOTP mandatory for
+      every user. The state is outside v1: `POST /auth/login` keeps answering `501` to such a user
+      without a confirmed method, and `POST /auth/mfa/recovery` answers `501` to such a user and
+      consumes nothing.
+
     ### CSRF (SR-041, double-submit cookie)
     Every state-changing operation (`POST`/`PUT`/`PATCH`/`DELETE`) requires an `X-CSRF-Token`
     header (`components.parameters.CsrfToken`), regardless of the auth scheme. There is **no
@@ -71,7 +105,8 @@ info:
       presented `cv_refresh`). Header/cookie equality alone is never sufficient. Every
       comparison is constant time.
     * **Issue, rotate and re-issue.** `POST /auth/login` (when `status=authenticated`),
-      `POST /auth/mfa/verify` and `POST /auth/mfa/recovery` issue a token for the new session.
+      `POST /auth/mfa/verify`, `POST /auth/mfa/recovery` and `POST /auth/mfa/enroll/confirm`
+      (which rotates the session) issue a token for the new session.
       `POST /auth/refresh` validates the presented token against the session bound to
       `cv_refresh`, then rotates both cookies. A successful `POST /auth/step-up` rotates the
       session (SR-013) and both cookies with it. `GET /auth/session` re-issues the cookie for
@@ -311,6 +346,10 @@ x-error-codes:
   - code: session_read_only
     status: 403
     title: Session is read-only for 5 minutes after three invalid step-up codes
+    retryable: false
+  - code: mfa_enrollment_required
+    status: 403
+    title: Session is enrolment-only; enrol and confirm a TOTP method first
     retryable: false
   - code: positions_unknown
     status: 409
@@ -745,10 +784,17 @@ paths:
       operationId: authLogin
       summary: Authenticate with username/email + password
       description: |
-        Step 1 of login. If the user has an enrolled MFA method (`totp` or `webauthn`) the
-        response is `200` with `status: "mfa_required` and a short-lived (`5 min`) `mfa_token`;"
-        no session is created yet. Otherwise a full `TokenBundle` is returned and the
-        `cv_refresh` cookie is set.
+        Step 1 of login. If the user has a confirmed MFA method (`totp` or `webauthn`) the
+        response is `200` with `status: mfa_required` and a short-lived (`5 min`) `mfa_token`;
+        no session is created yet.
+
+        If the user has `mfa_required` set and no confirmed MFA method (never enrolled, or after
+        an owner TOTP reset or a recovery sign-in), the response is `200` with
+        `status: authenticated` and the `cv_refresh` and `__Host-cv_csrf` cookies are set, but
+        the session is **enrolment-only** (see "Enrolment-only session" above): it may only enrol
+        and confirm a TOTP method, and it lives at most 15 minutes. A user with `mfa_required`
+        false and no confirmed method keeps getting `501`; C-12.2 makes TOTP mandatory for every
+        user, so production never has one.
 
         Failures are deliberately uniform (`unauthenticated`) whether the user is unknown,
         the password is wrong, or the account is disabled — no user enumeration.
@@ -805,6 +851,25 @@ paths:
                     mfa_token: "<opaque mfa token — example placeholder>"
                     methods: [totp, recovery_code]
                     expires_in: 300
+                enrolmentOnly:
+                  summary: No confirmed MFA method; the session is enrolment-only (15 min)
+                  value:
+                    status: authenticated
+                    tokens:
+                      access_token: "<JWT — example placeholder>"
+                      token_type: Bearer
+                      expires_in: 600
+                      refresh_expires_in: 900
+                    user:
+                      {
+                        id: "11111111-2222-3333-4444-555555555555",
+                        username: "viewer.alice",
+                        email: "alice@example.com",
+                        roles: [viewer],
+                        status: active,
+                        mfa_enabled: false,
+                        mfa_required: true,
+                      }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "503":
@@ -883,8 +948,14 @@ paths:
       summary: Begin enrolment of a new MFA method for the current user
       description: |
         Returns a TOTP provisioning URI + QR payload, or a WebAuthn creation challenge.
-        The method stays `pending` until confirmed via `POST /auth/mfa/enroll/confirm`.
-      x-rbac: { permissions: [settings:write], scope: self }
+        The method stays `pending` until confirmed via `POST /auth/mfa/enroll/confirm`, which
+        is also where the recovery codes are issued; this response never carries them.
+
+        Every role may enrol its own method: no permission is needed, and the route takes no
+        target user (SR-026). An enrolment-only session may call it (see "Enrolment-only
+        session"). If the caller's user already has a confirmed MFA method the answer is
+        `409 conflict` and nothing changes: voluntary re-enrolment is not specified yet.
+      x-rbac: { permissions: [], scope: self }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
@@ -904,19 +975,37 @@ paths:
                     method_id: "5c3f9a10-6d21-4f0a-9a2f-70a1b2c3d4e5"
                     method: totp
                     otpauth_uri: "otpauth://totp/CandleViewer:basiltt?secret=JBSWY3DPEHPK3PXP&issuer=CandleViewer&algorithm=SHA1&digits=6&period=30"
-                    recovery_codes: ["7f2a-91bc-4de0", "0c14-88fa-23b7"]
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "503": { $ref: "#/components/responses/AuthUnavailable" }
 
   /auth/mfa/enroll/confirm:
     post:
       tags: [auth]
       operationId: authMfaEnrollConfirm
-      summary: Confirm a pending MFA enrolment
-      x-rbac: { permissions: [settings:write], scope: self }
-      x-idempotency: optional
+      summary: Confirm a pending MFA enrolment and rotate to a full session
+      description: |
+        Activates the pending method once its code verifies. In the same step the server revokes
+        every other TOTP method of the user and replaces the user's recovery codes with 10 new
+        ones: the old method and the old codes stop working at the instant the new ones start
+        (SR-022). It then rotates the session (SR-013): the calling session, enrolment-only
+        until now (see "Enrolment-only session"), is revoked, so its access and refresh tokens
+        stop working at once, and a full session replaces it with the lifetimes of a
+        `POST /auth/mfa/verify` sign-in. The `200` carries the new access token in `tokens`
+        (the refresh token travels only in the cookie, so `refresh_token` is null), the user
+        (`mfa_enabled` is now true), the activated method and the 10 recovery codes, which are
+        shown exactly once. Audited (C-2.9): `auth.mfa_enrolled`,
+        `auth.recovery_codes_regenerated`, and the rotation as `auth.session_revoked` and
+        `auth.session_created`.
+
+        Every role may confirm its own enrolment: no permission is needed, and the route takes
+        no target user (SR-026). If the caller's user already has a confirmed MFA method the
+        answer is `409 conflict` and nothing changes. `Idempotency-Key` is ignored: the response
+        holds tokens and recovery codes, which are never stored for a replay.
+      x-rbac: { permissions: [], scope: self }
+      x-idempotency: ignored
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true
@@ -925,12 +1014,61 @@ paths:
             schema: { $ref: "#/components/schemas/MfaEnrollConfirmRequest" }
       responses:
         "200":
-          description: Method activated.
+          description: Method activated; the session was rotated to a full session.
+          headers:
+            Set-Cookie:
+              {
+                description: "Rotated `cv_refresh` cookie and a rotated `__Host-cv_csrf` cookie bound to the new session (SR-041)",
+                schema: { type: string },
+              }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/MfaMethod" }
+              schema: { $ref: "#/components/schemas/MfaEnrollConfirmResponse" }
+              examples:
+                rotated:
+                  value:
+                    status: authenticated
+                    tokens:
+                      access_token: "<JWT — example placeholder>"
+                      token_type: Bearer
+                      expires_in: 600
+                      refresh_expires_in: 2592000
+                      refresh_token: null
+                    user:
+                      {
+                        id: "11111111-2222-3333-4444-555555555555",
+                        username: "viewer.alice",
+                        email: "alice@example.com",
+                        roles: [viewer],
+                        status: active,
+                        mfa_enabled: true,
+                        mfa_required: true,
+                      }
+                    mfa_method:
+                      {
+                        id: "5c3f9a10-6d21-4f0a-9a2f-70a1b2c3d4e5",
+                        kind: totp,
+                        label: "Phone",
+                        active: true,
+                        created_at: "2026-10-15T20:01:12Z",
+                        last_used_at: null,
+                      }
+                    recovery_codes:
+                      [
+                        "<recovery code 1 — example placeholder>",
+                        "<recovery code 2 — example placeholder>",
+                        "<recovery code 3 — example placeholder>",
+                        "<recovery code 4 — example placeholder>",
+                        "<recovery code 5 — example placeholder>",
+                        "<recovery code 6 — example placeholder>",
+                        "<recovery code 7 — example placeholder>",
+                        "<recovery code 8 — example placeholder>",
+                        "<recovery code 9 — example placeholder>",
+                        "<recovery code 10 — example placeholder>",
+                      ]
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/AuthUnavailable" }
 
@@ -9394,7 +9532,9 @@ paths:
       operationId: resetUserMfa
       summary: Owner-initiated TOTP reset (owner, step-up `users`)
       description: >
-        Revokes the target's TOTP methods and all their sessions. Does not cancel orders or
+        Revokes the target's TOTP methods and all their sessions, and sets the target's
+        `mfa_required`, so their next sign-in gets an enrolment-only session that must enrol a
+        new TOTP method first (see "Enrolment-only session"). Does not cancel orders or
         flatten positions and reveals no secret. Self-reset is refused. Audited as
         `auth.mfa_reset_by_owner`. When the position state is unavailable the request must carry
         `acknowledge_unknown_positions: true`, otherwise `409 positions_unknown`.
@@ -9431,9 +9571,17 @@ paths:
       operationId: authMfaRecovery
       summary: Complete an MFA challenge with a single-use recovery code
       description: >
-        Consumes one `recovery_codes` row. Consumption is audited and raises a
-        `security.mfa_recovery_used` system event; the user is forced to re-enrol TOTP on
-        the next login when fewer than three codes remain.
+        Completes the `POST /auth/login` challenge with a recovery code instead of the second
+        factor. Consumes one `recovery_codes` row. Consumption is audited and raises a
+        `security.mfa_recovery_used` system event. Every recovery sign-in forces TOTP
+        re-enrolment, however many codes remain: the user is left without a confirmed MFA
+        method, and the `200` mints an **enrolment-only** session (see "Enrolment-only session")
+        with the `cv_refresh` and `__Host-cv_csrf` cookies. That session may only enrol and
+        confirm a new TOTP method; the confirmation issues 10 new recovery codes and invalidates
+        what is left of the old set. A user with `mfa_required` false gets `501` and nothing is
+        consumed (production has no such user, C-12.2). Runs before any session exists, like
+        `POST /auth/mfa/verify`.
+      security: []
       x-rbac: { permissions: [], scope: none }
       requestBody:
         required: true
@@ -9448,7 +9596,7 @@ paths:
                 recovery_code: { type: string, minLength: 8, maxLength: 64 }
       responses:
         "200":
-          description: Authenticated.
+          description: Authenticated; the session is enrolment-only.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AuthenticatedResponse" }
@@ -11455,7 +11603,7 @@ components:
                   idle_locked_at: "2026-09-14T10:46:02Z",
                 }
     Forbidden:
-      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused."
+      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused."
       content:
         application/problem+json:
           schema:
@@ -11484,6 +11632,17 @@ components:
                   detail: "X-CSRF-Token header is missing.",
                   instance: "urn:cv:req:0193f2bb-2223",
                   code: csrf_token_invalid,
+                }
+            mfaEnrollmentRequired:
+              summary: Enrolment-only session calling an operation outside its allow-list
+              value:
+                {
+                  type: "https://candleviewer.local/errors/mfa_enrollment_required",
+                  title: "Session is enrolment-only; enrol and confirm a TOTP method first",
+                  status: 403,
+                  detail: "Set up two-factor authentication to continue.",
+                  instance: "urn:cv:req:0193f2bb-2226",
+                  code: mfa_enrollment_required,
                 }
             stepUpRequired:
               summary: Dangerous action without a live elevation; the body is a step-up challenge (#2304)
@@ -12383,17 +12542,14 @@ components:
     MfaEnrollResponse:
       type: object
       required: [method_id, method]
+      description: >
+        Carries no recovery codes: `POST /auth/mfa/enroll/confirm` issues them once the method
+        is confirmed (`MfaEnrollConfirmResponse`).
       properties:
         method_id: { type: string, format: uuid }
         method: { $ref: "#/components/schemas/MfaMethodKind" }
         otpauth_uri: { type: ["string", "null"] }
         webauthn_creation_options: { type: ["object", "null"], additionalProperties: true }
-        recovery_codes:
-          {
-            type: array,
-            items: { type: string },
-            description: "Shown exactly once, on first enrolment.",
-          }
     MfaEnrollConfirmRequest:
       type: object
       additionalProperties: false
@@ -12402,6 +12558,24 @@ components:
         method_id: { type: string, format: uuid }
         code: { type: string }
         webauthn_attestation: { type: object, additionalProperties: true }
+    MfaEnrollConfirmResponse:
+      description: >
+        `POST /auth/mfa/enroll/confirm` `200`: the `AuthenticatedResponse` of the rotated, full
+        session, plus the activated method and the user's new recovery codes.
+      allOf:
+        - $ref: "#/components/schemas/AuthenticatedResponse"
+        - type: object
+          required: [mfa_method, recovery_codes]
+          properties:
+            mfa_method: { $ref: "#/components/schemas/MfaMethod" }
+            recovery_codes:
+              type: array
+              minItems: 10
+              maxItems: 10
+              items: { type: string }
+              description: >
+                The user's 10 new single-use recovery codes (SR-022), shown exactly once. The
+                previous set stopped working when these were issued.
     MfaMethod:
       type: object
       properties:
@@ -12521,8 +12695,15 @@ components:
         display_name: { type: ["string", "null"] }
         roles: { type: array, items: { $ref: "#/components/schemas/RoleName" } }
         status: { $ref: "#/components/schemas/UserStatus" }
-        mfa_enabled: { type: boolean }
-        mfa_required: { type: boolean }
+        mfa_enabled:
+          type: boolean
+          description: The user has at least one confirmed, unrevoked MFA method.
+        mfa_required:
+          type: boolean
+          description: >
+            MFA is mandatory for this user (C-12.2: every user in production). With
+            `mfa_enabled` false, every session of the user is enrolment-only (see
+            "Enrolment-only session").
         last_login_at: { type: ["string", "null"], format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
