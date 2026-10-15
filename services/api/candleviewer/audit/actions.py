@@ -113,6 +113,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "retention.downsample",
         "rolloff.drop_aborted",
         "flags.change",
+        # E42-T03: maintenance mode turned on / off (its kill-switch-class flag); emitted next to
+        # the `flags.change` entry of the same write.
+        "maintenance.enabled",
+        "maintenance.disabled",
         "settings.change",
         "hotkey.trading_binding_changed",
         "backup.run",
