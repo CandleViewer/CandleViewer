@@ -11,7 +11,7 @@ import re
 import time
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import event, given, settings
 from hypothesis import strategies as st
 
 from candleviewer.observability import redaction
@@ -22,8 +22,32 @@ _REFERENCE = re.compile(
     f"(?P<jwt>{redaction._JWT_RE})|(?P<apikey>{redaction._APIKEY_RE})"
     f"|(?P<invite>{redaction._INVITE_SHAPE_RE})|(?P<totp>{redaction._TOTP_RE})"
 )
-#: Runs of segment characters, dots, spaces and digits: what the alternatives tell apart.
-_TEXT = st.text(alphabet="aZ09_-. 1234567", max_size=200)
+#: Non-ASCII word characters and digits: separators for the JWT segments (ASCII classes), word
+#: characters for the `\b` and `\d` of the API-key and TOTP alternatives.
+_UNICODE = "é٣"
+_SEGMENT = "aZ09_-"
+#: Runs of segment characters, often 8-13 long so three of them make a JWT, joined by separators.
+_RUNS = st.lists(
+    st.tuples(
+        st.one_of(
+            st.text(alphabet=_SEGMENT, min_size=8, max_size=13), st.text(_SEGMENT, max_size=4)
+        ),
+        st.sampled_from([".", ".", ".", " ", "=", "", *_UNICODE]),
+    ),
+    max_size=8,
+).map(lambda parts: "".join(run + sep for run, sep in parts))
+#: A JWT-shaped string in random context, including context that extends its first or last run.
+_AROUND = st.text(alphabet=_SEGMENT + ". =" + _UNICODE, max_size=6)
+_JWT_IN_TEXT = st.tuples(_AROUND, st.from_regex(redaction._JWT_RE, fullmatch=True), _AROUND)
+#: Alphanumeric runs of API-key and invite-token length (18-36 and 43) in random context.
+_KEY_IN_TEXT = st.tuples(_AROUND, st.text(alphabet="aZ09", min_size=16, max_size=45), _AROUND)
+#: Free text over the characters the alternatives tell apart, runs, and embedded secret shapes.
+_TEXT = st.one_of(
+    st.text(alphabet=_SEGMENT + ". 1234567" + _UNICODE, max_size=200),
+    _RUNS,
+    _JWT_IN_TEXT.map("".join),
+    _KEY_IN_TEXT.map("".join),
+)
 _CAP = redaction._MAX_SCAN_LEN
 #: Inputs at the scan cap that made the old JWT alternative backtrack from every offset.
 _PATHOLOGICAL = [
@@ -44,7 +68,9 @@ def _found(pattern: re.Pattern[str], text: str) -> _Found:
 @settings(max_examples=2000, deadline=None)
 @given(_TEXT)
 def test_redaction_scan_finds_the_same_match_as_the_backtracking_pattern(text: str) -> None:
-    assert _found(redaction._VALUE_PATTERN, text) == _found(_REFERENCE, text)
+    found = _found(redaction._VALUE_PATTERN, text)
+    event(f"match: {found[0] if found else None}")  # --hypothesis-show-statistics: jwt is reached
+    assert found == _found(_REFERENCE, text)
 
 
 @pytest.mark.parametrize(
