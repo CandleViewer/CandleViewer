@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import random
 import time
-import warnings
 from typing import Any
 
 import pytest
@@ -23,7 +22,7 @@ from candleviewer.ws.sequencing import (
     window_delta,
 )
 from candleviewer.ws.topics import FAMILIES
-from tests.unit.ws._seq_support import ACC_A, USER, Book, Clock, Conn, Source
+from tests.unit.ws._seq_support import ACC_A, USER, Book, Clock, Conn, Source, validate
 from tests.unit.ws.test_sequencing import RefClient, _book_source, _resync
 
 KIB = 1024
@@ -295,16 +294,23 @@ def _reference_workspace() -> tuple[Source, list[dict[str, Any]]]:
 
 
 def _resnapshot() -> tuple[int, float, int]:
+    """One re-snapshot of the reference workspace: (bytes, seconds, frames). Only the product's
+    build and encode are timed. The harness validates the frames against the schema after the
+    window (#2489: inside it, validation was about 99% of the measured time)."""
     src, entries = _reference_workspace()
     conn = Conn(src, cache=SnapshotCache())
     subs = [conn.sub(e)[1] for e in entries]
     conn.take()
+    frames: list[dict[str, Any]] = []
+    conn.emitter.push = frames.append
     start = time.perf_counter()
     for s in subs:
         conn.emitter.cache.invalidate(s.ch)
         conn.emitter.snapshot(s, "client_resync")
-    frames = conn.take()
     elapsed = time.perf_counter() - start
+    assert len(frames) >= len(subs)  # a window that emitted nothing must not pass as fast
+    for frame in frames:
+        validate(frame)
     size = sum(len(json.dumps(f, separators=(",", ":"))) for f in frames)
     return size, elapsed, len(frames)
 
@@ -315,22 +321,22 @@ def test_reference_workspace_resnapshot_size_is_under_700_kib() -> None:
     assert size < _BUDGET_BYTES < _HARD_BYTES
 
 
-#: §16.3 re-snapshot time: the 400 ms target is measured on reference hardware by E17-Q03 (#568);
-#: a shared CI runner only enforces the 1.5 s hard fail and reports a target overrun as a warning.
+#: §16.3 re-snapshot time: 400 ms target, 1.5 s hard fail. The product path takes about 7 ms
+#: (#2489), so the target holds with ample headroom on a shared runner; E17-Q03 (#568) measures
+#: it on reference hardware.
 _TARGET_S = 0.4
 _HARD_S = 1.5
 
 
 @pytest.mark.perf
-def test_reference_workspace_resnapshot_build_and_encode_is_under_hard_fail() -> None:
+def test_reference_workspace_resnapshot_build_and_encode_is_under_the_target(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     best = min(_resnapshot()[1] for _ in range(5))  # best-of-5 damps scheduler noise
-    if best >= _TARGET_S:
-        warnings.warn(
-            f"re-snapshot build+encode {best * 1000:.0f} ms is over the {_TARGET_S * 1000:.0f} ms "
-            "§16.3 target on this runner (hard fail 1.5 s; target tracked by E17-Q03)",
-            stacklevel=1,
-        )
+    with capsys.disabled():  # recorded in the run's log, pass or fail
+        print(f"\n§16.3 re-snapshot build+encode, best of 5: {best * 1000:.1f} ms")
     assert best < _HARD_S
+    assert best < _TARGET_S
 
 
 # -- resync window (§7.5) --
