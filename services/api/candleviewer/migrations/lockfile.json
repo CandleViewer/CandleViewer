@@ -106,6 +106,11 @@
       "path": "services/api/candleviewer/migrations/versions/0022_workspaces.py",
       "sha256": "c62b225e1462fbc27b0a7a411d5d0902e211189b6e495a09c183d4c12f537516",
       "down_revision": "0021_drawings"
+    },
+    "0023_replay_sessions": {
+      "path": "services/api/candleviewer/migrations/versions/0023_replay_sessions.py",
+      "sha256": "f27bfa74b3e157156fc9240196ec4ec053bbe9705212c8800bd4c822fa0df54a",
+      "down_revision": "0022_workspaces"
     }
   }
 }

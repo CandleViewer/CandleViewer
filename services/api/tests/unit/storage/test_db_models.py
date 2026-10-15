@@ -66,6 +66,8 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "workspaces",
         "layouts",
         "layout_panes",
+        # E26-T01 (0023_replay_sessions)
+        "replay_sessions",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected
