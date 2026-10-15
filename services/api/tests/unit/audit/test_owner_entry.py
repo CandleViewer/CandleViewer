@@ -305,7 +305,7 @@ async def _served(repo: FakeAuditRepository, principal: AuditPrincipal) -> dict[
             response = await client.get("/admin/audit")
     finally:
         svc.close()
-    assert response.status_code == 200
+    assert (response.status_code, response.headers["cache-control"]) == (200, "no-store")
     [item] = response.json()["items"]
     assert isinstance(item, dict)
     return item
