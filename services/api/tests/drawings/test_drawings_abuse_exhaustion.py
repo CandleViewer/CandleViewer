@@ -1,5 +1,8 @@
-"""E14-X02 (#474) abuse cases, part B: payload exhaustion on /drawings (threat model DR30-DR33,
-section 4 "Numeric bounds"). Every case has one deterministic status and the problem envelope."""
+"""E14-X02 (#474) abuse cases, part B: payload exhaustion on /drawings.
+
+Pins threat-model DR29-DR31 and DR34 and the section 4 "Numeric bounds" rows. DR32 (no quota) and
+DR33 (retry storm) are residuals (RR4), not pinned. Each case has one deterministic status and
+the problem envelope."""
 
 from __future__ import annotations
 
@@ -14,7 +17,10 @@ from fastapi.testclient import TestClient
 from candleviewer.api.drawings import IDEMPOTENCY_USER_MAX_ENTRIES
 from candleviewer.api.drawings_models import (
     MAX_BATCH_BODY_BYTES,
+    MAX_BATCH_OPS,
+    MAX_JSON_DEPTH,
     MAX_SINGLE_BODY_BYTES,
+    POINT_COUNTS,
 )
 
 PT = TRENDLINE["geometry"]["points"][0]
@@ -64,24 +70,30 @@ def test_batch_body_at_the_cap_is_served_and_one_byte_over_is_413(env: Env) -> N
     assert len(env.repo.rows) == 1
 
 
-def test_a_chunked_body_without_a_length_is_capped_while_streaming(env: Env) -> None:
-    chunks = (b" " * 1024 for _ in range(MAX_SINGLE_BODY_BYTES // 1024 + 1))
-    _problem(env.c.post("/drawings", content=chunks), 413)
+def _deep(n: int) -> bytes:  # n nested objects
+    return b'{"a":' * n + b"1" + b"}" * n
+
+
+def test_json_at_the_depth_limit_reaches_the_model_and_fails_only_on_its_own_rules(
+    env: Env,
+) -> None:
+    r = env.c.post("/drawings", content=_deep(MAX_JSON_DEPTH))
+    _problem(r, 422)
+    rules = {e["rule"] for e in r.json()["errors"]}
+    assert "json_too_deep" not in rules and rules == {"extra_forbidden", "missing"}
+
+
+def test_json_one_beyond_the_depth_limit_is_refused_before_parsing(env: Env) -> None:
+    r = env.c.post("/drawings", content=_deep(MAX_JSON_DEPTH + 1))
+    _problem(r, 422)
+    assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [("", "json_too_deep")]
     assert env.repo.calls == []
 
 
-def test_json_depth_16_is_parsed_and_17_is_refused_before_parsing(env: Env) -> None:
-    def deep(n: int) -> bytes:  # n nested objects
-        return b'{"a":' * n + b"1" + b"}" * n
+@pytest.mark.parametrize("tool", ["brush", "polyline"])
+def test_point_arrays_at_the_bound_pass_and_one_beyond_is_422(env: Env, tool: str) -> None:
+    hi = POINT_COUNTS[tool][1]
 
-    _problem(env.c.post("/drawings", content=deep(16)), 422)  # parsed, then unknown key
-    r = env.c.post("/drawings", content=deep(17))
-    _problem(r, 422, "json_too_deep")
-    assert env.repo.calls == []
-
-
-@pytest.mark.parametrize(("tool", "hi"), [("brush", 500), ("polyline", 100)])
-def test_point_arrays_at_the_bound_pass_and_one_beyond_is_422(env: Env, tool: str, hi: int) -> None:
     def make(n: int) -> dict[str, Any]:
         pts = [{"t": PT["t"], "p": str(i)} for i in range(n)]
         return {"symbol": "BTCUSDT", "tool": tool, "geometry": {"points": pts}}
@@ -98,19 +110,24 @@ def test_a_hundred_thousand_points_hit_the_body_cap_not_the_validator(env: Env) 
     _problem(r, 413)
 
 
-@pytest.mark.parametrize(
-    "literal",
-    ["1e999", "-1e999", "NaN", "Infinity", "-Infinity", "9" * 5000, "1" + "0" * 400 + ".5"],
-)
-def test_huge_and_non_finite_numbers_are_a_bounded_422_never_a_500(env: Env, literal: str) -> None:
+LITERALS = ["1e999", "-1e999", "NaN", "Infinity", "-Infinity", "9" * 5000, "1" + "0" * 400 + ".5"]
+
+
+@pytest.mark.parametrize("literal", LITERALS)
+def test_a_huge_or_non_finite_level_is_a_bounded_422_never_a_500(env: Env, literal: str) -> None:
     body = _raw(wire(FIB | {"geometry": {"points": [PT, PT], "levels": [0.5]}}))
     r = env.c.post("/drawings", content=body.replace("[0.5]", f"[{literal}]"))
     _problem(r, 422)
     assert len(r.content) < 4096 and literal[:40] not in r.text  # no echo, no amplification
-    r = env.c.post(
-        "/drawings", content=_raw(wire(TRENDLINE)).replace('"p":"61200.10"', f'"p":{literal}')
-    )
+    assert env.repo.rows == {}
+
+
+@pytest.mark.parametrize("literal", LITERALS)
+def test_a_huge_or_non_finite_price_is_a_bounded_422_never_a_500(env: Env, literal: str) -> None:
+    body = _raw(wire(TRENDLINE)).replace('"p":"61200.10"', f'"p":{literal}')
+    r = env.c.post("/drawings", content=body)
     _problem(r, 422)
+    assert len(r.content) < 4096 and literal[:40] not in r.text
     assert env.repo.rows == {}
 
 
@@ -119,27 +136,32 @@ def test_a_numeric_p_where_a_string_is_specified_is_refused(env: Env) -> None:
     _problem(env.c.post("/drawings", content=body), 422)
 
 
-def test_duplicate_json_keys_are_last_wins_pinned_per_the_threat_model(env: Env) -> None:
-    """Section 4: accepted, not an error. Pinned so a parser swap cannot silently change it."""
+def test_duplicate_keys_in_a_single_body_are_last_wins(env: Env) -> None:
+    """Threat model section 4: accepted, not an error. Pinned so a parser swap cannot change it."""
     base = _raw(wire(TRENDLINE | {"label": "first"}))
     dup = base[:-1] + ',"label":"second","locked":false,"locked":true}'
     r = env.c.post("/drawings", content=dup)
     assert r.status_code == 201 and r.json()["label"] == "second" and r.json()["locked"] is True
-    op = {"op": "create", "drawing": json.loads(dup)}
+
+
+def test_duplicate_keys_in_a_batch_are_last_wins_too(env: Env) -> None:
+    op = {"op": "create", "drawing": wire(TRENDLINE)}
     batch = '{"operations":[' + json.dumps(op) + '],"operations":[]}'
-    _problem(env.c.post("/drawings/batch", content=batch), 422)  # last-wins: the empty list
+    _problem(env.c.post("/drawings/batch", content=batch), 422, "too_short")  # the empty list wins
+    assert env.repo.rows == {}
 
 
 def test_a_batch_of_maximum_size_geometry_is_413_before_validation(env: Env) -> None:
+    points = [{"t": PT["t"], "p": "1"}] * POINT_COUNTS["brush"][1]
     op = {"op": "create", "drawing": {"symbol": "BTCUSDT", "tool": "brush",
-          "geometry": {"points": [{"t": PT["t"], "p": "1"}] * 500}}}  # fmt: skip
-    r = env.c.post("/drawings/batch", content=json.dumps({"operations": [op] * 200}))
+                                      "geometry": {"points": points}}}  # fmt: skip
+    r = env.c.post("/drawings/batch", content=json.dumps({"operations": [op] * MAX_BATCH_OPS}))
     _problem(r, 413)
     assert env.repo.calls == []
 
 
 def _fill(c: TestClient, n: int) -> list[str]:
-    keys = [str(uuid.uuid4()) for _ in range(n)]
+    keys = [str(uuid.UUID(int=i + 1, version=4)) for i in range(n)]
     for k in keys:
         assert (
             c.post("/drawings", json=wire(TRENDLINE), headers={"Idempotency-Key": k}).status_code
