@@ -28,7 +28,7 @@ class FakeTime:
         return self.t
 
     def advance(self, seconds: float) -> None:
-        self.t += seconds
+        self.t = round(self.t + seconds, 9)  # many small steps must not fall short of a deadline
 
     async def wait_until(self, deadline: float, wake: asyncio.Event) -> None:
         self.waits += 1
