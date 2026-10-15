@@ -17,11 +17,12 @@ import asyncio
 import functools
 import hashlib
 import json
+import math
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any
+from typing import Any, NoReturn
 
 from candleviewer.audit.cursor import AuditCursor, encode_cursor
 from candleviewer.audit.errors import AuditError
@@ -240,41 +241,60 @@ def _nesting_within(value: dict[str, Any], limit: int) -> bool:
     return True
 
 
-class _NumberOverCap(ValueError):
-    """A number literal longer than `NUMBER_MAX_CHARS` characters, refused unconverted."""
+class _NumberRefused(ValueError):
+    """A number a returned state may not hold: a literal over `NUMBER_MAX_CHARS`
+    characters, refused unconverted, or one that is not finite (`1e999`, `NaN`)."""
 
 
 def _capped_int(literal: str) -> int:
     """`parse_int` of a state's parse: the scanner hands over each integer literal's text
     before converting it, so one over `NUMBER_MAX_CHARS` is never converted."""
     if len(literal) > NUMBER_MAX_CHARS:
-        raise _NumberOverCap
+        raise _NumberRefused
     return int(literal)
 
 
 def _capped_float(literal: str) -> float:
-    """`parse_float` of a state's parse, as `_capped_int`."""
+    """`parse_float` of a state's parse, as `_capped_int`; a literal past the float range
+    (`1e999`) converts to an infinity, which no JSON number is, so it is refused too."""
     if len(literal) > NUMBER_MAX_CHARS:
-        raise _NumberOverCap
-    return float(literal)
+        raise _NumberRefused
+    value = float(literal)
+    if not math.isfinite(value):
+        raise _NumberRefused
+    return value
+
+
+def _refused_constant(_name: str) -> NoReturn:
+    """`parse_constant` of a state's parse: `NaN`, `Infinity` and `-Infinity` are no JSON
+    numbers."""
+    raise _NumberRefused
 
 
 def _parse_state(rendering: str, budget: _StructureBudget) -> dict[str, Any] | None:
     """A state's rendering as an object, or `None` when it cannot be returned: the page's
     structure budget has no room left for it, it holds a number literal over
-    `NUMBER_MAX_CHARS` characters, it does not parse (defensive: a jsonb rendering always
-    does), it is not an object, or it nests deeper than `STATE_MAX_DEPTH`. Never raises
-    for the rendering, never yields its text. The number cap is checked by the parse
-    itself, which hands each literal's text to `_capped_int` / `_capped_float` before
+    `NUMBER_MAX_CHARS` characters or a number that is not finite, it does not parse
+    (defensive: a jsonb rendering always does), it is not an object, or it nests deeper
+    than `STATE_MAX_DEPTH`. Never raises for the rendering, never yields its text. The
+    numbers are checked by the parse itself, which hands each literal's text to
+    `_capped_int` / `_capped_float` (and `NaN` / `Infinity` to `_refused_constant`) before
     converting it: no pass of its own, and a run of digits inside a string is no literal."""
     # Counted once, before any parse, for both bounds: brackets and commas are the state's
     # cost, and as a container opens with one bracket, the brackets alone bound its depth.
+    # A state withheld below for another reason has still spent its cost: this errs toward
+    # withholding.
     brackets = rendering.count("{") + rendering.count("[")
     if not budget.spend(brackets + rendering.count(",")):
         return None
     try:
-        value = json.loads(rendering, parse_int=_capped_int, parse_float=_capped_float)
-    except (ValueError, RecursionError):  # `_NumberOverCap` is a `ValueError`
+        value = json.loads(
+            rendering,
+            parse_int=_capped_int,
+            parse_float=_capped_float,
+            parse_constant=_refused_constant,
+        )
+    except (ValueError, RecursionError):  # `_NumberRefused` is a `ValueError`
         return None
     if not isinstance(value, dict):
         return None
@@ -290,9 +310,9 @@ def _owner_detail(row: dict[str, Any], budget: _StructureBudget) -> dict[str, An
     a null state and any other is parsed, so a state shown is the one the chain check hashed.
     Without it (over the render caps), only whether each state is null is known, and a
     non-null one is withheld; so is a state past the page's structure `budget` or holding
-    a number literal over `NUMBER_MAX_CHARS` characters. A withheld state is null and
-    listed in `elided`; a stored null never is, and `elided` is absent when nothing was
-    withheld."""
+    a number literal over `NUMBER_MAX_CHARS` characters or a number that is not finite. A
+    withheld state is null and listed in `elided`; a stored null never is, and `elided` is
+    absent when nothing was withheld."""
     chain = row["chain"]
     detail: dict[str, Any] = {}
     elided: list[str] = []

@@ -384,10 +384,11 @@ class Settings(BaseSettings):
     audit_verify_max_entry_bytes: int = Field(default=4_194_304, ge=65_536, le=8_388_608)
     # Structure one Owner audit page serves, as the `{`, `[` and `,` of its states'
     # renderings; past it the remaining states are withheld (`detail.elided`). The page is
-    # serialized on the event loop at a cost per value (C-2.17), so at most twice the
-    # default. At least two states at the 16 Ki-character field cap, so a one-row page
-    # always serves its row's states.
-    audit_page_structure_budget: int = Field(default=50_000, ge=32_768, le=100_000)
+    # serialized on the event loop (C-2.17): the costliest page measured, 4-byte UTF-8
+    # strings and then 17-digit floats up to the budget, renders in about 30 ms at the
+    # default and 33 ms at the maximum (#2467). The floor, two states at the 16 Ki-character
+    # field cap, leaves budget room for one row's states.
+    audit_page_structure_budget: int = Field(default=50_000, ge=32_768, le=65_536)
 
     # E27-T02 / e27-kek.md §4: KEK source vocabulary. `host-keychain` is a deprecated alias
     # of `handle` for one release. The KEK itself never enters Settings or os.environ.
