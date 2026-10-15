@@ -130,6 +130,7 @@ class AuditQueryServiceLike(Protocol):
         ip: str | None = None,
         timeout_ms: int | None = None,
         owner: bool = False,
+        raw: bool = False,
     ) -> Any: ...
 
     async def plan_verify(
@@ -538,6 +539,9 @@ def make_audit_router(
             page = await service.query.query(
                 **filters,
                 restrict_to_actor=restrict,
+                # Only the Owner's raw view fetches the Owner-only columns. Stated from the
+                # view, never inferred from the scope or the read-slot flag below.
+                raw=view is AuditView.RAW,
                 after=after,
                 timeout_ms=query_timeout_ms,
                 # The read slot kept for the Owner follows `is_owner` only (SR-017).

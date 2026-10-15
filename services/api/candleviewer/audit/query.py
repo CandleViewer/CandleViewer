@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import hashlib
+import json
 from collections.abc import Callable, Coroutine, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -64,6 +65,11 @@ HASHED_FIELDS = (
     "env",
     "event_ts",
 )
+#: The recorded states, as (`detail` key, `audit_log` column).
+_STATES = (("before", "before_state"), ("after", "after_state"))
+#: Deepest container nesting of a state the Owner's page returns. The response serializer
+#: refuses about 255 levels, so a deeper state is withheld instead of failing the page.
+STATE_MAX_DEPTH = 128
 
 
 def _canonical_field(value: object) -> str:
@@ -193,6 +199,100 @@ def _page_chain_verified(rows: list[dict[str, Any]]) -> bool:
     return True
 
 
+def _nesting_within(value: dict[str, Any], limit: int) -> bool:
+    """Whether `value` nests at most `limit` containers deep, walked without recursion."""
+    stack: list[tuple[dict[str, Any] | list[Any], int]] = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > limit:
+            return False
+        children = node.values() if isinstance(node, dict) else node
+        stack.extend((child, depth + 1) for child in children if isinstance(child, dict | list))
+    return True
+
+
+def _parse_state(rendering: str) -> dict[str, Any] | None:
+    """A state's rendering as an object, or `None` when it cannot be returned: it does not
+    parse (defensive: a jsonb rendering always does), it is not an object, or it nests
+    deeper than `STATE_MAX_DEPTH`. Never raises for the rendering, never yields its text."""
+    try:
+        value = json.loads(rendering)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(value, dict):
+        return None
+    # A container opens with one bracket, so the bracket count bounds the depth: only a
+    # state with more brackets than the limit is walked.
+    brackets = rendering.count("{") + rendering.count("[")
+    if brackets > STATE_MAX_DEPTH and not _nesting_within(value, STATE_MAX_DEPTH):
+        return None
+    return value
+
+
+def _owner_detail(row: dict[str, Any]) -> dict[str, Any]:
+    """The Owner's `detail`, built from the page's capped chain renderings (`row["chain"]`),
+    as the page select fetches no state. With the form fetched in full, a null rendering is
+    a null state and any other is parsed, so a state shown is the one the chain check hashed.
+    Without it (over the render caps), only whether each state is null is known, and a
+    non-null one is withheld. A withheld state is null and listed in `elided`; a stored
+    null never is, and `elided` is absent when nothing was withheld."""
+    chain = row["chain"]
+    detail: dict[str, Any] = {}
+    elided: list[str] = []
+    for key, column in _STATES:
+        if chain is None:
+            value, withheld = None, not row[f"{column}_is_null"]
+        elif chain[column] in (None, "null"):  # SQL NULL, or a jsonb `null`
+            value, withheld = None, False
+        else:
+            value = _parse_state(chain[column])
+            withheld = value is None
+        detail[key] = value
+        if withheld:
+            elided.append(key)
+    if elided:
+        detail["elided"] = elided
+    return detail
+
+
+def _check_page(rows: list[dict[str, Any]], raw: bool) -> tuple[bool, list[dict[str, Any] | None]]:
+    """The hasher-thread part of a page read: the chain check and, for the Owner's raw view
+    only, each row's `detail`, since parsing the renderings is CPU work too. Any other view
+    builds no detail (`None` per row)."""
+    verified = _page_chain_verified(rows)
+    return verified, [_owner_detail(row) if raw else None for row in rows]
+
+
+def _entry(row: dict[str, Any], detail: dict[str, Any] | None) -> AuditEntry:
+    """An entry from a page row. `detail` is `None` for any view but the Owner's raw one,
+    whose select fetched no Owner-only column: none is read, and they stay null."""
+    owner_only: dict[str, Any] = {"ip": None}
+    if detail is not None:
+        owner_only = {
+            "subject_label": row["object_label"],
+            "reason": row["reason"],
+            "environment": row["env"],
+            "session_id": row["session_id"],
+            "ip": None if row["actor_ip"] is None else str(row["actor_ip"]),
+            "detail": detail,
+        }
+    return AuditEntry(
+        id=row["id"],
+        ts=row["event_ts"],
+        actor_user_id=row["actor_user_id"],
+        actor_username=row["actor_label"],
+        action=row["action"],
+        subject_type=row["object_kind"],
+        subject_id=row["object_id"],
+        outcome=row["outcome"],
+        severity=row["severity"],
+        request_id=None if row["request_id"] is None else str(row["request_id"]),
+        entry_hash=row["entry_hash"],
+        prev_hash=row["prev_hash"],
+        **owner_only,
+    )
+
+
 class AuditQueryService:
     """Backs the three `/admin/audit*` endpoints. Constructed with the same
     `RelationalRepository` the `AuditWriter` uses — read-only queries only,
@@ -237,6 +337,7 @@ class AuditQueryService:
         ip: str | None = None,
         timeout_ms: int | None = None,
         owner: bool = False,
+        raw: bool = False,
     ) -> AuditPage:
         """`limit` is validated to 1..500 by `AuditQueryRequest`
         (`extra="forbid"`); out-of-range values raise `ValidationError`
@@ -250,7 +351,11 @@ class AuditQueryService:
         user id), and the repository applies it in the SQL of every page.
         `after` is the decoded cursor; `meta.next_cursor` names the last
         entry returned when more entries follow. `owner` (the principal's
-        `is_owner`, SR-017) lets the read use the slot kept for the Owner."""
+        `is_owner`, SR-017) lets the read use the slot kept for the Owner.
+        `raw` is the Owner's raw view (`AuditView.RAW`), stated by the caller
+        and never inferred from the scope or `owner`. Only a raw read fetches
+        the Owner-only columns and builds `detail`; it defaults to `False`, so
+        a caller that omits it gets less, never more."""
         req = AuditQueryRequest.model_validate(
             {
                 "actor_user_id": actor_user_id,
@@ -269,6 +374,7 @@ class AuditQueryService:
         limit = req.limit
         rows = await self._repository.query_page(
             restrict_to_actor=restrict_to_actor,
+            raw=raw,
             actor_user_id=req.actor_user_id,
             actions=req.actions,
             subject_type=req.subject_type,
@@ -287,32 +393,10 @@ class AuditQueryService:
 
         has_more = len(rows) > limit
         rows = rows[:limit]
-        # On the full rows, before any projection, and off the event loop. A refusal
-        # (`ChainHasherBusy`) or cancellation serves nothing.
-        chain_verified = await self._hasher.run(functools.partial(_page_chain_verified, rows))
-        items = [
-            AuditEntry(
-                id=row["id"],
-                ts=row["event_ts"],
-                actor_user_id=row["actor_user_id"],
-                actor_username=row["actor_label"],
-                action=row["action"],
-                subject_type=row["object_kind"],
-                subject_id=row["object_id"],
-                subject_label=row["object_label"],
-                outcome=row["outcome"],
-                severity=row["severity"],
-                reason=row["reason"],
-                environment=row["env"],
-                session_id=row["session_id"],
-                detail={"before": row["before_state"], "after": row["after_state"]},
-                ip=str(row["actor_ip"]) if row["actor_ip"] is not None else None,
-                request_id=str(row["request_id"]) if row["request_id"] is not None else None,
-                entry_hash=row["entry_hash"],
-                prev_hash=row["prev_hash"],
-            )
-            for row in rows
-        ]
+        # On the full rows, before any projection, and off the event loop, as is parsing the
+        # Owner's states. A refusal (`ChainHasherBusy`) or cancellation serves nothing.
+        chain_verified, details = await self._hasher.run(functools.partial(_check_page, rows, raw))
+        items = [_entry(row, detail) for row, detail in zip(rows, details, strict=True)]
         last = items[-1] if has_more and items else None
         next_cursor = None if last is None else encode_cursor(AuditCursor(last.ts, last.id))
         return AuditPage(

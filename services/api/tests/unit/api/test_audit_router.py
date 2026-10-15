@@ -68,7 +68,7 @@ class _FakeQuery:
         # Mirrors `AuditQueryService.query`'s own validation (QA defect
         # #1596 review): a naive datetime or `from_ts > to_ts` must raise
         # `ValidationError`, not be accepted silently by the fake.
-        paging = ("timeout_ms", "restrict_to_actor", "after", "owner")
+        paging = ("timeout_ms", "restrict_to_actor", "after", "owner", "raw")
         AuditQueryRequest.model_validate({k: v for k, v in kwargs.items() if k not in paging})
         self.query_calls.append(kwargs)
         return AuditPage(items=[], chain_verified=True)
@@ -725,6 +725,21 @@ def test_the_owner_read_slot_follows_is_owner_only() -> None:
         client, svc = _budgeted(principal)
         assert client.get("/admin/audit").status_code == 200
         assert svc.query_service.query_calls[-1]["owner"] is expected
+
+
+def test_raw_follows_the_resolved_view_not_the_owner_flag() -> None:
+    """Only the Owner's raw view asks for the Owner-only columns, and `raw` comes from the
+    view alone: the `*` grant gets the raw view without `is_owner`, so there `raw` and the
+    read slot's `owner` differ."""
+    owner = AuditPrincipal(
+        user_id=uuid.uuid4(), username="owner", permissions=frozenset({"audit:read"}), is_owner=True
+    )
+    cases = ((owner, True, True), (_owner(), True, False), (_manager_with_read(), False, False))
+    for principal, raw, slot in cases:
+        client, svc = _budgeted(principal)
+        assert client.get("/admin/audit").status_code == 200
+        call = svc.query_service.query_calls[-1]
+        assert (call["raw"], call["owner"]) == (raw, slot)
 
 
 # ---- #2392 parameter rules: canonical values, 422 without echoing the input ----------------
