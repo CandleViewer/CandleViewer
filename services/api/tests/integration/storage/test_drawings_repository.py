@@ -460,6 +460,8 @@ async def _explain(
     repo: SqlAlchemyRelationalRepository, analyze: bool, params: dict[str, Any]
 ) -> Any:
     option = "ANALYZE, FORMAT JSON" if analyze else "FORMAT JSON"
+    # Built only from the two fixed options above and the shipped `_LIST` text; no input.
+    # nosemgrep: avoid-sqlalchemy-text reason=explain-shipped-sql owner=@basiltt review=2027-03-25
     stmt = sa.text(f"EXPLAIN ({option}) " + _LIST.text)
     async with repo.unit_of_work() as uow:
         return (await uow.session.execute(stmt, params)).scalar_one()
