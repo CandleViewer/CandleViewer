@@ -17,8 +17,9 @@ import asyncio
 import functools
 import hashlib
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any
 
 from candleviewer.audit.cursor import AuditCursor, encode_cursor
@@ -102,15 +103,26 @@ class _Walk:
     kind: ChainBreakKind | None = None
 
 
-def _walk_batch(expected_prev: str, rows: Sequence[Sequence[Any]]) -> _Walk:
+_NO_CHECKPOINTS: Mapping[int, str] = MappingProxyType({})
+
+
+def _walk_batch(
+    expected_prev: str,
+    rows: Sequence[Sequence[Any]],
+    checkpoints: Mapping[int, str] = _NO_CHECKPOINTS,
+) -> _Walk:
     """Check one batch, on the hasher's thread. `rows` are `(id, prev_hash, entry_hash,
-    *renderings)` in id order; the link is checked before the hash (design §5)."""
+    *renderings)` in id order. Per row: the link, then the hash (design §5), then the
+    `head_hash` of a checkpoint naming that id (`checkpoints`, by id)."""
     for index, row in enumerate(rows):
         if row[1] != expected_prev:
             kind = ChainBreakKind.PREV_HASH_MISMATCH
             return _Walk(index + 1, index, expected_prev, row[0], kind)
         if _canonical_digest(expected_prev, row[3:]) != row[2]:
             kind = ChainBreakKind.ENTRY_HASH_MISMATCH
+            return _Walk(index + 1, index, expected_prev, row[0], kind)
+        if checkpoints.get(row[0], row[2]) != row[2]:
+            kind = ChainBreakKind.CHECKPOINT_MISMATCH
             return _Walk(index + 1, index, expected_prev, row[0], kind)
         expected_prev = row[2]
     return _Walk(len(rows), len(rows), expected_prev)
@@ -339,22 +351,53 @@ class AuditQueryService:
         if plan.from_id is not None:
             anchor = await self._repository.fetch_anchor_hash(plan.from_id) or _GENESIS_HASH
         walk = _Walk(0, 0, anchor)
-        if plan.truncated_at is None and plan.from_id is not None and plan.to_id is not None:
-            walk = await self._walk(anchor, plan.from_id - 1, plan.to_id, batch_size)
-        bad_id, kind = walk.bad_id, walk.kind
-        if bad_id is None and plan.truncated_at is not None:
-            bad_id, kind = plan.truncated_at, ChainBreakKind.TAIL_TRUNCATED
+        if plan.from_id is not None and plan.to_id is not None:
+            walk = await self._check_range(plan.from_id, plan.to_id, plan, anchor, batch_size)
+        elif plan.truncated_at is not None:  # an empty log, and checkpoints name entries
+            walk = replace(walk, bad_id=plan.truncated_at, kind=ChainBreakKind.TAIL_TRUNCATED)
         return VerifyResult(
-            verified=bad_id is None,
+            verified=walk.bad_id is None,
             entries_checked=walk.checked,
-            first_bad_id=bad_id,
+            first_bad_id=walk.bad_id,
             checked_at=self._clock(),
             from_id=plan.from_id,
             to_id=plan.to_id,
             anchor_hash=anchor,
             last_hash=walk.last_hash if walk.passed else None,
-            kind=kind,
+            kind=walk.kind,
         )
+
+    async def _check_range(
+        self, lo: int, hi: int, plan: VerifyPlan, anchor: str, batch_size: int
+    ) -> _Walk:
+        """The walk and the checkpoint cross-check (#2392), breaks taken in id order: every
+        checkpoint with `head_id <= hi` must name an entry whose `entry_hash` is its
+        `head_hash` (below the range, the stored hash; in it, after the entry's own
+        checks), and a range that ends at the head breaks on a checkpoint above it."""
+        checkpoints = await self._repository.fetch_checkpoints(hi)
+        missing, mismatch = ChainBreakKind.CHECKPOINT_MISSING, ChainBreakKind.CHECKPOINT_MISMATCH
+        for head_id, head_hash, stored in checkpoints:
+            if head_id >= lo:
+                break
+            if stored != head_hash:
+                return _Walk(0, 0, anchor, head_id, missing if stored is None else mismatch)
+        inside = {h: (hh, e) for h, hh, e in checkpoints if h >= lo}
+        gap = min((h for h, (_, e) in inside.items() if e is None), default=None)
+        above = plan.truncated_at
+        walk = _Walk(0, 0, anchor)
+        if above is None:  # `lo <= hi`
+            end = hi if gap is None else gap - 1
+            if end >= lo:
+                known = {h: hh for h, (hh, e) in inside.items() if e is not None}
+                walk = await self._walk(anchor, lo - 1, end, batch_size, known)
+            if walk.bad_id is not None:
+                return walk
+            if gap is not None:
+                return replace(walk, bad_id=gap, kind=missing)
+            if hi == plan.head_id:
+                above = await self._repository.fetch_checkpoint_above(hi)
+        kind = ChainBreakKind.TAIL_TRUNCATED
+        return walk if above is None else replace(walk, bad_id=above, kind=kind)
 
     async def verify(
         self,
@@ -367,7 +410,14 @@ class AuditQueryService:
         plan = await self.plan_verify(from_id=from_id, to_id=to_id)
         return await self.run_verify(plan, batch_size=batch_size)
 
-    async def _walk(self, expected: str, after_id: int, last_id: int, batch_size: int) -> _Walk:
+    async def _walk(
+        self,
+        expected: str,
+        after_id: int,
+        last_id: int,
+        batch_size: int,
+        checkpoints: Mapping[int, str] = _NO_CHECKPOINTS,
+    ) -> _Walk:
         """Keyset batches `after_id < id <= last_id`; batch n+1 is fetched while batch n
         is hashed, and batch n+2 only after batch n is done (at most two held)."""
         checked = passed = 0
@@ -381,7 +431,8 @@ class AuditQueryService:
                     break
                 if len(rows) == batch_size and rows[-1][0] < last_id:
                     pending = spawn(self._fetch(rows[-1][0], last_id, batch_size), name=_PREFETCH)
-                walk = await self._hasher.run(functools.partial(_walk_batch, expected, rows))
+                check = functools.partial(_walk_batch, expected, rows, checkpoints)
+                walk = await self._hasher.run(check)
                 checked, passed = checked + walk.checked, passed + walk.passed
                 if walk.bad_id is not None:
                     return _Walk(checked, passed, walk.last_hash, walk.bad_id, walk.kind)
