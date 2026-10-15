@@ -259,9 +259,9 @@ Standing assumptions for all areas: no public listener exists; all human actors 
 | F6  | Tampering              | A leg placed without a native SL because the per-account profile lacked offsets                                                                                              | M   | H   | **High**     | SR-056 invariant enforced per leg; profile validation rejects profiles without an SL rule                                                                                                                                     | Low      |
 
 **E28 per-account profiles & trade groups** (`docs/security/threat-models/E28-profiles-trade-groups.md`, ticket
-E28-X01) re-derives F1-F6 above, with O3, O4, O8 and R2, against the E28 design before any of it is built: profile CRUD,
-the sizer, the risk guard, group definitions, the preview, per-trade overrides and the `trade_groups` projection, plus
-the fan-out flows E34 builds. 53 rows (PF-S01..PF-E08): 11 inherent Critical and 24 High. Main findings: the contract
+E28-X01) re-derives F1-F6 above, with O3, O4, O8, R2, R3 and D4, against the unbuilt E28 design: profile CRUD, the
+sizer, the risk guard, group definitions, the preview, per-trade overrides and the `trade_groups` projection, plus the
+fan-out flows E34 builds. 53 rows (PF-S01..PF-E08): 11 inherent Critical and 24 High. Main findings: the contract
 resolves request defaults and per-leg overrides "later wins", with a free `profile_id`, and a group amend can raise a leg
 or clear its stop; a NULL cap or an empty allow-list means "unlimited", and the DDL lacks four caps and any table or
 route for group definitions; a preview or a group view can leak an ungranted account; Managers hold the permission that
