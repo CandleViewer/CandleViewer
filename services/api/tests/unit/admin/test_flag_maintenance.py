@@ -1,9 +1,10 @@
-"""E42-T03: maintenance mode refuses order acceptance before any OMS work within 200 ms of the
-write, notifies every session, cancels emulated algos only, and keeps the gate in step with a
-change made directly in the database."""
+"""E42-T03: maintenance mode refuses order acceptance before any OMS work once the write returns,
+notifies every session, cancels emulated algos only on a real `True`, retries a failed entry,
+and keeps the gate in step with the database through fresh polls."""
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Iterable
 from dataclasses import replace
@@ -27,19 +28,28 @@ from candleviewer.admin.flags import (
     chain_hooks,
     default_registry,
 )
+from candleviewer.admin.flags.maintenance import REFRESH_S
+from candleviewer.admin.flags.metrics import EXPORTED_NAMES, maintenance_mode_gauge
 from candleviewer.admin.flags.push import FlagPush, Session
 from candleviewer.api.order_entry_gate import order_entry_refusal
+from candleviewer.audit.access import AuditPrincipal
 from tests.unit.admin.flag_fakes import Clock, FakeAudit, FakeFlagStore
 
-_OWNER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001")
+_OWNER = AuditPrincipal(user_id=UUID(int=1), username="owner", permissions=frozenset({"*"}))
 
 
 class _Algos:
-    def __init__(self) -> None:
+    def __init__(self, failures: int = 0, hang: bool = False) -> None:
         self.calls: list[str] = []
+        self.failures, self.hang = failures, hang
 
     async def cancel_running_algos(self, reason: str) -> int:
         self.calls.append(reason)
+        if self.hang:
+            await asyncio.Event().wait()
+        if self.failures:
+            self.failures -= 1
+            raise RuntimeError("algo engine down")
         return 2
 
 
@@ -59,27 +69,52 @@ class _Sessions:
         self.frames: list[dict[str, Any]] = []
 
     def authenticated(self) -> Iterable[Session]:
-        return [Session(_OWNER, frozenset({"owner"}), self.frames.append)]
+        return [Session(_OWNER.user_id, frozenset({"owner"}), self.frames.append)]
 
 
-async def _rig() -> tuple[FlagWriter, FakeFlagStore, MaintenanceController, _Algos, _Recorder]:
-    store, gate, algos, recorder = FakeFlagStore(), MaintenanceGate(), _Algos(), _Recorder()
-    service = FlagService(default_registry(), store, clock=Clock())
-    await store.ensure(service.registry.values())
-    controller = MaintenanceController(service, gate, algos=algos, recorder=recorder)
-    hook = chain_hooks(controller.on_flag_changed, FlagPush(service, _Sessions()).flag_changed)
-    return FlagWriter(service, FakeAudit(), on_change=hook), store, controller, algos, recorder
+class _Rig:
+    def __init__(self, algos: _Algos | None = None, effect_timeout_s: float = 5.0) -> None:
+        self.store, self.clock, self.sessions = FakeFlagStore(), Clock(), _Sessions()
+        self.service = FlagService(default_registry(), self.store, clock=self.clock)
+        self.algos, self.recorder = algos or _Algos(), _Recorder()
+        self.sleeps: list[float] = []
+        self.controller = MaintenanceController(
+            self.service,
+            MaintenanceGate(),
+            algos=self.algos,
+            recorder=self.recorder,
+            sleep=self._sleep,
+            effect_timeout_s=effect_timeout_s,
+        )
+        push = FlagPush(self.service, self.sessions)
+        hook = chain_hooks(
+            self.controller.gate_hook, push.flag_changed, self.controller.effects_hook
+        )
+        self.writer = FlagWriter(self.service, FakeAudit(), on_change=hook)
+        self.stop_after = 1
 
+    async def _sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.clock.now += seconds
+        if len(self.sleeps) >= self.stop_after:
+            raise asyncio.CancelledError
 
-async def _toggle(writer: FlagWriter, store: FakeFlagStore, key: str, value: bool) -> None:
-    await writer.set(
-        key,
-        actor_id=_OWNER,
-        actor_label="owner",
-        value=value,
-        reason="maintenance window",
-        expected_updated_at=store.rows[key].updated_at,
-    )
+    async def start(self) -> _Rig:
+        await self.store.ensure(self.service.registry.values())
+        await self.controller.refresh()
+        return self
+
+    async def toggle(self, key: str, value: bool) -> None:
+        await self.writer.set(
+            key,
+            _OWNER,
+            value=value,
+            reason="maintenance window",
+            expected_updated_at=self.store.rows[key].updated_at,
+        )
+
+    def db(self, key: str, value: bool) -> None:
+        self.store.rows[key] = replace(self.store.rows[key], value=value)
 
 
 def _orders_app(gate: MaintenanceGate, oms_calls: list[str]) -> FastAPI:
@@ -96,117 +131,134 @@ def _orders_app(gate: MaintenanceGate, oms_calls: list[str]) -> FastAPI:
     return app
 
 
-async def test_maintenance_refuses_order_acceptance_within_200_ms_before_any_oms_work() -> None:
-    writer, store, controller, algos, _ = await _rig()
-    await controller.refresh()
+async def test_orders_are_refused_right_after_the_write_returns_before_any_oms_work() -> None:
+    rig = await _Rig().start()
     oms: list[str] = []
-    transport = httpx.ASGITransport(app=_orders_app(controller.gate, oms))
+    transport = httpx.ASGITransport(app=_orders_app(rig.controller.gate, oms))
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         assert (await client.post("/orders")).status_code == 202
-        start = time.monotonic()
-        await _toggle(writer, store, MAINTENANCE_MODE, True)
+        await rig.toggle(MAINTENANCE_MODE, True)
         refused = await client.post("/orders")
-        assert time.monotonic() - start < 0.2
-    assert refused.status_code == 403
-    assert refused.json()["code"] == "trading_disabled"
+    assert (refused.status_code, refused.json()["code"]) == (403, "trading_disabled")
     assert oms == ["submit"]
-    assert algos.calls == ["maintenance.enabled"]
 
 
-async def _bare() -> tuple[FlagService, FakeFlagStore]:
-    store = FakeFlagStore()
-    service = FlagService(default_registry(), store, clock=Clock())
-    await store.ensure(service.registry.values())
-    return service, store
+@pytest.mark.perf
+async def test_orders_are_refused_within_200_ms_of_the_write() -> None:
+    rig = await _Rig().start()
+    transport = httpx.ASGITransport(app=_orders_app(rig.controller.gate, []))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        start = time.monotonic()
+        await rig.toggle(MAINTENANCE_MODE, True)
+        assert (await client.post("/orders")).status_code == 403
+        assert time.monotonic() - start < 0.2
 
 
-async def test_the_gate_starts_closed_and_follows_the_flag() -> None:
-    service, store = await _bare()
-    controller = MaintenanceController(service, MaintenanceGate(), algos=_Algos())
+async def test_entering_maintenance_cancels_algos_and_notifies_once() -> None:
+    rig = await _Rig().start()
+    await rig.toggle(MAINTENANCE_MODE, True)
+    await rig.controller.refresh()
+    assert rig.algos.calls == ["maintenance.enabled"]
+    assert [f["reason"] for f in rig.sessions.frames if f["kind"] == "notice"] == [
+        "maintenance.enabled"
+    ]
+
+
+async def test_the_gate_starts_engaged_and_opens_once_both_flags_are_read() -> None:
+    gate = MaintenanceGate()
     with pytest.raises(OrderEntryPausedError):
-        controller.gate.check()
-    await controller.refresh()
-    controller.gate.check()
-    store.down = True
-    service.invalidate()
-    await controller.refresh()
-    assert controller.gate.engaged  # store unreachable: fail closed
+        gate.check()
+    rig = await _Rig().start()
+    rig.controller.gate.check()
+    assert not rig.controller.gate.engaged
 
 
-async def test_a_change_made_in_the_database_is_picked_up_by_the_refresh_loop() -> None:
-    service, store = await _bare()
-    sleeps: list[float] = []
+async def test_the_order_kill_switch_also_engages_the_gate() -> None:
+    rig = await _Rig().start()
+    await rig.toggle("killswitch.order_entry", True)
+    assert rig.controller.gate.engaged
+    assert rig.algos.calls == []
 
-    async def sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-        store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
-        service.invalidate()  # the 5 s kill-switch TTL elapsed
-        if len(sleeps) == 2:
-            raise RuntimeError("stop")
 
-    controller = MaintenanceController(service, MaintenanceGate(), algos=_Algos(), sleep=sleep)
-    with pytest.raises(RuntimeError):
-        await controller.run()
-    assert sleeps == [5.0, 5.0] and controller.gate.engaged
+async def test_an_unreadable_store_engages_the_gate_without_side_effects() -> None:
+    rig = await _Rig().start()
+    rig.store.down = True
+    with capture_logs() as logs:
+        await rig.controller.refresh()
+    assert rig.controller.gate.engaged
+    assert rig.algos.calls == [] and rig.recorder.calls == []
+    assert "maintenance_store_unavailable" in [e["event"] for e in logs]
+
+
+async def test_a_database_change_is_picked_up_by_the_next_poll() -> None:
+    rig = await _Rig().start()
+    rig.db(MAINTENANCE_MODE, True)
+    with pytest.raises(asyncio.CancelledError):
+        await rig.controller.run()
+    assert rig.sleeps == [REFRESH_S]
+    assert rig.controller.gate.engaged and rig.algos.calls == ["maintenance.enabled"]
+
+
+async def test_a_poll_that_read_before_a_write_never_overwrites_it() -> None:
+    rig = await _Rig().start()
+    rig.store.hold = asyncio.Event()
+    poll = asyncio.create_task(rig.controller.refresh())
+    await asyncio.sleep(0)
+    rig.store.hold.set()
+    rig.store.hold = None
+    await rig.controller.gate_hook(
+        MAINTENANCE_MODE, None, replace(rig.store.rows[MAINTENANCE_MODE], value=True)
+    )
+    await poll
+    assert rig.controller.gate.engaged
+
+
+async def test_a_failed_entry_is_retried_on_the_next_poll() -> None:
+    rig = await _Rig(algos=_Algos(failures=1)).start()
+    rig.db(MAINTENANCE_MODE, True)
+    rig.stop_after = 2
+    with capture_logs() as logs, pytest.raises(asyncio.CancelledError):
+        await rig.controller.run()
+    assert rig.algos.calls == ["maintenance.enabled", "maintenance.enabled"]
+    assert "maintenance_refresh_failed" in [e["event"] for e in logs]
+
+
+async def test_a_hung_algo_engine_times_out_and_still_lets_the_notice_out() -> None:
+    rig = await _Rig(algos=_Algos(hang=True), effect_timeout_s=0.001).start()
+    with capture_logs() as logs:
+        await rig.toggle(MAINTENANCE_MODE, True)
+    assert rig.controller.gate.engaged
+    assert any(f["kind"] == "notice" for f in rig.sessions.frames)
+    assert "feature_flag_hook_failed" in [e["event"] for e in logs]
 
 
 async def test_the_recorder_pauses_only_when_keep_recorder_is_false() -> None:
-    writer, store, controller, _, recorder = await _rig()
-    await controller.refresh()
-    await _toggle(writer, store, MAINTENANCE_MODE, True)
-    await _toggle(writer, store, MAINTENANCE_MODE, False)
-    assert recorder.calls == []
-    await _toggle(writer, store, MAINTENANCE_KEEP_RECORDER, False)
-    await _toggle(writer, store, MAINTENANCE_MODE, True)
-    await _toggle(writer, store, MAINTENANCE_MODE, False)
-    assert recorder.calls == ["pause:maintenance.enabled", "resume:maintenance.disabled"]
+    rig = await _Rig().start()
+    await rig.toggle(MAINTENANCE_MODE, True)
+    await rig.toggle(MAINTENANCE_MODE, False)
+    assert rig.recorder.calls == []
+    await rig.toggle(MAINTENANCE_KEEP_RECORDER, False)
+    await rig.toggle(MAINTENANCE_MODE, True)
+    await rig.toggle(MAINTENANCE_MODE, False)
+    assert rig.recorder.calls == ["pause:maintenance.enabled", "resume:maintenance.disabled"]
 
 
-async def test_a_failing_algo_cancel_still_closes_the_gate_and_pushes_the_notice() -> None:
-    service, store = await _bare()
-    sessions = _Sessions()
-
-    class _Broken:
-        async def cancel_running_algos(self, reason: str) -> int:
-            raise RuntimeError("algo engine down")
-
-    controller = MaintenanceController(service, MaintenanceGate(), algos=_Broken())
-    await controller.refresh()
-    hook = chain_hooks(controller.on_flag_changed, FlagPush(service, sessions).flag_changed)
-    with capture_logs() as logs:
-        await _toggle(
-            FlagWriter(service, FakeAudit(), on_change=hook), store, MAINTENANCE_MODE, True
-        )
-    assert controller.gate.engaged
-    assert any(f["kind"] == "notice" for f in sessions.frames)
-    assert any(e["event"] == "feature_flag_hook_failed" for e in logs)
-
-
-async def test_without_an_algo_port_the_gap_is_logged() -> None:
-    service, store = await _bare()
-    controller = MaintenanceController(service, MaintenanceGate())
+async def test_without_an_algo_port_the_gap_is_logged_once() -> None:
+    store = FakeFlagStore()
+    service = FlagService(default_registry(), store, clock=Clock())
+    await store.ensure(service.registry.values())
     store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
+    controller = MaintenanceController(service, MaintenanceGate())
     with capture_logs() as logs:
         await controller.refresh()
-        await controller.refresh()  # still on: entered once, not twice
+        await controller.refresh()
     assert [e["event"] for e in logs] == ["maintenance_algo_cancel_unavailable"]
 
 
-async def test_a_failing_refresh_never_stops_the_loop() -> None:
-    service, store = await _bare()
-    store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
-    calls: list[float] = []
-
-    class _Broken:
-        async def cancel_running_algos(self, reason: str) -> int:
-            raise RuntimeError("algo engine down")
-
-    async def sleep(seconds: float) -> None:
-        calls.append(seconds)
-        raise RuntimeError("stop")
-
-    controller = MaintenanceController(service, MaintenanceGate(), algos=_Broken(), sleep=sleep)
-    with capture_logs() as logs, pytest.raises(RuntimeError, match="stop"):
-        await controller.run()
-    assert calls == [5.0] and controller.gate.engaged
-    assert "maintenance_refresh_failed" in [e["event"] for e in logs]
+async def test_the_gate_gauge_is_exported_and_follows_the_gate() -> None:
+    assert "cv_maintenance_mode" in EXPORTED_NAMES
+    rig = await _Rig().start()
+    await rig.toggle(MAINTENANCE_MODE, True)
+    assert maintenance_mode_gauge._value.get() == 1
+    await rig.toggle(MAINTENANCE_MODE, False)
+    assert maintenance_mode_gauge._value.get() == 0

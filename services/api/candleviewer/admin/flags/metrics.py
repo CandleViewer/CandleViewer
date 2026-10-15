@@ -13,6 +13,7 @@ from typing import Final
 from candleviewer.observability.metrics import (
     CollectorRegistry,
     Counter,
+    Gauge,
     Histogram,
     ReexportCollector,
 )
@@ -39,12 +40,17 @@ flag_push_latency_seconds = Histogram(
     buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0),
 )
 
+maintenance_mode_gauge = Gauge(
+    "cv_maintenance_mode", "1 while the order gate is engaged (maintenance or order kill switch)."
+)
+
 EXPORTED_NAMES: Final = frozenset(
     {
         "cv_feature_flag_evaluations_total",
         "cv_feature_flag_unreadable_overrides_total",
         "cv_feature_flag_changes_total",
         "cv_flag_push_latency_seconds",
+        "cv_maintenance_mode",
     }
 )
 
