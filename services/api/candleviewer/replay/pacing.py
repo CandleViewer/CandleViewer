@@ -5,7 +5,7 @@ previous event. Each wait therefore targets an absolute deadline, and oversleepi
 carries into the next (`24-internal-schemas.md` Sec.13.7; the ticket's 0.5 % over one hour). A
 speed change re-anchors at the current position, so it takes effect continuously instead of
 jumping. An event later than `max_lag_s` behind schedule re-anchors at that event: the clock slows
-instead of bursting to catch up, and the wall time it gave up is booked in `lost_s`.
+instead of bursting to catch up. `late()` returns that lateness; the clock books it as lost time.
 
 Replay time at or before the anchor is due at the anchor. After a skipped gap (`skip_to`), the
 stretch it compressed plays without waits and never early.
@@ -23,7 +23,7 @@ class Pacer:
 
     Wall times are `MonotonicTime.now()` seconds; replay times are integer µs."""
 
-    __slots__ = ("_rate", "anchor_ts", "anchor_wall", "lost_s", "speed")
+    __slots__ = ("_rate", "anchor_ts", "anchor_wall", "speed")
 
     def __init__(self, speed: float, *, wall: float, ts_us: int) -> None:
         if speed <= 0:
@@ -32,7 +32,6 @@ class Pacer:
         self._rate = speed * US_PER_S
         self.anchor_wall = wall
         self.anchor_ts = ts_us
-        self.lost_s = 0.0
 
     def due(self, ts_us: int) -> float:
         """Wall time at which replay time `ts_us` is due."""
@@ -46,7 +45,9 @@ class Pacer:
         return self.anchor_ts + int((wall - self.anchor_wall) * self._rate)
 
     def set_speed(self, speed: float, *, wall: float, position_us: int) -> None:
-        """Continue at `speed` from `position_us`, reached at `wall`."""
+        """Continue at `speed` from `position_us`, reached at `wall`. For a continuous change,
+        `position_us` must be `position(wall)`: any other value moves the schedule, and a value
+        behind it would forgive the lateness of every event in between."""
         if speed <= 0:
             raise ValueError("a paced speed is positive")
         self.anchor_wall, self.anchor_ts = wall, position_us
@@ -60,11 +61,10 @@ class Pacer:
 
     def late(self, ts_us: int, *, wall: float, max_lag_s: float) -> float:
         """Lateness in seconds of the event at `ts_us` delivered at `wall`. Beyond `max_lag_s`
-        the clock slows: it re-anchors at the event (never back in replay time) and books the
-        lateness in `lost_s`."""
+        the clock slows: it re-anchors at the event (never back in replay time), and the caller
+        books the returned lateness as lost wall time."""
         lag = wall - self.due(ts_us)
         if lag > max_lag_s:
-            self.lost_s += lag
             self.anchor_wall, self.anchor_ts = wall, max(ts_us, self.anchor_ts)
         return lag
 

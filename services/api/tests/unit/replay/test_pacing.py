@@ -43,15 +43,15 @@ def test_pacer_speed_change_continues_from_the_current_position_without_a_jump()
 def test_pacer_lateness_within_max_lag_keeps_the_absolute_schedule() -> None:
     pacer = Pacer(1.0, wall=0.0, ts_us=0)
     assert pacer.late(US_PER_S, wall=1.2, max_lag_s=0.25) == pytest.approx(0.2)
-    assert (pacer.anchor_wall, pacer.anchor_ts, pacer.lost_s) == (0.0, 0, 0.0)
+    assert (pacer.anchor_wall, pacer.anchor_ts) == (0.0, 0)
     assert pacer.due(2 * US_PER_S) == pytest.approx(2.0)
 
 
-def test_pacer_lateness_beyond_max_lag_slows_the_clock_and_books_lost_time() -> None:
+def test_pacer_lateness_beyond_max_lag_slows_the_clock_and_returns_the_lost_time() -> None:
     pacer = Pacer(2.0, wall=0.0, ts_us=0)
     lag = pacer.late(2 * US_PER_S, wall=4.0, max_lag_s=0.25)
     assert lag == pytest.approx(3.0)
-    assert pacer.lost_s == pytest.approx(3.0)
+    assert (pacer.anchor_wall, pacer.anchor_ts) == (4.0, 2 * US_PER_S)
     assert pacer.due(4 * US_PER_S) == pytest.approx(5.0)  # no burst: 2 s of replay is 1 s
 
 
@@ -119,7 +119,7 @@ def test_pacer_oversleep_never_accumulates_into_drift(
         pacer.late(ts, wall=wall, max_lag_s=0.25)
         ideal = ts / (speed * US_PER_S)
         assert 0.0 <= wall - ideal <= 0.01 + 1e-9
-    assert pacer.lost_s == 0.0
+    assert (pacer.anchor_wall, pacer.anchor_ts) == (0.0, 0)  # never re-anchored
 
 
 def test_pacer_one_hour_at_1x_with_jitter_ends_within_half_a_percent() -> None:
