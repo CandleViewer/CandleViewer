@@ -154,8 +154,7 @@ def is_wire_representable(spec: BarSpec) -> bool:
 #: both refuse outside these, never clamp.
 _PARAM_BOUNDS: Final[dict[str, tuple[int, int]]] = {
     "tick": TICK_PARAM_RANGE,
-    "range": RANGE_TICKS_RANGE,
-    "renko": RANGE_TICKS_RANGE,
+    "range": RANGE_TICKS_RANGE,  # renko's bricks are bounded by the model (`check_renko_bounds`)
     "volume": (1, QTY_PARAM_MAX),
     "delta": (1, QTY_PARAM_MAX),
 }

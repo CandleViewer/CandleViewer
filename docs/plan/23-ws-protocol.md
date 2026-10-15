@@ -1026,7 +1026,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 ### 7.7 As built (E17-S03, #2178; wired by #377)
 
 - Each (connection, subscription) has its own sequence domain. A `snap` takes exactly one sequence number. `meta.previous_seq` is present whenever an earlier `snap` or `d` existed.
-- While a subscription is `snapshot_pending`, no `d` is sent on it. Snapshots come from the owning module (book, bars, order-flow). Until a module's adapter has landed (#2195 bars, #2196 book, #2197 order-flow), its families stay `snapshot_pending` and no `snap` is emitted. Such a subscription is never an error.
+- While a subscription is `snapshot_pending`, no `d` is sent on it. Snapshots come from the owning module (book, bars, order-flow). Until a module's adapter has landed (#2195 bars, #2196 book, #2197 order-flow), its families stay `snapshot_pending` and no `snap` is emitted. Such a pending subscription is never an error; the §6.1 `bars.*` refusals happen at subscribe, before it is pending.
 - `snapshot: false` without provable continuity is answered with `snapshot_forced: true` (§7.6).
 - A `resync` with no `ch`, or with an unknown `reason`, is answered with `err` `frame_malformed`.
 - Every `revoked` frame, including the §7.5 `resync_rate_limited` one, always carries `resubscribe_allowed`. It is `true` only when a scope narrowed and some accounts were kept (E17-S02, #2159).
@@ -3794,6 +3794,7 @@ here and checked against the charts by the contract test, never restated (C-2.19
 | Max subscriptions / connection | 200                                                |
 | Max topics / `sub` frame       | 50                                                 |
 | Max symbols / connection       | 40                                                 |
+| Max `bars.*` / connection      | 16 (SR-E12-07, §6.1)                               |
 | Max connections / user         | 8                                                  |
 | Max inbound frame              | 256 KiB                                            |
 | Max outbound frame             | 4 MiB (snapshots chunked above this)               |

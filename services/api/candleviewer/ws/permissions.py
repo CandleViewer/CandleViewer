@@ -221,6 +221,20 @@ class Subscription:
         return frozenset(out)
 
 
+def _bar_spec(sub: Subscription) -> tuple[BarSpec | None, dict[str, Any] | None]:
+    """A `bars.*`/`footprint.*` topic's spec, or its refusal (§6.1, SR-E12-03): an unbuildable
+    spec, or a `param` outside its kind's bounds, naming the bound and never the series."""
+    bar_type = sub.topic.bar_type or ""
+    try:
+        spec = from_wire(bar_type, sub.topic.param or "")
+        check_param_bounds(spec, bar_type)
+    except BarParamOutOfRange as exc:
+        return None, _fail(sub.ch, "invalid_topic_format", str(exc))
+    except BarsError:
+        return None, _fail(sub.ch, "invalid_topic_format", "This bar series is not available.")
+    return spec, None
+
+
 def _fail(ch: Any, code: str, message: str, fld: str | None = None) -> dict[str, Any]:
     err: dict[str, Any] = {"code": code, "message": message}
     if fld is not None:
@@ -427,8 +441,13 @@ class ConnectionAuthz:
         `BarBuilderSet` lease with `user=` the authenticated principal id - never a client
         value. Returns a failure result (and drops the subscription) on refusal."""
         family = sub.topic.family.family
-        if family == "bars":
-            refused = self._bars_refusal(sub)
+        spec: BarSpec | None = None
+        if family in {"bars", "footprint"}:
+            refused = self._bars_refusal(sub) if family == "bars" else None
+            # SR-E12-03 for live and replay alike, wherever a builder could serve the series.
+            served = sub.replay_session_id is not None or self.services.bars is not None
+            if refused is None and served:
+                spec, refused = _bar_spec(sub)
             if refused is not None:
                 self._drop(sub)
                 return refused
@@ -437,9 +456,7 @@ class ConnectionAuthz:
         consumer = self._consumer(sub)
         try:
             bars = self.services.bars
-            if family in {"bars", "footprint"} and bars is not None:
-                spec = from_wire(sub.topic.bar_type or "", sub.topic.param or "")
-                check_param_bounds(spec, sub.topic.bar_type or "")
+            if spec is not None and bars is not None:
                 symbol = sub.topic.symbol or ""
                 await bars.register(spec, symbol, consumer, user=str(self.principal.user_id))
                 sub.bar_lease = (spec.spec_hash, symbol)
@@ -450,9 +467,6 @@ class ConnectionAuthz:
         except SpecCapExceeded:
             self._drop(sub)
             return _fail(sub.ch, "subscription_limit", "Too many distinct bar series.")
-        except BarParamOutOfRange as exc:  # SR-E12-03: names the bound, never the series
-            self._drop(sub)
-            return _fail(sub.ch, "invalid_topic_format", str(exc))
         except BarServiceStopping:
             self._drop(sub)
             return _fail(sub.ch, "internal_error", "The bar service is restarting; retry.")
@@ -464,7 +478,7 @@ class ConnectionAuthz:
     def _bars_refusal(self, sub: Subscription) -> dict[str, Any] | None:
         """§6.1: `unknown_topic` while the bars feature is off, and `subscription_limit` past
         SR-E12-07's per-connection cap (live and replay `bars.*` count alike). `footprint.*`
-        keeps §7.7 until #2197."""
+        keeps §7.7 until #2197, but its spec is still bounded (`_bar_spec`)."""
         if self.services.bars_off:
             return _fail(sub.ch, "unknown_topic", "This topic is not available on this server.")
         held = sum(

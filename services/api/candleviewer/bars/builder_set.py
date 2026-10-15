@@ -367,7 +367,8 @@ class BarBuilderSet:
         string), or the per-user cap is meaningless. `None` is reserved for system consumers
         (recorder, rules) and skips only the per-user cap.
 
-        Raises `SpecCapExceeded` (nothing changed) or `BarSpecError` for an unbuildable kind.
+        Raises `SpecCapExceeded` (nothing changed), `BarSpecError` for an unbuildable kind, or
+        `BarServiceStopping` once `stop()` has begun (a transient refusal).
         """
         if self._stopping:
             raise BarServiceStopping(

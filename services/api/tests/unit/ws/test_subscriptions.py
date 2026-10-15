@@ -298,7 +298,9 @@ def test_sub_symbol_limit_40_per_connection() -> None:
 
 def test_sub_more_than_50_topics_rejects_the_excess() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
-    res = _sub(conn, *[f"bars.BTCUSDT.tick.{i}" for i in range(1, 53)])
+    # footprint, not bars: bars.* stops at its own 16-per-connection cap first (§6.1)
+    res = _sub(conn, *[f"footprint.BTCUSDT.tick.{i}" for i in range(1, 53)])
+    assert all(r["ok"] for r in res[:50])
     assert [r["error"]["code"] for r in res[50:]] == ["too_many_topics"] * 2
 
 
@@ -868,3 +870,27 @@ def test_bars_effective_echoes_the_defaults_and_explicit_values() -> None:
     )
     assert (default["effective"]["history"], default["effective"]["include_delta"]) == (500, False)
     assert (explicit["effective"]["history"], explicit["effective"]["include_delta"]) == (0, True)
+
+
+def test_replay_bars_param_outside_its_bounds_is_refused_too() -> None:
+    """SR-E12-03 holds on the replay path, which takes no live lease."""
+    conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars()))
+    (r,) = _sub(conn, "bars.BTCUSDT.tick.1", replay_session_id=RS)
+    assert (r["ok"], r["error"]["code"]) == (False, "invalid_topic_format")
+    assert r["error"]["message"].endswith("must be between 100 and 1000000.")
+
+
+def test_the_17th_bars_topic_of_one_frame_is_refused_and_an_unsub_frees_a_slot() -> None:
+    conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars()))
+    topics = [f"bars.BTCUSDT.tick.{100 + i}" for i in range(MAX_BARS_SUBSCRIPTIONS + 1)]
+    res = _sub(conn, *topics)
+    assert [r["ok"] for r in res] == [True] * MAX_BARS_SUBSCRIPTIONS + [False]
+    assert res[-1]["error"]["code"] == "subscription_limit"
+    conn.unsubscribe(topics[0])
+    assert _sub(conn, topics[-1])[0]["ok"]
+
+
+def test_bars_volume_param_above_its_ceiling_is_refused() -> None:
+    conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars()))
+    (r,) = _sub(conn, "bars.BTCUSDT.volume.1000000000001")
+    assert r["error"]["message"].endswith("must be between 1 and 1000000000000.")

@@ -12,7 +12,7 @@ import pytest
 from candleviewer.bars import builder_set
 from candleviewer.bars.builder_set import BarBuilderSet, BarsHealthReason, default_factory
 from candleviewer.bars.emit import EmitRouter
-from candleviewer.bars.errors import BarsError
+from candleviewer.bars.errors import BarsError, BarServiceStopping
 from candleviewer.bars.metrics import (
     bar_builder_quarantined_total,
     bar_emit_sink_errors_total,
@@ -207,7 +207,7 @@ async def test_restore_with_lagging_tape_catches_up_from_lane_ring(tmp_path: Pat
 async def test_register_refused_once_stopping(tmp_path: Path) -> None:
     s = make_set(tmp_path)
     await s.stop()
-    with pytest.raises(BarsError, match="shutting down"):
+    with pytest.raises(BarServiceStopping, match="shutting down"):  # retryable, not invalid
         await s.register(T3, SYM, "late")
     assert s._lanes == {}
 
