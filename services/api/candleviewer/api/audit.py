@@ -166,18 +166,17 @@ def _problem(
     title: str,
     detail: str,
     *,
-    code: str | None = None,
+    code: str,
     retry_after_s: int | None = None,
     errors: list[dict[str, str]] | None = None,
 ) -> JSONResponse:
     content: dict[str, Any] = {
-        "type": f"https://candleviewer.local/errors/{code}" if code else "about:blank",
+        "type": f"https://candleviewer.local/errors/{code}",
         "title": title,
         "status": status_code,
         "detail": detail,
+        "code": code,
     }
-    if code is not None:
-        content["code"] = code
     if errors is not None:
         content["errors"] = errors
     response = JSONResponse(
@@ -312,14 +311,7 @@ def make_audit_router(
         request: Request, operation: str
     ) -> tuple[AuditServiceLike, AuditPrincipal, AuditView]:
         if audit_service is None or not audit_service.is_active:
-            raise _HttpProblem(
-                _problem(
-                    503,
-                    "Service unavailable",
-                    "audit backend is not wired",
-                    code="store_unavailable",
-                )
-            )
+            raise _HttpProblem(_unavailable("audit backend is not wired"))
         if principal_resolver is None:
             raise _HttpProblem(
                 _problem(

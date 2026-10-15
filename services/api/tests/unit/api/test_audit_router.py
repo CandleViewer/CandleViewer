@@ -209,15 +209,17 @@ def test_export_owner_gets_501_with_not_implemented_type(principal: Any) -> None
 def test_export_owner_501_body_has_no_job_id(principal: Any) -> None:
     client = TestClient(_app(_FakeAuditService(), _FakeResolver(principal())))
     response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert response.status_code == 501
     assert "job_id" not in response.text
 
 
 @_OWNER_SHAPES
 def test_export_owner_501_writes_no_audit_record(principal: Any) -> None:
     service = _FakeAuditService()
-    TestClient(_app(service, _FakeResolver(principal()))).post(
+    response = TestClient(_app(service, _FakeResolver(principal()))).post(
         "/admin/audit/export", json=_EXPORT_BODY
     )
+    assert response.status_code == 501
     assert service.writer_service.emitted == []
 
 
@@ -279,6 +281,7 @@ def test_export_backend_not_wired_gives_503() -> None:
     assert response.status_code == 503
     assert response.json()["code"] == "store_unavailable"
     assert response.json()["type"].endswith("/errors/store_unavailable")
+    assert response.headers["Retry-After"] == "1"
 
 
 def test_inactive_audit_service_returns_503() -> None:
@@ -301,6 +304,7 @@ def test_no_audit_service_wired_returns_503() -> None:
     assert response.status_code == 503
     assert response.json()["code"] == "store_unavailable"
     assert response.json()["type"].endswith("/errors/store_unavailable")
+    assert response.headers["Retry-After"] == "1"
 
 
 def test_resolver_returning_none_returns_401_unauthorized() -> None:
