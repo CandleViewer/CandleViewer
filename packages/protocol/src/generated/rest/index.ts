@@ -185,6 +185,30 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/admin/capacity/subaccount-tier": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Record the Bybit sub-account tier as a fact (never inferred)
+     * @description Records the system-scope setting `accounts.subaccount_tier` (21-database-schema.md 3.9)
+     *     that `GET /admin/capacity` reports as `SubaccountCapacity`: cap 5 for `regular`, 20 for
+     *     `business_kyc`. Owner-only (`admin:write`). Every successful call is audited as
+     *     `settings.change` with the before and after tier, written ahead of the response; a denied
+     *     attempt is audited too. The tier cannot be cleared here, and nothing else ever sets it.
+     */
+    put: operations["setSubaccountTier"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/admin/feature-flags": {
     parameters: {
       query?: never;
@@ -8486,6 +8510,45 @@ export interface operations {
           "application/json": components["schemas"]["CapacityReport"];
         };
       };
+    };
+  };
+  setSubaccountTier: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** @enum {string} */
+          tier: "regular" | "business_kyc";
+        };
+      };
+    };
+    responses: {
+      /** @description Tier recorded; the resulting sub-account capacity. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SubaccountCapacity"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   listFeatureFlags: {
