@@ -61,6 +61,9 @@ def _seed(c: psycopg.Connection) -> None:
     s1, s2 = _account(c, "sub", m1), _account(c, "sub", m1)
     s3, s4 = _account(c, "sub", m1, enabled=False), _account(c, "sub", m1, deleted=True)
     _account(c, "sub", m2)
+    live = _account(c, "main", None, env="live")
+    for _ in range(2):
+        _account(c, "sub", live, env="live")
     _key(c, s1, "active", NOW + timedelta(days=10))  # expiring within 30 days
     _key(c, s2, "active", NOW + timedelta(days=60))
     _key(c, m1, "active", None)
@@ -88,13 +91,14 @@ def _account(
     *,
     enabled: bool = True,
     deleted: bool = False,
+    env: str = "demo",
 ) -> UUID:
     acct = uuid4()
     c.execute(
         "INSERT INTO exchange_accounts (id, exchange, env, kind, exchange_uid, label, "
         "parent_account_id, is_enabled, deleted_at) "
-        "VALUES (%s, 'bybit', 'demo', %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END)",
-        (acct, kind, str(acct.int % 10**12), f"acct-{acct}", parent, enabled, deleted),
+        "VALUES (%s, 'bybit', %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END)",
+        (acct, env, kind, str(acct.int % 10**12), f"acct-{acct}", parent, enabled, deleted),
     )
     return acct
 
@@ -142,7 +146,7 @@ async def test_account_totals_count_live_accounts_and_keys_by_horizon(
     counts: SqlAlchemyAdminCounts,
 ) -> None:
     totals = await counts.account_totals(NOW + timedelta(days=30))
-    assert totals == AccountTotals(total=6, enabled=5, keys_expiring=1, keys_invalid=1)
+    assert totals == AccountTotals(total=9, enabled=8, keys_expiring=1, keys_invalid=1)
 
 
 async def test_open_incidents_group_unresolved_errors_by_component_and_kind(
@@ -151,7 +155,7 @@ async def test_open_incidents_group_unresolved_errors_by_component_and_kind(
     assert await counts.open_incidents() == 2
 
 
-async def test_subaccounts_in_use_is_the_busiest_main_account(
+async def test_subaccounts_in_use_is_the_busiest_live_main_account(
     counts: SqlAlchemyAdminCounts,
 ) -> None:
-    assert await counts.subaccounts_in_use() == 3
+    assert await counts.subaccounts_in_use() == 2  # the demo main has 3: never counted
