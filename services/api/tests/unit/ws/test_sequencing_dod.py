@@ -308,6 +308,7 @@ def _resnapshot() -> tuple[int, float, int]:
         conn.emitter.cache.invalidate(s.ch)
         conn.emitter.snapshot(s, "client_resync")
     elapsed = time.perf_counter() - start
+    assert len(frames) >= len(subs)  # a window that emitted nothing must not pass as fast
     for frame in frames:
         validate(frame)
     size = sum(len(json.dumps(f, separators=(",", ":"))) for f in frames)
