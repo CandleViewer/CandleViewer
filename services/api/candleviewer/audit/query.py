@@ -101,6 +101,7 @@ class _Walk:
     last_hash: str  # `entry_hash` of the last row that passed (else the expected predecessor)
     bad_id: int | None = None
     kind: ChainBreakKind | None = None
+    last_id: int = 0  # the id of the last row that passed (0: none did)
 
 
 _NO_CHECKPOINTS: Mapping[int, str] = MappingProxyType({})
@@ -125,7 +126,7 @@ def _walk_batch(
             kind = ChainBreakKind.CHECKPOINT_MISMATCH
             return _Walk(index + 1, index, expected_prev, row[0], kind)
         expected_prev = row[2]
-    return _Walk(len(rows), len(rows), expected_prev)
+    return _Walk(len(rows), len(rows), expected_prev, last_id=rows[-1][0] if rows else 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -387,13 +388,18 @@ class AuditQueryService:
         walk = _Walk(0, 0, anchor)
         if above is None:  # `lo <= hi`
             end = hi if gap is None else gap - 1
+            known = {h: hh for h, (hh, e) in inside.items() if e is not None}
             if end >= lo:
-                known = {h: hh for h, (hh, e) in inside.items() if e is not None}
                 walk = await self._walk(anchor, lo - 1, end, batch_size, known)
             if walk.bad_id is not None:
                 return walk
             if gap is not None:
                 return replace(walk, bad_id=gap, kind=missing)
+            # A checkpointed entry deleted during the run, after the last row the walk passed,
+            # leaves no next row whose link would break: it was never visited.
+            unvisited = [h for h in known if h > walk.last_id]
+            if unvisited:
+                return replace(walk, bad_id=min(unvisited), kind=missing)
             if hi == plan.head_id:
                 above = await self._repository.fetch_checkpoint_above(hi)
         kind = ChainBreakKind.TAIL_TRUNCATED
@@ -420,7 +426,7 @@ class AuditQueryService:
     ) -> _Walk:
         """Keyset batches `after_id < id <= last_id`; batch n+1 is fetched while batch n
         is hashed, and batch n+2 only after batch n is done (at most two held)."""
-        checked = passed = 0
+        checked = passed = passed_id = 0
         pending: asyncio.Future[list[tuple[Any, ...]]] | None
         pending = spawn(self._fetch(after_id, last_id, batch_size), name=_PREFETCH)
         try:
@@ -436,8 +442,8 @@ class AuditQueryService:
                 checked, passed = checked + walk.checked, passed + walk.passed
                 if walk.bad_id is not None:
                     return _Walk(checked, passed, walk.last_hash, walk.bad_id, walk.kind)
-                expected = walk.last_hash
-            return _Walk(checked, passed, expected)
+                expected, passed_id = walk.last_hash, walk.last_id
+            return _Walk(checked, passed, expected, last_id=passed_id)
         finally:
             if pending is not None:  # a prefetch nobody read: a break, an error, a cancel
                 await _discard(pending)
