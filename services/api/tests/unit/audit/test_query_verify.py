@@ -406,6 +406,24 @@ async def test_verify_marks_only_a_run_from_genesis_to_the_head_as_the_full_chai
     assert "full_chain" not in (await svc.verify()).model_dump(mode="json")
 
 
+async def test_verify_a_head_entry_gone_during_the_run_is_a_truncation(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Review of #2462: a range ending at the head must pass the head entry; when it vanished
+    during the run the run breaks there, so the chain gauge can never read 1 over it."""
+    await _seed(repo, 5, clock)
+    fetch = repo.fetch_verify_batch
+
+    async def delete_then_fetch(**kw: Any) -> list[tuple[Any, ...]]:
+        repo.rows[:] = [r for r in repo.rows if r["id"] != 5]
+        return await fetch(**kw)
+
+    repo.fetch_verify_batch = delete_then_fetch  # type: ignore[method-assign]  # spy
+    result = await AuditQueryService(repo).verify()
+    assert (result.verified, result.first_bad_id) == (False, 5)
+    assert (result.kind, result.entries_checked) == (ChainBreakKind.TAIL_TRUNCATED, 4)
+
+
 def _checkpoint(repo: FakeAuditRepository, head_id: int, head_hash: str | None = None) -> None:
     """A checkpoint naming `head_id`, by default with that entry's stored hash."""
     stored = next((r["entry_hash"] for r in repo.rows if r["id"] == head_id), "f" * 64)
