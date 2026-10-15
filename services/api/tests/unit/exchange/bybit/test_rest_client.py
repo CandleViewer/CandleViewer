@@ -399,7 +399,7 @@ async def test_non_json_body_on_order_class_stays_unknown_state_without_retry() 
     route = respx.post(f"{BASE_URL}/v5/order/create").mock(
         return_value=httpx.Response(200, content=_TRUNCATED)
     )
-    signer = BybitSigner(api_key="k", api_secret=SecretStr("s"))
+    signer = BybitSigner(fake_capability("k"), CREDENTIAL_ID)
     client = BybitRestClient(_config(), signer=signer, governor=_fresh_governor())
     try:
         with pytest.raises(UnknownStateError):

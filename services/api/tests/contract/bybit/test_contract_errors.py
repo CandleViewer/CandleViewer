@@ -137,7 +137,7 @@ async def test_truncated_json_on_order_class_stays_unknown_state_without_retry()
     route = respx.post(f"{BASE}/v5/order/create").mock(
         return_value=httpx.Response(200, text='{"retCode":0,"res')
     )
-    signer = BybitSigner(api_key="CONTRACT-KEY-1234", api_secret=SecretStr("CONTRACT-SECRET-9"))
+    signer = BybitSigner(fake_capability("CONTRACT-KEY-1234"), CREDENTIAL_ID)
     client = _client(max_retries=3, signer=signer)
     try:
         with pytest.raises(UnknownStateError):
