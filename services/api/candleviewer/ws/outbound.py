@@ -9,15 +9,19 @@ market-data frames (`d` / `snap` of a throttled topic) can be dropped; control f
 `Backpressure` runs the §8.4 ladder against that budget plus the pacer's pending state:
 
 1. drop the queued frames and pending state of every throttled topic that holds any, and mark it
-   `resnapshot_required` (its deltas are held until then);
+   `resnapshot_required` (its deltas are held until then); queued frames of a topic already
+   awaiting its snapshot, or no longer subscribed, are dropped as well;
 2. once the queue has drained below 50 %, send one `snap` with reason `backpressure` per marked
    topic, one at a time while the queue stays below 50 %;
-3. if the queue is still over budget after the drop because `orders` / `executions` frames
-   cannot be dropped, close the connection as a slow consumer, naming the topics that were the
-   most expensive when the overflow began.
+3. if the queue is still over budget after the drop, what remains cannot be dropped (`orders` /
+   `executions`, control and `system` frames): close the connection as a slow consumer, naming
+   the topics that were the most expensive (queued plus pending) when the overflow began. A
+   topic whose `backpressure` snapshot is dropped again `MAX_REDROPS` times in a row before it
+   ever leaves the queue (a snapshot larger than the budget) ends in the same close.
 
 Every step comes back as a `LadderEvent`; the caller records step 4 (`cv_ws_overflow_total`, and
-the warning audit entry when step 3 fires) and performs the close.
+the warning audit entry when step 3 fires) and performs the close. The bound holds only if the
+caller runs `check` after every push and every pacer update, and `drain` after every send.
 """
 
 from __future__ import annotations
@@ -38,12 +42,12 @@ QUEUE_FRAMES: Final = 2000
 DRAIN_PCT: Final = 50.0
 #: Topics named in the slow-consumer `bye.hint.most_expensive_topics`.
 MOST_EXPENSIVE: Final = 5
+#: Consecutive drops of a topic's queued `backpressure` snapshot before the connection closes.
+MAX_REDROPS: Final = 3
 #: Families whose frames ride the priority lane, with the ping / pong control frames.
 PRIORITY_FAMILIES: Final = frozenset({"orders", "executions", "system"})
 _PRIORITY_CONTROL: Final = frozenset({"ping", "pong"})
 _DATA_FRAMES: Final = frozenset({"d", "snap"})
-#: Families whose frames cannot be dropped (§8.4 step 3, S4).
-UNDROPPABLE_FAMILIES: Final = frozenset({"orders", "executions"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,8 +62,10 @@ class Queued:
 
 
 def encode(frame: Mapping[str, Any]) -> Queued:
-    """Serialise `frame` once, exactly as the writer sends it, and classify it for the lanes."""
-    text = json.dumps(frame, separators=(",", ":"))
+    """Serialise `frame` once, exactly as the writer sends it, and classify it for the lanes.
+    ASCII-only output makes `len(text)` the byte count; a NaN or infinity raises `ValueError`
+    rather than leave as invalid JSON."""
+    text = json.dumps(frame, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
     ch = frame.get("ch")
     family = ch.split(".", 1)[0] if isinstance(ch, str) else None
     priority = family in PRIORITY_FAMILIES or frame.get("t") in _PRIORITY_CONTROL
@@ -128,9 +134,9 @@ class OutboundQueue:
     def over_budget(self, pending_bytes: int = 0) -> bool:
         return self.bytes + pending_bytes > self.max_bytes or len(self) > self.max_frames
 
-    def topics(self) -> frozenset[str]:
-        """Topics with droppable frames queued."""
-        return frozenset(self._topic_bytes)
+    def topic_bytes(self) -> dict[str, int]:
+        """Queued bytes of every topic with droppable frames."""
+        return dict(self._topic_bytes)
 
     def drop(self, topics: Collection[str]) -> int:
         """Remove the droppable frames of `topics`; returns how many were dropped."""
@@ -147,15 +153,6 @@ class OutboundQueue:
             self.ready.clear()
         return dropped
 
-    def most_expensive(self, n: int = MOST_EXPENSIVE) -> list[str]:
-        """The `n` topics with the most queued bytes, largest first."""
-        ranked = sorted(self._topic_bytes.items(), key=lambda item: (-item[1], item[0]))
-        return [topic for topic, _ in ranked[:n]]
-
-    def holds_undroppable(self) -> bool:
-        """True while `orders` / `executions` frames wait in the queue."""
-        return any(frame.family in UNDROPPABLE_FAMILIES for frame in self._priority)
-
 
 class Backpressure:
     """The §8.4 ladder for one connection: `check` after anything grows the queue or the pacer's
@@ -164,16 +161,22 @@ class Backpressure:
     def __init__(self, queue: OutboundQueue, pacer: Pacer) -> None:
         self.queue = queue
         self.pacer = pacer
+        #: Topics whose `backpressure` snapshot is queued, not yet sent.
+        self._snapped: set[str] = set()
+        #: Consecutive drops of a topic whose snapshot never left the queue.
+        self._redrops: dict[str, int] = {}
 
     def over_budget(self) -> bool:
         return self.queue.over_budget(self.pacer.pending_bytes)
 
     def check(self, subs: Iterable[Subscription]) -> list[LadderEvent]:
-        """Steps 1 and 3, when the connection is over its budget."""
+        """Steps 1 and 3, when the connection is over its budget. `subs` is the connection's full
+        subscription set."""
         if not self.over_budget():
             return []
-        hint = self.queue.most_expensive()
-        queued = self.queue.topics()
+        subs = list(subs)
+        hint = self._most_expensive(subs)
+        queued = self.queue.topic_bytes().keys()
         offending = [
             sub
             for sub in subs
@@ -183,25 +186,53 @@ class Backpressure:
         ]
         for sub in offending:
             self.pacer.drop(sub)
-        self.queue.drop({sub.ch for sub in offending})
+        live = {sub.ch for sub in subs if not sub.snapshot_pending}
+        self.queue.drop(
+            {topic for topic in queued if topic not in live} | {s.ch for s in offending}
+        )
         events = []
         if offending:
             events.append(LadderEvent("drop", tuple(sorted(sub.ch for sub in offending))))
-        if self.over_budget() and self.queue.holds_undroppable():
-            events.append(LadderEvent("close", tuple(hint)))
+        if self.over_budget() or self._looping(sub.ch for sub in offending):
+            events.append(LadderEvent("close", hint))
         return events
 
     def _pending(self, sub: Subscription) -> bool:
         lane = self.pacer.lanes.get(sub.sub_id)
         return lane is not None and lane.queue.pending
 
+    def _most_expensive(self, subs: list[Subscription]) -> tuple[str, ...]:
+        """Topics by queued plus pending bytes, largest first (`bye.hint`)."""
+        costs = self.queue.topic_bytes()
+        for sub in subs:
+            lane = self.pacer.lanes.get(sub.sub_id)
+            if lane is not None and lane.queue.pending_bytes:
+                costs[sub.ch] = costs.get(sub.ch, 0) + lane.queue.pending_bytes
+        ranked = sorted(costs.items(), key=lambda item: (-item[1], item[0]))
+        return tuple(topic for topic, _ in ranked[:MOST_EXPENSIVE])
+
+    def _looping(self, dropped: Iterable[str]) -> bool:
+        """Count a drop of a topic whose snapshot was still queued; True at `MAX_REDROPS`."""
+        looping = False
+        for topic in dropped:
+            if topic in self._snapped:
+                self._snapped.discard(topic)
+                self._redrops[topic] = self._redrops.get(topic, 0) + 1
+                looping = looping or self._redrops[topic] >= MAX_REDROPS
+        return looping
+
     def drain(self) -> list[LadderEvent]:
         """Step 2: below `DRAIN_PCT`, one `backpressure` snap per marked topic, one at a time."""
+        queued = self.queue.topic_bytes().keys()
+        for topic in [t for t in self._snapped if t not in queued]:
+            self._snapped.discard(topic)  # the snapshot left: the topic recovered
+            self._redrops.pop(topic, None)
         sent: list[str] = []
         for sub_id, sub in list(self.pacer.resnapshot_required.items()):
             if self.queue.pct(self.pacer.pending_bytes) >= DRAIN_PCT:
                 break
             if self.pacer.emitter.snapshot(sub, "backpressure"):
                 del self.pacer.resnapshot_required[sub_id]
+                self._snapped.add(sub.ch)
                 sent.append(sub.ch)
         return [LadderEvent("resnapshot", tuple(sent))] if sent else []
