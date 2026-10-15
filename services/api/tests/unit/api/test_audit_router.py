@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import math
 import threading
 import uuid
 from datetime import UTC, datetime
@@ -43,7 +44,10 @@ from candleviewer.audit.models import (
     VerifyResult,
 )
 from candleviewer.audit.query import AuditQueryService, VerifyPlan, VerifyRangeBeyondHead
-from candleviewer.observability.audit_query_metrics import FILTER_CLASSES
+from candleviewer.observability.audit_query_metrics import (
+    FILTER_CLASSES,
+    cv_audit_chain_verified_state,
+)
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadBusy, AuditReadFailed
 
@@ -1328,6 +1332,32 @@ def test_verify_writes_a_started_record_then_its_result() -> None:
 
 def _failures() -> float:
     return REGISTRY.get_sample_value("audit_chain_verification_failures_total") or 0.0
+
+
+@pytest.mark.parametrize("full", [True, False])
+@pytest.mark.parametrize(
+    "error", [TimeoutError(), ChainHasherBusy(), AuditReadFailed("08006"), RuntimeError("x")]
+)
+def test_verify_stop_leaves_the_chain_state_unknown_only_for_a_full_range(
+    error: Exception, full: bool
+) -> None:
+    """Review of #2462: a full-range run that stops sets the gauge to NaN, so an old 1 cannot
+    stand while such runs keep stopping; a partial range leaves it as it is."""
+    svc = _FakeAuditService()
+
+    async def plan(**_kw: Any) -> VerifyPlan:
+        return VerifyPlan(1, 5, 5, full_chain=full)
+
+    async def stopping(*_a: Any, **_kw: Any) -> VerifyResult:
+        raise error
+
+    svc.query_service.plan_verify = plan  # type: ignore[method-assign]  # fault injection
+    svc.query_service.run_verify = stopping  # type: ignore[method-assign]  # fault injection
+    cv_audit_chain_verified_state.set(1)
+    r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
+    state = REGISTRY.get_sample_value("cv_audit_chain_verified_state")
+    assert r.status_code == 503 and state is not None
+    assert math.isnan(state) if full else state == 1
 
 
 def test_verify_break_is_a_critical_record_counted_and_the_chain_state_is_zero() -> None:

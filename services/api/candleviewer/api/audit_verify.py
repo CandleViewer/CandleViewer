@@ -12,12 +12,14 @@ an append. Outside the budget, these records are bounded only by verify's own ru
 
 Gauge rule (design §5): a break sets `cv_audit_chain_verified_state` to 0 and counts in
 `audit_chain_verification_failures_total`; only a run from genesis to the head that found no
-break sets it to 1, so a passing partial range never hides a known break.
+break sets it to 1, so a passing partial range never hides a known break. Such a run that
+stops early sets it to NaN (unknown), so a stop never leaves an old 1 standing.
 """
 
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -81,6 +83,14 @@ def result_record(result: VerifyResult) -> tuple[AuditOutcome, Severity, str, di
     if result.verified:
         return AuditOutcome.SUCCESS, Severity.INFO, "verified", after
     return AuditOutcome.FAILURE, Severity.CRITICAL, f"{kind}@{result.first_bad_id}", after
+
+
+def observe_stop(*, full_chain: bool) -> None:
+    """A run from genesis to the head that stopped early leaves the chain state unknown
+    (NaN): a stop cannot keep an old 1 standing while such runs keep stopping. A partial
+    range that stops leaves the gauge as it is."""
+    if full_chain:
+        cv_audit_chain_verified_state.set(math.nan)
 
 
 def observe_verify(result: VerifyResult) -> None:

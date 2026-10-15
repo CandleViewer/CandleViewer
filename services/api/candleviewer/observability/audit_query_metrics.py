@@ -51,7 +51,8 @@ cv_audit_query_timeouts_total = Counter(
 
 cv_audit_chain_verified_state = Gauge(
     "cv_audit_chain_verified_state",
-    "Audit chain: 1 verified from genesis to the head, 0 broken, NaN not checked yet.",
+    "Audit chain: 1 verified from genesis to the head, 0 broken, NaN unknown "
+    "(not checked, or a full run stopped).",
 )
 cv_audit_chain_verified_state.set(math.nan)
 audit_chain_verification_failures_total = Counter(

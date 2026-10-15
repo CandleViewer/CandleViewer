@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from datetime import UTC, datetime
 from typing import Any
 
@@ -43,6 +44,16 @@ def test_gauge_rule_only_a_genesis_to_head_run_sets_one() -> None:
     assert _state() == 1
     mod.observe_verify(_result(verified=False, full=True))
     assert _state() == 0
+
+
+def test_gauge_rule_a_full_range_run_that_stops_is_unknown() -> None:
+    """Review of #2462: a stop must not leave an old 1 standing."""
+    mod.observe_verify(_result(verified=True, full=True))
+    mod.observe_stop(full_chain=False)  # a partial range leaves the gauge as it is
+    assert _state() == 1
+    mod.observe_stop(full_chain=True)
+    state = _state()
+    assert state is not None and math.isnan(state)
 
 
 def test_result_record_is_critical_with_kind_at_id_on_a_break() -> None:

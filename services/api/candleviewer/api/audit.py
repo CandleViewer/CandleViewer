@@ -49,7 +49,12 @@ from candleviewer.api.audit_budget import (
     filters_digest,
 )
 from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditQueryRefused
-from candleviewer.api.audit_verify import observe_verify, result_record, write_verify_record
+from candleviewer.api.audit_verify import (
+    observe_stop,
+    observe_verify,
+    result_record,
+    write_verify_record,
+)
 from candleviewer.audit.access import (
     AuditAccessDenied,
     AuditPrincipal,
@@ -599,7 +604,8 @@ def make_audit_router(
         records go straight to the writer, never through the budget; one that cannot be
         written makes the call 503 and serves nothing. A run that stops early is recorded
         as failure/warning with the reason it stopped (`internal_error` for anything
-        unexpected, also 503); a cancellation propagates."""
+        unexpected, also 503), and when planned from genesis to the head it leaves the chain
+        gauge unknown (NaN); a cancellation propagates."""
         emit, fields = service.writer.emit, _request_fields(principal)
         span = {"from_id": plan.from_id, "to_id": plan.to_id}
         if not await write_verify_record(
@@ -609,12 +615,14 @@ def make_audit_router(
         try:
             result = await service.query.run_verify(plan)
         except _VERIFY_STOP_ERRORS as exc:
+            observe_stop(full_chain=plan.full_chain)
             reason, detail = _verify_stop(exc)
             await write_verify_record(
                 emit, fields, outcome=_FAILURE, severity=_WARNING, reason=reason, after_state=span
             )
             return _unavailable(detail)
         except Exception as exc:  # anything else, e.g. MemoryError: never a 500, never a pass
+            observe_stop(full_chain=plan.full_chain)
             _log().error("audit.verify.failed", error=type(exc).__name__)
             await write_verify_record(
                 emit,
