@@ -57,6 +57,10 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
+    "DELETE /users/{userId}/sessions/{sessionId}": {
+      "reason": "user-lifecycle contract (E42-T04 slice 1); the admin-sessions slice serves it",
+      "ticket": "#965"
+    },
     "DELETE /watchlists/{watchlistId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -328,6 +332,10 @@
     "GET /users/{userId}/account-access": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
+    },
+    "GET /users/{userId}/sessions": {
+      "reason": "user-lifecycle contract (E42-T04 slice 1); the admin-sessions slice serves it",
+      "ticket": "#965"
     },
     "GET /watchlists": {
       "reason": "contract-first operation; implementation lands with its owning epic",
