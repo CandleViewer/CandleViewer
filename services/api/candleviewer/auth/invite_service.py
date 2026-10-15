@@ -228,6 +228,11 @@ class InviteService:
     def is_blocked(self, source_ip: str) -> bool:
         return self._throttle.is_blocked(source_ip)
 
+    def refuse(self, reason: str, *, source_ip: str) -> None:
+        """Count and charge a refusal that never reached a token lookup (a body that claims a role
+        or an identity): the same metric and per-source budget as every other refusal."""
+        self._reject(reason, source_ip)
+
     async def inspect(self, token: str, *, source_ip: str) -> InviteView:
         """`GET /invites/{token}`: validates without consuming."""
         record = await self._find_open_or_reject(token, source_ip)

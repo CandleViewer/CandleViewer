@@ -41,6 +41,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # E09-X02 AC2 (#2144, U6/SR-013): a session credential this server never issued, or
         # another user's, presented to the session routes or carried into the MFA step.
         "auth.session_fixation_attempt",
+        # E09-X02 (#2319, AC-CSRF-05): `DELETE /me/sessions/{id}` for an id that is not one of the
+        # caller's live sessions (the response is the same 404 for a foreign id, an unknown id and
+        # the caller's own ended session).
+        "auth.session_revoke_denied",
         "auth.mfa_enroll",
         "auth.mfa_reset",
         "auth.step_up_granted",

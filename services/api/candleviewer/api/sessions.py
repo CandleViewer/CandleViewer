@@ -31,6 +31,12 @@ never issued here is refused with the same 401 as any other, and counted
 (`auth.session_fixation_attempt`) within a per-IP and a global budget, through
 the CSRF guard's in-flight-capped, shielded writer path. Expired or revoked
 tokens of real sessions are not attempts and stay silent.
+
+IDOR probe (AC-CSRF-05, #2319): `DELETE /me/sessions/{id}` for an id that is not one
+of the caller's live sessions keeps its 404 (a foreign id, an unknown id and the caller's
+own ended session answer identically) and is counted (`auth_session_revoke_denied_total`)
+and audited (`auth.session_revoke_denied`, reason `not_live_own_session`) within a
+per-user and a global budget, through the same in-flight-capped, shielded writer path.
 """
 
 from __future__ import annotations
@@ -64,7 +70,11 @@ from candleviewer.auth.errors import (
     SessionNotFound,
     SessionRevoked,
 )
-from candleviewer.auth.metrics import auth_csrf_refused_total, auth_session_fixation_attempts_total
+from candleviewer.auth.metrics import (
+    auth_csrf_refused_total,
+    auth_session_fixation_attempts_total,
+    auth_session_revoke_denied_total,
+)
 from candleviewer.auth.models import (
     MintedSession,
     RefreshOutcome,
@@ -138,6 +148,8 @@ class AuditEmitter(Protocol):
         actor_user_id: str | uuid.UUID | None = None,
         actor_ip: str | None = None,
         session_id: str | uuid.UUID | None = None,
+        object_kind: str | None = None,
+        object_id: str | None = None,
         outcome: AuditOutcome = AuditOutcome.SUCCESS,
         severity: Severity = Severity.INFO,
         reason: str | None = None,
@@ -215,6 +227,14 @@ REFRESH_WINDOW_S = 60.0
 FIXATION_AUDITS_PER_WINDOW = 20
 FIXATION_AUDITS_GLOBAL_PER_WINDOW = 60
 FIXATION_AUDIT_WINDOW_S = 60.0
+#: Revokes of an id that is not one of the caller's live sessions (AC-CSRF-05, #2319) audited per
+#: authenticated user (the caller is known, so the key is the user) and for all users together, per
+#: window, with at most the shared `RefusalAuditTracker` cap in flight. Past any of them the 404 is
+#: unchanged and the attempt is still counted (`auth_session_revoke_denied_total`), with no audit
+#: row (C-2.9 vs C-2.18, as the fixation row).
+PROBE_AUDITS_PER_WINDOW = 10
+PROBE_AUDITS_GLOBAL_PER_WINDOW = 30
+PROBE_AUDIT_WINDOW_S = 60.0
 _ALL_SOURCES = "*"
 
 
@@ -295,6 +315,8 @@ def make_session_router(
     csrf: CsrfCodec,
     fixation_throttle: PerIpLoginThrottle | None = None,
     fixation_global_throttle: PerIpLoginThrottle | None = None,
+    probe_throttle: PerIpLoginThrottle | None = None,
+    probe_global_throttle: PerIpLoginThrottle | None = None,
     audit_tracker: RefusalAuditTracker | None = None,
     audit_timeout_s: float = AUDIT_TIMEOUT_S,
 ) -> APIRouter:
@@ -313,6 +335,14 @@ def make_session_router(
     by_fixation_all = fixation_global_throttle or PerIpLoginThrottle(
         max_attempts=FIXATION_AUDITS_GLOBAL_PER_WINDOW,
         window_s=FIXATION_AUDIT_WINDOW_S,
+        max_tracked_ips=1,
+    )
+    by_probe_user = probe_throttle or PerIpLoginThrottle(
+        max_attempts=PROBE_AUDITS_PER_WINDOW, window_s=PROBE_AUDIT_WINDOW_S
+    )
+    by_probe_all = probe_global_throttle or PerIpLoginThrottle(
+        max_attempts=PROBE_AUDITS_GLOBAL_PER_WINDOW,
+        window_s=PROBE_AUDIT_WINDOW_S,
         max_tracked_ips=1,
     )
     tracker = audit_tracker if audit_tracker is not None else RefusalAuditTracker()
@@ -342,6 +372,46 @@ def make_session_router(
             severity=severity,
             reason=reason,
         )
+
+    async def _revoke_denied(request: Request, record: SessionRecord, target: uuid.UUID) -> None:
+        """AC-CSRF-05 / SR-019 (#2319): the caller named an id that is not one of their live
+        sessions: a foreign or an unknown id (an IDOR probe), or their own session that has already
+        ended (a stale Sessions row). The route reads the live list only, so it cannot tell the
+        three apart, and the 404 is the same for all of them (no oracle). Counted every time;
+        audited within the per-user and the global budget and the tracker's in-flight cap, through
+        the shielded writer path (a cancelled request never cuts the write short), as
+        `_fixation_attempt`. The id is a validated UUID row key, not a credential. A slow or failed
+        write never changes the 404."""
+        auth_session_revoke_denied_total.inc()
+        key = str(record.user_id)
+        if tracker.full or by_probe_user.is_blocked(key) or by_probe_all.is_blocked(_ALL_SOURCES):
+            return
+        by_probe_user.record_failure(key)
+        by_probe_all.record_failure(_ALL_SOURCES)
+        if audit_service is None or not audit_service.is_active:
+            _log().error("auth.session_revoke_denied.audit_unavailable", error="inactive")
+            return
+        task = tracker.track(
+            audit_service.writer.emit(
+                "auth.session_revoke_denied",
+                actor_label=key,
+                actor_user_id=record.user_id,
+                actor_ip=_source_ip(request),
+                session_id=record.id,
+                object_kind="session",
+                object_id=str(target),
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason="not_live_own_session",
+            )
+        )
+        try:
+            await asyncio.wait_for(asyncio.shield(task), audit_timeout_s)
+        except TimeoutError:
+            tracker.mark_timed_out(task)  # left to finish; never cancelled mid-append
+            _log().warning("auth.session_revoke_denied.audit_slow")
+        except Exception as exc:
+            _log().error("auth.session_revoke_denied.audit_unavailable", error=type(exc).__name__)
 
     async def _fixation_attempt(request: Request, vector: str) -> None:
         """U6/SR-013 (E09-X02 AC2): a session credential this server never issued was
@@ -682,6 +752,7 @@ def make_session_router(
             str(record.user_id), current_session_id=str(record.id)
         )
         if str(session_id) not in {str(v.id) for v in own}:
+            await _revoke_denied(request, record, session_id)
             return _problem(404, "Not found", "no such session")
         try:
             await _audit(

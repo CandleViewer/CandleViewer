@@ -12,8 +12,10 @@ codes. No session is minted - the invitee signs in normally afterwards.
 
 Every unknown / expired / redeemed / revoked token yields the same 404 body so
 links cannot be probed. A request that tries to carry a `role`/`roles` field on
-the invitee side is refused with 403 and audited (role immutability). The raw
-token is never logged, audited or echoed after creation.
+the invitee side is refused with 403 and audited (role immutability); one that
+claims another identity (`username`, `user_id`, `email`) keeps its 400 and is
+audited too (#2319). Both are counted and spend the per-source invite budget (429,
+no row, past it). The raw token is never logged, audited or echoed after creation.
 """
 
 from __future__ import annotations
@@ -47,6 +49,9 @@ from candleviewer.storage.errors import WriteAheadTimeout
 _TOKEN = Path(alias="inviteToken", min_length=16, max_length=128)
 _UNIFORM_DETAIL = "This invitation link is not valid."
 _AUDIT_DOWN = "audit unavailable; nothing was changed"
+#: Body fields that claim another identity than the invited one (#2319, AC-INV-07); never recorded.
+_IDENTITY_CLAIMS = frozenset({"username", "user_id", "email"})
+_WARNING_REASONS = frozenset({"redeemed", "role_tamper", "identity_tamper"})
 
 
 class _AuditRefused(Exception):
@@ -179,7 +184,7 @@ def make_invites_router(
             actor_label="anonymous",
             actor_ip=_actor_ip(request),
             outcome=AuditOutcome.DENIED,
-            severity=Severity.WARNING if reason in {"redeemed", "role_tamper"} else Severity.INFO,
+            severity=Severity.WARNING if reason in _WARNING_REASONS else Severity.INFO,
             reason=reason,
         )
 
@@ -289,13 +294,16 @@ def make_invites_router(
 
     # -- invitee side ------------------------------------------------------
 
+    def _too_many() -> JSONResponse:
+        return _problem(429, "Too many requests", "too many invalid attempts; try later")
+
     async def _gate(request: Request) -> JSONResponse | None:
         if not auth.invites_is_active:
             return _problem(503, "Service unavailable", "invites not wired")
         if not audit_ready():  # generic: an anonymous caller learns nothing about audit
             return _problem(503, "Service unavailable", "service temporarily unavailable")
         if auth.invites.is_blocked(_client_ip(request)):
-            return _problem(429, "Too many requests", "too many invalid attempts; try later")
+            return _too_many()
         return None
 
     @router.get("/invites/{inviteToken}")
@@ -319,10 +327,25 @@ def make_invites_router(
         )
 
     async def _tamper_check(body: dict[str, Any] | None, request: Request) -> JSONResponse | None:
+        """Refuse a body that claims a role (403); count and audit one that claims another identity
+        and let the route's own 400 answer it, unchanged (any such key is an undeclared field). Each
+        spends the per-source budget, past which the answer is 429 and no row is written. The budget
+        is read and spent with nothing awaited in between, so concurrent requests cannot overshoot.
+        """
         if body is None:
             return _problem(400, "Bad request", "body must be a JSON object")
         if "role" in body or "roles" in body:
-            await _reject_audit("role_tamper", request)
+            reason = "role_tamper"
+        elif body.keys() & _IDENTITY_CLAIMS:
+            reason = "identity_tamper"
+        else:
+            return None
+        ip = _client_ip(request)
+        if auth.invites.is_blocked(ip):
+            return _too_many()
+        auth.invites.refuse(reason, source_ip=ip)
+        await _reject_audit(reason, request)
+        if reason == "role_tamper":
             return _problem(
                 403, "Forbidden", "the invited role cannot be changed", code="forbidden"
             )

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import hashlib
 import json
 import re
+from pathlib import Path
 
 import structlog
 from prometheus_client import generate_latest
 from prometheus_client.parser import text_string_to_metric_families
 
+from candleviewer.observability import metrics_catalogue
 from candleviewer.observability.metrics import DISALLOWED_LABEL_NAMES, Metrics
 from candleviewer.observability.metrics_catalogue import (
     CATALOGUE,
@@ -41,7 +44,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "8a6c3f1d04afec81155b8689210f452da12e3f611a6db728376bcad3da071e32"
+GOLDEN_CATALOGUE_SHA256 = "00e42078392ebce9ef8410adf90d2e540aa8ed37922e09df178648b0fb34ae09"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -71,6 +74,31 @@ def test_catalogue_every_planned_entry_has_owning_epic() -> None:
     for s in CATALOGUE:
         if s.status == "planned":
             assert _KNOWN_EPICS.match(s.owner_epic), s.name
+
+
+_SECTION = re.compile(r"^\s*# --- (?P<title>.+?) -*$")
+
+
+def test_catalogue_planned_section_headers_only_cover_planned_entries() -> None:
+    # A `# --- ... (planned) ---` comment reads as the status of its block; the SR-125 one went on
+    # saying so after its auth series went live (#2319 review).
+    source = Path(metrics_catalogue.__file__).read_text(encoding="utf-8")
+    lines = source.splitlines()
+    headers = [(n, m["title"]) for n, line in enumerate(lines, 1) if (m := _SECTION.match(line))]
+    entries = [
+        (node.lineno, str(node.args[0].value))
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_s"
+        and isinstance(node.args[0], ast.Constant)
+    ]
+    status = {spec.name: spec.status for spec in CATALOGUE}
+    ends = [n for n, _ in headers[1:]] + [len(lines) + 1]
+    for (start, title), end in zip(headers, ends, strict=True):
+        if "(planned)" in title:
+            live = [name for n, name in entries if start < n < end and status[name] != "planned"]
+            assert live == [], f"{title!r} heads live entries"
 
 
 def test_catalogue_no_disallowed_label_names() -> None:

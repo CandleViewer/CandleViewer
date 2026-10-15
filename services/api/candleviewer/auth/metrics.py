@@ -1,13 +1,17 @@
 """Prometheus metrics for session lifetime (E09-S03 "Observability") and the SR-125
-security counters (`auth_lockouts_total`, `authz_denied_total`, `auth_stepup_failures_total`).
+security counters (`auth_login_failures_total`, `auth_lockouts_total`, `authz_denied_total`,
+`auth_stepup_failures_total`).
 
 Labels are closed sets (revocation `reason` is normalised by `normalise_reason`, the denied
-`permission` by `normalise_permission`) so cardinality stays bounded.
+`permission` by `normalise_permission`, the failed-login `method` is `LOGIN_FAILURE_METHODS`) so
+cardinality stays bounded. Only `AUTH_EXPORTED_NAMES` reaches the scraped registry; every other
+series here lands on the process-default registry that Prometheus never reads.
 """
 
 from __future__ import annotations
 
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.models import MfaMethodKind
 from candleviewer.observability.metrics import (
     CollectorRegistry,
     Counter,
@@ -16,6 +20,10 @@ from candleviewer.observability.metrics import (
     ReexportCollector,
 )
 
+# Process-local and NOT in `AUTH_EXPORTED_NAMES` (#2319, accepted decision): it is +1 on mint and -1
+# only on `revoke`/`revoke_all`, never on expiry, idle lock, rotation or a family revoke, and a
+# process that revokes a session minted before it started drives it negative. The database is the
+# truth for live sessions.
 auth_sessions_active = Gauge(
     "auth_sessions_active", "Live (unrevoked) sessions minted by this process."
 )
@@ -31,9 +39,6 @@ auth_idle_locks_total = Counter(
 )
 auth_step_up_total = Counter(
     "auth_step_up_total", "Successful step-up re-authentications.", ["action_class"]
-)
-auth_step_up_failures_total = Counter(
-    "auth_step_up_failures_total", "Failed step-up code verifications.", ["action_class"]
 )
 auth_readonly_downgrades_total = Counter(
     "auth_readonly_downgrades_total", "Sessions downgraded to read-only after repeated failures."
@@ -56,6 +61,16 @@ auth_stepup_failures_total = Counter(
     "auth_stepup_failures_total",
     "Failed step-up re-authentications (wrong password or code, or a locked account).",
 )
+# One per audited failed login (`api/auth.py`): `password` per `auth.login_failed` row, the
+# requested MFA method per `auth.mfa_failed` row, `recovery_code` per
+# `auth.recovery_codes_exhausted`. An attempt refused while the account is locked
+# (`auth.account_locked`) and a success never count.
+auth_login_failures_total = Counter(
+    "auth_login_failures_total",
+    "Failed logins by the factor that failed (password, totp, webauthn, recovery_code).",
+    # closed set: `LOGIN_FAILURE_METHODS`
+    ["method"],
+)
 authz_denied_total = Counter(
     "authz_denied_total",
     "Permission-check denials decided by auth.scopes.enforce (the rbac.denied decisions).",
@@ -74,6 +89,11 @@ auth_session_fixation_attempts_total = Counter(
     # closed set: unknown_token | foreign_session (attempts)
     #             | audit_throttled | audit_slow | audit_unavailable | audit_failed (bookkeeping)
     ["reason"],
+)
+auth_session_revoke_denied_total = Counter(
+    "auth_session_revoke_denied_total",
+    "DELETE /me/sessions/{id} for an id that is not one of the caller's live sessions "
+    "(IDOR probe, or a stale row for the caller's own ended session).",
 )
 auth_revocation_latency_seconds = Histogram(
     "auth_revocation_latency_seconds",
@@ -118,6 +138,13 @@ def normalise_permission(permission: str) -> str:
 for _permission in (*sorted(_KNOWN_PERMISSIONS), "other"):
     authz_denied_total.labels(permission=_permission)
 
+#: Closed `auth_login_failures_total{method}` set: the password step, then the MFA factor that
+#: failed (`MfaMethodKind`: `totp`, `webauthn`, `recovery_code`).
+LOGIN_FAILURE_METHODS: tuple[str, ...] = ("password", *(kind.value for kind in MfaMethodKind))
+# Bound every method now: `ExpectedMetricMissingAuthLoginFailuresTotal` is `absent()` on this name.
+for _method in LOGIN_FAILURE_METHODS:
+    auth_login_failures_total.labels(method=_method)
+
 
 users_invites_created_total = Counter(
     "users_invites_created_total", "Invites minted (incl. re-issues), by role.", ["role"]
@@ -143,6 +170,13 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_stepup_failures_total",
         "authz_denied_total",
         "auth_totp_clock_skew_total",
+        # E09-X02 observability gaps (#2319)
+        "auth_login_failures_total",
+        "auth_refresh_reuse_total",
+        "auth_session_revocations_total",
+        "auth_readonly_downgrades_total",
+        "users_invites_rejected_total",
+        "auth_session_revoke_denied_total",
     }
 )
 

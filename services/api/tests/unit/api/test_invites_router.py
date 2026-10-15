@@ -6,8 +6,10 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
+import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 from candleviewer.api.invites import make_invites_router
 from candleviewer.auth.generated_permissions import Permission
@@ -194,3 +196,81 @@ async def test_brute_force_token_guessing_trips_429_even_for_valid_token() -> No
     assert set(codes) == {404}
     assert c.get(f"/invites/{bad}").status_code == 429
     assert c.get(f"/invites/{tok}").status_code == 429
+
+
+# -- #2319 item 3: identity claims and the tamper budget --------------------------------------
+
+_CLAIMS = [{"username": "bob"}, {"user_id": "u-1c0ffee"}, {"email": "b@x.test"}]
+
+
+def _rejected(reason: str) -> float:
+    sample = REGISTRY.get_sample_value("users_invites_rejected_total", {"reason": reason})
+    return float(sample or 0.0)
+
+
+def _tamper_rows(em: _Emitter) -> list[tuple[Any, ...]]:
+    rows = (x for x in em.calls if x["action"] == "users.invite_rejected")
+    return [(x["reason"], x["outcome"].value, x["severity"].value) for x in rows]
+
+
+@pytest.mark.parametrize("claim", _CLAIMS)
+async def test_identity_claim_is_the_same_400_audited_counted_and_consumes_nothing(
+    claim: dict[str, str],
+) -> None:
+    c, em, seed, clock, _, _ = await _setup()
+    tok = await _invite(c, seed, clock)
+    plain = c.post(f"/invites/{tok}", json={"password": GOOD_PW, "undeclared": "x"})
+    assert _tamper_rows(em) == []  # an undeclared non-identity field stays a silent 400
+    before = _rejected("identity_tamper")
+    claimed = c.post(f"/invites/{tok}", json={"password": GOOD_PW, **claim})
+    assert (claimed.status_code, claimed.json()) == (plain.status_code, plain.json())  # no oracle
+    assert claimed.status_code == 400 and claimed.json()["detail"] == "password is required"
+    assert _tamper_rows(em) == [("identity_tamper", "denied", "warning")]
+    assert _rejected("identity_tamper") - before == 1
+    assert next(iter(claim.values())) not in repr(em.calls)  # the claimed value is never recorded
+    assert c.post(f"/invites/{tok}", json={"password": GOOD_PW}).status_code == 200  # not consumed
+
+
+async def test_identity_claim_on_confirm_is_the_same_400_and_audited() -> None:
+    c, em, seed, clock, _, _ = await _setup()
+    tok = await _invite(c, seed, clock)
+    start = c.post(f"/invites/{tok}", json={"password": GOOD_PW})
+    ok = {"method_id": start.json()["method_id"], "code": "123456"}
+    claimed = c.post(f"/invites/{tok}/confirm", json={**ok, "email": "b@x.test"})
+    assert claimed.status_code == 400 and "method_id and code" in claimed.json()["detail"]
+    assert _tamper_rows(em) == [("identity_tamper", "denied", "warning")]
+    assert c.post(f"/invites/{tok}/confirm", json=ok).status_code == 200
+
+
+async def test_tamper_requests_past_the_per_source_budget_get_429_and_write_no_row() -> None:
+    c, em, seed, clock, _, _ = await _setup()
+    tok = await _invite(c, seed, clock)
+    role0, identity0 = _rejected("role_tamper"), _rejected("identity_tamper")
+    role, identity = {"password": GOOD_PW, "roles": ["owner"]}, {"password": GOOD_PW, **_CLAIMS[2]}
+    sent = [c.post(f"/invites/{tok}", json=role if i % 2 else identity) for i in range(10)]
+    assert [r.status_code for r in sent] == [400, 403] * 5  # the budget is shared by both kinds
+    assert (_rejected("role_tamper") - role0, _rejected("identity_tamper") - identity0) == (5, 5)
+    assert c.post(f"/invites/{tok}", json=role).status_code == 429
+    assert c.post(f"/invites/{tok}", json=identity).status_code == 429
+    assert c.get(f"/invites/{tok}").status_code == 429  # the same budget as every invalid attempt
+    assert len(_tamper_rows(em)) == 10  # no row past it
+
+
+async def test_a_tamper_that_passed_the_gate_as_the_budget_filled_is_still_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The gate reads the budget before the body is read; a request let through while the budget
+    # was filling must be refused where the budget is spent, not write a row past it.
+    c, em, seed, clock, _, svc = await _setup()
+    tok = await _invite(c, seed, clock)
+    tamper = {"password": GOOD_PW, "role": "owner"}
+    assert [c.post(f"/invites/{tok}", json=tamper).status_code for _ in range(10)] == [403] * 10
+    real, reads = svc.is_blocked, []
+
+    def gate_then_real(ip: str) -> bool:
+        reads.append(ip)
+        return False if len(reads) == 1 else real(ip)
+
+    monkeypatch.setattr(svc, "is_blocked", gate_then_real)
+    assert c.post(f"/invites/{tok}", json=tamper).status_code == 429
+    assert len(_tamper_rows(em)) == 10 and len(reads) == 2  # the gate, then the spend point

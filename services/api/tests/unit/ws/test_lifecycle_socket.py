@@ -20,12 +20,14 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from starlette.websockets import WebSocketDisconnect
 from structlog.testing import capture_logs
 
 import candleviewer.ws.gateway as gateway
 from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.metrics import LOGIN_FAILURE_METHODS
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.observability.correlation import CorrelationMiddleware
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
@@ -306,6 +308,25 @@ def test_three_failed_auth_attempts_bye_4401_and_warning_audit(world: _World) ->
     rec = world.audit.records[0]
     assert rec["severity"] == "warning" and rec["reason"] == "ws_auth_failed"
     assert REJECTED_MARK not in repr(rec)  # the token never lands in the audit trail
+
+
+def test_failed_auth_frames_count_as_ws_failures_not_as_login_failures(world: _World) -> None:
+    # #2319: the audited `auth.login_failed` row (`ws_auth_failed`) of a socket is counted by
+    # `cv_ws_auth_failures_total`; `auth_login_failures_total` is the /auth routes' failures only.
+    read = REGISTRY.get_sample_value
+    rejected = {"reason": "rejected"}
+    logins = {m: read("auth_login_failures_total", {"method": m}) for m in LOGIN_FAILURE_METHODS}
+    ws_failures = read("cv_ws_auth_failures_total", rejected) or 0.0
+    with world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+        _hello(ws)
+        for i in range(2):
+            _auth(ws, f"bad-{i}")
+        ws.send_json({"t": "auth", "id": "a3", "p": {"access_token": "bad-2"}})
+        _bye_then_close(ws)
+    assert [r["action"] for r in world.audit.records] == ["auth.login_failed"]
+    assert (read("cv_ws_auth_failures_total", rejected) or 0.0) - ws_failures == 3
+    after = {m: read("auth_login_failures_total", {"method": m}) for m in LOGIN_FAILURE_METHODS}
+    assert after == logins
 
 
 def test_unauthenticated_frames_get_err_then_close_after_three(world: _World) -> None:

@@ -284,7 +284,7 @@ def _sample(name: str, **labels: str) -> float:
 async def test_step_up_and_reset_metrics_are_emitted() -> None:
     svc, clock, seed, owner, sessions = await _setup()
     ok0 = _sample("auth_step_up_total", action_class="users")
-    bad0 = _sample("auth_step_up_failures_total", action_class="keys")
+    bad0 = _sample("auth_stepup_failures_total")
     ro0 = _sample("auth_readonly_downgrades_total")
     rs0 = _sample("auth_mfa_resets_total")
     await svc.step_up(str(owner), "o1", "users", _code(seed, clock), PASSWORD)
@@ -294,7 +294,7 @@ async def test_step_up_and_reset_metrics_are_emitted() -> None:
             await svc.step_up(str(owner), "s1", "keys", "000000", PASSWORD)
     with pytest.raises(SessionReadOnly):
         await svc.step_up(str(owner), "s1", "keys", "000000", PASSWORD)
-    assert _sample("auth_step_up_failures_total", action_class="keys") == bad0 + 3
+    assert _sample("auth_stepup_failures_total") == bad0 + 3
     assert _sample("auth_readonly_downgrades_total") == ro0 + 1
     target = uuid.uuid4()
     await sessions.create_session(_session(target))
