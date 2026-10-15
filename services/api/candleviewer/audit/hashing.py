@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from candleviewer.audit.errors import AuditError
+from candleviewer.observability.context import executor_future
 
 DEFAULT_WORKERS = 2
 DEFAULT_MAX_PENDING = 8
@@ -48,7 +49,7 @@ class ChainHasher:
         if self._pending >= self._max_pending:
             raise ChainHasherBusy
         try:
-            job = asyncio.get_running_loop().run_in_executor(self._pool, fn)
+            job = executor_future(self._pool, fn)
         except RuntimeError:  # the pool is shut down
             raise ChainHasherBusy from None
         self._pending += 1

@@ -17,6 +17,7 @@ import asyncio
 import contextvars
 import functools
 from collections.abc import Callable, Coroutine, Iterator
+from concurrent.futures import Executor
 from contextlib import contextmanager
 from typing import Any, Final
 
@@ -93,3 +94,18 @@ def thread_future[T](func: Callable[..., T], /, *args: Any) -> asyncio.Future[T]
     ctx = contextvars.copy_context()
     loop = asyncio.get_running_loop()
     return loop.run_in_executor(None, functools.partial(ctx.run, func, *args))
+
+
+def executor_future[T](
+    executor: Executor, func: Callable[..., T], /, *args: Any
+) -> asyncio.Future[T]:
+    """Start `func(*args)` on a caller-owned `executor` under a copy of the current
+    context and return the executor's plain `asyncio.Future`.
+
+    For a module that must run CPU work on its own bounded pool instead of the loop's
+    shared default executor (the audit chain check, design §16/§17). Like
+    `thread_future`, the plain Future can be awaited without cancelling the job, and
+    the correlation context is carried into the worker thread."""
+    ctx = contextvars.copy_context()
+    loop = asyncio.get_running_loop()
+    return loop.run_in_executor(executor, functools.partial(ctx.run, func, *args))
