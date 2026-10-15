@@ -314,16 +314,17 @@ class World:
 class Client:
     """A validating protocol client over one starlette websocket session."""
 
-    def __init__(self, ws: Any) -> None:
+    def __init__(self, ws: Any, *, conform: bool = True) -> None:
         self.ws = ws
+        self.conform = conform  # default for `send`/`sub`; negative-path tests turn it off
         self.seen: list[dict[str, Any]] = []
 
     # -- raw ---
-    def send(self, frame: dict[str, Any], *, conform: bool = True) -> None:
+    def send(self, frame: dict[str, Any], *, conform: bool | None = None) -> None:
         """Send a client frame. By default it is validated against §13 first, so a test cannot
         accidentally send a non-conformant frame; pass `conform=False` to send a deliberately
         invalid one (the negative tests do)."""
-        if conform:
+        if self.conform if conform is None else conform:
             validate_frame(frame)
         self.ws.send_json(frame)
 
@@ -425,7 +426,7 @@ class Client:
             self.send({"t": "auth", "id": "a", "p": {"access_token": token}})
             assert self.recv()["t"] == "auth_ok"
 
-    def sub(self, *topics: Any, conform: bool = True, **p: Any) -> dict[str, Any]:
+    def sub(self, *topics: Any, conform: bool | None = None, **p: Any) -> dict[str, Any]:
         """`sub` with the §13.5 object form `{ch, opts}`; bare strings are normalised to it
         (the schema does not allow strings)."""
         entries = [{"ch": t} if isinstance(t, str) else t for t in topics]
@@ -440,10 +441,11 @@ def connect(
     *,
     authed: bool = True,
     handshake: bool = True,
+    conform: bool = True,
     **hello: Any,
 ) -> Iterator[Client]:
     with world.client, world.client.websocket_connect("/ws", subprotocols=offer or JSON) as ws:
-        c = Client(ws)
+        c = Client(ws, conform=conform)
         if handshake:
             c.open(auth=authed, **hello)
         yield c
