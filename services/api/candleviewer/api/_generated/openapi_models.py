@@ -3520,81 +3520,255 @@ class JournalAnalytics(BaseModel):
 
 
 class WorkspaceInput(BaseModel):
-    name: Annotated[str, Field(max_length=80, min_length=1)]
-    description: Annotated[str | None, Field(max_length=280)] = None
-    is_default: bool | None = False
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[
+        str,
+        Field(
+            description="At most 40 characters as sent, at least 1 after sanitising (above), SCR-020. Unique per user, case-insensitive, among live workspaces (`409 conflict`, rule `name_taken`).",
+            max_length=40,
+            min_length=1,
+        ),
+    ]
+    is_default: Annotated[
+        bool | None,
+        Field(
+            description="At most one live default per user; `true` clears the previous default in the same transaction."
+        ),
+    ] = False
+    icon_token: Annotated[
+        Literal["workspace.default"] | None,
+        Field(
+            description="Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a token\nis an additive change (C-6.3). Writers must send a listed value; the server keeps the same\nallow-list. `workspace.default` is the only token until the design-system icon registry\n(CMP-019) publishes workspace icons.\n"
+        ),
+    ] = "workspace.default"
+    sort_order: Annotated[
+        int | None,
+        Field(description="Client-defined tab order; ties break by `id`.", ge=0, le=32767),
+    ] = 0
 
 
-class Workspace(WorkspaceInput):
-    id: UUID | None = None
-    user_id: UUID | None = None
-    layout_count: int | None = None
-    created_at: AwareDatetime | None = None
-    updated_at: AwareDatetime | None = None
+class Workspace(BaseModel):
+    id: UUID
+    user_id: UUID
+    name: str
+    is_default: bool
+    icon_token: Annotated[
+        Literal["workspace.default"],
+        Field(
+            description="Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a token\nis an additive change (C-6.3). Writers must send a listed value; the server keeps the same\nallow-list. `workspace.default` is the only token until the design-system icon registry\n(CMP-019) publishes workspace icons.\n"
+        ),
+    ]
+    sort_order: Annotated[int, Field(ge=0, le=32767)]
+    layout_count: Annotated[int, Field(description="Live layouts.", ge=0, le=32)]
+    created_at: AwareDatetime
+    updated_at: Annotated[
+        AwareDatetime,
+        Field(
+            description="Concurrency token (also the `ETag`) for the workspace metadata only; layout writes do not change it. Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing on every write. Echo it exactly as received; never re-serialise it through a client date type."
+        ),
+    ]
+
+
+class Size(RootModel[float]):
+    root: Annotated[float, Field(gt=0.0, le=1.0)]
+
+
+class LayoutGridLeaf(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["leaf"]
+    slot: Annotated[
+        int, Field(description="`slot_index` of a pane in the same layout.", ge=0, le=15)
+    ]
+
+
+class PaneIntervalCode(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            description="`<bar_type>:<param>`, exactly the `bar_type` and `param` of `/market/bars` (and of the WS topic `bars.{symbol}.{bar_type}.{param}`): `param` at most 24 characters, no leading zeros, and no trailing zeros in a `volume`/`delta` fraction, so each value has one spelling (`volume:0.5`, never `volume:0.50`), e.g. `time:1`, `time:D`, `tick:500`, `volume:0.5`, `renko:atr:14`, `pnf:10:3`. A `volume` or `delta` threshold must also be greater than 0 (`422` rule `interval_not_positive`).",
+            examples=["time:1", "time:240", "tick:500", "renko:atr:14"],
+            max_length=36,
+            pattern="^(time|heikin_ashi):(1|3|5|15|30|60|120|240|360|720|D|W|M)$|^(tick|range):[1-9][0-9]{0,8}$|^(volume|delta):(0|[1-9][0-9]{0,10})(\\.[0-9]{0,11}[1-9])?$|^renko:([1-9][0-9]{0,8}|atr:[1-9][0-9]{0,2})$|^pnf:[1-9][0-9]{0,8}:[1-9][0-9]{0,2}$",
+        ),
+    ]
+
+
+class PaneSettingValue1(RootModel[str]):
+    root: Annotated[
+        str,
+        Field(
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
+            max_length=256,
+        ),
+    ]
+
+
+class PaneSettingValue2(RootModel[int]):
+    root: Annotated[
+        int,
+        Field(
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
+            ge=-1000000000000000,
+            le=1000000000000000,
+        ),
+    ]
+
+
+class PaneSettingValue3(RootModel[float]):
+    root: Annotated[
+        float,
+        Field(
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
+            ge=-1000000000000000.0,
+            le=1000000000000000.0,
+        ),
+    ]
+
+
+class PaneSettingValue41(RootModel[str]):
+    root: Annotated[str, Field(max_length=256)]
+
+
+class PaneSettingValue42(RootModel[int]):
+    root: Annotated[int, Field(ge=-1000000000000000, le=1000000000000000)]
+
+
+class PaneSettingValue43(RootModel[float]):
+    root: Annotated[float, Field(ge=-1000000000000000.0, le=1000000000000000.0)]
+
+
+class PaneSettingValue4(
+    RootModel[list[PaneSettingValue41 | PaneSettingValue42 | PaneSettingValue43 | bool]]
+):
+    root: Annotated[
+        list[PaneSettingValue41 | PaneSettingValue42 | PaneSettingValue43 | bool],
+        Field(
+            description="A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
+            max_length=32,
+        ),
+    ]
+
+
+class PaneConfig(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    sync_group: Annotated[
+        Literal["A", "B", "C"] | None,
+        Field(
+            description="Cross-pane sync group (SCR-023); `null` or omitted means not synced. The axis defaults live on the layout (`crosshair_sync`, `symbol_sync`, `level_sync`)."
+        ),
+    ] = None
+    settings: Annotated[
+        dict[
+            str,
+            PaneSettingValue1
+            | PaneSettingValue2
+            | PaneSettingValue3
+            | bool
+            | PaneSettingValue4
+            | None,
+        ]
+        | None,
+        Field(
+            description="Kind-specific flat settings (for example DOM depth, tape filters, CVD anchor, visible range), at most 32 keys. Every key must match `^[a-z][a-z0-9_]{0,31}$` (`422` rule `invalid_setting_key`); the server enforces this because generators cannot express key patterns. Numbers keep their kind (`1` stays `1`, `1.0` stays `1.0`). Omitted means `{}`.",
+            max_length=32,
+        ),
+    ] = None
+
+
+class LayoutPaneInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    slot_index: Annotated[
+        int,
+        Field(description="Unique within the layout (`422` rule `duplicate_slot`).", ge=0, le=15),
+    ]
+    pane_kind: Annotated[
+        Literal[
+            "chart",
+            "dom",
+            "tape",
+            "profile",
+            "cvd",
+            "oi",
+            "deep_stats",
+            "regime",
+            "positions",
+            "journal",
+            "watchlist",
+            "alerts",
+        ],
+        Field(
+            description="Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). A heatmap lives in the `dom` pane and orders in the\n`positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is\nmarked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`\nsettings.\n"
+        ),
+    ]
+    symbol: Annotated[
+        str | None,
+        Field(
+            description="Bound symbol, market panes only: a Bybit USDT linear perpetual symbol of at most 20 characters (the DB `symbol_code` domain). It is not checked against the instrument catalogue. A non-null symbol on a live layout counts as chart-open for auto-recording.",
+            pattern="^[A-Z0-9]{2,16}USDT$",
+        ),
+    ] = None
+    interval_code: Annotated[
+        PaneIntervalCode | None,
+        Field(description="Bar series of a market pane; `null` for panes without one."),
+    ] = None
+    chart_template_id: Annotated[
+        UUID | None,
+        Field(
+            description="Chart template reference. Every non-null value is refused (`422` rule `chart_template_not_found`) until `chart_templates` ships; then it must name a template the caller may use."
+        ),
+    ] = None
+    indicator_preset_ids: Annotated[
+        list[UUID] | None,
+        Field(
+            description="Indicator preset references; omitted means `[]`. A non-empty list is refused (`422` rule `indicator_preset_not_found`) until `indicator_presets` ships (E13-T03); then every id must name a preset the caller may use.",
+            max_length=16,
+        ),
+    ] = None
+    pane_config: PaneConfig | None = None
+    scale_mode: Annotated[
+        Literal["auto", "linked", "manual", "log"] | None,
+        Field(description="Price-scale behaviour (`lp_scale`). **Open-ended for readers.**"),
+    ] = "auto"
 
 
 class LayoutPane(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    slot: Annotated[
-        str, Field(description="`column,row` grid position.", pattern="^[0-9]{1,2},[0-9]{1,2}$")
+    slot_index: Annotated[int, Field(ge=0, le=15)]
+    pane_kind: Annotated[
+        Literal[
+            "chart",
+            "dom",
+            "tape",
+            "profile",
+            "cvd",
+            "oi",
+            "deep_stats",
+            "regime",
+            "positions",
+            "journal",
+            "watchlist",
+            "alerts",
+        ],
+        Field(
+            description="Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). A heatmap lives in the `dom` pane and orders in the\n`positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is\nmarked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`\nsettings.\n"
+        ),
     ]
-    span: Annotated[str | None, Field(pattern="^[0-9]{1,2}x[0-9]{1,2}$")] = "1x1"
-    kind: Literal[
-        "chart",
-        "dom",
-        "tape",
-        "footprint",
-        "heatmap",
-        "orders",
-        "positions",
-        "journal",
-        "rules",
-        "watchlist",
-        "metrics",
-        "account_summary",
-        "alerts",
-        "replay_controls",
+    symbol: Annotated[str | None, Field(pattern="^[A-Z0-9]{2,16}USDT$")]
+    interval_code: PaneIntervalCode | None
+    chart_template_id: UUID | None
+    indicator_preset_ids: Annotated[list[UUID], Field(max_length=16)]
+    pane_config: PaneConfig
+    scale_mode: Annotated[
+        Literal["auto", "linked", "manual", "log"],
+        Field(description="Price-scale behaviour (`lp_scale`). **Open-ended for readers.**"),
     ]
-    symbol: Symbol | None = None
-    bar_type: (
-        Literal["time", "tick", "volume", "range", "delta", "renko", "pnf", "heikin_ashi"] | None
-    ) = None
-    param: Annotated[str | None, Field(max_length=24)] = None
-    depth: Literal[1, 50, 200, 500] | None = None
-    chart_template_id: UUID | None = None
-    link_group: Annotated[
-        Literal["red", "green", "blue", "yellow", "purple"] | None,
-        Field(description="Panes sharing a colour follow each other's symbol and crosshair."),
-    ] = None
-    settings: dict[str, Any] | None = None
-
-
-class Grid(BaseModel):
-    model_config = ConfigDict(
-        extra="forbid",
-    )
-    columns: Annotated[int | None, Field(ge=1, le=8)] = None
-    rows: Annotated[int | None, Field(ge=1, le=8)] = None
-    gaps_px: Annotated[int | None, Field(ge=0, le=32)] = 4
-    column_fractions: list[float] | None = None
-    row_fractions: list[float] | None = None
-
-
-class LayoutInput(BaseModel):
-    name: Annotated[str, Field(max_length=80, min_length=1)]
-    grid_preset: Annotated[str | None, Field(examples=["1x1", "2x2", "3x1", "custom"])] = None
-    grid: Grid | None = None
-    panes: Annotated[list[LayoutPane], Field(max_length=32, min_length=1)]
-    is_default: bool | None = False
-
-
-class Layout(LayoutInput):
-    id: UUID | None = None
-    workspace_id: UUID | None = None
-    created_at: AwareDatetime | None = None
-    updated_at: AwareDatetime | None = None
 
 
 class Footprint(BaseModel):
@@ -4435,26 +4609,6 @@ class IndicatorDescriptor(BaseModel):
     defaults: dict[str, Any] | None = None
 
 
-class LayoutPreset(BaseModel):
-    id: UUID
-    name: str
-    description: str | None = None
-    is_builtin: bool
-    pane_count: int | None = None
-    preview_svg: str | None = None
-    layout: LayoutInput | None = None
-
-
-class WorkspaceBundle(BaseModel):
-    schema_version: str
-    exported_at: AwareDatetime | None = None
-    workspace: WorkspaceInput
-    layouts: list[LayoutInput]
-    chart_templates: list[ChartTemplateInput] | None = None
-    drawings: list[DrawingInput] | None = None
-    indicator_presets: list[IndicatorPresetInput] | None = None
-
-
 class ExchangeCall(BaseModel):
     at: AwareDatetime | None = None
     endpoint: str | None = None
@@ -5218,8 +5372,15 @@ class JournalTradeDetail(JournalTrade):
     rule_id: UUID | None = None
 
 
-class WorkspaceDetail(Workspace):
-    layouts: list[Layout] | None = None
+class LayoutGridTabset(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["tabset"]
+    children: Annotated[list[LayoutGridLeaf], Field(max_length=16, min_length=1)]
+    active: Annotated[
+        int | None, Field(description="Index of the visible tab in `children`.", ge=0, le=15)
+    ] = 0
 
 
 class Watchlist(WatchlistInput):
@@ -5402,6 +5563,146 @@ class AlertInput(BaseModel):
     enabled: bool | None = True
 
 
+class WorkspaceDetail(Workspace):
+    layouts: Annotated[
+        list[Layout], Field(description="Live layouts ordered by `id` ascending.", max_length=32)
+    ]
+
+
+class LayoutGridSpec(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    version: Annotated[Literal[1], Field(description="Tree format version.")]
+    root: Annotated[
+        LayoutGridSplit | LayoutGridTabset | LayoutGridLeaf, Field(discriminator="type")
+    ]
+
+
+class LayoutGridSplit(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    type: Literal["row", "column"]
+    children: Annotated[
+        list[
+            Annotated[
+                LayoutGridSplit | LayoutGridTabset | LayoutGridLeaf, Field(discriminator="type")
+            ]
+        ],
+        Field(max_length=16, min_length=2),
+    ]
+    sizes: Annotated[list[Size], Field(max_length=16, min_length=2)]
+
+
+class LayoutInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    name: Annotated[
+        str,
+        Field(
+            description="At most 40 characters as sent, at least 1 after sanitising, as for workspace names. Unique per workspace, case-insensitive, among live layouts (`409 conflict`, rule `name_taken`).",
+            max_length=40,
+            min_length=1,
+        ),
+    ]
+    grid_preset: Annotated[
+        Literal["1x1", "2x1", "1x2", "2x2", "1+3", "3x3", "custom"] | None,
+        Field(
+            description="Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset stores\nonly its name and fixed cell proportions: `grid_spec` is `null`, and a pane's `slot_index`\nis its cell in row-major reading order (a slot beyond the preset's cells is placed by the\nclient, e.g. floating). Any other arrangement, including a named grid whose divider was\ndragged, is saved as `custom` with its tree in `grid_spec`. **Open-ended for readers.**\n"
+        ),
+    ] = "1x1"
+    grid_spec: Annotated[
+        LayoutGridSpec | None,
+        Field(description="Required when `grid_preset` is `custom`, otherwise `null` or omitted."),
+    ] = None
+    crosshair_sync: Annotated[
+        bool | None,
+        Field(description="Layout default for crosshair sync between panes of one sync group."),
+    ] = True
+    level_sync: Annotated[
+        bool | None, Field(description="Layout default for price-level sync.")
+    ] = False
+    symbol_sync: Annotated[bool | None, Field(description="Layout default for symbol sync.")] = (
+        False
+    )
+    hotkey_slot: Annotated[
+        int | None,
+        Field(
+            description="`Ctrl+1..9` binding; unique among the workspace's live layouts (`409 conflict`, rule `hotkey_slot_taken`).",
+            ge=1,
+            le=9,
+        ),
+    ] = None
+    is_default: Annotated[
+        bool | None,
+        Field(
+            description="At most one live default per workspace; `true` clears the previous default in the same transaction."
+        ),
+    ] = False
+    panes: Annotated[
+        list[LayoutPaneInput],
+        Field(
+            description="In any order: panes are keyed by `slot_index`, and responses sort by it.",
+            max_length=16,
+            min_length=0,
+        ),
+    ]
+
+
+class Layout(BaseModel):
+    id: UUID
+    workspace_id: UUID
+    name: str
+    grid_preset: Annotated[
+        Literal["1x1", "2x1", "1x2", "2x2", "1+3", "3x3", "custom"],
+        Field(
+            description="Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset stores\nonly its name and fixed cell proportions: `grid_spec` is `null`, and a pane's `slot_index`\nis its cell in row-major reading order (a slot beyond the preset's cells is placed by the\nclient, e.g. floating). Any other arrangement, including a named grid whose divider was\ndragged, is saved as `custom` with its tree in `grid_spec`. **Open-ended for readers.**\n"
+        ),
+    ]
+    grid_spec: LayoutGridSpec | None
+    crosshair_sync: bool
+    level_sync: bool
+    symbol_sync: bool
+    hotkey_slot: Annotated[int | None, Field(ge=1, le=9)]
+    is_default: bool
+    panes: Annotated[
+        list[LayoutPane], Field(description="Ordered by `slot_index` ascending.", max_length=16)
+    ]
+    created_at: AwareDatetime
+    updated_at: Annotated[
+        AwareDatetime,
+        Field(
+            description="Concurrency token (also the `ETag`) of the whole layout aggregate, panes included: every write changes it, including a pane-only change and a default switch made by another layout. Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing. Echo it exactly as received; never re-serialise it through a client date type."
+        ),
+    ]
+
+
+class LayoutPreset(BaseModel):
+    id: Annotated[UUID, Field(description="Stable for the life of the catalogue entry.")]
+    name: str
+    description: str | None
+    is_builtin: Annotated[
+        bool,
+        Field(
+            description="Always `true`: the catalogue is static. User-saved presets are layouts with a `hotkey_slot`."
+        ),
+    ]
+    pane_count: Annotated[int, Field(ge=0, le=16)]
+    layout: LayoutInput
+
+
+class WorkspaceBundle(BaseModel):
+    schema_version: str
+    exported_at: AwareDatetime | None = None
+    workspace: WorkspaceInput
+    layouts: list[LayoutInput]
+    chart_templates: list[ChartTemplateInput] | None = None
+    drawings: list[DrawingInput] | None = None
+    indicator_presets: list[IndicatorPresetInput] | None = None
+
+
 class Alert(AlertInput):
     id: UUID | None = None
     owner_user_id: UUID | None = None
@@ -5414,3 +5715,6 @@ class Alert(AlertInput):
 RuleArithmeticNode.model_rebuild()
 RuleBooleanNode.model_rebuild()
 RuleTemporalNode.model_rebuild()
+WorkspaceDetail.model_rebuild()
+LayoutGridSpec.model_rebuild()
+LayoutGridSplit.model_rebuild()

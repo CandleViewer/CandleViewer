@@ -5816,6 +5816,10 @@ paths:
       tags: [workspaces]
       operationId: listWorkspaces
       summary: List the caller's workspaces
+      description: |
+        The caller's live workspaces ordered by `sort_order`, then `id`. A user holds at most 32, so
+        the default page returns them all. `cursor` is opaque, bound to this listing and valid for
+        one hour; a malformed, foreign or expired cursor returns `400 invalid_cursor`.
       x-rbac: { permissions: [workspaces:read], scope: self }
       parameters:
         - $ref: "#/components/parameters/Cursor"
@@ -5831,36 +5835,58 @@ paths:
                   - type: object
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/Workspace" } }
+        "400":
+          description: "Malformed request. For this operation `code: invalid_cursor` signals a malformed, foreign or expired `cursor`."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [workspaces]
       operationId: createWorkspace
       summary: Create a workspace
+      description: |
+        The server mints a UUIDv7 `id`. `409 conflict`: rule `name_taken` (names are unique per
+        user, case-insensitive, among live workspaces), `limit_reached` (32 live workspaces) or
+        `concurrent_update` (a racing write; retry). `is_default: true` clears the previous default
+        in the same transaction (its token changes); `false` touches no other workspace, and a user
+        may have no default.
+
+        Bodies over 4 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries
+        the `updated_at` token for `If-Match`. `Idempotency-Key` is accepted, never required
+        (`x-idempotency: optional`): the same key and request replay the stored 2xx response with
+        `Idempotency-Replayed: true`. The replay fingerprint covers the method, path and body, so
+        the same key with another request is `409 idempotency_key_reuse`. Replay storage is in
+        memory, best-effort and bounded; correctness never depends on it.
       x-rbac: { permissions: [workspaces:write], scope: self }
       x-idempotency: optional
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfToken"
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: "#/components/schemas/WorkspaceInput" }
             examples:
-              scalping:
-                {
-                  value:
-                    { name: "Scalping", is_default: true, description: "DOM + footprint + tape" },
-                }
+              scalping: { value: { name: "Scalping", is_default: true } }
       responses:
         "201":
           description: Created.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Workspace" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /workspaces/{workspaceId}:
     parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
@@ -5868,21 +5894,47 @@ paths:
       tags: [workspaces]
       operationId: getWorkspace
       summary: Get a workspace with its layouts
+      description: |
+        Restore in one request: the workspace plus every live layout with all of its panes (layouts
+        by `id`, panes by `slot_index`). Missing, soft-deleted or another user's: the same `404`. No
+        `ETag`: the workspace token versions its metadata only, and each layout carries its own.
       x-rbac: { permissions: [workspaces:read], scope: self }
       responses:
         "200":
-          description: Workspace.
+          description: Workspace with its layouts.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/WorkspaceDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     put:
       tags: [workspaces]
       operationId: updateWorkspace
       summary: Replace a workspace's metadata
+      description: |
+        Full replacement of `WorkspaceInput` (an omitted field takes its default); layouts are
+        untouched and do not change this token. `409` and the 4 KiB limit as on `createWorkspace`.
+
+        `ETag` is the quoted token, `"<updated_at>"`, a strong validator. `If-Match` is optional
+        (absent: the last write wins) and takes that value; a `W/` prefix or the bare token is
+        accepted on input only, as leniency. Any other value, including `*` and a list of tags, is
+        unparseable.
+
+        Evaluation order for `/workspaces*` (not `exportWorkspace`, E15-S07) and `/layout-presets`
+        (steps that do not apply are skipped): `401`; `403` (permission, CSRF); `413`; `422` (path,
+        query, headers, body); `400 invalid_cursor` (lists); `Idempotency-Key` replay (stored 2xx +
+        `Idempotency-Replayed: true`) or `409 idempotency_key_reuse`; `404` (missing,
+        soft-deleted or another user's, identical); no-op `200` (the body changes nothing: unchanged
+        token, no write, even when `If-Match` is stale or unparseable, as the change is already
+        applied, RFC 9110 §13.1.1); `412 version_conflict` (stale or unparseable `If-Match`, nothing
+        written); `409`; the write. `503 store_unavailable` when storage fails.
       x-rbac: { permissions: [workspaces:write], scope: self }
       parameters:
-        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CsrfToken"
       requestBody:
         required: true
         content:
@@ -5890,22 +5942,63 @@ paths:
             schema: { $ref: "#/components/schemas/WorkspaceInput" }
       responses:
         "200":
-          description: Updated.
+          description: Replaced (or unchanged).
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Workspace" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [workspaces]
       operationId: deleteWorkspace
       summary: Delete a workspace and its layouts
+      description: |
+        Soft delete in one transaction: the workspace, its live layouts and their drawings get the
+        same `deleted_at`; retention purges them later. Deleting the caller's **last** live
+        workspace is `409 conflict` with `errors[0].rule = last_workspace` ("You need at least one
+        workspace.", SCR-025), and nothing changes. Deleting the default leaves no default. No
+        precondition. Missing, already deleted or another user's: the same `404`. `Idempotency-Key`
+        as on `createWorkspace` (a replay returns the stored `204`).
       x-rbac: { permissions: [workspaces:write], scope: self }
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      x-idempotency: optional
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfToken"
       responses:
-        "204": { description: "Deleted." }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
-        "409": { $ref: "#/components/responses/Conflict" }
+        "204":
+          description: Deleted.
+          headers:
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: "State conflict. For this operation `code: conflict` with `errors[0].rule = last_workspace` refuses deleting the caller's last live workspace; `code: idempotency_key_reuse` is the shared idempotency refusal."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                lastWorkspace:
+                  value:
+                    type: "https://candleviewer.local/errors/conflict"
+                    title: "Concurrent modification or state conflict"
+                    status: 409
+                    detail: "You need at least one workspace."
+                    instance: "urn:cv:req:0193f2c0-0002"
+                    code: conflict
+                    errors:
+                      - field: workspaceId
+                        rule: last_workspace
+                        message: "You need at least one workspace."
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /workspaces/{workspaceId}/layouts:
     parameters: [{ $ref: "#/components/parameters/WorkspaceId" }]
@@ -5913,31 +6006,60 @@ paths:
       tags: [workspaces]
       operationId: listLayouts
       summary: List layouts in a workspace
+      description: |
+        Live layouts (with all panes) of one of the caller's live workspaces, ordered by `id` (panes
+        by `slot_index`); at most 32. Missing, soft-deleted or another user's workspace: the same
+        `404`. `cursor` as on `listWorkspaces`, bound to this workspace.
       x-rbac: { permissions: [workspaces:read], scope: self }
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
       responses:
         "200":
-          description: Layouts.
+          description: Layouts page.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items: { type: array, items: { $ref: "#/components/schemas/Layout" } }
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Layout" } }
+        "400":
+          description: "Malformed request. For this operation `code: invalid_cursor` signals a malformed, foreign or expired `cursor`."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [workspaces]
       operationId: createLayout
       summary: Create a layout (pane grid)
       description: |
-        A layout is a grid of panes; each pane declares its kind (`chart`, `dom`, `tape`,
-        `footprint`, `heatmap`, `orders`, `positions`, `journal`, `rules`, `watchlist`,
-        `metrics`), its symbol, its linked symbol-group colour, and a reference to a chart
-        template. Panes are persisted verbatim so the Electron shell can restore the exact
-        workspace on launch.
+        A layout is a grid of up to 16 panes, persisted verbatim so the Electron shell restores the
+        exact arrangement. The server mints a UUIDv7 `id`; the pane set is validated as a whole and
+        written in the same transaction.
+
+        `422 validation_failed` lists up to 20 `errors[]`, naming a pane by array position (e.g.
+        `panes.2.slot_index`): rule `duplicate_slot`, the enums, the tree rules of `LayoutGridSpec`
+        (plus `grid_spec_required` for `custom` and `grid_spec_not_allowed` otherwise) and the pane
+        rules of `PaneKind`, `PaneConfig`, `PaneIntervalCode` and `LayoutPaneInput`. `409 conflict`:
+        rule `name_taken`, `hotkey_slot_taken`, `limit_reached` (32 live layouts) or
+        `concurrent_update`. `is_default: true` clears the previous default layout in the same
+        transaction. A workspace that is missing, soft-deleted or another user's returns the same
+        `404`.
+
+        Bodies over 128 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries
+        the `updated_at` token. `Idempotency-Key` behaves as on `createWorkspace`.
       x-rbac: { permissions: [workspaces:write], scope: self }
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      x-idempotency: optional
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfToken"
       requestBody:
         required: true
         content:
@@ -5948,41 +6070,68 @@ paths:
                 value:
                   name: "BTC 4-pane"
                   grid_preset: "2x2"
-                  grid: { columns: 2, rows: 2, gaps_px: 4 }
+                  hotkey_slot: 1
+                  is_default: true
                   panes:
-                    - {
-                        slot: "0,0",
-                        kind: chart,
-                        symbol: BTCUSDT,
-                        bar_type: time,
-                        param: "1",
-                        chart_template_id: "15000000-0000-4000-8000-000000000001",
-                        link_group: blue,
-                      }
-                    - {
-                        slot: "1,0",
-                        kind: footprint,
-                        symbol: BTCUSDT,
-                        bar_type: time,
-                        param: "5",
-                        link_group: blue,
-                      }
-                    - { slot: "0,1", kind: dom, symbol: BTCUSDT, depth: 50, link_group: blue }
-                    - {
-                        slot: "1,1",
-                        kind: tape,
-                        symbol: BTCUSDT,
-                        link_group: blue,
-                        settings: { min_size: "1.0", cluster_window_ms: 50 },
-                      }
+                    - { slot_index: 0, pane_kind: chart, symbol: BTCUSDT, interval_code: "time:1" }
+                    - { slot_index: 1, pane_kind: cvd, symbol: BTCUSDT, interval_code: "time:5" }
+                    - { slot_index: 2, pane_kind: dom, symbol: BTCUSDT }
+                    - slot_index: 3
+                      pane_kind: tape
+                      symbol: ETHUSDT
+                      pane_config: { sync_group: A, settings: { min_size: "1.0" } }
+              customTree:
+                value:
+                  name: "Chart + DOM / tape"
+                  grid_preset: custom
+                  grid_spec:
+                    version: 1
+                    root:
+                      type: row
+                      sizes: [0.7, 0.3]
+                      children:
+                        - { type: leaf, slot: 0 }
+                        - type: column
+                          sizes: [0.5, 0.5]
+                          children:
+                            - { type: leaf, slot: 1 }
+                            - { type: tabset, active: 0, children: [{ type: leaf, slot: 2 }] }
+                  panes:
+                    - { slot_index: 0, pane_kind: chart, symbol: BTCUSDT, interval_code: "time:1" }
+                    - { slot_index: 1, pane_kind: dom, symbol: BTCUSDT }
+                    - { slot_index: 2, pane_kind: tape, symbol: BTCUSDT }
       responses:
         "201":
           description: Created.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Layout" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
-        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422":
+          description: "Semantically invalid layout. `code: validation_failed`; each entry of `errors[]` names the offending field, a pane by its array position."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                duplicateSlot:
+                  value:
+                    type: "https://candleviewer.local/errors/validation_failed"
+                    title: "Request body or parameters failed schema validation"
+                    status: 422
+                    detail: "1 field failed validation."
+                    instance: "urn:cv:req:0193f2c0-0003"
+                    code: validation_failed
+                    errors:
+                      - field: panes.1.slot_index
+                        rule: duplicate_slot
+                        message: "slot_index 3 is already used by panes.0."
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /workspaces/{workspaceId}/layouts/{layoutId}:
     parameters:
@@ -5992,22 +6141,42 @@ paths:
       tags: [workspaces]
       operationId: getLayout
       summary: Get a layout
+      description: |
+        The layout with all of its panes (by `slot_index`). It must be live and belong to the named
+        workspace, one of the caller's live workspaces; otherwise the same `404`. The `ETag` header
+        carries the `updated_at` token.
       x-rbac: { permissions: [workspaces:read], scope: self }
       responses:
         "200":
           description: Layout.
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Layout" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     put:
       tags: [workspaces]
       operationId: updateLayout
       summary: Replace a layout
-      description: "Called on pane rearrangement with a 2-second debounce. `If-Match` prevents a stale tab from clobbering a newer arrangement made in another window."
+      description: |
+        Called on pane rearrangement with a 2-second debounce. `If-Match` prevents a stale tab from
+        clobbering a newer arrangement made in another window.
+
+        Full replacement of the layout **and its whole pane set** in one transaction, validated as
+        on `createLayout` before anything is written; partial application is impossible. The
+        `updated_at` token versions the aggregate, so a pane-only change also changes it.
+        `If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`; after a
+        `412` the stored layout is unchanged and the client re-reads it with `getLayout`. `404` as
+        on `getLayout`; `409`, `422` and the 128 KiB limit as on `createLayout`.
       x-rbac: { permissions: [workspaces:write], scope: self }
       parameters:
-        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CsrfToken"
       requestBody:
         required: true
         content:
@@ -6015,23 +6184,43 @@ paths:
             schema: { $ref: "#/components/schemas/LayoutInput" }
       responses:
         "200":
-          description: Replaced.
+          description: Replaced (or unchanged).
+          headers:
+            ETag: { $ref: "#/components/headers/ETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Layout" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [workspaces]
       operationId: deleteLayout
       summary: Delete a layout
+      description: |
+        Soft delete in one transaction: the layout and its drawings get the same `deleted_at`;
+        retention purges them later. No precondition. A workspace may be left with no layouts or no
+        default. `404` as on `getLayout`; `Idempotency-Key` as on `createWorkspace`.
       x-rbac: { permissions: [workspaces:write], scope: self }
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      x-idempotency: optional
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CsrfToken"
       responses:
-        "204": { description: "Deleted." }
+        "204":
+          description: Deleted.
+          headers:
+            Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /chart-templates:
     get:
@@ -8303,17 +8492,36 @@ paths:
     get:
       tags: [workspaces]
       operationId: listLayoutPresets
-      summary: Built-in and user-saved workspace layout presets
+      summary: Built-in layout presets
+      description: |
+        Static built-in catalogue served from the code (no rows, nothing user-scoped). Each entry
+        carries a complete `LayoutInput` for `createLayout`, symbols left for the client to fill
+        ("Keep current symbols", SCR-022). User-saved presets are layouts with a `hotkey_slot`
+        (`listLayouts`). Ids are stable and new entries are additive. Thumbnails are static client
+        assets keyed by `id`; the API never serves markup. `cursor` as on `listWorkspaces`.
       x-rbac: { permissions: [workspaces:read], scope: self }
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
       responses:
         "200":
-          description: Presets.
+          description: Presets page.
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items: { type: array, items: { $ref: "#/components/schemas/LayoutPreset" } }
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/LayoutPreset" } }
+        "400":
+          description: "Malformed request. For this operation `code: invalid_cursor` signals a malformed or expired `cursor`."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /workspaces/{workspaceId}/export:
     parameters:
@@ -12225,106 +12433,391 @@ components:
         generated_at: { type: string, format: date-time }
 
     # === Workspaces / layouts / drawings / settings =========================
+    WorkspaceIconToken:
+      type: string
+      enum: [workspace.default]
+      description: |
+        Design-system icon token for the workspace (a token name, never a URL or markup).
+        **Open-ended for readers:** clients must tolerate values they do not know, so adding a token
+        is an additive change (C-6.3). Writers must send a listed value; the server keeps the same
+        allow-list. `workspace.default` is the only token until the design-system icon registry
+        (CMP-019) publishes workspace icons.
     WorkspaceInput:
       type: object
+      additionalProperties: false
       required: [name]
+      description: |
+        Writable workspace fields. `PUT` is a full replacement: an omitted field takes its default,
+        and an explicit `null` is refused (`422`).
+
+        Observable validation (all `422 validation_failed`): JSON nesting depth must be at most 16;
+        `NaN` and `Infinity` are rejected; a string that cannot be encoded as UTF-8 (a lone
+        surrogate) is rule `invalid_unicode`. `name` is at most 40 characters as sent (rule
+        `string_too_long`), then sanitised: U+0000-U+001F, U+007F-U+009F, U+2028, U+2029, U+061C,
+        U+200E, U+200F, U+202A-U+202E and U+2066-U+2069 are removed, then surrounding whitespace is
+        trimmed; nothing else is altered. Empty after sanitising is rule `string_too_short`. Reads
+        return the sanitised name.
       properties:
-        name: { type: string, minLength: 1, maxLength: 80 }
-        description: { type: string, maxLength: 280 }
-        is_default: { type: boolean, default: false }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 40
+          description: "At most 40 characters as sent, at least 1 after sanitising (above), SCR-020. Unique per user, case-insensitive, among live workspaces (`409 conflict`, rule `name_taken`)."
+        is_default:
+          type: boolean
+          default: false
+          description: "At most one live default per user; `true` clears the previous default in the same transaction."
+        icon_token:
+          allOf:
+            - $ref: "#/components/schemas/WorkspaceIconToken"
+          default: workspace.default
+        sort_order:
+          type: integer
+          minimum: 0
+          maximum: 32767
+          default: 0
+          description: "Client-defined tab order; ties break by `id`."
     Workspace:
-      allOf:
-        - $ref: "#/components/schemas/WorkspaceInput"
-        - type: object
-          properties:
-            id: { type: string, format: uuid }
-            user_id: { type: string, format: uuid }
-            layout_count: { type: integer }
-            created_at: { type: string, format: date-time }
-            updated_at: { type: string, format: date-time }
+      type: object
+      description: "Response object. Readers must ignore unknown properties (C-6.3)."
+      required:
+        [
+          id,
+          user_id,
+          name,
+          is_default,
+          icon_token,
+          sort_order,
+          layout_count,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        name: { type: string }
+        is_default: { type: boolean }
+        icon_token: { $ref: "#/components/schemas/WorkspaceIconToken" }
+        sort_order: { type: integer, minimum: 0, maximum: 32767 }
+        layout_count: { type: integer, minimum: 0, maximum: 32, description: "Live layouts." }
+        created_at: { type: string, format: date-time }
+        updated_at:
+          type: string
+          format: date-time
+          description: "Concurrency token (also the `ETag`) for the workspace metadata only; layout writes do not change it. Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing on every write. Echo it exactly as received; never re-serialise it through a client date type."
     WorkspaceDetail:
+      description: "Response object: `Workspace` plus every live layout with its panes, so restore is one request per workspace. Readers must ignore unknown properties (C-6.3)."
       allOf:
         - $ref: "#/components/schemas/Workspace"
         - type: object
+          required: [layouts]
           properties:
-            layouts: { type: array, items: { $ref: "#/components/schemas/Layout" } }
-    LayoutPane:
+            layouts:
+              type: array
+              maxItems: 32
+              description: "Live layouts ordered by `id` ascending."
+              items: { $ref: "#/components/schemas/Layout" }
+    LayoutGridPreset:
+      type: string
+      enum: ["1x1", "2x1", "1x2", "2x2", "1+3", "3x3", custom]
+      description: |
+        Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset stores
+        only its name and fixed cell proportions: `grid_spec` is `null`, and a pane's `slot_index`
+        is its cell in row-major reading order (a slot beyond the preset's cells is placed by the
+        client, e.g. floating). Any other arrangement, including a named grid whose divider was
+        dragged, is saved as `custom` with its tree in `grid_spec`. **Open-ended for readers.**
+    LayoutGridSpec:
       type: object
       additionalProperties: false
-      required: [slot, kind]
+      required: [version, root]
+      description: |
+        Dock tree of a `custom` layout (`row` / `column` / `tabset` / `leaf`), checked at the API
+        boundary (`422`, field paths under `grid_spec`): depth at most 6 counting the root as 1
+        (rule `tree_too_deep`); at most 64 nodes and at most 16 leaves (rule `tree_too_large`);
+        every leaf names the `slot_index` of a pane in the same body (rule `unknown_slot`) and no
+        slot appears twice (rule `duplicate_leaf`), so the leaf cap also follows from `panes` having
+        at most 16 entries; a split's `sizes` has one entry per child (rule `sizes_mismatch`), each
+        in (0, 1], summing to 1 within 1e-6 (rule `sizes_sum`); a tabset's `active` indexes one of
+        its children (rule `active_out_of_range`). Panes that no leaf names are kept (floating or
+        minimised, placed by the client).
       properties:
+        version: { type: integer, enum: [1], description: "Tree format version." }
+        root: { $ref: "#/components/schemas/LayoutGridNode" }
+    LayoutGridNode:
+      oneOf:
+        - $ref: "#/components/schemas/LayoutGridSplit"
+        - $ref: "#/components/schemas/LayoutGridTabset"
+        - $ref: "#/components/schemas/LayoutGridLeaf"
+      discriminator:
+        propertyName: type
+        mapping:
+          row: "#/components/schemas/LayoutGridSplit"
+          column: "#/components/schemas/LayoutGridSplit"
+          tabset: "#/components/schemas/LayoutGridTabset"
+          leaf: "#/components/schemas/LayoutGridLeaf"
+    LayoutGridSplit:
+      type: object
+      additionalProperties: false
+      required: [type, children, sizes]
+      description: "`row` lays children out left to right, `column` top to bottom; `sizes` are fractions of the container."
+      properties:
+        type: { type: string, enum: [row, column] }
+        children:
+          type: array
+          minItems: 2
+          maxItems: 16
+          items: { $ref: "#/components/schemas/LayoutGridNode" }
+        sizes:
+          type: array
+          minItems: 2
+          maxItems: 16
+          items: { type: number, exclusiveMinimum: 0, maximum: 1 }
+    LayoutGridTabset:
+      type: object
+      additionalProperties: false
+      required: [type, children]
+      properties:
+        type: { type: string, enum: [tabset] }
+        children:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: "#/components/schemas/LayoutGridLeaf" }
+        active:
+          type: integer
+          minimum: 0
+          maximum: 15
+          default: 0
+          description: "Index of the visible tab in `children`."
+    LayoutGridLeaf:
+      type: object
+      additionalProperties: false
+      required: [type, slot]
+      properties:
+        type: { type: string, enum: [leaf] }
         slot:
           {
-            type: string,
-            pattern: "^[0-9]{1,2},[0-9]{1,2}$",
-            description: "`column,row` grid position.",
+            type: integer,
+            minimum: 0,
+            maximum: 15,
+            description: "`slot_index` of a pane in the same layout.",
           }
-        span: { type: string, pattern: "^[0-9]{1,2}x[0-9]{1,2}$", default: "1x1" }
-        kind:
-          {
-            type: string,
-            enum:
-              [
-                chart,
-                dom,
-                tape,
-                footprint,
-                heatmap,
-                orders,
-                positions,
-                journal,
-                rules,
-                watchlist,
-                metrics,
-                account_summary,
-                alerts,
-                replay_controls,
-              ],
-          }
-        symbol: { oneOf: [{ $ref: "#/components/schemas/Symbol" }, { type: "null" }] }
-        bar_type: { $ref: "#/components/schemas/BarType" }
-        param: { type: string, maxLength: 24 }
-        depth: { type: integer, enum: [1, 50, 200, 500] }
+    PaneKind:
+      type: string
+      enum:
+        [
+          chart,
+          dom,
+          tape,
+          profile,
+          cvd,
+          oi,
+          deep_stats,
+          regime,
+          positions,
+          journal,
+          watchlist,
+          alerts,
+        ]
+      description: |
+        Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients
+        must tolerate values they do not know, so adding a kind is an additive change (C-6.3);
+        writers must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,
+        `oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes
+        (`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule
+        `property_not_allowed_for_kind`). A heatmap lives in the `dom` pane and orders in the
+        `positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is
+        marked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`
+        settings.
+    PaneScaleMode:
+      type: string
+      enum: [auto, linked, manual, log]
+      description: "Price-scale behaviour (`lp_scale`). **Open-ended for readers.**"
+    PaneIntervalCode:
+      type: string
+      maxLength: 36
+      pattern: "^(time|heikin_ashi):(1|3|5|15|30|60|120|240|360|720|D|W|M)$|^(tick|range):[1-9][0-9]{0,8}$|^(volume|delta):(0|[1-9][0-9]{0,10})(\\.[0-9]{0,11}[1-9])?$|^renko:([1-9][0-9]{0,8}|atr:[1-9][0-9]{0,2})$|^pnf:[1-9][0-9]{0,8}:[1-9][0-9]{0,2}$"
+      description: "`<bar_type>:<param>`, exactly the `bar_type` and `param` of `/market/bars` (and of the WS topic `bars.{symbol}.{bar_type}.{param}`): `param` at most 24 characters, no leading zeros, and no trailing zeros in a `volume`/`delta` fraction, so each value has one spelling (`volume:0.5`, never `volume:0.50`), e.g. `time:1`, `time:D`, `tick:500`, `volume:0.5`, `renko:atr:14`, `pnf:10:3`. A `volume` or `delta` threshold must also be greater than 0 (`422` rule `interval_not_positive`)."
+      examples: ["time:1", "time:240", "tick:500", "renko:atr:14"]
+    PaneSettingValue:
+      description: "A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`."
+      anyOf:
+        - { type: string, maxLength: 256 }
+        - { type: integer, minimum: -1000000000000000, maximum: 1000000000000000 }
+        - { type: number, minimum: -1000000000000000, maximum: 1000000000000000 }
+        - { type: boolean }
+        - { type: "null" }
+        - type: array
+          maxItems: 32
+          items:
+            anyOf:
+              - { type: string, maxLength: 256 }
+              - { type: integer, minimum: -1000000000000000, maximum: 1000000000000000 }
+              - { type: number, minimum: -1000000000000000, maximum: 1000000000000000 }
+              - { type: boolean }
+    PaneConfig:
+      type: object
+      additionalProperties: false
+      description: |
+        Per-pane view state with no column of its own, so a pane cannot become a blob store: closed
+        (unknown keys are refused, C-6.3; later stories add keys additively), at most 4096 bytes of
+        canonical compact UTF-8 JSON measured after sanitising (`422` rule `pane_config_too_large`),
+        and never holds credentials, account ids or user ids. Omitted means `{}`.
+      properties:
+        sync_group:
+          type: ["string", "null"]
+          enum: [A, B, C, null]
+          description: "Cross-pane sync group (SCR-023); `null` or omitted means not synced. The axis defaults live on the layout (`crosshair_sync`, `symbol_sync`, `level_sync`)."
+        settings:
+          type: object
+          maxProperties: 32
+          additionalProperties: { $ref: "#/components/schemas/PaneSettingValue" }
+          description: "Kind-specific flat settings (for example DOM depth, tape filters, CVD anchor, visible range), at most 32 keys. Every key must match `^[a-z][a-z0-9_]{0,31}$` (`422` rule `invalid_setting_key`); the server enforces this because generators cannot express key patterns. Numbers keep their kind (`1` stays `1`, `1.0` stays `1.0`). Omitted means `{}`."
+    LayoutPaneInput:
+      type: object
+      additionalProperties: false
+      required: [slot_index, pane_kind]
+      properties:
+        slot_index:
+          type: integer
+          minimum: 0
+          maximum: 15
+          description: "Unique within the layout (`422` rule `duplicate_slot`)."
+        pane_kind: { $ref: "#/components/schemas/PaneKind" }
+        symbol:
+          type: ["string", "null"]
+          pattern: "^[A-Z0-9]{2,16}USDT$"
+          default: null
+          description: "Bound symbol, market panes only: a Bybit USDT linear perpetual symbol of at most 20 characters (the DB `symbol_code` domain). It is not checked against the instrument catalogue. A non-null symbol on a live layout counts as chart-open for auto-recording."
+        interval_code:
+          oneOf: [{ $ref: "#/components/schemas/PaneIntervalCode" }, { type: "null" }]
+          default: null
+          description: "Bar series of a market pane; `null` for panes without one."
+        chart_template_id:
+          type: ["string", "null"]
+          format: uuid
+          default: null
+          description: "Chart template reference. Every non-null value is refused (`422` rule `chart_template_not_found`) until `chart_templates` ships; then it must name a template the caller may use."
+        indicator_preset_ids:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items: { type: string, format: uuid }
+          description: "Indicator preset references; omitted means `[]`. A non-empty list is refused (`422` rule `indicator_preset_not_found`) until `indicator_presets` ships (E13-T03); then every id must name a preset the caller may use."
+        pane_config: { $ref: "#/components/schemas/PaneConfig" }
+        scale_mode:
+          allOf:
+            - $ref: "#/components/schemas/PaneScaleMode"
+          default: auto
+    LayoutPane:
+      type: object
+      description: "Stored pane (response object). Panes have no id of their own: they are addressed by `slot_index` and replaced as a set. Readers must ignore unknown properties (C-6.3)."
+      required:
+        [
+          slot_index,
+          pane_kind,
+          symbol,
+          interval_code,
+          chart_template_id,
+          indicator_preset_ids,
+          pane_config,
+          scale_mode,
+        ]
+      properties:
+        slot_index: { type: integer, minimum: 0, maximum: 15 }
+        pane_kind: { $ref: "#/components/schemas/PaneKind" }
+        symbol: { type: ["string", "null"], pattern: "^[A-Z0-9]{2,16}USDT$" }
+        interval_code:
+          { oneOf: [{ $ref: "#/components/schemas/PaneIntervalCode" }, { type: "null" }] }
         chart_template_id: { type: ["string", "null"], format: uuid }
-        link_group:
-          {
-            type: ["string", "null"],
-            enum: [red, green, blue, yellow, purple, null],
-            description: "Panes sharing a colour follow each other's symbol and crosshair.",
-          }
-        settings: { type: object, additionalProperties: true }
+        indicator_preset_ids: { type: array, maxItems: 16, items: { type: string, format: uuid } }
+        pane_config: { $ref: "#/components/schemas/PaneConfig" }
+        scale_mode: { $ref: "#/components/schemas/PaneScaleMode" }
     LayoutInput:
       type: object
+      additionalProperties: false
       required: [name, panes]
+      description: "Writable layout fields plus the complete pane set. `PUT` is a full replacement: an omitted field takes its default, an explicit `null` on a non-nullable field is refused, and the stored panes are replaced. Observable validation (depth, `NaN`/`Infinity`, `invalid_unicode`, `name` sanitising and rules) is as on `WorkspaceInput`."
       properties:
-        name: { type: string, minLength: 1, maxLength: 80 }
-        grid_preset: { type: string, examples: ["1x1", "2x2", "3x1", "custom"] }
-        grid:
-          type: object
-          additionalProperties: false
-          properties:
-            columns: { type: integer, minimum: 1, maximum: 8 }
-            rows: { type: integer, minimum: 1, maximum: 8 }
-            gaps_px: { type: integer, minimum: 0, maximum: 32, default: 4 }
-            column_fractions: { type: array, items: { type: number } }
-            row_fractions: { type: array, items: { type: number } }
-        panes:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 40
+          description: "At most 40 characters as sent, at least 1 after sanitising, as for workspace names. Unique per workspace, case-insensitive, among live layouts (`409 conflict`, rule `name_taken`)."
+        grid_preset:
+          allOf:
+            - $ref: "#/components/schemas/LayoutGridPreset"
+          default: "1x1"
+        grid_spec:
+          oneOf: [{ $ref: "#/components/schemas/LayoutGridSpec" }, { type: "null" }]
+          default: null
+          description: "Required when `grid_preset` is `custom`, otherwise `null` or omitted."
+        crosshair_sync:
           {
-            type: array,
-            minItems: 1,
-            maxItems: 32,
-            items: { $ref: "#/components/schemas/LayoutPane" },
+            type: boolean,
+            default: true,
+            description: "Layout default for crosshair sync between panes of one sync group.",
           }
-        is_default: { type: boolean, default: false }
+        level_sync:
+          { type: boolean, default: false, description: "Layout default for price-level sync." }
+        symbol_sync:
+          { type: boolean, default: false, description: "Layout default for symbol sync." }
+        hotkey_slot:
+          type: ["integer", "null"]
+          minimum: 1
+          maximum: 9
+          default: null
+          description: "`Ctrl+1..9` binding; unique among the workspace's live layouts (`409 conflict`, rule `hotkey_slot_taken`)."
+        is_default:
+          type: boolean
+          default: false
+          description: "At most one live default per workspace; `true` clears the previous default in the same transaction."
+        panes:
+          type: array
+          minItems: 0
+          maxItems: 16
+          description: "In any order: panes are keyed by `slot_index`, and responses sort by it."
+          items: { $ref: "#/components/schemas/LayoutPaneInput" }
     Layout:
-      allOf:
-        - $ref: "#/components/schemas/LayoutInput"
-        - type: object
-          properties:
-            id: { type: string, format: uuid }
-            workspace_id: { type: string, format: uuid }
-            created_at: { type: string, format: date-time }
-            updated_at: { type: string, format: date-time }
+      type: object
+      description: "Response object. Readers must ignore unknown properties (C-6.3)."
+      required:
+        [
+          id,
+          workspace_id,
+          name,
+          grid_preset,
+          grid_spec,
+          crosshair_sync,
+          level_sync,
+          symbol_sync,
+          hotkey_slot,
+          is_default,
+          panes,
+          created_at,
+          updated_at,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        name: { type: string }
+        grid_preset: { $ref: "#/components/schemas/LayoutGridPreset" }
+        grid_spec: { oneOf: [{ $ref: "#/components/schemas/LayoutGridSpec" }, { type: "null" }] }
+        crosshair_sync: { type: boolean }
+        level_sync: { type: boolean }
+        symbol_sync: { type: boolean }
+        hotkey_slot: { type: ["integer", "null"], minimum: 1, maximum: 9 }
+        is_default: { type: boolean }
+        panes:
+          type: array
+          maxItems: 16
+          description: "Ordered by `slot_index` ascending."
+          items: { $ref: "#/components/schemas/LayoutPane" }
+        created_at: { type: string, format: date-time }
+        updated_at:
+          type: string
+          format: date-time
+          description: "Concurrency token (also the `ETag`) of the whole layout aggregate, panes included: every write changes it, including a pane-only change and a default switch made by another layout. Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing. Echo it exactly as received; never re-serialise it through a client date type."
     ChartTemplateInput:
       type: object
       required: [name, config]
@@ -13071,14 +13564,17 @@ components:
 
     LayoutPreset:
       type: object
-      required: [id, name, is_builtin]
+      description: "Response object. Readers must ignore unknown properties (C-6.3); the embedded `layout` is a closed `LayoutInput`."
+      required: [id, name, description, is_builtin, pane_count, layout]
       properties:
-        id: { type: string, format: uuid }
+        id:
+          { type: string, format: uuid, description: "Stable for the life of the catalogue entry." }
         name: { type: string }
         description: { type: ["string", "null"] }
-        is_builtin: { type: boolean }
-        pane_count: { type: integer }
-        preview_svg: { type: ["string", "null"] }
+        is_builtin:
+          type: boolean
+          description: "Always `true`: the catalogue is static. User-saved presets are layouts with a `hotkey_slot`."
+        pane_count: { type: integer, minimum: 0, maximum: 16 }
         layout: { $ref: "#/components/schemas/LayoutInput" }
 
     WorkspaceBundle:
