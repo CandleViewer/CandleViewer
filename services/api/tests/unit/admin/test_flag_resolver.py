@@ -44,6 +44,8 @@ _OWNER, _MANAGER = frozenset({"owner"}), frozenset({"manager"})
         (_PCT, StoredFlag(0, {}, {"owner": True}), _U1, _OWNER, True),
         (_PCT, StoredFlag(0), _U1, _OWNER, False),
         (_PCT, StoredFlag(100), _U1, _OWNER, True),
+        (_PCT, StoredFlag(72), _U1, _OWNER, False),  # bucket(_U1) == 72: `<`, never `<=`
+        (_PCT, StoredFlag(73), _U1, _OWNER, True),
         (_PCT, StoredFlag(99), None, frozenset(), False),
         (_PCT, StoredFlag(100), None, frozenset(), True),
         # variant: user override > role override > stored value
@@ -108,3 +110,24 @@ def test_rollout_bucket_is_stable_and_in_range(user: UUID, key: str) -> None:
     bucket = rollout_bucket(user, key)
     assert 0 <= bucket < 100
     assert rollout_bucket(user, key) == bucket
+
+
+@pytest.mark.parametrize(
+    ("user", "key", "bucket"),
+    [
+        (_U1, "ui.rollout", 72),
+        (_U2, "ui.rollout", 15),
+        (_U1, "engine.webgl_v2", 42),
+    ],
+)
+def test_rollout_bucket_golden_vectors(user: UUID, key: str, bucket: int) -> None:
+    assert rollout_bucket(user, key) == bucket
+
+
+@pytest.mark.parametrize(
+    "key", ["maintenance.mode", "killswitch.order_entry", "trading.live_enabled"]
+)
+def test_stored_overrides_on_non_overridable_flags_are_ignored(key: str) -> None:
+    spec = default_registry()[key]
+    stored = StoredFlag(False, {_U1: True}, {"owner": True})
+    assert resolve(spec, stored, user_id=_U1, roles=_OWNER) is False

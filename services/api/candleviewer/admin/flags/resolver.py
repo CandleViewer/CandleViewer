@@ -52,6 +52,8 @@ def override_matches(spec: FlagSpec, value: object) -> bool:
 def _override(
     spec: FlagSpec, stored: StoredFlag, user_id: UUID | None, roles: frozenset[str]
 ) -> FlagValue | None:
+    if not spec.overridable:  # D2: a stored override on the live gate or a kill switch is ignored
+        return None
     candidates: list[FlagValue] = []
     if user_id is not None and user_id in stored.user_overrides:
         candidates.append(stored.user_overrides[user_id])
