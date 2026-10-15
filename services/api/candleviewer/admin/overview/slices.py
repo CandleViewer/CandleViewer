@@ -25,5 +25,22 @@ class AdminSlice(StrEnum):
 
 
 #: `GET /admin/overview` slices and `GET /admin/capacity` sections: disjoint cache keys.
-OVERVIEW_SLICES: Final = frozenset(list(AdminSlice)[:6])
-CAPACITY_SLICES: Final = frozenset(list(AdminSlice)[6:])
+#: Explicit membership: a slice added to the enum must be placed in a set on purpose.
+OVERVIEW_SLICES: Final = frozenset(
+    {
+        AdminSlice.USERS,
+        AdminSlice.ACCOUNTS,
+        AdminSlice.RECORDER,
+        AdminSlice.STORAGE,
+        AdminSlice.TRADING,
+        AdminSlice.INCIDENTS,
+    }
+)
+CAPACITY_SLICES: Final = frozenset(
+    {
+        AdminSlice.CAPACITY_STORAGE,
+        AdminSlice.INGESTION,
+        AdminSlice.RATE_BUDGET,
+        AdminSlice.SUBACCOUNTS,
+    }
+)
