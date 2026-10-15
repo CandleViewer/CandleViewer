@@ -127,6 +127,111 @@ def test_granted_accounts_read_cell_allows_granted_and_hides_foreign(world: Worl
     assert other.json() == absent.json() or other.json().get("code") == absent.json().get("code")
 
 
+# -- granted_accounts write cell: PUT /rules/{ruleId}/active-version (#2574) --------------------
+#
+# The matrix row cannot reach this route's scope logic (its runner sends a static body against an
+# empty rule store, so no real version id exists); these cells drive the real path instead.
+
+
+def _acct(account: uuid.UUID) -> dict[str, Any]:
+    return {"level": "account", "account_ids": [str(account)]}
+
+
+def _rule_with_old_version(world: World, scope: dict[str, Any]) -> tuple[str, str]:
+    """Owner-made rule on `scope`, edited once: (rule id, its older, inactive version id)."""
+    body = _rule_body(GRANTED, "two-versions")
+    body["ir"]["scope"] = scope
+    made = world.client.post("/rules", json=body, headers=bearer("owner"))
+    assert made.status_code == 201, made.text
+    rid = str(made.json()["id"])
+    body["ir"]["actions"][0]["params"]["template"] = "edited"
+    hdrs = {**bearer("owner"), "If-Match": "1"}
+    assert world.client.put(f"/rules/{rid}", json=body, headers=hdrs).status_code == 200
+    items = world.client.get(f"/rules/{rid}/versions", headers=bearer("owner")).json()["items"]
+    assert len(items) == 2
+    return rid, str(items[-1]["id"])  # newest first: the last item is version 1
+
+
+def _activate(world: World, actor: str, rule_id: str, version_id: str) -> Any:
+    body = {"version_id": version_id}
+    return world.client.put(f"/rules/{rule_id}/active-version", json=body, headers=bearer(actor))
+
+
+def _active_version(world: World, rule_id: str) -> str:
+    view = world.client.get(f"/rules/{rule_id}", headers=bearer("owner")).json()
+    return str(view["active_version_id"])
+
+
+@pytest.mark.parametrize(
+    ("actor", "account"), [("manager_with_grant", FOREIGN), ("manager_without_grant", GRANTED)]
+)
+def test_active_version_on_an_unseen_rule_is_the_same_404_as_a_missing_rule_or_version(
+    world: World, actor: str, account: uuid.UUID
+) -> None:
+    """#2574, 04 §7.3: on a rule the caller cannot see, its real version, a missing version and a
+    missing rule are one indistinguishable 404 (no existence oracle). Visibility is checked before
+    any version lookup or scope pre-check; the denial is audited and nothing changes."""
+    rid, old = _rule_with_old_version(world, _acct(account))
+    active = _active_version(world, rid)
+    world.audit.records.clear()
+    world.scope_events.clear()
+    real = _activate(world, actor, rid, old)
+    no_version = _activate(world, actor, rid, str(uuid.uuid4()))
+    no_rule = _activate(world, actor, str(uuid.uuid4()), old)
+    statuses = (real.status_code, no_version.status_code, no_rule.status_code)
+    assert statuses == (404, 404, 404), f"a real foreign version must not answer 403: {statuses}"
+    assert real.json() == no_version.json() == no_rule.json(), "the problem bodies must match"
+    assert real.json()["code"] == "not_found"
+    assert _active_version(world, rid) == active, "a refused call must change nothing"
+    refused = [
+        (r["rule_id"], r["op"], r["reason"])
+        for r in world.audit.records
+        if r["action"] == "rule.scope_refused"
+    ]
+    assert refused == [(rid, "set_active_version", "rule_not_visible")] * 2, refused
+    assert world.scope_events == [], "an unseen rule never reaches the scope pre-check"
+
+
+@pytest.mark.parametrize(
+    ("actor", "account"), [("manager_with_grant", GRANTED), ("owner", FOREIGN)]
+)
+def test_active_version_on_a_visible_rule_switches_the_version(
+    world: World, actor: str, account: uuid.UUID
+) -> None:
+    rid, old = _rule_with_old_version(world, _acct(account))
+    resp = _activate(world, actor, rid, old)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["active_version_id"] == old == _active_version(world, rid)
+
+
+def test_active_version_without_rules_write_is_the_same_403_whether_or_not_the_rule_exists(
+    world: World,
+) -> None:
+    """The viewer lacks `rules:write`: refused at the API boundary before any lookup."""
+    rid, old = _rule_with_old_version(world, _acct(GRANTED))
+    active = _active_version(world, rid)
+    real = _activate(world, "viewer", rid, old)
+    absent = _activate(world, "viewer", str(uuid.uuid4()), str(uuid.uuid4()))
+    assert real.status_code == absent.status_code == 403
+    assert real.json() == absent.json() and real.json()["code"] == "forbidden"
+    assert _active_version(world, rid) == active
+
+
+def test_active_version_grant_refusal_on_a_visible_rule_is_audited_as_scope_refused(
+    world: World,
+) -> None:
+    """An account-less rule is visible to a manager with no grants, who still may not switch it
+    (`_require_grants`, no vacuous pass): 403 audited as `rule.scope_refused`."""
+    rid, old = _rule_with_old_version(world, {"level": "symbol", "symbols": ["BTCUSDT"]})
+    world.audit.records.clear()
+    resp = _activate(world, "manager_without_grant", rid, old)
+    assert resp.status_code == 403 and resp.json()["code"] == "forbidden", resp.text
+    refused = [
+        (r["op"], r["reason"]) for r in world.audit.records if r["action"] == "rule.scope_refused"
+    ]
+    assert refused == [("set_active_version", "no_grants")], refused
+
+
 # -- SR-051: scope applied at construction -------------------------------------------------------
 
 

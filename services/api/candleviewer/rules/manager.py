@@ -535,7 +535,18 @@ class RulesManager:
         return [self._version_view(v) for v in reversed((await self._row(rule_id)).versions)]
 
     async def version(self, rule_id: str, version_id: str) -> dict[str, Any]:
-        for v in (await self._row(rule_id)).versions:
+        return self._pick_version(await self._row(rule_id), version_id)
+
+    async def visible_version(
+        self, rule_id: str, version_id: str, actor: Actor, op: str
+    ) -> dict[str, Any]:
+        """`version()` for a mutation: visibility (audited) runs before the version lookup, so on
+        a rule the actor cannot see a real version and a missing rule or version are the same 404
+        (no existence oracle, 04 §7.3)."""
+        return self._pick_version(await self._visible_row(rule_id, actor, op), version_id)
+
+    def _pick_version(self, row: RuleRow, version_id: str) -> dict[str, Any]:
+        for v in row.versions:
             if v.id == version_id:
                 return self._version_view(v, full=True)
         raise RuleError(404, "not_found", "That version does not exist.")

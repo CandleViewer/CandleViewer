@@ -1189,8 +1189,10 @@ operations:
     scope: granted_accounts
     public: false
     state: executed
+    # #2574: a static body cannot name a real version (the store is empty per cell), so the
+    # authorised cells end at the rule lookup; test_scope_and_ws.py drives the scope path.
     request:
-      json: {version: 1}
+      json: {version_id: '00000000-0000-4000-8000-0000000000ff'}
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   POST /rules/{ruleId}/compile:
     permissions: ['rules:read']
