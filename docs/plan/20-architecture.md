@@ -914,7 +914,10 @@ judges the ASGI `scope["client"]` address, which is the TCP peer: `candleviewer.
 sets `proxy_headers=False`, so uvicorn never rewrites it from `X-Forwarded-For` (whatever
 `FORWARDED_ALLOW_IPS` says) and MeshOnly is the only interpreter of forwarded headers (#2275). With
 both settings set, MeshOnly reads the right-most hop of that header, and only when the TCP peer is the
-configured proxy address (runbook: `docs/ops/runbooks/ws-server-limits.md`). `make audit-net`
+configured proxy address; it refuses a request from the proxy that repeats the header, and startup
+fails if only one setting is set or the address is not an IP address. Every reader of the client
+address (logs, audit `actor_ip`, sign-in and invite throttles, session record) uses the address
+MeshOnly admitted (runbook: `docs/ops/runbooks/ws-server-limits.md`). `make audit-net`
 (`tools/ci/audit_net.py`) runs the identical `BindingSelfCheck` against the host's real listening
 sockets — host-wide via `psutil.net_connections()` plus the Windows `netsh interface portproxy` table,
 catching a `portproxy` leak that neither the process's own sockets nor a per-process `psutil` scope can

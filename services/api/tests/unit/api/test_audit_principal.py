@@ -6,12 +6,14 @@ import uuid
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from candleviewer.api.audit import make_audit_router
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
 from candleviewer.auth.errors import SessionIdleLocked, SessionNotFound, SessionRevoked
+from candleviewer.net import CidrAllowList, MeshOnlyMiddleware
 from tests.unit.api.test_audit_router import _FakeAuditService
 
 _OWNER = uuid.uuid4()
@@ -84,6 +86,33 @@ def test_verify_owner_is_authorized() -> None:
     client, _ = _client()
     r = client.post("/admin/audit/verify", json={}, headers={"Authorization": "Bearer owner-tok"})
     assert r.status_code not in (401, 403, 501)
+
+
+@pytest.mark.parametrize(
+    ("peer", "forwarded_for", "recorded"),
+    [
+        ("127.0.0.1", "203.0.113.9, 100.64.1.2", "100.64.1.2"),  # the configured proxy
+        ("127.0.0.2", "100.64.1.2", "127.0.0.2"),  # another loopback peer: header ignored
+    ],
+)
+def test_audit_denial_records_the_address_mesh_only_admitted(
+    peer: str, forwarded_for: str, recorded: str
+) -> None:
+    """#2275: the principal's `ip` is MeshOnly's admitted address, not the proxy's."""
+    svc = _FakeAuditService()
+    app = FastAPI()
+    resolver = SessionAuditPrincipalResolver(lambda: _Sessions(), _Identity())
+    app.include_router(make_audit_router(svc, resolver))
+    app.add_middleware(
+        MeshOnlyMiddleware,
+        allow_list=CidrAllowList(["100.64.0.0/10"]),
+        trusted_proxy_header="x-forwarded-for",
+        trusted_proxy_address="127.0.0.1",
+    )
+    headers = {"Authorization": "Bearer mgr-tok", "X-Forwarded-For": forwarded_for}
+    r = TestClient(app, client=(peer, 50000)).get("/admin/audit", headers=headers)
+    assert r.status_code == 403
+    assert svc.writer_service.emitted[0][1]["actor_ip"] == recorded
 
 
 def _resolver_client(sessions: Any, identity: Any) -> TestClient:

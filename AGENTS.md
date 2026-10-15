@@ -351,7 +351,7 @@ the source of truth for ticket _content_.
 | Protocol-model staleness gate (what CI runs)   | `python scripts/generate_protocol_models.py --check`                     |
 | New migration                                  | `alembic revision -m "<summary>"` (autogenerate then **review by hand**) |
 | Apply / roll back migration                    | `alembic upgrade head` / `alembic downgrade -1`                          |
-| Run API locally                                | `uvicorn services.api.main:app --host 127.0.0.1 --port 8000 --reload`    |
+| Run API locally                                | `python -m candleviewer.server --reload`                                 |
 
 ### Stack, E2E, load, security
 

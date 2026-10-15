@@ -68,6 +68,8 @@ _DEFAULT_PORTS: dict[str, int] = {"http": 80, "https": 443, "ws": 80, "wss": 443
 _ORIGIN_SCHEME_RE = re.compile(r"[a-z][a-z0-9+.-]*")
 _ORIGIN_LABEL = r"[a-z0-9_](?:[a-z0-9_-]*[a-z0-9_])?"
 _ORIGIN_HOST_RE = re.compile(rf"{_ORIGIN_LABEL}(?:\.{_ORIGIN_LABEL})*\.?")
+#: An HTTP field name (RFC 9110 `token`), lowercase.
+_FIELD_NAME_RE = re.compile(r"[!#$%&'*+.^_`|~0-9a-z-]+")
 
 
 def _is_origin_host(host: str) -> bool:
@@ -156,7 +158,8 @@ class Settings(BaseSettings):
     mesh_self_check_interval_s: float = Field(default=3600.0, gt=0.0)
     # No trusted proxy by default: `X-Forwarded-For` and friends are always
     # ignored unless both are set, and even then only the configured proxy's
-    # own immediate peer address is trusted to supply the header.
+    # own immediate peer address is trusted to supply the header. Set both or
+    # neither, the address as an IP literal: anything else fails startup (#2275).
     mesh_trusted_proxy_header: str | None = None
     mesh_trusted_proxy_address: str | None = None
 
@@ -454,6 +457,50 @@ class Settings(BaseSettings):
                     "(scheme://host[:port]: lowercase, ASCII host, no path, no default port)"
                 )
         return value
+
+    @field_validator("mesh_trusted_proxy_header")
+    @classmethod
+    def _trusted_proxy_header_is_a_field_name(cls, value: str | None) -> str | None:
+        """#2275: an HTTP field name, lowercased as ASGI delivers it; blank means unset. A
+        misspelt name (`X-Forwarded-For:`) would silently never be read: it fails startup."""
+        name = (value or "").strip().lower()
+        if not name:
+            return None
+        if _FIELD_NAME_RE.fullmatch(name) is None:
+            raise ValueError(f"CV_MESH_TRUSTED_PROXY_HEADER {value!r} is not an HTTP header name")
+        return name
+
+    @field_validator("mesh_trusted_proxy_address")
+    @classmethod
+    def _trusted_proxy_address_is_an_ip(cls, value: str | None) -> str | None:
+        """#2275: the proxy's TCP peer address as an IP literal, normalised (an IPv4-mapped
+        IPv6 address becomes IPv4, as `CidrAllowList` matches it); blank means unset. A
+        hostname, `host:port` or CIDR never equals the peer, so the header would silently
+        never be read and every client recorded as the proxy: it fails startup instead."""
+        text = (value or "").strip()
+        if not text:
+            return None
+        try:
+            address = ipaddress.ip_address(text)
+        except ValueError:
+            raise ValueError(
+                f"CV_MESH_TRUSTED_PROXY_ADDRESS {value!r} is not an IP address "
+                "(the proxy's address as the API sees it, e.g. 127.0.0.1)"
+            ) from None
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
+        return str(address)
+
+    @model_validator(mode="after")
+    def _trusted_proxy_set_together(self) -> Settings:
+        """#2275: with only one of the pair set the header is never read, so every request
+        through the proxy would be recorded as the proxy: it fails startup instead."""
+        if (self.mesh_trusted_proxy_header is None) != (self.mesh_trusted_proxy_address is None):
+            raise ValueError(
+                "CV_MESH_TRUSTED_PROXY_HEADER and CV_MESH_TRUSTED_PROXY_ADDRESS "
+                "must be set together"
+            )
+        return self
 
     def model_post_init(self, __context: object) -> None:
         """Fail fast on `CV_FEED=live` without credentials (acceptance criterion 3).

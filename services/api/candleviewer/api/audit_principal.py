@@ -4,7 +4,10 @@ Bearer token -> `SessionService.authenticate_access_token` -> the SQL identity
 read path for username + permission codes. Every failure (no/unknown/expired/
 revoked/idle-locked token, unknown or non-active user) resolves to `None`,
 which the router maps to 401. Permissions are read server-side per request
-(C-12.4); nothing is trusted from the client.
+(C-12.4); nothing is trusted from the client. The principal's `ip` (the audit
+`actor_ip` of every route that resolves one) is the address MeshOnly admitted,
+as the auth audit records it: behind the configured trusted proxy, the client's
+hop, never the proxy (#2275).
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ from typing import Any, Protocol
 
 from fastapi import Request
 
+from candleviewer.api.csrf import source_ip
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import SessionIdleLocked, SessionNotFound, SessionRevoked
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -75,6 +79,6 @@ class SessionAuditPrincipalResolver:
             permissions=frozenset(str(p) for p in info.get("permissions", ())),
             is_owner=_is_owner(record.user_id, user.get("roles") or ()),
             session_id=record.id,
-            ip=request.client.host if request.client is not None else None,
+            ip=source_ip(request.scope),
             request_id=request_id,
         )

@@ -8,10 +8,11 @@ on-mesh source" scenarios can be asserted precisely.
 from __future__ import annotations
 
 import pytest
+from starlette.types import Receive, Scope, Send
 
 from candleviewer.net.audit import InMemoryAuditSink
 from candleviewer.net.cidr import CidrAllowList
-from candleviewer.net.middleware import MeshOnlyMiddleware
+from candleviewer.net.middleware import RESOLVED_SOURCE_KEY, MeshOnlyMiddleware
 
 MESH_CIDR = "100.64.0.0/10"
 
@@ -167,3 +168,106 @@ async def test_only_the_right_most_forwarded_hop_is_trusted() -> None:
     await mw(scope, _noop_receive, sent)
 
     assert sent.messages[0]["status"] == 403
+
+
+class _Admitted:
+    """Downstream app recording the source address MeshOnly admitted."""
+
+    def __init__(self) -> None:
+        self.sources: list[object] = []
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        self.sources.append(scope["state"][RESOLVED_SOURCE_KEY])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_forwarded_header_from_the_trusted_proxy_is_refused() -> None:
+    # #2275: a proxy that appends to the first line but passes a client's second line through
+    # would let the client choose the last line's hop (joining the lines picks the same hop).
+    # Which line the proxy wrote cannot be told, so no source is trusted and MeshOnly refuses.
+    audit, admitted = InMemoryAuditSink(), _Admitted()
+    mw = MeshOnlyMiddleware(
+        admitted,
+        allow_list=CidrAllowList([MESH_CIDR]),
+        audit_sink=audit,
+        trusted_proxy_header="x-forwarded-for",
+        trusted_proxy_address="127.0.0.1",
+    )
+    sent = _Sent()
+    lines = [(b"x-forwarded-for", b"203.0.113.9, 8.8.8.8"), (b"x-forwarded-for", b"100.70.1.2")]
+
+    await mw(_http_scope("127.0.0.1", headers=lines), _noop_receive, sent)
+
+    assert sent.messages[0]["status"] == 403
+    assert admitted.sources == []
+    assert audit.events[0]["source_address"] is None
+
+
+@pytest.mark.parametrize(
+    ("configured", "peer"),
+    [
+        ("127.0.0.1", "::ffff:127.0.0.1"),  # a dual-stack listener reports the mapped form
+        ("::ffff:127.0.0.1", "127.0.0.1"),
+        ("0:0:0:0:0:0:0:1", "::1"),  # not the canonical spelling of the peer
+    ],
+)
+@pytest.mark.asyncio
+async def test_the_trusted_proxy_is_matched_as_an_address_not_a_string(
+    configured: str, peer: str
+) -> None:
+    admitted = _Admitted()
+    mw = MeshOnlyMiddleware(
+        admitted,
+        allow_list=CidrAllowList([MESH_CIDR]),
+        trusted_proxy_header="X-Forwarded-For",
+        trusted_proxy_address=configured,
+    )
+    scope = _http_scope(peer, headers=[(b"x-forwarded-for", b"100.70.1.2")])
+
+    await mw(scope, _noop_receive, _Sent())
+
+    assert admitted.sources == ["100.70.1.2"]
+
+
+@pytest.mark.parametrize("address", ["localhost", "127.0.0.1:8080", "127.0.0.0/8", "[::1]"])
+def test_a_trusted_proxy_address_that_is_not_an_ip_fails_construction(address: str) -> None:
+    # #2275: it would never equal the peer, so the header would silently never be read.
+    with pytest.raises(ValueError, match="does not appear to be an IPv4 or IPv6 address"):
+        MeshOnlyMiddleware(
+            _Admitted(),
+            allow_list=CidrAllowList([MESH_CIDR]),
+            trusted_proxy_header="x-forwarded-for",
+            trusted_proxy_address=address,
+        )
+
+
+@pytest.mark.parametrize(
+    ("client", "lines", "status", "admitted"),
+    [
+        (("127.0.0.1", 1), [], 200, ["127.0.0.1"]),  # the proxy's own request: its address
+        (("127.0.0.1", 1), [(b"x-forwarded-for", b" , ")], 200, ["127.0.0.1"]),  # no hop in it
+        (("testclient", 1), [(b"x-forwarded-for", b"100.70.1.2")], 403, []),  # peer not an IP
+        (None, [(b"x-forwarded-for", b"100.70.1.2")], 403, []),  # no peer at all
+    ],
+)
+@pytest.mark.asyncio
+async def test_without_a_usable_hop_from_the_trusted_proxy_the_peer_is_judged(
+    client: tuple[str, int] | None,
+    lines: list[tuple[bytes, bytes]],
+    status: int,
+    admitted: list[object],
+) -> None:
+    recorder = _Admitted()
+    mw = MeshOnlyMiddleware(
+        recorder,
+        allow_list=CidrAllowList([MESH_CIDR]),
+        trusted_proxy_header="x-forwarded-for",
+        trusted_proxy_address="127.0.0.1",
+    )
+    sent = _Sent()
+
+    await mw({"type": "http", "path": "/", "client": client, "headers": lines}, _noop_receive, sent)
+
+    assert (sent.messages[0]["status"], recorder.sources) == (status, admitted)
