@@ -13,6 +13,7 @@ call; `make_read_only_guard` is the middleware refusing every write during the
 
 from __future__ import annotations
 
+import inspect
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -63,7 +64,11 @@ class _UserLookup(Protocol):
 
 
 class _Resolver(Protocol):
-    def resolve(self, request: Request) -> PrincipalSnapshot | None: ...
+    """Sync (test seams) or async (`SessionSnapshotResolver`, the deployed app, #2492)."""
+
+    def resolve(
+        self, request: Request
+    ) -> PrincipalSnapshot | Awaitable[PrincipalSnapshot | None] | None: ...
 
 
 def _problem(status: int, code: str, title: str, detail: str, **extra: Any) -> JSONResponse:
@@ -322,7 +327,8 @@ def make_step_up_router(
     async def _owner(request: Request, record: SessionRecord) -> JSONResponse | None:
         if principal_resolver is None:
             return _problem(501, "not_implemented", "Not implemented", "no principal resolver")
-        principal = principal_resolver.resolve(request)
+        got = principal_resolver.resolve(request)
+        principal = await got if inspect.isawaitable(got) else got
         if principal is None or principal.user_id != record.user_id:
             return _problem(401, "unauthorized", "Unauthorized", "authentication required")
         try:

@@ -7,6 +7,7 @@ users, accounts or key material is ever returned. Dismissal is a per-user row
 
 from __future__ import annotations
 
+import inspect
 import time
 from collections.abc import Mapping
 from typing import Any, Protocol
@@ -55,7 +56,8 @@ def make_onboarding_router(
     async def get_checklist(request: Request) -> Response:
         if principal_resolver is None or store is None:
             return _problem(501, "Not implemented", "onboarding not wired")
-        principal = principal_resolver.resolve(request)
+        got = principal_resolver.resolve(request)
+        principal = await got if inspect.isawaitable(got) else got
         if principal is None:
             return _problem(401, "Unauthorized", "no verified session for this request")
         started = time.monotonic()
@@ -80,7 +82,8 @@ def make_onboarding_router(
     async def dismiss(request: Request) -> Response:
         if principal_resolver is None or store is None:
             return _problem(501, "Not implemented", "onboarding not wired")
-        principal = principal_resolver.resolve(request)
+        got = principal_resolver.resolve(request)
+        principal = await got if inspect.isawaitable(got) else got
         if principal is None:
             return _problem(401, "Unauthorized", "no verified session for this request")
         raw_body = await request.body()
