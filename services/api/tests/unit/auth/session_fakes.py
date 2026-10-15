@@ -46,6 +46,14 @@ class FakeSessionRepository:
         self.sessions[session_id] = updated
         return updated
 
+    async def lift_idle_lock(self, session_id: str, *, now: datetime) -> SessionRecord | None:
+        session = self.sessions.get(session_id)
+        if session is None or session.revoked_at is not None:
+            return None
+        updated = session.model_copy(update={"last_seen_at": now, "step_up_elevations": {}})
+        self.sessions[session_id] = updated
+        return updated
+
     async def revoke(self, session_id: str, *, reason: str, now: datetime) -> SessionRecord | None:
         session = self.sessions.get(session_id)
         if session is None or session.revoked_at is not None:

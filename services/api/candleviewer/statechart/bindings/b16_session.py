@@ -358,41 +358,31 @@ async def audit_readonly_downgrade(
 
 # -- #2301: idle lock (`auth.idle_locked`, ADR-0020 §4) ----------------------
 
-#: Mirrors `SessionService.MAX_UNLOCK_ATTEMPTS` (a parity test pins it): the
-#: fifth consecutive wrong unlock password revokes the session.
-UNLOCK_ATTEMPT_CAP = 5
-
-
-class OneClickPublisher(Protocol):
-    """Receives the plain one-click flag on lock entry (C-2.20): the session's
-    arm record, which the OMS validator reads synchronously (C-2.21, #2305).
-    Nothing reads one-click state from this chart."""
-
-    async def publish(self, session_id: str, *, armed: bool) -> None: ...
-
-
-_ONE_CLICK: list[OneClickPublisher] = []
-
-
-def set_one_click_publisher(publisher: OneClickPublisher | None) -> None:
-    """Install (or clear, with `None`) the process-wide one-click publisher."""
-    _ONE_CLICK.clear()
-    if publisher is not None:
-        _ONE_CLICK.append(publisher)
-
 
 def unlock_attempts_exhausted(context: dict[str, Any], event: dict[str, Any]) -> bool:
-    """Guard: this failure is the fifth (`unlock_attempts + 1 >= cap`). Total (A6)."""
-    try:
-        return bool(int(context.get("unlock_attempts", 0)) + 1 >= UNLOCK_ATTEMPT_CAP)
-    except (TypeError, ValueError):
-        return False
+    """Guard: synchronous code decided that this failed unlock revoked the
+    session (`SessionService.unlock()` raises `SessionRevoked` at
+    `MAX_UNLOCK_ATTEMPTS`), so the event carries `revoked: true`. Never derived
+    from the chart's own `unlock_attempts`, which a restart or an eviction resets
+    independently of the service's count. Total: anything but `True` is `False` (A6)."""
+    return _payload(event).get("revoked") is True
 
 
-def session_unlocked(context: dict[str, Any], event: dict[str, Any]) -> bool:
-    """Guard on granting elevation: deny unless the lock flag is explicitly
-    clear (A6, deny-by-default). Elevation never coexists with the lock."""
-    return context.get("idle_locked") is False
+def session_active(context: dict[str, Any], event: dict[str, Any]) -> bool:
+    """Guard on granting elevation: MFA satisfied, the lock flag explicitly
+    clear and no revocation (A6, deny-by-default). Elevation is never granted
+    before MFA, while locked or after a revocation."""
+    return (
+        context.get("mfa_satisfied") is True
+        and context.get("idle_locked") is False
+        and context.get("revoke_reason") is None
+    )
+
+
+def session_revoked(context: dict[str, Any], event: dict[str, Any]) -> bool:
+    """Guard of the eventless `elevation -> dead` arm: a `set_revoke_*` action
+    committed in the `auth` step (a rolled-back step leaves it `None`)."""
+    return context.get("revoke_reason") is not None
 
 
 async def mark_idle_locked(
@@ -418,38 +408,17 @@ async def bump_unlock_attempts(
 async def disarm_one_click(
     _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
 ) -> None:
-    """Lock entry disarms one-click; unlock never re-arms it (#2290 rule 2d).
-    Not skipped on replay: a disarm is idempotent and fails safe."""
+    """Lock entry records the one-click disarm; unlock never re-arms it (#2290
+    rule 2d). Chart context only: the OMS validator reads the session's arm
+    record, never this chart, and `SessionService.unlock()` invalidates that
+    record when it lifts a lock (B16.5/B16.7, C-2.20, C-2.21)."""
     context["one_click_armed"] = False
-    sid, _uid = _identity(context)
-    if _ONE_CLICK and sid is not None:
-        await _ONE_CLICK[0].publish(sid, armed=False)
 
 
 async def audit_idle_locked(
     _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
 ) -> None:
     await _emit(context, event, "auth.idle_locked")
-
-
-async def audit_session_unlocked(
-    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
-) -> None:
-    await _emit(context, event, "auth.session_unlocked")
-
-
-async def audit_unlock_failed(
-    _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
-) -> None:
-    remaining = max(UNLOCK_ATTEMPT_CAP - int(context.get("unlock_attempts", 0) or 0), 0)
-    await _emit(
-        context,
-        event,
-        "auth.unlock_failed",
-        outcome="failure",
-        severity="warning",
-        reason=f"remaining={remaining}",
-    )
 
 
 async def audit_ignored_request(
@@ -496,8 +465,6 @@ ACTIONS: dict[str, Callable[..., Awaitable[None]]] = {
     "bump_unlock_attempts": bump_unlock_attempts,
     "disarm_one_click": disarm_one_click,
     "audit_idle_locked": audit_idle_locked,
-    "audit_session_unlocked": audit_session_unlocked,
-    "audit_unlock_failed": audit_unlock_failed,
     "audit_ignored_request": audit_ignored_request,
 }
 
@@ -506,7 +473,8 @@ GUARDS: dict[str, Callable[..., bool]] = {
     "grace_window_valid": grace_window_valid,
     "step_up_strikes_exhausted": step_up_strikes_exhausted,
     "unlock_attempts_exhausted": unlock_attempts_exhausted,
-    "session_unlocked": session_unlocked,
+    "session_active": session_active,
+    "session_revoked": session_revoked,
 }
 
 SERVICES: dict[str, Callable[..., Awaitable[Any]]] = {}

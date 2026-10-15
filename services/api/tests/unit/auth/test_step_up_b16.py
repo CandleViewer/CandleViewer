@@ -5,18 +5,35 @@ audit record its action wrote (with before/after state, C-12.8)."""
 
 from __future__ import annotations
 
+import ast
 import uuid
 from datetime import timedelta
+from pathlib import Path
+from typing import Any
 
 import pytest
 
+from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.auth.errors import SessionReadOnly, StepUpCodeInvalid, StepUpRequired
+from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_chart import SessionChart, SessionChartError
-from candleviewer.auth.step_up import StepUpService
+from candleviewer.auth.session_service import SessionService
+from candleviewer.auth.step_up import StepUpService, grace_expires_at
 from candleviewer.statechart.bindings import b16_session
 from tests.conftest import RecordingAuditSink
 
-from .test_step_up import PASSWORD, _code, _Positions, _session, _setup
+from .session_fakes import FakeSessionRepository
+from .test_step_up import (
+    _HASHER,
+    _T0,
+    PASSWORD,
+    _Clock,
+    _code,
+    _Positions,
+    _pw_hash,
+    _session,
+    _setup,
+)
 
 
 def _sid(svc: StepUpService, sessions: object, alias: str = "s1") -> str:
@@ -162,9 +179,11 @@ async def test_locked_row_is_recorded_as_idle_lock_before_the_next_event(
         "auth.request_ignored",
         "auth.request_ignored",
     ]
+    mark = len(b16_audit.calls)
     await svc.chart.record(row, clock.now, "UNLOCK_OK")
     assert svc.chart.in_state(sid, "active")
-    assert b16_audit.actions()[-1] == "auth.session_unlocked"
+    # `POST /auth/unlock` writes the unlock row write-ahead; the chart writes none (B16.7).
+    assert b16_audit.actions()[mark:] == []
     assert b16_audit.actions().count("auth.idle_locked") == 1
 
 
@@ -186,3 +205,165 @@ async def test_chart_rebuilt_for_a_locked_row_comes_back_locked_without_elevatio
         assert b16_audit.actions()[-1] == "auth.idle_locked"
     finally:
         await chart.stop()
+
+
+# -- B16.7 (#2301): one fail-closed writer per record; unlock drops elevation ----
+
+
+class _FailingSink(RecordingAuditSink):
+    """The M19 writer refusing one action: that row is never written (C-2.9)."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__()
+        self.failing: str | None = action
+
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        if action == self.failing:
+            raise RuntimeError(f"audit down: {action}")
+        await super().emit(action, **kwargs)
+
+
+_LATER = _T0 + timedelta(minutes=5)
+
+
+@pytest.mark.parametrize(
+    ("leaf", "step_up"),
+    [
+        ("elevated", {"step_up_elevations": {"keys": _LATER}}),
+        ("normal", {}),
+        ("readonly_downgrade", {"readonly_until": _LATER, "step_up_failures": 3}),
+    ],
+)
+async def test_failed_lock_write_raises_and_the_retry_records_the_lock(
+    leaf: str, step_up: dict[str, Any]
+) -> None:
+    """With the sink failing on `auth.idle_locked`, recording the lock raises and
+    writes no row, also from `[active, elevated]`, where the step moves both
+    regions and the receipt reads clean (CV-C06). The retry locks the chart."""
+    sink = _FailingSink("auth.idle_locked")
+    b16_session.set_audit_sink(sink)
+    # The default 15-minute idle timeout locks this row one minute before _T0.
+    row = _session(uuid.uuid4()).model_copy(
+        update={"last_seen_at": _T0 - timedelta(minutes=16), **step_up}
+    )
+    sid = str(row.id)
+    chart = SessionChart()
+    try:
+        await chart.record(row, _T0 - timedelta(minutes=2), "REQUEST", replay=True)
+        assert chart.in_state(sid, "active") and chart.in_state(sid, leaf)
+        with pytest.raises(SessionChartError):
+            await chart.record(row, _T0, "REQUEST", replay=True)
+        assert not chart.in_state(sid, "idle_locked") and sink.actions() == []
+        sink.failing = None
+        await chart.record(row, _T0, "REQUEST", replay=True)
+        assert chart.in_state(sid, "idle_locked") and not chart.in_state(sid, "elevated")
+        assert sink.actions() == ["auth.idle_locked"]
+    finally:
+        await chart.stop()
+
+
+async def test_failed_revocation_write_makes_revoke_raise() -> None:
+    """A kill event moves both regions, so a failed `auth.session_revoked` write
+    can leave a clean receipt; `SessionChart.revoke` still raises (B16.7)."""
+    sink = _FailingSink("auth.session_revoked")
+    b16_session.set_audit_sink(sink)
+    row = _session(uuid.uuid4())
+    chart = SessionChart()
+    try:
+        with pytest.raises(SessionChartError):
+            await chart.revoke(row, _T0, "admin")
+        assert not chart.in_state(str(row.id), "revoked") and sink.actions() == []
+    finally:
+        await chart.stop()
+
+
+def test_every_audit_action_the_chart_writes_is_registered() -> None:
+    """The M19 writer refuses an unregistered action, which would fail every
+    record that writes it (C-2.9). Reads the literal `_emit` actions."""
+    tree = ast.parse(Path(b16_session.__file__).read_text(encoding="utf-8"))
+    written = {
+        node.args[2].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "_emit"
+        and len(node.args) > 2
+        and isinstance(node.args[2], ast.Constant)
+    }
+    assert {"auth.idle_locked", "auth.request_ignored"} <= written
+    assert written <= AUDIT_ACTIONS
+
+
+async def _lock_and_unlock(
+    svc: StepUpService, clock: _Clock, sessions: FakeSessionRepository
+) -> SessionRecord:
+    """Let the idle deadline `_last_seen_14_minutes_ago` set pass, then unlock
+    `s1` with the password; returns the row as it was while locked."""
+    clock.now += timedelta(minutes=2)
+    locked = sessions.sessions["s1"]
+    assert locked.is_idle_locked(now=clock.now)
+    service = SessionService(sessions, _HASHER, clock=clock)
+    await service.unlock("s1", password=PASSWORD, password_hash=await _pw_hash())
+    return locked
+
+
+def _last_seen_14_minutes_ago(sessions: FakeSessionRepository, clock: _Clock) -> None:
+    """`s1` idle-locks one minute from now (default 15-minute timeout)."""
+    row = sessions.sessions["s1"]
+    sessions.sessions["s1"] = row.model_copy(
+        update={"last_seen_at": clock.now - timedelta(minutes=14)}
+    )
+
+
+async def test_unlock_of_an_idle_locked_row_drops_every_step_up_elevation() -> None:
+    """Step up, idle-lock, unlock: no grace window, one-shot grant or pending
+    challenge taken before the lock survives the password-only unlock
+    (PR #2290 ruling rule 4d); `step_up_failures` and `readonly_until` stay."""
+    svc, clock, seed, user, sessions = await _setup()
+    _last_seen_14_minutes_ago(sessions, clock)
+    await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
+    clock.now += timedelta(seconds=30)  # a fresh TOTP time step
+    await svc.step_up(str(user), "s1", "killswitch", _code(seed, clock), PASSWORD)
+    await svc.record_pending("s1", "users")
+    with pytest.raises(StepUpCodeInvalid):
+        await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
+    elevations = set(sessions.sessions["s1"].step_up_elevations)
+    assert elevations == {"keys", "once:killswitch", "pending:users"}
+    locked = await _lock_and_unlock(svc, clock, sessions)
+    row = sessions.sessions["s1"]
+    with pytest.raises(StepUpRequired):
+        await svc.require_elevation("s1", "keys")
+    with pytest.raises(StepUpRequired):
+        await svc.consume_single_use("s1", "killswitch")
+    assert await svc.pending_action_class("s1") is None
+    assert grace_expires_at(row.step_up_elevations, clock.now) is None  # step_up_expires_at
+    assert (row.step_up_failures, row.readonly_until) == (1, None)
+    assert (locked.step_up_failures, locked.readonly_until) == (1, None)
+
+
+async def test_unlock_of_an_idle_locked_row_keeps_the_readonly_downgrade() -> None:
+    svc, clock, _seed, user, sessions = await _setup()
+    _last_seen_14_minutes_ago(sessions, clock)
+    for _ in range(2):
+        with pytest.raises(StepUpCodeInvalid):
+            await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
+    with pytest.raises(SessionReadOnly):
+        await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
+    await svc.record_pending("s1", "keys")
+    locked = await _lock_and_unlock(svc, clock, sessions)
+    row = sessions.sessions["s1"]
+    assert set(locked.step_up_elevations) == {"pending:keys"} and row.step_up_elevations == {}
+    assert locked.readonly_until is not None
+    assert (row.step_up_failures, row.readonly_until) == (3, locked.readonly_until)
+    with pytest.raises(SessionReadOnly):
+        await svc.assert_writable("s1")
+
+
+async def test_unlock_of_a_row_that_is_not_locked_only_re_stamps_it() -> None:
+    """B16.7 clears on the unlock of a row idle-locked at that instant only."""
+    svc, clock, seed, user, sessions = await _setup()
+    await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
+    clock.now += timedelta(minutes=1)
+    service = SessionService(sessions, _HASHER, clock=clock)
+    await service.unlock("s1", password=PASSWORD, password_hash=await _pw_hash())
+    row = sessions.sessions["s1"]
+    assert row.last_seen_at == clock.now and set(row.step_up_elevations) == {"keys"}

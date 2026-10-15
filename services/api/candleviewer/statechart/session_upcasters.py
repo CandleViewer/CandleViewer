@@ -21,7 +21,7 @@ from candleviewer.statechart.upcasters import register_upcaster
 B16_FROM_HASH = "2d45266da1d7d17a68cbe76c93fc33043ef7f4fb2f2062c260ec3f3955989ffc"
 B16_TO_HASH = "a6ac6e5bd897afff2533fcfcf027213aa5e6d022f8054d06232cf5a37dda178a"
 B16_V1_HASH = B16_TO_HASH
-B16_V2_HASH = "f272384dc2e5048970d4040172703794ebfa7b320286084e29bdd9a35faae190"
+B16_V2_HASH = "63e6c7c663f6aa40a783cbbe7f25a4f9db91db6247072d3c1c7913b46b4538d3"
 
 
 def upcast_session_v0_to_v1(context: dict[str, Any]) -> dict[str, Any]:

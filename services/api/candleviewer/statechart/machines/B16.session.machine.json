@@ -19,16 +19,7 @@
     },
     "REVOKE": {
       "target": "#session.elevation.dead"
-    },
-    "UNLOCK_FAILED": [
-      {
-        "target": "#session.elevation.dead",
-        "guard": "unlock_attempts_exhausted"
-      },
-      {
-        "actions": []
-      }
-    ]
+    }
   },
   "context": {
     "session_id": null,
@@ -59,6 +50,9 @@
           "actions": [
             "audit_ignored_request"
           ]
+        },
+        "IDLE_DEADLINE": {
+          "actions": []
         }
       },
       "states": {
@@ -146,8 +140,7 @@
             "UNLOCK_OK": {
               "target": "#session.auth.active",
               "actions": [
-                "stamp_idle_deadline",
-                "audit_session_unlocked"
+                "stamp_idle_deadline"
               ]
             },
             "UNLOCK_FAILED": [
@@ -160,8 +153,7 @@
               },
               {
                 "actions": [
-                  "bump_unlock_attempts",
-                  "audit_unlock_failed"
+                  "bump_unlock_attempts"
                 ]
               }
             ],
@@ -204,21 +196,20 @@
     },
     "elevation": {
       "initial": "normal",
-      "on": {
-        "IDLE_DEADLINE": {
-          "actions": []
-        }
-      },
       "states": {
         "normal": {
           "tags": [
             "not_elevated"
           ],
+          "always": {
+            "target": "#session.elevation.dead",
+            "guard": "session_revoked"
+          },
           "on": {
             "STEP_UP_OK": [
               {
                 "target": "#session.elevation.elevated",
-                "guard": "session_unlocked",
+                "guard": "session_active",
                 "actions": [
                   "stamp_elevated_until",
                   "audit_step_up"
@@ -326,6 +317,10 @@
           "entry": [
             "clear_elevated"
           ],
+          "always": {
+            "target": "#session.elevation.dead",
+            "guard": "session_revoked"
+          },
           "on": {
             "READONLY_EXPIRED": {
               "target": "#session.elevation.normal",

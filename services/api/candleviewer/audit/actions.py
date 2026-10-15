@@ -36,11 +36,6 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.session_refreshed",
         "auth.session_revoked",
         "auth.idle_locked",
-        # #2301: written by the B16 chart's idle-lock arms (unlock, failed unlock,
-        # activity ignored while locked or an unlock outside a lock).
-        "auth.session_unlocked",
-        "auth.unlock_failed",
-        "auth.request_ignored",
         "auth.refresh_reuse_detected",
         "auth.csrf_refused",
         # E09-X02 AC2 (#2144, U6/SR-013): a session credential this server never issued, or
@@ -53,6 +48,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.step_up_required",
         "auth.step_up_grace_used",
         "auth.session_readonly_downgrade",
+        # #2301: the B16 chart records activity on an idle-locked session, a step-up
+        # it refuses to record as elevation, and an unlock outside a lock.
+        "auth.request_ignored",
         "auth.mfa_reset_by_owner",
         "auth.mfa_verified",
         "auth.mfa_failed",
