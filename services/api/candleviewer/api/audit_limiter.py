@@ -15,6 +15,8 @@ from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from candleviewer.settings import Settings
+
 _WINDOW_S = 60.0
 
 
@@ -91,6 +93,8 @@ class AuditQueryLimiter:
 
 
 _HOUR_S = 3600.0
+#: The `audit_verify_rate_per_hour` default: verify runs a user may start in a rolling hour.
+VERIFY_RATE_PER_HOUR: int = Settings.model_fields["audit_verify_rate_per_hour"].default
 
 
 class AuditVerifyLimiter:
@@ -104,7 +108,7 @@ class AuditVerifyLimiter:
     def __init__(
         self,
         *,
-        rate_per_hour: int = 30,
+        rate_per_hour: int = VERIFY_RATE_PER_HOUR,
         tracked_users: int = 1024,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
