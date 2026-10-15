@@ -4,6 +4,7 @@ and WS parity assertions for the RBAC matrix pack (E09-Q03)."""
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -20,6 +21,7 @@ from tests.contract.rbac.rbac_harness import (
     GRANTED,
     World,
     bearer,
+    record_cell,
     user_id_of,
 )
 
@@ -283,14 +285,21 @@ def test_every_topic_family_x_actor_matches_the_matrix(
     row = _TOPICS[family]
     expected = row["outcomes"][actor]
     account = GRANTED if row["scope"] == "granted_accounts" else None
-    with world.client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
-        if actor != "unauthenticated":
-            assert _auth(ws, actor)["t"] == "auth_ok"
-        else:
-            _hello(ws)
-        result = _sub(ws, row["sample"], account)
-    observed = "sub_ok" if result["ok"] else result["error"]["code"]
-    assert observed == expected, f"topic {family} as {actor}: expected {expected}, got {observed}"
+    started = time.perf_counter()
+    msg = f"topic {family} as {actor}: expected {expected}"
+    try:
+        with world.client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+            if actor != "unauthenticated":
+                assert _auth(ws, actor)["t"] == "auth_ok"
+            else:
+                _hello(ws)
+            result = _sub(ws, row["sample"], account)
+        observed = "sub_ok" if result["ok"] else result["error"]["code"]
+        assert observed == expected, f"{msg}, got {observed}"
+    except BaseException:
+        record_cell("ws", f"WS {family}", actor, "fail", started)
+        raise
+    record_cell("ws", f"WS {family}", actor, "pass", started)
 
 
 def test_non_entitled_role_gets_forbidden_not_a_silent_empty_subscription(world: World) -> None:

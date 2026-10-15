@@ -228,13 +228,18 @@ def test_cell_outcome_matches_matrix(world: World, key: str, actor: str) -> None
     )
     observed = _observe(method, actor, resp)
     pending = actor in row.get("pending", {})
-    record_cell(_group(key), key, actor, "xfail" if pending else "pass", started)
     # 501/503 after authorisation = backend not wired in the CI app (authz still passed); any
     # other 5xx is an unhandled error and fails the cell.
     unhandled = resp.status_code in range(500, 600) and resp.status_code not in (501, 503)
-    assert not unhandled, f"{key} as {actor}: unhandled server error {resp.status_code}"
     cell_msg = f"{key} as {actor}: expected {row['outcomes'][actor]}, got {resp.status_code}"
-    assert observed == row["outcomes"][actor], cell_msg
+    try:
+        assert not unhandled, f"{key} as {actor}: unhandled server error {resp.status_code}"
+        assert observed == row["outcomes"][actor], cell_msg
+    except AssertionError:
+        # Recorded AFTER the checks so a failing cell is red in the HTML artefact (#294).
+        record_cell(_group(key), key, actor, "fail", started)
+        raise
+    record_cell(_group(key), key, actor, "xfail" if pending else "pass", started)
 
 
 def test_not_executable_rows_still_refuse_the_unauthenticated_caller_or_say_why(
@@ -274,3 +279,67 @@ def test_undeclared_served_route_fails_the_build(world: World) -> None:
         world.app.router.routes[:] = [
             r for r in world.app.router.routes if getattr(r, "path", "") != "/__matrix_probe__"
         ]
+
+
+# -- tripwire: not_executable rows for every logged-in actor (D1) -------------------------------
+
+#: Status the fail-closed stub returns today, identical for every actor. A route that becomes
+#: reachable changes a status here and turns the pack red; update a value only together with the
+#: matrix row (and a Security review of matrix.yaml). Every value must stay inside
+#: `_REFUSAL_STATUSES`: a pin can never be bumped to a success status, so a route that becomes
+#: reachable without authorisation cannot be parked here (it must move to `executed`).
+_REFUSAL_STATUSES: frozenset[int] = frozenset({401, 422, 501, 503})
+
+_STUB_STATUS: dict[str, int] = {
+    "GET /admin/health": 501,
+    "PUT /admin/log-level": 501,
+    "POST /auth/login": 422,
+    "POST /auth/mfa/enroll": 422,
+    "POST /auth/mfa/enroll/confirm": 422,
+    "POST /auth/mfa/recovery": 422,
+    "POST /auth/mfa/verify": 422,
+    "POST /auth/refresh": 401,
+    "GET /instruments": 501,
+    "GET /instruments/{symbol}": 501,
+    "GET /market/bars": 422,
+    "GET /market/data-coverage": 422,  # required query params are validated before the 501/503
+    "GET /market/klines": 422,
+    "GET /onboarding/checklist": 501,
+    "POST /onboarding/checklist/dismiss": 501,
+}
+
+
+def test_stub_status_table_covers_exactly_the_not_executable_rows() -> None:
+    declared = {k for k, r in _OPS.items() if r["state"] == "not_executable"}
+    assert declared == set(_STUB_STATUS), (
+        f"not_executable rows without a stub status: {sorted(declared - set(_STUB_STATUS))}; "
+        f"stale stub statuses: {sorted(set(_STUB_STATUS) - declared)}"
+    )
+
+
+def test_stub_statuses_are_refusals_never_successes() -> None:
+    """A parked route may only pin a pre-authorisation refusal; pinning a success status would let
+    a route that is reachable without authorisation hide in this table."""
+    offenders = {k: v for k, v in _STUB_STATUS.items() if v not in _REFUSAL_STATUSES}
+    assert not offenders, f"stub statuses outside {sorted(_REFUSAL_STATUSES)}: {offenders}"
+
+
+@pytest.mark.parametrize("actor", [a for a in ACTORS if a != "unauthenticated"])
+def test_not_executable_rows_keep_their_stub_status_for_every_logged_in_actor(
+    world: World, actor: str
+) -> None:
+    """Silent exclusions are not permitted: each not_executable route must still answer its stub
+    status as every logged-in actor, so a route that becomes reachable (or widens its permission,
+    so a manager/viewer passes authorisation) fails the pack instead of hiding."""
+    drifted: list[str] = []
+    for key, expected in _STUB_STATUS.items():
+        method, path = key.split(" ", 1)
+        resp = world.client.request(
+            method,
+            fill_path(path),
+            json={} if method in ("POST", "PUT", "PATCH") else None,
+            headers=bearer(actor),
+        )
+        if resp.status_code != expected:
+            drifted.append(f"{key}: expected {expected}, got {resp.status_code}")
+    assert not drifted, f"{actor}: not_executable rows changed behaviour: {drifted}"
