@@ -8,7 +8,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
+
+import pytest
 
 from candleviewer.storage.repositories import admin_readmodel_sqlalchemy as repo
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import (
@@ -24,13 +26,13 @@ class _Rel:
     def __init__(self, row: dict[str, Any]) -> None:
         self.row = row
         self.calls: list[dict[str, Any] | None] = []
-        self.timeouts = 0
+        self.timeouts: list[dict[str, Any] | None] = []
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
         async def execute(stmt: Any, params: dict[str, Any] | None = None) -> Any:
             if stmt is repo._TIMEOUT:
-                self.timeouts += 1
+                self.timeouts.append(params)
                 return None
             self.calls.append(params)
             return SimpleNamespace(mappings=lambda: SimpleNamespace(first=lambda: self.row))
@@ -51,7 +53,7 @@ async def test_account_totals_bind_the_horizon_and_the_process_environment() -> 
     rel = _Rel({"total": 6, "enabled": 5, "keys_expiring": 1, "keys_invalid": 1})
     assert await _counts(rel).account_totals(NOW) == AccountTotals(6, 5, 1, 1)
     assert rel.calls == [{"expiring_before": NOW, "env": "live"}]
-    assert rel.timeouts == 1  # every read caps server work first
+    assert rel.timeouts == [{"timeout": repo.READ_TIMEOUT}]  # every read caps server work
 
 
 async def test_subaccounts_bind_the_process_environment() -> None:
@@ -69,3 +71,9 @@ def test_every_statement_is_aggregate_only_and_reads_no_secret_column() -> None:
         sql = str(stmt).lower()
         assert "count(" in sql
         assert "_enc" not in sql and "password" not in sql
+
+
+@pytest.mark.parametrize("env", ["Live", "prod", ""], ids=["capitalised", "unknown", "empty"])
+def test_an_unknown_environment_is_refused_instead_of_counting_nothing(env: str) -> None:
+    with pytest.raises(ValueError):
+        SqlAlchemyAdminCounts(_Rel({}), env=cast(Any, env))  # type: ignore[arg-type]  # structural fake

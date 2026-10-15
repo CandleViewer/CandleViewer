@@ -157,7 +157,7 @@ async def relational(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepositor
         await repo.dispose()
 
 
-async def test_user_totals_count_active_users_without_a_confirmed_live_mfa(
+async def test_user_totals_count_active_users_without_a_confirmed_unrevoked_mfa(
     relational: SqlAlchemyRelationalRepository,
 ) -> None:
     counts = SqlAlchemyAdminCounts(relational, env="demo")

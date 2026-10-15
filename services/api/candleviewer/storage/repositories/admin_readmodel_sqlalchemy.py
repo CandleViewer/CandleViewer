@@ -5,8 +5,8 @@ Feeds `GET /admin/overview` (users, accounts and keys, open incidents) and `GET 
 composition root adapts these results to the admin ports. Every statement is static,
 parameterised, aggregate-only SQL: only counts leave this module, never a row, a name or key
 material. Account and key counts are scoped to the process environment bound at construction
-(C-2.11: demo rows never show as live). Each read caps server work at 1 s
-(`SET LOCAL statement_timeout`); the 300 ms slice budget is the client-side cancellation.
+(C-2.11: demo rows never show as live). Each read caps server work at `READ_TIMEOUT` (a
+transaction-local `statement_timeout`); the 300 ms slice budget is the client-side cancellation.
 The recorded sub-account tier needs the `settings` table, which no migration has created yet
 (planned `0012_governance`, 21-database-schema.md 9.4), so it is not read here.
 """
@@ -15,15 +15,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Final, get_args
 
 import sqlalchemy as sa
 
+from candleviewer.domain.primitives import Environment
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 
-_TIMEOUT = sa.text("SET LOCAL statement_timeout = '1s'")
+#: Server-side cap per read, well above the admin slice budget (300 ms, `DEFAULT_BUDGET_S`),
+#: which cancels client-side first; this bounds the work a cancelled read leaves behind.
+READ_TIMEOUT: Final = "1s"
+_ENVIRONMENTS: Final = frozenset(get_args(Environment))
+_TIMEOUT = sa.text("SELECT set_config('statement_timeout', :timeout, true)")
 _USERS = sa.text("""
     SELECT count(*) AS total,
            count(*) FILTER (WHERE u.status = 'active') AS active,
@@ -75,12 +80,14 @@ class AccountTotals:
 
 
 class SqlAlchemyAdminCounts:
-    def __init__(self, relational: SqlAlchemyRelationalRepository, *, env: str) -> None:
+    def __init__(self, relational: SqlAlchemyRelationalRepository, *, env: Environment) -> None:
+        if env not in _ENVIRONMENTS:  # "Live", "prod" or "" would silently count nothing
+            raise ValueError(f"unknown environment {env!r}")
         self._rel, self._env = relational, env
 
     async def _row(self, stmt: sa.TextClause, params: dict[str, Any] | None = None) -> Any:
         async with self._rel.unit_of_work() as uow:  # read-only: no commit
-            await uow.session.execute(_TIMEOUT)
+            await uow.session.execute(_TIMEOUT, {"timeout": READ_TIMEOUT})
             res: Any = await uow.session.execute(stmt, params or {})
             return res.mappings().first()
 
