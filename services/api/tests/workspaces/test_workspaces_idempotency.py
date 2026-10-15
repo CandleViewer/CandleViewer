@@ -7,8 +7,15 @@ from __future__ import annotations
 
 import uuid
 
+import _workspaces_api_env as fakes
 import pytest
 from _workspaces_api_env import LAYOUT, USER_B, Env, wire
+from fastapi.testclient import TestClient
+
+import candleviewer.app as appmod
+from tests.csrf_helpers import arm_csrf
+from tests.drawings._drawings_api_env import TRENDLINE, FakeDrawingRepo
+from tests.drawings._drawings_api_env import wire as drawing_wire
 
 
 @pytest.fixture
@@ -82,3 +89,26 @@ def test_keys_are_scoped_per_user(env: Env) -> None:
     assert env.c.post("/workspaces", json=body, headers=key).status_code == 201
     theirs = env.as_user(USER_B).c.post("/workspaces", json=body, headers=key)
     assert theirs.status_code == 201 and "idempotency-replayed" not in theirs.headers
+
+
+def test_a_key_stored_by_one_router_is_never_replayed_by_the_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Through the real `create_app()`: /workspaces and /drawings keep their own caches and
+    operationId-scoped keys, so one key sent to both runs both writes (no replay, no 409)."""
+    monkeypatch.setattr(appmod, "build_identity_provider", lambda _settings: fakes.Identity())
+    app = appmod.create_app()
+    app.state.app_context.auth._sessions = fakes.Sessions()
+    writer = app.state.app_context.audit._writer = fakes.Audit()
+    app.state.workspaces_repository = workspaces = fakes.FakeWorkspaceRepo()
+    app.state.drawings_repository = drawings = FakeDrawingRepo()
+    c = arm_csrf(TestClient(app, client=("127.0.0.1", 50000)), app.state.csrf_codec, fakes.SID)
+    for n, order in enumerate((("/workspaces", "/drawings"), ("/drawings", "/workspaces"))):
+        body = {"/workspaces": wire({"name": f"Charts {n}"}), "/drawings": drawing_wire(TRENDLINE)}
+        h = {"Authorization": "Bearer tok-a", "Idempotency-Key": str(uuid.uuid4())}
+        stored, other = (c.post(path, json=body[path], headers=h) for path in order)
+        assert (stored.status_code, other.status_code) == (201, 201), other.text
+        assert "idempotency-replayed" not in other.headers  # its own write, not the other's 201
+        again = c.post(order[0], json=body[order[0]], headers=h)
+        assert again.headers["idempotency-replayed"] == "true"  # the key was kept where sent
+    assert (len(workspaces.rows), len(drawings.rows), writer.calls) == (2, 2, [])
