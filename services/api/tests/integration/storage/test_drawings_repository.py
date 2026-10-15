@@ -728,10 +728,11 @@ async def test_bulk_batch_statements_use_the_pk_index_and_never_seq_scan_drawing
     rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-it-plans")
     try:
         for name, (stmt, params) in cases.items():
+            # Built only from a fixed literal and a shipped statement's text; no input.
+            # nosemgrep: avoid-sqlalchemy-text reason=explain-sql owner=@basiltt review=2027-03-25
+            explain = sa.text("EXPLAIN (FORMAT JSON) " + stmt.text)
             async with rel.unit_of_work() as uow:
-                res = await uow.session.execute(
-                    sa.text("EXPLAIN (FORMAT JSON) " + stmt.text), params
-                )
+                res = await uow.session.execute(explain, params)
                 raw = res.scalar_one()
             plan = raw if isinstance(raw, list) else json.loads(raw)
             nodes = list(_plan_nodes(plan[0]["Plan"]))
