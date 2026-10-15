@@ -216,3 +216,15 @@ def test_snap_meta_names_the_bar_build_identity(schemas: dict[str, object]) -> N
     assert meta.is_valid({"reason": "initial", "spec_hash": "0" * 64, "build_version": 1})
     for bad in ({"spec_hash": "A" * 64}, {"spec_hash": "0" * 63}, {"build_version": 0}):
         assert not meta.is_valid({"reason": "initial", **bad}), bad
+
+
+def test_snap_meta_echoes_include_delta_on_bars_frames(schemas: dict[str, object]) -> None:
+    """#399: `meta.include_delta` says whether a kind-4 `delta` of 0 is real."""
+    from jsonschema import Draft202012Validator
+
+    meta = Draft202012Validator(
+        {"$ref": "cv://ws/v1/common.schema.json#/$defs/snapMeta"},
+        registry=val.build_registry(schemas),
+    )
+    assert meta.is_valid({"include_delta": False}) and meta.is_valid({"include_delta": True})
+    assert not meta.is_valid({"include_delta": "no"})

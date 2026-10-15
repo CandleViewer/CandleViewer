@@ -228,6 +228,10 @@
               "type": "integer",
               "minimum": 1,
               "description": "bars/footprint snapshots: the bar builder version that built the series (SR-E12-14)."
+            },
+            "include_delta": {
+              "type": "boolean",
+              "description": "bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1)."
             }
           },
           "additionalProperties": false

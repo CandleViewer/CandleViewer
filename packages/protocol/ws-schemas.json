@@ -561,6 +561,10 @@
               "minimum": 0,
               "type": "integer"
             },
+            "include_delta": {
+              "description": "bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1).",
+              "type": "boolean"
+            },
             "previous_seq": {
               "$ref": "#/$defs/seq"
             },

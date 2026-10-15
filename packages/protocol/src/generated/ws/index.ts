@@ -336,6 +336,10 @@ export interface SnapMeta {
    * bars/footprint snapshots: the bar builder version that built the series (SR-E12-14).
    */
   build_version?: number;
+  /**
+   * bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1).
+   */
+  include_delta?: boolean;
 }
 
 // Source: cv://ws/v1/ctl.schema.json
@@ -440,6 +444,10 @@ export interface SnapMeta {
    * bars/footprint snapshots: the bar builder version that built the series (SR-E12-14).
    */
   build_version?: number;
+  /**
+   * bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1).
+   */
+  include_delta?: boolean;
 }
 
 // Source: cv://ws/v1/executions.schema.json
