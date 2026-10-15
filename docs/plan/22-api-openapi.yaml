@@ -901,6 +901,7 @@ paths:
               }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /auth/session:
     get:
@@ -5290,6 +5291,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
     post:
       tags: [alerts]
       operationId: createAlert
@@ -5365,6 +5367,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Alert" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
     put:
       tags: [alerts]
       operationId: updateAlert
@@ -7885,6 +7888,7 @@ paths:
         "204": { description: Revoked. }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /me/limits:
     get:
@@ -8112,6 +8116,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/OnboardingChecklist" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /onboarding/checklist/dismiss:
     post:
