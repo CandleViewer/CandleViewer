@@ -52,3 +52,20 @@ async def test_a_slot_handed_over_as_its_waiter_is_cancelled_is_given_back() -> 
     waiter.cancel()  # ... and cancelled before the waiter ran
     await asyncio.gather(waiter, return_exceptions=True)
     assert waiter.cancelled() and not slot.held
+
+
+async def test_a_scheduled_run_takes_a_free_slot_at_once() -> None:
+    slot = VerifySlot()
+    await slot.acquire()
+    assert slot.held and not slot.try_acquire()
+
+
+async def test_a_waiter_cancelled_before_the_release_is_skipped() -> None:
+    slot = VerifySlot()
+    assert slot.try_acquire()
+    gone = asyncio.ensure_future(slot.acquire())
+    await asyncio.sleep(0)
+    gone.cancel()  # its future is cancelled now; the task has not run yet
+    slot.release()  # skips the cancelled waiter: nobody holds the slot
+    await asyncio.gather(gone, return_exceptions=True)
+    assert not slot.held and slot.try_acquire()
