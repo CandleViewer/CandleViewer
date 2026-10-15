@@ -896,7 +896,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 
 | Mechanism      | What it does                                                               | Applied to                                                          | Loss of information?                                    |
 | -------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
-| **Throttling** | Emits at most one frame per `throttle_ms` per topic.                       | All topics except `orders`, `executions`.                           | No — state is complete at each emission.                |
+| **Throttling** | Releases a topic's pending updates at most once per `throttle_ms`.         | All topics except `orders`, `executions`.                           | No — state is complete at each emission.                |
 | **Coalescing** | Merges all pending updates for a topic into one frame.                     | Book, bars, footprint, heatmap, metrics, ticker, positions, wallet. | Intermediate _frames_ are lost; final _state_ is exact. |
 | **Shedding**   | Drops the subscription and forces a re-snapshot, or closes the connection. | Last resort under sustained overflow.                               | Yes — recovered by re-snapshot.                         |
 
@@ -925,7 +925,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 
 **Client rules the merges rely on (#412).** Clients enforce the bar confirmed/amended precedence themselves, so a window's merge never has to know what earlier windows sent. Within one `positions` frame, `removed` applies after the upserts. An entity whose `updated_at_ms` equals the stored one replaces it (the later frame wins; §15). Event-like metrics (`iceberg`, `stop_run`, `absorption`, `exhaustion`) keep only the latest point of a window, as any series does.
 
-**Families without a merge rule (#412).** `profile`, `trade_groups`, `rules`, `alerts` and `recorder` are throttled but never merged: the frames a window collects leave back to back when it closes, unchanged.
+**Families without a merge rule (#412).** `profile`, `trade_groups`, `rules`, `alerts` and `recorder` are throttled but never merged: the frames a window collects leave back to back when it closes, unchanged. Their frames count against the §8.4 budget like any other, and overflow follows the §8.4 ladder.
 
 A coalesced frame sets `coalesced: true` (structured) or header flag bit1 (binary), and carries `coalesced_count` — the number of source updates merged. The UI uses this to drive the "feed compressed" indicator on the tape-speed widget rather than silently under-reporting activity.
 
@@ -973,7 +973,7 @@ On overflow the server acts in this order:
 
 1. **Drop coalescable pending state** for the offending topics and mark them `resnapshot_required`.
 2. Send `snap` with `reason: "backpressure"` for each such topic once the queue drains below 50 %.
-3. If the queue is still over budget after the drop **and** the affected topics include `orders` or `executions` (which cannot be dropped), send `bye` with `slow_consumer` and close `4429`.
+3. If the queue is still over budget after the drop **and** the affected topics include `orders` or `executions` (which cannot be dropped), send `bye` with `slow_consumer` and close `4429`. Control frames (`sub_ok`, `err`, `pong`, ...) and `system` frames are never dropped either, so a backlog of them that alone keeps the queue over budget ends in this step too (S6).
 4. Record `cv_ws_overflow_total{action}` (`action`: `drop`, `resnapshot` or `close`) and, if step 3 fires, write a `warning` audit entry (`ws.slow_consumer.closed`).
 
 A client that is closed as a slow consumer should reconnect with backoff and _reduce its subscription set_ — the `bye` payload names the topics that were most expensive (up to five, by queued bytes when the overflow began, largest first):
@@ -1984,6 +1984,7 @@ Shared definitions used throughout:
       "properties": {
         "most_expensive_topics": {
           "type": "array",
+          "maxItems": 5,
           "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/topic" }
         }
       },

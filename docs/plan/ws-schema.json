@@ -995,6 +995,7 @@
           "properties": {
             "most_expensive_topics": {
               "type": "array",
+              "maxItems": 5,
               "items": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/topic"
               }

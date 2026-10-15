@@ -182,7 +182,16 @@ export interface CvWsV1ByeSchemaJson {
   retry_after_ms?: number;
   reconnect?: boolean;
   hint?: {
-    most_expensive_topics?: string[];
+    /**
+     * @maxItems 5
+     */
+    most_expensive_topics?:
+      | []
+      | [string]
+      | [string, string]
+      | [string, string, string]
+      | [string, string, string, string]
+      | [string, string, string, string, string];
   };
 }
 

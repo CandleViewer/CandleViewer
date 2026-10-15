@@ -396,6 +396,7 @@
               "items": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/topic"
               },
+              "maxItems": 5,
               "type": "array"
             }
           },

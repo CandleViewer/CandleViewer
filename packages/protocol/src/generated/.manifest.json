@@ -3,6 +3,6 @@
   "cvwb/index.ts": "99ebeebf15b02bafbc5d1f5fb9f1bd5de65f4548a84097a8503c6e3900d7679c",
   "index.ts": "7995ff77812e645e6858022bb4ca8d8fb3fd78581c77561ea809e6fd6415fa6e",
   "policy/index.ts": "9288b6c4957efcb0e64e22962255f6ce270d486aec89cc88d5aa2517b5a3a233",
-  "rest/index.ts": "ec50dc1ff930de5f4e8082d6a62302d40d2ab4747df005ab6b961ff4a4ace7f7",
-  "ws/index.ts": "37d3dd5036c8980b2f0cf08a65c22ff9ec2a1094ff6d47d563728adf8929001b"
+  "rest/index.ts": "6c88db930f9c1b7fe6953fe104fd981d8e40d98446bc446300cfc72a9d1d9b02",
+  "ws/index.ts": "a7ce1de84f5705be4802c43857b807acdd5db2eb8a950f253b42487992d4944a"
 }
