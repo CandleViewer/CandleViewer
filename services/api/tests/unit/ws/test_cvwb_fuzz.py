@@ -1,10 +1,13 @@
-"""E17-T02 part B: nightly mutation fuzz of the CVWB decoder (SR-155) seeded from the corpus.
+"""E17-T02 part B: nightly mutation fuzz of the CVWB decoder (SR-155) seeded from the corpus, and
+of the `cv.v1.msgpack` client-frame decoder (SR-185, #2483) seeded from `msgpack-client.json`.
 
 Deselected from the default lane by `addopts` (`-m "not fuzz and not perf"`); run explicitly with
 ``pytest -m fuzz --no-cov``. Default 200 examples; the nightly sets ``CV_FUZZ_EXAMPLES=20000`` and
 ``CV_FUZZ_SEED`` (Hypothesis runs derandomised from it, so a failure replays from the seed).
 Invariant: ``decode`` returns a ``Frame`` or raises ONLY ``FrameMalformedError``, and one decode
-never allocates more than ``MAX_PEAK_BYTES`` (SR-128: wire counts never size an allocation).
+never allocates more than ``MAX_PEAK_BYTES`` (SR-128: wire counts never size an allocation). The
+msgpack decoder returns a JSON-like value within ``MAX_MSGPACK_DEPTH`` or raises ONLY
+``MsgpackFrameError``, under the same allocation bound.
 Failing inputs are written to ``CV_FUZZ_ARTIFACT_DIR`` (uploaded as a CI artefact, never the repo).
 """
 
@@ -25,11 +28,18 @@ from hypothesis import HealthCheck, given, seed, settings
 from hypothesis import strategies as st
 
 from candleviewer.ws.binary import FrameMalformedError, decode
+from candleviewer.ws.codec import MAX_MSGPACK_DEPTH, MsgpackFrameError, decode_client_frame
 
 REPO = Path(__file__).resolve().parents[5]
 SEEDS: Final[list[bytes]] = [
     bytes.fromhex(s["hex"])
     for s in json.loads((REPO / "tests/fuzz/ws-frames/corpus.json").read_text(encoding="utf-8"))
+]
+MSGPACK_SEEDS: Final[list[bytes]] = [
+    bytes.fromhex(s["hex"])
+    for s in json.loads(
+        (REPO / "tests/fuzz/ws-frames/msgpack-client.json").read_text(encoding="utf-8")
+    )
 ]
 EXAMPLES: Final[int] = int(os.environ.get("CV_FUZZ_EXAMPLES", "200"))
 MAX_PEAK_BYTES: Final[int] = 1 << 20
@@ -66,12 +76,12 @@ SEED: Final[int] = int(os.environ.get("CV_FUZZ_SEED", "12648430"))
 random.seed(SEED)
 
 
-def _save_failure(data: bytes) -> str:
+def _save_failure(data: bytes, kind: str = "cvwb") -> str:
     """Dumps the input under CV_FUZZ_ARTIFACT_DIR by sha256; returns the replay string."""
     out = os.environ.get("CV_FUZZ_ARTIFACT_DIR")
     if out:
         Path(out).mkdir(parents=True, exist_ok=True)
-        (Path(out) / f"cvwb-fail-{hashlib.sha256(data).hexdigest()}.bin").write_bytes(data)
+        (Path(out) / f"{kind}-fail-{hashlib.sha256(data).hexdigest()}.bin").write_bytes(data)
     return f"seed={SEED} b64={base64.b64encode(data).decode()}"
 
 
@@ -102,6 +112,62 @@ def test_decode_mutated_corpus_raises_only_the_typed_error(
         tracemalloc.stop()
     if peak > MAX_PEAK_BYTES:
         pytest.fail(f"decode peaked at {peak} B: {_save_failure(data)}")
+
+
+def _json_like_depth(value: object) -> int:
+    """Container nesting of a decoded value, or -1 if it holds anything JSON could not carry."""
+    stack: list[tuple[object, int]] = [(value, 0)]
+    deepest = 0
+    while stack:
+        node, depth = stack.pop()
+        if isinstance(node, dict):
+            if not all(isinstance(key, str) for key in node):
+                return -1
+            children: list[object] = list(node.values())
+        elif isinstance(node, list):
+            children = list(node)
+        elif isinstance(node, float):
+            if node != node or node in (float("inf"), float("-inf")):
+                return -1
+            continue
+        elif isinstance(node, str | int | bool) or node is None:
+            continue
+        else:
+            return -1
+        deepest = max(deepest, depth + 1)
+        stack.extend((child, depth + 1) for child in children)
+    return deepest
+
+
+@pytest.mark.fuzz
+@seed(SEED)
+@settings(
+    max_examples=EXAMPLES,
+    deadline=None,
+    suppress_health_check=list(HealthCheck),
+    database=None,
+    print_blob=True,
+)
+@given(i=st.integers(0, len(MSGPACK_SEEDS) - 1), ops=st.lists(_op, min_size=1, max_size=6))
+def test_msgpack_client_decode_mutated_corpus_raises_only_the_typed_error(
+    i: int, ops: list[tuple[str, int, int]]
+) -> None:
+    data = mutate(MSGPACK_SEEDS[i], ops)
+    tracemalloc.start()
+    try:
+        try:
+            value = decode_client_frame(data)
+        except MsgpackFrameError:
+            value = None
+        except BaseException as exc:
+            raise AssertionError(f"untyped {exc!r}: {_save_failure(data, 'msgpack')}") from exc
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    if not 0 <= _json_like_depth(value) <= MAX_MSGPACK_DEPTH:
+        pytest.fail(f"decoded beyond the SR-185 bounds: {_save_failure(data, 'msgpack')}")
+    if peak > MAX_PEAK_BYTES:
+        pytest.fail(f"msgpack decode peaked at {peak} B: {_save_failure(data, 'msgpack')}")
 
 
 # SR-128 (targeted): every count field that cannot fit is rejected up front by `_fits`. Removing

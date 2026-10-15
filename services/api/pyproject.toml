@@ -21,6 +21,7 @@ dependencies = [
   "prometheus-client>=0.20",
   "structlog>=24.1",
   "orjson>=3.10",
+  "msgpack>=1.2.2",
   "xstate-statemachine==0.9.1",
   "jsonschema>=4.23",
   "argon2-cffi>=25.1.0",
@@ -132,6 +133,12 @@ ignore_missing_imports = true
 # "missing library stubs or py.typed marker"). Narrow to import resolution
 # only (no ignore_errors); drop once upstream ships types.
 module = ["pyarrow.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# msgpack (#2483, the cv.v1.msgpack client-frame codec) ships no py.typed marker or stubs as of
+# 2026-10-15 (msgpack 1.2.2). Narrow to import resolution only; drop once upstream ships types.
+module = ["msgpack.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
