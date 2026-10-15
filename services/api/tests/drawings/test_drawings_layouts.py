@@ -10,6 +10,9 @@ from typing import Any
 
 import pytest
 from _drawings_api_env import BATCH, TRENDLINE, USER_A, USER_B, Env, wire
+from sqlalchemy.exc import DBAPIError
+
+from candleviewer.storage.repositories.drawings_sqlalchemy import SqlAlchemyDrawingRepository
 
 OWN, FOREIGN, GONE = (str(uuid.uuid4()) for _ in range(3))  # GONE: deleted or never existed
 
@@ -100,3 +103,42 @@ def test_put_reports_an_immutable_field_before_its_layout(env: Env) -> None:
     assert r.status_code == 422, r.text
     assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [("symbol", "immutable_field")]
     assert "update" not in [name for name, _ in env.repo.calls]  # refused before the write
+
+
+class _Deadlock(Exception):
+    sqlstate = "40P01"  # deadlock_detected, as the driver reports it
+
+
+class _DeadlockingStore:
+    """A relational store whose every statement deadlocks; counts the transactions opened."""
+
+    def __init__(self) -> None:
+        self.opened = 0
+        self.session = self
+
+    def unit_of_work(self) -> _DeadlockingStore:
+        return self
+
+    async def __aenter__(self) -> _DeadlockingStore:
+        self.opened += 1
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        return None
+
+    async def execute(self, *_args: object) -> None:
+        raise DBAPIError("stmt", {}, _Deadlock("deadlock detected"))
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_a_write_deadlocking_twice_is_503_after_one_retry(env: Env, batch: bool) -> None:
+    """Spec Sec.7 end to end: the real repository reruns the transaction after a `40P01`; a
+    second one reaches the client as 503 `store_unavailable`, never a 500."""
+    store = _DeadlockingStore()
+    env.repo = SqlAlchemyDrawingRepository(store)  # type: ignore[arg-type,assignment]  # stub UoW
+    drawing = TRENDLINE | {"layout_id": OWN}
+    ops = {"operations": [{"op": "create", "drawing": drawing}]}
+    r = (env.c.post("/drawings/batch", json=wire(ops, BATCH)) if batch
+         else env.c.post("/drawings", json=wire(drawing)))  # fmt: skip
+    assert r.status_code == 503 and r.json()["code"] == "store_unavailable", r.text
+    assert store.opened == 2  # one rerun of the whole transaction, then the outage
