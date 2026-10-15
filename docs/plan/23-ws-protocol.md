@@ -1088,21 +1088,7 @@ The grace and downtime come from `CV_WS_SHUTDOWN_GRACE_MS` and `CV_WS_SHUTDOWN_E
 
 Authorisation is re-evaluated on every change to the user's roles, permissions or account grants, and on kill-switch transitions. Affected subscriptions are terminated with `revoked` — never silently emptied, which would look like a flat book or a closed position.
 
-```jsonc
-{
-  "t": "revoked",
-  "ch": "positions",
-  "ts": 1789133600000,
-  "p": {
-    "reason": "account_scope_changed",
-    "message": "Access to account a1000000-…-0002 was withdrawn.",
-    "removed_accounts": ["a1000000-0000-4000-8000-000000000002"],
-    "resubscribe_allowed": true,
-  },
-}
-```
-
-Before any `revoked` frames, the server sends one `permission_change` frame carrying the connection's re-resolved identity, so the client can refresh its permission-gated UI without a reconnect. It is sent on every re-evaluation, even when no subscription is affected. The payload is the live subset of `auth_ok` (no `session_id` / `token_expires_at_ms`; the session is unchanged). Schema: §13.4.
+Before any `revoked` frames, the server sends one `permission_change` frame carrying the connection's re-resolved identity, so the client can refresh its permission-gated UI without a reconnect. It is sent on registry-driven re-evaluations (role, permission and grant changes, and kill-switch transitions, applied through `ConnectionRegistry`), even when no subscription is affected. The in-place re-`auth` path (§4.3) does not send it: it answers with `auth_ok` and forwards only the `revoked` frames. The payload is the identity subset of `auth_ok` (`user_id`, `roles`, `permissions`, `account_scope`), so it carries no `session_id`, `token_expires_at_ms`, `kill_switch`, `username` or `allowed_environments`; the session itself is unchanged. `account_scope` is built as in `auth_ok`: for an **owner** it is `[]`, meaning **all** accounts (an owner holds no per-account grants), while for a manager or viewer it lists the accounts they hold a view grant on, so `[]` there means none. Schema: §13.4.
 
 ```jsonc
 {
@@ -1113,6 +1099,22 @@ Before any `revoked` frames, the server sends one `permission_change` frame carr
     "roles": ["manager"],
     "permissions": ["marketdata:read", "orders:read"],
     "account_scope": ["a1000000-0000-4000-8000-000000000001"],
+  },
+}
+```
+
+Then one `revoked` frame per affected subscription:
+
+```jsonc
+{
+  "t": "revoked",
+  "ch": "positions",
+  "ts": 1789133600000,
+  "p": {
+    "reason": "account_scope_changed",
+    "message": "Access to account a1000000-…-0002 was withdrawn.",
+    "removed_accounts": ["a1000000-0000-4000-8000-000000000002"],
+    "resubscribe_allowed": true,
   },
 }
 ```
@@ -1653,7 +1655,7 @@ Shared definitions used throughout:
 }
 ```
 
-### 13.4 `auth` and `auth_ok`
+### 13.4 `auth`, `auth_ok`, `permission_change`
 
 ```json
 {
