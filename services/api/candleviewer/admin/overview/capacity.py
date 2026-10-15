@@ -31,6 +31,7 @@ from candleviewer.admin.overview.ports import (
     StorageSnapshot,
     TierPort,
 )
+from candleviewer.admin.overview.slices import AdminSlice
 
 #: 0.75 GB/day/symbol (GB = 1e9 bytes, as the recorder's DiskBudget measures).
 ESTIMATED_DAILY_GROWTH_BYTES: Final = 750_000_000
@@ -144,10 +145,10 @@ class AdminCapacityService:
     async def capacity(self) -> CapacitySnapshot:
         read = self._fan.read
         storage, ingestion, rate_budget, subaccounts = await asyncio.gather(
-            read("capacity_storage", self._storage),
-            read("ingestion", self._ingestion_stats),
-            read("rate_budget", self._rate_budget),
-            read("subaccounts", self._subaccounts),
+            read(AdminSlice.CAPACITY_STORAGE, self._storage),
+            read(AdminSlice.INGESTION, self._ingestion_stats),
+            read(AdminSlice.RATE_BUDGET, self._rate_budget),
+            read(AdminSlice.SUBACCOUNTS, self._subaccounts),
         )
         return CapacitySnapshot(self._now(), storage, ingestion, rate_budget, subaccounts)
 
