@@ -229,7 +229,9 @@ def publish(
     acc = account if FAMILIES[family].private else None
     if FAMILIES[family].account_scoped and acc is None:
         acc = ACC_A
-    owner = user if user is not None or FAMILIES[family].scope is not Scope.SELF else USER
+    # By value: a test that reloads `generated_permissions` (test_rbac_generator) leaves two
+    # `Scope` classes behind, so an identity check would depend on the test order.
+    owner = user if user is not None or FAMILIES[family].scope != Scope.SELF else USER
     sent: int = world.call(
         lambda: world.hub.publish(
             ch,
