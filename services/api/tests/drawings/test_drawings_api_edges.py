@@ -14,6 +14,7 @@ import _drawings_api_env as fakes
 import pytest
 from _drawings_api_env import BATCH, DRAWING_KEYS, SID, TRENDLINE, USER_A, Env, wire
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import DBAPIError
 from structlog.testing import capture_logs
 
 import candleviewer.app as appmod
@@ -186,6 +187,18 @@ def test_store_unavailable_is_503(method: str, path: str, body: Any, fault: Any)
     assert "refused" not in r.text and "down" not in r.text
     expected = [] if fault is None else ["drawings_store_unavailable"]  # never the audit event
     assert [e["event"] for e in logs if e["event"].endswith("_unavailable")] == expected
+
+
+@pytest.mark.parametrize("state", ["57014", "08006"])  # statement timeout, lost connection
+def test_driver_outage_is_503_without_echoing_detail(state: str) -> None:
+    class _Driver(Exception):
+        sqlstate = state
+
+    env = Env()
+    env.repo_up, env.repo.fail = True, DBAPIError("SELECT secret_token", {}, _Driver("leak-me"))
+    r = env.c.request(*ROUTES[0][:2], json=ROUTES[0][2])
+    assert r.status_code == 503 and r.json()["code"] == "store_unavailable"
+    assert "leak-me" not in r.text and "secret_token" not in r.text
 
 
 def test_router_requires_an_audit_emitter() -> None:
