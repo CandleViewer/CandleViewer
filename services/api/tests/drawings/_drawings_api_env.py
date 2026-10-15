@@ -21,8 +21,10 @@ from candleviewer.storage.repositories.drawings import (
     BatchOpFailed,
     BatchResult,
     CreateOp,
+    DeleteOp,
     DrawingFields,
     DrawingIdUnavailableError,
+    DrawingLayoutNotFoundError,
     DrawingNotFoundError,
     DrawingRow,
     DrawingVersionConflictError,
@@ -73,11 +75,22 @@ class FakeDrawingRepo:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.fail: Exception | None = None  # raised by every call (store outage)
         self.tick = 0
+        self.layouts: dict[str, str] = {}  # live layout id -> owner (E15-T01 spec Sec.7)
 
     def _call(self, name: str, **kw: Any) -> None:
         self.calls.append((name, kw))
         if self.fail is not None:
             raise self.fail
+
+    def _layouts_live(self, owner: str, refs: list[tuple[str, str | None]]) -> None:
+        """The SQL repo's first step: every named layout is a live one of `owner`."""
+        missing = [f for f, lid in refs if lid is not None and self.layouts.get(lid) != owner]
+        if missing:
+            raise DrawingLayoutNotFoundError(tuple(missing))
+
+    async def is_live_layout(self, owner: str, layout_id: str) -> bool:  # the `layouts` probe
+        self._call("is_live_layout", owner=owner, layout_id=layout_id)
+        return self.layouts.get(layout_id) == owner
 
     def _live(self, owner: str, drawing_id: str) -> DrawingRow | None:
         row = self.rows.get(drawing_id)
@@ -120,6 +133,7 @@ class FakeDrawingRepo:
 
     async def create(self, owner: str, drawing_id: str, fields: DrawingFields) -> DrawingRow:
         self._call("create", owner=owner, drawing_id=drawing_id)
+        self._layouts_live(owner, [("layout_id", fields.layout_id)])
         if drawing_id in self.rows:
             raise DrawingIdUnavailableError(drawing_id)
         return self._put(owner, drawing_id, fields, T0)
@@ -128,6 +142,7 @@ class FakeDrawingRepo:
         self, owner: str, drawing_id: str, fields: DrawingFields, *, if_match: datetime | None
     ) -> DrawingRow:
         self._call("update", owner=owner, drawing_id=drawing_id, if_match=if_match)
+        self._layouts_live(owner, [("layout_id", fields.layout_id)])
         row = self._live(owner, drawing_id)
         if row is None:
             raise DrawingNotFoundError(drawing_id)
@@ -144,6 +159,9 @@ class FakeDrawingRepo:
 
     async def apply_batch(self, owner: str, ops: Sequence[BatchOp]) -> BatchResult:
         self._call("apply_batch", owner=owner, op_count=len(ops))
+        refs = [(f"operations.{i}.drawing.layout_id", op.fields.layout_id)
+                for i, op in enumerate(ops) if not isinstance(op, DeleteOp)]  # fmt: skip
+        self._layouts_live(owner, refs)
         saved, created, updated, deleted = (dict(self.rows), dict(self.deleted)), [], [], []
         try:
             for i, op in enumerate(ops):
@@ -214,6 +232,7 @@ class Env:
         app.include_router(make_drawings_router(
             lambda: self.repo if self.repo_up else None, _Resolver() if wired else None,
             self.audit, clock=lambda: self.now, metrics=metrics, idempotency=idempotency,
+            layouts=lambda: self.repo if self.repo_up else None,
         ))  # fmt: skip
         self.c = TestClient(app)
 
