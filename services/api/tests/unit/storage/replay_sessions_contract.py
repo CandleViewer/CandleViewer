@@ -38,6 +38,7 @@ from tests.unit.storage.fakes_replay_sessions import FakeClock
 S = ReplayState
 T0 = FakeClock().now
 T2H = T0 + timedelta(hours=2)
+_SOME_UUID = "00000000-0000-4000-8000-000000000001"  # literal: parametrize ids must be stable
 
 
 def _cursor(payload: object) -> str:
@@ -94,6 +95,13 @@ class ReplaySessionRepositoryContract:
         assert (made.speed, made.bookmarks, made.paper_account_id) == (Decimal("2.5"), mark, acct)
         assert await h.repo.get(user, made.id) == made
 
+    async def test_stored_bookmarks_do_not_alias_the_callers_objects(self, h: Harness) -> None:
+        mark = {"ts": "2026-10-01T00:30:00+00:00", "label": "gap", "note": None}
+        made = await h.make(bookmarks=(mark,))
+        mark["label"] = "changed after create"
+        got = await h.repo.get(made.user_id, made.id)
+        assert got is not None and got.bookmarks[0]["label"] == "gap"
+
     async def test_another_users_session_is_invisible_to_every_method(self, h: Harness) -> None:
         mine, stranger = await h.in_state(S.PAUSED), h.new_user()
         assert await h.repo.get(stranger, mine.id) is None
@@ -113,6 +121,16 @@ class ReplaySessionRepositoryContract:
             with pytest.raises(ReplaySessionNotFoundError):
                 await h.repo.touch(user, bad, T0)
         assert await h.repo.get("not-a-uuid", str(uuid.uuid4())) is None
+
+    async def test_not_found_never_echoes_the_callers_id_string(self, h: Harness) -> None:
+        hostile = "<script>alert(1)</script>\r\nX-Injected: 1"
+        unknown = str(uuid.uuid4())
+        user = h.new_user()
+        for sid, allowed in ((hostile, {""}), (unknown, {"", unknown})):
+            for call in _writes(h, user, sid).values():
+                with pytest.raises(ReplaySessionNotFoundError) as err:
+                    await call()
+                assert str(err.value) in allowed
 
     async def test_create_with_a_used_id_names_the_primary_key(self, h: Harness) -> None:
         row = await h.make()
@@ -170,9 +188,19 @@ class ReplaySessionRepositoryContract:
             "A" * 300,
             _cursor("not a pair"),
             _cursor([1, 2]),
-            _cursor(["2026-10-01T00:00:00", str(uuid.uuid4())]),  # naive timestamp
+            _cursor(["2026-10-01T00:00:00", _SOME_UUID]),  # naive timestamp
             _cursor(["2026-10-01T00:00:00+00:00", "not-a-uuid"]),
             base64.urlsafe_b64encode(b"\xff\xfe not json").decode(),
+            # Well-formed and aware, but with no UTC equivalent: asyncpg cannot bind it, so every
+            # backend must refuse it the same way instead of paging (fake) or a 500 (Postgres).
+            pytest.param(
+                _cursor(["0001-01-01T00:00:00+23:59", _SOME_UUID]),
+                id="year-1-offset-overflows-utc",
+            ),
+            pytest.param(
+                _cursor(["9999-12-31T23:59:59-23:59", _SOME_UUID]),
+                id="year-9999-offset-overflows-utc",
+            ),
         ],
     )
     async def test_list_page_refuses_a_garbage_cursor_cleanly(
@@ -325,6 +353,10 @@ class ReplaySessionRepositoryContract:
             ("rps_speed", {"speed": Decimal("0.09")}),
             ("rps_speed", {"speed": Decimal(101)}),
             ("rps_speed", {"speed": Decimal(12_345)}),
+            ("rps_speed", {"speed": Decimal("9999.995")}),  # rounds up to 10000.00: overflows
+            ("rps_speed", {"speed": Decimal("NaN")}),  # storable, so the CHECK rejects it
+            ("rps_speed", {"speed": Decimal("Infinity")}),  # never storable: numeric overflow
+            ("rps_range", {"speed": Decimal("NaN"), "range_end": T0}),  # CHECKs run in name order
             ("rps_tier", {"source_tier": "bogus"}),
             ("rps_cursor", {"cursor_ts": T0 - timedelta(seconds=1)}),
             ("rps_cursor", {"cursor_ts": T2H + timedelta(seconds=1)}),
@@ -364,3 +396,51 @@ class ReplaySessionRepositoryContract:
                 await h.repo.update_speed(uid, sid, speed=speed)
             assert bad_speed.value.constraint == "rps_speed"
         assert await h.repo.get(uid, sid) == row
+
+    @pytest.mark.parametrize(
+        "speed",
+        [Decimal(12_345), Decimal("9999.995"), Decimal("Infinity"), Decimal("-Infinity")],
+    )
+    async def test_an_unstorable_speed_fails_by_name_even_when_no_row_matches(
+        self, h: Harness, speed: Decimal
+    ) -> None:
+        # Postgres coerces the value to numeric(6,2) before it matches a row, so a missing or
+        # foreign row is still `rps_speed`, not "not found".
+        row = await h.in_state(S.PAUSED)
+        for uid, sid in ((row.user_id, str(uuid.uuid4())), (h.new_user(), row.id)):
+            with pytest.raises(ReplaySessionConstraintError) as err:
+                await h.repo.update_speed(uid, sid, speed=speed)
+            assert err.value.constraint == "rps_speed"
+        assert await h.repo.get(row.user_id, row.id) == row
+
+    async def test_nan_speed_is_an_ordinary_check_failure_not_a_coercion_error(
+        self, h: Harness
+    ) -> None:
+        nan = Decimal("NaN")
+        row = await h.in_state(S.PAUSED)
+        with pytest.raises(ReplaySessionConstraintError) as own:  # the CHECK, on a matching row
+            await h.repo.update_speed(row.user_id, row.id, speed=nan)
+        assert own.value.constraint == "rps_speed"
+        for uid, sid in ((row.user_id, str(uuid.uuid4())), (h.new_user(), row.id)):  # no match
+            with pytest.raises(ReplaySessionNotFoundError):
+                await h.repo.update_speed(uid, sid, speed=nan)
+        assert await h.repo.get(row.user_id, row.id) == row
+
+    # -- uuid columns ----------------------------------------------------------------------------
+
+    async def test_create_stores_uuid_columns_in_canonical_lower_case_form(
+        self, h: Harness
+    ) -> None:
+        acct, rec = h.new_account(), h.new_recording()
+        made = await h.make(
+            paper_trading=True, paper_account_id=acct.upper(), recording_session_id="{" + rec + "}"
+        )
+        assert (made.paper_account_id, made.recording_session_id) == (acct, rec)
+        assert await h.repo.get(made.user_id, made.id) == made
+
+    @pytest.mark.parametrize("field", ["id", "user_id", "recording_session_id", "paper_account_id"])
+    async def test_create_refuses_a_garbage_uuid_before_any_constraint_is_checked(
+        self, h: Harness, field: str
+    ) -> None:
+        with pytest.raises(ValueError, match="hexadecimal"):
+            await h.make(symbol="btc-usdt", **{field: "garbage"})  # not `symbol_code_check`

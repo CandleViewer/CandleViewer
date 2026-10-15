@@ -98,6 +98,22 @@ class StorageDiskCritical(StorageError):
     code = "STORAGE_DISK_CRITICAL"
 
 
+class StorageQueryFailed(StorageError):
+    """A database statement failed and the repository has no domain error for it.
+
+    Carries only the SQLSTATE (None for a driver-side failure that has none). It never carries the
+    statement, its bound parameters or the driver's message: those can embed P1 column values (a
+    bound `bookmarks` note, the server's `DETAIL: Failing row contains (...)`), and no exception
+    chain may render them (C-12.6). Raise it `from None` so the driver error is not chained.
+    """
+
+    code = "STORAGE_QUERY_FAILED"
+
+    def __init__(self, sqlstate: str | None) -> None:
+        super().__init__(f"database statement failed (sqlstate {sqlstate or 'unknown'})")
+        self.sqlstate = sqlstate
+
+
 class IlpRowError(StorageError, ValueError):
     """A row handed to `IlpWriter.write_rows` is malformed (E49-K01-F2, #1636).
 
@@ -144,6 +160,7 @@ ERROR_CODES: dict[type[StorageError], str] = {
     StorageRetentionBlockedUnverified: StorageRetentionBlockedUnverified.code,
     StorageRetentionBlockedByReplay: StorageRetentionBlockedByReplay.code,
     StorageDiskCritical: StorageDiskCritical.code,
+    StorageQueryFailed: StorageQueryFailed.code,
     IlpRowError: IlpRowError.code,
     MissingDesignatedTimestamp: MissingDesignatedTimestamp.code,
     InvalidSymbol: InvalidSymbol.code,

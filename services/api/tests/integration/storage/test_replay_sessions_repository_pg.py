@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+import traceback
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
@@ -22,8 +23,12 @@ from typing import Any
 import psycopg
 import pytest
 import pytest_asyncio
+import sqlalchemy as sa
+from sqlalchemy.exc import DBAPIError
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.db import models
+from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories import replay_sessions_sqlalchemy as mod
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -36,6 +41,7 @@ from candleviewer.storage.repositories.replay_sessions import (
 )
 from tests.unit.storage.fakes_replay_sessions import FakeClock
 from tests.unit.storage.replay_sessions_contract import (
+    T0,
     Harness,
     ReplaySessionRepositoryContract,
 )
@@ -243,3 +249,49 @@ async def test_concurrent_compare_and_set_has_exactly_one_winner(h: Harness) -> 
     losers = [r for r in results if isinstance(r, ReplaySessionIllegalUpdateError)]
     assert (len(winners), len(losers)) == (1, 7)
     assert {r.current for r in losers} == {S.PLAYING}
+
+
+# -- errors: nothing a driver error carries may reach a rendered chain (C-12.6) -------------------
+
+_NOTE = "SECRET-NOTE"  # stands in for a P1 `bookmarks` note (21 §12)
+
+
+def _rendered(exc: BaseException) -> str:
+    return "".join(traceback.format_exception(exc))
+
+
+async def test_a_real_check_violation_leaves_no_row_values_in_the_chain(
+    h: Harness, pg_dsn: str
+) -> None:
+    notes, user = ({"note": _NOTE},), h.new_user()
+    insert = sa.insert(models.replay_sessions).values(
+        id=uuid.uuid4(), user_id=uuid.UUID(user), symbol="BTCUSDT", range_start=T0, range_end=T0,
+        bookmarks=list(notes), created_at=T0, updated_at=T0,
+    )  # fmt: skip
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "replay-sessions-leak")
+    try:
+        with pytest.raises(DBAPIError) as raw:  # the same failure, un-sanitised
+            async with rel.unit_of_work() as uow:
+                await uow.session.execute(insert)
+    finally:
+        await rel.dispose()
+    # Control: the engine hides the bound values, but the server's `DETAIL: Failing row contains
+    # (...)` still rides in the cause chain, which is why the adapter must not chain the error.
+    assert "[parameters:" not in _rendered(raw.value)
+    assert _NOTE in _rendered(raw.value)
+    with pytest.raises(ReplaySessionConstraintError) as err:
+        await h.make(user, bookmarks=notes, range_end=T0)
+    assert err.value.constraint == "rps_range"
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert _NOTE not in _rendered(err.value)
+
+
+async def test_a_real_unmapped_server_error_is_wrapped_with_only_its_sqlstate(
+    h: Harness,
+) -> None:
+    # A NUL inside a jsonb string is refused with 22P05, which no constraint maps.
+    with pytest.raises(StorageQueryFailed) as err:
+        await h.make(bookmarks=({"note": _NOTE + "\x00"},))
+    assert err.value.sqlstate == "22P05"
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert _NOTE not in _rendered(err.value)

@@ -11,8 +11,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import traceback
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from decimal import Decimal
@@ -24,9 +25,10 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from sqlalchemy import CheckConstraint
-from sqlalchemy.exc import DataError, DBAPIError, IntegrityError
+from sqlalchemy.exc import DataError, DBAPIError, IntegrityError, OperationalError
 
 from candleviewer.db import models
+from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories import replay_sessions_sqlalchemy as mod
 from candleviewer.storage.repositories.replay_sessions import (
     FINISHED_STATES,
@@ -63,6 +65,10 @@ _B12 = (
 
 def _new_id() -> str:
     return str(uuid.uuid4())
+
+
+# A caller string a 404 mapper must not echo (markup plus a header-injection attempt).
+_HOSTILE = "<script>alert(1)</script>\r\nX-Injected: 1"
 
 
 class TestFakeRepository(ReplaySessionRepositoryContract):
@@ -150,6 +156,31 @@ def test_cursor_round_trips_and_is_url_safe() -> None:
 
 
 @pytest.mark.parametrize(
+    "stamp",
+    [
+        "2026-10-01T12:00:00+05:00",
+        "2026-10-01T12:00:00-03:30",
+        "2026-10-01T12:00:00Z",
+        "2026-10-01T12:00:00+00:00",
+    ],
+)
+def test_decode_cursor_hands_the_timestamp_back_in_utc(stamp: str) -> None:
+    rid = _new_id()
+    decoded, got_id = decode_cursor(encode_cursor(datetime.fromisoformat(stamp), rid))
+    assert (decoded, got_id) == (datetime.fromisoformat(stamp), rid)
+    assert decoded.tzinfo is UTC
+
+
+@pytest.mark.parametrize("stamp", ["0001-01-01T00:00:00+23:59", "9999-12-31T23:59:59-23:59"])
+def test_decode_cursor_refuses_a_timestamp_that_has_no_utc_equivalent(stamp: str) -> None:
+    # Well-formed and aware, but converting it to UTC leaves the datetime range. asyncpg cannot
+    # bind it either (DataError: date value out of range), so it is a 500 on Postgres unless the
+    # decoder refuses it, as it does for the fake.
+    with pytest.raises(ReplaySessionCursorError):
+        decode_cursor(encode_cursor(datetime.fromisoformat(stamp), _new_id()))
+
+
+@pytest.mark.parametrize(
     ("given", "clamped"),
     [(-1, 1), (0, 1), (1, 1), (50, 50), (MAX_PAGE_LIMIT, MAX_PAGE_LIMIT), (201, 200), (10**9, 200)],
 )
@@ -199,6 +230,28 @@ def test_illegal_update_error_says_what_it_found_and_what_it_expected() -> None:
     assert (lost.current, lost.expected) == (S.PAUSED, S.PLAYING)
     assert "paused" in str(lost) and "expected playing" in str(lost)
     assert "expected" not in str(ReplaySessionIllegalUpdateError("sid", S.DESTROYED))
+
+
+_CANONICAL = "12345678-1234-5678-1234-567812345678"
+
+
+@pytest.mark.parametrize(
+    ("given", "shown"),
+    [
+        (None, ""),
+        ("", ""),
+        ("not-a-uuid", ""),
+        (_HOSTILE, ""),
+        (_CANONICAL, _CANONICAL),
+        ("{12345678-1234-5678-1234-567812345678}", _CANONICAL),
+        ("12345678123456781234567812345678", _CANONICAL),
+        (uuid.UUID(_CANONICAL), _CANONICAL),
+    ],
+)
+def test_not_found_names_at_most_the_canonical_session_id(
+    given: str | uuid.UUID | None, shown: str
+) -> None:
+    assert str(ReplaySessionNotFoundError(given)) == shown
 
 
 # -- adapter: statements ---------------------------------------------------------------------------
@@ -291,8 +344,15 @@ class _Driver(Exception):
 class _PgError(Exception):
     """What the asyncpg wrapper raises: `sqlstate` here, the name on `__cause__` or `diag`."""
 
-    def __init__(self, sqlstate: str, *, cause: str | None = None, diag: str | None = None) -> None:
-        super().__init__("pg")
+    def __init__(
+        self,
+        sqlstate: str,
+        *,
+        cause: str | None = None,
+        diag: str | None = None,
+        message: str = "pg",
+    ) -> None:
+        super().__init__(message)
         self.sqlstate = sqlstate
         self.diag = None if diag is None else SimpleNamespace(constraint_name=diag)
         if cause is not None:
@@ -315,6 +375,24 @@ def test_violated_constraint_reads_the_name_wherever_the_driver_puts_it(
     orig: Exception, name: str | None
 ) -> None:
     assert mod._violated_constraint(DBAPIError("stmt", {}, orig)) == name
+
+
+class _OddState(Exception):
+    sqlstate = 23502  # an int is not a SQLSTATE: never trusted as one
+
+
+@pytest.mark.parametrize(
+    ("orig", "sqlstate"),
+    [
+        (_PgError("40001"), "40001"),
+        (Exception("a driver-side failure has no sqlstate"), None),
+        (_OddState(), None),
+    ],
+)
+def test_sqlstate_is_the_drivers_code_when_it_is_a_string_and_none_otherwise(
+    orig: Exception, sqlstate: str | None
+) -> None:
+    assert mod._sqlstate(DBAPIError("stmt", {}, orig)) == sqlstate
 
 
 # -- adapter: control flow over a scripted unit of work -------------------------------------------
@@ -419,11 +497,61 @@ async def test_create_maps_database_rejections_to_the_constraint_name(
     assert (err.value.constraint, rel.commits) == (constraint, 0)
 
 
-async def test_create_lets_an_unrelated_database_error_through_untouched() -> None:
-    boom = IntegrityError("INSERT", {}, _PgError("23502"))
-    with pytest.raises(IntegrityError) as err:
-        await _repo(_Rel(boom)).create(_create())
-    assert err.value is boom
+# -- adapter: no database error leaves with its statement, parameters or row detail (C-12.6) ------
+
+_NOTE = "SECRET-NOTE"  # stands in for a P1 `bookmarks` note (21 §12)
+
+
+def _leaky(error: type[DBAPIError], sqlstate: str, **named: str) -> DBAPIError:
+    """A driver failure as asyncpg and SQLAlchemy render it: the bound parameters and the server's
+    `DETAIL: Failing row contains (...)` line both carry the note."""
+    detail = f"new row violates a check\nDETAIL:  Failing row contains ({_NOTE})"
+    orig = _PgError(sqlstate, message=detail, **named)
+    statement = "INSERT INTO replay_sessions (bookmarks) VALUES ($1)"
+    return error(statement, {"bookmarks": [_NOTE]}, orig)
+
+
+def _rendered(exc: BaseException) -> str:
+    return "".join(traceback.format_exception(exc))
+
+
+_Writer = Callable[[mod.SqlAlchemyReplaySessionRepository], Awaitable[object]]
+_WRITES: dict[str, _Writer] = {
+    "create": lambda repo: repo.create(_create(bookmarks=({"note": _NOTE},))),
+    "update_state": lambda repo: repo.update_state(_new_id(), _new_id(), state=S.PLAYING),
+    "update_cursor": lambda repo: repo.update_cursor(_new_id(), _new_id(), cursor_ts=T0),
+    "update_speed": lambda repo: repo.update_speed(_new_id(), _new_id(), speed=Decimal(2)),
+    "touch": lambda repo: repo.touch(_new_id(), _new_id(), T0),
+}
+
+
+@pytest.mark.parametrize("write", sorted(_WRITES))
+async def test_a_named_violation_leaves_no_driver_text_or_parameters_behind(write: str) -> None:
+    leaky = _leaky(IntegrityError, "23514", cause="rps_cursor")
+    assert _NOTE in _rendered(leaky)  # control: the raw driver error would leak the note
+    rel = _Rel(leaky)
+    with pytest.raises(ReplaySessionConstraintError) as err:
+        await _WRITES[write](_repo(rel))
+    assert (err.value.constraint, rel.commits) == ("rps_cursor", 0)
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert _NOTE not in _rendered(err.value)
+
+
+@pytest.mark.parametrize("write", sorted(_WRITES))
+@pytest.mark.parametrize(
+    ("error", "sqlstate"), [(IntegrityError, "23502"), (OperationalError, "40001")]
+)
+async def test_an_unmapped_database_error_is_wrapped_with_only_its_sqlstate(
+    write: str, error: type[DBAPIError], sqlstate: str
+) -> None:
+    leaky = _leaky(error, sqlstate)
+    assert _NOTE in _rendered(leaky)
+    rel = _Rel(leaky)
+    with pytest.raises(StorageQueryFailed) as err:
+        await _WRITES[write](_repo(rel))
+    assert (err.value.sqlstate, rel.commits) == (sqlstate, 0)
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert _NOTE not in _rendered(err.value)
 
 
 async def test_malformed_ids_never_reach_the_database() -> None:
@@ -442,6 +570,24 @@ async def test_malformed_ids_never_reach_the_database() -> None:
     ):
         with pytest.raises(ReplaySessionNotFoundError):
             await write
+    assert rel.statements == []
+
+
+async def test_a_malformed_id_is_never_echoed_by_the_not_found_error() -> None:
+    rel, sid = _Rel(), _new_id()
+    repo = _repo(rel)
+    for write in (
+        repo.update_state(_new_id(), _HOSTILE, state=S.PAUSED),
+        repo.update_cursor(_new_id(), _HOSTILE, cursor_ts=T0),
+        repo.update_speed(_new_id(), _HOSTILE, speed=Decimal(1)),
+        repo.touch(_new_id(), _HOSTILE, T0),
+    ):
+        with pytest.raises(ReplaySessionNotFoundError) as err:
+            await write
+        assert str(err.value) == ""
+    with pytest.raises(ReplaySessionNotFoundError) as bad_owner:  # well-formed session id only
+        await repo.touch(_HOSTILE, sid, T0)
+    assert str(bad_owner.value) == sid
     assert rel.statements == []
 
 
@@ -513,8 +659,10 @@ async def test_list_page_fetches_one_extra_row_to_know_whether_a_next_page_exist
 async def test_list_page_rejects_a_bad_cursor_and_clamps_the_limit_before_the_database() -> None:
     rel = _Rel(_Result([]))
     repo = _repo(rel)
-    with pytest.raises(ReplaySessionCursorError):
-        await repo.list_page(_new_id(), cursor="garbage!")
+    overflow = encode_cursor(datetime.fromisoformat("0001-01-01T00:00:00+23:59"), _new_id())
+    for bad in ("garbage!", overflow):  # the second is a timestamp asyncpg cannot bind
+        with pytest.raises(ReplaySessionCursorError):
+            await repo.list_page(_new_id(), cursor=bad)
     assert rel.statements == []
     await repo.list_page(_new_id(), limit=10**6)
     assert rel.params()["param_1"] == MAX_PAGE_LIMIT + 1

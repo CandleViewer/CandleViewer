@@ -8,6 +8,7 @@ the injected clock (a settable `FakeClock` by default): no sleeps, no wall clock
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import re
 import uuid
@@ -63,11 +64,27 @@ def _canon(value: str) -> str | None:
         return None
 
 
+def _stored_uuid(value: str | None) -> str | None:
+    """A uuid column's text form as the adapter returns it: lower-case canonical, None stays None,
+    garbage is a `ValueError` before any constraint is looked at."""
+    return None if value is None else str(uuid.UUID(value))
+
+
 def _numeric_6_2(speed: Decimal) -> Decimal:
-    """What a `numeric(6,2)` column stores (half-up), or `rps_speed` when it cannot hold it."""
-    if not speed.is_finite() or abs(speed) >= _NUMERIC_6_2_LIMIT:
+    """What a `numeric(6,2)` column stores (half-up), or `rps_speed` when it cannot hold it.
+
+    Postgres coerces before it matches any row or evaluates any CHECK: an infinity, or a value
+    that rounds to 10^4 or more, is `rps_speed` even when nothing matches. NaN is storable, so it
+    goes on to fail the CHECK like any other out-of-range value (see `_check`).
+    """
+    if speed.is_nan():
+        return speed
+    if speed.is_infinite() or abs(speed) >= _NUMERIC_6_2_LIMIT:
         raise ReplaySessionConstraintError("rps_speed")
-    return speed.quantize(_CENT, rounding=ROUND_HALF_UP)
+    rounded = speed.quantize(_CENT, rounding=ROUND_HALF_UP)
+    if abs(rounded) >= _NUMERIC_6_2_LIMIT:  # 9999.995 rounds up to 10000.00
+        raise ReplaySessionConstraintError("rps_speed")
+    return rounded
 
 
 class FakeReplaySessionRepository:
@@ -86,7 +103,7 @@ class FakeReplaySessionRepository:
     ) -> ReplaySessionRow:
         row = self._owned(user_id, session_id)
         if row is None:
-            raise ReplaySessionNotFoundError(session_id)
+            raise ReplaySessionNotFoundError(_canon(session_id))  # like the adapter: never raw
         if row.state in TERMINAL_STATES or (expected is not None and row.state is not expected):
             raise ReplaySessionIllegalUpdateError(row.id, row.state, expected)
         return row
@@ -107,7 +124,9 @@ class FakeReplaySessionRepository:
             raise ReplaySessionConstraintError("rps_paper")
         if end <= start:
             raise ReplaySessionConstraintError("rps_range")
-        if not _SPEED_MIN <= speed <= _SPEED_MAX:
+        if (
+            speed.is_nan() or not _SPEED_MIN <= speed <= _SPEED_MAX
+        ):  # NaN: an ordinary CHECK failure
             raise ReplaySessionConstraintError("rps_speed")
         if tier not in {t.value for t in SourceTier}:
             raise ReplaySessionConstraintError("rps_tier")
@@ -116,6 +135,12 @@ class FakeReplaySessionRepository:
 
     async def create(self, row: ReplaySessionCreate) -> ReplaySessionRow:
         now = self._clock()
+        # Like the adapter, ids are parsed client-side first: garbage is a ValueError, never a
+        # constraint, and every uuid is stored in canonical lower-case form.
+        sid, uid = str(uuid.UUID(row.id)), str(uuid.UUID(row.user_id))
+        recording, account = _stored_uuid(row.recording_session_id), _stored_uuid(
+            row.paper_account_id
+        )
         if not _SYMBOL_CODE.fullmatch(
             row.symbol
         ):  # a domain check, coerced before the table CHECKs
@@ -123,19 +148,19 @@ class FakeReplaySessionRepository:
         speed = _numeric_6_2(row.speed)
         self._check(
             start=row.range_start, end=row.range_end, cursor=row.cursor_ts, speed=speed,
-            paper=row.paper_trading, account=row.paper_account_id, tier=row.source_tier,
+            paper=row.paper_trading, account=account, tier=row.source_tier,
         )  # fmt: skip
-        sid, uid = str(uuid.UUID(row.id)), str(uuid.UUID(row.user_id))
         if sid in self._rows:
             raise ReplaySessionConstraintError("replay_sessions_pkey")
         made = ReplaySessionRow(
             id=sid, user_id=uid, symbol=row.symbol,
-            recording_session_id=row.recording_session_id, range_start=row.range_start,
+            recording_session_id=recording, range_start=row.range_start,
             range_end=row.range_end, cursor_ts=row.cursor_ts, speed=speed,
             state=ReplayState.CREATED, source_tier=SourceTier(row.source_tier),
-            paper_trading=row.paper_trading, paper_account_id=row.paper_account_id,
-            bookmarks=tuple(row.bookmarks), loop_enabled=row.loop_enabled, events_emitted=0,
-            gap_warnings=0, error_message=None, created_at=now, updated_at=now, finished_at=None,
+            paper_trading=row.paper_trading, paper_account_id=account,
+            bookmarks=copy.deepcopy(tuple(row.bookmarks)), loop_enabled=row.loop_enabled,
+            events_emitted=0, gap_warnings=0, error_message=None, created_at=now, updated_at=now,
+            finished_at=None,
         )  # fmt: skip
         self._rows[sid] = made
         return made
@@ -218,8 +243,8 @@ class FakeReplaySessionRepository:
         self, user_id: str, session_id: str, *, speed: Decimal
     ) -> ReplaySessionRow:
         now = self._clock()
+        stored = _numeric_6_2(speed)  # an unstorable speed fails before any row is matched
         row = self._writable(user_id, session_id)
-        stored = _numeric_6_2(speed)
         self._check(
             start=row.range_start, end=row.range_end, cursor=row.cursor_ts, speed=stored,
             paper=row.paper_trading, account=row.paper_account_id, tier=row.source_tier,

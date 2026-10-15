@@ -21,6 +21,11 @@ from tests._ci_network_guard import _cv_network_guard  # noqa: F401
 from tests._duckdb_guard import _cv_no_duckdb_install  # noqa: F401
 from tests._hypothesis_profiles import load_active_profile
 
+# Behavioural-contract mixins are not `test_*` modules, so pytest would not rewrite their asserts
+# and a failure would print a bare `AssertionError` with no values (C-13.7). Register them before
+# any test module imports them; the fake and the Postgres suites both subclass this one.
+pytest.register_assert_rewrite("tests.unit.storage.replay_sessions_contract")
+
 load_active_profile()
 
 

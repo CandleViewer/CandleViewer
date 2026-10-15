@@ -43,11 +43,18 @@ def _build_engine(dsn: str) -> AsyncEngine:
     # time — the DSN is constructed at runtime from `Settings.pg_dsn` with no
     # per-connection kwargs, and `SET LOCAL` resets cleanly at every
     # transaction boundary, which a connect-time `SET` would not.
+    #
+    # `hide_parameters=True`: `DBAPIError.__str__` otherwise renders the bound
+    # parameters (`[parameters: ...]`), and bound values include P1 columns such
+    # as `replay_sessions.bookmarks` (21 §12). This is the one engine builder for
+    # every relational repository, so no exception chain they raise can carry
+    # bound values into a log (C-12.6).
     return create_async_engine(
         dsn,
         pool_size=10,
         max_overflow=5,
         pool_pre_ping=True,
+        hide_parameters=True,
     )
 
 

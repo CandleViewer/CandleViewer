@@ -11,6 +11,9 @@ that matches no row is disambiguated in the same unit of work: no row for this o
 `ReplaySessionNotFoundError`; a terminal row, or a lost compare-and-set, is
 `ReplaySessionIllegalUpdateError`. Reads select explicit column allow-lists (`ROW_COLUMNS`,
 `IDLE_COLUMNS`), never `*`, and the system-only sweep never selects `bookmarks` (P1, 21 §12).
+A database error never leaves a write with its statement, bound parameters or the server's
+`DETAIL: Failing row contains (...)`, any of which can carry a `bookmarks` note (C-12.6): it is
+re-raised `from None`, as a named `ReplaySessionConstraintError` or `StorageQueryFailed(sqlstate)`.
 Timestamps come from the injected clock (UTC), so tests need no sleeps.
 """
 
@@ -28,6 +31,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 
 from candleviewer.db.models import replay_sessions as _TABLE
+from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     SqlAlchemyUnitOfWork,
@@ -164,6 +168,12 @@ def _to_idle(m: Mapping[Any, Any]) -> IdleReplaySession:
     )
 
 
+def _sqlstate(exc: DBAPIError) -> str | None:
+    """The SQLSTATE the driver reported, or None for a driver-side failure that has none."""
+    value = getattr(exc.orig, "sqlstate", None)
+    return value if isinstance(value, str) else None
+
+
 def _violated_constraint(exc: DBAPIError) -> str | None:
     """Name of the constraint a database error reports, or None when it is not one of ours.
 
@@ -171,7 +181,7 @@ def _violated_constraint(exc: DBAPIError) -> str | None:
     (`__cause__`, or `diag` for psycopg); look in all of those places.
     """
     orig: Any = exc.orig
-    sqlstate = getattr(orig, "sqlstate", None)
+    sqlstate = _sqlstate(exc)
     if sqlstate == _NUMERIC_OUT_OF_RANGE:
         return "rps_speed"
     if sqlstate not in _NAMED_VIOLATIONS:
@@ -187,13 +197,20 @@ def _violated_constraint(exc: DBAPIError) -> str | None:
 
 @contextmanager
 def _constraints() -> Iterator[None]:
+    """Turn a database rejection into a domain error that carries none of the driver's text.
+
+    The driver error holds the statement, its bound parameters and the server's `DETAIL: Failing
+    row contains (...)`, all of which can include a P1 `bookmarks` note (21 §12), so it is never
+    chained (`from None`): a violated constraint is `ReplaySessionConstraintError(name)`, anything
+    else `StorageQueryFailed(sqlstate)` (C-12.6).
+    """
     try:
         yield
     except DBAPIError as exc:
         name = _violated_constraint(exc)
         if name is None:
-            raise
-        raise ReplaySessionConstraintError(name) from exc
+            raise StorageQueryFailed(_sqlstate(exc)) from None
+        raise ReplaySessionConstraintError(name) from None
 
 
 class SqlAlchemyReplaySessionRepository:
@@ -349,7 +366,7 @@ class SqlAlchemyReplaySessionRepository:
     ) -> Mapping[Any, Any]:
         uid, sid = _uuid(user_id), _uuid(session_id)
         if uid is None or sid is None:
-            raise ReplaySessionNotFoundError(session_id)
+            raise ReplaySessionNotFoundError(sid)  # never the caller's string: a 404 may render it
         stmt = update_statement(uid, sid, values, expected).returning(*columns)
         with _constraints():
             async with self._relational.unit_of_work() as uow:

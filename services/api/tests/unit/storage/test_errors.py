@@ -16,6 +16,7 @@ from candleviewer.storage.errors import (
     StorageError,
     StorageExportVerifyFailed,
     StoragePartitionDropNotApplied,
+    StorageQueryFailed,
     StorageRetentionBlockedByPin,
     StorageRetentionBlockedByReplay,
     StorageRetentionBlockedUnverified,
@@ -36,6 +37,7 @@ def test_error_codes_are_stable_and_unique() -> None:
         StorageRetentionBlockedUnverified: "STORAGE_RETENTION_BLOCKED_UNVERIFIED",
         StorageRetentionBlockedByReplay: "STORAGE_RETENTION_BLOCKED_REPLAY",
         StorageDiskCritical: "STORAGE_DISK_CRITICAL",
+        StorageQueryFailed: "STORAGE_QUERY_FAILED",
         IlpRowError: "STORAGE_ILP_ROW_INVALID",
         MissingDesignatedTimestamp: "STORAGE_ILP_MISSING_DESIGNATED_TS",
         InvalidSymbol: "STORAGE_ILP_INVALID_SYMBOL",
@@ -71,3 +73,13 @@ def test_partition_drop_not_applied_carries_structured_reason_and_names_it_in_th
         1.5,
     )
     assert str(err) == "partition 2026-10-17 of trades not applied (reason=suspended)"
+
+
+def test_storage_query_failed_names_only_the_sqlstate() -> None:
+    err = StorageQueryFailed("40001")
+    assert (err.code, err.sqlstate) == ("STORAGE_QUERY_FAILED", "40001")
+    assert str(err) == "database statement failed (sqlstate 40001)"
+    assert (StorageQueryFailed(None).sqlstate, str(StorageQueryFailed(None))) == (
+        None,
+        "database statement failed (sqlstate unknown)",
+    )

@@ -10,6 +10,11 @@ None, writes -> `ReplaySessionNotFoundError`), so ids cannot be probed across us
 unscoped read is `list_idle_since`, the system-only reclaim sweep: it returns a projection without
 `bookmarks`, which 21 §12 classifies P1 ("read only by `user_id` in the WHERE clause").
 
+Trust boundary: `user_id` is always the authenticated principal, never client-supplied;
+`paper_account_id` MUST be restricted by the service (slice 3 / E26-T05) to `exchange_accounts`
+rows with `env = 'demo'` that the user is granted (C-2.11, C-12.5). The repository only enforces
+the foreign key, so a live account, or another user's, passes it.
+
 State (C-2.19): `ReplayState` carries every B12 `replay` chart state (28 §B12.2). Only `destroyed`
 is final (§B12.3: `finished` and `error` re-enter via SEEK), so it is the one terminal state and
 every mutator refuses it. Which transition is legal is the B12 machine's call; the repository only
@@ -21,8 +26,9 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Protocol
@@ -64,7 +70,18 @@ _MAX_CURSOR_CHARS = 256
 
 
 class ReplaySessionNotFoundError(Exception):
-    """Row is missing, malformed-id or owned by someone else (all identical, HTTP 404)."""
+    """Row is missing, malformed-id or owned by someone else (all identical, HTTP 404).
+
+    Names at most the canonical session uuid, never the caller's own string, so a 404 mapper
+    cannot reflect arbitrary input.
+    """
+
+    def __init__(self, session_id: str | uuid.UUID | None = None) -> None:
+        canonical = ""
+        if session_id is not None:
+            with suppress(ValueError):
+                canonical = str(uuid.UUID(str(session_id)))
+        super().__init__(canonical)
 
 
 class ReplaySessionConstraintError(Exception):
@@ -106,7 +123,10 @@ class ReplaySessionCreate:
     """What the service supplies at create; the row starts in `created` with zeroed counters.
 
     `id` is service-minted (the table has no default). `source_tier` is a closed enum, and no
-    field accepts a filesystem path (SR-097).
+    field accepts a filesystem path (SR-097). `user_id` is always the authenticated principal,
+    never client-supplied. `paper_account_id` MUST be restricted by the service (slice 3 /
+    E26-T05) to `exchange_accounts` rows with `env = 'demo'` that the user is granted (C-2.11,
+    C-12.5): the repository only enforces the foreign key.
     """
 
     id: str
@@ -197,7 +217,12 @@ def encode_cursor(created_at: datetime, session_id: str) -> str:
 
 
 def decode_cursor(cursor: str) -> tuple[datetime, str]:
-    """Inverse of `encode_cursor`; anything else is a `ReplaySessionCursorError`, never a 500."""
+    """Inverse of `encode_cursor`; anything else is a `ReplaySessionCursorError`, never a 500.
+
+    The timestamp comes back in UTC. A well-formed one with no UTC equivalent (year 1 at +23:59)
+    is refused here, because asyncpg cannot bind it either (`DataError`, date value out of
+    range) and it would otherwise surface as a 500.
+    """
     try:
         if len(cursor) > _MAX_CURSOR_CHARS:
             raise ValueError("too long")
@@ -208,8 +233,8 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
         ):
             raise ValueError("wrong shape")
         created_at = require_aware(datetime.fromisoformat(data[0]), "cursor timestamp")
-        return created_at, str(uuid.UUID(data[1]))
-    except ValueError as exc:
+        return created_at.astimezone(UTC), str(uuid.UUID(data[1]))
+    except (ValueError, OverflowError) as exc:
         raise ReplaySessionCursorError("invalid cursor") from exc
 
 
@@ -273,10 +298,12 @@ class ReplaySessionRepository(Protocol):
         events_emitted: int | None = None,
         gap_warnings: int | None = None,
     ) -> None:
-        """Persist the throttled playback position and counters (absolute values) in one UPDATE.
+        """Persist the playback position and counters (absolute values) in one UPDATE.
 
-        Deliberately leaves `updated_at` alone: the reclaim sweep reads it as the last *control*
-        activity, so a session nobody is controlling must not look alive because its clock ticks.
+        The repository does not throttle: the service writes the cursor at most once per second
+        (24 §13.7) and decides what to coalesce. Deliberately leaves `updated_at` alone: the
+        reclaim sweep reads it as the last *control* activity, so a session nobody is controlling
+        must not look alive because its clock ticks.
         """
         ...
 
