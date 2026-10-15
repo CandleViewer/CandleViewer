@@ -17,18 +17,26 @@ target absent from the snapshot: another owner's or missing; internal, the API a
 answers it as `target_unavailable`), `version_conflict`, `id_unavailable` and `immutable_field`
 (an update changing `symbol` or `tool`; checked against the row locked by the snapshot, so it is
 race-free).
+
+Layout ownership (E15-T01 spec Sec.7, D27): a write naming layouts first share-locks the caller's
+live ones (`_LAYOUTS_SHARE`), before any drawings row is touched, as the layout soft deletes
+lock layouts before drawings. A concurrent soft delete then either waits and cascades to the
+new rows, or this write waits and finds the layout gone (`DrawingLayoutNotFoundError`, 422).
+0022's composite FK is the backstop and maps to the same error. A deadlock (`40P01`) reruns the
+whole transaction once; a second one is `StorageTierUnavailable` (503), never a 500.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Any, assert_never
 
 import sqlalchemy as sa
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
+from candleviewer.storage.errors import StorageTierUnavailable
 from candleviewer.storage.repositories.drawings import (
     BatchOp,
     BatchOpFailed,
@@ -37,6 +45,7 @@ from candleviewer.storage.repositories.drawings import (
     DeleteOp,
     DrawingFields,
     DrawingIdUnavailableError,
+    DrawingLayoutNotFoundError,
     DrawingNotFoundError,
     DrawingRow,
     DrawingVersionConflictError,
@@ -44,6 +53,7 @@ from candleviewer.storage.repositories.drawings import (
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    SqlAlchemyUnitOfWork,
 )
 
 #: Explicit read allow-list; internal columns (anchors, deleted_at, alert_id) stay out.
@@ -147,6 +157,12 @@ _SNAPSHOT = sa.text(
     "SELECT id::text AS id, symbol, tool, deleted_at, updated_at "
     "FROM drawings WHERE id = ANY(CAST(:ids AS uuid[])) AND owner_user_id = CAST(:owner AS uuid) "
     "ORDER BY id FOR UPDATE"
+)
+# Spec Sec.7: the caller's live layouts among `:ids`, share-locked in id order (blocks a
+# concurrent soft delete's row lock until this write commits).
+_LAYOUTS_SHARE = sa.text(
+    "SELECT id::text AS id FROM layouts WHERE id = ANY(CAST(:ids AS uuid[])) "
+    "AND owner_user_id = CAST(:owner AS uuid) AND deleted_at IS NULL ORDER BY id FOR SHARE"
 )
 _PURGE = sa.text(
     "DELETE FROM drawings WHERE id IN (SELECT id FROM drawings WHERE deleted_at IS NOT NULL "
@@ -291,22 +307,71 @@ def _first_failure(
     return None
 
 
-def _is_pk_collision(exc: IntegrityError) -> bool:
-    """unique_violation (SQLSTATE 23505) on the primary key, not message text.
-
-    asyncpg's wrapper exposes `sqlstate` but the constraint name lives on the driver
-    exception (`__cause__`, or `diag` for psycopg); look in all of those places.
-    """
+def _constraint_name(exc: IntegrityError) -> str | None:
+    """asyncpg's wrapper exposes `sqlstate` but the constraint name lives on the driver
+    exception (`__cause__`, or `diag` for psycopg); look in all of those places."""
     orig: Any = exc.orig
-    if getattr(orig, "sqlstate", None) != "23505":
-        return False
     for src in (orig, getattr(orig, "__cause__", None), getattr(orig, "driver_exception", None)):
         name = getattr(src, "constraint_name", None) or getattr(
             getattr(src, "diag", None), "constraint_name", None
         )
         if name:
-            return bool(name == "drawings_pkey")
-    return False
+            return str(name)
+    return None
+
+
+def _is_pk_collision(exc: IntegrityError) -> bool:
+    """unique_violation (SQLSTATE 23505) on the primary key, not message text."""
+    sqlstate = getattr(exc.orig, "sqlstate", None)
+    return sqlstate == "23505" and _constraint_name(exc) == "drawings_pkey"
+
+
+#: 0022's composite FK (D27); it fires only if the in-transaction layout check were bypassed.
+LAYOUT_FK = "fk_drawings_layout_id_layouts"
+
+
+def _is_layout_fk(exc: IntegrityError) -> bool:
+    """foreign_key_violation (SQLSTATE 23503) on `LAYOUT_FK`, not message text."""
+    sqlstate = getattr(exc.orig, "sqlstate", None)
+    return sqlstate == "23503" and _constraint_name(exc) == LAYOUT_FK
+
+
+def _is_deadlock(exc: DBAPIError) -> bool:
+    """deadlock_detected (SQLSTATE 40P01) on the driver error or its cause."""
+    orig: Any = exc.orig
+    sources = (orig, getattr(orig, "__cause__", None))
+    return any(getattr(src, "sqlstate", None) == "40P01" for src in sources)
+
+
+async def _deadlock_retry[T](run: Callable[[], Awaitable[T]]) -> T:
+    """Run one whole transaction; after a `40P01` (rolled back by the unit of work's exit) run
+    it once more. A second deadlock is a store outage (503, retryable), never a 500."""
+    try:
+        return await run()
+    except DBAPIError as exc:
+        if not _is_deadlock(exc):
+            raise
+    try:
+        return await run()
+    except DBAPIError as exc:
+        if not _is_deadlock(exc):
+            raise
+        raise StorageTierUnavailable("drawings write deadlocked twice") from exc
+
+
+async def _lock_live_layouts(
+    uow: SqlAlchemyUnitOfWork, owner: str, refs: Sequence[tuple[str, str | None]]
+) -> None:
+    """Share-lock the caller's live layouts named by `refs` (request field, layout id); any id
+    missing (unknown, another owner's or deleted: identical) refuses the whole write."""
+    ids = sorted({lid for _, lid in refs if lid is not None})
+    if not ids:
+        return
+    got = await uow.session.execute(_LAYOUTS_SHARE, {"ids": ids, "owner": owner})
+    live = {str(row[0]) for row in got.all()}
+    missing = tuple(field for field, lid in refs if lid is not None and lid not in live)
+    if missing:
+        raise DrawingLayoutNotFoundError(missing)
 
 
 class SqlAlchemyDrawingRepository:
@@ -348,15 +413,22 @@ class SqlAlchemyDrawingRepository:
 
     async def create(self, owner: str, drawing_id: str, fields: DrawingFields) -> DrawingRow:
         params = {"id": drawing_id, "owner": owner, **_params(fields)}
-        try:
+
+        async def attempt() -> DrawingRow:
             async with self._relational.unit_of_work() as uow:
+                await _lock_live_layouts(uow, owner, [("layout_id", fields.layout_id)])
                 row = (await uow.session.execute(_INSERT, params)).mappings().one()
                 await uow.commit()
+            return _to_row(row)
+
+        try:
+            return await _deadlock_retry(attempt)
         except IntegrityError as exc:
             if _is_pk_collision(exc):
                 raise DrawingIdUnavailableError(drawing_id) from exc
+            if _is_layout_fk(exc):
+                raise DrawingLayoutNotFoundError(("layout_id",)) from exc
             raise
-        return _to_row(row)
 
     async def update(
         self,
@@ -367,17 +439,27 @@ class SqlAlchemyDrawingRepository:
         if_match: datetime | None,
     ) -> DrawingRow:
         params = {"id": drawing_id, "owner": owner, "if_match": if_match, **_params(fields)}
-        async with self._relational.unit_of_work() as uow:
-            row = (await uow.session.execute(_UPDATE, params)).mappings().first()
-            if row is None:
-                # Same unit of work: tell a stale token from an unavailable row. A foreign
-                # or deleted row stays NotFound, so no existence oracle.
-                live = await uow.session.execute(_GET, {"id": drawing_id, "owner": owner})
-                if live.first() is not None:
-                    raise DrawingVersionConflictError(drawing_id)
-                raise DrawingNotFoundError(drawing_id)
-            await uow.commit()
-        return _to_row(row)
+
+        async def attempt() -> DrawingRow:
+            async with self._relational.unit_of_work() as uow:
+                await _lock_live_layouts(uow, owner, [("layout_id", fields.layout_id)])
+                row = (await uow.session.execute(_UPDATE, params)).mappings().first()
+                if row is None:
+                    # Same unit of work: tell a stale token from an unavailable row. A foreign
+                    # or deleted row stays NotFound, so no existence oracle.
+                    live = await uow.session.execute(_GET, {"id": drawing_id, "owner": owner})
+                    if live.first() is not None:
+                        raise DrawingVersionConflictError(drawing_id)
+                    raise DrawingNotFoundError(drawing_id)
+                await uow.commit()
+            return _to_row(row)
+
+        try:
+            return await _deadlock_retry(attempt)
+        except IntegrityError as exc:
+            if _is_layout_fk(exc):
+                raise DrawingLayoutNotFoundError(("layout_id",)) from exc
+            raise
 
     async def soft_delete(self, owner: str, drawing_id: str) -> bool:
         async with self._relational.unit_of_work() as uow:
@@ -386,9 +468,26 @@ class SqlAlchemyDrawingRepository:
         return bool(getattr(res, "rowcount", 0))
 
     async def apply_batch(self, owner: str, ops: Sequence[BatchOp]) -> BatchResult:
-        """Apply `ops` atomically with four statements (snapshot + one per op kind)."""
+        """Apply `ops` atomically: the layout share-lock, the snapshot and one statement per op
+        kind; a deadlock reruns the whole transaction once."""
         if len(ops) > MAX_BATCH_OPS_STORAGE:
             raise ValueError(f"a batch carries at most {MAX_BATCH_OPS_STORAGE} operations")
+        refs = [
+            (f"operations.{i}.drawing.layout_id", op.fields.layout_id)
+            for i, op in enumerate(ops)
+            if not isinstance(op, DeleteOp)
+        ]
+        try:
+            return await _deadlock_retry(lambda: self._apply_batch_once(owner, ops, refs))
+        except IntegrityError as exc:
+            if _is_layout_fk(exc):
+                named = tuple(field for field, lid in refs if lid is not None)
+                raise DrawingLayoutNotFoundError(named) from exc
+            raise
+
+    async def _apply_batch_once(
+        self, owner: str, ops: Sequence[BatchOp], refs: Sequence[tuple[str, str | None]]
+    ) -> BatchResult:
         creates: list[tuple[int, CreateOp]] = [
             (i, op) for i, op in enumerate(ops) if isinstance(op, CreateOp)
         ]
@@ -399,6 +498,7 @@ class SqlAlchemyDrawingRepository:
             (i, op) for i, op in enumerate(ops) if isinstance(op, DeleteOp)
         ]
         async with self._relational.unit_of_work() as uow:
+            await _lock_live_layouts(uow, owner, refs)  # layouts before drawings (spec Sec.7)
             ids = [op.id for op in ops]
             locked = await uow.session.execute(_SNAPSHOT, {"ids": ids, "owner": owner})
             snap: dict[str, Mapping[str, Any]] = {r["id"]: dict(r) for r in locked.mappings()}
