@@ -95,8 +95,8 @@ class _OneThread[T]:
         self._pending: Future[T] | None = None
 
     async def run(self, fn: Callable[[], T]) -> T:
-        # A cancelled `wrap_future` may leave a stale done future here; the next pass consumes it.
-        if self._pending is None:
+        # A cancelled await may leave a stale future here: consumed if it ran, resubmitted if not.
+        if self._pending is None or self._pending.cancelled():
             self._pending = self._pool.submit(contextvars.copy_context().run, fn)
         future = self._pending
         try:

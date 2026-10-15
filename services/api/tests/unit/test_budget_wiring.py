@@ -214,3 +214,20 @@ async def test_one_thread_starts_a_fresh_call_after_a_failure() -> None:
         await lane.run(call)
     assert await lane.run(call) == 3
     lane.close()
+
+
+async def test_one_thread_resubmits_a_call_cancelled_before_it_started() -> None:
+    lane, hold, calls = _OneThread[int]("test-lane"), threading.Event(), [0]
+    busy = lane._pool.submit(hold.wait, 5)  # the lane's only worker is busy: the next call queues
+
+    def queued() -> int:
+        calls[0] += 1
+        return 7
+
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0):  # the pass ends before the worker ever starts the call
+            await lane.run(queued)
+    hold.set()
+    await asyncio.wrap_future(busy)
+    assert (await lane.run(queued), calls[0]) == (7, 1)  # not a CancelledError on every pass
+    lane.close()
