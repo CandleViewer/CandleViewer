@@ -222,12 +222,12 @@
             "spec_hash": {
               "type": "string",
               "pattern": "^[0-9a-f]{64}$",
-              "description": "bars/footprint snapshots: the series' bar spec (SR-E12-14)."
+              "description": "bars snapshots: the series' bar spec (SR-E12-14)."
             },
             "build_version": {
               "type": "integer",
               "minimum": 1,
-              "description": "bars/footprint snapshots: the bar builder version that built the series (SR-E12-14)."
+              "description": "bars snapshots: the lowest bar builder version among the bars sent (SR-E12-14, §6.1)."
             },
             "include_delta": {
               "type": "boolean",

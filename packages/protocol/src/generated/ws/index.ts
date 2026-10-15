@@ -329,11 +329,11 @@ export interface SnapMeta {
   history_bars?: number;
   source?: "live" | "replay";
   /**
-   * bars/footprint snapshots: the series' bar spec (SR-E12-14).
+   * bars snapshots: the series' bar spec (SR-E12-14).
    */
   spec_hash?: string;
   /**
-   * bars/footprint snapshots: the bar builder version that built the series (SR-E12-14).
+   * bars snapshots: the lowest bar builder version among the bars sent (SR-E12-14, §6.1).
    */
   build_version?: number;
   /**
@@ -437,11 +437,11 @@ export interface SnapMeta {
   history_bars?: number;
   source?: "live" | "replay";
   /**
-   * bars/footprint snapshots: the series' bar spec (SR-E12-14).
+   * bars snapshots: the series' bar spec (SR-E12-14).
    */
   spec_hash?: string;
   /**
-   * bars/footprint snapshots: the bar builder version that built the series (SR-E12-14).
+   * bars snapshots: the lowest bar builder version among the bars sent (SR-E12-14, §6.1).
    */
   build_version?: number;
   /**

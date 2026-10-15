@@ -228,3 +228,21 @@ def test_snap_meta_echoes_include_delta_on_bars_frames(schemas: dict[str, object
     )
     assert meta.is_valid({"include_delta": False}) and meta.is_valid({"include_delta": True})
     assert not meta.is_valid({"include_delta": "no"})
+
+
+def test_envelope_meta_carries_the_bars_fields_on_snap_and_d_frames(
+    schemas: dict[str, object],
+) -> None:
+    """#399: the envelope `meta` is snapMeta on every frame type, so a `d` echoes `include_delta`;
+    a bars snapshot carries no `meta.sources` (§6.1: the topic is tape-built only)."""
+    from jsonschema import Draft202012Validator
+
+    env = Draft202012Validator(
+        {"$ref": "cv://ws/v1/envelope.schema.json"}, registry=val.build_registry(schemas)
+    )
+    frame = {"ch": "bars.BTCUSDT.time.5", "ts": 1789132262404, "e": "b", "p": "AAAA"}
+    identity = {"spec_hash": "0" * 64, "build_version": 1, "include_delta": True}
+    snap = {**frame, "t": "snap", "s": 1, "meta": {"reason": "initial", **identity}}
+    delta = {**frame, "t": "d", "s": 2, "meta": {"include_delta": False}}
+    assert env.is_valid(snap) and env.is_valid(delta)
+    assert not env.is_valid({**delta, "meta": {"include_delta": False, "sources": ["tape"]}})

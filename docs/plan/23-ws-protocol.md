@@ -222,7 +222,7 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 | 1    | `u8`  | `side` (0 = buy/taker-lift, 1 = sell/taker-hit) — Bybit gives the aggressor side directly |
 | 1    | `u8`  | `flags` (bit0 block trade, bit1 liquidation-origin, bit2 cluster-aggregated)              |
 
-**body_kind 4 — bars.** Requires header `format_version = 2` (#2014); a `format_version = 1` bars body (69-byte records without identity) is no longer sent. `record_count` records of 85 bytes, little-endian like every field here: `u64 generation`, `u64 index` (the §8.2 bar key), `u32 ts_offset_ms`, `i64 o,h,l,c`, `u64 v`, `u64 turnover`, `u32 trades`, `i64 delta`, `u8 flags` (bit0 `confirm`). `o`, `h`, `l`, `c` are scaled by `price_scale`; `v`, `turnover` and `delta` by `qty_scale`, as both reference decoders read them. `delta` is 0 unless the subscription set `include_delta`, which the frame's `meta.include_delta` echoes (§6.1). The version is bumped rather than the fields appended because records have a fixed stride: a v1 decoder reading 69-byte records from an 85-byte body would misread every record after the first without noticing. Other body kinds stay at `format_version = 1`.
+**body_kind 4 — bars.** Requires header `format_version = 2` (#2014); a `format_version = 1` bars body (69-byte records without identity) is no longer sent. `record_count` records of 85 bytes, little-endian like every field here: `u64 generation`, `u64 index` (the §8.2 bar key), `u32 ts_offset_ms`, `i64 o,h,l,c`, `u64 v`, `u64 turnover`, `u32 trades`, `i64 delta`, `u8 flags` (bit0 `confirm`). `o`, `h`, `l`, `c` are scaled by `price_scale`; `v`, `turnover` and `delta` by `qty_scale`, as both reference decoders read them. Every scaled field except `turnover` is exact at its frame's scales, which the server picks to hold every bar it sends; `turnover` (price × qty) is rounded half-even to `qty_scale`, and REST carries it exactly. `delta` is 0 unless the subscription set `include_delta`, which the frame's `meta.include_delta` echoes (§6.1). The version is bumped rather than the fields appended because records have a fixed stride: a v1 decoder reading 69-byte records from an 85-byte body would misread every record after the first without noticing. Other body kinds stay at `format_version = 1`.
 
 **body_kind 5 — footprint.** Per-bar group: `u32 ts_offset_ms`, `u32 cell_count`, then `cell_count` × 33 bytes: `i64 price`, `u64 bid_volume`, `u64 ask_volume`, `u32 trades`, `u8 flags` (bit0 buy-imbalance, bit1 sell-imbalance, bit2 in-stack, bit3 POC).
 
@@ -523,7 +523,12 @@ Every requested topic gets exactly one result. Partial success is normal — one
         "ok": true,
         "sub_id": "s_03",
         "snapshot_pending": true,
-        "effective": { "throttle_ms": 250, "encoding": "binary" },
+        "effective": {
+          "throttle_ms": 250,
+          "encoding": "binary",
+          "include_delta": true,
+          "history": 500,
+        },
       },
       {
         "ch": "footprint.BTCUSDT.time.5",
@@ -608,13 +613,14 @@ Notes that bite if ignored:
 
 - **`book` depth is in the topic name, not the options**, because changing depth changes the identity of the state. `book.BTCUSDT.50` and `book.BTCUSDT.200` are two independent subscriptions with independent sequences.
 - **`bars` `param` follows the REST convention** of `22-api-openapi.yaml` `/market/bars`: `time` → interval code (`1`,`5`,`60`,`D`…), `tick` → trades per bar, `volume` → base volume, `range` → ticks, `delta` → signed volume, `renko` → ticks or `atr:14`, `pnf` → `box:reversal`, `heikin_ashi` → underlying interval. Dots are illegal in `param`; `atr:14` and `10:3` use a colon for exactly this reason.
-- **`footprint` and `bars` for the same `(symbol, bar_type, param)` are separate subscriptions** and each carries its own sequence. They are guaranteed _consistent_ (both derived from the same builder) but not _synchronised_ frame-for-frame; the client keys them by bar open time.
+- **`footprint` and `bars` for the same `(symbol, bar_type, param)` are separate subscriptions** and each carries its own sequence. They are guaranteed _consistent_ (both derived from the same builder) but not _synchronised_ frame-for-frame; the client joins them by `(generation, index)` (§8.2; footprint gains the key with #2529).
 - **Unconfirmed bars.** The last bar in any `bars`/`footprint` frame may have `confirm: false`. A client MUST NOT treat it as closed — this is the flicker bug Bybit's own `confirm` flag exists to prevent.
 - **`bars` snapshot and options (E12-T06, #399).**
-  - **Snapshot.** Up to `history` bars of the series in index order: the most recent closed bars, then the forming bar last (`confirm: false`). `history` is 0–1 000 and defaults to 500; `history: 0` sends an empty `bars` array (deltas only). A series with no recorded tape yet (a non-time bar type just subscribed) also gets an empty `bars` array, then deltas as bars form; there is no WS `no_data_recorded`.
-  - **`meta`.** A `bars` snapshot's `meta` carries the series' `spec_hash` and the builder's `build_version` (SR-E12-14), so a served bar can be traced to the code that built it. Every `bars` snapshot and delta's `meta.include_delta` echoes the option, so a `delta` of 0 is never read as a real delta.
-  - **`include_delta`.** It defaults to false. When false, structured items omit `delta`, `cvd`, `min_delta` and `max_delta`, and kind-4 records carry `delta = 0`.
-  - **Refusals, per topic in `sub_ok`.** More distinct bar series than the spec cap allows gets `subscription_limit`. A spec the server cannot build, or a `param` outside the server's bounds for its `bar_type` (SR-E12-03, the same bounds as REST `/market/bars`), gets `invalid_topic_format`. While the bars feature is off on the server, every `bars.*` and `footprint.*` topic gets `unknown_topic`: §10.2 has no feature-disabled code, and the flag goes when E12-T06 completes.
+  - **What the topic carries.** Only bars built from the recorded tape (row source `tape` or `parquet`), each keyed by `(generation, index)` (§8.2). Kline-backfilled rows have no builder index and no order flow, so they are never sent on WS; REST `/market/bars` and `/market/klines` serve them. A `bars` snapshot therefore carries no `meta.sources`.
+  - **Snapshot.** The `history` most recent bars of the series in index order, the forming bar (when one exists) last with `confirm: false`. The forming bar counts toward `history`, so `history: 1` is the forming bar, or the last closed bar when none is forming. `history` is 0–1 000 and defaults to 500, the §12.1 chart depth; `history: 0` sends an empty `bars` array (deltas only). A series with no tape yet also gets an empty `bars` array, then deltas as bars form. A `bars` subscribe never returns `no_data_recorded`, neither the refusal nor the §12.6 warning: REST's 422 is about a requested window, which a subscription does not have. A snapshot spanning more than 2³²−1 ms (1 000 daily bars do) arrives as several `partial` chunks (§3.6), each with its own `ts_base_ms`; clients key bars by `(generation, index)`, never by chunk.
+  - **`meta`.** A `bars` snapshot's `meta` carries the series' `spec_hash` and `build_version` (SR-E12-14). `build_version` is the lowest among the bars sent, the forming bar counting as the running build, so a served bar is never traced to newer code than built it. The envelope `ts` is the snapshot's generation time (REST's `meta.generated_at`). Every `bars` snapshot and delta's `meta.include_delta` echoes the option; a client MUST treat `delta` as absent unless it is `true`, and absent means `false`.
+  - **`include_delta`.** It defaults to false, unlike REST `/market/bars` (true), so a client that bootstraps over REST passes it explicitly on both. When true, structured items carry `delta`, `min_delta` and `max_delta`; `cvd` is never sent per bar (the client sums `delta`). When false those are omitted and kind-4 records carry `delta = 0`. `trades` is always sent, although REST gates it behind `include_delta`. `include_delta` and `history` are fixed at subscribe, not `ctl` keys: change them with `unsub` and `sub`. `sub_ok.effective` echoes both, defaults included (from slice E).
+  - **Refusals, per topic in `sub_ok`, never clamped.** More distinct bar series than a spec cap allows (8 per user, 32 per symbol, 512 per server) gets `subscription_limit`. A spec the server cannot build, or a `param` outside the server's bounds for its `bar_type` (SR-E12-03, the same bounds as REST `/market/bars`), gets `invalid_topic_format`; the message may name the bound but never lists spec hashes or other users' series. A refusal because the bar service is shutting down is `internal_error` (retryable), not `invalid_topic_format` (from slice E). While the `bars_enabled` setting is off, every `bars.*` topic gets `unknown_topic` (from slice E; until then such a subscription stays `snapshot_pending`); the setting goes when E12-T06 completes. `footprint.*` keeps §7.7 until #2197.
 
 #### 6.1.1 `heatmap.time_bucket_ms` — normative default (resolves open item W3)
 
@@ -930,7 +936,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 | `trades`, `liquidations`        | **Append, never merge** — throttling batches them into arrays.                                                                                                | Every print matters for the tape and CVD.                      |
 | `orders`, `executions`          | **Never coalesced, never throttled.**                                                                                                                         | State-machine transitions and fills must be seen individually. |
 
-**Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts when ADR-0033 starts a new generation/epoch. A channel streams one generation at a time; a generation swap arrives as a new snapshot (ADR-0033 client ingestion). Clients key their bar stores the same way. **Footprint bars take the same key (#2529, decided with E12-T06):** §14.4 bar items and each CVWB kind-5 group gain `generation` and `index` before any footprint producer ships (#2197), so two footprint bars that share an open time are never merged.
+**Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts when ADR-0033 starts a new generation/epoch. A channel streams one generation at a time; a generation swap arrives as a new snapshot (ADR-0033 client ingestion). Clients key their bar stores the same way. **Footprint bars will take the same key (planned, #2529; decided with E12-T06):** §14.4 bar items and each CVWB kind-5 group gain `generation` and `index` before any footprint producer ships (#2197), so two footprint bars that share an open time are never merged.
 
 **Amended bars (#2018, 24 §3.2).** A late trade can re-close an already-confirmed bar; the server then emits a `confirm: true` item with `amended: true` at the same `(generation, index)`. This is the one carve-out to "confirmed is final": a confirmed→confirmed replacement is permitted (and coalesced last-write-wins) only when the incoming item sets `amended`. A confirmed→unconfirmed replacement is never permitted. Clients replace the stored bar by key and re-render it.
 
@@ -1196,12 +1202,12 @@ The `REST` column shows the REST code a client may fold this into; “=” means
 | `token_expired`            | connection | yes         | `unauthenticated`      | Refresh over REST and re-`auth` (in place or on a new socket).                       |
 | `forbidden`                | topic      | no          | =                      | Missing permission for the topic family.                                             |
 | `account_scope_denied`     | topic      | no          | =                      | None of the requested accounts are in scope.                                         |
-| `unknown_topic`            | topic      | no          | `not_found`            | Topic name not in the catalogue.                                                     |
-| `invalid_topic_format`     | topic      | no          | `validation_failed`    | Malformed topic string (bad depth, dotted `param`, unknown bar type).                |
+| `unknown_topic`            | topic      | no          | `not_found`            | Topic not in the catalogue, or `bars.*` while the bars feature is off (§6.1).        |
+| `invalid_topic_format`     | topic      | no          | `validation_failed`    | Malformed topic (bad depth, dotted `param`, unknown bar type) or bad spec (§6.1).    |
 | `unsupported_symbol`       | topic      | no          | `unsupported_category` | Not a Bybit USDT linear perpetual, or unknown instrument.                            |
 | `invalid_options`          | topic      | no          | `validation_failed`    | Option out of range or unknown key. `field` names it.                                |
 | `encoding_unsupported`     | topic      | no          | —                      | Binary requested on a structured-only topic.                                         |
-| `subscription_limit`       | topic      | yes         | `rate_limited`         | 200 subscriptions reached. Unsubscribe something.                                    |
+| `subscription_limit`       | topic      | yes         | `rate_limited`         | A subscription (§3.6) or bars spec cap (§6.1) is reached. Unsubscribe something.     |
 | `too_many_topics`          | request    | yes         | `rate_limited`         | More than 50 topics in one `sub`. Split the request.                                 |
 | `duplicate_subscription`   | topic      | no          | `conflict`             | Already subscribed; use `ctl` to retune.                                             |
 | `not_subscribed`           | topic      | no          | `not_found`            | `ctl`/`resync` on a topic with no subscription.                                      |
@@ -1313,7 +1319,7 @@ S→C {"t":"sub_ok","id":"c-3","ts":1789132262290,"p":{"results":[
       {"ch":"wallet","ok":true,"sub_id":"s_04","snapshot_pending":true,"effective":{"throttle_ms":500}},
       {"ch":"book.BTCUSDT.50","ok":true,"sub_id":"s_05","snapshot_pending":true,"effective":{"throttle_ms":50,"encoding":"binary","depth":50}},
       {"ch":"trades.BTCUSDT","ok":true,"sub_id":"s_06","snapshot_pending":true,"effective":{"throttle_ms":100,"encoding":"binary"}},
-      {"ch":"bars.BTCUSDT.time.1","ok":true,"sub_id":"s_07","snapshot_pending":true,"effective":{"throttle_ms":250,"encoding":"binary"}},
+      {"ch":"bars.BTCUSDT.time.1","ok":true,"sub_id":"s_07","snapshot_pending":true,"effective":{"throttle_ms":250,"encoding":"binary","include_delta":true,"history":500}},
       {"ch":"footprint.BTCUSDT.time.5","ok":true,"sub_id":"s_08","snapshot_pending":true,"effective":{"throttle_ms":250,"encoding":"binary"}},
       {"ch":"metrics.BTCUSDT","ok":true,"sub_id":"s_09","snapshot_pending":true,"effective":{"throttle_ms":250}},
       {"ch":"ticker.BTCUSDT","ok":true,"sub_id":"s_10","snapshot_pending":true,"effective":{"throttle_ms":250}}]}}
@@ -1321,7 +1327,9 @@ S→C {"t":"sub_ok","id":"c-3","ts":1789132262290,"p":{"results":[
 // 5. snapshots, then the live tail
 S→C {"t":"snap","ch":"book.BTCUSDT.50","s":1000,"ts":1789132262400,"e":"b","p":"<CVWB kind=1, 100 records, trailer xu/xseq>"}
 S→C {"t":"snap","ch":"orders","s":1,"ts":1789132262402,"e":"j","p":{"orders":[{"id":"0a000000-0000-4000-8000-000000000001","exchange_account_id":"a1000000-0000-4000-8000-000000000001","symbol":"BTCUSDT","side":"buy","order_type":"limit","intent":"entry","state":"partially_filled","qty":"0.500","filled_qty":"0.200","remaining_qty":"0.300","price":"63100.00","avg_fill_price":"63099.80","stop_loss":"62900.00","take_profit":"63600.00","environment":"live","updated_at_ms":1789132211000}]}}
+S→C {"t":"snap","ch":"bars.BTCUSDT.time.1","s":1,"ts":1789132262404,"e":"b","meta":{"reason":"initial","spec_hash":"5b1e0c7d9a4f2e3b8c6d0a1f9e2b7c4d3a6f8e1b0c9d2a5f7e4b3c8d1a0f6e9b","build_version":1,"include_delta":true},"p":"<CVWB kind=4, 500 records>"}
 S→C {"t":"d","ch":"book.BTCUSDT.50","s":1001,"ts":1789132262452,"e":"b","p":"<CVWB kind=2, 3 records>"}
+S→C {"t":"d","ch":"bars.BTCUSDT.time.1","s":2,"ts":1789132262480,"e":"b","meta":{"include_delta":true},"p":"<CVWB kind=4, 1 record (forming bar)>"}
 S→C {"t":"d","ch":"trades.BTCUSDT","s":2,"ts":1789132262500,"e":"b","p":"<CVWB kind=3, 14 records>"}
 S→C {"t":"d","ch":"metrics.BTCUSDT","s":2,"ts":1789132262650,"e":"j","p":{"symbol":"BTCUSDT","series":[{"metric":"cvd","estimated":false,"unit":"base_volume","t_ms":1789132262600,"v":"-453.122"},{"metric":"tape_acceleration","estimated":false,"unit":"ratio","t_ms":1789132262600,"v":"1.42"},{"metric":"adx","estimated":false,"unit":"index","t_ms":1789132262600,"v":"28.10"}]}}
 ```
@@ -1375,7 +1383,7 @@ S→C {"t":"sub_ok","id":"c-70","ts":1789133100000,"p":{"results":[{"ch":"footpr
 S→C {"t":"snap","ch":"footprint.SOLUSDT.time.5","s":1,"ts":1789133100100,"e":"b","meta":{"reason":"initial","recording_started_at_ms":1789132848000,"history_bars":1},"p":"<CVWB kind=5, 1 bar>"}
 ```
 
-Subscribing to a symbol that is **not recorded at all** triggers auto-record (owner decision #4 — "auto-record any symbol with an open chart") and returns the same warning with `history_bars: 0`. Live topics (`book`, `trades`, `ticker`) work immediately for any symbol regardless of recording state; only the derived, history-dependent topics are affected.
+Subscribing to a symbol that is **not recorded at all** triggers auto-record (owner decision #4 — "auto-record any symbol with an open chart") and returns the same warning with `history_bars: 0`. Live topics (`book`, `trades`, `ticker`) work immediately for any symbol regardless of recording state; only the derived, history-dependent topics are affected. `bars.*` never carries this warning: an empty `bars` array is its signal (§6.1).
 
 ### 12.7 Slow consumer degradation, then recovery
 
@@ -1504,12 +1512,12 @@ Shared definitions used throughout:
         "spec_hash": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$",
-          "description": "bars/footprint snapshots: the series' bar spec (SR-E12-14)."
+          "description": "bars snapshots: the series' bar spec (SR-E12-14)."
         },
         "build_version": {
           "type": "integer",
           "minimum": 1,
-          "description": "bars/footprint snapshots: the bar builder version that built the series (SR-E12-14)."
+          "description": "bars snapshots: the lowest bar builder version among the bars sent (SR-E12-14, §6.1)."
         },
         "include_delta": {
           "type": "boolean",
