@@ -60,7 +60,10 @@ jobs:
         run: python scripts/check_sot_duplication.py
 
       - name: CODEOWNERS coverage check (GOV-001)
-        run: python scripts/check_codeowners_coverage.py
+        id: gov001
+        # Also writes the ownership-report artefact from the same scan, so the
+        # repo is matched once, not twice (#2557).
+        run: python scripts/check_codeowners_coverage.py --report-file gov-artifacts/codeowners-ownership-report.txt
 
       - name: Issue form structural check (GOV-004)
         run: python scripts/check_issue_forms.py
@@ -111,12 +114,20 @@ jobs:
         run: python scripts/gov_self_test.py --self-test
 
       - name: Governance script unit tests (>=85% coverage gate on scripts/**)
+        env:
+          # Line coverage only (no branch config anywhere), so coverage.py can
+          # measure with sys.monitoring on 3.13: identical per-file results,
+          # about 2x faster than the default ctrace core, which pays a trace
+          # call per frame even in unmeasured code (the ast/YAML-heavy tests).
+          # If branch coverage is ever enabled, coverage.py warns and falls
+          # back to ctrace: slower, never weaker (#2557).
+          COVERAGE_CORE: sysmon
         run: >
-          python -m pytest scripts/tests scripts/gh/tests -q -n auto
+          python -m pytest scripts/tests scripts/gh/tests -q -n auto --dist worksteal
           --cov=scripts --cov-report=term-missing --cov-fail-under=85
 
-      - name: Generate CODEOWNERS ownership report (artefact)
-        if: always()
+      - name: Generate CODEOWNERS ownership report (artefact, only if GOV-001 did not run)
+        if: ${{ always() && steps.gov001.outcome == 'skipped' }}
         run: python scripts/check_codeowners_coverage.py --report > gov-artifacts/codeowners-ownership-report.txt
         continue-on-error: true
 

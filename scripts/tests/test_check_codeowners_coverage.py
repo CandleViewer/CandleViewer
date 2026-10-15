@@ -245,6 +245,66 @@ def test_report_mode_lists_every_path_and_exits_zero(
     assert "services/foo.py" in out
 
 
+def _catch_all_repo(repo_root: Path) -> None:
+    """A repo whose services/foo.py falls through to the catch-all (exit 1)."""
+    repo_root.mkdir()
+    _init_repo(repo_root)
+    _write(
+        repo_root,
+        ".github/CODEOWNERS",
+        BASE_HEADER + "*                 @Org/architecture\n" + HARNESS_TAIL,
+    )
+    _write(repo_root, "services/foo.py", "print(1)\n")
+    _add_all(repo_root)
+
+
+def test_report_file_matches_report_mode_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo, report_file = tmp_path / "repo", tmp_path / "report.txt"
+    _catch_all_repo(repo)
+    check_codeowners_coverage.main(["--repo-root", str(repo), "--report"])
+    report_out = capsys.readouterr().out
+
+    check_codeowners_coverage.main(["--repo-root", str(repo), "--report-file", str(report_file)])
+
+    assert report_file.read_text(encoding="utf-8") == report_out
+
+
+def test_report_file_keeps_the_check_failing_on_violations(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    repo = tmp_path / "repo"
+    _catch_all_repo(repo)
+
+    exit_code = check_codeowners_coverage.main(
+        ["--repo-root", str(repo), "--report-file", str(tmp_path / "report.txt")]
+    )
+    out = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "services/foo.py matched-by:line 7 (*) owners:catch-all" in out
+
+
+def test_rule_shadowed_by_a_later_rule_is_not_dead(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write(
+        tmp_path,
+        ".github/CODEOWNERS",
+        BASE_HEADER
+        + "*                          @Org/architecture\n"
+        + "/docs/                     @Org/architecture\n"
+        + "/docs/*.md                 @Org/backend\n"
+        + HARNESS_TAIL,
+    )
+    _write(tmp_path, "docs/note.md", "hello\n")
+    _add_all(tmp_path)
+
+    violations, _ = check_codeowners_coverage.check(str(tmp_path))
+
+    assert violations.dead_rules == []
+
+
 def test_rule_with_no_owners_is_internal_error(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write(

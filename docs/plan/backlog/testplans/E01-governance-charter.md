@@ -114,3 +114,11 @@ attacking the system?
 - Optimisations: pip cache, `pytest -n auto` (xdist). Full-depth checkout is kept because `tools/ci/verify_migration_lockfile.py` needs `git merge-base`.
 - After: ~60 s on the PR run (xdist gains are limited on 2-vCPU runners), so the optimised median is not <40 s.
 - Budget set to 90 s (measured max ~66 s + ~35% margin). The duration step prints a timing table to the step summary so drift is visible.
+
+### Follow-up: faster job, same budget (#2557)
+
+- Before (26 PR runs, 2026-10-15): 45-92 s as measured by the budget step, median 77 s; 3 of the 26 failed on the budget alone. The unit-test step took 26-62 s, and most of that was a tail: on the slowest run the last test finished 38 s after 95% of the suite. The CODEOWNERS scan also ran twice (the check, then the report artefact), about 4 s each on slow runners.
+- Profile (local, `-n 4`): the tail is two real-repo tests, `test_event_coverage` (8.6 s) and the four `test_error_registry` real-document tests (1.5-3 s each). Most of their time was coverage overhead in code that is not measured: the default `ctrace` core makes a trace call for every frame of the `ast` and PyYAML work, although only `scripts/**` is measured. Without coverage they take 3.1 s and 3.5 s.
+- Changes: `COVERAGE_CORE=sysmon` on the unit-test step (line coverage only, so `sys.monitoring` works on Python 3.13; the per-file coverage report is byte-identical), `--dist worksteal`, and GOV-001 writes the ownership report in the same run (`--report-file`) with one matching pass per path. The old report step now runs only when GOV-001 did not run.
+- After (local, `-n 4`, median of 3): unit-test step 17.45 s to 7.81 s; GOV-001 check plus report 2.57 s to 0.68 s. The CI timings are in the fix PR for #2557.
+- Unchanged: `BUDGET_MS=90000`, the budget step stays blocking and last, the 85% coverage gate on `scripts/**`, and the canary self-test.
