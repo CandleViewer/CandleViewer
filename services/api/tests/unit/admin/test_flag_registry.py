@@ -99,6 +99,9 @@ def test_registry_rechecks_every_spec_at_startup() -> None:
     [
         ({"key": "Bad.Key"}, "malformed"),
         ({"key": "single"}, "malformed"),
+        ({"key": "a.b.c.d.e"}, "malformed"),
+        ({"key": "a_b.c"}, "malformed"),
+        ({"key": "a.b."}, "malformed"),
         ({"gates": Category(0)}, "no gate category"),
         ({"default": 1}, "is not a boolean"),
         ({"kind": FlagKind.PERCENTAGE, "default": 101}, "is not a percentage"),
@@ -171,3 +174,20 @@ def test_startup_log_lists_every_flag_with_its_gates() -> None:
         "is_killswitch": False,
     }
     assert registry["ui.panel"].key == "ui.panel" and len(registry) == 2
+
+
+@pytest.mark.parametrize("key", ["a.b", "a1.b_2", "a.b.c.d"])
+def test_keys_of_two_to_four_segments_are_accepted(key: str) -> None:
+    assert _spec(key).key == key
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "overridable"),
+    [
+        ({}, True),
+        ({"requires_evidence": True}, False),
+        ({"is_killswitch": True, "gates": Category.KILL_SWITCH}, False),
+    ],
+)
+def test_only_ordinary_flags_are_overridable(kwargs: dict[str, Any], overridable: bool) -> None:
+    assert _spec(**kwargs).overridable is overridable

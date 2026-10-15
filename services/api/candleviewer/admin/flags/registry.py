@@ -6,16 +6,10 @@ reviewed like code and never editable at runtime. Each `FlagSpec` declares what 
 audit writing, the native stop-loss invariant, risk limits, the withdrawal check, the rate-limit
 reserve and demo/live isolation) are in `DENIED`, and no spec may declare one:
 
-- `FlagSpec` refuses such a definition when it is constructed, so a module that defines one
-  fails at import;
-- `FlagRegistry` re-checks every spec when the service builds it at startup, so the process
-  refuses to boot rather than accept the definition at write time. The error names the flag
-  and the denied category.
-
-`maintenance.mode` and `killswitch.*` are kill-switch class: their store value is re-read at
-least every 5 s, never served from the 30 s cache. `restrictive` is the value a flag resolves
-to while the store cannot be read (fail closed, E42-T03 security notes): engaged for the
-order-entry kill switches, off for live trading, the default for everything else.
+`FlagSpec` refuses such a definition when constructed (so its module fails at import), and
+`FlagRegistry` re-checks every spec at startup, so the process refuses to boot; the error names
+the flag and the denied category. `restrictive` is the value while the store cannot be read
+(fail closed): engaged for the order-entry kill switches, off for live trading.
 """
 
 from __future__ import annotations
@@ -106,6 +100,12 @@ class FlagSpec:
     @property
     def fail_closed_value(self) -> FlagValue:
         return self.default if self.restrictive is None else self.restrictive
+
+    @property
+    def overridable(self) -> bool:
+        """D2: the live gate and kill-switch-class flags take no per-user or per-role override,
+        so neither can differ from the value the gate enforces."""
+        return not (self.requires_evidence or self.is_killswitch)
 
 
 def _members(categories: Category) -> list[str]:
