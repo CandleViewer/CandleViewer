@@ -328,6 +328,14 @@ export interface SnapMeta {
   recording_started_at_ms?: EpochMs;
   history_bars?: number;
   source?: "live" | "replay";
+  /**
+   * bars/footprint snapshots: the series' bar spec (SR-E12-14).
+   */
+  spec_hash?: string;
+  /**
+   * bars/footprint snapshots: the bar builder version that built the series (SR-E12-14).
+   */
+  build_version?: number;
 }
 
 // Source: cv://ws/v1/ctl.schema.json
@@ -424,6 +432,14 @@ export interface SnapMeta {
   recording_started_at_ms?: number;
   history_bars?: number;
   source?: "live" | "replay";
+  /**
+   * bars/footprint snapshots: the series' bar spec (SR-E12-14).
+   */
+  spec_hash?: string;
+  /**
+   * bars/footprint snapshots: the bar builder version that built the series (SR-E12-14).
+   */
+  build_version?: number;
 }
 
 // Source: cv://ws/v1/executions.schema.json

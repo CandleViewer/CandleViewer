@@ -218,6 +218,16 @@
             "source": {
               "enum": ["live", "replay"],
               "default": "live"
+            },
+            "spec_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "bars/footprint snapshots: the series' bar spec (SR-E12-14)."
+            },
+            "build_version": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "bars/footprint snapshots: the bar builder version that built the series (SR-E12-14)."
             }
           },
           "additionalProperties": false

@@ -203,3 +203,16 @@ def test_every_coalesced_family_declares_the_disclosure_fields() -> None:
         assert props["coalesced"].get("type") == "boolean", family
         assert props["coalesced_count"].get("type") == "integer", family
         assert props["coalesced_count"].get("minimum") == 1, family
+
+
+def test_snap_meta_names_the_bar_build_identity(schemas: dict[str, object]) -> None:
+    """SR-E12-14 (#399): a bars or footprint snapshot names its `spec_hash` and `build_version`."""
+    from jsonschema import Draft202012Validator
+
+    meta = Draft202012Validator(
+        {"$ref": "cv://ws/v1/common.schema.json#/$defs/snapMeta"},
+        registry=val.build_registry(schemas),
+    )
+    assert meta.is_valid({"reason": "initial", "spec_hash": "0" * 64, "build_version": 1})
+    for bad in ({"spec_hash": "A" * 64}, {"spec_hash": "0" * 63}, {"build_version": 0}):
+        assert not meta.is_valid({"reason": "initial", **bad}), bad

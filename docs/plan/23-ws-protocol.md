@@ -222,7 +222,7 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 | 1    | `u8`  | `side` (0 = buy/taker-lift, 1 = sell/taker-hit) — Bybit gives the aggressor side directly |
 | 1    | `u8`  | `flags` (bit0 block trade, bit1 liquidation-origin, bit2 cluster-aggregated)              |
 
-**body_kind 4 — bars.** Requires header `format_version = 2` (#2014); a `format_version = 1` bars body (69-byte records without identity) is no longer sent. `record_count` records of 85 bytes, little-endian like every field here: `u64 generation`, `u64 index` (the §8.2 bar key), `u32 ts_offset_ms`, `i64 o,h,l,c`, `u64 v`, `u64 turnover`, `u32 trades`, `i64 delta`, `u8 flags` (bit0 `confirm`). The version is bumped rather than the fields appended because records have a fixed stride: a v1 decoder reading 69-byte records from an 85-byte body would misread every record after the first without noticing. Other body kinds stay at `format_version = 1`.
+**body_kind 4 — bars.** Requires header `format_version = 2` (#2014); a `format_version = 1` bars body (69-byte records without identity) is no longer sent. `record_count` records of 85 bytes, little-endian like every field here: `u64 generation`, `u64 index` (the §8.2 bar key), `u32 ts_offset_ms`, `i64 o,h,l,c`, `u64 v`, `u64 turnover`, `u32 trades`, `i64 delta`, `u8 flags` (bit0 `confirm`). `o`, `h`, `l`, `c` are scaled by `price_scale`; `v`, `turnover` and `delta` by `qty_scale`, as both reference decoders read them. `delta` is 0 unless the subscription set `include_delta` (§6.1). The version is bumped rather than the fields appended because records have a fixed stride: a v1 decoder reading 69-byte records from an 85-byte body would misread every record after the first without noticing. Other body kinds stay at `format_version = 1`.
 
 **body_kind 5 — footprint.** Per-bar group: `u32 ts_offset_ms`, `u32 cell_count`, then `cell_count` × 33 bytes: `i64 price`, `u64 bid_volume`, `u64 ask_volume`, `u32 trades`, `u8 flags` (bit0 buy-imbalance, bit1 sell-imbalance, bit2 in-stack, bit3 POC).
 
@@ -594,7 +594,7 @@ Topic names are dot-separated, lower-case, with symbols in Bybit's native upper-
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------- | ---------- | ------------------------------------------------------------ |
 | `book.{symbol}.{depth}`                 | `depth` ∈ {1, 50, 200, 500} (in the name), `throttle_ms`                                                                                                            | Full book to depth                                 | 50 ms (depth 1 → 20 ms; 200/500 → 100 ms) | ✔ kind 1/2 | [`BookSnapshot`](#141-booksnapshot--bookdelta) / `BookDelta` |
 | `trades.{symbol}`                       | `min_size`, `cluster_window_ms`, `cluster_tolerance_ticks`                                                                                                          | Last 200 prints                                    | 100 ms                                    | ✔ kind 3   | [`TradesBatch`](#142-tradesbatch)                            |
-| `bars.{symbol}.{bar_type}.{param}`      | `include_delta`, `history` (≤1 000)                                                                                                                                 | Last `history` bars                                | 250 ms                                    | ✔ kind 4   | [`BarsBatch`](#143-barsbatch)                                |
+| `bars.{symbol}.{bar_type}.{param}`      | `include_delta` (false), `history` (1–1 000, default 500)                                                                                                           | Last `history` bars, forming bar last              | 250 ms                                    | ✔ kind 4   | [`BarsBatch`](#143-barsbatch)                                |
 | `footprint.{symbol}.{bar_type}.{param}` | `price_grouping`, `imbalance_ratio`, `min_stack`, `min_imbalance_volume`, `history` (≤200)                                                                          | Last `history` bars of cells                       | 250 ms                                    | ✔ kind 5   | [`FootprintUpdate`](#144-footprintupdate)                    |
 | `heatmap.{symbol}`                      | `time_bucket_ms` ∈ {100,250,500,1000,5000} (**client-derived, see §6.1.1**; server fallback `500`), `price_grouping`, `depth`, `window_seconds` (≤900, default 900) | Window of columns, capped at the 2 000 most recent | = `time_bucket_ms`                        | ✔ kind 6   | [`HeatmapColumn`](#145-heatmapcolumn)                        |
 | `profile.{symbol}.{kind}`               | `kind` ∈ {volume, delta, tpo}, `split`, `session_anchor`, `price_grouping`, `value_area_pct`                                                                        | Current period profile                             | 1 000 ms                                  | ✖          | [`ProfileUpdate`](#146-profileupdate)                        |
@@ -610,6 +610,11 @@ Notes that bite if ignored:
 - **`bars` `param` follows the REST convention** of `22-api-openapi.yaml` `/market/bars`: `time` → interval code (`1`,`5`,`60`,`D`…), `tick` → trades per bar, `volume` → base volume, `range` → ticks, `delta` → signed volume, `renko` → ticks or `atr:14`, `pnf` → `box:reversal`, `heikin_ashi` → underlying interval. Dots are illegal in `param`; `atr:14` and `10:3` use a colon for exactly this reason.
 - **`footprint` and `bars` for the same `(symbol, bar_type, param)` are separate subscriptions** and each carries its own sequence. They are guaranteed _consistent_ (both derived from the same builder) but not _synchronised_ frame-for-frame; the client keys them by bar open time.
 - **Unconfirmed bars.** The last bar in any `bars`/`footprint` frame may have `confirm: false`. A client MUST NOT treat it as closed — this is the flicker bug Bybit's own `confirm` flag exists to prevent.
+- **`bars` snapshot and options (E12-T06, #399).**
+  - **Snapshot.** The last `history` bars of the series in index order, with the forming bar last (`confirm: false`). `history` is 1–1 000 and defaults to 500. A series with no recorded tape yet (a non-time bar type just subscribed) gets an empty `bars` array, then deltas as bars form; there is no WS `no_data_recorded`.
+  - **`snap.meta`.** It carries the series' `spec_hash` and the builder's `build_version` (SR-E12-14), so a served bar can be traced to the code that built it.
+  - **`include_delta`.** It defaults to false. When false, structured items omit `delta`, `cvd`, `min_delta` and `max_delta`, and kind-4 records carry `delta = 0`, which a client that did not ask for it ignores.
+  - **Refusals, per topic in `sub_ok`.** More distinct bar series than the spec cap allows gets `subscription_limit`. A spec the server cannot build, or a `param` outside the server's bounds for its `bar_type` (SR-E12-03, the same bounds as REST `/market/bars`), gets `invalid_topic_format`. While the bars feature is off on the server, every `bars.*` and `footprint.*` topic gets `unknown_topic`.
 
 #### 6.1.1 `heatmap.time_bucket_ms` — normative default (resolves open item W3)
 
@@ -1495,7 +1500,17 @@ Shared definitions used throughout:
         "previous_seq": { "$ref": "#/$defs/seq" },
         "recording_started_at_ms": { "$ref": "#/$defs/epochMs" },
         "history_bars": { "type": "integer", "minimum": 0 },
-        "source": { "enum": ["live", "replay"], "default": "live" }
+        "source": { "enum": ["live", "replay"], "default": "live" },
+        "spec_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "bars/footprint snapshots: the series' bar spec (SR-E12-14)."
+        },
+        "build_version": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "bars/footprint snapshots: the bar builder version that built the series (SR-E12-14)."
+        }
       },
       "additionalProperties": false
     }

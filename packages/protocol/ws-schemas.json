@@ -552,6 +552,11 @@
         "snapMeta": {
           "additionalProperties": false,
           "properties": {
+            "build_version": {
+              "description": "bars/footprint snapshots: the bar builder version that built the series (SR-E12-14).",
+              "minimum": 1,
+              "type": "integer"
+            },
             "history_bars": {
               "minimum": 0,
               "type": "integer"
@@ -580,6 +585,11 @@
                 "live",
                 "replay"
               ]
+            },
+            "spec_hash": {
+              "description": "bars/footprint snapshots: the series' bar spec (SR-E12-14).",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
             }
           },
           "type": "object"
