@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import gc
+import json
 import math
 import os
 import time
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from argon2 import extract_parameters
@@ -159,9 +161,13 @@ def test_mann_whitney_detects_a_shift_and_accepts_identical() -> None:
     os.environ.get("CV_RUN_PERF") != "1",
     reason="wall-clock statistical test: opt in with CV_RUN_PERF=1 (CI lane has coverage)",
 )
-async def test_ac_enum_03_timing_unknown_vs_wrong_password_500_samples() -> None:  # SR-014 / U8
+async def test_ac_enum_03_timing_unknown_vs_wrong_password_500_samples(  # SR-014 / U8
+    tmp_path: Path,
+) -> None:
     """Interleaved arms (same host/process), warm-up discarded, gc disabled in the timed region,
-    ratio-of-medians + Mann-Whitney (not a mean compare). Threshold: RATIO_TOL / Z_CRIT above."""
+    ratio-of-medians + Mann-Whitney (not a mean compare). Threshold: RATIO_TOL / Z_CRIT above.
+    The raw samples go to `tmp_path` only: #298 classes them SECRET (retained CI artefact or the
+    private security folder, destroyed after closure), so they are never committed."""
     svc, repo, _ = await _world()
     arms: dict[str, list[float]] = {"unknown": [], "wrong": []}
     cases = (("unknown", "ghost"), ("wrong", "basiltt"))
@@ -184,9 +190,13 @@ async def test_ac_enum_03_timing_unknown_vs_wrong_password_500_samples() -> None
     finally:
         gc.enable()
     a, b = sorted(arms["unknown"]), sorted(arms["wrong"])
-    ratio = a[len(a) // 2] / b[len(b) // 2]
+    mid_a, mid_b = a[len(a) // 2], b[len(b) // 2]
+    ratio = mid_a / mid_b
     z = mann_whitney_z(arms["unknown"], arms["wrong"])
     assert len(a) == len(b) == SAMPLES
+    raw = tmp_path / "ac-enum-03-samples.json"
+    raw.write_text(json.dumps({"unit": "s", "warmup_dropped": WARMUP, **arms}), encoding="utf-8")
     print(f"AC-ENUM-03 evidence: n={SAMPLES}/arm ratio={ratio:.4f} mann_whitney_z={z:.3f}")
+    print(f"AC-ENUM-03 medians: unknown={mid_a:.6f}s wrong={mid_b:.6f}s raw={raw}")
     assert 1 - RATIO_TOL < ratio < 1 + RATIO_TOL, f"median ratio {ratio:.3f}"
     assert abs(z) < Z_CRIT, f"Mann-Whitney z={z:.2f}"

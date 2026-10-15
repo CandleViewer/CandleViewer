@@ -37,7 +37,7 @@ ALERTING: dict[str, set[str]] = {
     "auth_step_up_failures_total": set(),
     "users_invites_rejected_total": set(),
     "cv_ws_auth_failures_total": set(),
-    "cv_ws_closes_total": set(),
+    "cv_ws_closes_total": {"WsOriginRefusalsHigh"},  # only reason="origin_forbidden" (#2276)
     "cv_ws_revoked_total": set(),
     "cv_ws_subscribe_total": set(),
     # SR-125 metrics that are alerted but never emitted: only the absent() guard can fire.
