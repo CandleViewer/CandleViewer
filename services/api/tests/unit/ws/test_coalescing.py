@@ -820,3 +820,44 @@ def test_coalescer_nested_whole_frame_or_root_field_is_refused(family: str, body
     queue = CoalescingQueue(family)
     assert not queue.offer(body)
     assert queue.overflowed
+
+
+def test_coalescer_heatmap_single_update_drops_a_column_of_a_sent_bucket() -> None:
+    """#2500 review: a lone update mixing a sent bucket and a new one must not leave verbatim."""
+    queue = CoalescingQueue("heatmap")
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_column(1)]})
+    queue.take()
+    stale, fresh = _column(1, complete=False), _column(2, complete=False)
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [stale, fresh]})
+    [frame] = queue.take()
+    assert frame.body["columns"] == [fresh]
+
+
+def test_coalescer_heatmap_root_change_never_resends_a_sent_bucket() -> None:
+    queue = CoalescingQueue("heatmap")
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "max_value": 1.0, "columns": [_column(1)]})
+    queue.take()
+    body = {"symbol": "X", "time_bucket_ms": 100, "max_value": 2.0}
+    queue.offer({**body, "columns": [_column(1, complete=False)]})
+    [frame] = queue.take()
+    assert frame.body == {**body, "columns": []}
+
+
+def test_coalescer_footprint_update_without_bars_changes_nothing() -> None:
+    queue = CoalescingQueue("footprint")
+    queue.offer({"symbol": "X", "bars": []})
+    assert not queue.pending
+
+
+def test_coalescer_footprint_absurd_exponent_is_refused() -> None:
+    queue = CoalescingQueue("footprint")
+    cell = {"price": "1", "bid_volume": "1E+999999"}
+    assert not queue.offer({"bars": [{"t_ms": 0, "cells": [cell]}]})
+    assert queue.overflowed
+
+
+@pytest.mark.parametrize("body", [["x"], None, "bids"])
+def test_coalescer_body_that_is_not_a_mapping_is_refused(body: Any) -> None:
+    queue = CoalescingQueue("book")
+    assert not queue.offer(body)
+    assert queue.overflowed

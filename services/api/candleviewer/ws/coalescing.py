@@ -109,8 +109,14 @@ def _dec(value: Any) -> Decimal:
     return key
 
 
+#: Largest decimal exponent a summed footprint value may carry before it is refused.
+_MAX_EXPONENT: Final = 40
+
+
 def _plain(value: Decimal) -> str:
-    """Wire decimal form (`^-?[0-9]+(\\.[0-9]+)?$`): never an exponent."""
+    """Wire decimal form (`^-?[0-9]+(\\.[0-9]+)?$`): never an exponent, never absurdly long."""
+    if abs(value.adjusted()) > _MAX_EXPONENT:
+        raise ValueError(f"decimal out of range: {value!r}")
     return format(value, "f")
 
 
@@ -126,6 +132,8 @@ class _Merge(ABC):
         self.root: dict[str, Any] = {}
         self.root_bytes = 0
         self.bytes = 0
+        #: Part of an update was dropped (a heatmap bucket already sent): no verbatim emission.
+        self.trimmed = False
 
     def add(self, body: Payload) -> bool:
         """Merge one update; a discarded update's root fields are discarded with it."""
@@ -153,7 +161,7 @@ class _Merge(ABC):
 
     def reset(self) -> None:
         """Forget the pending state after an emission."""
-        self.root, self.root_bytes, self.bytes = {}, 0, 0
+        self.root, self.root_bytes, self.bytes, self.trimmed = {}, 0, 0, False
 
 
 class _BookMerge(_Merge):
@@ -271,7 +279,8 @@ class _KeyedMerge(_Merge):
 
 
 def _not_older(old: Payload, new: Payload) -> bool:
-    """§15: entities carry `updated_at_ms` so a late-arriving older frame is discarded."""
+    """§15: entities carry `updated_at_ms` so a late-arriving older frame is discarded; the field
+    is mandatory, so an entity without it is refused (overflow) rather than guessed."""
     return int(new["updated_at_ms"]) >= int(old["updated_at_ms"])
 
 
@@ -326,8 +335,8 @@ class _HeatmapMerge(_KeyedMerge):
     def add(self, body: Payload) -> bool:
         root = {k: v for k, v in body.items() if k not in self.lists}
         root_changed = any(k not in self.known or self.known[k] != v for k, v in root.items())
-        self.known.update(root)
         changed = self.merge(body) or root_changed
+        self.known.update(root)
         if changed:
             self.root.update(root)
             self.root_bytes = _size(self.root)
@@ -335,6 +344,7 @@ class _HeatmapMerge(_KeyedMerge):
 
     def upsert(self, key: Hashable, item: Payload) -> bool:
         if key in self.sent:
+            self.trimmed = True
             return False
         return super().upsert(key, item)
 
@@ -361,7 +371,8 @@ class _FootprintMerge(_Merge):
         self.keys = 0
 
     def merge(self, body: Payload) -> bool:
-        for bar in body.get("bars") or ():
+        bars = body.get("bars") or ()
+        for bar in bars:
             t_ms = int(bar["t_ms"])
             entry = self.bars.get(t_ms)
             if entry is None:
@@ -373,7 +384,7 @@ class _FootprintMerge(_Merge):
             self.bytes += _size(fields) - before
             for cell in bar.get("cells") or ():
                 self._cell(cells, cell)
-        return True
+        return bool(bars)
 
     def _grow(self) -> None:
         if self.keys >= self.limit:
@@ -546,6 +557,9 @@ class CoalescingQueue:
         `body` is the structured payload every family needs; `part` is its optional CVWB form."""
         if self._overflowed:
             return False
+        if not isinstance(body, Mapping):
+            self._overflowed = True  # a producer bug: refused like any other unmergeable update
+            return False
         if self._private:
             try:
                 body = copy.deepcopy(body)  # SR-190: nothing of a private update is shared
@@ -613,7 +627,7 @@ class CoalescingQueue:
 
     def _close_window(self, merge: _Merge) -> None:
         """Move the pending merge to the frame list as one emission (verbatim if unmerged)."""
-        if self._count == 1 and self._first is not None:
+        if self._count == 1 and self._first is not None and not merge.trimmed:
             emission = self._first
         elif self._count:
             count = 1 if self.family in APPENDED_FAMILIES else self._count
