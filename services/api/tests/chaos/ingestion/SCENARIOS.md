@@ -77,24 +77,24 @@ Parity follow-up: #1975.
 
 **Mutation runs** (one mechanism neutered at a time; full suite each run, then restored):
 
-| Mechanism               | Neutered (file:function → behaviour)                                                                                                                                     | Fails                                                                   | Readable message                                                                                                                                         |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Staleness watchdog      | `ingestion/watchdog.py:StalenessWatchdog.check` → returns `[]`: no topic ever goes stale, no `stale` signal, no recycle                                                  | 2 (1 test); also AC `[stall-then-refuse]` (2 tests, built on the stall) | `watchdog did not fire within threshold`; AC (weak): `['healthy']`, `assert 'ok' == 'degraded'`                                                          |
-| Book resync             | `orderbook_wiring.py:BookStream._make_engine.resub` → returns instead of `resubscribe_topic`: gap still detected and DESYNCED published, no unsub+sub, no fresh snapshot | 3 (3 tests)                                                             | `assert ['subscribe'] == ['unsubscribe', 'subscribe']`; duplicate: `assert <BookPhase.SNAPSHOT_PENDING: 'snapshot_pending'> is <BookPhase.LIVE: 'live'>` |
-| 10002 drift re-measure  | `ingestion/clock.py:ClockGuard.resync_after_signature_failure` → returns `0`: no re-measure, no `clock_resync_triggered_total`                                           | 8 (1 test)                                                              | `ClockDriftError: invalid request, please check your server timestamp or recv_window param` (weak: uncaught)                                             |
-| Connection token bucket | `ingestion/reconnect.py:ConnectionRateGuard.reserve` → returns `0.0`: every dial immediate, nothing recorded                                                             | 7 (1 test)                                                              | `251 dials in a 300 s window > budget 120`                                                                                                               |
+| Mechanism               | Neutered (file:function → behaviour)                                                                                                                                     | Fails                                                                   | Readable message                                                                                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Staleness watchdog      | `ingestion/watchdog.py:StalenessWatchdog.check` → returns `[]`: no topic ever goes stale, no `stale` signal, no recycle                                                  | 2 (1 test); also AC `[stall-then-refuse]` (2 tests, built on the stall) | `watchdog did not fire within threshold`; AC: `stall-then-refuse: no degraded/stale signal on orderbook.200.BTCUSDT (feed states: ['healthy'])`, `stall-then-refuse: health reports 'ok', expected 'degraded'` |
+| Book resync             | `orderbook_wiring.py:BookStream._make_engine.resub` → returns instead of `resubscribe_topic`: gap still detected and DESYNCED published, no unsub+sub, no fresh snapshot | 3 (3 tests)                                                             | `assert ['subscribe'] == ['unsubscribe', 'subscribe']`; duplicate: `assert <BookPhase.SNAPSHOT_PENDING: 'snapshot_pending'> is <BookPhase.LIVE: 'live'>`                                                       |
+| 10002 drift re-measure  | `ingestion/clock.py:ClockGuard.resync_after_signature_failure` → returns `0`: no re-measure, no `clock_resync_triggered_total`                                           | 8 (1 test)                                                              | `10002 retry failed again: no clock re-measure before re-signing (invalid request, …)`                                                                                                                         |
+| Connection token bucket | `ingestion/reconnect.py:ConnectionRateGuard.reserve` → returns `0.0`: every dial immediate, nothing recorded                                                             | 7 (1 test)                                                              | `251 dials in a 300 s window > budget 120`                                                                                                                                                                     |
 
 Recorded 2026-10-15 by hcl-worker-2 (#1976) on main 6f9818f7, re-run on 6200a73f with identical
 results; unmutated baseline `45 passed`, no xfail. Production code unchanged.
 
 - **Against the #280 test plan** ("each must fail exactly one scenario with a readable message"):
-  book resync and the token bucket each fail one scenario with a self-explanatory assert. The
-  watchdog also fails the AC `[stall-then-refuse]` pair, which stalls the feed by construction;
-  those two asserts give no descriptive message. The drift re-measure test fails on the retry's
-  uncaught `ClockDriftError` (the venue's 10002 text) before its own
-  `clock_resync_triggered_total` assert runs. Whether the AC pair counts as a second scenario,
-  and whether these asserts need test-authored messages (a test change, outside #1976), is for
-  the #280 owner to decide.
+  every run fails with a readable, test-authored message. #1976 gave the AC pair and the s08
+  re-measure test explicit failure messages (pass/fail behaviour unchanged); before that they
+  printed `['healthy']`, `assert 'ok' == 'degraded'` and the venue's 10002 text. Book resync, the
+  drift re-measure and the token bucket each fail exactly one scenario. The watchdog fails
+  scenario 2 and also the AC `[stall-then-refuse]` pair, which needs stall detection by
+  construction; the AC rows are the cross-scenario "degradation is visible" check, not a
+  scenario of their own.
 - **Flake budget:** 20 consecutive full-suite runs, 20/20 green (`45 passed` each) on 6200a73f,
   2026-10-15 (#1976); the #1921 record was `43 passed, 1 xfailed`.
 - **Determinism:** same seed ⇒ identical fault trace (`test_harness_guards.py`).
