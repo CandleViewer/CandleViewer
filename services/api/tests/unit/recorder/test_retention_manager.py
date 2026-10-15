@@ -237,6 +237,34 @@ async def test_pending_hot_drop_applied_after_its_timeout_is_recorded_done_not_c
     assert ckpt.doc is None
 
 
+async def test_drop_raising_a_storage_error_is_handled_like_a_timeout() -> None:
+    """Forward-compat: the drop adapter may report a DROP not applied in time as a typed
+    `StorageError` subclass instead of `TimeoutError`. Same handling: `failed` record, the item
+    stays pending, the pass ends `partial`, and the next pass finishes it with no new intent."""
+    from candleviewer.storage.errors import StorageError
+
+    class DropNotApplied(StorageError):
+        """Stand-in for a storage adapter's typed "DROP not applied" error."""
+
+    w = _world()
+    w.add_hot(T, 10, {"BTCUSDT": 5})
+    w.archived[("BTCUSDT", T)] = day(9)
+    ckpt = MemoryCheckpoint()
+    m = manager(w, ckpt)
+
+    async def not_applied(stream: object, day_start_us: int) -> bool:
+        raise DropNotApplied("partition still listed")
+
+    m._hot.drop_day = not_applied  # type: ignore[method-assign]  # inject the typed failure
+    first = await m.run_nightly()
+    assert [why for _, why in first.failed] == ["DropNotApplied"] and day(10) in w.hot[T]
+    assert ckpt.doc is not None and ckpt.doc["pending"] == first.failed[0][0].deletion_id
+    assert [d["phase"] for a, d in w.audit if a == "retention.run"] == ["start", "partial"]
+    assert w.data_deleted_phase("failed")[0]["error"] == "DropNotApplied"
+    second = await manager(w, ckpt).run_nightly()
+    assert [i.start_us for i in second.deleted] == [day(10)] and len(w.data_deleted()) == 1
+
+
 async def test_corrupt_checkpoint_fails_closed() -> None:
     w = _world()
     w.add_cold("BTCUSDT", T, 40)

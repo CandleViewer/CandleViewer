@@ -238,7 +238,9 @@ class QuestDbRetentionHotStore:
 
     async def drop_day(self, stream: StreamKind, day_start_us: int) -> bool:
         """Issue the DROP, then wait (bounded) until it is applied AND the partition is gone.
-        Raises `TimeoutError` otherwise, so the reaper keeps the item `pending` and retries."""
+        Raises `TimeoutError` otherwise, so the reaper keeps the item `pending` and retries.
+        A `StorageError` from the inner DROP (if it ever waits for the apply itself) gets the
+        same reaper handling."""
         name = day_name(day_start_us)
         if name not in await self._sizes(stream):
             return False  # already dropped (resumed pass): idempotent

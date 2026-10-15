@@ -44,6 +44,7 @@ from candleviewer.recorder.retention_defaults import (
 )
 from candleviewer.storage.cold.observability import SystemEventSink
 from candleviewer.storage.cold.watermarks import RollOffWatermark
+from candleviewer.storage.errors import StorageError
 from candleviewer.storage.models import StreamKind
 
 #: Hard default (§3.6.3). Provisional values from E16-K01 (`e16-storage-measurement.md` §5):
@@ -800,7 +801,10 @@ class RetentionManager:
                 await ckpt.save(doc)
             try:
                 await self._delete(item)
-            except (OSError, TimeoutError, ValueError, RuntimeError) as exc:
+            except (OSError, TimeoutError, ValueError, RuntimeError, StorageError) as exc:
+                # `StorageError`: a storage adapter may report a DROP its bounded wait did not
+                # see applied as a typed storage error rather than `TimeoutError`; same
+                # handling — `failed` record, item stays `pending`, retried next pass.
                 # Class name only: an exception message may carry filesystem paths (review c).
                 why = type(exc).__name__
                 report.failed.append((item, why))
