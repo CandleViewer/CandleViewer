@@ -10,6 +10,12 @@ the first side while it holds its layout locks (an uncommitted insert of the bat
 lock on the drawing the delete cascades to); the second side is started and seen waiting on a
 lock in `pg_stat_activity` (polled, no sleeps); then the third connection rolls back. With the
 layout check weakened to `FOR KEY SHARE` the batch-first rounds leave a live drawing behind.
+
+Two-layout writer rounds (a workspace soft delete; a replace taking over the default) insert and
+name the layouts against their id order while a third connection share-locks the lower id: the
+writer queues on it holding nothing and the batch commits at once, whether the third connection
+lets go before or after the deadlock checks (a short `deadlock_timeout`). A writer locking in
+scan or statement order holds the higher id there and deadlocks with the batch instead.
 """
 
 from __future__ import annotations
@@ -26,7 +32,7 @@ from typing import Any
 import psycopg
 import pytest
 import pytest_asyncio
-from sqlalchemy import event
+from sqlalchemy import event, text
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.storage.repositories.drawings import (
@@ -47,7 +53,9 @@ pytestmark = pytest.mark.integration
 _ROOT = Path(__file__).resolve().parents[3]
 ROUNDS = 60
 WS_ROUNDS = 24  # even: the batch parks first (committed); odd: the delete parks first (rejected)
-_MAX_POLLS = 5_000
+DEADLOCK_ROUNDS = 3  # per writer and release timing
+DEADLOCK_MS = 100  # `deadlock_timeout` on the race engines (`_fast_deadlock_check`)
+_MAX_POLLS = 100_000  # a safety bound only: polls stop as soon as their condition holds
 Repos = tuple[SqlAlchemyDrawingRepository, SqlAlchemyWorkspaceRepository, str, str]
 
 
@@ -97,10 +105,16 @@ def _f(layout: str | None) -> DrawingFields:
 
 
 async def _layout(
-    workspaces: SqlAlchemyWorkspaceRepository, owner: str, wid: str, lid: str | None = None
+    workspaces: SqlAlchemyWorkspaceRepository,
+    owner: str,
+    wid: str,
+    lid: str | None = None,
+    *,
+    name: str | None = None,
+    default: bool = False,
 ) -> str:
     lid = lid or str(uuid.uuid4())
-    fields = LayoutFields(f"l-{lid}", "1x1", None, True, False, False, None, False, ())
+    fields = LayoutFields(name or f"l-{lid}", "1x1", None, True, False, False, None, default, ())
     await workspaces.create_layout(owner, wid, lid, fields)
     return lid
 
@@ -120,18 +134,34 @@ async def _parked(gate: asyncio.Event, work: Coroutine[Any, Any, object]) -> str
     return await _outcome(work)
 
 
-async def _until_waiting(poll: psycopg.AsyncConnection[tuple[object, ...]], side: str) -> None:
-    """Return once the `side` engine's backend waits on a lock (autocommit: a fresh snapshot of
-    `pg_stat_activity` per poll); the unit of work tags it `candleviewer:<side>`."""
+async def _until_waiting(
+    poll: psycopg.AsyncConnection[tuple[object, ...]],
+    side: str,
+    *,
+    ms: int = 0,
+    done: asyncio.Task[str] | None = None,
+) -> None:
+    """Return once the `side` engine's backend has waited on a lock for `ms` milliseconds, or once
+    `done` has finished (autocommit: a fresh snapshot of `pg_stat_activity` per poll); the unit
+    of work tags the backend `candleviewer:<side>`."""
     for _ in range(_MAX_POLLS):
+        if done is not None and done.done():
+            return
         cur = await poll.execute(
-            "SELECT count(*) FROM pg_stat_activity "
-            "WHERE application_name = %s AND wait_event_type = 'Lock'",
-            (f"candleviewer:{side}",),
+            "SELECT count(*) FROM pg_stat_activity WHERE application_name = %s "
+            "AND wait_event_type = 'Lock' "
+            "AND clock_timestamp() - query_start >= %s * interval '1 ms'",
+            (f"candleviewer:{side}", ms),
         )
         if await cur.fetchone() != (0,):
             return
     raise AssertionError(f"{side} never waited on a lock")
+
+
+def _fast_deadlock_check(dbapi_connection: Any, _record: object) -> None:
+    """Pool `connect` hook: run the deadlock check `DEADLOCK_MS` into a lock wait, not after 1 s
+    (session level, outside any transaction, so it sticks)."""
+    dbapi_connection.run_async(lambda c: c.execute("SET deadlock_timeout = '100ms'"))
 
 
 async def _release(gate: asyncio.Event) -> str:
@@ -298,3 +328,69 @@ async def test_a_two_layout_batch_racing_a_workspace_soft_delete_never_leaves_a_
         ).fetchone()
     assert stray == (0,) and sum(outcomes.values()) == WS_ROUNDS, outcomes
     print("WORKSPACE_RACE_OUTCOMES=" + repr(outcomes))
+
+
+@pytest.mark.parametrize("late", [False, True])  # the third connection lets go before/after
+@pytest.mark.parametrize("writer", ["delete", "replace"])
+async def test_two_layout_writers_lock_in_id_order_so_a_batch_never_deadlocks(
+    repos: Repos, pg_dsn: str, writer: str, late: bool
+) -> None:
+    drawings, workspaces, owner, _home = repos  # `_home` stays live: never the last workspace
+    checks = [0]
+
+    def count(_c: object, _cur: object, statement: str, *_rest: object) -> None:
+        if "FROM layouts" in statement:
+            checks[0] += 1  # the batch's layout check; a 40P01 rerun would run it again
+
+    event.listen(drawings._relational._engine.sync_engine, "before_cursor_execute", count)
+    for rel in (drawings._relational, workspaces._relational):
+        event.listen(rel._engine.sync_engine, "connect", _fast_deadlock_check)
+        await rel.dispose()  # reconnect: every connection now has the short deadlock_timeout
+        async with rel.unit_of_work() as uow:
+            got = (await uow.session.execute(text("SHOW deadlock_timeout"))).scalar_one()
+            assert got == f"{DEADLOCK_MS}ms"
+    plain = pg_dsn.replace("postgresql+asyncpg", "postgresql")
+    async with await psycopg.AsyncConnection.connect(plain, autocommit=True) as poll:
+        for _ in range(DEADLOCK_ROUNDS):
+            wid, (lo, hi) = str(uuid.uuid4()), sorted(str(uuid.uuid4()) for _ in range(2))
+            await workspaces.create_workspace(
+                owner, wid, WorkspaceFields(f"w-{wid}", False, "workspace.default", 0)
+            )
+            await _layout(workspaces, owner, wid, hi, name="a")  # first by insert and by name
+            await _layout(workspaces, owner, wid, lo, name="b", default=True)
+            old, new = str(uuid.uuid4()), str(uuid.uuid4())
+            token = (await drawings.create(owner, old, _f(hi))).updated_at
+            ops = [CreateOp(new, _f(lo)), UpdateOp(old, token, _f(hi))]
+            take = LayoutFields("a", "1x1", None, True, False, False, None, True, ())
+            write = (
+                workspaces.soft_delete_workspace(owner, wid)
+                if writer == "delete"
+                else workspaces.replace_layout(owner, wid, hi, take, if_match=None)
+            )
+            with _sync(pg_dsn, autocommit=False) as third:
+                third.execute("SELECT 1 FROM layouts WHERE id = %s FOR SHARE", (lo,))
+                checks[0] = 0
+                async with asyncio.TaskGroup() as tg:  # a 40P01 on the writer escapes
+                    tg.create_task(write)
+                    await _until_waiting(poll, "workspaces-race")  # queued on `lo`
+                    batch = tg.create_task(_outcome(drawings.apply_batch(owner, ops)))
+                    await _until_waiting(poll, "drawings-race", done=batch)
+                    if late:  # both sides' deadlock checks have run before the third lets go
+                        await _until_waiting(poll, "workspaces-race", ms=3 * DEADLOCK_MS)
+                        await _until_waiting(poll, "drawings-race", ms=3 * DEADLOCK_MS, done=batch)
+                    third.rollback()
+            assert (batch.result(), checks[0]) == ("committed", 1)  # first attempt, no rerun
+            with _sync(pg_dsn) as c:
+                kept = c.execute(
+                    "SELECT count(*) FROM drawings d JOIN layouts l ON l.id = d.layout_id "
+                    "WHERE d.id = ANY(%s::uuid[]) "
+                    "AND (d.deleted_at IS NULL) = (l.deleted_at IS NULL)",
+                    ([old, new],),
+                ).fetchone()
+                state = c.execute(
+                    "SELECT bool_and(deleted_at IS NOT NULL), bool_and(is_default = "
+                    "(id = %s::uuid)) FROM layouts WHERE id = ANY(%s::uuid[])",
+                    (hi, [lo, hi]),
+                ).fetchone()
+            assert kept == (2,)  # each drawing shares its layout's fate: nothing stray
+            assert state == (writer == "delete", writer == "replace")  # deleted, or default moved
