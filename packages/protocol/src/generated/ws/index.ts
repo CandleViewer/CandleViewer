@@ -42,6 +42,9 @@ export interface CvWsV1AuthSchemaJson {
 export interface CvWsV1AuthOkSchemaJson {
   user_id: string;
   username?: string;
+  /**
+   * Items: Closed set: OpenAPI RoleName / role_name enum (22-api-openapi.yaml) and CONSTITUTION C-12.4 (Owner, Manager, Viewer); custom roles are out of scope for v1.
+   */
   roles: ("owner" | "manager" | "viewer")[];
   permissions: string[];
   account_scope: string[];
@@ -806,6 +809,9 @@ export interface Orders {
 // Source: cv://ws/v1/permission_change.schema.json
 export interface CvWsV1PermissionChangeSchemaJson {
   user_id: string;
+  /**
+   * Items: Closed set: OpenAPI RoleName / role_name enum (22-api-openapi.yaml) and CONSTITUTION C-12.4 (Owner, Manager, Viewer); custom roles are out of scope for v1.
+   */
   roles: ("owner" | "manager" | "viewer")[];
   permissions: string[];
   account_scope: string[];

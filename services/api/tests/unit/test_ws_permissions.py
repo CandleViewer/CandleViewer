@@ -149,24 +149,40 @@ def test_registry_without_connections_is_noop() -> None:
 
 
 def test_permission_change_frame_validates_against_section_13_schema() -> None:
-    """#2297: the `apply_snapshot` frame is documented (23-ws-protocol §9.5/§13.4)."""
+    """#2297: the `apply_snapshot` frame is documented (23-ws-protocol §9.5/§13.4).
+
+    Both the docs bundle and the packages/protocol bundle must accept the emitted frame,
+    for an empty (viewer) and a populated (manager, two accounts) `account_scope`.
+    """
     import json
     from pathlib import Path
 
     from jsonschema import Draft202012Validator
     from referencing import Registry, Resource
 
-    bundle = Path(__file__).resolve().parents[4] / "docs" / "plan" / "ws-schema.json"
-    schemas: dict[str, Any] = json.loads(bundle.read_text(encoding="utf-8"))["schemas"]
-    registry: Registry[Any] = Registry().with_resources(
-        (sid, Resource.from_contents(body)) for sid, body in schemas.items()
+    root = Path(__file__).resolve().parents[4]
+    bundles = (
+        root / "docs" / "plan" / "ws-schema.json",
+        root / "packages" / "protocol" / "ws-schemas.json",
     )
-    conn = ConnectionAuthz(_snap("manager", MGR))
-    frame = conn.apply_snapshot(_snap("viewer", VIEWER), 1)[0]
-    assert frame["t"] == "permission_change"
-    for sid, doc in (
-        ("cv://ws/v1/envelope.schema.json", frame),
-        ("cv://ws/v1/permission_change.schema.json", frame["p"]),
-    ):
-        validator = Draft202012Validator(schemas[sid], registry=registry)
-        assert not list(validator.iter_errors(doc))
+    two = (AccountGrant(ACC, True, True, False), AccountGrant(OTHER, True, False, False))
+    mgr = PrincipalSnapshot(uuid.UUID(int=2), frozenset({"manager"}), MGR, two)
+    for bundle in bundles:
+        schemas: dict[str, Any] = json.loads(bundle.read_text(encoding="utf-8"))["schemas"]
+        registry: Registry[Any] = Registry().with_resources(
+            (sid, Resource.from_contents(body)) for sid, body in schemas.items()
+        )
+        viewer_frame = ConnectionAuthz(_snap("manager", MGR)).apply_snapshot(
+            PrincipalSnapshot(uuid.UUID(int=1), frozenset({"viewer"}), VIEWER, ()), 1
+        )[0]
+        mgr_frame = ConnectionAuthz(_snap("viewer", VIEWER)).apply_snapshot(mgr, 2)[0]
+        assert viewer_frame["p"]["account_scope"] == []
+        assert len(mgr_frame["p"]["account_scope"]) == 2
+        for frame in (viewer_frame, mgr_frame):
+            assert frame["t"] == "permission_change"
+            for sid, doc in (
+                ("cv://ws/v1/envelope.schema.json", frame),
+                ("cv://ws/v1/permission_change.schema.json", frame["p"]),
+            ):
+                validator = Draft202012Validator(schemas[sid], registry=registry)
+                assert not list(validator.iter_errors(doc)), bundle

@@ -1689,7 +1689,14 @@ Shared definitions used throughout:
   "properties": {
     "user_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
     "username": { "type": "string" },
-    "roles": { "type": "array", "items": { "enum": ["owner", "manager", "viewer"] } },
+    "roles": {
+      "type": "array",
+      "items": {
+        "enum": ["owner", "manager", "viewer"],
+        "x-db-enum": "role_name",
+        "description": "Closed set: OpenAPI RoleName / role_name enum (22-api-openapi.yaml) and CONSTITUTION C-12.4 (Owner, Manager, Viewer); custom roles are out of scope for v1."
+      }
+    },
     "permissions": { "type": "array", "items": { "type": "string" } },
     "account_scope": {
       "type": "array",
@@ -1717,7 +1724,14 @@ Shared definitions used throughout:
   "required": ["user_id", "roles", "permissions", "account_scope"],
   "properties": {
     "user_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
-    "roles": { "type": "array", "items": { "enum": ["owner", "manager", "viewer"] } },
+    "roles": {
+      "type": "array",
+      "items": {
+        "enum": ["owner", "manager", "viewer"],
+        "x-db-enum": "role_name",
+        "description": "Closed set: OpenAPI RoleName / role_name enum (22-api-openapi.yaml) and CONSTITUTION C-12.4 (Owner, Manager, Viewer); custom roles are out of scope for v1."
+      }
+    },
     "permissions": { "type": "array", "items": { "type": "string" } },
     "account_scope": {
       "type": "array",

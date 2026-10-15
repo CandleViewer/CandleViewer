@@ -154,11 +154,13 @@
         },
         "roles": {
           "items": {
+            "description": "Closed set: OpenAPI RoleName / role_name enum (22-api-openapi.yaml) and CONSTITUTION C-12.4 (Owner, Manager, Viewer); custom roles are out of scope for v1.",
             "enum": [
               "owner",
               "manager",
               "viewer"
-            ]
+            ],
+            "x-db-enum": "role_name"
           },
           "type": "array"
         },
@@ -1678,11 +1680,13 @@
         },
         "roles": {
           "items": {
+            "description": "Closed set: OpenAPI RoleName / role_name enum (22-api-openapi.yaml) and CONSTITUTION C-12.4 (Owner, Manager, Viewer); custom roles are out of scope for v1.",
             "enum": [
               "owner",
               "manager",
               "viewer"
-            ]
+            ],
+            "x-db-enum": "role_name"
           },
           "type": "array"
         },
