@@ -364,6 +364,8 @@ def make_audit_router(
     @_no_store
     async def query_audit_log(
         request: Request,
+        # Every parameter is declared as text (`action` as a list of text), to validate
+        # query parameters after authorisation, in `AuditQueryRequest` below.
         actor_user_id: str | None = None,
         # Without `Query()` a list parameter is read from a JSON body, even on a GET.
         action: Annotated[list[str] | None, Query()] = None,
@@ -373,10 +375,10 @@ def make_audit_router(
         # `from` is a Python keyword; the OpenAPI contract (22-api-openapi.yaml) names
         # the query parameter `from`, so alias it — without the alias `?from=` was
         # silently ignored and the lower time bound dropped.
-        from_: Annotated[datetime | None, Query(alias="from")] = None,
-        to: datetime | None = None,
+        from_: Annotated[str | None, Query(alias="from")] = None,
+        to: str | None = None,
         cursor: str | None = None,
-        limit: int = AUDIT_QUERY_DEFAULT_LIMIT,
+        limit: str | None = None,
         ip: str | None = None,
         subject_id: str | None = None,
         q: str | None = None,
@@ -409,7 +411,7 @@ def make_audit_router(
                     "from_ts": from_,
                     "to_ts": to,
                     "q": q,
-                    "limit": limit,
+                    "limit": AUDIT_QUERY_DEFAULT_LIMIT if limit is None else limit,
                 }
             )
         except ValidationError as exc:
