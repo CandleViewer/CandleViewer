@@ -1440,6 +1440,14 @@
         "estimated": {
           "type": "boolean",
           "default": false
+        },
+        "coalesced": {
+          "type": "boolean",
+          "default": false
+        },
+        "coalesced_count": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "additionalProperties": false
@@ -1614,6 +1622,14 @@
             },
             "additionalProperties": false
           }
+        },
+        "coalesced": {
+          "type": "boolean",
+          "default": false
+        },
+        "coalesced_count": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "additionalProperties": false
@@ -1692,6 +1708,14 @@
             },
             "additionalProperties": false
           }
+        },
+        "coalesced": {
+          "type": "boolean",
+          "default": false
+        },
+        "coalesced_count": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "additionalProperties": false
@@ -2100,7 +2124,15 @@
           "items": {
             "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
           },
-          "description": "Positions that went flat."
+          "description": "Positions that went flat; applied after this frame's `positions` upserts."
+        },
+        "coalesced": {
+          "type": "boolean",
+          "default": false
+        },
+        "coalesced_count": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "additionalProperties": false
@@ -2285,6 +2317,14 @@
             },
             "additionalProperties": false
           }
+        },
+        "coalesced": {
+          "type": "boolean",
+          "default": false
+        },
+        "coalesced_count": {
+          "type": "integer",
+          "minimum": 1
         }
       },
       "additionalProperties": false
