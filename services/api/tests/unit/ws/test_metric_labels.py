@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
+import pytest
+
 from candleviewer.ws.gateway import close_reason_label
 from candleviewer.ws.lifecycle import CLOSE_REASONS
 from candleviewer.ws.upstream import (
@@ -10,6 +14,14 @@ from candleviewer.ws.upstream import (
     UpstreamRefs,
     cv_ws_upstream_consumers_in_use,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clean_upstream_gauge() -> Iterator[None]:
+    """The gauge is module-global; isolate every test from series leaked by others (#2360)."""
+    cv_ws_upstream_consumers_in_use.clear()
+    yield
+    cv_ws_upstream_consumers_in_use.clear()
 
 
 def _series() -> dict[tuple[str, str], float]:
@@ -53,3 +65,24 @@ async def test_upstream_gauge_symbol_label_bounded_with_other() -> None:
         refs.release((s, "book", ()), "c1", now=0.0)
     await refs.sweep(now=5.0)
     assert not [k for k in _series() if k[1] == "book"]
+
+
+def test_autouse_fixture_is_active_and_starts_clean(request: pytest.FixtureRequest) -> None:
+    assert "_clean_upstream_gauge" in request.fixturenames
+    assert _series() == {}
+
+
+def test_fixture_clears_stray_series_before_and_after() -> None:
+    """Drive the fixture generator by hand so both halves are proven (#2360)."""
+    fixture_fn = getattr(_clean_upstream_gauge, "__wrapped__", None)
+    if fixture_fn is None:  # pytest >= 8.4 wraps fixtures in a definition object
+        fixture_fn = _clean_upstream_gauge._get_wrapped_function()  # type: ignore[attr-defined]
+    stray = cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book")
+    stray.set(1)
+    assert ("ZZSTRAYUSDT", "book") in _series()
+    gen = fixture_fn()
+    next(gen)  # setup half: pre-existing leak is cleared
+    assert _series() == {}
+    cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book").set(1)
+    assert next(gen, None) is None  # teardown half: leak created during the test is cleared
+    assert _series() == {}
