@@ -869,7 +869,7 @@ retention_policies = Table(
     ),
 )
 
-#: Replay sessions (E26-T01, revision 0022_replay_sessions) - `21-database-schema.md` Sec.3.6.4.
+#: Replay sessions (E26-T01, revision 0023_replay_sessions) - `21-database-schema.md` Sec.3.6.4.
 #: `replay_state` mirrors every B12 `replay` chart state (C-2.19): the six API values, then the
 #: transient `stepping` and the final `destroyed`.
 replay_state = ENUM(

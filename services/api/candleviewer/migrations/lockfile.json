@@ -107,10 +107,10 @@
       "sha256": "c62b225e1462fbc27b0a7a411d5d0902e211189b6e495a09c183d4c12f537516",
       "down_revision": "0021_drawings"
     },
-    "0022_replay_sessions": {
-      "path": "services/api/candleviewer/migrations/versions/0022_replay_sessions.py",
-      "sha256": "26cc1746d203e9db92f80c8d03f72b030edc0359db23ee6977e61da3c1065f06",
-      "down_revision": "0021_drawings"
+    "0023_replay_sessions": {
+      "path": "services/api/candleviewer/migrations/versions/0023_replay_sessions.py",
+      "sha256": "b6ef7e94a2140bb268098d3afdaf86390682cdefe44593e6b3619ef3b14b4554",
+      "down_revision": "0022_workspaces"
     }
   }
 }

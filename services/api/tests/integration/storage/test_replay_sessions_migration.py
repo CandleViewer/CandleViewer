@@ -1,4 +1,4 @@
-"""Integration: `0022_replay_sessions` against real Postgres 16 (E26-T01 #624).
+"""Integration: `0023_replay_sessions` against real Postgres 16 (E26-T01 #624).
 
 AC1 (round trip, no residue, catalog == 21-database-schema.md Sec.3.6.4) and AC2 (each
 invalid row rejected by its NAMED constraint). Uses `testcontainers` like the other
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.integration
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
-_PREV = "0021_drawings"
+_PREV = "0022_workspaces"
 _T0 = datetime(2026, 9, 10, 13, 0, tzinfo=UTC)
 _T1 = _T0 + timedelta(hours=2)
 
@@ -193,7 +193,7 @@ def test_downgrade_refuses_while_sessions_exist(pg_dsn: str) -> None:
         _session(c, _user(c))
         refused = _alembic(pg_dsn, "downgrade", _PREV)
         assert refused.returncode != 0
-        assert "0022_replay_sessions downgrade refused" in refused.stderr
+        assert "0023_replay_sessions downgrade refused" in refused.stderr
         assert c.execute("SELECT to_regclass('replay_sessions')").fetchone() == ("replay_sessions",)
         c.execute("DELETE FROM replay_sessions")
 

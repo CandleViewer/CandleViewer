@@ -1,4 +1,4 @@
-"""`0022_replay_sessions` (E26-T01 #624): offline render, plan-doc parity, models, downgrade.
+"""`0023_replay_sessions` (E26-T01 #624): offline render, plan-doc parity, models, downgrade.
 
 Real-Postgres behaviour (named-constraint rejection, catalog parity, round trip) is covered by
 `tests/integration/storage/test_replay_sessions_migration.py`.
@@ -20,7 +20,7 @@ from candleviewer.db import models
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DOC = _ROOT.parents[1] / "docs" / "plan" / "21-database-schema.md"
-_REV, _PREV = "0022_replay_sessions", "0021_drawings"
+_REV, _PREV = "0023_replay_sessions", "0022_workspaces"
 #: The six API-facing values, then B12's `stepping` and `destroyed` (C-2.19: the chart wins).
 _STATES = (
     "created",
@@ -100,7 +100,7 @@ def test_upgrade_tags_bookmarks_as_pii_per_classification() -> None:
 def test_downgrade_refuses_while_populated_then_drops_table_before_type() -> None:
     sql = _norm(_sql("downgrade", f"{_REV}:{_PREV}"))
     assert "IF EXISTS (SELECT 1 FROM replay_sessions) THEN" in sql
-    assert "RAISE EXCEPTION '0022_replay_sessions downgrade refused" in sql
+    assert "RAISE EXCEPTION '0023_replay_sessions downgrade refused" in sql
     drop_table = sql.index("DROP TABLE IF EXISTS replay_sessions;")
     assert drop_table < sql.index("DROP TYPE IF EXISTS replay_state;")
 

@@ -1,12 +1,12 @@
 """replay_sessions + replay_state (E26-T01 #624)
 
-Revision ID: 0022_replay_sessions
-Revises: 0021_drawings
+Revision ID: 0023_replay_sessions
+Revises: 0022_workspaces
 Create Date: 2026-10-15
 
 Purely additive (C-5.1). The table, its five named CHECKs and both indexes are
 `docs/plan/21-database-schema.md` Sec.3.6.4 verbatim (the register's
-`0007_recorder` row; that number was taken, so it ships alone as 0022).
+`0007_recorder` row; that number was taken, so it ships alone as 0023).
 `replay_state` (Sec.1.2) had no earlier owner, so it is created here: the six
 `ReplayState` API values in contract order, then B12's `stepping` (transient,
 still a valid persisted snapshot state) and `destroyed` (the only final state;
@@ -29,8 +29,8 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0022_replay_sessions"
-down_revision: str | None = "0021_drawings"
+revision: str = "0023_replay_sessions"
+down_revision: str | None = "0022_workspaces"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -91,7 +91,7 @@ _DOWNGRADE_SQL = """
 DO $BODY$
 BEGIN
   IF EXISTS (SELECT 1 FROM replay_sessions) THEN
-    RAISE EXCEPTION '0022_replay_sessions downgrade refused: replay_sessions holds data';
+    RAISE EXCEPTION '0023_replay_sessions downgrade refused: replay_sessions holds data';
   END IF;
 END $BODY$;
 DROP TABLE IF EXISTS replay_sessions;
