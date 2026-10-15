@@ -656,7 +656,9 @@ def make_audit_router(
         unexpected, also 503), and a full-range stop turns a chain gauge of 1 into NaN (0
         stays until a full-range run passes); a cancellation propagates. Each of these 503s
         carries `Retry-After` but `entry_too_large`, which no retry can pass until the cap is
-        raised."""
+        raised. A break's system event comes after the result record, in a `finally` so a
+        record that cannot be written still raises it; it is best effort and delays the
+        response by at most `EVENT_TIMEOUT_S` (2 s)."""
         emit, fields = service.writer.emit, _request_fields(principal)
         span = {"from_id": plan.from_id, "to_id": plan.to_id}
         if not await write_verify_record(
@@ -690,15 +692,17 @@ def make_audit_router(
             )
             return _unavailable("audit verify failed")
         observe_verify(result)  # the chain series follow the run, recorded or not
-        request_id = principal.request_id
-        await raise_break_event(
-            verify_events, result, None if request_id is None else str(request_id)
-        )
         outcome, severity, reason, after = result_record(result)
-        if not await write_verify_record(
-            emit, fields, outcome=outcome, severity=severity, reason=reason, after_state=after
-        ):
-            return _unavailable()
+        request_id = principal.request_id
+        try:  # the record first: it alone decides the response
+            if not await write_verify_record(
+                emit, fields, outcome=outcome, severity=severity, reason=reason, after_state=after
+            ):
+                return _unavailable()
+        finally:
+            await raise_break_event(
+                verify_events, result, None if request_id is None else str(request_id)
+            )
         return JSONResponse(status_code=200, content=_jsonable(result))
 
     @router.post("/export")
