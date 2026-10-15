@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import uuid
+from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -15,10 +17,11 @@ from audit_fakes import FakeAuditRepository, FakeClock
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from candleviewer.audit import query as query_mod
 from candleviewer.audit.checkpoint import run_checkpoint
 from candleviewer.audit.cursor import decode_cursor
 from candleviewer.audit.errors import AuditChainBroken
-from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.audit.models import AuditOutcome, ChainBreakKind, Severity
 from candleviewer.audit.query import VERIFY_BATCH_SIZE, AuditQueryService
 
 _ME, _OTHER = str(uuid.UUID(int=1)), str(uuid.UUID(int=2))
@@ -204,6 +207,7 @@ async def test_verify_broken_prev_link_located(repo: FakeAuditRepository, clock:
     del repo.rows[2]  # out-of-band delete of id 3
     result = await AuditQueryService(repo).verify()
     assert not result.verified and result.first_bad_id == 4
+    assert result.kind is ChainBreakKind.PREV_HASH_MISMATCH
 
 
 async def test_verify_anchors_on_the_greatest_id_below_from_id(
@@ -252,12 +256,122 @@ async def test_verify_walks_keyset_batches_of_ten_thousand_by_default(
     assert repo.verify_calls == [(2, 10, 4), (6, 10, 4)]  # a full last batch ends at the head
 
 
+class _SpyHasher:
+    """Runs each batch check inline and records how many fetches were issued by then."""
+
+    def __init__(self, repo: FakeAuditRepository) -> None:
+        self.repo, self.fetched_at_submit = repo, list[int]()
+
+    async def run(self, fn: Callable[[], Any]) -> Any:
+        await asyncio.sleep(0)  # one loop turn: a prefetch scheduled before this call starts
+        self.fetched_at_submit.append(len(self.repo.verify_calls))
+        return fn()
+
+    def shutdown(self) -> None:
+        return None
+
+
+async def test_verify_fetches_the_next_batch_while_hashing_one(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Pipelined: batch n+1 is in flight while batch n is hashed, and batch n+2 is not
+    fetched before batch n is done, so at most two batches are held."""
+    await _seed(repo, 9, clock)
+    hasher = _SpyHasher(repo)
+    svc = AuditQueryService(repo, hasher)  # type: ignore[arg-type]  # structural stand-in
+    assert (await svc.verify(batch_size=3)).entries_checked == 9
+    assert hasher.fetched_at_submit == [2, 3, 3]
+
+
+async def test_verify_hashes_off_the_event_loop(
+    repo: FakeAuditRepository, clock: FakeClock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _seed(repo, 3, clock)
+    threads: list[int] = []
+    walk = query_mod._walk_batch
+
+    def spy(expected: str, rows: Any) -> Any:
+        threads.append(threading.get_ident())
+        return walk(expected, rows)
+
+    monkeypatch.setattr(query_mod, "_walk_batch", spy)
+    assert (await AuditQueryService(repo).verify()).verified
+    assert threads and threading.get_ident() not in threads
+
+
+async def test_verify_stops_at_the_first_divergence_and_cancels_the_prefetch(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 9, clock)
+    repo.rows[1]["reason"] = "forged"  # id 2
+    repo.rows[7]["reason"] = "forged"  # id 8, never reached
+    result = await AuditQueryService(repo).verify(batch_size=3)
+    assert (result.verified, result.entries_checked, result.first_bad_id) == (False, 2, 2)
+    assert result.kind is ChainBreakKind.ENTRY_HASH_MISMATCH
+    assert len(repo.verify_calls) <= 2  # the prefetch of ids 4-6, never the third batch
+
+
+async def test_verify_reports_a_broken_link_before_a_bad_hash(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Both checks fail on id 3: the link is checked first (`prev_hash_mismatch`)."""
+    await _seed(repo, 4, clock)
+    repo.rows[2].update(prev_hash="f" * 64, reason="forged")
+    result = await AuditQueryService(repo).verify()
+    assert (result.first_bad_id, result.kind) == (3, ChainBreakKind.PREV_HASH_MISMATCH)
+    assert "kind" not in result.model_dump(mode="json")  # internal: not in the response
+
+
+async def test_verify_takes_checked_at_from_the_injected_clock(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    from datetime import UTC, datetime
+
+    await _seed(repo, 2, clock)
+    at = datetime(2026, 10, 14, 23, 0, tzinfo=UTC)
+    assert (await AuditQueryService(repo, clock=lambda: at).verify()).checked_at == at
+
+
 async def test_verify_an_empty_or_past_the_head_range_checks_nothing(
     repo: FakeAuditRepository, clock: FakeClock
 ) -> None:
     await _seed(repo, 3, clock)
     result = await AuditQueryService(repo).verify(from_id=4)
     assert (result.verified, result.entries_checked, repo.verify_calls) == (True, 0, [])
+
+
+async def test_verify_a_range_inside_an_id_gap_checks_nothing(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 2, clock)
+    repo.burn_ids(2)  # ids 3 and 4 are never written
+    await _seed(repo, 1, clock, first=2)  # id 5
+    result = await AuditQueryService(repo).verify(from_id=3, to_id=4)
+    assert (result.verified, result.entries_checked) == (True, 0)
+    assert repo.verify_calls == [(2, 4, VERIFY_BATCH_SIZE)]
+
+
+async def test_verify_cancelled_mid_run_leaves_no_fetch_running(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 6, clock)
+    gate, fetch = asyncio.Event(), repo.fetch_verify_batch
+    pending: list[asyncio.Task[Any]] = []
+
+    async def stalled(**kw: Any) -> list[tuple[Any, ...]]:
+        if kw["after_id"] > 0:  # the prefetch never answers
+            pending.append(asyncio.current_task())  # type: ignore[arg-type]  # inside a task
+            gate.set()
+            await asyncio.Event().wait()
+        return await fetch(**kw)
+
+    repo.fetch_verify_batch = stalled  # type: ignore[method-assign]  # spy on the fake
+    run = asyncio.ensure_future(AuditQueryService(repo).verify(batch_size=3))
+    await gate.wait()
+    run.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await run
+    assert pending and all(task.done() for task in pending)
 
 
 _FIELDS = ["actor_label", "action", "reason", "before_state", "object_id", "event_ts", "severity"]

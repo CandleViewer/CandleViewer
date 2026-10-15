@@ -83,6 +83,10 @@ _ENTRY_HASH_SQL = sa.text("SELECT entry_hash FROM audit_log WHERE id = :id")
 _ANCHOR_SQL = sa.text(
     "SELECT entry_hash FROM audit_log WHERE id < :before_id ORDER BY id DESC LIMIT 1"
 )
+#: Per-statement budget for verify's reads (the head, the anchor, each batch), client-side
+#: and as `statement_timeout`: a backstop far above one keyset batch. An overrun is 503.
+VERIFY_READ_TIMEOUT_MS = 10_000
+_VERIFY_READ_TIMEOUT = {"v": f"{VERIFY_READ_TIMEOUT_MS}ms"}
 
 #: Every hashed column is rendered to text *by Postgres*, with exactly the
 #: casts `audit_chain()` uses, so the Python verifier encodes the same bytes
@@ -386,21 +390,43 @@ class SqlAlchemyAuditRepository:
             return row[0] if row is not None else None
 
     async def fetch_anchor_hash(self, before_id: int) -> str | None:
-        async with self._relational.unit_of_work() as uow:
-            rows = list(await uow.session.execute(_ANCHOR_SQL, {"before_id": before_id}))
-            return str(rows[0][0]) if rows else None
+        rows = await self._bounded_read(_ANCHOR_SQL, {"before_id": before_id})
+        return str(rows[0][0]) if rows else None
 
     async def fetch_verify_batch(
         self, *, after_id: int, to_id: int, limit: int
     ) -> list[tuple[Any, ...]]:
         params = {"after_id": after_id, "to_id": to_id, "limit": limit}
-        async with self._relational.unit_of_work() as uow:
-            return [tuple(row) for row in await uow.session.execute(_VERIFY_BATCH_SQL, params)]
+        return await self._bounded_read(_VERIFY_BATCH_SQL, params)
 
     async def read_head(self) -> tuple[int, str] | None:
-        async with self._relational.unit_of_work() as uow:
-            row = (await uow.session.execute(_HEAD_SQL)).first()
-            return (row[0], row[1]) if row is not None else None
+        rows = await self._bounded_read(_HEAD_SQL, {})
+        return (int(rows[0][0]), str(rows[0][1])) if rows else None
+
+    async def _bounded_read(
+        self, statement: sa.TextClause, params: dict[str, Any]
+    ) -> list[tuple[Any, ...]]:
+        """One read under `VERIFY_READ_TIMEOUT_MS`, rows as plain tuples. Failures as in
+        `query_page`: the builtin `TimeoutError`, or `AuditReadFailed` with the SQLSTATE
+        only, raised `from None` so no database error rides along (C-12.6)."""
+        budget = asyncio.timeout(VERIFY_READ_TIMEOUT_MS / 1000)
+        timed_out, error, state = False, "", None
+        try:
+            async with budget:
+                async with self._relational.unit_of_work() as uow:
+                    await uow.session.execute(_SET_TIMEOUT_SQL, _VERIFY_READ_TIMEOUT)
+                    return [tuple(row) for row in await uow.session.execute(statement, params)]
+        except (TimeoutError, sa.exc.TimeoutError):
+            timed_out = True
+        except (sa.exc.SQLAlchemyError, OSError) as exc:
+            state = _sqlstate(exc) if isinstance(exc, sa.exc.DBAPIError) else None
+            timed_out = state == _QUERY_CANCELED or budget.expired()
+            error = type(exc).__name__
+        if timed_out:
+            _log().warning("audit.verify_read.timeout", budget_ms=VERIFY_READ_TIMEOUT_MS)
+            raise TimeoutError("audit read exceeded its time budget") from None
+        _log().warning("audit.verify_read.failed", error=error, sqlstate=state)
+        raise AuditReadFailed(state) from None
 
     async def count(self) -> int:
         async with self._relational.unit_of_work() as uow:

@@ -89,7 +89,11 @@ class AuditRepository(Protocol):
         *renderings)`. The renderings follow `query.HASHED_FIELDS`, each rendered to text by
         Postgres with the exact casts `audit_chain()` uses (`::text`, jsonb `::text`, and
         the trigger's `to_char(... 'YYYY-MM-DD"T"HH24:MI:SS.USOF')` for `event_ts`),
-        `None` for SQL NULL."""
+        `None` for SQL NULL.
+
+        This and `fetch_anchor_hash`/`read_head` bound each call in time; an overrun raises
+        the builtin `TimeoutError`, and a database failure a storage error that carries
+        only the SQLSTATE."""
         ...
 
     async def read_head(self) -> tuple[int, str] | None:
