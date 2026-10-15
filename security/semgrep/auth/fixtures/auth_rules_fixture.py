@@ -167,6 +167,16 @@ async def archive_ok(body):
     return await svc.archive(body)
 
 
+@router.put("/drawings/{drawingId}")  # ok: audit-write-required
+async def drawing_put_ok(body):
+    return await svc.put(body)
+
+
+@router.post("/drawings/{drawingId}/share")  # ruleid: audit-write-required
+async def drawing_share_bad(body):
+    return await svc.share(body)
+
+
 @router.get("/accounts")  # ok: audit-write-required
 async def list_ok():
     return await svc.list()

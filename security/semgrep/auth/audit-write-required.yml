@@ -22,14 +22,32 @@ rules:
           metavariable: $M
           regex: "^(post|put|patch|delete)$"
       - pattern-not-regex: "(_audit\\(|audit_\\w+\\(|\\.emit\\()"
+      # Not C-2.9 actions by decision (#357 item 11, #402 D20): these exact routes only, so a new
+      # mutating route in the same router is still flagged. Drawings: 403s go through enforce()
+      # (audited) and a foreign drawing id on a single PUT/DELETE is audited as rbac.denied;
+      # batch target_unavailable/id_unavailable probes (R3, #433) and a foreign layout_id probe
+      # are NOT audited. Workspaces: D18 audits foreign-id probes as rbac.denied.
+      # REVISIT when E40 exposes drawings.alert_id and when the 3.8.5 hotkey routes land: this
+      # rule cannot see new behaviour inside an approved handler.
+      - pattern-not: |
+          @$R.post("=~/^/(drawings|drawings/batch|workspaces|workspaces/[{]workspaceId[}]/layouts)$/", ...)
+          async def $F(...):
+              ...
+      - pattern-not: |
+          @$R.put("=~/^/(drawings/[{]drawingId[}]|workspaces/[{]workspaceId[}]|workspaces/[{]workspaceId[}]/layouts/[{]layoutId[}])$/", ...)
+          async def $F(...):
+              ...
+      - pattern-not: |
+          @$R.delete("=~/^/(drawings/[{]drawingId[}]|workspaces/[{]workspaceId[}]|workspaces/[{]workspaceId[}]/layouts/[{]layoutId[}])$/", ...)
+          async def $F(...):
+              ...
     paths:
       exclude:
         - "**/tests/**"
-        # Allowlist (Security-owned, widening needs Security review). Audit for these is
-        # emitted below the handler, not inline; each entry states where.
+        # Allowlist (Security-owned, widening needs Security review). Two classes:
+        # (a) audited below the handler, not inline: rules.py, rules_crud.py, step_up.py;
+        # (b) not an audited account action: telemetry.py, plus the exact-route list below.
         - "**/api/rules.py"        # validate is non-mutating; compile audits in rules/service.py
         - "**/api/rules_crud.py"   # every mutation goes through rules/service.py (audited)
         - "**/api/step_up.py"      # step-up grant/fail audited by the B16 plugin (ACTION_REQUEST)
         - "**/api/telemetry.py"    # frontend telemetry sink, not an audited account action
-        - "**/api/drawings.py"     # user drawings are UI state (SCR-037 analytics), not C-2.9 (E14-T01 decision record item 11); denials audited as rbac.denied
-        - "**/api/workspaces.py"   # workspaces/layouts are UI state, not C-2.9 (E15-T01 D20); denials audited as rbac.denied
