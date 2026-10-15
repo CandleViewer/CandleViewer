@@ -55,7 +55,7 @@ MAX_MSGPACK_DEPTH: Final = MAX_JSON_DEPTH
 #: this cap. A longer list is malformed here, where JSON would get the per-option error.
 MAX_MSGPACK_CONTAINER_LEN: Final = 128
 #: SR-185: values charged per frame (see `_Budget`). The largest schema-valid frames, a `sub` of
-#: 50 topics with every option list full, cost about 5 400.
+#: 50 topics with every option list full, cost about 11 000.
 MAX_MSGPACK_VALUES: Final = 16_384
 _SCALARS: Final = (str, int, type(None))  # a bool is an int
 
