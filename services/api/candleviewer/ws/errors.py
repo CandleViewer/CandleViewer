@@ -33,8 +33,9 @@ def build_ws_error(
     """The one sanctioned ``err`` frame builder (requirement S10).
 
     Raises ``UnknownErrorCode`` for a code that is not in the generated WS catalogue.
-    ``internal_error`` never carries a message (only ``request_id``): no exception text,
-    stack trace or SQL can reach a client through this path.
+    ``message`` defaults to the code's catalogue title (``common#/$defs/error`` requires one).
+    ``internal_error`` always carries only its generic title, plus ``request_id``: no caller
+    text, so no exception text, stack trace or SQL can reach a client through this path.
     """
     try:
         known = ErrorCode(code)
@@ -43,13 +44,14 @@ def build_ws_error(
     if known not in WS_ERROR_CODES:
         raise UnknownErrorCode(f"error code {code!r} is REST-only, not legal on the WS")
     cv_ws_errors_total.labels(code).inc()
+    meta = ERROR_META[known]
+    own = message is not None and known is not ErrorCode.INTERNAL_ERROR
     payload: dict[str, Any] = {
         "code": code,
-        "retryable": ERROR_META[known].retryable,
+        "message": message if own else meta.title,
+        "retryable": meta.retryable,
         "close": close,
     }
-    if message is not None and known is not ErrorCode.INTERNAL_ERROR:
-        payload["message"] = message
     if field is not None:
         payload["field"] = field
     if request_id is not None:
