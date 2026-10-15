@@ -1165,14 +1165,31 @@ def test_verify_body_over_one_kib_is_422_without_a_run() -> None:
     assert client.post("/admin/audit/verify", content=fits).status_code == 200
 
 
+class _Body:
+    """A request whose body arrives in `chunks`, with an optional `Content-Length`."""
+
+    def __init__(self, chunks: list[bytes], declared: str | None = None) -> None:
+        self.chunks, self.pulled = chunks, 0
+        self.headers = {} if declared is None else {"content-length": declared}
+
+    async def stream(self) -> Any:
+        for chunk in self.chunks:
+            self.pulled += 1
+            yield chunk
+
+
+async def _capped(body: _Body) -> bytes | None:
+    return await _read_capped(body, 1024)  # type: ignore[arg-type]  # a fake request
+
+
 async def test_capped_body_read_stops_once_past_the_limit() -> None:
-    pulled: list[int] = []
+    body = _Body([b"x" * 600] * 10)
+    assert await _capped(body) is None
+    assert body.pulled == 2  # nothing read past the chunk that would cross the limit
 
-    class _Request:
-        async def stream(self) -> Any:
-            for i in range(10):
-                pulled.append(i)
-                yield b"x" * 600
 
-    assert await _read_capped(_Request(), 1024) is None  # type: ignore[arg-type]  # fake
-    assert pulled == [0, 1]  # nothing read past the chunk that crossed the limit
+async def test_capped_body_read_is_exact_and_refuses_a_long_declared_length_unread() -> None:
+    assert await _capped(_Body([b"x" * 1024])) == b"x" * 1024
+    assert await _capped(_Body([b"x" * 1024, b"y"])) is None
+    declared = _Body([b"{}"], declared="5000")
+    assert await _capped(declared) is None and declared.pulled == 0
