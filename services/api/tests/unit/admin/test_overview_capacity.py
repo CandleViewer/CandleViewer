@@ -7,6 +7,7 @@ rate-budget mapping, unwired ports, the exported metrics and the slice names eac
 from __future__ import annotations
 
 import asyncio
+from asyncio import Barrier
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from uuid import UUID
@@ -69,6 +70,10 @@ def _snap(
         (_snap(_sym("BTCUSDT", GB), used=100, cap=100), [GB], "measured", 0.0),
         (_snap(_sym("BTCUSDT", GB), free=0), [GB], "measured", 0.0),
         (_snap(_sym("BTCUSDT", GB), used=110, cap=100), [GB], "measured", 0.0),
+        (_snap(used=100, cap=100), [], "nothing_recorded", 0.0),
+        (_snap(_sym("BTCUSDT", 0), used=100, cap=100), [0], "measured", 0.0),
+        (_snap(_sym("BTCUSDT", 0, retention=None), free=0), [0], "measured", 0.0),
+        (_snap(_sym("BTCUSDT", GB, retention=-5)), [GB], "measured", None),
     ],
     ids=[
         "measured-steady-state-fits",
@@ -83,6 +88,10 @@ def _snap(
         "cap-reached-is-exhausted-now",
         "free-zero-is-exhausted-now",
         "cap-below-use-is-exhausted-now",
+        "nothing-recorded-at-cap-is-exhausted-now",
+        "measured-zero-growth-at-cap-is-exhausted-now",
+        "pinned-zero-growth-on-full-volume-is-exhausted-now",
+        "negative-retention-is-clamped",
     ],
 )
 def test_projection(
@@ -136,11 +145,15 @@ async def _hang() -> None:
 
 
 class Subaccounts:
-    def __init__(self, used: int | BaseException | None = 3) -> None:
-        self.used, self.entered = used, asyncio.Event()  # used None: hang
+    def __init__(
+        self, used: int | BaseException | None = 3, barrier: Barrier | None = None
+    ) -> None:
+        self.used, self.entered, self.barrier = used, asyncio.Event(), barrier  # None: hang
 
     async def subaccounts_in_use(self) -> int:
         self.entered.set()
+        if self.barrier is not None:
+            await self.barrier.wait()
         if self.used is None:
             await _hang()
         if isinstance(self.used, BaseException):
@@ -149,10 +162,14 @@ class Subaccounts:
 
 
 class Tier:
-    def __init__(self, tier: str | Exception | None, *, hang: bool = False) -> None:
-        self.tier, self.hang = tier, hang
+    def __init__(
+        self, tier: str | Exception | None, *, hang: bool = False, barrier: Barrier | None = None
+    ) -> None:
+        self.tier, self.hang, self.barrier = tier, hang, barrier
 
     async def recorded_tier(self) -> RecordedTier | None:
+        if self.barrier is not None:
+            await self.barrier.wait()
         if self.hang:
             await _hang()
         if isinstance(self.tier, Exception):
@@ -161,9 +178,12 @@ class Tier:
 
 
 class RateLimit:
+    def __init__(self, sub_peak: int = 0) -> None:
+        self.sub_peak = sub_peak
+
     async def rate_budget(self) -> tuple[RateBudgetUse, ...]:
         uid = UUID(int=1)
-        return (RateBudgetUse(uid, "main", 600, 450), RateBudgetUse(uid, "sub", 0, 7))
+        return (RateBudgetUse(uid, "main", 600, 450), RateBudgetUse(uid, "sub", 0, self.sub_peak))
 
 
 def _service(
@@ -253,7 +273,7 @@ async def test_the_error_status_carries_the_error_detail_and_logs_only_part_and_
         sub = (await service.capacity()).subaccounts
     assert (sub.status, sub.detail) == ("error", "tier: unrecognised value")
     reasons = {e["reason"] for e in logs if e.get("source") == AdminSlice.SUBACCOUNTS}
-    assert reasons == {"tier:UnrecognisedTier"} and "vip" not in repr(logs)
+    assert reasons == {"subaccounts:unwired--tier:UnrecognisedTier"} and "vip" not in repr(logs)
 
 
 def test_the_part_budget_stays_inside_the_slice_budget() -> None:
@@ -268,8 +288,9 @@ async def test_rate_budget_utilisation_and_the_exported_metrics() -> None:
     snap = await _service(Tier("regular")).capacity()
     assert snap.rate_budget.value == (
         RateBudgetRow(UUID(int=1), "main", 600, 450, 75.0),
-        RateBudgetRow(UUID(int=1), "sub", 0, 7, 0.0),
+        RateBudgetRow(UUID(int=1), "sub", 0, 0, 0.0),
     )
+    assert snap.rate_budget.status == "ok"
     assert snap.storage.value is not None and snap.storage.value.projected_bytes == 20 * GB
     gauge = registry.get_sample_value("cv_admin_capacity_projection_bytes", {"env": "demo"})
     timed = registry.get_sample_value(
@@ -326,3 +347,26 @@ async def test_unwired_ports_make_every_section_unavailable() -> None:
         "rate-limit peak: no provider wired",
         "subaccounts: no provider wired",
     }
+
+
+async def test_usage_and_tier_are_read_concurrently() -> None:
+    both = Barrier(2)  # read one after the other, the first part would time out at the barrier
+    fan = SliceFanOut(monotonic=lambda: 0.0, now=lambda: NOW)
+    usage, tier = Subaccounts(3, barrier=both), Tier("regular", barrier=both)
+    sub = (await AdminCapacityService(fan, subaccounts=usage, tier=tier).capacity()).subaccounts
+    assert (sub.status, sub.value) == ("ok", SubaccountCapacity("regular", 5, 3, "recorded", NOW))
+
+
+async def test_a_failed_usage_read_logs_only_part_and_class() -> None:
+    leak = OSError("postgresql://u:hunter2@db/x")
+    with capture_logs() as logs:
+        await _service(Tier("regular"), used=leak).capacity()
+    reasons = [e["reason"] for e in logs if e.get("source") == AdminSlice.SUBACCOUNTS]
+    assert reasons == ["subaccounts:OSError"] and "hunter2" not in repr(logs)
+
+
+async def test_usage_against_no_rate_limit_is_an_error_not_a_healthy_zero() -> None:
+    fan = SliceFanOut(monotonic=lambda: 0.0, now=lambda: NOW)
+    service = AdminCapacityService(fan, rate_limit=RateLimit(sub_peak=7))
+    budget = (await service.capacity()).rate_budget
+    assert (budget.status, budget.detail) == ("error", "rate_budget: invalid limit")

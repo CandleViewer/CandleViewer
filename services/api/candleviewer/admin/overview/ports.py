@@ -129,7 +129,9 @@ class RecordedTier:
 
 class TierPort(Protocol):
     async def recorded_tier(self) -> RecordedTier | None:
-        """The `accounts.subaccount_tier` system setting, or `None` if never recorded."""
+        """The `accounts.subaccount_tier` system setting. `None` means only "no row" (never
+        recorded); an adapter raises on any read failure, never returns `None` for it. The
+        route slice's adapter must test both."""
 
 
 class OmsPort(Protocol):
