@@ -363,6 +363,16 @@ proposals to be confirmed against real tape density, in its section 3) are reque
 E12-T02/T03/T05/T06/S04/S05/S12/X03; abuse cases AC-01..AC-14 go to E12-X02/Q05/Q06 (see RSK-058, RSK-059).
 Rebuild controls depend on ADR-0033 (Proposed).
 
+**E14 drawings persistence, sync & annotation content** (`docs/security/threat-models/E14-drawings.md`, ticket
+E14-X01) models the shipped `/drawings` backend (owner-scoped, 404-not-403, 200-op batch, `If-Match`/`if_match`
+conflicts, closed strict models, per-user idempotency cache, 90-day purge) and the unbuilt render sinks. Of 42 rows,
+the High ones are stored XSS at the DOM and accessible-name sinks, position-tool size integrity, IDOR (single and
+batch) and edit of another user's drawing; the server-side ones are mitigated and test-enforced, the sink and
+position-tool rows are requirements SR-E14-01..11. **Drawings are explicitly outside the C-2.9 append-only audit
+scope** (E14-T01 decision record 11; only denials and foreign-id PUT/DELETE probes are audited), so no edit history
+exists. Residuals: batch and `layout_id` probes unaudited (R3), no per-user quota (RR4, blocks sign-off), lock-wait
+side channel (RR3). Sharing is a deferred surface; risk R13 is not-yet-applicable.
+
 **E13 indicator framework, presets & metric exposure** (`docs/security/threat-models/E13-indicators.md`, ticket
 E13-X01) is integrity-first where indicators become safety-relevant: ATR feeding `sl_offset_unit="atr"` stop
 sizing (IR-12 and IR-45 fail-closed, Critical: a display-only worker value must never be the source) and provisional Zig Zag swings
