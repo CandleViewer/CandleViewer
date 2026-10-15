@@ -3895,7 +3895,14 @@ class DrawingPoint(BaseModel):
 
 
 class Level(RootModel[float]):
-    root: Annotated[float, Field(ge=-1000.0, le=1000.0)]
+    root: Annotated[
+        float,
+        Field(
+            description="A non-zero number must have |x| ≥ 1e-6 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
+            ge=-1000.0,
+            le=1000.0,
+        ),
+    ]
 
 
 class DrawingGeometry(BaseModel):
@@ -3937,7 +3944,14 @@ class DrawingStyle(BaseModel):
     )
     colour: Annotated[str | None, Field(pattern="^#[0-9a-fA-F]{6}$")] = None
     fill_colour: Annotated[str | None, Field(pattern="^#[0-9a-fA-F]{6}$")] = None
-    fill_opacity: Annotated[float | None, Field(ge=0.0, le=1.0)] = None
+    fill_opacity: Annotated[
+        float | None,
+        Field(
+            description="A non-zero number must have |x| ≥ 1e-6 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
+            ge=0.0,
+            le=1.0,
+        ),
+    ] = None
     width: Annotated[int | None, Field(ge=1, le=8)] = None
     dash: Literal["solid", "dashed", "dotted"] | None = None
     font_size: Annotated[int | None, Field(ge=8, le=48)] = None

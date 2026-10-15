@@ -2,7 +2,7 @@
   "x-cv-generated": {
     "notice": "GENERATED FILE — DO NOT EDIT BY HAND. Regenerate from services/api with `uv run python scripts/generate_protocol_models.py`.",
     "source": "docs/plan/22-api-openapi.yaml",
-    "source_sha256": "1d09e4f6e49fd5eb671677f0ff29fb8ecfd442501dd74ee2ef5b8d84d9100c86"
+    "source_sha256": "f4661ea4c0ebab7e2b2bc07de3d88589ae3ef7fc6804ca1a7b4077db64b4d295"
   },
   "components": {
     "headers": {
@@ -771,6 +771,7 @@
           "levels": {
             "description": "Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`.",
             "items": {
+              "description": "A non-zero number must have |x| ≥ 1e-6 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
               "maximum": 1000,
               "minimum": -1000,
               "type": "number"
@@ -919,6 +920,7 @@
             ]
           },
           "fill_opacity": {
+            "description": "A non-zero number must have |x| ≥ 1e-6 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`.",
             "maximum": 1,
             "minimum": 0,
             "type": "number"

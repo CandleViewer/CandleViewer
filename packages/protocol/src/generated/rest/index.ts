@@ -5045,6 +5045,7 @@ export interface components {
       /** @enum {string} */
       dash?: "solid" | "dashed" | "dotted";
       fill_colour?: string | null;
+      /** @description A non-zero number must have |x| ≥ 1e-6 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`. */
       fill_opacity?: number;
       font_size?: number;
       width?: number;
