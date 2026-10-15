@@ -367,10 +367,7 @@ The client sends `hello` immediately on open. The server replies `welcome` with 
       "positions:write",
       "audit:read",
     ],
-    "account_scope": [
-      "a1000000-0000-4000-8000-000000000001",
-      "a1000000-0000-4000-8000-000000000002",
-    ],
+    "account_scope": [],
     "allowed_environments": ["live", "demo"],
     "session_id": "5e1a0c33-2b44-4f10-9a22-77aa11bb22cc",
     "token_expires_at_ms": 1789132862110,
@@ -389,6 +386,7 @@ Rules:
 
 **As built (E17-S01, #2132; wired by #377).** These details are binding:
 
+- `account_scope` lists the caller's granted accounts for a Manager or Viewer; for an Owner it is `[]`, meaning **all** accounts (the example above is an Owner). The same rule applies to the `permission_change` frame (§9.5).
 - Failed `auth` attempts 1 and 2 each get `err` `auth_failed` and the socket stays open. The 3rd closes with `bye auth_failed` + `4401`. A `warning` audit entry (`auth.login_failed`, `reason: ws_auth_failed`, never the token) is written.
 - A failed re-`auth` keeps the prior identity until its token expires. A re-`auth` that resolves to a different user is refused.
 - `token_expires_at_ms` is the presented token's real expiry: the first instant the session service refuses it on time grounds (`issued_at` + the ADR-0020 access-token TTL, capped by the session's absolute expiry). There is no gateway-side default, and a re-`auth` takes the new token's expiry. The gateway checks the expiry before every frame it dequeues or sends, on both its monotonic and its wall clock, whichever reaches it first. At the expiry it drops everything still queued, and the next frame is the `bye`: `token_expired` + `4401`, or the `bye` of a close already under way. A token that is already expired when its `auth` is processed is refused like any failed `auth`. An authenticator that reports no timezone-aware expiry is a server fault: `bye internal_error` + `1011`, and nothing is served (#2259).

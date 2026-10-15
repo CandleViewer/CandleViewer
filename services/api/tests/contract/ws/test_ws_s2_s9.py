@@ -414,7 +414,8 @@ def test_s7_f3_permission_change_frame_validates_against_the_envelope() -> None:
     with connect(w) as c:
         w.grants = ()
         w.call(w.registry.grants_changed, USER)
-        c.recv()  # validated: `t: permission_change` must be a legal envelope type
+        frame = c.recv_permission_change()  # validated against §13.4, not just the envelope
+        assert frame["t"] == "permission_change"
 
 
 # -- S8 ----------------------------------------------------------------------------------------
