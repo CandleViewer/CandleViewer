@@ -7,11 +7,10 @@ precondition), and nothing is written without it. The store locks the row and co
 `updated_at`, so a stale write is a conflict carrying the current flag, never last-write-wins.
 
 Every attempt that reaches this service (RBAC and step-up passed at the route) is audited as
-`flags.change` with the key, before, after, reason and evidence, ahead of the response: refused,
-conflicting and failed attempts too. Toggling `maintenance.mode` also writes
-`maintenance.enabled` or `maintenance.disabled`. After a committed write the service cache is
-dropped and the change hook (the `system` push) runs; a hook failure is logged, never raised,
-because the write has already committed.
+`flags.change` (key, before, after, reason, evidence) ahead of the response, refused,
+conflicting and failed ones too; `maintenance.mode` toggles add `maintenance.enabled|disabled`.
+A committed write drops the cache and runs the change hook (the `system` push), whose failure
+is logged and never raised.
 """
 
 from __future__ import annotations
@@ -89,8 +88,10 @@ class FlagWriter:
         if spec is None:
             await audit.refused(None, "not_found")
             raise UnknownFlagError(key)
-        overrides = dict(user_overrides or {})
         before = await self._current(spec)
+        # Omitted overrides keep the stored ones; a list replaces them (an empty one clears).
+        kept: Mapping[UUID, object] = before.user_overrides if before is not None else {}
+        overrides = dict(kept if user_overrides is None else user_overrides)
         refusal = _refusal(spec, value, overrides, reason, expected_updated_at, evidence_url)
         if refusal is not None or expected_updated_at is None:
             refusal = refusal or FlagValidationError("required", "expected_updated_at")

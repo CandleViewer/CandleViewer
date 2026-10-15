@@ -174,3 +174,15 @@ async def test_a_writer_without_a_push_hook_still_commits() -> None:
     await store.ensure(service.registry.values())
     await _set(FlagWriter(service, FakeAudit()), "rules.form_editor", False)
     assert store.rows["rules.form_editor"].value is False
+
+
+async def test_omitted_overrides_are_kept_and_an_empty_list_clears_them() -> None:
+    writer, store, _ = await _writer([])
+    key = "rules.form_editor"
+    await _set(writer, key, True, user_overrides={_B: False})
+    await _set(writer, key, False, expected_updated_at=store.rows[key].updated_at)
+    assert store.rows[key].user_overrides == {_B: False}
+    await _set(
+        writer, key, False, expected_updated_at=store.rows[key].updated_at, user_overrides={}
+    )
+    assert store.rows[key].user_overrides == {}
