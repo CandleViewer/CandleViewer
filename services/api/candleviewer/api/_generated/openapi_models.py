@@ -110,6 +110,36 @@ class Problem(BaseModel):
     exchange: Annotated[
         Exchange | None, Field(description="Present when the failure originated at Bybit.")
     ] = None
+    action_class: Annotated[
+        str | None,
+        Field(
+            description="`step_up_required` only: the step-up class the refused request needs, one of the `action_class` values of `POST /auth/step-up`.\n"
+        ),
+    ] = None
+    challenge_id: Annotated[
+        UUID | None,
+        Field(
+            description="`step_up_required` only: the challenge this refusal issued (#2304). One challenge is live per session; a newer refusal supersedes it. Send it as `challenge_id` to `POST /auth/step-up`.\n"
+        ),
+    ] = None
+    challenge_expires_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="`step_up_required` only: when the challenge expires, 5 minutes after issue (server clock). The client drops the held request then, without sending it.\n"
+        ),
+    ] = None
+    action_summary: Annotated[
+        str | None,
+        Field(
+            description='`step_up_required` only: server-composed text naming exactly what the refused request would execute, built from the validated request (for example "Release kill switch, scope global"). The step-up dialog shows it verbatim as its accessible description; a client never composes its own.\n'
+        ),
+    ] = None
+    target: Annotated[
+        str | None,
+        Field(
+            description="`step_up_required` only: the exact, case-sensitive text a typed confirmation must equal when the action asks for one (for example the account name), else null.\n"
+        ),
+    ] = None
 
 
 class PageMeta(BaseModel):

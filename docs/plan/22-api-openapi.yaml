@@ -100,6 +100,17 @@ info:
     `Idempotency-Replayed: true`. Same key + different body → `409` with code
     `idempotency_key_reuse`.
 
+    **Binding point (#2304).** On every operation that requires the key (parameter
+    `IdempotencyKeyRequired`, which every `x-idempotency: required` operation takes) the key is
+    recorded only after the request has passed every admission check: authentication and CSRF,
+    the session state (`session_read_only`, and the idle lock of #2300) and authorisation (RBAC,
+    account scope and `step_up_required`). A request refused by any of them stores no
+    idempotency record and has no side effect. The identical request re-sent with the same key
+    once the cause is cleared (after an unlock or a successful step-up) is therefore a first
+    submission: it executes once and is not answered from the idempotency store (no
+    `Idempotency-Replayed`). This is what lets a client hold a request refused with
+    `step_up_required` and re-send it unchanged (`POST /auth/step-up`, C-2.10).
+
     ### Rate limiting
     Per-user token bucket (default 600 req/min, 60 req/s burst) plus a per-UID *exchange*
     budget mirroring Bybit's per-UID limits. Responses carry `RateLimit-Limit`,
@@ -7945,6 +7956,38 @@ paths:
         password is verified first (same Argon2id path and lockout counters as login), then the
         code. A missing `password` is `422`; any wrong factor is the same `401 mfa_invalid`
         and never reveals which one failed.
+
+        **Challenges (#2304).** Every `403 step_up_required` is a challenge for the one request it
+        refused. Its problem body carries `challenge_id`, `challenge_expires_at` (5 minutes after
+        issue), `action_class`, `action_summary` and `target` (see `Problem`). The server composes
+        `action_summary` from the validated request, so it names what would execute; the client
+        shows it verbatim and never composes its own. A session has at most one live challenge. A
+        newer `403 step_up_required` supersedes it, and it also ends when a step-up uses it, at
+        `challenge_expires_at`, when the session turns read-only and when it idle-locks (#2300).
+        This operation elevates against the live challenge: `challenge_id`, when sent, must name
+        it, and `action_class` alone never elevates a no-grace class (without a live challenge
+        the answer is `400`). Audit: `auth.step_up_required` records the `challenge_id`;
+        `auth.step_up_granted` records it too, plus the bound request's SHA-256 fingerprint for a
+        no-grace class; `auth.step_up_mismatch` records the bound and the refused request's
+        fingerprints. No audit record carries a request body, the password or the code.
+
+        **Binding (no-grace classes).** For `live_enablement` and `killswitch` the one-shot grant
+        is bound to the challenged request: its method, its path including any query string, and
+        its canonical JSON body (member order and insignificant whitespace are ignored; every
+        value counts). Headers, `Idempotency-Key` included, are not part of the binding. Only that
+        identical request can use the grant. Any other request of the class is refused with
+        `403 step_up_required`, which is a new challenge for that request, and audited as
+        `auth.step_up_mismatch`. The refusal does not use up the grant: it stays bound to the
+        challenged request until that request uses it or it expires, 5 minutes after the
+        step-up. Grace classes keep the unbound 5-minute window described below.
+
+        **Holding the refused request.** The client keeps the refused request unchanged (method,
+        path, body and `Idempotency-Key`) and re-sends it as is after a successful step-up. The
+        refusal bound no idempotency key (Idempotency, "Binding point"), so the re-send is a
+        first submission and executes once. On cancel, at `challenge_expires_at`, on the third
+        failure (`session_read_only`), on idle lock and at absolute session expiry the client
+        drops the request without sending it and tells the user it was not sent.
+
         Grants a **5-minute** server-side grace for `action_class` on the current session
         (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the
         earlier 15). `live_enablement` and `killswitch` are no-grace classes: the response is
@@ -7966,6 +8009,19 @@ paths:
               properties:
                 code: { type: string, pattern: "^[0-9]{6}$" }
                 password: { type: string, minLength: 1, format: password, writeOnly: true }
+                challenge_id:
+                  description: >
+                    The `challenge_id` of the `403 step_up_required` being answered (#2304).
+                    Optional: without it the server uses the session's live challenge. A value
+                    that does not name the live challenge (expired, superseded, already used or
+                    unknown) gets `400 validation_failed` with
+                    `errors: [{field: challenge_id, rule: challenge_expired}]`. So does a request
+                    with no live challenge to answer, unless its `action_class` is a grace class.
+                    That `400` is decided before the password and code are checked: no factor is
+                    verified, no failure is counted and nothing is elevated. The client then
+                    drops the held request without sending it.
+                  type: string
+                  format: uuid
                 action_class:
                   description: >
                     Optional cross-check. The server elevates the class its last
@@ -9422,7 +9478,11 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      description: "Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`."
+      description: >
+        Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange
+        `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation
+        all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its
+        identical re-send with the same key is a first submission.
       schema: { type: string, format: uuid }
     CsrfToken:
       name: X-CSRF-Token
@@ -9622,7 +9682,7 @@ components:
                   code: unauthenticated,
                 }
     Forbidden:
-      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values."
+      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304)."
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -9648,6 +9708,38 @@ components:
                   detail: "X-CSRF-Token header is missing.",
                   instance: "urn:cv:req:0193f2bb-2223",
                   code: csrf_token_invalid,
+                }
+            stepUpRequired:
+              summary: Dangerous action without a live elevation; the body is a step-up challenge (#2304)
+              value:
+                {
+                  type: "https://candleviewer.local/errors/step_up_required",
+                  title: "A dangerous action needs a live step-up elevation for its action class",
+                  status: 403,
+                  detail: "Re-enter your password and authenticator code (POST /auth/step-up) to continue.",
+                  instance: "urn:cv:req:0193f2bb-2224",
+                  code: step_up_required,
+                  action_class: killswitch,
+                  challenge_id: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+                  challenge_expires_at: "2026-09-14T10:36:02Z",
+                  action_summary: "Release kill switch, scope global",
+                  target: null,
+                }
+            stepUpRequiredTypedConfirmation:
+              summary: A step-up challenge whose action asks for a typed confirmation of its target (#2304)
+              value:
+                {
+                  type: "https://candleviewer.local/errors/step_up_required",
+                  title: "A dangerous action needs a live step-up elevation for its action class",
+                  status: 403,
+                  detail: "Re-enter your password and authenticator code (POST /auth/step-up) to continue.",
+                  instance: "urn:cv:req:0193f2bb-2225",
+                  code: step_up_required,
+                  action_class: keys,
+                  challenge_id: "0c9b8a7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d",
+                  challenge_expires_at: "2026-09-14T10:36:02Z",
+                  action_summary: "Rotate API key for account 'sub_002'",
+                  target: sub_002,
                 }
     CsrfTokenInvalid:
       description: "SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`) up to a per-session / per-source budget; beyond it the response is identical but carries `Retry-After` and writes no audit record. `detail` never echoes token or cookie values; clients re-read the cookie and retry once."
@@ -9984,6 +10076,36 @@ components:
             ret_msg: { type: string }
             endpoint: { type: string }
             request_id: { type: string }
+        action_class:
+          type: string
+          description: >
+            `step_up_required` only: the step-up class the refused request needs, one of the
+            `action_class` values of `POST /auth/step-up`.
+        challenge_id:
+          type: string
+          format: uuid
+          description: >
+            `step_up_required` only: the challenge this refusal issued (#2304). One challenge is
+            live per session; a newer refusal supersedes it. Send it as `challenge_id` to
+            `POST /auth/step-up`.
+        challenge_expires_at:
+          type: string
+          format: date-time
+          description: >
+            `step_up_required` only: when the challenge expires, 5 minutes after issue (server
+            clock). The client drops the held request then, without sending it.
+        action_summary:
+          type: string
+          description: >
+            `step_up_required` only: server-composed text naming exactly what the refused request
+            would execute, built from the validated request (for example "Release kill switch,
+            scope global"). The step-up dialog shows it verbatim as its accessible description;
+            a client never composes its own.
+        target:
+          type: ["string", "null"]
+          description: >
+            `step_up_required` only: the exact, case-sensitive text a typed confirmation must
+            equal when the action asks for one (for example the account name), else null.
     PageMeta:
       type: object
       required: [has_more, count]
