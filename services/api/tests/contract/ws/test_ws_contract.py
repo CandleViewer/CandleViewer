@@ -59,8 +59,8 @@ _KINDS = {
 
 # -- every frame type the gateway can emit ------------------------------------------------------
 
-#: Server -> client frame types, per the §13.1 envelope enum plus the one the gateway emits
-#: outside it (`permission_change`, FINDING F3). `hello/auth/sub/unsub/ctl/resync` are client-only.
+#: Server -> client frame types, per the §13.1 envelope enum (`permission_change` included, §9.5,
+#: #2297). `hello/auth/sub/unsub/ctl/resync` are client-only.
 SERVER_TYPES = {
     "welcome", "auth_ok", "sub_ok", "unsub_ok", "ctl_ok", "snap", "d", "revoked", "ping",
     "pong", "err", "bye", "permission_change",

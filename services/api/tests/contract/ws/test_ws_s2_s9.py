@@ -343,7 +343,7 @@ def test_s7_grant_withdrawal_emits_revoked_within_1s_and_other_topics_continue()
         w.grants = (AccountGrant(ACC_A, True, False, False),)
         t0 = w.clock.now
         w.call(w.registry.grants_changed, USER)
-        revoked = c.next_validated("revoked")  # no assumption about other frames before it (F3)
+        revoked = c.next_validated("revoked")  # no assumption about other frames before it
         assert w.clock.now - t0 < 1.0  # injected clock: no real time passed, none was needed
         assert (revoked["ch"], revoked["p"]["reason"]) == ("positions", "account_scope_changed")
         assert revoked["p"]["removed_accounts"] == [str(ACC_B)]
