@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import (
@@ -137,3 +138,82 @@ async def test_enforce_raises_forbidden_without_emitter() -> None:
     with pytest.raises(ForbiddenError) as exc_info:
         await enforce(principal, Permission.ORDERS_WRITE)
     assert exc_info.value.deny.permission == Permission.ORDERS_WRITE
+
+
+# -- SR-125 / #2117: `authz_denied_total{permission}` ------------------------------------------
+
+
+def _denied(permission: Permission | str) -> float:
+    labels = {"permission": str(permission)}
+    return float(REGISTRY.get_sample_value("authz_denied_total", labels) or 0.0)
+
+
+def _denied_series() -> int:
+    return sum(
+        1
+        for family in REGISTRY.collect()
+        for sample in family.samples
+        if sample.name == "authz_denied_total"
+    )
+
+
+class _FailingEmitter:
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        raise RuntimeError("audit sink unavailable")
+
+
+@pytest.mark.asyncio
+async def test_deny_moves_authz_denied_total_for_the_denied_permission_only() -> None:
+    write, read = _denied(Permission.ORDERS_WRITE), _denied(Permission.ORDERS_READ)
+    with pytest.raises(ForbiddenError):
+        await enforce(_viewer_principal(), Permission.ORDERS_WRITE, emitter=_FakeEmitter())
+    assert _denied(Permission.ORDERS_WRITE) == write + 1
+    assert _denied(Permission.ORDERS_READ) == read
+
+
+@pytest.mark.asyncio
+async def test_allow_does_not_move_authz_denied_total() -> None:
+    before = _denied(Permission.ORDERS_READ)
+    await enforce(_viewer_principal(), Permission.ORDERS_READ, emitter=_FakeEmitter())
+    assert _denied(Permission.ORDERS_READ) == before
+
+
+@pytest.mark.asyncio
+async def test_account_scope_denial_counts_under_the_permission_not_the_account() -> None:
+    principal = _manager_principal(
+        grants=(AccountGrant(ACCOUNT_A, can_view=True, can_trade=True, frozen=False),)
+    )
+    before, series = _denied(Permission.ORDERS_WRITE), _denied_series()
+    with pytest.raises(ForbiddenError) as denied:
+        await enforce(
+            principal,
+            Permission.ORDERS_WRITE,
+            scope=Scope.GRANTED_ACCOUNTS,
+            exchange_account_id=ACCOUNT_B,
+        )
+    assert denied.value.deny.reason.value == "account_not_granted"
+    assert _denied(Permission.ORDERS_WRITE) == before + 1
+    assert _denied_series() == series  # no account id (or any new label value) became a series
+
+
+@pytest.mark.asyncio
+async def test_deny_is_counted_without_an_audit_emitter() -> None:
+    before = _denied(Permission.ORDERS_WRITE)
+    with pytest.raises(ForbiddenError):
+        await enforce(_viewer_principal(), Permission.ORDERS_WRITE)
+    assert _denied(Permission.ORDERS_WRITE) == before + 1
+
+
+@pytest.mark.asyncio
+async def test_deny_is_counted_even_when_the_audit_write_fails() -> None:
+    before = _denied(Permission.ORDERS_WRITE)
+    with pytest.raises(RuntimeError, match="audit sink unavailable"):
+        await enforce(_viewer_principal(), Permission.ORDERS_WRITE, emitter=_FailingEmitter())
+    assert _denied(Permission.ORDERS_WRITE) == before + 1
+
+
+def test_route_403_moves_authz_denied_total() -> None:
+    before = _denied(Permission.ORDERS_WRITE)
+    client = TestClient(_build_app(_viewer_principal(), _FakeEmitter()))
+    assert client.post(f"/orders/{ACCOUNT_A}").status_code == 403
+    assert _denied(Permission.ORDERS_WRITE) == before + 1

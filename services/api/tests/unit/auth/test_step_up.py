@@ -327,3 +327,58 @@ async def test_wrong_password_lockout_uses_login_counters_and_refuses_correct_fa
     clock.now += timedelta(minutes=6)
     with pytest.raises(StepUpCodeInvalid):  # locked: correct factors still refused
         await svc.step_up(str(user), "o1", "keys", _code(seed, clock), PASSWORD)
+
+
+# -- SR-125 / #2117: `auth_stepup_failures_total` and `auth_lockouts_total` -------------------
+
+
+async def test_step_up_failures_move_the_catalogue_counter_for_password_and_code() -> None:
+    svc, clock, seed, user, _ = await _setup()
+    before = _sample("auth_stepup_failures_total")
+    code = _code(seed, clock)
+    with pytest.raises(StepUpCodeInvalid):
+        await svc.step_up(str(user), "s1", "keys", code, "wrong password")  # wrong password
+    with pytest.raises(StepUpCodeInvalid):
+        await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)  # wrong code
+    assert _sample("auth_stepup_failures_total") == before + 2
+    grant = await svc.step_up(str(user), "s1", "keys", code, PASSWORD)  # the code was not burnt
+    assert grant.action_class == "keys"
+    assert _sample("auth_stepup_failures_total") == before + 2  # success does not move it
+
+
+async def test_step_up_refused_before_verification_does_not_move_the_failure_counter() -> None:
+    svc, _, _, user, _ = await _setup()
+    before = _sample("auth_stepup_failures_total")
+    with pytest.raises(UnknownActionClass):
+        await svc.step_up(str(user), "s1", "not-a-class", "000000", PASSWORD)
+    with pytest.raises(StepUpRequired):  # no live session row for this id
+        await svc.step_up(str(user), "no-such-session", "keys", "000000", PASSWORD)
+    assert _sample("auth_stepup_failures_total") == before
+
+
+async def test_step_up_wrong_password_that_trips_the_lock_moves_auth_lockouts_total() -> None:
+    svc, clock, _, user, _ = await _setup()
+    before = _sample("auth_lockouts_total")
+    for i, sid in enumerate(("s1", "s2", "o1", "s1")):  # one short of the threshold
+        clock.now += timedelta(minutes=6)  # clear the 3-strike read-only window between tries
+        with pytest.raises((StepUpCodeInvalid, SessionReadOnly)):
+            await svc.step_up(str(user), sid, "keys", "000000", f"bad{i}")
+    assert _sample("auth_lockouts_total") == before
+    clock.now += timedelta(minutes=6)
+    with pytest.raises((StepUpCodeInvalid, SessionReadOnly)):
+        await svc.step_up(str(user), "s2", "keys", "000000", "bad-last")
+    assert svc._users.users[str(user)].locked_until is not None  # type: ignore[attr-defined]
+    assert _sample("auth_lockouts_total") == before + 1
+
+
+async def test_step_up_on_a_locked_account_does_not_move_the_lockout_counter() -> None:
+    svc, clock, _, user, _ = await _setup()
+    for i, sid in enumerate(("s1", "s2", "o1", "s1", "s2")):
+        clock.now += timedelta(minutes=6)
+        with pytest.raises((StepUpCodeInvalid, SessionReadOnly)):
+            await svc.step_up(str(user), sid, "keys", "000000", f"bad{i}")
+    locked = _sample("auth_lockouts_total")
+    clock.now += timedelta(minutes=6)  # still inside the 15 minute lock
+    with pytest.raises((StepUpCodeInvalid, SessionReadOnly)):
+        await svc.step_up(str(user), "o1", "keys", "000000", "bad-again")
+    assert _sample("auth_lockouts_total") == locked

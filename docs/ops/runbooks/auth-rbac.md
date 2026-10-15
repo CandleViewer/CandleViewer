@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292). Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -60,6 +60,24 @@ account refuses even a correct password.
    `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.login"`: expect an
    `auth.login` entry for the user.
 
+Telemetry for a lock: counter `auth_lockouts_total` (no labels) rises by 1 when a failed password
+check applies the lock: the fifth failure, or the first failure after an expired lock (at login, or
+from a wrong step-up password, §2). The failure that trips the lock has no `auth.account_locked` row
+of its own: at login it is audited as `auth.login_failed`, in step-up as `auth.step_up_failed`. So
+this counter is the only record that the lock itself was applied. It does not name the user, it does
+not move for attempts refused while locked (at login, the `auth.account_locked` rows above) and it
+does not move on a successful login, so it confirms that a lock happened, not that it ended. Read it
+on the metrics listener (default `127.0.0.1:9108`, §6):
+
+```bash
+curl -s http://127.0.0.1:9108/metrics | grep '^auth_lockouts_total'
+```
+
+Expected: one line `auth_lockouts_total{env="<env>"} <n>`. `n` counts from API process start, so
+compare it before and after; a burst of parallel wrong passwords can add more than 1 for one lock. The
+`AuthLockouts` rule (`infra/prometheus/alerts/system_ticket.yml`) reads it:
+`increase(auth_lockouts_total[10m]) > 0`.
+
 Owner's own account: the same expiry applies. If the Owner has lost the TOTP device,
 `POST $API/auth/mfa/recovery` takes `{"mfa_token":"<from login>","recovery_code":"<code>"}`:
 
@@ -79,9 +97,8 @@ Not available today:
 
 - **Early unlock by an Owner: not implemented, no ticket.** Wait for expiry.
 - **Owner alert on lockout: BLOCKED — not verified/implemented.** The review found it unverified
-  (see #2102). Do not rely on being notified; check the audit log.
-- **`cv_auth_lockouts_total`** is declared `planned` in `metrics_catalogue.py` and is not emitted by
-  any code, so it cannot confirm a lock or an unlock. Use the audit log.
+  (see #2102). Do not rely on being notified; check the audit log. The `AuthLockouts` rule has a
+  signal to read since #2117, but delivery of its ticket to the Owner has not been verified.
 
 Stop and escalate if every Owner account is locked and has no TOTP device or recovery codes: go to
 procedure 3.
@@ -115,7 +132,8 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    identical `401` (`Invalid password or code.`, with `failures_remaining`). **A wrong password also
    increments your login lockout counter**, so five mistakes can lock your own account (see §1).
    Three failures abandon the action and make your session read-only for 5 minutes
-   (`403 session_read_only`).
+   (`403 session_read_only`). Every failed step-up adds 1 to `auth_stepup_failures_total`, and the
+   failure that locks your account also adds 1 to `auth_lockouts_total` (metrics listener, §1).
 
 3. Reset:
 
@@ -270,10 +288,31 @@ To answer a denial:
 5. For the route-by-actor matrix test, see `services/api/tests/contract/rbac/test_route_matrix.py` and
    `docs/qa/charters/E09-charter-2-rbac-boundaries.md`.
 
-**`cv_authz_denied_total`**: the catalogue declares `authz_denied_total{permission}` as `planned`
-(`observability/metrics_catalogue.py`) and no code increments it. Until it is wired, the audit log is
-the only denial telemetry. `auth_stepup_failures_total` is likewise `planned`; the emitted step-up
-counters are `auth_step_up_total` and `auth_step_up_failures_total` (`auth/metrics.py`).
+**`authz_denied_total{permission}`** (the catalogue name; there is no `cv_` prefix) counts each
+denial decided by `auth/scopes.py::enforce`. It moves before the `rbac.denied` audit row is written,
+so an audit failure never hides a denial. `permission` is the permission code from a closed set (the
+generated vocabulary plus `other`). Only routes that call `enforce` are counted, and today those are
+all `users:write` routes: `PUT /users/{userId}/roles`, the invite routes (`POST /users`,
+`GET /users/invites`, `POST` and `DELETE /users/{userId}/invite`) and the TOTP reset routes. Not
+counted:
+
+- permission checks written inline in other route modules (market data, instruments, and so on),
+  which write no `rbac.denied` row either: their only trace is the `403` response itself;
+- WS subscribe denials: see `cv_ws_subscribe_total{result="forbidden"}` and the audit action
+  `ws.subscribe.denied`;
+- the owner-floor `409` (audited as `rbac.denied`, see the note below, but a business refusal rather
+  than a permission check) and `step_up_required` (§2).
+
+Read it on the metrics listener, for example
+`curl -s http://127.0.0.1:9108/metrics | grep '^authz_denied_total'` (every permission is listed at 0
+from process start). The `AuthzDeniedSpike` rule fires above 20 denials in 10 minutes
+(`sum by (permission) (increase(authz_denied_total[10m]))` shows which permission).
+
+**`auth_stepup_failures_total`** (no labels) counts each failed step-up verification: wrong password,
+locked account, wrong or replayed code. The audit row is `auth.step_up_failed` (names the action
+class). `auth_step_up_failures_total{action_class}` also exists inside the process but is not served on
+the metrics listener, like the other auth counters outside `AUTH_EXPORTED_NAMES` (`auth/metrics.py`);
+that gap is tracked in #2319.
 
 Note: the role-change route writes `rbac.denied` with detail `owner_floor` when you try to demote the
 last active Owner (`409`).
@@ -327,7 +366,7 @@ repository's secret settings, never from an agent session.
 | Disable-user cascade (SR-029)                                             | #965                 |
 | Session rotation on role change and step-up                               | #2101                |
 | Owner notification on lockout                                             | #2102                |
-| Authz/lockout metrics declared but not emitted                            | #2117                |
+| `auth_login_failures_total` declared but not emitted                      | #2319 (item 4)       |
 
 ## Execution record
 

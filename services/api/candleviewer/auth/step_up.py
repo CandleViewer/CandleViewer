@@ -33,10 +33,12 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_DURATION, LOCKOUT_THRESHOLD
 from candleviewer.auth.metrics import (
+    auth_lockouts_total,
     auth_mfa_resets_total,
     auth_readonly_downgrades_total,
     auth_step_up_failures_total,
     auth_step_up_total,
+    auth_stepup_failures_total,
 )
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import SessionRecord, UserRecord
@@ -217,6 +219,7 @@ class StepUpService:
         elevations = {k: v for k, v in record.step_up_elevations.items() if v > now}
         if not await self._verify_both(user_id, code, password, now):
             auth_step_up_failures_total.labels(action_class=action_class).inc()
+            auth_stepup_failures_total.inc()  # SR-125 catalogue series (scraped, no label)
             failures = record.step_up_failures + 1
             if failures >= FAILURE_CAP:
                 until = now + READONLY_WINDOW
@@ -305,12 +308,14 @@ class StepUpService:
         if user.locked_until is not None and user.locked_until > now:
             return False  # locked accounts are refused like any other failure
         if not ok:
-            await self._users.record_login_failure(
+            locked_until = await self._users.record_login_failure(
                 str(user.id),
                 lockout_threshold=LOCKOUT_THRESHOLD,
                 lock_duration=LOCKOUT_DURATION,
                 now=now,
             )
+            if locked_until is not None:
+                auth_lockouts_total.inc()  # SR-125: a wrong step-up password can lock the account
         return ok
 
     async def _verify(self, user_id: str, code: str, now: datetime) -> bool:
