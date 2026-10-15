@@ -777,6 +777,12 @@ class RetentionManager:
             if not await self._wait_for_lag():
                 logger().warning("retention_yield_ingest_lag", remaining=len(plan.items))
                 return False
+            if doc.get("pending") == did and await self._dropped_earlier(item):
+                # Review round 4 (3): the earlier attempt's DROP outlived its bounded wait and
+                # applied later. The day is gone, so close the trail (`done`); re-checking it
+                # would read back an empty day as a false CRITICAL archive mismatch.
+                await self._complete(item, plan, doc, done, ckpt, report, applied="earlier")
+                continue
             now_us = self._now_us()
             blocker = await self._recheck(item, plan, now_us)
             if blocker is not None:
@@ -816,24 +822,45 @@ class RetentionManager:
                     item.detail() | {"actor": SYSTEM_ACTOR, "phase": "failed", "error": why},
                 )
                 return False  # keep `pending`: the next pass finishes it (no second intent)
-            # After-record (review M1): intent + completion both exist, so a crash between the
-            # two is detectable as an intent without a `done` (ticket security notes).
-            await self._audit.write(
-                "data.deleted",
-                {"deletion_id": did, "actor": SYSTEM_ACTOR, "phase": "done", "mode": plan.mode},
-            )
-            done.add(did)
-            doc["done"] = sorted(done)
-            doc["pending"] = None
-            await ckpt.save(doc)
-            report.deleted.append(item)
-            for sym in item.symbols:
-                retention_deleted_bytes_total.labels(symbol=sym, stream=item.stream).inc(
-                    item.bytes // len(item.symbols)
-                )
-            retention_deleted_rows_total.inc(item.rows)
+            await self._complete(item, plan, doc, done, ckpt, report)
             await asyncio.sleep(0)  # yield to live ingestion between partitions
         return True
+
+    async def _dropped_earlier(self, item: PruneItem) -> bool:
+        """A `pending` hot day that reads back no rows: the earlier attempt dropped it."""
+        if item.tier != "hot":
+            return False
+        rows = await self._verify.hot_rows(StreamKind(item.stream), item.start_us)
+        return not any(n > 0 for n in rows.values())
+
+    async def _complete(
+        self,
+        item: PruneItem,
+        plan: PrunePlan,
+        doc: dict[str, object],
+        done: set[str],
+        ckpt: Checkpoint,
+        report: RunReport,
+        **extra: str | int,
+    ) -> None:
+        """After-record (review M1): intent + completion both exist, so a crash between the
+        two is detectable as an intent without a `done` (ticket security notes)."""
+        did = item.deletion_id
+        record: dict[str, str | int] = {
+            "deletion_id": did, "actor": SYSTEM_ACTOR, "phase": "done", "mode": plan.mode,
+        }  # fmt: skip
+        record.update(extra)
+        await self._audit.write("data.deleted", record)
+        done.add(did)
+        doc["done"] = sorted(done)
+        doc["pending"] = None
+        await ckpt.save(doc)
+        report.deleted.append(item)
+        for sym in item.symbols:
+            retention_deleted_bytes_total.labels(symbol=sym, stream=item.stream).inc(
+                item.bytes // len(item.symbols)
+            )
+        retention_deleted_rows_total.inc(item.rows)
 
     async def _audit_run(self, plan: PrunePlan, report: RunReport, phase: str) -> None:
         await self._audit.write(

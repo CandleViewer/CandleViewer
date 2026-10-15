@@ -210,6 +210,33 @@ async def test_failed_delete_keeps_pending_and_next_pass_finishes_without_reaudi
     assert len(second.deleted) == 1 and len(w.data_deleted()) == 1
 
 
+async def test_pending_hot_drop_applied_after_its_timeout_is_recorded_done_not_critical() -> None:
+    """Review round 4 (3): the DROP's bounded apply-wait times out, then QuestDB applies it.
+    The resumed pass records `done` (applied by the earlier attempt) instead of reading the
+    emptied day back as a false CRITICAL `archive.verification_failed`."""
+    w = _world()
+    w.add_hot(T, 10, {"BTCUSDT": 5})
+    w.archived[("BTCUSDT", T)] = day(9)
+    ckpt = MemoryCheckpoint()
+    m = manager(w, ckpt)
+    real = m._hot.drop_day
+
+    async def applies_late(stream: object, day_start_us: int) -> bool:
+        await real(stream, day_start_us)  # type: ignore[arg-type]  # fake passthrough: it lands
+        raise TimeoutError  # ...after the bounded apply-wait gave up
+
+    m._hot.drop_day = applies_late  # type: ignore[method-assign]  # inject the late apply
+    first = await m.run_nightly()
+    assert [why for _, why in first.failed] == ["TimeoutError"] and day(10) not in w.hot[T]
+    assert ckpt.doc is not None and ckpt.doc["pending"]
+    second = await manager(w, ckpt).run_nightly()
+    assert second.resumed and [i.start_us for i in second.deleted] == [day(10)]
+    assert second.skipped == [] and w.events == [("WARNING", "retention.delete_failed")]
+    phases = [(d["phase"], d.get("applied")) for a, d in w.audit if a == "data.deleted"]
+    assert phases == [("intent", None), ("failed", None), ("done", "earlier")]
+    assert ckpt.doc is None
+
+
 async def test_corrupt_checkpoint_fails_closed() -> None:
     w = _world()
     w.add_cold("BTCUSDT", T, 40)
