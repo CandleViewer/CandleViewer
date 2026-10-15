@@ -158,8 +158,6 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("GET", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("POST", re.compile(r"^/risk/lockouts/[^/]+/override$"), "risk_caps"),
-    # E16-T06: irreversible purge (permission 51, step-up per 04-security-program §13).
-    ("POST", re.compile(r"^/admin/recorder/purge$"), "recorder"),
 )
 
 #: No-grace classes cannot be gated by path alone: kill-switch *engage* must
@@ -171,6 +169,9 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/trading/kill-switch", "killswitch"),  # E39: release only
     ("POST", "/session/environment", "live_enablement"),  # E44: to live only
     ("PUT", "/rules/{ruleId}/mode", "live_enablement"),  # E35-S01: arming a live-scoped rule
+    # E16-T06: irreversible purge. The handler checks RBAC, then owner-only (capability 9a),
+    # THEN step-up, so a non-owner gets the audited `purge_owner_only`, not a step-up prompt.
+    ("POST", "/admin/recorder/purge", "recorder"),
 )
 
 #: Mounted write routes whose path matches this must be in one of the two

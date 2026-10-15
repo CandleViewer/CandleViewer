@@ -78,7 +78,6 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
         ("POST", "/exchange-accounts/a/keys/k/rotate", "keys"),
         ("DELETE", "/exchange-accounts/a/keys/k", "keys"),
         ("POST", "/risk/lockouts/a/override", "risk_caps"),
-        ("POST", "/admin/recorder/purge", "recorder"),
     ],
 )
 def test_contract_dangerous_routes_map_to_action_class(
@@ -110,3 +109,10 @@ def test_invites_router_write_routes_are_gated() -> None:
         if _ungated(m, r.path)
     ]
     assert missing == []
+
+
+def test_recorder_purge_is_handler_gated_not_middleware_gated() -> None:
+    """E16-T06 review (a): middleware step-up would pre-empt the handler's owner-only check."""
+    assert dangerous_action_class("POST", "/admin/recorder/purge") is None
+    assert ("POST", "/admin/recorder/purge", "recorder") in HANDLER_GATED_ROUTES
+    assert not _ungated("POST", "/admin/recorder/purge")

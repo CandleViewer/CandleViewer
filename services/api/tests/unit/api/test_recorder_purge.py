@@ -283,3 +283,35 @@ async def test_purge_manager_with_recording_write_is_403_owner_only_and_audited(
     action, kw = env.audit.calls[0]
     assert action == "retention.purge" and kw["reason"] == "purge_owner_only"
     assert kw["outcome"].value == "denied"
+
+
+async def test_purge_concurrent_loser_writes_no_intent_record() -> None:
+    """Review (b): the 409 loser must not leave an orphan `retention.purge` intent entry."""
+    env = _Env()
+    gate = asyncio.Event()
+    real_plan = env.backend.plan_purge
+
+    async def slow_plan(symbol: str, before_us: int, *, include_pinned: bool) -> PrunePlan:
+        await gate.wait()
+        return await real_plan(symbol, before_us, include_pinned=include_pinned)
+
+    env.backend.plan_purge = slow_plan  # type: ignore[method-assign]  # hold the winner mid-flight
+    winner = asyncio.ensure_future(env.post(BODY))
+    for _ in range(50):
+        await asyncio.sleep(0)
+    loser = await env.post(BODY | {"reason": "second"})
+    gate.set()
+    assert (await winner).status_code == 202
+    assert loser.status_code == 409
+    intents = [kw for a, kw in env.audit.calls if a == "retention.purge" and "before_state" in kw]
+    assert len(intents) == 1 and intents[0]["reason"] == "free disk"
+
+
+async def test_purge_non_owner_never_reaches_step_up_even_unelevated() -> None:
+    """Review (a): an unelevated manager sees the audited owner-only 403, not a step-up prompt."""
+    env = _Env(elevated=False)
+    env.res.as_(OWNER, owner=False)
+    r = await env.post(BODY)
+    assert r.status_code == 403 and r.json().get("code") != "step_up_required"
+    assert env.elevation_checks == 0
+    assert env.audit.calls[0][1]["reason"] == "purge_owner_only"

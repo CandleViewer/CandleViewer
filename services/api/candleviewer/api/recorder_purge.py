@@ -11,6 +11,7 @@ deletion inside it writes its own write-ahead `data.deleted`.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import uuid
@@ -78,6 +79,7 @@ def make_recorder_purge_router(
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> APIRouter:
     router = APIRouter(prefix="/admin", tags=["recording"])
+    reserve = asyncio.Lock()
 
     @router.post("/recorder/purge")
     async def purge(request: Request) -> JSONResponse:
@@ -169,6 +171,26 @@ def make_recorder_purge_router(
                 "symbol is pinned; set include_pinned to purge it",
                 "retention_pinned_refused",
             )
+        # Review (b): hold the reservation from the free-check through `submit`, so a concurrent
+        # loser is refused 409 BEFORE it writes an intent record (no orphan audit entries).
+        if reserve.locked():
+            return _problem(409, "Conflict", "a purge job is already running", "job_running")
+        async with reserve:
+            return await _accept(
+                backend, audit, body, before, params, body_hash, actor, key, common
+            )
+
+    async def _accept(
+        backend: PurgeBackend,
+        audit: _Emitter,
+        body: PurgeRequest,
+        before: datetime,
+        params: dict[str, object],
+        body_hash: str,
+        actor: str,
+        key: str,
+        common: dict[str, object],
+    ) -> JSONResponse:
         try:
             jobs.ensure_free(PURGE_JOB_KIND)
         except JobConflict:
