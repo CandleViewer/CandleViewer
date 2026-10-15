@@ -10,7 +10,7 @@ loop is scheduled separately behind `retention_enabled` (C-4.13).
 from __future__ import annotations
 
 from candleviewer.recorder.rolloff import AuditEmitter, RollOffJob, SystemAuditAdapter
-from candleviewer.settings import QUESTDB_PG_DEFAULT_PORT, Settings
+from candleviewer.settings import Settings
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.observability import LoggingSystemEventSink
 from candleviewer.storage.cold.questdb_source import QuestDbHotTierSource
@@ -32,7 +32,7 @@ def build_rolloff_job(
     host, _, port = settings.questdb_pg.partition(":")
     pg = LazyPgWire(
         host,
-        int(port or QUESTDB_PG_DEFAULT_PORT),
+        int(port or 8812),
         settings.questdb_pg_user,
         settings.questdb_pg_password.get_secret_value(),
     )
