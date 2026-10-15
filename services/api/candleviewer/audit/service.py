@@ -10,9 +10,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from candleviewer.audit.journal import fold_in, hold_run_lock, journal_dir
 from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
+    from io import FileIO
+
     from candleviewer.app import AppContext
     from candleviewer.audit.query import AuditQueryService
     from candleviewer.audit.repository import AuditRepository
@@ -34,6 +37,8 @@ class AuditService:
         self._repository = repository
         self._writer: AuditWriter | None = None
         self._query: AuditQueryService | None = None
+        #: E09-S11: the break-glass run lock, held shared while a real writer may run.
+        self._run_lock: FileIO | None = None
 
     @property
     def is_active(self) -> bool:
@@ -56,11 +61,17 @@ class AuditService:
         a concrete `AuditRepository` was injected by the composition root
         (M10's `SqlAlchemyAuditRepository` once the real relational backend
         is wired); otherwise stays the no-op scaffold. `audit` never imports
-        a storage driver (ADR-0003 import-linter contract)."""
+        a storage driver (ADR-0003 import-linter contract).
+
+        E09-S11 (#2119): with a real backend it first takes the break-glass run lock shared,
+        held until `stop()`, and refuses to boot (`RunLockHeld`) while the offline CLI holds
+        it; once the writer runs it folds in the CLI's journaled records (`fold_in`)."""
         if self._writer is not None:
             # Two writers on one WAL file would truncate each other's in-flight frames.
             raise RuntimeError("AuditService.start(): a writer is already running; stop() first")
         if self._repository is not None:
+            lock_dir = journal_dir(ctx.settings.audit_wal_path)
+            self._run_lock = hold_run_lock(lock_dir, exclusive=False)
             from candleviewer.audit.query import AuditQueryService
             from candleviewer.audit.writer import AuditWriter
 
@@ -68,6 +79,8 @@ class AuditService:
             await self._writer.start()
             self._query = AuditQueryService(self._repository)
         self._started = True
+        if self._writer is not None:
+            await fold_in(self._writer, journal_dir(ctx.settings.audit_wal_path))
 
     async def stop(self, grace_s: float) -> None:
         """Stop the module within `grace_s` seconds. No-op scaffold."""
@@ -76,6 +89,9 @@ class AuditService:
             self._writer = None
         self._query = None
         self._started = False
+        if self._run_lock is not None:  # after the writer: the CLI may run from here on
+            self._run_lock.close()
+            self._run_lock = None
 
     def health(self) -> HealthReport:
         """Report module health. Scaffold modules report `ok` when constructed."""
