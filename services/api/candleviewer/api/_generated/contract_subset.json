@@ -1,0 +1,5049 @@
+{
+  "x-cv-generated": {
+    "notice": "GENERATED FILE — DO NOT EDIT BY HAND. Regenerate from services/api with `uv run python scripts/generate_protocol_models.py`.",
+    "source": "docs/plan/22-api-openapi.yaml",
+    "source_sha256": "4f07a29df522d34400b16fd2831810e31a97a1558cd9572a73110520e10b188e"
+  },
+  "components": {
+    "headers": {
+      "ETag": {
+        "description": "Opaque version of the returned representation, for `If-Match`.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "IdempotencyReplayed": {
+        "description": "True when the response was replayed from the idempotency store.",
+        "schema": {
+          "type": "boolean"
+        }
+      },
+      "RetryAfter": {
+        "description": "Seconds the client should wait before retrying.",
+        "schema": {
+          "type": "integer"
+        }
+      }
+    },
+    "parameters": {
+      "CsrfToken": {
+        "description": "SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify\nagainst the session id the server resolves itself (not merely header == cookie). All\ncomparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except\nthe pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or\nunbound → `403 csrf_token_invalid`.\n",
+        "in": "header",
+        "name": "X-CSRF-Token",
+        "required": true,
+        "schema": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "Cursor": {
+        "description": "Opaque forward cursor from `meta.next_cursor`. Cursors expire after 1 hour.",
+        "in": "query",
+        "name": "cursor",
+        "schema": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "DrawingId": {
+        "in": "path",
+        "name": "drawingId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "IdempotencyKey": {
+        "description": "Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`.",
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": false,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "IfMatch": {
+        "description": "ETag of the version the client believes it is editing. Omitting it accepts last-write-wins.",
+        "in": "header",
+        "name": "If-Match",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      "LayoutId": {
+        "in": "path",
+        "name": "layoutId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "Limit": {
+        "description": "Page size.",
+        "in": "query",
+        "name": "limit",
+        "schema": {
+          "default": 100,
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "SymbolQuery": {
+        "in": "query",
+        "name": "symbol",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/Symbol"
+        }
+      },
+      "WorkspaceId": {
+        "in": "path",
+        "name": "workspaceId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "Conflict": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "idempotency": {
+                "value": {
+                  "code": "idempotency_key_reuse",
+                  "detail": "Key 4d9f… was first used with a different body fingerprint.",
+                  "instance": "urn:cv:req:0193f2bb-5555",
+                  "status": 409,
+                  "title": "Idempotency-Key reused with a different request payload",
+                  "type": "https://candleviewer.local/errors/idempotency_key_reuse"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "State conflict."
+      },
+      "Forbidden": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "csrfTokenInvalid": {
+                "summary": "SR-041 refusal on a state-changing operation",
+                "value": {
+                  "code": "csrf_token_invalid",
+                  "detail": "X-CSRF-Token header is missing.",
+                  "instance": "urn:cv:req:0193f2bb-2223",
+                  "status": 403,
+                  "title": "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session",
+                  "type": "https://candleviewer.local/errors/csrf_token_invalid"
+                }
+              },
+              "missingPermission": {
+                "value": {
+                  "code": "forbidden",
+                  "detail": "Requires permission 'keys:manage'.",
+                  "instance": "urn:cv:req:0193f2bb-2222",
+                  "required_permissions": [
+                    "keys:manage"
+                  ],
+                  "status": 403,
+                  "title": "Authenticated but lacking the required permission",
+                  "type": "https://candleviewer.local/errors/forbidden"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values."
+      },
+      "NotFound": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "missing": {
+                "value": {
+                  "code": "not_found",
+                  "detail": "No order with id 0a000000-0000-4000-8000-0000000000ff.",
+                  "instance": "urn:cv:req:0193f2bb-4444",
+                  "status": 404,
+                  "title": "Resource does not exist or is out of the caller's scope",
+                  "type": "https://candleviewer.local/errors/not_found"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Resource not found (or hidden by scope)."
+      },
+      "PayloadTooLarge": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "batchTooLarge": {
+                "value": {
+                  "code": "payload_too_large",
+                  "detail": "Batch carries 201 operations; the maximum is 200.",
+                  "instance": "urn:cv:req:0193f2bb-7777",
+                  "status": 413,
+                  "title": "Request body or batch exceeds the operation's size ceiling",
+                  "type": "https://candleviewer.local/errors/payload_too_large"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The request body or the number of batch operations exceeds the operation's ceiling (`payload_too_large`). Checked before per-item validation."
+      },
+      "PreconditionFailed": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "stale": {
+                "value": {
+                  "code": "version_conflict",
+                  "detail": "Resource was modified at 2026-09-14T10:30:00Z by another session.",
+                  "instance": "urn:cv:req:0193f2bb-6666",
+                  "status": 412,
+                  "title": "If-Match / ETag precondition failed",
+                  "type": "https://candleviewer.local/errors/version_conflict"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "ETag precondition failed."
+      },
+      "ServiceUnavailable": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "stale": {
+                "value": {
+                  "code": "degraded_data",
+                  "detail": "Book lag 3800 ms exceeds the 2000 ms SLO.",
+                  "instance": "urn:cv:req:0193f2bb-eeee",
+                  "retry_after_seconds": 2,
+                  "status": 503,
+                  "title": "Local store is behind the exchange beyond the freshness SLO",
+                  "type": "https://candleviewer.local/errors/degraded_data"
+                }
+              },
+              "storeUnavailable": {
+                "value": {
+                  "code": "store_unavailable",
+                  "detail": "The relational store is unavailable.",
+                  "instance": "urn:cv:req:0193f2bb-ffff",
+                  "retry_after_seconds": 5,
+                  "status": 503,
+                  "title": "QuestDB / Postgres / Parquet tier unavailable",
+                  "type": "https://candleviewer.local/errors/store_unavailable"
+                }
+              },
+              "wsDown": {
+                "value": {
+                  "code": "exchange_unavailable",
+                  "detail": "Public WS disconnected 42 s ago; REST backfill failing.",
+                  "instance": "urn:cv:req:0193f2bb-dddd",
+                  "retry_after_seconds": 5,
+                  "status": 503,
+                  "title": "Exchange connectivity lost",
+                  "type": "https://candleviewer.local/errors/exchange_unavailable"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A dependency is unavailable or data is degraded.",
+        "headers": {
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        }
+      },
+      "Unauthorized": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "expired": {
+                "value": {
+                  "code": "unauthenticated",
+                  "detail": "Access token expired at 2026-09-14T10:21:00Z.",
+                  "instance": "urn:cv:req:0193f2bb-1111",
+                  "status": 401,
+                  "title": "Missing, malformed or expired access token",
+                  "type": "https://candleviewer.local/errors/unauthenticated"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Not authenticated."
+      },
+      "UnprocessableEntity": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "nativeStop": {
+                "value": {
+                  "code": "validation_failed",
+                  "detail": "Entry orders must carry a native exchange-side stop-loss.",
+                  "errors": [
+                    {
+                      "field": "stop_loss",
+                      "message": "No stop_loss supplied and the account profile defines no SL offset.",
+                      "rule": "native_stop_required"
+                    }
+                  ],
+                  "instance": "urn:cv:req:0193f2bb-7777",
+                  "status": 422,
+                  "title": "Request body or parameters failed schema validation",
+                  "type": "https://candleviewer.local/errors/validation_failed"
+                }
+              },
+              "riskCap": {
+                "value": {
+                  "code": "risk_limit_breached",
+                  "detail": "max_daily_loss_usd 1500 already realised (-1522.40).",
+                  "instance": "urn:cv:req:0193f2bb-8888",
+                  "status": 422,
+                  "title": "Per-account profile risk cap would be exceeded",
+                  "type": "https://candleviewer.local/errors/risk_limit_breached"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Semantically invalid request."
+      }
+    },
+    "schemas": {
+      "BarType": {
+        "enum": [
+          "time",
+          "tick",
+          "volume",
+          "range",
+          "delta",
+          "renko",
+          "pnf",
+          "heikin_ashi"
+        ],
+        "type": "string"
+      },
+      "ChartTemplateInput": {
+        "properties": {
+          "config": {
+            "additionalProperties": true,
+            "description": "Chart configuration blob; validated against the chart-engine schema in `26-chart-engine-design.md`.",
+            "properties": {
+              "bar_type": {
+                "$ref": "#/components/schemas/BarType"
+              },
+              "chart_type": {
+                "enum": [
+                  "candlestick",
+                  "hollow_candlestick",
+                  "bar",
+                  "line",
+                  "area",
+                  "baseline",
+                  "step_line",
+                  "equi_volume",
+                  "delta_volume",
+                  "heikin_ashi"
+                ],
+                "type": "string"
+              },
+              "colours": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "footprint": {
+                "properties": {
+                  "cell_type": {
+                    "enum": [
+                      "volume",
+                      "bid_ask",
+                      "delta",
+                      "delta_total"
+                    ],
+                    "type": "string"
+                  },
+                  "display_mode": {
+                    "enum": [
+                      "profile",
+                      "box"
+                    ],
+                    "type": "string"
+                  },
+                  "imbalance_ratio": {
+                    "type": "number"
+                  },
+                  "min_stack": {
+                    "type": "integer"
+                  },
+                  "price_grouping": {
+                    "type": "integer"
+                  },
+                  "show_unfinished_auctions": {
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "indicators": {
+                "items": {
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "pane": {
+                      "enum": [
+                        "main",
+                        "sub1",
+                        "sub2",
+                        "sub3"
+                      ],
+                      "type": "string"
+                    },
+                    "params": {
+                      "additionalProperties": true,
+                      "type": "object"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "param": {
+                "type": "string"
+              },
+              "price_scale": {
+                "properties": {
+                  "auto_fit": {
+                    "type": "boolean"
+                  },
+                  "mode": {
+                    "enum": [
+                      "linear",
+                      "logarithmic",
+                      "percent"
+                    ],
+                    "type": "string"
+                  },
+                  "right_margin_bars": {
+                    "type": "integer"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "shared": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "config"
+        ],
+        "type": "object"
+      },
+      "Drawing": {
+        "description": "Response object. Readers must ignore unknown properties (C-6.3).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/DrawingGeometry"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "layout_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "owner_user_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "style": {
+            "$ref": "#/components/schemas/DrawingStyle"
+          },
+          "symbol": {
+            "$ref": "#/components/schemas/Symbol"
+          },
+          "tool": {
+            "$ref": "#/components/schemas/DrawingTool"
+          },
+          "updated_at": {
+            "description": "Concurrency token (also the `ETag`). Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing on every write. Echo it exactly as received; never re-serialise it through a client date type.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "visible": {
+            "type": "boolean"
+          },
+          "z_index": {
+            "maximum": 32767,
+            "minimum": -32768,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "owner_user_id",
+          "symbol",
+          "tool",
+          "layout_id",
+          "geometry",
+          "style",
+          "label",
+          "locked",
+          "visible",
+          "z_index",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "DrawingBatchCreateOp": {
+        "additionalProperties": false,
+        "properties": {
+          "drawing": {
+            "$ref": "#/components/schemas/DrawingInput"
+          },
+          "id": {
+            "description": "Optional client-chosen id (UUIDv7 recommended); taken ids are `409 id_unavailable`.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "op": {
+            "enum": [
+              "create"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "drawing"
+        ],
+        "type": "object"
+      },
+      "DrawingBatchDeleteOp": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "if_match": {
+            "description": "`updated_at` of the version being deleted: echo it exactly as received (6 fractional digits plus `Z`); never re-serialise it through a client date type. A token that does not match is a 422 on `operations.N.if_match`.",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$",
+            "type": "string"
+          },
+          "op": {
+            "enum": [
+              "delete"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "if_match"
+        ],
+        "type": "object"
+      },
+      "DrawingBatchRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "operations": {
+            "description": "Applied in order. More than 200 items is `413 payload_too_large`.",
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "create": "#/components/schemas/DrawingBatchCreateOp",
+                  "delete": "#/components/schemas/DrawingBatchDeleteOp",
+                  "update": "#/components/schemas/DrawingBatchUpdateOp"
+                },
+                "propertyName": "op"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/DrawingBatchCreateOp"
+                },
+                {
+                  "$ref": "#/components/schemas/DrawingBatchUpdateOp"
+                },
+                {
+                  "$ref": "#/components/schemas/DrawingBatchDeleteOp"
+                }
+              ]
+            },
+            "maxItems": 200,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "operations"
+        ],
+        "type": "object"
+      },
+      "DrawingBatchResult": {
+        "description": "Response object. Readers must ignore unknown properties (C-6.3).",
+        "properties": {
+          "created": {
+            "items": {
+              "$ref": "#/components/schemas/Drawing"
+            },
+            "type": "array"
+          },
+          "deleted": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "updated": {
+            "items": {
+              "$ref": "#/components/schemas/Drawing"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "created",
+          "updated",
+          "deleted"
+        ],
+        "type": "object"
+      },
+      "DrawingBatchUpdateOp": {
+        "additionalProperties": false,
+        "properties": {
+          "drawing": {
+            "$ref": "#/components/schemas/DrawingInput"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "if_match": {
+            "description": "`updated_at` of the version being replaced: echo it exactly as received (6 fractional digits plus `Z`); never re-serialise it through a client date type. A token that does not match is a 422 on `operations.N.if_match`.",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$",
+            "type": "string"
+          },
+          "op": {
+            "enum": [
+              "update"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "op",
+          "id",
+          "if_match",
+          "drawing"
+        ],
+        "type": "object"
+      },
+      "DrawingGeometry": {
+        "additionalProperties": false,
+        "description": "Chart-space geometry (time + price, never pixels). Per-tool point counts and key rules: see `DrawingTool`.\n\nObservable validation (all `422 validation_failed` unless stated): JSON nesting depth must\nbe at most 16; `NaN` and `Infinity` are rejected; a string that cannot be encoded as UTF-8\n(a lone surrogate) is rule `invalid_unicode`. `text` is sanitised on write, before the length\ncheck: U+0000-U+001F except LF (U+000A, kept in `text` only), U+007F-U+009F, U+2028, U+2029,\nU+061C, U+200E, U+200F, U+202A-U+202E and U+2066-U+2069 are removed; nothing else is altered\n(no trim, no normalisation). Text that is empty after sanitising is rule `text_required`.\nReads return the sanitised text, so it may differ from what was sent.\n",
+        "properties": {
+          "bands": {
+            "description": "Standard-deviation bands (`anchored_vwap` only).",
+            "items": {
+              "enum": [
+                1,
+                2,
+                3
+              ],
+              "type": "integer"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "extend_left": {
+            "type": "boolean"
+          },
+          "extend_right": {
+            "type": "boolean"
+          },
+          "levels": {
+            "description": "Fibonacci levels (fib tools only): unique finite numbers; a duplicate is rule `duplicate_level`.",
+            "items": {
+              "maximum": 1000,
+              "minimum": -1000,
+              "type": "number"
+            },
+            "maxItems": 24,
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/DrawingPoint"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "type": "array"
+          },
+          "text": {
+            "description": "Text content (`text` and `callout` only), 1..1000 code points after control-character stripping (LF is kept).",
+            "maxLength": 1000,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "points"
+        ],
+        "type": "object"
+      },
+      "DrawingInput": {
+        "additionalProperties": false,
+        "description": "Write payload. Strings are sanitised on write exactly as described on `DrawingGeometry`\n(for `label` LF is removed too; an empty result is rule `string_too_short`), and a read\nreturns the sanitised value. The nesting-depth, `NaN`/`Infinity` and `invalid_unicode`\nrules there apply to the whole body.\n",
+        "properties": {
+          "geometry": {
+            "$ref": "#/components/schemas/DrawingGeometry"
+          },
+          "label": {
+            "default": null,
+            "description": "Display label, 1..120 code points after control-character stripping.",
+            "maxLength": 120,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "layout_id": {
+            "default": null,
+            "description": "Layout scope. A non-null value must be one of the caller's live layouts, else 422 rule `layout_not_found`; every non-null value is refused until layouts ship (E15-T01).",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locked": {
+            "default": false,
+            "type": "boolean"
+          },
+          "style": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DrawingStyle"
+              }
+            ],
+            "description": "Optional; omitted means no style overrides (stored as `{}`, returned as `{}`)."
+          },
+          "symbol": {
+            "description": "Bybit USDT linear perpetual symbol, at most 20 characters (the DB symbol_code domain).",
+            "examples": [
+              "BTCUSDT",
+              "ETHUSDT"
+            ],
+            "pattern": "^[A-Z0-9]{2,16}USDT$",
+            "type": "string"
+          },
+          "tool": {
+            "$ref": "#/components/schemas/DrawingTool"
+          },
+          "visible": {
+            "default": true,
+            "type": "boolean"
+          },
+          "z_index": {
+            "default": 0,
+            "maximum": 32767,
+            "minimum": -32768,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "symbol",
+          "tool",
+          "geometry"
+        ],
+        "type": "object"
+      },
+      "DrawingPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "p": {
+            "description": "Chart-space price coordinate as a decimal string; may be negative. Stored and returned verbatim, never converted to a float.",
+            "examples": [
+              "61200.00",
+              "-12.5"
+            ],
+            "pattern": "^-?(0|[1-9][0-9]{0,14})(\\.[0-9]{1,12})?$",
+            "type": "string"
+          },
+          "t": {
+            "description": "RFC 3339 UTC instant with `Z`, at most millisecond precision, years 2000-2099.",
+            "examples": [
+              "2026-09-13T12:00:00Z",
+              "2026-09-13T12:00:00.250Z"
+            ],
+            "pattern": "^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,3})?Z$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "t",
+          "p"
+        ],
+        "type": "object"
+      },
+      "DrawingStyle": {
+        "additionalProperties": false,
+        "properties": {
+          "colour": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "type": "string"
+          },
+          "dash": {
+            "enum": [
+              "solid",
+              "dashed",
+              "dotted"
+            ],
+            "type": "string"
+          },
+          "fill_colour": {
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fill_opacity": {
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
+          "font_size": {
+            "maximum": 48,
+            "minimum": 8,
+            "type": "integer"
+          },
+          "width": {
+            "maximum": 8,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "DrawingTool": {
+        "description": "Drawing tool. **Open-ended for readers:** clients must tolerate values they do not know, so\nadding a tool is an additive change (C-6.3). Writers must send one of the listed values.\n\nRequired point count per tool (`geometry.points`):\n\n- exactly 1: `horizontal_line`, `vertical_line`, `text`, `anchored_vwap`\n- exactly 2: `trendline`, `ray`, `extended_line`, `rectangle`, `ellipse`, `fib_retracement`,\n  `fib_timezone`, `gann_fan`, `arrow`, `callout`, `measure`, `price_range`, `date_range`\n- exactly 3: `parallel_channel`, `triangle`, `fib_extension`, `pitchfork`, `long_position`,\n  `short_position`\n- 2..500: `brush`; 2..100: `polyline`\n\nTool-specific `geometry` keys (any other combination is `422` rule `property_not_allowed_for_tool`):\n`text` is required for `text` and `callout` (rule `text_required`) and forbidden elsewhere;\n`levels` only for `fib_retracement`, `fib_extension`, `fib_timezone`; `bands` only for\n`anchored_vwap`; `extend_left` / `extend_right` are allowed on every tool.\nA horizontal ray is a `horizontal_line` with `extend_left: false` and `extend_right: true`.\n",
+        "enum": [
+          "trendline",
+          "horizontal_line",
+          "vertical_line",
+          "ray",
+          "extended_line",
+          "parallel_channel",
+          "rectangle",
+          "ellipse",
+          "triangle",
+          "fib_retracement",
+          "fib_extension",
+          "fib_timezone",
+          "pitchfork",
+          "gann_fan",
+          "text",
+          "arrow",
+          "callout",
+          "measure",
+          "long_position",
+          "short_position",
+          "price_range",
+          "date_range",
+          "brush",
+          "polyline",
+          "anchored_vwap"
+        ],
+        "type": "string"
+      },
+      "IndicatorPresetInput": {
+        "properties": {
+          "indicator_code": {
+            "maxLength": 40,
+            "type": "string"
+          },
+          "is_default": {
+            "default": false,
+            "type": "boolean"
+          },
+          "name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "name",
+          "indicator_code",
+          "params"
+        ],
+        "type": "object"
+      },
+      "Layout": {
+        "description": "Response object. Readers must ignore unknown properties (C-6.3).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "crosshair_sync": {
+            "type": "boolean"
+          },
+          "grid_preset": {
+            "$ref": "#/components/schemas/LayoutGridPreset"
+          },
+          "grid_spec": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LayoutGridSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hotkey_slot": {
+            "maximum": 9,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "level_sync": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "panes": {
+            "description": "Ordered by `slot_index` ascending.",
+            "items": {
+              "$ref": "#/components/schemas/LayoutPane"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "symbol_sync": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "description": "Concurrency token (also the `ETag`) of the whole layout aggregate, panes included: every write changes it, including a pane-only change and a default switch made by another layout. Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing. Echo it exactly as received; never re-serialise it through a client date type.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "workspace_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "name",
+          "grid_preset",
+          "grid_spec",
+          "crosshair_sync",
+          "level_sync",
+          "symbol_sync",
+          "hotkey_slot",
+          "is_default",
+          "panes",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "LayoutGridLeaf": {
+        "additionalProperties": false,
+        "properties": {
+          "slot": {
+            "description": "`slot_index` of a pane in the same layout.",
+            "maximum": 15,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "enum": [
+              "leaf"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "slot"
+        ],
+        "type": "object"
+      },
+      "LayoutGridNode": {
+        "discriminator": {
+          "mapping": {
+            "column": "#/components/schemas/LayoutGridSplit",
+            "leaf": "#/components/schemas/LayoutGridLeaf",
+            "row": "#/components/schemas/LayoutGridSplit",
+            "tabset": "#/components/schemas/LayoutGridTabset"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/LayoutGridSplit"
+          },
+          {
+            "$ref": "#/components/schemas/LayoutGridTabset"
+          },
+          {
+            "$ref": "#/components/schemas/LayoutGridLeaf"
+          }
+        ]
+      },
+      "LayoutGridPreset": {
+        "description": "Named grid (`lay_preset`, `21-database-schema.md` §3.8.1) or `custom`. A named preset stores\nonly its name and fixed cell proportions: `grid_spec` is `null`, and a pane's `slot_index`\nis its cell in row-major reading order (a slot beyond the preset's cells is placed by the\nclient, e.g. floating). Any other arrangement, including a named grid whose divider was\ndragged, is saved as `custom` with its tree in `grid_spec`. **Open-ended for readers.**\n",
+        "enum": [
+          "1x1",
+          "2x1",
+          "1x2",
+          "2x2",
+          "1+3",
+          "3x3",
+          "custom"
+        ],
+        "type": "string"
+      },
+      "LayoutGridSpec": {
+        "additionalProperties": false,
+        "description": "Dock tree of a `custom` layout (`row` / `column` / `tabset` / `leaf`), checked at the API\nboundary (`422`, field paths under `grid_spec`): depth at most 6 counting the root as 1\n(rule `tree_too_deep`); at most 64 nodes and at most 16 leaves (rule `tree_too_large`);\nevery leaf names the `slot_index` of a pane in the same body (rule `unknown_slot`) and no\nslot appears twice (rule `duplicate_leaf`), so the leaf cap also follows from `panes` having\nat most 16 entries; a split's `sizes` has one entry per child (rule `sizes_mismatch`), each\nin (0, 1], summing to 1 within 1e-6 (rule `sizes_sum`); a tabset's `active` indexes one of\nits children (rule `active_out_of_range`). Panes that no leaf names are kept (floating or\nminimised, placed by the client).\n",
+        "properties": {
+          "root": {
+            "$ref": "#/components/schemas/LayoutGridNode"
+          },
+          "version": {
+            "description": "Tree format version.",
+            "enum": [
+              1
+            ],
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "root"
+        ],
+        "type": "object"
+      },
+      "LayoutGridSplit": {
+        "additionalProperties": false,
+        "description": "`row` lays children out left to right, `column` top to bottom; `sizes` are fractions of the container.",
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/LayoutGridNode"
+            },
+            "maxItems": 16,
+            "minItems": 2,
+            "type": "array"
+          },
+          "sizes": {
+            "items": {
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "type": "number"
+            },
+            "maxItems": 16,
+            "minItems": 2,
+            "type": "array"
+          },
+          "type": {
+            "enum": [
+              "row",
+              "column"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "children",
+          "sizes"
+        ],
+        "type": "object"
+      },
+      "LayoutGridTabset": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "default": 0,
+            "description": "Index of the visible tab in `children`.",
+            "maximum": 15,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/LayoutGridLeaf"
+            },
+            "maxItems": 16,
+            "minItems": 1,
+            "type": "array"
+          },
+          "type": {
+            "enum": [
+              "tabset"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "children"
+        ],
+        "type": "object"
+      },
+      "LayoutInput": {
+        "additionalProperties": false,
+        "description": "Writable layout fields plus the complete pane set. `PUT` is a full replacement: an omitted field takes its default, an explicit `null` on a non-nullable field is refused, and the stored panes are replaced. Observable validation (depth, `NaN`/`Infinity`, `invalid_unicode`, `name` sanitising and rules) is as on `WorkspaceInput`.",
+        "properties": {
+          "crosshair_sync": {
+            "default": true,
+            "description": "Layout default for crosshair sync between panes of one sync group.",
+            "type": "boolean"
+          },
+          "grid_preset": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LayoutGridPreset"
+              }
+            ],
+            "default": "1x1"
+          },
+          "grid_spec": {
+            "default": null,
+            "description": "Required when `grid_preset` is `custom`, otherwise `null` or omitted.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/LayoutGridSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hotkey_slot": {
+            "default": null,
+            "description": "`Ctrl+1..9` binding; unique among the workspace's live layouts (`409 conflict`, rule `hotkey_slot_taken`).",
+            "maximum": 9,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "is_default": {
+            "default": false,
+            "description": "At most one live default per workspace; `true` clears the previous default in the same transaction.",
+            "type": "boolean"
+          },
+          "level_sync": {
+            "default": false,
+            "description": "Layout default for price-level sync.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "At most 40 characters as sent, at least 1 after sanitising, as for workspace names. Unique per workspace, case-insensitive, among live layouts (`409 conflict`, rule `name_taken`).",
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "panes": {
+            "description": "In any order: panes are keyed by `slot_index`, and responses sort by it.",
+            "items": {
+              "$ref": "#/components/schemas/LayoutPaneInput"
+            },
+            "maxItems": 16,
+            "minItems": 0,
+            "type": "array"
+          },
+          "symbol_sync": {
+            "default": false,
+            "description": "Layout default for symbol sync.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "panes"
+        ],
+        "type": "object"
+      },
+      "LayoutPane": {
+        "description": "Stored pane (response object). Panes have no id of their own: they are addressed by `slot_index` and replaced as a set. Readers must ignore unknown properties (C-6.3).",
+        "properties": {
+          "chart_template_id": {
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "indicator_preset_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "interval_code": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaneIntervalCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pane_config": {
+            "$ref": "#/components/schemas/PaneConfig"
+          },
+          "pane_kind": {
+            "$ref": "#/components/schemas/PaneKind"
+          },
+          "scale_mode": {
+            "$ref": "#/components/schemas/PaneScaleMode"
+          },
+          "slot_index": {
+            "maximum": 15,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "symbol": {
+            "pattern": "^[A-Z0-9]{2,16}USDT$",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "slot_index",
+          "pane_kind",
+          "symbol",
+          "interval_code",
+          "chart_template_id",
+          "indicator_preset_ids",
+          "pane_config",
+          "scale_mode"
+        ],
+        "type": "object"
+      },
+      "LayoutPaneInput": {
+        "additionalProperties": false,
+        "properties": {
+          "chart_template_id": {
+            "default": null,
+            "description": "Chart template reference. Every non-null value is refused (`422` rule `chart_template_not_found`) until `chart_templates` ships; then it must name a template the caller may use.",
+            "format": "uuid",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "indicator_preset_ids": {
+            "description": "Indicator preset references; omitted means `[]`. A non-empty list is refused (`422` rule `indicator_preset_not_found`) until `indicator_presets` ships (E13-T03); then every id must name a preset the caller may use.",
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 16,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "interval_code": {
+            "default": null,
+            "description": "Bar series of a market pane; `null` for panes without one.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PaneIntervalCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pane_config": {
+            "$ref": "#/components/schemas/PaneConfig"
+          },
+          "pane_kind": {
+            "$ref": "#/components/schemas/PaneKind"
+          },
+          "scale_mode": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaneScaleMode"
+              }
+            ],
+            "default": "auto"
+          },
+          "slot_index": {
+            "description": "Unique within the layout (`422` rule `duplicate_slot`).",
+            "maximum": 15,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "symbol": {
+            "default": null,
+            "description": "Bound symbol, market panes only: a Bybit USDT linear perpetual symbol of at most 20 characters (the DB `symbol_code` domain). It is not checked against the instrument catalogue. A non-null symbol on a live layout counts as chart-open for auto-recording.",
+            "pattern": "^[A-Z0-9]{2,16}USDT$",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "slot_index",
+          "pane_kind"
+        ],
+        "type": "object"
+      },
+      "Page": {
+        "properties": {
+          "items": {
+            "items": {},
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta"
+          }
+        },
+        "required": [
+          "items",
+          "meta"
+        ],
+        "type": "object"
+      },
+      "PageMeta": {
+        "properties": {
+          "count": {
+            "description": "Items in this page (not the total, which is never computed for unbounded sets).",
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "description": "Present only where a cheap exact count exists.",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "has_more",
+          "count"
+        ],
+        "type": "object"
+      },
+      "PaneConfig": {
+        "additionalProperties": false,
+        "description": "Per-pane view state with no column of its own, so a pane cannot become a blob store: closed\n(unknown keys are refused, C-6.3; later stories add keys additively), at most 4096 bytes of\ncanonical compact UTF-8 JSON measured after sanitising (`422` rule `pane_config_too_large`),\nand never holds credentials, account ids or user ids. Omitted means `{}`.\n",
+        "properties": {
+          "settings": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PaneSettingValue"
+            },
+            "description": "Kind-specific flat settings (for example DOM depth, tape filters, CVD anchor, visible range), at most 32 keys. Every key must match `^[a-z][a-z0-9_]{0,31}$` (`422` rule `invalid_setting_key`); the server enforces this because generators cannot express key patterns. Numbers keep their kind (`1` stays `1`, `1.0` stays `1.0`). Omitted means `{}`.",
+            "maxProperties": 32,
+            "type": "object"
+          },
+          "sync_group": {
+            "description": "Cross-pane sync group (SCR-023); `null` or omitted means not synced. The axis defaults live on the layout (`crosshair_sync`, `symbol_sync`, `level_sync`).",
+            "enum": [
+              "A",
+              "B",
+              "C",
+              null
+            ],
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "PaneIntervalCode": {
+        "description": "`<bar_type>:<param>`, exactly the `bar_type` and `param` of `/market/bars` (and of the WS topic `bars.{symbol}.{bar_type}.{param}`): `param` at most 24 characters, no leading zeros, and no trailing zeros in a `volume`/`delta` fraction, so each value has one spelling (`volume:0.5`, never `volume:0.50`), e.g. `time:1`, `time:D`, `tick:500`, `volume:0.5`, `renko:atr:14`, `pnf:10:3`. A `volume` or `delta` threshold must also be greater than 0 (`422` rule `interval_not_positive`).",
+        "examples": [
+          "time:1",
+          "time:240",
+          "tick:500",
+          "renko:atr:14"
+        ],
+        "maxLength": 36,
+        "pattern": "^(time|heikin_ashi):(1|3|5|15|30|60|120|240|360|720|D|W|M)$|^(tick|range):[1-9][0-9]{0,8}$|^(volume|delta):(0|[1-9][0-9]{0,10})(\\.[0-9]{0,11}[1-9])?$|^renko:([1-9][0-9]{0,8}|atr:[1-9][0-9]{0,2})$|^pnf:[1-9][0-9]{0,8}:[1-9][0-9]{0,2}$",
+        "type": "string"
+      },
+      "PaneKind": {
+        "description": "Pane kind (`lp_kind`, `21-database-schema.md` §3.8.1). **Open-ended for readers:** clients\nmust tolerate values they do not know, so adding a kind is an additive change (C-6.3);\nwriters must send a listed value. Market panes (`chart`, `dom`, `tape`, `profile`, `cvd`,\n`oi`, `deep_stats`, `regime`) may bind a `symbol` and `interval_code`; account panes\n(`positions`, `journal`, `watchlist`, `alerts`) show many symbols and carry neither (rule\n`property_not_allowed_for_kind`). A heatmap lives in the `dom` pane and orders in the\n`positions` pane. A footprint is a `chart` pane; until chart templates exist (#2411) it is\nmarked by `pane_config.settings.footprint: true`, its options as further flat `footprint_*`\nsettings.\n",
+        "enum": [
+          "chart",
+          "dom",
+          "tape",
+          "profile",
+          "cvd",
+          "oi",
+          "deep_stats",
+          "regime",
+          "positions",
+          "journal",
+          "watchlist",
+          "alerts"
+        ],
+        "type": "string"
+      },
+      "PaneScaleMode": {
+        "description": "Price-scale behaviour (`lp_scale`). **Open-ended for readers.**",
+        "enum": [
+          "auto",
+          "linked",
+          "manual",
+          "log"
+        ],
+        "type": "string"
+      },
+      "PaneSettingValue": {
+        "anyOf": [
+          {
+            "maxLength": 256,
+            "type": "string"
+          },
+          {
+            "maximum": 1000000000000000,
+            "minimum": -1000000000000000,
+            "type": "integer"
+          },
+          {
+            "maximum": 1000000000000000,
+            "minimum": -1000000000000000,
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "items": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "maximum": 1000000000000000,
+                  "minimum": -1000000000000000,
+                  "type": "integer"
+                },
+                {
+                  "maximum": 1000000000000000,
+                  "minimum": -1000000000000000,
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "maxItems": 32,
+            "type": "array"
+          }
+        ],
+        "description": "A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`."
+      },
+      "Problem": {
+        "description": "RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue.",
+        "properties": {
+          "code": {
+            "description": "Stable machine-readable error code from `x-error-codes`.",
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "errors": {
+            "description": "Field-level validation failures.",
+            "items": {
+              "properties": {
+                "field": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "rule": {
+                  "type": "string"
+                }
+              },
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "exchange": {
+            "description": "Present when the failure originated at Bybit.",
+            "properties": {
+              "endpoint": {
+                "type": "string"
+              },
+              "request_id": {
+                "type": "string"
+              },
+              "ret_code": {
+                "type": "integer"
+              },
+              "ret_msg": {
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "instance": {
+            "description": "Correlation id, `urn:cv:req:{uuid}`; matches the `X-Request-Id` header and the audit entry.",
+            "type": "string"
+          },
+          "required_permissions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retry_after_seconds": {
+            "type": "integer"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 400,
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "description": "`https://candleviewer.local/errors/{code}`.",
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code"
+        ],
+        "type": "object"
+      },
+      "Symbol": {
+        "description": "Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
+        "examples": [
+          "BTCUSDT",
+          "ETHUSDT",
+          "SOLUSDT"
+        ],
+        "pattern": "^[A-Z0-9]{2,20}USDT$",
+        "type": "string"
+      },
+      "Workspace": {
+        "description": "Response object. Readers must ignore unknown properties (C-6.3).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "icon_token": {
+            "$ref": "#/components/schemas/WorkspaceIconToken"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_default": {
+            "type": "boolean"
+          },
+          "layout_count": {
+            "description": "Live layouts.",
+            "maximum": 32,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "sort_order": {
+            "maximum": 32767,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "Concurrency token (also the `ETag`) for the workspace metadata only; layout writes do not change it. Always exactly 6 fractional digits plus `Z` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) and strictly increasing on every write. Echo it exactly as received; never re-serialise it through a client date type.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "name",
+          "is_default",
+          "icon_token",
+          "sort_order",
+          "layout_count",
+          "created_at",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "WorkspaceBundle": {
+        "description": "Portable, credential-free export of presentation state only.\n",
+        "properties": {
+          "chart_templates": {
+            "items": {
+              "$ref": "#/components/schemas/ChartTemplateInput"
+            },
+            "type": "array"
+          },
+          "drawings": {
+            "items": {
+              "$ref": "#/components/schemas/DrawingInput"
+            },
+            "type": "array"
+          },
+          "exported_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "indicator_presets": {
+            "items": {
+              "$ref": "#/components/schemas/IndicatorPresetInput"
+            },
+            "type": "array"
+          },
+          "layouts": {
+            "items": {
+              "$ref": "#/components/schemas/LayoutInput"
+            },
+            "type": "array"
+          },
+          "schema_version": {
+            "type": "string"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceInput"
+          }
+        },
+        "required": [
+          "schema_version",
+          "workspace",
+          "layouts"
+        ],
+        "type": "object"
+      },
+      "WorkspaceDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Workspace"
+          },
+          {
+            "properties": {
+              "layouts": {
+                "description": "Live layouts ordered by `id` ascending.",
+                "items": {
+                  "$ref": "#/components/schemas/Layout"
+                },
+                "maxItems": 32,
+                "type": "array"
+              }
+            },
+            "required": [
+              "layouts"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "Response object: `Workspace` plus every live layout with its panes, so restore is one request per workspace. Readers must ignore unknown properties (C-6.3)."
+      },
+      "WorkspaceIconToken": {
+        "description": "Design-system icon token for the workspace (a token name, never a URL or markup).\n**Open-ended for readers:** clients must tolerate values they do not know, so adding a token\nis an additive change (C-6.3). Writers must send a listed value; the server keeps the same\nallow-list. `workspace.default` is the only token until the design-system icon registry\n(CMP-019) publishes workspace icons.\n",
+        "enum": [
+          "workspace.default"
+        ],
+        "type": "string"
+      },
+      "WorkspaceInput": {
+        "additionalProperties": false,
+        "description": "Writable workspace fields. `PUT` is a full replacement: an omitted field takes its default,\nand an explicit `null` is refused (`422`).\n\nObservable validation (all `422 validation_failed`): JSON nesting depth must be at most 16;\n`NaN` and `Infinity` are rejected; a string that cannot be encoded as UTF-8 (a lone\nsurrogate) is rule `invalid_unicode`. `name` is at most 40 characters as sent (rule\n`string_too_long`), then sanitised: U+0000-U+001F, U+007F-U+009F, U+2028, U+2029, U+061C,\nU+200E, U+200F, U+202A-U+202E and U+2066-U+2069 are removed, then surrounding whitespace is\ntrimmed; nothing else is altered. Empty after sanitising is rule `string_too_short`. Reads\nreturn the sanitised name.\n",
+        "properties": {
+          "icon_token": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceIconToken"
+              }
+            ],
+            "default": "workspace.default"
+          },
+          "is_default": {
+            "default": false,
+            "description": "At most one live default per user; `true` clears the previous default in the same transaction.",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "At most 40 characters as sent, at least 1 after sanitising (above), SCR-020. Unique per user, case-insensitive, among live workspaces (`409 conflict`, rule `name_taken`).",
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "sort_order": {
+            "default": 0,
+            "description": "Client-defined tab order; ties break by `id`.",
+            "maximum": 32767,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "paths": {
+    "/admin/audit": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "audit:read"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/admin/audit/export": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "audit:export"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/audit/verify": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "audit:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/backups": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "backups:read"
+          ],
+          "scope": "none"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "backups:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/backups/{backupId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "backups:write"
+          ],
+          "scope": "none"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "backups:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/backups/{backupId}/restore": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "backups:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/backups/{backupId}/verify": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "backups:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/capacity": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/feature-flags": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "flags:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/feature-flags/{flagKey}": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "flags:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/health": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/incidents": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/jobs/{jobId}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/log-level": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "admin:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/overview": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/recorder/compact": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "recording:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/recorder/import": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "recording:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/recorder/purge": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "recording:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/security/summary": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "audit:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/support-bundle": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/support-bundle/{job_id}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/alerts": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/alerts/deliveries": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:read"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/alerts/deliveries/ack-all": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/alerts/deliveries/{deliveryId}/ack": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/alerts/{alertId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:write"
+          ],
+          "scope": "self"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/alerts/{alertId}/enabled": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "alerts:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "security": [],
+        "x-rbac": {
+          "permissions": [],
+          "scope": "none"
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/mfa/enroll": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/mfa/enroll/confirm": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/mfa/methods/{methodId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/mfa/recovery": {
+      "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "none"
+        }
+      }
+    },
+    "/auth/mfa/verify": {
+      "post": {
+        "security": [],
+        "x-rbac": {
+          "permissions": [],
+          "scope": "none"
+        }
+      }
+    },
+    "/auth/password": {
+      "put": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "security": [
+          {
+            "refreshCookie": []
+          },
+          {}
+        ],
+        "x-rbac": {
+          "permissions": [],
+          "scope": "none"
+        }
+      }
+    },
+    "/auth/session": {
+      "get": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/sessions": {
+      "get": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/auth/step-up": {
+      "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/chart-templates": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/chart-templates/{templateId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/detectors/config": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/detectors/methodology": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/drawings": {
+      "get": {
+        "description": "Drawings are stored in **chart space** (time + price), never pixels, so they survive\nzoom, bar-type changes and DPI changes. Only the caller's live (not soft-deleted) drawings\nare returned, ordered by `id` ascending, so a cursor walk is stable.\n\n`symbol` is required. Without `layout_id` the result holds the caller's drawings on that\nsymbol in **both** scopes (symbol-global and layout-scoped). With `layout_id` the result is\nnarrowed to that layout, and the call returns `404` when the id is not one of the caller's\nlive layouts (always the case until layouts ship, E15-T01).\n\n`limit` is 1..500 (default 100). `cursor` is opaque, bound to the `symbol`/`layout_id`\nscope it was issued for and valid for one hour; a malformed, mismatched or expired cursor\nreturns `400 invalid_cursor`.\n",
+        "operationId": "listDrawings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SymbolQuery"
+          },
+          {
+            "description": "Narrow to one layout. Must be one of the caller's live layouts, otherwise 404.",
+            "in": "query",
+            "name": "layout_id",
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "trendline": {
+                    "value": {
+                      "items": [
+                        {
+                          "created_at": "2026-09-13T12:04:00.123456Z",
+                          "geometry": {
+                            "extend_right": true,
+                            "points": [
+                              {
+                                "p": "61200.00",
+                                "t": "2026-09-13T12:00:00Z"
+                              },
+                              {
+                                "p": "63000.00",
+                                "t": "2026-09-14T09:00:00Z"
+                              }
+                            ]
+                          },
+                          "id": "0193f2bb-9c11-7a3d-88f1-0d2e3f4a5b6c",
+                          "label": "ascending support",
+                          "layout_id": null,
+                          "locked": false,
+                          "owner_user_id": "10000000-0000-4000-8000-000000000001",
+                          "style": {
+                            "colour": "#5B8DEF",
+                            "dash": "solid",
+                            "width": 2
+                          },
+                          "symbol": "BTCUSDT",
+                          "tool": "trendline",
+                          "updated_at": "2026-09-13T12:04:00.123456Z",
+                          "visible": true,
+                          "z_index": 0
+                        }
+                      ],
+                      "meta": {
+                        "count": 1,
+                        "has_more": false,
+                        "next_cursor": null
+                      }
+                    }
+                  }
+                },
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/Drawing"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Drawings page."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "examples": {
+                  "invalidCursor": {
+                    "value": {
+                      "code": "invalid_cursor",
+                      "instance": "urn:cv:req:0193f2bb-8888",
+                      "status": 400,
+                      "title": "Pagination cursor is malformed or expired",
+                      "type": "https://candleviewer.local/errors/invalid_cursor"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request. For this operation `code: invalid_cursor` signals a malformed, scope-mismatched or expired `cursor`."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "List the caller's drawings for a symbol",
+        "tags": [
+          "workspaces"
+        ],
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "post": {
+        "description": "The server mints a UUIDv7 `id`. The body is limited to 64 KiB (`413 payload_too_large`).\nA non-null `layout_id` must name one of the caller's live layouts, otherwise\n`422` rule `layout_not_found` (every non-null value until layouts ship, E15-T01).\nThe `ETag` response header carries the `updated_at` token for later `If-Match` use.\n\n`Idempotency-Key`: the same key with the same body replays the stored 2xx response with\n`Idempotency-Replayed: true`; the same key with a different body is `409 idempotency_key_reuse`.\nReplay storage is best-effort and bounded; correctness never depends on it.\nThe replay cache is in memory and bounded: a retry after the entry was evicted, or after a\nserver restart, creates a **duplicate** drawing. Clients that need retry-safe creation\nshould use `batchUpsertDrawings` with a client-chosen `id` (a repeat is `409 id_unavailable`).\n",
+        "operationId": "createDrawing",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrawingInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Drawing"
+                }
+              }
+            },
+            "description": "Created.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Create a drawing",
+        "tags": [
+          "workspaces"
+        ],
+        "x-idempotency": "recommended",
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/drawings/batch": {
+      "post": {
+        "description": "The chart engine batches drawing mutations during a drag with a 500 ms debounce, so a single\ncall carries all affected shapes.\n\nProcessing order: (1) the body is limited to 1 MiB and `operations` to 200 items, otherwise\n`413 payload_too_large`, checked before per-operation validation; (2) the whole body is\nvalidated (`422`, up to 20 field errors such as `operations.3.drawing.tool`; each `id` may\nappear at most once per batch, else rule `duplicate_id`); (3) the operations are applied in\norder inside **one transaction**. The first operation that cannot be applied rolls the\nwhole batch back and returns `409 conflict` with `errors[0] = {field: \"operations.<i>\", rule, message}`,\nwhere `rule` is one of:\n\n- `target_unavailable` — an `update`/`delete` target is missing, soft-deleted or owned by\n  another user (indistinguishable by design);\n- `version_conflict` — the operation's `if_match` is stale;\n- `id_unavailable` — a `create` id is already used by any row of any owner in any state\n  (an id stays unavailable until its row is purged, 90 days after deletion; re-create under a new id).\n\n`create.id` is optional (client UUIDv7 recommended); `update` and `delete` require `if_match`,\nthe `updated_at` token of the version being replaced or removed. The result lists the\ncreated, updated and deleted ids in operation order.\n\n`Idempotency-Key` behaves as on `createDrawing`.\n",
+        "operationId": "batchUpsertDrawings",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrawingBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DrawingBatchResult"
+                }
+              }
+            },
+            "description": "Batch applied.",
+            "headers": {
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "examples": {
+                  "targetUnavailable": {
+                    "value": {
+                      "code": "conflict",
+                      "errors": [
+                        {
+                          "field": "operations.3",
+                          "message": "The target drawing is not available.",
+                          "rule": "target_unavailable"
+                        }
+                      ],
+                      "instance": "urn:cv:req:0193f2bb-9999",
+                      "status": 409,
+                      "title": "Concurrent modification or state conflict",
+                      "type": "https://candleviewer.local/errors/conflict"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The batch was rolled back. `errors[0].field` names the failing operation and `rule` is `target_unavailable`, `version_conflict` or `id_unavailable`; a reused `Idempotency-Key` with a different body is `idempotency_key_reuse`."
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Create/update/delete many drawings in one call",
+        "tags": [
+          "workspaces"
+        ],
+        "x-idempotency": "recommended",
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/drawings/{drawingId}": {
+      "delete": {
+        "description": "Soft delete (the row is purged by retention later). No precondition. A drawing that is\nmissing, already deleted or owned by another user returns the same `404`.\n",
+        "operationId": "deleteDrawing",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Delete a drawing",
+        "tags": [
+          "workspaces"
+        ],
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/DrawingId"
+        }
+      ],
+      "put": {
+        "description": "Full replacement. `symbol` and `tool` are immutable (`422` rule `immutable_field`). The body\nis limited to 64 KiB (`413 payload_too_large`).\n\n`If-Match` is optional: the quoted `updated_at` token (a `W/` prefix or the bare token is\nalso accepted). A stale or unparseable value returns `412 version_conflict`; when absent the\nlast write wins. A drawing that is missing, soft-deleted or owned by another user returns\nthe same `404`.\n",
+        "operationId": "updateDrawing",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DrawingInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Drawing"
+                }
+              }
+            },
+            "description": "Replaced.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Replace a drawing",
+        "tags": [
+          "workspaces"
+        ],
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/exchange-accounts": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/exchange-accounts/{accountId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "none"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "patch": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/exchange-accounts/{accountId}/fee-rate": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/exchange-accounts/{accountId}/keys": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "keys:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "keys:manage"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/exchange-accounts/{accountId}/keys/{keyId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "keys:manage"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/exchange-accounts/{accountId}/keys/{keyId}/rotate": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "keys:manage"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/exchange-accounts/{accountId}/keys/{keyId}/test": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "keys:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/exchange-accounts/{accountId}/profiles": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/exchange-accounts/{accountId}/profiles/{profileId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "accounts:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/executions": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "executions:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/executions/closed-pnl": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "executions:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "security": [],
+        "x-rbac": {
+          "permissions": [],
+          "scope": "none"
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "security": [],
+        "x-rbac": {
+          "permissions": [],
+          "scope": "none"
+        }
+      }
+    },
+    "/indicator-presets": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/indicator-presets/{presetId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/indicators": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/instruments": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "instruments:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/instruments/refresh": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "instruments:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/instruments/{symbol}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "instruments:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/instruments/{symbol}/ticker": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/invites/{inviteToken}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "none"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "none"
+        }
+      }
+    },
+    "/invites/{inviteToken}/confirm": {
+      "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "none"
+        }
+      }
+    },
+    "/journal/analytics": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "journal:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/journal/tags": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "journal:read"
+          ],
+          "scope": "none"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "journal:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/journal/trades": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "journal:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/journal/trades/{journalTradeId}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "journal:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "patch": {
+        "x-rbac": {
+          "permissions": [
+            "journal:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/journal/trades/{journalTradeId}/context": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "journal:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/journal/trades/{journalTradeId}/notes": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "journal:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "journal:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/layout-presets": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/market/bars": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/data-coverage": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/footprint": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/footprint/recompute": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "recording:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/funding": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/heatmap": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/klines": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/liquidations": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/metrics": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/open-interest": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/orderbook": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/profile": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/regime/explain": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/market/trades": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/me": {
+      "get": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/me/keymap": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "settings:read"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/me/limits": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "settings:read"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/me/preferences": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "settings:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "patch": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/me/sessions": {
+      "get": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/me/sessions/{sessionId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/onboarding/checklist": {
+      "get": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/onboarding/checklist/dismiss": {
+      "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/onboarding/complete": {
+      "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/orders": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "orders:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "orders:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/orders/cancel-all": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "orders:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/orders/{orderId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "orders:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "orders:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "patch": {
+        "x-rbac": {
+          "permissions": [
+            "orders:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/orders/{orderId}/diagnostics": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "orders:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/permissions": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "users:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/positions": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "positions:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/positions/close-all": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "positions:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/positions/{positionId}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "positions:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/positions/{positionId}/close": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "positions:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/positions/{positionId}/leverage": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "positions:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/positions/{positionId}/reverse": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "positions:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/positions/{positionId}/tpsl": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "positions:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/recording/retention-policies": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "recording:read"
+          ],
+          "scope": "none"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "recording:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/recording/sessions": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "recording:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/recording/status": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "recording:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/recording/storage": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "recording:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/recording/symbols": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "recording:read"
+          ],
+          "scope": "none"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "recording:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/recording/symbols/{recordedSymbolId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "recording:write"
+          ],
+          "scope": "none"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "recording:read"
+          ],
+          "scope": "none"
+        }
+      },
+      "patch": {
+        "x-rbac": {
+          "permissions": [
+            "recording:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/recording/symbols/{recordedSymbolId}/pin": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "recording:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/replay/sessions": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "replay:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "replay:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/replay/sessions/{replayId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "replay:write"
+          ],
+          "scope": "self"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "replay:read"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/replay/sessions/{replayId}/control": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "replay:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/risk/lockouts/{accountId}/override": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "killswitch:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/risk/summary": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "positions:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/roles": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "users:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/rules": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "rules:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/accounts": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "account"
+        }
+      }
+    },
+    "/rules/runs/{runId}/events": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/validate": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/rules/vocabulary": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/rules/{ruleId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "rules:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "rules:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/{ruleId}/active-version": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "rules:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/{ruleId}/compile": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/{ruleId}/mode": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "rules:write",
+            "rules:arm_live"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/{ruleId}/runs": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/{ruleId}/simulate": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "rules:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/{ruleId}/versions": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/rules/{ruleId}/versions/{versionId}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/scanner": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "marketdata:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/schemas/rule-ir.json": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "rules:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/session/environment": {
+      "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/settings": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "settings:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "patch": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/settings/arm": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "orders:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/settings/hotkey-audit": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/settings/hotkeys": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "settings:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/settings/hotkeys/{hotkeyProfileId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/settings/hotkeys/{hotkeyProfileId}/activate": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "settings:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/system/build": {
+      "get": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/telemetry/frontend": {
+      "post": {
+        "x-rbac": {
+          "permissions": [],
+          "scope": "self"
+        }
+      }
+    },
+    "/trade-groups": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "orders:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "orders:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/trade-groups/preview": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "orders:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/trade-groups/{tradeGroupId}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "orders:read"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/trade-groups/{tradeGroupId}/amend": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "orders:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/trade-groups/{tradeGroupId}/cancel": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "orders:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/trading/kill-switch": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "orders:read"
+          ],
+          "scope": "none"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "killswitch:write"
+          ],
+          "scope": "granted_accounts"
+        }
+      }
+    },
+    "/users": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "users:read"
+          ],
+          "scope": "none"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/users/invites": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/users/{userId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      },
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "users:read"
+          ],
+          "scope": "none"
+        }
+      },
+      "patch": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/users/{userId}/account-access": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "users:read"
+          ],
+          "scope": "none"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/users/{userId}/invite": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/users/{userId}/mfa/reset": {
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/users/{userId}/mfa/reset-preview": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/users/{userId}/roles": {
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/watchlists": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "post": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/watchlists/{watchlistId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      },
+      "put": {
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/workspaces": {
+      "get": {
+        "description": "The caller's live workspaces ordered by `sort_order`, then `id`. A user holds at most 32, so\nthe default page returns them all. `cursor` is opaque, bound to this listing and valid for\none hour; a malformed, foreign or expired cursor returns `400 invalid_cursor`.\n",
+        "operationId": "listWorkspaces",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/Workspace"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Workspaces page."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request. For this operation `code: invalid_cursor` signals a malformed, foreign or expired `cursor`."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "List the caller's workspaces",
+        "tags": [
+          "workspaces"
+        ],
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "post": {
+        "description": "The server mints a UUIDv7 `id`. `409 conflict`: rule `name_taken` (names are unique per\nuser, case-insensitive, among live workspaces), `limit_reached` (32 live workspaces) or\n`concurrent_update` (a racing write; retry). `is_default: true` clears the previous default\nin the same transaction (its token changes); `false` touches no other workspace, and a user\nmay have no default.\n\nBodies over 4 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries\nthe `updated_at` token for `If-Match`. `Idempotency-Key` is accepted, never required\n(`x-idempotency: optional`): the same key and request replay the stored 2xx response with\n`Idempotency-Replayed: true`. The replay fingerprint covers the method, path and body, so\nthe same key with another request is `409 idempotency_key_reuse`. Replay storage is in\nmemory, best-effort and bounded; correctness never depends on it.\n",
+        "operationId": "createWorkspace",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "scalping": {
+                  "value": {
+                    "is_default": true,
+                    "name": "Scalping"
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "Created.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Create a workspace",
+        "tags": [
+          "workspaces"
+        ],
+        "x-idempotency": "optional",
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/workspaces/{workspaceId}": {
+      "delete": {
+        "description": "Soft delete in one transaction: the workspace, its live layouts and their drawings get the\nsame `deleted_at`; retention purges them later. Deleting the caller's **last** live\nworkspace is `409 conflict` with `errors[0].rule = last_workspace` (\"You need at least one\nworkspace.\", SCR-025), and nothing changes. Deleting the default leaves no default. No\nprecondition. Missing, already deleted or another user's: the same `404`. `Idempotency-Key`\nas on `createWorkspace` (a replay returns the stored `204`).\n",
+        "operationId": "deleteWorkspace",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted.",
+            "headers": {
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "examples": {
+                  "lastWorkspace": {
+                    "value": {
+                      "code": "conflict",
+                      "detail": "You need at least one workspace.",
+                      "errors": [
+                        {
+                          "field": "workspaceId",
+                          "message": "You need at least one workspace.",
+                          "rule": "last_workspace"
+                        }
+                      ],
+                      "instance": "urn:cv:req:0193f2c0-0002",
+                      "status": 409,
+                      "title": "Concurrent modification or state conflict",
+                      "type": "https://candleviewer.local/errors/conflict"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "State conflict. For this operation `code: conflict` with `errors[0].rule = last_workspace` refuses deleting the caller's last live workspace; `code: idempotency_key_reuse` is the shared idempotency refusal."
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Delete a workspace and its layouts",
+        "tags": [
+          "workspaces"
+        ],
+        "x-idempotency": "optional",
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      },
+      "get": {
+        "description": "Restore in one request: the workspace plus every live layout with all of its panes (layouts\nby `id`, panes by `slot_index`). Missing, soft-deleted or another user's: the same `404`. No\n`ETag`: the workspace token versions its metadata only, and each layout carries its own.\n",
+        "operationId": "getWorkspace",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceDetail"
+                }
+              }
+            },
+            "description": "Workspace with its layouts."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Get a workspace with its layouts",
+        "tags": [
+          "workspaces"
+        ],
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceId"
+        }
+      ],
+      "put": {
+        "description": "Full replacement of `WorkspaceInput` (an omitted field takes its default); layouts are\nuntouched and do not change this token. `409` and the 4 KiB limit as on `createWorkspace`.\n\n`ETag` is the quoted token, `\"<updated_at>\"`, a strong validator. `If-Match` is optional\n(absent: the last write wins) and takes that value; a `W/` prefix or the bare token is\naccepted on input only, as leniency. Any other value, including `*` and a list of tags, is\nunparseable.\n\nEvaluation order for `/workspaces*` (not `exportWorkspace`, E15-S07) and `/layout-presets`\n(steps that do not apply are skipped): `401`; `403` (permission, CSRF); `413`; `422` (path,\nquery, headers, body); `400 invalid_cursor` (lists); `Idempotency-Key` replay (stored 2xx +\n`Idempotency-Replayed: true`) or `409 idempotency_key_reuse`; `404` (missing,\nsoft-deleted or another user's, identical); no-op `200` (the body changes nothing: unchanged\ntoken, no write, even when `If-Match` is stale or unparseable, as the change is already\napplied, RFC 9110 §13.1.1); `412 version_conflict` (stale or unparseable `If-Match`, nothing\nwritten); `409`; the write. `503 store_unavailable` when storage fails.\n",
+        "operationId": "updateWorkspace",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "Replaced (or unchanged).",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Replace a workspace's metadata",
+        "tags": [
+          "workspaces"
+        ],
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/export": {
+      "get": {
+        "description": "The bundle is self-contained and contains no credentials, account identifiers or PnL figures - only presentation state - so it is safe to share. Import is `POST /workspaces` with `from_bundle`.\n",
+        "operationId": "exportWorkspace",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceBundle"
+                }
+              }
+            },
+            "description": "Workspace bundle."
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        },
+        "summary": "Export a workspace as a portable bundle",
+        "tags": [
+          "workspaces"
+        ],
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceId"
+        }
+      ]
+    },
+    "/workspaces/{workspaceId}/layouts": {
+      "get": {
+        "description": "Live layouts (with all panes) of one of the caller's live workspaces, ordered by `id` (panes\nby `slot_index`); at most 32. Missing, soft-deleted or another user's workspace: the same\n`404`. `cursor` as on `listWorkspaces`, bound to this workspace.\n",
+        "operationId": "listLayouts",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/Layout"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Layouts page."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request. For this operation `code: invalid_cursor` signals a malformed, foreign or expired `cursor`."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "List layouts in a workspace",
+        "tags": [
+          "workspaces"
+        ],
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceId"
+        }
+      ],
+      "post": {
+        "description": "A layout is a grid of up to 16 panes, persisted verbatim so the Electron shell restores the\nexact arrangement. The server mints a UUIDv7 `id`; the pane set is validated as a whole and\nwritten in the same transaction.\n\n`422 validation_failed` lists up to 20 `errors[]`, naming a pane by array position (e.g.\n`panes.2.slot_index`): rule `duplicate_slot`, the enums, the tree rules of `LayoutGridSpec`\n(plus `grid_spec_required` for `custom` and `grid_spec_not_allowed` otherwise) and the pane\nrules of `PaneKind`, `PaneConfig`, `PaneIntervalCode` and `LayoutPaneInput`. `409 conflict`:\nrule `name_taken`, `hotkey_slot_taken`, `limit_reached` (32 live layouts) or\n`concurrent_update`. `is_default: true` clears the previous default layout in the same\ntransaction. A workspace that is missing, soft-deleted or another user's returns the same\n`404`.\n\nBodies over 128 KiB are refused with `413` (`payload_too_large`). The `ETag` header carries\nthe `updated_at` token. `Idempotency-Key` behaves as on `createWorkspace`.\n",
+        "operationId": "createLayout",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "customTree": {
+                  "value": {
+                    "grid_preset": "custom",
+                    "grid_spec": {
+                      "root": {
+                        "children": [
+                          {
+                            "slot": 0,
+                            "type": "leaf"
+                          },
+                          {
+                            "children": [
+                              {
+                                "slot": 1,
+                                "type": "leaf"
+                              },
+                              {
+                                "active": 0,
+                                "children": [
+                                  {
+                                    "slot": 2,
+                                    "type": "leaf"
+                                  }
+                                ],
+                                "type": "tabset"
+                              }
+                            ],
+                            "sizes": [
+                              0.5,
+                              0.5
+                            ],
+                            "type": "column"
+                          }
+                        ],
+                        "sizes": [
+                          0.7,
+                          0.3
+                        ],
+                        "type": "row"
+                      },
+                      "version": 1
+                    },
+                    "name": "Chart + DOM / tape",
+                    "panes": [
+                      {
+                        "interval_code": "time:1",
+                        "pane_kind": "chart",
+                        "slot_index": 0,
+                        "symbol": "BTCUSDT"
+                      },
+                      {
+                        "pane_kind": "dom",
+                        "slot_index": 1,
+                        "symbol": "BTCUSDT"
+                      },
+                      {
+                        "pane_kind": "tape",
+                        "slot_index": 2,
+                        "symbol": "BTCUSDT"
+                      }
+                    ]
+                  }
+                },
+                "fourPane": {
+                  "value": {
+                    "grid_preset": "2x2",
+                    "hotkey_slot": 1,
+                    "is_default": true,
+                    "name": "BTC 4-pane",
+                    "panes": [
+                      {
+                        "interval_code": "time:1",
+                        "pane_kind": "chart",
+                        "slot_index": 0,
+                        "symbol": "BTCUSDT"
+                      },
+                      {
+                        "interval_code": "time:5",
+                        "pane_kind": "cvd",
+                        "slot_index": 1,
+                        "symbol": "BTCUSDT"
+                      },
+                      {
+                        "pane_kind": "dom",
+                        "slot_index": 2,
+                        "symbol": "BTCUSDT"
+                      },
+                      {
+                        "pane_config": {
+                          "settings": {
+                            "min_size": "1.0"
+                          },
+                          "sync_group": "A"
+                        },
+                        "pane_kind": "tape",
+                        "slot_index": 3,
+                        "symbol": "ETHUSDT"
+                      }
+                    ]
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/LayoutInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Layout"
+                }
+              }
+            },
+            "description": "Created.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "examples": {
+                  "duplicateSlot": {
+                    "value": {
+                      "code": "validation_failed",
+                      "detail": "1 field failed validation.",
+                      "errors": [
+                        {
+                          "field": "panes.1.slot_index",
+                          "message": "slot_index 3 is already used by panes.0.",
+                          "rule": "duplicate_slot"
+                        }
+                      ],
+                      "instance": "urn:cv:req:0193f2c0-0003",
+                      "status": 422,
+                      "title": "Request body or parameters failed schema validation",
+                      "type": "https://candleviewer.local/errors/validation_failed"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Semantically invalid layout. `code: validation_failed`; each entry of `errors[]` names the offending field, a pane by its array position."
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Create a layout (pane grid)",
+        "tags": [
+          "workspaces"
+        ],
+        "x-idempotency": "optional",
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    },
+    "/workspaces/{workspaceId}/layouts/{layoutId}": {
+      "delete": {
+        "description": "Soft delete in one transaction: the layout and its drawings get the same `deleted_at`;\nretention purges them later. No precondition. A workspace may be left with no layouts or no\ndefault. `404` as on `getLayout`; `Idempotency-Key` as on `createWorkspace`.\n",
+        "operationId": "deleteLayout",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted.",
+            "headers": {
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Delete a layout",
+        "tags": [
+          "workspaces"
+        ],
+        "x-idempotency": "optional",
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      },
+      "get": {
+        "description": "The layout with all of its panes (by `slot_index`). It must be live and belong to the named\nworkspace, one of the caller's live workspaces; otherwise the same `404`. The `ETag` header\ncarries the `updated_at` token.\n",
+        "operationId": "getLayout",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Layout"
+                }
+              }
+            },
+            "description": "Layout.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Get a layout",
+        "tags": [
+          "workspaces"
+        ],
+        "x-rbac": {
+          "permissions": [
+            "workspaces:read"
+          ],
+          "scope": "self"
+        }
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceId"
+        },
+        {
+          "$ref": "#/components/parameters/LayoutId"
+        }
+      ],
+      "put": {
+        "description": "Called on pane rearrangement with a 2-second debounce. `If-Match` prevents a stale tab from\nclobbering a newer arrangement made in another window.\n\nFull replacement of the layout **and its whole pane set** in one transaction, validated as\non `createLayout` before anything is written; partial application is impossible. The\n`updated_at` token versions the aggregate, so a pane-only change also changes it.\n`If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`; after a\n`412` the stored layout is unchanged and the client re-reads it with `getLayout`. `404` as\non `getLayout`; `409`, `422` and the 128 KiB limit as on `createLayout`.\n",
+        "operationId": "updateLayout",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LayoutInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Layout"
+                }
+              }
+            },
+            "description": "Replaced (or unchanged).",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Replace a layout",
+        "tags": [
+          "workspaces"
+        ],
+        "x-rbac": {
+          "permissions": [
+            "workspaces:write"
+          ],
+          "scope": "self"
+        }
+      }
+    }
+  }
+}

@@ -61,7 +61,7 @@ from candleviewer.api import (
 )
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
-from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.contract_conformance import load_contract_subset
 from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
 from candleviewer.api.deny_by_default import (
     assert_app_routes_declared,
@@ -600,8 +600,8 @@ def _hub_publisher(hub: RevocationHub) -> Callable[[str, str], Awaitable[None]]:
 
 @lru_cache(maxsize=1)
 def _cached_spec() -> dict[str, Any]:
-    """The 500 KB contract parse costs ~2 s; parse once per process."""
-    return load_openapi_spec()
+    """The packaged contract subset (#2555: the image ships no `docs/plan`); parsed once."""
+    return load_contract_subset()
 
 
 async def _deny_all_snapshot(user_id: uuid.UUID) -> PrincipalSnapshot:
