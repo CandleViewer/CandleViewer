@@ -4399,7 +4399,7 @@ class SetFeatureFlagRequest(BaseModel):
     reason: Annotated[
         str | None,
         Field(
-            description="Why the flag changed; recorded in the `flags.change` audit entry (E42-T03). The server refuses a write without it (`422 validation_failed`).\n",
+            description="Why the flag changed; recorded in the `flags.change` audit entry (E42-T03). The server refuses a write without it (`422 validation_failed`). It stays optional in the schema because C-6.3 classes a newly required field as breaking.\n",
             max_length=280,
         ),
     ] = None
@@ -4409,7 +4409,7 @@ class SetFeatureFlagRequest(BaseModel):
     expected_updated_at: Annotated[
         AwareDatetime | None,
         Field(
-            description="The flag's `updated_at` as the caller last read it (E42-T03). The write is applied only if the stored value still matches, else `409 conflict`. The server refuses a write without it (`422 validation_failed`).\n"
+            description="The flag's `updated_at` as the caller last read it (E42-T03). The write is applied only if the stored value still matches, else `409 conflict`. The server refuses a write without it (`422 validation_failed`); schema-optional for the same reason as `reason`.\n"
         ),
     ] = None
 

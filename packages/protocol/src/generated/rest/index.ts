@@ -242,7 +242,11 @@ export interface paths {
      *     control (C-4.14), and the service refuses to start with a definition that declares one.
      *     Kill-switch-class flags (`maintenance.mode`, `killswitch.*`) are re-read at least every
      *     5 s and never served from the 30 s cache. If the flag store is unreachable, every flag
-     *     resolves to its registry default, and those defaults are the restrictive values.
+     *     resolves to its fail-closed value: the restrictive one for the safety-relevant flags
+     *     (`maintenance.mode` and `killswitch.order_entry` engaged, so an unknown state refuses new
+     *     orders; `trading.live_enabled` off) and the registry default for every other flag.
+     *     Override values on a `percentage` flag are booleans that pin a user in (`true`) or out
+     *     (`false`) of the rollout.
      */
     get: operations["listFeatureFlags"];
     put?: never;
@@ -275,8 +279,17 @@ export interface paths {
      *     - `value` and every override value must match the flag's kind (`boolean`; `percentage`
      *       0-100; `variant` one of the flag's variants), else `422 validation_failed` (rule
      *       `kind_mismatch`). An unknown `flagKey` is `404 not_found`.
-     *     - `flags:write` is a dangerous permission: the session needs a live step-up elevation,
-     *       else `403 step_up_required` (audited as `auth.step_up_required`).
+     *     - `flags:write` is a dangerous permission, and the step-up class depends on the flag:
+     *       `trading.live_enabled: true` needs a fresh `live_enablement` elevation, a
+     *       kill-switch-class flag a fresh `killswitch` elevation (both no-grace, single use), and
+     *       every other flag `flags` (5-minute grace). Without it the call is
+     *       `403 step_up_required` (audited as `auth.step_up_required`). The route slice registers
+     *       `flags` in `ACTION_CLASSES`, `DANGEROUS_ROUTES` and `DANGEROUS_PATH_PATTERN`
+     *       (`^/admin/feature-flags/[^/]+$`).
+     *     - `trading.live_enabled` and the kill-switch-class flags take no overrides: any override
+     *       on them is `422 validation_failed` (rule `overrides_not_allowed`), so neither the live
+     *       gate nor maintenance mode can differ per user. On a `percentage` flag an override is a
+     *       boolean that pins the user in or out of the rollout.
      *     - The write locks the flag row and compares `expected_updated_at` with the stored
      *       `updated_at`. A mismatch is `409 conflict` carrying the current flag in `current`; it is
      *       never last-write-wins.
@@ -7357,7 +7370,7 @@ export interface components {
       evidence_url?: string;
       /**
        * Format: date-time
-       * @description The flag's `updated_at` as the caller last read it (E42-T03). The write is applied only if the stored value still matches, else `409 conflict`. The server refuses a write without it (`422 validation_failed`).
+       * @description The flag's `updated_at` as the caller last read it (E42-T03). The write is applied only if the stored value still matches, else `409 conflict`. The server refuses a write without it (`422 validation_failed`); schema-optional for the same reason as `reason`.
        */
       expected_updated_at?: string;
       overrides?: {
@@ -7365,7 +7378,7 @@ export interface components {
         user_id: string;
         value: unknown;
       }[];
-      /** @description Why the flag changed; recorded in the `flags.change` audit entry (E42-T03). The server refuses a write without it (`422 validation_failed`). */
+      /** @description Why the flag changed; recorded in the `flags.change` audit entry (E42-T03). The server refuses a write without it (`422 validation_failed`). It stays optional in the schema because C-6.3 classes a newly required field as breaking. */
       reason?: string;
       /** @description Boolean, number (percentage) or string (variant), matching the flag kind. */
       value: unknown;
@@ -9828,7 +9841,13 @@ export interface operations {
            * @enum {string}
            */
           action_class?:
-            "keys" | "users" | "live_enablement" | "killswitch" | "risk_caps" | "recorder";
+            | "keys"
+            | "users"
+            | "live_enablement"
+            | "killswitch"
+            | "risk_caps"
+            | "recorder"
+            | "flags";
           /**
            * Format: uuid
            * @description The `challenge_id` of the `403 step_up_required` being answered (#2304). Required for a no-grace class (`live_enablement` or `killswitch`, named by the live challenge or by `action_class`): omitting it is `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a grace class: without it the server uses the session's live challenge. This grace-class optionality is transitional and ends with #2725 (the web client sends `challenge_id` on every step-up); from then on it is required whenever the session has a live challenge. A value that does not name the live challenge (expired, superseded, already used or unknown), or that is sent when there is none, gets `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is decided before the password and code are checked: no factor is verified, no failure is counted and nothing is elevated. The client then drops the held request without sending it.

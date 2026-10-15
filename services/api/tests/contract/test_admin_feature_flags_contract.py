@@ -66,7 +66,9 @@ def test_every_error_code_the_rules_name_is_registered(code: str) -> None:
     assert f"`{code}`" in _PUT["description"] or f" {code}`" in _PUT["description"]
 
 
-@pytest.mark.parametrize("rule", ["required", "kind_mismatch", "gate_evidence_required"])
+@pytest.mark.parametrize(
+    "rule", ["required", "kind_mismatch", "gate_evidence_required", "overrides_not_allowed"]
+)
 def test_validation_rules_are_named(rule: str) -> None:
     assert f"`{rule}`" in _PUT["description"]
 
@@ -117,3 +119,35 @@ def test_push_note_states_changed_keys_only_and_role_filtering() -> None:
     assert "only the changed keys" in note
     assert "owner-only key" in note
     assert "`maintenance.enabled`" in note and "`maintenance.disabled`" in note
+
+
+def _text(description: str) -> str:
+    return " ".join(description.split())
+
+
+def test_unreachable_store_resolves_to_the_fail_closed_value() -> None:
+    text = _text(_LIST["description"])
+    assert "resolves to its fail-closed value" in text
+    assert "`killswitch.order_entry` engaged" in text
+    assert "pin a user in (`true`) or out (`false`) of the rollout" in text
+
+
+def test_step_up_class_depends_on_the_flag() -> None:
+    text = _text(_PUT["description"])
+    for cls in ("`live_enablement`", "`killswitch`", "`flags`"):
+        assert cls in text
+    assert "(`^/admin/feature-flags/[^/]+$`)" in text
+    body = _SPEC["paths"]["/auth/step-up"]["post"]["requestBody"]["content"]["application/json"]
+    assert "flags" in body["schema"]["properties"]["action_class"]["enum"]
+
+
+def test_trading_disabled_names_maintenance_mode() -> None:
+    entry = next(e for e in _SPEC["x-error-codes"] if e["code"] == "trading_disabled")
+    assert "maintenance mode" in entry["title"]
+
+
+def test_system_coalescing_keeps_every_flag_key_and_every_notice() -> None:
+    text = (_DOCS / "23-ws-protocol.md").read_text(encoding="utf-8")
+    rows = text.split("### 8.2", 1)[1].split("### 8.3", 1)[0].splitlines()
+    row = next(line for line in rows if line.startswith("| `system` "))
+    assert "a key is never dropped" in row and "**never coalesced**" in row

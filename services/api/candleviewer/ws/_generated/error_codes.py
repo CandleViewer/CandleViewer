@@ -102,7 +102,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.FORBIDDEN: ErrorMeta(("rest", "ws",), "any", False, None, None, "Authenticated but lacking the required permission"),
     ErrorCode.CSRF_TOKEN_INVALID: ErrorMeta(("rest",), None, False, None, None, "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session (SR-041)"),
     ErrorCode.ACCOUNT_SCOPE_DENIED: ErrorMeta(("rest", "ws",), "any", False, None, None, "Caller has no granted access to the targeted exchange account"),
-    ErrorCode.TRADING_DISABLED: ErrorMeta(("rest",), None, False, None, None, "Kill-switch engaged or live trading not enabled for this deployment"),
+    ErrorCode.TRADING_DISABLED: ErrorMeta(("rest",), None, False, None, None, "Kill-switch or maintenance mode engaged, or live trading not enabled for this deployment"),
     ErrorCode.RISK_LIMIT_BREACHED: ErrorMeta(("rest",), None, False, None, None, "Per-account profile risk cap (daily loss, max position, allowed symbols) would be exceeded"),
     ErrorCode.NOT_FOUND: ErrorMeta(("rest",), None, False, None, None, "Resource does not exist or is out of the caller's scope"),
     ErrorCode.CONFLICT: ErrorMeta(("rest",), None, False, None, None, "Concurrent modification or state conflict"),
