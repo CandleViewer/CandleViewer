@@ -8951,6 +8951,10 @@ paths:
       description: >
         Counts and headline state across users, accounts, keys nearing expiry, recorder
         health, storage headroom and open incidents.
+        Partial results (E42-T01): each slice is read from its own source under its own 300 ms
+        budget, concurrently, and cached for 5 s. A source that times out or fails turns only its
+        slice into `status: error` (see `AdminSliceStatus`); the response is still `200`, never
+        all-or-nothing. Kill-switch and flag state (`trading`) is never served from the cache.
       x-rbac: { permissions: [admin:read], scope: none }
       responses:
         "200":
@@ -8958,6 +8962,42 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AdminOverview" }
+              examples:
+                degraded:
+                  summary: The recorder timed out; open positions have no provider yet
+                  value:
+                    generated_at: "2026-10-15T18:00:05Z"
+                    users:
+                      status: ok
+                      generated_at: "2026-10-15T18:00:03Z"
+                      total: 4
+                      active: 4
+                      without_mfa: 0
+                    accounts:
+                      status: ok
+                      generated_at: "2026-10-15T18:00:03Z"
+                      total: 4
+                      enabled: 3
+                      keys_expiring_30d: 1
+                      keys_invalid: 0
+                    recorder:
+                      status: error
+                      detail: "timed out after 300 ms"
+                      generated_at: "2026-10-15T18:00:05Z"
+                    storage:
+                      status: ok
+                      generated_at: "2026-10-15T18:00:03Z"
+                      used_bytes: 44023414784
+                      free_bytes: 402653184000
+                      days_until_full: null
+                    trading:
+                      status: unavailable
+                      detail: "open_positions: no provider wired"
+                      generated_at: "2026-10-15T18:00:05Z"
+                      live_enabled: false
+                      kill_switch_engaged: false
+                    incidents_open: 0
+                    incidents: { status: ok, generated_at: "2026-10-15T18:00:03Z", open: 0 }
 
   /admin/capacity:
     get:
@@ -8968,6 +9008,9 @@ paths:
         Projects disk exhaustion from the current recorded-symbol set and retention policy
         (~0.5-0.75 GB/day/symbol at 200-depth) and reports per-UID rate-budget utilisation,
         so the owner can see a limit approaching instead of discovering it at a rejection.
+        Read from the backend's own accounting only; never queries Bybit. Same partial-result
+        rules as `/admin/overview`: every section carries `AdminSliceStatus` (`rate_budget_status`
+        for the `rate_budget` list). The sub-account tier is a recorded fact (`SubaccountCapacity`).
       x-rbac: { permissions: [admin:read], scope: none }
       responses:
         "200":
@@ -8975,6 +9018,74 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/CapacityReport" }
+              examples:
+                estimated:
+                  summary: No growth measurement yet; the rate-limit peak has no provider yet
+                  value:
+                    generated_at: "2026-10-15T18:00:05Z"
+                    storage:
+                      status: ok
+                      generated_at: "2026-10-15T18:00:03Z"
+                      used_bytes: 44023414784
+                      free_bytes: 402653184000
+                      daily_growth_bytes: 750000000
+                      days_until_full: 536.87
+                      projection_basis: estimated
+                      estimated: true
+                      per_symbol:
+                        - symbol: BTCUSDT
+                          used_bytes: 30023414784
+                          daily_growth_bytes: 750000000
+                          pinned: true
+                          retention_days: null
+                    ingestion:
+                      status: ok
+                      generated_at: "2026-10-15T18:00:03Z"
+                      messages_per_sec: 1840.5
+                      queue_depth: 12
+                      dropped_last_hour: 0
+                    rate_budget_status:
+                      status: unavailable
+                      detail: "rate-limit peak: no provider wired"
+                      generated_at: "2026-10-15T18:00:05Z"
+                    subaccounts:
+                      status: ok
+                      generated_at: "2026-10-15T18:00:03Z"
+                      tier: regular
+                      cap: 5
+                      used: 3
+                      tier_source: recorded
+                      recorded_at: "2026-10-01T09:00:00Z"
+                empty:
+                  summary: Nothing is recorded yet and the tier was never recorded
+                  value:
+                    generated_at: "2026-10-15T18:00:05Z"
+                    storage:
+                      status: ok
+                      generated_at: "2026-10-15T18:00:03Z"
+                      used_bytes: 1073741824
+                      free_bytes: 402653184000
+                      daily_growth_bytes: 0
+                      days_until_full: null
+                      projection_basis: nothing_recorded
+                      estimated: false
+                      per_symbol: []
+                    ingestion:
+                      status: unavailable
+                      detail: "ingestion: no provider wired"
+                      generated_at: "2026-10-15T18:00:05Z"
+                    rate_budget_status:
+                      status: unavailable
+                      detail: "rate-limit peak: no provider wired"
+                      generated_at: "2026-10-15T18:00:05Z"
+                    subaccounts:
+                      status: ok
+                      generated_at: "2026-10-15T18:00:03Z"
+                      tier: null
+                      cap: null
+                      used: 0
+                      tier_source: unrecorded
+                      recorded_at: null
 
   /admin/incidents:
     get:
@@ -13906,17 +14017,44 @@ components:
         ws_protocol_version: { type: string }
         electron_version: { type: ["string", "null"] }
 
+    AdminSliceStatus:
+      type: object
+      description: >
+        One admin read-model slice (E42-T01); servers always populate `status` and `generated_at`.
+        `ok`: every field read. `error`: a source timed out (300 ms budget) or failed.
+        `unavailable`: no provider wired yet. Unread fields are omitted, read ones still returned.
+        `detail` is a non-empty fixed reason naming the source iff `status` is not `ok` (else
+        `null` or omitted), never an exception message, connection string or key material.
+      properties:
+        status:
+          type: string
+          enum: [ok, error, unavailable]
+          description: >
+            **Open-ended for readers:** clients must tolerate values they do not know, so adding an
+            outcome is an additive change (C-6.3).
+        detail: { type: ["string", "null"], maxLength: 200 }
+        generated_at:
+          type: string
+          format: date-time
+          description: When the slice was read; at most 5 s older than the response (slice cache).
+
     AdminOverview:
       type: object
+      description: >
+        Partial-result roll-up (E42-T01): every slice carries `AdminSliceStatus`; `generated_at`
+        is when it was assembled; `incidents_open` mirrors `incidents.open` (omitted if not `ok`).
       properties:
+        generated_at: { type: string, format: date-time }
         users:
           type: object
+          allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
           properties:
             total: { type: integer }
             active: { type: integer }
             without_mfa: { type: integer }
         accounts:
           type: object
+          allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
           properties:
             total: { type: integer }
             enabled: { type: integer }
@@ -13924,29 +14062,44 @@ components:
             keys_invalid: { type: integer }
         recorder:
           type: object
+          allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
           properties:
             symbols_recording: { type: integer }
             symbols_degraded: { type: integer }
             lag_seconds_p99: { type: number }
         storage:
           type: object
+          description: "`days_until_full` is `null` unless growth is measured; the estimated fallback exists only in `CapacityReport.storage`."
+          allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
           properties:
             used_bytes: { type: integer, format: int64 }
             free_bytes: { type: integer, format: int64 }
             days_until_full: { type: ["number", "null"] }
         trading:
           type: object
+          allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
           properties:
             live_enabled: { type: boolean }
             kill_switch_engaged: { type: boolean }
             open_positions: { type: integer }
         incidents_open: { type: integer }
+        incidents:
+          type: object
+          allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
+          properties:
+            open: { type: integer }
 
     CapacityReport:
       type: object
+      description: >
+        Partial-result capacity read model (E42-T01): every section carries `AdminSliceStatus`,
+        and `rate_budget_status` covers the `rate_budget` list. `generated_at` is when the
+        response was assembled.
       properties:
+        generated_at: { type: string, format: date-time }
         storage:
           type: object
+          allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
           properties:
             used_bytes: { type: integer, format: int64 }
             free_bytes: { type: integer, format: int64 }
@@ -13962,8 +14115,22 @@ components:
                   daily_growth_bytes: { type: integer, format: int64 }
                   pinned: { type: boolean }
                   retention_days: { type: ["integer", "null"] }
+            projection_basis:
+              type: string
+              enum: [measured, estimated, nothing_recorded]
+              description: >
+                Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit.
+                `estimated`: no measurement yet, so 0.75 GB/day per recorded symbol (7.5e8 bytes,
+                upper bound of the 0.5-0.75 band at 200-depth); `estimated` is `true` (convention
+                C10). `nothing_recorded`: no symbol recorded, so growth is `0` by fact and
+                `days_until_full` is `null`. **Open-ended for readers:** clients must tolerate
+                values they do not know, so adding a basis is an additive change (C-6.3).
+            estimated:
+              type: boolean
+              description: "`true` iff `projection_basis` is `estimated`; otherwise `false` or omitted."
         ingestion:
           type: object
+          allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
           properties:
             messages_per_sec: { type: number }
             queue_depth: { type: integer }
@@ -13978,6 +14145,40 @@ components:
               limit_per_minute: { type: integer }
               peak_used_per_minute: { type: integer }
               utilisation_pct: { type: number }
+        rate_budget_status: { $ref: "#/components/schemas/AdminSliceStatus" }
+        subaccounts: { $ref: "#/components/schemas/SubaccountCapacity" }
+
+    SubaccountCapacity:
+      type: object
+      description: >
+        Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact (setting
+        `accounts.subaccount_tier`, `21-database-schema.md` §3.9), never inferred from counts or
+        `max_sub_accounts_hint`; `tier` and `cap` are `null` iff `tier_source` is `unrecorded`.
+      allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
+      properties:
+        tier:
+          type: ["string", "null"]
+          enum: [regular, business_kyc, null]
+          description: >
+            **Open-ended for readers:** clients must tolerate values they do not know, so adding a
+            tier is an additive change (C-6.3).
+        cap:
+          type: ["integer", "null"]
+          description: 5 for `regular`, 20 for `business_kyc`, `null` while unrecorded.
+        used:
+          type: integer
+          minimum: 0
+          description: >
+            Most non-deleted live sub-accounts (`exchange_accounts.kind = sub`, `env = live`)
+            under any one main account: the cap binds live exchange UIDs, per main (C-2.11).
+        tier_source:
+          type: string
+          enum: [recorded, unrecorded]
+          description: Deliberately closed; readers may rely on these two values.
+        recorded_at:
+          type: ["string", "null"]
+          format: date-time
+          description: When the tier was recorded (the setting's `updated_at`); `null` if never.
 
     Incident:
       type: object
