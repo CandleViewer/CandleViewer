@@ -22,7 +22,7 @@ import json
 import os
 import re
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -57,7 +57,10 @@ from candleviewer.storage.cold.writer import (
     normalise_ts,
     write_parquet_file,
 )
-from candleviewer.storage.errors import StorageExportVerifyFailed
+from candleviewer.storage.errors import (
+    StorageExportVerifyFailed,
+    StoragePartitionDropNotApplied,
+)
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.natural_keys import TABLE_BY_STREAM
 from candleviewer.storage.questdb.reader import PgWireConnection
@@ -65,6 +68,9 @@ from candleviewer.storage.sql_identifiers import checked_identifier, sql_string_
 
 US_PER_DAY = 86_400_000_000
 _US_PER_HOUR = 3_600_000_000
+DROP_APPLY_TIMEOUT_S = 10.0
+DROP_POLL_MIN_S = 0.02
+DROP_POLL_MAX_S = 0.2
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _PROVENANCE = frozenset({"_export_run_id", "_exported_at", "_source"})
 _DIGEST_ROWS = 8192
@@ -159,9 +165,18 @@ _FINGERPRINT_COLUMN: dict[StreamKind, str] = {
 class QuestDbHotPartitions:
     """Hot-tier inventory and partition drop over PGWire (every await bounded)."""
 
-    def __init__(self, connection: PgWireConnection, *, timeout_s: float = 60.0) -> None:
+    def __init__(
+        self,
+        connection: PgWireConnection,
+        *,
+        timeout_s: float = 60.0,
+        apply_timeout_s: float = DROP_APPLY_TIMEOUT_S,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
         self._conn = connection
         self._timeout_s = timeout_s
+        self._apply_timeout_s = apply_timeout_s
+        self._sleep = sleep
 
     async def _fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
         async with asyncio.timeout(self._timeout_s):
@@ -213,6 +228,23 @@ class QuestDbHotPartitions:
             raise ValueError("bad partition name")
         stmt = f"ALTER TABLE {table} DROP PARTITION LIST " + sql_string_literal(name)
         await self._fetch(stmt)
+        await self._await_dropped(table, name)
+
+    async def _await_dropped(self, table: str, name: str) -> None:
+        """WAL tables apply DDL asynchronously: return only once the day is gone (bounded)."""
+        literal = sql_string_literal(table)
+        sql = f"SELECT name FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted
+        delay, waited = DROP_POLL_MIN_S, 0.0
+        while True:
+            if name not in {str(r.get("name", "")) for r in await self._fetch(sql)}:
+                return
+            if waited >= self._apply_timeout_s:
+                raise StoragePartitionDropNotApplied(
+                    f"partition {name} of {table} still present after {waited:.1f}s"
+                )
+            await self._sleep(delay)
+            waited += delay
+            delay = min(delay * 2, DROP_POLL_MAX_S)
 
 
 def _subranges(stream: StreamKind, rng: TimeRange) -> list[tuple[TimeRange, dict[str, str]]]:

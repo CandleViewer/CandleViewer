@@ -28,7 +28,7 @@ from candleviewer.storage.cold.rolloff_ops import (
     _downsample_table,
 )
 from candleviewer.storage.cold.watermarks import FileWatermarkStore
-from candleviewer.storage.errors import StorageExportVerifyFailed
+from candleviewer.storage.errors import StorageExportVerifyFailed, StoragePartitionDropNotApplied
 from candleviewer.storage.models import StreamKind, TimeRange
 from tests.unit.storage.cold._helpers import (
     DAY_START_US,
@@ -184,7 +184,47 @@ async def test_hot_partitions_symbols_bind_naive_utc_ts_params() -> None:
 async def test_hot_partitions_drop_uses_allowlisted_table_and_date_literal() -> None:
     pg = FakePg()
     await QuestDbHotPartitions(pg).drop_day(StreamKind.ORDERBOOK_DELTA, DAY_START_US)
-    assert pg.calls == [("ALTER TABLE orderbook_deltas DROP PARTITION LIST '2026-10-17'", ())]
+    assert pg.calls[0] == ("ALTER TABLE orderbook_deltas DROP PARTITION LIST '2026-10-17'", ())
+    assert "table_partitions('orderbook_deltas')" in pg.calls[1][0]
+
+
+class LaggingDropPg:
+    """Lists the day for `lag` table_partitions calls after the DROP (async WAL apply)."""
+
+    def __init__(self, lag: int | None) -> None:
+        self.lag = lag
+        self.polls = 0
+
+    async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
+        if not sql.startswith("SELECT"):
+            return []
+        self.polls += 1
+        if self.lag is None or self.polls <= self.lag:
+            return [{"name": "2026-10-17"}, {"name": "2026-10-18"}]
+        return [{"name": "2026-10-18"}]
+
+
+async def test_hot_partitions_drop_waits_until_applied() -> None:
+    pg, slept = LaggingDropPg(3), []
+
+    async def sleep(s: float) -> None:
+        slept.append(s)
+
+    await QuestDbHotPartitions(pg, sleep=sleep).drop_day(T, DAY_START_US)
+    assert pg.polls == 4
+    assert slept == [0.02, 0.04, 0.08]
+
+
+async def test_hot_partitions_drop_never_applied_raises_after_bound() -> None:
+    pg, slept = LaggingDropPg(None), []
+
+    async def sleep(s: float) -> None:
+        slept.append(s)
+
+    with pytest.raises(StoragePartitionDropNotApplied):
+        await QuestDbHotPartitions(pg, sleep=sleep).drop_day(T, DAY_START_US)
+    assert max(slept) == 0.2
+    assert 10.0 <= sum(slept) < 10.2
 
 
 async def test_hot_partitions_refuse_stream_without_hot_table() -> None:

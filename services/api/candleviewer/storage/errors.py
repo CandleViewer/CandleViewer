@@ -35,6 +35,12 @@ class StorageExportVerifyFailed(StorageError):
     code = "STORAGE_EXPORT_VERIFY_FAILED"
 
 
+class StoragePartitionDropNotApplied(StorageError):
+    """QuestDB did not apply a `DROP PARTITION` (async on WAL tables) within the bound."""
+
+    code = "STORAGE_PARTITION_DROP_NOT_APPLIED"
+
+
 class StorageSchemaDrift(StorageError):
     """A tier's on-disk/on-wire schema no longer matches this package's models."""
 
