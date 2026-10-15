@@ -10,11 +10,16 @@ to B12 events (`range_end` to `RANGE_END`, `error` to `SOURCE_ERROR`).
 Playback runs as a task of that group. Leaving the block (session destroy) cancels it and closes
 the source exactly once (INV-B12-e), even if the runner is cancelled again meanwhile.
 
-**Pacing.** `replay.pacing` sets each deadline from one anchor, so pacing is drift-free. An event
-due within `min_wait_s` goes out without a wait; after `yield_slice_s` of work without one the
+**Pacing.** `replay.pacing` sets each deadline from one anchor, so pacing is drift-free. The
+schedule starts once the first event is read, so a cold source's first read is not lateness. An
+event due within `min_wait_s` goes out without a wait; after `yield_slice_s` of work without one the
 clock yields to the loop (C-2.17). `cursor_us` is the replay time reached and only moves forward
 during playback (INV-B12-b). `now_us()` is the replay "now" for downstream clocks; it never passes
 an event not yet delivered, so a bar never closes ahead of its own trades.
+
+**Failures.** A source `ReplayError` stops playback (`error`) after every event before it, and the
+clock then refuses to play from that source. If the sink raises, playback stops (`error`) with the
+event still pending, and the next `play()` delivers it first: nothing is lost.
 """
 
 from __future__ import annotations
@@ -80,6 +85,7 @@ class ReplayClock:
         self._cfg = config or ClockConfig()
         self._end_us, self._cursor, self._speed = end_us, start_us, check_speed(speed)
         self._pending: ReplayItem | None = None
+        self._failed: ReplayError | None = None
         self._drained = self._stop = self._closed = False
         self._pacer: Pacer | None = None
         self._wake = asyncio.Event()
@@ -131,6 +137,8 @@ class ReplayClock:
         group = self._group
         if group is None or self._closed:
             raise ReplayClockStateError("the replay clock is not open")
+        if self._failed is not None:
+            raise ReplayClockStateError("the replay source failed: replay cannot continue from it")
         if self.playing:
             raise ReplayClockStateError("playback is already running or still stopping")
         if self._speed == STEP:
@@ -154,14 +162,19 @@ class ReplayClock:
 
     # -- playback ------------------------------------------------------------------------------
     async def _play(self) -> StopReason:
-        if self._speed > 0:
-            self._pacer = Pacer(self._speed, wall=self._time.now(), ts_us=self._cursor)
-        error: ReplayError | None = None
+        error: Exception | None = None
         try:
+            await self._peek()  # prime: a cold source's first read is not lateness
+            if self._speed > 0:
+                self._pacer = Pacer(self._speed, wall=self._time.now(), ts_us=self._cursor)
             reason = await self._run()
-        except ReplayError as exc:  # a source failure: every event before it was delivered
+        except Exception as exc:  # the source failed (`_failed`), or the sink raised: nothing lost
             reason, error = "error", exc
-            _log().warning("replay_source_failed", code=exc.code)
+            _log().warning(
+                "replay_playback_failed",
+                error_type=type(exc).__name__,
+                source_failed=exc is self._failed,
+            )
         finally:  # keep the position reached, even on destroy: the cursor never moves back
             self._cursor = self._position(self._time.now())
             self._pacer = None
@@ -187,8 +200,8 @@ class ReplayClock:
             if item is None:
                 self._cursor = self._end_us
                 return "range_end"
-            self._pending = None
             if isinstance(item, ReplayGap):  # the gap policy lands with E26-T03 slice 4
+                self._pending = None
                 continue
             await self._deliver(item)
             if now - sliced >= cfg.yield_slice_s:  # catching up without waits: let the loop run
@@ -206,12 +219,18 @@ class ReplayClock:
             except StopAsyncIteration:
                 self._drained = True
                 return None
+            except ReplayError as exc:  # a storage failure ends the source: remember it
+                self._failed = exc
+                raise
             self._pending = item
         return item if item.ts_us < self._end_us else None
 
     async def _deliver(self, event: RecordedEvent) -> None:
-        self._cursor = max(self._cursor, event.ts_us)
+        """Hand `event` to the sink. It stays pending until the sink returns: if the sink raises,
+        the next `play()` delivers it again instead of losing it."""
         await self._sink.deliver(event)
+        self._pending = None
+        self._cursor = max(self._cursor, event.ts_us)
         self._emitted += 1
 
     def _position(self, now: float) -> int:
