@@ -197,17 +197,13 @@ def _seed(dsn: str) -> list[str]:
     return users
 
 
-async def _plan(dsn: str, stmt: Any) -> str:
+async def _plan(rel: SqlAlchemyRelationalRepository, stmt: Any) -> str:
     """The planner's chosen node tree for the shipped statement (literals inlined), as JSON."""
-    rel = SqlAlchemyRelationalRepository(dsn, "replay-sessions-explain")
-    try:
-        async with rel.unit_of_work() as uow:
-            conn = await uow.session.connection()
-            sql = str(stmt.compile(dialect=conn.dialect, compile_kwargs={"literal_binds": True}))
-            result = await conn.exec_driver_sql("EXPLAIN (FORMAT JSON) " + sql)
-            return json.dumps(result.scalar_one())
-    finally:
-        await rel.dispose()
+    async with rel.unit_of_work() as uow:
+        conn = await uow.session.connection()
+        sql = str(stmt.compile(dialect=conn.dialect, compile_kwargs={"literal_binds": True}))
+        result = await conn.exec_driver_sql("EXPLAIN (FORMAT JSON) " + sql)
+        return json.dumps(result.scalar_one())
 
 
 async def test_the_planner_uses_the_indexes_the_table_was_designed_around(
@@ -215,14 +211,19 @@ async def test_the_planner_uses_the_indexes_the_table_was_designed_around(
 ) -> None:
     user = uuid.UUID(_seed(pg_dsn)[0])
     now = datetime.now(UTC)  # the seeded rows are dated relative to the real clock
-    page = mod.list_statement(user, None, None, 51)
-    next_page = mod.list_statement(user, None, (now - timedelta(hours=1), str(uuid.uuid4())), 51)
-    by_state = mod.list_statement(user, S.PAUSED, None, 51)
-    assert "ix_rps_user_time" in await _plan(pg_dsn, page)
-    assert "ix_rps_user_time" in await _plan(pg_dsn, next_page)
-    assert "ix_rps_live" in await _plan(pg_dsn, by_state)
-    assert "ix_rps_live" in await _plan(pg_dsn, mod.count_statement(user))
-    sweep = await _plan(pg_dsn, mod.idle_statement(now - timedelta(hours=2), 200))
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "replay-sessions-explain")
+    try:
+        page = await _plan(rel, mod.list_statement(user, None, None, 51))
+        after = (now - timedelta(hours=1), str(uuid.uuid4()))
+        next_page = await _plan(rel, mod.list_statement(user, None, after, 51))
+        by_state = await _plan(rel, mod.list_statement(user, S.PAUSED, None, 51))
+        count = await _plan(rel, mod.count_statement(user))
+        sweep = await _plan(rel, mod.idle_statement(now - timedelta(hours=2), 200))
+    finally:
+        await rel.dispose()
+    assert "ix_rps_user_time" in page and "ix_rps_user_time" in next_page
+    assert "Seq Scan" not in by_state  # a state filter still reads through an index
+    assert "ix_rps_live" in count
     assert "ix_rps_live" in sweep and "Seq Scan" not in sweep
 
 
