@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import time
+from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from typing import Any
 
@@ -111,7 +114,7 @@ class FakeSupervisor:
 
 
 class Harness:
-    def __init__(self) -> None:
+    def __init__(self, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
         self.bus = Bus()
         self.sub = self.bus.subscribe(
             "b", "live.md.*.book", QueuePolicy.NEVER_DROP, maxsize=100_000
@@ -144,6 +147,7 @@ class Harness:
             writer=W(),
             now_us=lambda: 0,
             supervisor=self.sup,
+            sleep=sleep,
         )
 
     def drain(self) -> list[Any]:
@@ -204,3 +208,37 @@ async def test_stream_forwards_lifecycle_edges_to_injected_supervisor() -> None:
     assert [e for _, e in h.sup.edges][-1] == "SEQUENCE_GAP"
     await h.stream.stop()
     assert h.sup.detached == ["live:BTCUSDT:200"]
+
+
+#: The SNAPSHOT_TIMEOUT check cadence (`orderbook_wiring._TICK_S`).
+SNAPSHOT_TICK_S = 0.25
+
+
+def test_stream_timeout_tick_defaults_to_the_loop_clock() -> None:
+    """#1975: the seam's default keeps today's `asyncio.sleep` tick."""
+    assert inspect.signature(BookStream).parameters["sleep"].default is asyncio.sleep
+
+
+async def test_stream_timeout_tick_runs_on_the_injected_sleep() -> None:
+    """#1975: the SNAPSHOT_TIMEOUT tick sleeps on the injected `sleep` (the chaos rig's
+    virtual clock), and a tick re-requests a snapshot pending past the timeout."""
+    delays: list[float] = []
+    parked = asyncio.Event()
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) > 1:  # one tick done: park until stop()
+            parked.set()
+            await asyncio.Event().wait()
+
+    h = Harness(sleep=sleep)
+    h.stream.acquire("c", "BTCUSDT")
+    await h.stream.handle_frame(FRAMES[1])  # a delta and no snapshot: pending
+    h.stream._books["BTCUSDT"].active._pending_since = -10_000_000  # past the 10 s timeout
+    await h.stream.start()
+    async with asyncio.timeout(5):  # hang guard only
+        await parked.wait()
+    assert delays == [SNAPSHOT_TICK_S, SNAPSHOT_TICK_S]
+    assert h.resubs == ["orderbook.200.BTCUSDT"]  # the tick re-requested the snapshot
+    assert h.sup.edges[-1] == ("live:BTCUSDT:200", "SNAPSHOT_TIMEOUT")
+    await h.stream.stop()

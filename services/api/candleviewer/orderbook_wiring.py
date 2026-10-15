@@ -164,8 +164,11 @@ class BookStream:
         supervisor: HealthSupervisor | None = None,
         rand: Callable[[], float] = _JITTER,
         write_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._clock, self._rand = clock, rand
+        #: #1975: the SNAPSHOT_TIMEOUT tick's sleep (a virtual clock in the chaos rig).
+        self._sleep = sleep
         self._backoff: dict[str, _ResyncBackoff] = {}
         self._deferred: set[str] = set()
         #: #1919: symbol -> clock() reading when its book last left LIVE.
@@ -463,7 +466,7 @@ class BookStream:
 
     async def _timeout_loop(self) -> None:
         while True:
-            await asyncio.sleep(_TICK_S)
+            await self._sleep(_TICK_S)
             await self.check_timeouts()
 
     async def start(self) -> None:
