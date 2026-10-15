@@ -4396,10 +4396,26 @@ class SetFeatureFlagRequest(BaseModel):
         ),
     ]
     overrides: list[Override1] | None = None
-    reason: Annotated[str | None, Field(max_length=280)] = None
+    reason: Annotated[
+        str | None,
+        Field(
+            description="Why the flag changed; recorded in the `flags.change` audit entry (E42-T03). The server refuses a write without it (`422 validation_failed`).\n",
+            max_length=280,
+        ),
+    ] = None
     evidence_url: Annotated[
         AnyUrl | None, Field(description="Required for gated flags such as `trading.live_enabled`.")
     ] = None
+    expected_updated_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="The flag's `updated_at` as the caller last read it (E42-T03). The write is applied only if the stored value still matches, else `409 conflict`. The server refuses a write without it (`422 validation_failed`).\n"
+        ),
+    ] = None
+
+
+class FeatureFlagConflict(Problem):
+    current: FeatureFlag
 
 
 class Backup(BaseModel):

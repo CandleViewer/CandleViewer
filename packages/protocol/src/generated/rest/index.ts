@@ -235,6 +235,14 @@ export interface paths {
      *     WS order entry, Tauri shell, heatmap v2). Kinds: `boolean`, `percentage` (rollout),
      *     `variant` (string choice). Per-user overrides are supported for staged rollout to the
      *     owner before managers.
+     *     Resolution (E42-T03) is server-side only, per caller: user override, then role override,
+     *     then percentage rollout (`hash(user_id || flag_key)`), then the deployment default
+     *     (`21-database-schema.md` 3.9). Flag definitions are code (a reviewed registry), never
+     *     configuration: a flag may gate a UI surface or an incomplete feature, never a security
+     *     control (C-4.14), and the service refuses to start with a definition that declares one.
+     *     Kill-switch-class flags (`maintenance.mode`, `killswitch.*`) are re-read at least every
+     *     5 s and never served from the 30 s cache. If the flag store is unreachable, every flag
+     *     resolves to its registry default, and those defaults are the restrictive values.
      */
     get: operations["listFeatureFlags"];
     put?: never;
@@ -260,6 +268,32 @@ export interface paths {
      * @description `trading.live_enabled` is special-cased: enabling it requires `reason` and a recorded
      *     pen-test reference (`evidence_url`), per the R4 release gate in `07-release-and-prr.md`.
      *     Without them the call fails with `validation_failed` / `gate_evidence_required`.
+     *
+     *     Write rules (E42-T03), all enforced server-side:
+     *     - Every write carries `reason` and `expected_updated_at` (the `updated_at` the caller last
+     *       read). Without either the call fails `422 validation_failed` (rule `required`).
+     *     - `value` and every override value must match the flag's kind (`boolean`; `percentage`
+     *       0-100; `variant` one of the flag's variants), else `422 validation_failed` (rule
+     *       `kind_mismatch`). An unknown `flagKey` is `404 not_found`.
+     *     - `flags:write` is a dangerous permission: the session needs a live step-up elevation,
+     *       else `403 step_up_required` (audited as `auth.step_up_required`).
+     *     - The write locks the flag row and compares `expected_updated_at` with the stored
+     *       `updated_at`. A mismatch is `409 conflict` carrying the current flag in `current`; it is
+     *       never last-write-wins.
+     *     - `trading.live_enabled: true` without `evidence_url` is `422` (rule
+     *       `gate_evidence_required`) and nothing is written. This service only enforces the
+     *       precondition; the evidence binding belongs to the live gate (E44-T04).
+     *     - Every attempt that passes RBAC and step-up is audited as `flags.change` with the key,
+     *       before, after, `reason` and `evidence_url`, including refused and conflicting ones.
+     *       Toggling `maintenance.mode` is also audited as `maintenance.enabled` or
+     *       `maintenance.disabled`.
+     *     - A successful write pushes a `SystemUpdate` of kind `feature_flags`, carrying only the
+     *       changed key, to every session whose role may see that flag (`23-ws-protocol.md` 15.9).
+     *
+     *     `maintenance.mode` is a kill-switch-class flag. While it is on, order acceptance is
+     *     refused before any OMS work with `403 trading_disabled`, running emulated algos are
+     *     cancelled, native exchange stop-losses are never touched, and every session gets a
+     *     `notice`. The recorder keeps running unless `maintenance.keep_recorder` is `false`.
      */
     put: operations["setFeatureFlag"];
     post?: never;
@@ -5199,6 +5233,10 @@ export interface components {
       /** @description Resolved value for the caller. */
       value?: unknown;
     };
+    /** @description `409 conflict` from `PUT /admin/feature-flags/{flagKey}` (E42-T03): the problem body plus the flag as it stands now, so the caller can re-read and retry deliberately. */
+    FeatureFlagConflict: components["schemas"]["Problem"] & {
+      current: components["schemas"]["FeatureFlag"];
+    };
     /** @enum {string} */
     FlagKind: "boolean" | "percentage" | "variant";
     FootprintBar: components["schemas"]["Bar"] & {
@@ -7317,11 +7355,17 @@ export interface components {
        * @description Required for gated flags such as `trading.live_enabled`.
        */
       evidence_url?: string;
+      /**
+       * Format: date-time
+       * @description The flag's `updated_at` as the caller last read it (E42-T03). The write is applied only if the stored value still matches, else `409 conflict`. The server refuses a write without it (`422 validation_failed`).
+       */
+      expected_updated_at?: string;
       overrides?: {
         /** Format: uuid */
         user_id: string;
         value: unknown;
       }[];
+      /** @description Why the flag changed; recorded in the `flags.change` audit entry (E42-T03). The server refuses a write without it (`422 validation_failed`). */
       reason?: string;
       /** @description Boolean, number (percentage) or string (variant), matching the flag kind. */
       value: unknown;
@@ -8587,6 +8631,7 @@ export interface operations {
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
     };
   };
@@ -8623,7 +8668,18 @@ export interface operations {
           "application/json": components["schemas"]["FeatureFlag"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      /** @description The flag changed after the caller read it (`expected_updated_at` no longer matches). `code: conflict`; `current` is the flag as it stands now, resolved for the caller. */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["FeatureFlagConflict"];
+        };
+      };
       422: components["responses"]["UnprocessableEntity"];
     };
   };
