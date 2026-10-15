@@ -29,8 +29,10 @@ for a given request, that is a normal 401 per the resolver's own contract
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Annotated, Any, Final, Protocol
 
@@ -266,6 +268,22 @@ def _verify_stop(exc: Exception) -> tuple[str, str]:
     return next((reason, detail) for kind, reason, detail in _VERIFY_STOPS if isinstance(exc, kind))
 
 
+def _no_store[**P](
+    handler: Callable[P, Awaitable[JSONResponse]],
+) -> Callable[P, Awaitable[JSONResponse]]:
+    """Every response the handler returns carries `Cache-Control: no-store` (contract
+    `queryAuditLog`), so no browser or proxy cache keeps an audit page. FastAPI reads the
+    handler's own signature through `functools.wraps`."""
+
+    @functools.wraps(handler)
+    async def no_store(*args: P.args, **kwargs: P.kwargs) -> JSONResponse:
+        response = await handler(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    return no_store
+
+
 def _budget_actor(principal: AuditPrincipal) -> BudgetActor:
     # The Owner's cap and tracked entry follow the resolved `is_owner` only
     # (`PrincipalSnapshot.is_owner`, SR-017), never a role name or a grant.
@@ -403,6 +421,7 @@ def make_audit_router(
         return audit_service, principal, view
 
     @router.get("")
+    @_no_store
     async def query_audit_log(
         request: Request,
         actor_user_id: str | None = None,

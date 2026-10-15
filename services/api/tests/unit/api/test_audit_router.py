@@ -742,6 +742,22 @@ def test_raw_follows_the_resolved_view_not_the_owner_flag() -> None:
         assert (call["raw"], call["owner"]) == (raw, slot)
 
 
+def test_every_query_response_is_no_store() -> None:
+    """Contract `queryAuditLog`: no cache keeps an audit page, nor a refusal of one."""
+    limiter = AuditQueryLimiter(rate_per_minute=1, clock=_Clock())
+    owner = _limited(_owner(), limiter=limiter)[0]
+    responses = [
+        owner.get("/admin/audit"),
+        owner.get("/admin/audit"),  # over the rate
+        owner.get("/admin/audit", params={"cursor": "<x>"}),
+        owner.get("/admin/audit", params={"limit": 0}),
+        _budgeted(_manager_with_read())[0].get("/admin/audit", params={"q": "x"}),
+        TestClient(_app(_FakeAuditService(), _FakeResolver(None))).get("/admin/audit"),
+    ]
+    assert [r.status_code for r in responses] == [200, 429, 400, 422, 403, 401]
+    assert [r.headers["cache-control"] for r in responses] == ["no-store"] * len(responses)
+
+
 # ---- #2392 parameter rules: canonical values, 422 without echoing the input ----------------
 
 
