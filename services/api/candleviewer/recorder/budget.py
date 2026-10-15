@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
+from types import MappingProxyType
 from typing import Final, Protocol, cast
 
 import structlog
@@ -391,6 +392,15 @@ class DiskBudget:
     def report(self) -> StorageUsage | None:
         """`StorageUsage` from the last sample (never measured per request); `None` before it."""
         return self._report
+
+    def measured_growth(self) -> tuple[int | None, Mapping[str, int]]:
+        """The last fitted bytes/day (`None` = no fit yet) and the symbols that have a fit.
+
+        `report()` folds "not measured yet" into `daily_growth_bytes = 0`; the admin capacity
+        read model (E42-T01) must tell it apart from a measured zero to apply its estimate.
+        """
+        growth, rates = self._growth
+        return growth, MappingProxyType(dict(rates))
 
     async def sample_once(self) -> None:
         cfg, now = self._cfg, self._now_us()
