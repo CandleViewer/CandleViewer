@@ -268,6 +268,15 @@ def _verify_stop(exc: Exception) -> tuple[str, str]:
     return reason, detail
 
 
+def _verify_unavailable(exc: Exception) -> JSONResponse:
+    """The `503` for a verify that stopped early, with `Retry-After` but for an entry over the
+    per-entry cap: no retry can pass that one until the cap is raised, so it has none."""
+    detail = _verify_stop(exc)[1]
+    if isinstance(exc, AuditEntryTooLarge):
+        return _problem(503, "Service unavailable", detail, code="store_unavailable")
+    return _unavailable(detail)
+
+
 def _budget_actor(principal: AuditPrincipal) -> BudgetActor:
     # The Owner's cap and tracked entry follow the resolved `is_owner` only
     # (`PrincipalSnapshot.is_owner`, SR-017), never a role name or a grant.
@@ -611,7 +620,7 @@ def make_audit_router(
         except VerifyRangeBeyondHead:
             return _problem(404, "Not found", "from_id is beyond the chain head", code="not_found")
         except _VERIFY_STOP_ERRORS as exc:
-            return _unavailable(_verify_stop(exc)[1])
+            return _verify_unavailable(exc)
         # Then the per-user limit (429) and single-flight (409). The head read (range
         # defaulting, above) comes first, as the contract orders the checks; a caller who is
         # not authorised never reaches it. A refusal writes no record: it is counted and
@@ -642,7 +651,9 @@ def make_audit_router(
         written makes the call 503 and serves nothing. A run that stops early is recorded
         as failure/warning with the reason it stopped (`internal_error` for anything
         unexpected, also 503), and a full-range stop turns a chain gauge of 1 into NaN (0
-        stays until a full-range run passes); a cancellation propagates."""
+        stays until a full-range run passes); a cancellation propagates. Each of these 503s
+        carries `Retry-After` but `entry_too_large`, which no retry can pass until the cap is
+        raised."""
         emit, fields = service.writer.emit, _request_fields(principal)
         span = {"from_id": plan.from_id, "to_id": plan.to_id}
         if not await write_verify_record(
@@ -654,11 +665,11 @@ def make_audit_router(
             result = await service.query.run_verify(plan, deadline_s=verify_deadline_s)
         except _VERIFY_STOP_ERRORS as exc:
             observe_stop(full_chain=plan.full_chain)
-            reason, detail = _verify_stop(exc)
+            reason = _verify_stop(exc)[0]
             await write_verify_record(
                 emit, fields, outcome=_FAILURE, severity=_WARNING, reason=reason, after_state=span
             )
-            return _unavailable(detail)
+            return _verify_unavailable(exc)
         except Exception as exc:  # anything else, e.g. MemoryError: never a 500, never a pass
             observe_stop(full_chain=plan.full_chain)
             _log().error("audit.verify.failed", error=type(exc).__name__)
