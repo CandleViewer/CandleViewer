@@ -40,7 +40,7 @@ from candleviewer.audit.models import (
     Severity,
     VerifyResult,
 )
-from candleviewer.audit.query import AuditQueryService
+from candleviewer.audit.query import AuditQueryService, VerifyPlan, VerifyRangeBeyondHead
 from candleviewer.observability.audit_query_metrics import FILTER_CLASSES
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadBusy, AuditReadFailed
@@ -62,10 +62,20 @@ class _FakeQuery:
         self.query_calls.append(kwargs)
         return AuditPage(items=[], chain_verified=True)
 
-    async def verify(self, **kwargs: Any) -> VerifyResult:
+    async def plan_verify(self, **kwargs: Any) -> VerifyPlan:
         self.verify_calls.append(kwargs)
+        return VerifyPlan(kwargs["from_id"] or 1, kwargs["to_id"] or 1, 1)
+
+    async def run_verify(self, plan: VerifyPlan, **_kw: Any) -> VerifyResult:
         return VerifyResult(
-            verified=True, entries_checked=0, first_bad_id=None, checked_at=datetime.now(UTC)
+            verified=True,
+            entries_checked=1,
+            first_bad_id=None,
+            checked_at=datetime.now(UTC),
+            from_id=plan.from_id,
+            to_id=plan.to_id,
+            anchor_hash="0" * 64,
+            last_hash="a" * 64,
         )
 
 
@@ -391,19 +401,63 @@ def test_verify_audit_chain_checks_the_caller_before_reading_the_body(
     assert recorded == ([] if principal is None else ["admin.audit_denied"])
 
 
+@pytest.mark.parametrize("stage", ["plan_verify", "run_verify"])
 @pytest.mark.parametrize(
     "error", [TimeoutError(), AuditReadFailed("08006"), AuditReadBusy(), ChainHasherBusy()]
 )
-def test_verify_audit_chain_store_failure_is_503_without_a_result(error: Exception) -> None:
+def test_verify_audit_chain_store_failure_is_503_without_a_result(
+    error: Exception, stage: str
+) -> None:
     service = _FakeAuditService()
 
-    async def failing(**_kw: Any) -> VerifyResult:
+    async def failing(*_a: Any, **_kw: Any) -> VerifyResult:
         raise error
 
-    service.query_service.verify = failing  # type: ignore[method-assign]  # fault injection
+    setattr(service.query_service, stage, failing)  # fault injection
     r = TestClient(_app(service, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
     assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
     assert "verified" not in r.json() and "08006" not in r.text
+
+
+def _verify_app(service: _FakeAuditService, max_span: int) -> TestClient:
+    app = FastAPI()
+    app.include_router(
+        make_audit_router(service, _FakeResolver(_owner()), verify_max_span=max_span)
+    )
+    return TestClient(app)
+
+
+def test_verify_span_over_the_cap_is_422_naming_the_limit() -> None:
+    service = _FakeAuditService()
+    client = _verify_app(service, max_span=10)
+    r = client.post("/admin/audit/verify", json={"from_id": 1, "to_id": 11})
+    assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
+    assert r.json()["errors"] == [{"field": "to_id", "rule": "max_verify_span"}]
+    assert "(10)" in r.json()["detail"] and service.query_service.verify_calls == []
+    ok = client.post("/admin/audit/verify", json={"from_id": 1, "to_id": 10})  # 10 ids: at the cap
+    assert ok.status_code == 200
+    assert service.query_service.verify_calls == [{"from_id": 1, "to_id": 10, "max_span": 10}]
+
+
+def test_verify_from_id_beyond_the_head_is_404() -> None:
+    service = _FakeAuditService()
+
+    async def beyond(**_kw: Any) -> VerifyPlan:
+        raise VerifyRangeBeyondHead
+
+    service.query_service.plan_verify = beyond  # type: ignore[method-assign]  # fault injection
+    r = TestClient(_app(service, _FakeResolver(_owner()))).post(
+        "/admin/audit/verify", json={"from_id": 99}
+    )
+    assert (r.status_code, r.json()["code"]) == (404, "not_found")
+
+
+def test_verify_response_echoes_the_effective_range_and_hides_the_kind() -> None:
+    r = _verify_app(_FakeAuditService(), max_span=10).post("/admin/audit/verify", json={})
+    assert r.status_code == 200 and set(r.json()) == {
+        *("verified", "entries_checked", "first_bad_id", "checked_at"),
+        *("from_id", "to_id", "anchor_hash", "last_hash"),
+    }
 
 
 def test_query_audit_log_from_alias_matches_openapi_and_reaches_service() -> None:

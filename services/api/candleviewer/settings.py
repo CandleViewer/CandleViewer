@@ -226,6 +226,8 @@ class Settings(BaseSettings):
     audit_read_flush_seconds: float = Field(default=300.0, gt=0.0)
     audit_budget_tracked_users: int = Field(default=1024, ge=64)
     audit_inflight_writes: int = Field(default=64, ge=1)
+    # E42-T02 verify (contract #2392/#2446): the most ids one `POST /admin/audit/verify` spans.
+    audit_verify_max_span: int = Field(default=1_000_000, ge=1)
 
     # E27-T02 / e27-kek.md §4: KEK source vocabulary. `host-keychain` is a deprecated alias
     # of `handle` for one release. The KEK itself never enters Settings or os.environ.

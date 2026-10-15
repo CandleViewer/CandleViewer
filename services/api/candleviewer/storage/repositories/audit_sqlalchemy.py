@@ -83,6 +83,11 @@ _ENTRY_HASH_SQL = sa.text("SELECT entry_hash FROM audit_log WHERE id = :id")
 _ANCHOR_SQL = sa.text(
     "SELECT entry_hash FROM audit_log WHERE id < :before_id ORDER BY id DESC LIMIT 1"
 )
+#: The first and the head id in one statement (both ends of the primary key index).
+_BOUNDS_SQL = sa.text("SELECT min(id), max(id) FROM audit_log")
+_CHECKPOINT_ABOVE_SQL = sa.text(
+    "SELECT min(head_id) FROM audit_checkpoints WHERE head_id > :head_id"
+)
 #: Per-statement budget for verify's reads (the head, the anchor, each batch), client-side
 #: and as `statement_timeout`: a backstop far above one keyset batch. An overrun is 503.
 VERIFY_READ_TIMEOUT_MS = 10_000
@@ -400,6 +405,14 @@ class SqlAlchemyAuditRepository:
     async def read_head(self) -> tuple[int, str] | None:
         rows = await self._bounded_read(_HEAD_SQL, {})
         return (int(rows[0][0]), str(rows[0][1])) if rows else None
+
+    async def read_bounds(self) -> tuple[int, int] | None:
+        [(first, head)] = await self._bounded_read(_BOUNDS_SQL, {})
+        return None if head is None else (int(first), int(head))
+
+    async def fetch_checkpoint_above(self, head_id: int) -> int | None:
+        [(above,)] = await self._bounded_read(_CHECKPOINT_ABOVE_SQL, {"head_id": head_id})
+        return None if above is None else int(above)
 
     async def _bounded_read(
         self, statement: sa.TextClause, params: dict[str, Any]

@@ -162,6 +162,13 @@ class FakeAuditRepository:
     async def read_head(self) -> tuple[int, str] | None:
         return (self.rows[-1]["id"], self.rows[-1]["entry_hash"]) if self.rows else None
 
+    async def read_bounds(self) -> tuple[int, int] | None:
+        ids = [r["id"] for r in self.rows]
+        return (min(ids), max(ids)) if ids else None
+
+    async def fetch_checkpoint_above(self, head_id: int) -> int | None:
+        return min((h for h in self.checkpoints if h > head_id), default=None)
+
     async def count(self) -> int:
         return len(self.rows)
 

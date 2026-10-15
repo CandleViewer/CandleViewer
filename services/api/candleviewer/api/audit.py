@@ -65,6 +65,7 @@ from candleviewer.audit.models import (
     AuditVerifyRequest,
     Severity,
 )
+from candleviewer.audit.query import VERIFY_MAX_SPAN, VerifyPlan, VerifyRangeBeyondHead
 from candleviewer.observability.audit_query_metrics import cv_audit_query_duration_seconds
 from candleviewer.storage.errors import StorageTierUnavailable
 
@@ -119,9 +120,11 @@ class AuditQueryServiceLike(Protocol):
         owner: bool = False,
     ) -> Any: ...
 
-    async def verify(
-        self, *, from_id: int | None = None, to_id: int | None = None, batch_size: int = 5_000
-    ) -> Any: ...
+    async def plan_verify(
+        self, *, from_id: int | None, to_id: int | None, max_span: int = ...
+    ) -> VerifyPlan: ...
+
+    async def run_verify(self, plan: VerifyPlan, *, batch_size: int = ...) -> Any: ...
 
 
 class AuditWriterLike(_Emitter, Protocol):
@@ -290,6 +293,7 @@ def make_audit_router(
     limiter: AuditQueryLimiter | None = None,
     budget: AuditRecordBudget | None = None,
     query_timeout_ms: int = 4000,
+    verify_max_span: int = VERIFY_MAX_SPAN,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
 
@@ -550,8 +554,22 @@ def make_audit_router(
             req = AuditVerifyRequest.model_validate_json(raw or b"{}")
         except ValidationError as exc:
             return _invalid(exc, AuditVerifyRequest)
-        try:
-            result = await service.query.verify(from_id=req.from_id, to_id=req.to_id)
+        if req.from_id is not None and req.to_id is not None:
+            if req.to_id - req.from_id >= verify_max_span:
+                return _problem(
+                    422,
+                    "Request validation failed",
+                    f"the range spans more than audit_verify_max_span ({verify_max_span}) ids",
+                    code="validation_failed",
+                    errors=[{"field": "to_id", "rule": "max_verify_span"}],
+                )
+        try:  # one head read at range defaulting (#2446), then the run
+            plan = await service.query.plan_verify(
+                from_id=req.from_id, to_id=req.to_id, max_span=verify_max_span
+            )
+            result = await service.query.run_verify(plan)
+        except VerifyRangeBeyondHead:
+            return _problem(404, "Not found", "from_id is beyond the chain head", code="not_found")
         except TimeoutError:
             return _unavailable("audit verify exceeded its time budget")
         except ChainHasherBusy:

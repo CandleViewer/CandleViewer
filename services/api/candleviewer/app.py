@@ -1063,6 +1063,7 @@ def create_app(
             ),
             budget=audit_budget,
             query_timeout_ms=resolved.audit_query_timeout_ms,
+            verify_max_span=resolved.audit_verify_max_span,
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))
