@@ -75,12 +75,24 @@ def test_s1_every_topic_failing_still_yields_one_result_each() -> None:
 # 2026-10-15; §5.2). One result per requested topic applies to topics, not to entries that are not.
 
 
-def test_s1_f2_a_malformed_topic_name_is_never_echoed() -> None:
+@pytest.mark.parametrize(
+    ("entry", "field"),
+    [
+        ("Bad Topic", "topics[0]"),  # the string form of the #2396 repro
+        ({"ch": "Bad Topic"}, "topics[0].ch"),
+        ("t" * 130, "topics[0]"),  # past the 120-character topic bound
+    ],
+)
+def test_s1_f2_a_malformed_topic_name_is_never_echoed(entry: Any, field: str) -> None:
     with connect(World()) as c:
-        c.send({"t": "sub", "id": "z", "p": {"topics": [{"ch": "Bad Topic"}]}}, conform=False)
+        c.send({"t": "sub", "id": "z", "p": {"topics": [entry]}}, conform=False)
         f = c.recv()  # validated: an `err`, so no `results[].ch` echoes the name
-        assert (f["t"], f["id"], f["p"]["code"]) == ("err", "z", "invalid_options")
-        assert f["p"]["field"] == "topics[0].ch"
+        assert (f["t"], f["id"], f["p"]["code"], f["p"]["field"]) == (
+            "err",
+            "z",
+            "invalid_options",
+            field,
+        )
 
 
 def test_s1_f4_a_non_topic_entry_refuses_the_whole_sub() -> None:

@@ -836,7 +836,8 @@ _AUDITED_DENIALS: Final = frozenset({"forbidden", "account_scope_denied"})
 
 async def _audit_denial(authz: ConnectionAuthz, ch: str, code: str) -> None:
     """`ws.subscribe.denied`: every authorisation denial, plus any rejected private-topic
-    attempt (confidential). Best effort: the reply is never held hostage to the audit sink."""
+    attempt on a well-formed topic name (confidential; a malformed `sub` is refused whole before
+    any topic is read, #2396). Best effort: the reply is never held hostage to the audit sink."""
     audit = authz.services.audit
     fam = FAMILIES.get(topic_family(ch))
     if audit is None or not (code in _AUDITED_DENIALS or (fam is not None and fam.private)):

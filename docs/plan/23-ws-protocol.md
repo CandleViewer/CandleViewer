@@ -499,14 +499,14 @@ A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It i
 
 Every requested topic gets exactly one result. Partial success is normal — one bad topic never fails the batch.
 
-**A malformed `sub` is refused whole (#2396, #2399).** The rule above covers topics, not entries that are not topics. A `sub` whose shape breaks §13.5 gets one `err` `invalid_options` instead of a `sub_ok`: nothing is subscribed, and it is not a protocol strike (§4.3). The shape breaks when:
+**A malformed `sub` is refused whole (#2396, #2399).** The rule above covers topics, not entries that are not topics. A `sub` whose shape breaks §13.5 in one of the following ways gets one `err` `invalid_options` instead of a `sub_ok`: nothing is subscribed, and it is not a protocol strike (§4.3). The ways are:
 
 - the payload is not an object, or has a key other than `topics`, `snapshot` and `replay_session_id` (`field`: `p`);
 - `topics` is missing or not a non-empty array (`field`: `topics`);
 - an entry is neither an object nor a string, or a string that is not a topic name (`field`: `topics[i]`);
 - an entry object's `ch` is missing or not a topic name (`field`: `topics[i].ch`).
 
-A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what the client sent. So every `sub_ok.results[].ch` is a valid topic name. A well-formed topic the server cannot serve (unknown, unsupported symbol, bad `opts`, denied) still gets its own result. This is an orchestrator contract decision (2026-10-15); the owner may override it.
+A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what the client sent. Every other §13.5 violation stays per topic: an unknown key in a topic entry, a `snapshot` that is not a boolean or a `replay_session_id` that is not a uuid gives that topic `invalid_options`, and entries beyond 50 get `too_many_topics`. So every `sub_ok.results[].ch` is a valid topic name. A well-formed topic the server cannot serve (unknown, unsupported symbol, bad `opts`, denied) still gets its own result. This is an orchestrator contract decision (2026-10-15); the owner may override it.
 
 ```jsonc
 {
