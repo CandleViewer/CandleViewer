@@ -11,12 +11,15 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 from pydantic import BaseModel, ValidationError
 
 from candleviewer.api.drawings_models import BatchIn, DrawingIn, format_errors
 from candleviewer.storage.repositories.drawings_sqlalchemy import _json
 
 PTS = [{"t": "2026-01-01T00:00:00Z", "p": "1.5"}, {"t": "2026-01-01T00:01:00Z", "p": "2"}]
+MAX_RENDERED = 25  # measured maximum plain-decimal length of an accepted value
 RULE = "number_out_of_range"
 
 
@@ -73,9 +76,19 @@ def test_fill_opacity_below_the_floor_is_refused_with_path() -> None:
     assert bad(styled(9.99e-7)) == [("style.fill_opacity", RULE)]
 
 
-def test_zero_is_allowed_for_levels_and_opacity() -> None:
-    assert DrawingIn.model_validate(fib([0, 0.5])).geometry.levels == (0, 0.5)
-    assert DrawingIn.model_validate(styled(0)).style.fill_opacity == 0
+def test_integer_zero_level_stays_an_int() -> None:
+    levels = DrawingIn.model_validate(fib([0, 0.5])).db_values()["geometry"]["levels"]
+    assert type(levels[0]) is int
+
+
+def test_integer_zero_opacity_stays_an_int() -> None:
+    v = DrawingIn.model_validate(styled(0)).db_values()["style"]["fill_opacity"]
+    assert type(v) is int
+
+
+def test_float_zero_level_stays_a_float_zero() -> None:
+    levels = DrawingIn.model_validate(fib([0.0, 0.5])).db_values()["geometry"]["levels"]
+    assert (type(levels[0]), str(levels[0])) == (float, "0.0")
 
 
 def test_negative_zero_opacity_is_stored_as_positive_zero() -> None:
@@ -98,18 +111,32 @@ def test_batch_create_op_reports_the_operation_index_for_levels() -> None:
     assert bad({"operations": ops}, BatchIn) == [("operations.0.drawing.geometry.levels.0", RULE)]
 
 
+def opacity_json(spelling: str) -> str:
+    raw = json.dumps(styled(0)).replace('"fill_opacity": 0', f'"fill_opacity": {spelling}')
+    assert f'"fill_opacity": {spelling}' in raw  # the substitution happened (not vacuous)
+    return raw
+
+
+def levels_json(spelling: str) -> str:
+    raw = json.dumps(fib([0])).replace('"levels": [0]', f'"levels": [{spelling}, 1]')
+    assert f'"levels": [{spelling}, 1]' in raw  # the substitution happened (not vacuous)
+    return raw
+
+
 @pytest.mark.parametrize("spelling", ["0e-999999", "-0e5", "0.0e0", "-0.0", "0." + "0" * 400 + "1"])
 def test_zero_spellings_store_a_short_token_for_opacity(spelling: str) -> None:
-    out = stored(
-        json.dumps({**styled(0)}).replace('"fill_opacity": 0', f'"fill_opacity": {spelling}')
-    )
-    assert out.endswith('{"fill_opacity":0.0}')
+    assert stored(opacity_json(spelling)).endswith('{"fill_opacity":0.0}')
 
 
 def test_underflowing_exponent_is_stored_as_a_short_token() -> None:
-    raw = json.dumps(fib([0])).replace('"levels": [0]', '"levels": [1e-99999999999, 1]')
-    out = stored(raw)
-    assert '"levels":[0.0,1]' in out
+    assert '"levels":[0.0,1]' in stored(levels_json("1e-99999999999"))
+
+
+@pytest.mark.parametrize("spelling", ["0." + "1" * 5000, "999." + "9" * 9000])
+def test_long_mantissa_levels_store_a_bounded_token(spelling: str) -> None:
+    v = DrawingIn.model_validate_json(levels_json(spelling)).db_values()["geometry"]
+    token = _json({"levels": v["levels"][:1]})[len('{"levels":[') : -2]
+    assert len(token) <= MAX_RENDERED
 
 
 @pytest.mark.parametrize("levels", [[0.0, -0.0], [0, -0.0], [-0.0, 0]])
@@ -121,24 +148,28 @@ def test_floor_runs_before_the_duplicate_check() -> None:
     assert bad(fib([1e-9, 1e-9])) == [("geometry.levels.0", RULE)]
 
 
-@pytest.mark.parametrize("x", [1e-6, 1.234567e-6, 999.999999, -1000.0, -1e-6])
-def test_readback_size_of_accepted_levels_stays_near_written_size(x: float) -> None:
-    written = len(json.dumps(x))
-    assert len(format(Decimal(repr(x)), "f")) <= 2 * written + 8
-    levels = DrawingIn.model_validate(fib([x])).db_values()["geometry"]["levels"]
-    assert len(_json({"levels": levels})) <= 2 * len(json.dumps({"levels": [x]}))
+def rendered(x: float) -> int:
+    return len(format(Decimal(repr(x)), "f"))
 
 
-def test_readback_size_of_smallest_accepted_opacity_is_bounded() -> None:
-    x = 1e-6
-    assert len(format(Decimal(repr(x)), "f")) <= 2 * len(repr(x)) + 4
-    v = DrawingIn.model_validate(styled(x)).db_values()["style"]
-    assert len(_json(v)) <= 2 * len('{"fill_opacity":1e-06}')
+@given(x=st.floats(min_value=-1000, max_value=1000, allow_nan=False, allow_infinity=False))
+def test_accepted_level_renders_within_the_bound(x: float) -> None:
+    try:
+        model = DrawingIn.model_validate(fib([x]))
+    except ValidationError:
+        return  # refused values are not stored
+    levels = model.db_values()["geometry"]["levels"]
+    assert rendered(levels[0]) <= MAX_RENDERED
 
 
-def test_readback_size_of_a_full_levels_array_stays_bounded() -> None:
-    levels = [1e-6 * (i + 1) for i in range(24)]
-    g = DrawingIn.model_validate(fib(levels)).db_values()["geometry"]
-    written = len(json.dumps(levels, separators=(",", ":")))
-    assert len(_json({"levels": g["levels"]})) <= 2 * written + 20
-    assert max(len(format(Decimal(repr(x)), "f")) for x in levels) <= 30
+@given(x=st.floats(min_value=0, max_value=1, allow_nan=False, allow_infinity=False))
+def test_accepted_fill_opacity_renders_within_the_bound(x: float) -> None:
+    try:
+        model = DrawingIn.model_validate(styled(x))
+    except ValidationError:
+        return  # refused values are not stored
+    assert rendered(model.db_values()["style"]["fill_opacity"]) <= MAX_RENDERED
+
+
+def test_smallest_subnormal_would_exceed_the_bound_negative_control() -> None:
+    assert rendered(5e-324) > MAX_RENDERED
