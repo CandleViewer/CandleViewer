@@ -1698,6 +1698,18 @@
     "number": 182,
     "subissue_done": true
   },
+  "E08-S01-2": {
+    "blockedby_done": [
+      "E08-S01",
+      "E08-T03",
+      "E09-S01"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lAHOAzoHns4BjW_bzg9hksc",
+    "node_id": "I_kwDOUZDkl88AAAABT-ov8w",
+    "number": 1607,
+    "subissue_done": false
+  },
   "E08-S02": {
     "blockedby_done": [
       "E08-S01"
@@ -2182,6 +2194,14 @@
     "number": 233,
     "subissue_done": true
   },
+  "E09-S11": {
+    "blockedby_done": [],
+    "fields_done": true,
+    "item_id": "PVTI_lAHOAzoHns4BjW_bzhBFdsg",
+    "node_id": "I_kwDOUZDkl88AAAABWJKTFg",
+    "number": 2119,
+    "subissue_done": true
+  },
   "E09-T01": {
     "blockedby_done": [
       "E09-K01"
@@ -2261,7 +2281,8 @@
       "E09-X02",
       "E09-X03",
       "E09-T02",
-      "E09-T04"
+      "E09-T04",
+      "E09-S11"
     ],
     "fields_done": true,
     "item_id": "PVTI_lAHOAzoHns4BjW_bzg8euVg",
@@ -14275,8 +14296,7 @@
       "E09-T03",
       "E09-X02",
       "E09-X03",
-      "E09-X04",
-      "E27-S04"
+      "E09-X04"
     ],
     "fields_done": true,
     "item_id": "PVTI_lAHOAzoHns4BjW_bzg8e96M",
@@ -14316,6 +14336,36 @@
     "item_id": "PVTI_lAHOAzoHns4BjW_bzg8e_So",
     "node_id": "I_kwDOUZDkl88AAAABS4yphg",
     "number": 1025,
+    "subissue_done": true
+  },
+  "E42-T08": {
+    "blockedby_done": [
+      "E42-T04"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lAHOAzoHns4BjW_bzhBFdsE",
+    "node_id": "I_kwDOUZDkl88AAAABXhUYxw",
+    "number": 2648,
+    "subissue_done": true
+  },
+  "E42-T09": {
+    "blockedby_done": [
+      "E42-T04"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lAHOAzoHns4BjW_bzhBFdtE",
+    "node_id": "I_kwDOUZDkl88AAAABXhUgcA",
+    "number": 2649,
+    "subissue_done": true
+  },
+  "E42-T10": {
+    "blockedby_done": [
+      "E42-T04"
+    ],
+    "fields_done": true,
+    "item_id": "PVTI_lAHOAzoHns4BjW_bzhBFds0",
+    "node_id": "I_kwDOUZDkl88AAAABXhUntA",
+    "number": 2650,
     "subissue_done": true
   },
   "E42-X01": {
@@ -16938,17 +16988,5 @@
     "node_id": "I_kwDOUZDkl88AAAABS4Hh8Q",
     "number": 256,
     "subissue_done": true
-  },
-  "E08-S01-2": {
-    "blockedby_done": [
-      "E08-S01",
-      "E08-T03",
-      "E09-S01"
-    ],
-    "fields_done": true,
-    "item_id": "PVTI_lAHOAzoHns4BjW_bzg9hksc",
-    "node_id": "I_kwDOUZDkl88AAAABT-ov8w",
-    "number": 1607,
-    "subissue_done": false
   }
 }
