@@ -122,10 +122,16 @@ async def test_rolloff_real_questdb_partition_export_verify_drop(
         report = await job.run()
 
         assert report.dropped == [(StreamKind.TRADES, _us(_OLD))]
-        names = {
-            str(r["name"]) for r in await pg.fetch("SELECT name FROM table_partitions('trades')")
+        # Applied = absent, or listed but emptied: QuestDB can keep a dropped WAL partition listed
+        # with numRows 0 / NULL minTimestamp until the purge job runs (the #2522 race), and
+        # `drop_day` returns on exactly that signal, so the assertion mirrors it.
+        parts = await pg.fetch("SELECT name, numRows, minTimestamp FROM table_partitions('trades')")
+        live = {
+            str(r["name"])
+            for r in parts
+            if int(r["numRows"] or 0) > 0 and r["minTimestamp"] is not None
         }
-        assert "2026-10-01" not in names and "2026-10-09" in names
+        assert "2026-10-01" not in live and "2026-10-09" in live
         assert await conn.fetchval("SELECT count() FROM trades") == 1200
         mark = await marks.get("BTCUSDT", StreamKind.TRADES)
         assert mark.archived_through_us == _us(_OLD + timedelta(days=1))

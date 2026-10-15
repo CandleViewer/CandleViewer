@@ -114,6 +114,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "retention.purge",
         "retention.downsample",
         "rolloff.drop_aborted",
+        # #2522: the DROP was issued but QuestDB could not be confirmed to have applied it; the
+        # outcome of a `retention.purge` intent (the day stays retained, never "dropped").
+        "rolloff.drop_unconfirmed",
         "flags.change",
         "settings.change",
         "hotkey.trading_binding_changed",
