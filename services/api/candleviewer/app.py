@@ -888,16 +888,17 @@ def create_app(
     bars_reader: BarReader | None = None
     if resolved.bars_enabled:
         bars_sink = _build_bars_sink(resolved)
+        bars_clock = bars_now_us or (lambda: time.time_ns() // 1000)
         app.state.bars_runtime = wire_bars(
             ctx,
             inner_sink=bars_sink,
             sink_stop=bars_sink.stop if bars_sink is not None else None,
             sink_degraded=(lambda: bars_sink.pgwire.degraded) if bars_sink is not None else None,
-            now_us=bars_now_us or (lambda: time.time_ns() // 1000),
+            now_us=bars_clock,
             tick_size=lambda sym: _catalogue_tick_size(ctx, sym),
         )
         if bars_sink is not None:
-            bars_reader = BarReader(bars_sink.pgwire, _no_rebuild_executor)
+            bars_reader = BarReader(bars_sink.pgwire, _no_rebuild_executor, now_us=bars_clock)
         if bars_reader is not None and ctx.ingestion.klines is not None:
             # E12-T05: `/market/klines` tier (1) — tape-built `bars_time` wins over klines.
             ctx.ingestion.klines.attach_tape(

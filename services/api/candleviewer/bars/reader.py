@@ -6,7 +6,7 @@ kinds its `(ts, generation, index)` key, #2017), parameterised queries only
 dropped and counted (SR-E12-11). Rows at an older `build_version` than the running code are
 served as-is and a rebuild is scheduled **once** per `(symbol, spec_hash)` window, not per poll.
 `read_tail` (E12-T06, #2195) is the WS snapshot store's one bounded newest-first read: closed,
-tape-built bars only, oldest first.
+tape-built bars only, oldest first, inside a `ts` window measured back from the wall clock.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from typing import Any, Final, Protocol
 
 import structlog
 
+from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TIME_WINDOW_US
 from candleviewer.bars.metrics import bars_tape_read_degraded_total
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import BUILD_VERSIONS, bar_param_for, row_checksum
@@ -63,6 +64,9 @@ class RowFetcher(Protocol):
 
 #: A stored bar's position: `(ts µs, generation, index)` (#2017). Unique per series (DEDUP key).
 BarKey = tuple[int, int, int]
+#: `BarTail.builds` key: a stored bar's `(generation, index, open_time µs)`, unique per series
+#: even across a builder cold start that reused a `(generation, index)` (#2662).
+BuildKey = tuple[int, int, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,25 +143,40 @@ def build_range_query(
 
 #: `read_tail` cap: a WS `bars` snapshot holds at most 1 000 bars (`23-ws-protocol.md` §6.1).
 MAX_TAIL: Final = 1_000
+#: A time-bar tail looks back this many times the span of `limit` bars (room for recording gaps).
+TAIL_SPAN_FACTOR: Final = 2
+#: `read_tail` yields to the loop after every this many rows (~24 µs of CPU a row, C-2.17).
+TAIL_YIELD_EVERY: Final = 128
 _ORDER_BY_KEY_DESC = ", ".join(
     f"{column_identifier(c)} DESC" for c in ("ts", "generation", "index")
 )
 
 
+def tail_window_us(spec: BarSpec, limit: int) -> int:
+    """How far back from now `read_tail` looks, within the SR-E12-02 window caps: time bars
+    `TAIL_SPAN_FACTOR` times the span of `limit` bars; other kinds have no fixed span, so they
+    get the whole non-time window."""
+    if spec.kind != "time":
+        return MAX_NON_TIME_WINDOW_US
+    return min(limit * int(spec.param_value) * 1_000 * TAIL_SPAN_FACTOR, MAX_TIME_WINDOW_US)
+
+
 def build_tail_query(
-    kind: str, symbol: str, bar_param: str, limit: int
+    kind: str, symbol: str, bar_param: str, limit: int, from_us: int
 ) -> tuple[str, tuple[object, ...]]:
-    """The newest `limit` builder rows of one series, newest first by the full bar key (the
-    caller reverses). Kline rows (NULL `index`) carry no bar key and are left out."""
+    """The newest `limit` builder rows of one series at or after `from_us`, newest first by the
+    full bar key (the caller reverses). Kline rows (NULL `index`) carry no bar key and are left
+    out."""
     if kind not in _FAMILIES:
         raise ValueError(f"unknown bar kind {kind!r}")
     if not 1 <= limit <= MAX_TAIL:
         raise ValueError(f"limit must be between 1 and {MAX_TAIL}")
+    # QuestDB 8.1.1 predates upstream #5148 (a multi-key DESC LIMIT sorts its whole scan): bound ts.
     sql = (
-        f"SELECT * FROM bars_{kind} WHERE symbol = $1 AND bar_param = $2 "  # noqa: S608  # nosec B608 reason=table-from-closed-allowlist owner=@CandleViewer/backend
+        f"SELECT * FROM bars_{kind} WHERE symbol = $1 AND bar_param = $2 AND ts >= $3 "  # noqa: S608  # nosec B608 reason=table-from-closed-allowlist owner=@CandleViewer/backend
         f"AND {_IDX} IS NOT NULL ORDER BY {_ORDER_BY_KEY_DESC} LIMIT {int(limit)}"
     )
-    return sql, (symbol, bar_param)
+    return sql, (symbol, bar_param, ts_param(from_us))
 
 
 def row_key(row: dict[str, object]) -> BarKey:
@@ -252,15 +271,23 @@ class RebuildRegistry:
             entry.in_flight = False
 
 
+def _wall_us() -> int:
+    """Epoch µs now: `read_tail` measures its window back from the wall clock."""
+    return time.time_ns() // 1_000
+
+
 class BarReader:
     def __init__(
         self,
         conn: RowFetcher,
         schedule_rebuild: Callable[[str, str, int, int], Awaitable[None]],
         clock: Callable[[], float] = time.monotonic,
+        *,
+        now_us: Callable[[], int] = _wall_us,
     ) -> None:
         self._conn = conn
         self._rebuilds = RebuildRegistry(schedule_rebuild, clock)
+        self._now_us = now_us
 
     async def read_bars(
         self,
@@ -292,67 +319,97 @@ class BarReader:
         )
 
     async def read_tail(self, symbol: str, spec: BarSpec, limit: int) -> BarTail:
-        """The newest `limit` closed, tape-built bars of a series, oldest first (WS `bars`
-        snapshot hydration, #2195): one `build_tail_query` read, reversed. Untrusted rows are
-        dropped and counted as in `read_bars`; stale `build_version` rows are served as-is."""
-        sql, params = build_tail_query(spec.kind, symbol, bar_param_for(spec), limit)
+        """The newest `limit` closed, tape-built bars of a series inside `tail_window_us`, oldest
+        first (WS `bars` snapshot hydration, #2195): one `build_tail_query` read, reversed.
+        Untrusted rows are dropped and counted as in `read_bars`; stale `build_version` rows are
+        served as-is. A malformed row is skipped, never fatal to the whole tail."""
+        since = self._now_us() - tail_window_us(spec, limit)
+        sql, params = build_tail_query(spec.kind, symbol, bar_param_for(spec), limit, since)
         raw = await self._conn.fetch(sql, *params)
         current = BUILD_VERSIONS[spec.kind]
         bars: list[tuple[int, Bar]] = []
-        builds: dict[tuple[int, int], int] = {}
-        trusted = [r for r in reversed(raw) if not _untrusted(r, spec)]
-        for row in trusted:
-            got = _tail_bar(row, spec)
+        builds: dict[BuildKey, int] = {}
+        dropped = skipped = malformed = 0
+        error = ""
+        for n, row in enumerate(reversed(raw)):
+            if n and n % TAIL_YIELD_EVERY == 0:
+                await asyncio.sleep(0)  # C-2.17: never hold the loop for a whole 1 000-row tail
+            if _untrusted(row, spec):
+                dropped += 1
+                continue
+            try:
+                got = _tail_bar(row, spec)
+                built = max(1, int(str(row.get("build_version") or 0)))  # NULL: a pre-0003 v1 row
+            except (ArithmeticError, ValueError, TypeError) as exc:
+                malformed, error = malformed + 1, error or type(exc).__name__
+                continue
             if got is None:
+                skipped += 1
                 continue
             bars.append(got)
-            built = max(1, int(str(row.get("build_version") or 0)))  # NULL: a pre-0003 v1 row
+            gen, bar = got
             if built < current:
-                builds[got[0], got[1].index] = built
-        return BarTail(bars, skipped=len(trusted) - len(bars), builds=builds)
+                builds[gen, bar.index, bar.open_time] = built
+        if malformed:
+            _log().warning(
+                "bars_tail_rows_malformed", table=f"bars_{spec.kind}", spec_hash=spec.spec_hash,
+                rows=malformed, error_type=error,
+            )  # fmt: skip
+        return BarTail(bars, skipped=skipped + malformed, builds=builds, dropped=dropped)
 
 
 @dataclass(frozen=True, slots=True)
 class BarTail:
-    """`read_tail` result: `(generation, bar)` pairs, oldest first. `skipped` counts the rows
-    left out for lacking a §8.2 `(generation, index)` key or order flow (kline-sourced rows,
-    BR-07) or for not being closed; nothing is fabricated for them."""
+    """`read_tail` result: `(generation, bar)` pairs, oldest first.
+
+    `skipped` counts the rows left out for not being closed or tape-built, for lacking a §8.2
+    `(generation, index)` key or a value the bar needs (NULL is never turned into zero, BR-07),
+    or for holding a malformed value. `dropped` counts the rows withheld by the integrity check
+    (SR-E12-11): a tail that is `integrity_degraded` is INCOMPLETE and must not be kept as final.
+    """
 
     bars: list[tuple[int, Bar]]
     skipped: int = 0
-    #: `(generation, index) -> build_version` of the rows built below the running code (§6.1
+    #: `BuildKey -> build_version` of the rows built below the running code (§6.1
     #: `meta.build_version` is the lowest among the bars a snapshot sends).
-    builds: dict[tuple[int, int], int] = field(default_factory=dict)
+    builds: dict[BuildKey, int] = field(default_factory=dict)
+    dropped: int = 0
+
+    @property
+    def integrity_degraded(self) -> bool:
+        return self.dropped > 0
+
+
+#: The stored columns a tail bar takes as data: a NULL in any of them skips the row.
+_TAIL_VALUES: Final = (
+    "close_ts", "volume", "buy_volume", "sell_volume", "delta", "min_delta", "max_delta",
+    "trade_count", "vwap",
+)  # fmt: skip
 
 
 def _tail_bar(row: dict[str, object], spec: BarSpec) -> tuple[int, Bar] | None:
     """A tape-built closed row as `(generation, Bar)`, in the REST row semantics of `stored_bar`
-    (turnover is `vwap * volume`); `partial`/`gap_before` are not stored and read as False."""
+    (turnover is `vwap * volume`); `partial`/`gap_before` are not stored and read as False.
+    None for any other row, or one with a NULL in `_TAIL_VALUES`: nothing is invented."""
+    if any(row.get(c) is None for c in _TAIL_VALUES):
+        return None
     s = stored_bar(row)
-    if (
-        not (s.tape_built and s.confirmed)
-        or s.index is None
-        or s.generation is None
-        or s.delta is None
-        or s.min_delta is None
-        or s.max_delta is None
-    ):
+    if not (s.tape_built and s.confirmed) or s.index is None or s.generation is None:
         return None
     bar = Bar.model_construct(
         spec_hash=spec.spec_hash, symbol=str(row["symbol"]), index=s.index, open_time=s.ts_us,
-        close_time=s.ts_us if s.close_ts_us is None else s.close_ts_us, open=Decimal(s.open),
-        high=Decimal(s.high), low=Decimal(s.low), close=Decimal(s.close),
-        volume=Decimal(s.volume), buy_volume=_dec(row.get("buy_volume")),
-        sell_volume=_dec(row.get("sell_volume")), delta=Decimal(s.delta),
-        min_delta=Decimal(s.min_delta), max_delta=Decimal(s.max_delta), trade_count=s.trades,
-        turnover=Decimal(s.turnover), vwap=_dec(row.get("vwap")), closed=True, partial=False,
-        gap_before=False,
+        close_time=ts_us_from_row(row["close_ts"]), open=Decimal(s.open), high=Decimal(s.high),
+        low=Decimal(s.low), close=Decimal(s.close), volume=Decimal(s.volume),
+        buy_volume=_dec(row["buy_volume"]), sell_volume=_dec(row["sell_volume"]),
+        delta=_dec(row["delta"]), min_delta=_dec(row["min_delta"]),
+        max_delta=_dec(row["max_delta"]), trade_count=s.trades, turnover=Decimal(s.turnover),
+        vwap=_dec(row["vwap"]), closed=True, partial=False, gap_before=False,
     )  # fmt: skip
     return s.generation, bar
 
 
 def _dec(value: object) -> Decimal:
-    return Decimal(_num(value or 0))
+    return Decimal(_num(value))
 
 
 @dataclass(frozen=True, slots=True)
