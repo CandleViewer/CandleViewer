@@ -78,6 +78,7 @@ from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restrict
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
+from candleviewer.api.session_snapshot import SessionSnapshotResolver
 from candleviewer.api.sessions import make_session_router
 from candleviewer.api.step_up import make_read_only_guard, make_step_up_router
 from candleviewer.api.support_bundle import make_support_bundle_router
@@ -92,6 +93,7 @@ from candleviewer.auth.models import (
     SessionRecord,
     UserRecord,
 )
+from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import access_token_expires_at
@@ -223,6 +225,7 @@ from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSo
 from candleviewer.storage.repositories.sessions_sqlalchemy import (
     SqlAlchemySessionRepository,
 )
+from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
 from candleviewer.storage.retention.alert_tasks import AlertDeliveriesPurgeTask, AlertGaugeTask
 from candleviewer.storage.retention.kline_boundary import (
@@ -419,6 +422,20 @@ def build_identity_provider(settings: Settings) -> SqlAlchemyIdentityProvider | 
         return None
     return SqlAlchemyIdentityProvider(
         SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "identity")
+    )
+
+
+def build_user_role_store(settings: Settings) -> SqlAlchemyUserRoleStore | None:
+    """#2492: the Postgres `UserRoleStore` behind `PUT /users/{userId}/roles` and the
+    owner TOTP-reset target lookup, with the M18 owner floor injected (M10 may not
+    import `auth`). `None` on the fake backend, where those routes fail closed (501)."""
+    if settings.storage_backend != "real":
+        return None
+    return SqlAlchemyUserRoleStore(
+        SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "user-roles"),
+        owner_floor=lambda current, new, owners: assert_owner_floor(
+            current_roles=current, new_roles=new, active_owner_count=owners
+        ),
     )
 
 
@@ -1024,12 +1041,21 @@ def create_app(
     )
     # E27-T02: gate transitions (KEK latch, mesh trip) reach connected clients directly.
     ctx.mesh_system_topic_publisher.direct_sinks.append(ws_hub.broadcast_system)
+    # #2492: unless a test injects them, the owner user-management routes (role change,
+    # invites, owner TOTP reset) get the session-backed snapshot resolver and the Postgres
+    # role store. The fake backend has no identity or role store to authorise against, so
+    # both stay `None` there and those routes fail closed with 501 (never unchecked).
+    owner_resolver: SnapshotResolver | None = principal_resolver
+    if owner_resolver is None and identity is not None:
+        owner_resolver = SessionSnapshotResolver(lambda: ctx.auth.sessions, identity)
+    if user_role_store is None:
+        user_role_store = build_user_role_store(resolved)
     # E09-S04: step-up, owner TOTP reset and the read-only write guard.
     app.include_router(
         make_step_up_router(
             ctx.auth,
             _LazyAuditEmitter(ctx.audit),
-            principal_resolver=principal_resolver,
+            principal_resolver=owner_resolver,
             positions=_NoPositionStore(),
             users=user_role_store,
         )
@@ -1042,14 +1068,12 @@ def create_app(
         make_users_router(
             user_role_store,
             _LazyAuditEmitter(ctx.audit),
-            principal_resolver,
+            owner_resolver,
             ws_registry,
             auth=ctx.auth,
         )
     )
-    app.include_router(
-        make_invites_router(ctx.auth, _LazyAuditEmitter(ctx.audit), principal_resolver)
-    )
+    app.include_router(make_invites_router(ctx.auth, _LazyAuditEmitter(ctx.audit), owner_resolver))
     # QA #1596: real session-backed resolver; without an identity provider
     # (fake backend) it stays `None` and every call fails closed with 501.
     audit_resolver = (

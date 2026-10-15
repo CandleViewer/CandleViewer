@@ -18,6 +18,7 @@ token is never logged, audited or echoed after creation.
 
 from __future__ import annotations
 
+import inspect
 import uuid
 from typing import Annotated, Any, Protocol
 
@@ -121,7 +122,8 @@ def make_invites_router(
             return _problem(501, "Not implemented", "no principal resolver wired")
         if not auth.invites_is_active:
             return _problem(503, "Service unavailable", "invites not wired")
-        principal = principal_resolver.resolve(request)
+        got = principal_resolver.resolve(request)
+        principal = await got if inspect.isawaitable(got) else got
         if principal is None:
             return _problem(401, "Unauthorized", "no verified session for this request")
         try:

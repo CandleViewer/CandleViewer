@@ -2,13 +2,16 @@
 
 Enforces `users:write`, the owner-floor guard at API level, audits the
 change, and notifies the WS layer so a downgrade takes effect on live
-sockets. `principal_resolver=None` / `store=None` fail closed with 501;
-the audit emitter and notifier are required (TypeError at wiring time).
+sockets. `principal_resolver=None` / `store=None` fail closed with 501
+(the fake backend; the real backend wires both, #2492); the audit emitter and
+notifier are required (TypeError at wiring time).
 """
 
 from __future__ import annotations
 
+import inspect
 import uuid
+from collections.abc import Awaitable
 from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Path, Request
@@ -28,7 +31,11 @@ class _Emitter(Protocol):
 
 
 class SnapshotResolver(Protocol):
-    def resolve(self, request: Request) -> PrincipalSnapshot | None: ...
+    """Sync (test seams) or async (`SessionSnapshotResolver`, the deployed app, #2492)."""
+
+    def resolve(
+        self, request: Request
+    ) -> PrincipalSnapshot | Awaitable[PrincipalSnapshot | None] | None: ...
 
 
 class UserRoleStore(Protocol):
@@ -108,7 +115,8 @@ def make_users_router(
             return _problem(
                 501, "not_implemented", "Not implemented", "no principal resolver/store wired"
             )
-        principal = principal_resolver.resolve(request)
+        got = principal_resolver.resolve(request)
+        principal = await got if inspect.isawaitable(got) else got
         if principal is None:
             return _problem(
                 401, "unauthorized", "Unauthorized", "no verified session for this request"
