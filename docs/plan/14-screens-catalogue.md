@@ -788,6 +788,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `indicator.added` with `{type}` (analytics).
 - **Components:** CMP-026 EmptyState, CMP-042 Tabs, CMP-043 Dialog, CMP-050 Card, CMP-054 SearchBox, CMP-213 FuzzyList.
 - **Stories:** US-IND-001, US-IND-002, US-IND-003, US-IND-004, US-IND-005, US-IND-006, US-IND-007.
+- **UX research:** [e13-indicator-mental-models.md](../design/research/e13-indicator-mental-models.md) (E13-D01; proposes amendment AM-1: Favourites + Recents landing).
 - **Design sign-off acceptance checklist:** [ ] categorised, searchable list with descriptions [ ] preview thumbnail per indicator [ ] indicators requiring recorded history are marked with what they need [ ] favourites/recents [ ] no-results state
 
 ### SCR-035 — Indicator settings dialog
@@ -799,6 +800,7 @@ Drag preview                Drop zones
 - **Stories:** US-IND-001, US-IND-008, US-CHART-009.
 - **Performance:** Parameter edits recompute incrementally over the visible window first (<=100 ms), then backfill off-screen ranges in the worker.
 - **Analytics/audit:** `indicator.settings_changed` with `{type, key}` (analytics).
+- **UX research:** [e13-indicator-mental-models.md](../design/research/e13-indicator-mental-models.md) (E13-D01; legend quick-edit of the primary parameter and its rule-referenced-indicator guard, R2/R2-A).
 - **Design sign-off acceptance checklist:** [ ] inputs / style / visibility / scale tabs drawn [ ] live preview [ ] parameter validation messages [ ] 'save as default for this indicator' control [ ] reset
 
 ### SCR-036 — Indicator manager (object tree)
@@ -823,6 +825,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `indicator.reordered`, `indicator.visibility_toggled`, `indicator.removed`, `drawing.removed` (analytics).
 - **Components:** CMP-002 IconButton, CMP-016 Tooltip, CMP-046 Drawer, CMP-049 Table, CMP-224 IndicatorChips.
 - **Stories:** US-IND-001, US-DRAW-008.
+- **UX research:** [e13-indicator-mental-models.md](../design/research/e13-indicator-mental-models.md) (E13-D01; key-map proposals and count-only referrer disclosure, R5).
 - **Design sign-off acceptance checklist:** [ ] tree drawn with panes, indicators and drawings grouped [ ] per-item visibility/lock/delete controls [ ] multi-select and bulk actions [ ] this tree is confirmed as the accessible equivalent for canvas objects (keyboard-reachable, named) [ ] empty state
 
 ### SCR-037 — Drawing toolbar & drawing properties
