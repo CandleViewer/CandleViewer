@@ -296,11 +296,7 @@ class AuditWriter:
         Cancelling the caller never interrupts an append that has started:
         that record is still accepted. Cancelled while still queued for
         `_wal_lock`, nothing is appended (see `_shielded`)."""
-        if self._failure is not None:
-            self._refused_total += 1
-            raise AuditUnavailable(f"audit flusher failed: {type(self._failure).__name__}")
-        if not self._running:
-            raise AuditWriterStopped()
+        self._refuse_unless_accepting()
         validate_action(action)
         emission = AuditEmission(
             record_id=uuid.uuid4(),
@@ -323,6 +319,24 @@ class AuditWriter:
         )
         record = json.loads(emission.model_dump_json())
         await self._shielded("audit-wal-append", self._accept, record)
+
+    async def ingest(self, record: dict[str, Any]) -> None:
+        """Durably append an already-redacted record in `emit()`'s format from another process
+        (`audit.journal.fold_in`), keeping its `record_id` and `event_ts`. Refuses as `emit()`."""
+        self._refuse_unless_accepting()
+        emission = AuditEmission.model_validate(record)
+        validate_action(emission.action)
+        await self._shielded(
+            "audit-wal-append", self._accept, json.loads(emission.model_dump_json())
+        )
+
+    def _refuse_unless_accepting(self) -> None:
+        """`AuditUnavailable` once the flusher died; `AuditWriterStopped` when not running."""
+        if self._failure is not None:
+            self._refused_total += 1
+            raise AuditUnavailable(f"audit flusher failed: {type(self._failure).__name__}")
+        if not self._running:
+            raise AuditWriterStopped()
 
     async def _accept(self, op: _WalOp, record: dict[str, Any]) -> None:
         """`emit()`'s WAL op: append + bookkeeping under `_wal_lock`, then the

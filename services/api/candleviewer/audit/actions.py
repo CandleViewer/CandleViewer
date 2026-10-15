@@ -55,6 +55,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.recovery_code_used",
         "auth.recovery_codes_exhausted",
         "auth.recovery_codes_regenerated",
+        # E09-S11 (#2119, SR-023): the offline break-glass CLI's intent, refusal and reset
+        # records (actor `system:breakglass`), folded in from its host journal at boot.
+        "auth.break_glass_attempt",
+        "auth.break_glass_refused",
+        "auth.break_glass_reset",
         "auth.password_change",
         "ws.subscribe.denied",
         "ws.subscription.revoked",
