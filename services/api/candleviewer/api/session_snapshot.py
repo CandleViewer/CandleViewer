@@ -12,17 +12,17 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from typing import Any
 
 from fastapi import Request
 
+from candleviewer.api.audit_principal import _Identity, _Sessions
 from candleviewer.auth.errors import AuthError
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 
 
 class SessionSnapshotResolver:
-    def __init__(self, sessions: Callable[[], Any], identity: Any) -> None:
+    def __init__(self, sessions: Callable[[], _Sessions], identity: _Identity) -> None:
         # Lazy: `AuthService.sessions` only exists after `start()` (lifespan).
         self._sessions = sessions
         self._identity = identity
