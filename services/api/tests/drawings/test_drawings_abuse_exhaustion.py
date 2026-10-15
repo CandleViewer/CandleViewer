@@ -175,7 +175,9 @@ def test_idempotency_pressure_evicts_the_oldest_key_of_the_flooding_user_only() 
     env = Env()
     first_key = str(uuid.UUID(int=1, version=4))  # shared with A on purpose
     env.user = USER_B
-    b_first = _post(env, first_key).json()
+    b_first_resp = _post(env, first_key)
+    assert b_first_resp.status_code == 201, b_first_resp.text
+    b_first = b_first_resp.json()
     env.user = USER_A
     keys = _fill(env, IDEMPOTENCY_USER_MAX_ENTRIES + 1)  # A's first post must not replay B's
     assert keys[0] == first_key
@@ -186,6 +188,6 @@ def test_idempotency_pressure_evicts_the_oldest_key_of_the_flooding_user_only() 
     assert evicted.status_code == 201 and "idempotency-replayed" not in evicted.headers  # re-ran
     env.user = USER_B
     kept = _post(env, first_key)
-    assert kept.headers.get("idempotency-replayed") == "true"  # B was never evicted by A
+    assert kept.headers.get("idempotency-replayed") == "true", "B's key was evicted by A's flood"
     assert kept.json()["id"] == b_first["id"]  # B's own response, not A's under the shared key
     assert kept.json()["owner_user_id"] == str(USER_B)  # fails if the cache ignored the user
