@@ -88,7 +88,7 @@ and close codes, never an internal class. The automated half lives in `services/
 | E17-TC-C09 | replay reaches `to`                                                         | —                                                                                                        | `revoked replay_session_ended` per topic                                                                                              | §11    | **pending E26** (frame shape: `test_integration_replay_end_revoked_frame_is_schema_valid`)                                                       |
 | E17-TC-C10 | all six CVWB kinds                                                          | Decode each, validate against its structured schema; corrupt magic/version/kind/length                   | Valid decode ≡ structured form; every corruption → `frame_malformed`                                                                  | §16.4  | `test_contract_cvwb_kind_…`, `test_contract_a_corrupted_cvwb_layout_…`, `test_contract_binary_and_structured_snapshots_…`                        |
 | E17-TC-C11 | —                                                                           | `heatmap_bucket_selection` over the six §6.1.1 rows, the 2500 ms clamp edge, and `time_bucket_ms` absent | 1000/1000/1000/1000/1000/5000; edge 2500→1000, 2500.1→5000; server applies 500                                                        | §6.1.1 | `test_heatmap_bucket_selection_*`                                                                                                                |
-| E17-TC-C12 | `book` subscribed                                                           | `ctl paused:true` (no `resnapshot`); two upstream updates; `ctl paused:false`                            | `ctl_ok resnapshot:true`, then `snap reason:reconfigure` holding the paused updates before any `d`; next `d` = `snap.s+1`             | §5.4   | `test_integration_ctl_pause_resume_resnapshots_with_the_paused_updates` (strict xfail, #2517; fix #2556)                                         |
+| E17-TC-C12 | `book` subscribed                                                           | `ctl paused:true` (no `resnapshot`); two upstream updates; `ctl paused:false`                            | `ctl_ok resnapshot:true`, then `snap reason:reconfigure` holding the paused updates before any `d`; next `d` = `snap.s+1`             | §5.4   | `test_integration_ctl_pause_resume_resnapshots_with_the_paused_updates` (#2517, fixed by #2556)                                                  |
 
 ## 4. Group D — Backpressure and limits (§8.4, §16.2; E17-S01/T03)
 
@@ -172,7 +172,7 @@ test directory). Result is the first failing tests.
 - CI wiring as a required check on `contracts` and `integration`: **not done here** (workflow files are out of scope for this PR).
 - Cross-references: E17-Q02 (chaos), E17-Q03 (load), E17-Q04 (E2E, C1–C12), E17-X02 (adversarial security), E26 (replay end).
 
-F1-F6 are pinned by one `xfail(strict=True)` test each (`test_*_xfail_fN_*`); the marker must be removed when the gateway is fixed. The pause/resume row (E17-TC-C12) is a strict xfail on #2517; remove the marker when #2556 merges. F7 is pinned by the single strict xfail `test_s13_xfail_f7_msgpack_only_offer_negotiates_cv_v1_msgpack` (#377).
+F1-F6 are pinned by one `xfail(strict=True)` test each (`test_*_xfail_fN_*`); the marker must be removed when the gateway is fixed. F7 is pinned by the single strict xfail `test_s13_xfail_f7_msgpack_only_offer_negotiates_cv_v1_msgpack` (#377).
 
 ## 11. Delivery in stacked parts
 

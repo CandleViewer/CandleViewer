@@ -321,7 +321,10 @@ class SnapshotCache:
         if fam.private:
             rendered = self._build(sub, source, max_part_bytes)
         else:
-            identity = tuple(sorted((k, repr(v)) for k, v in sub.effective.items()))
+            # `paused` gates deltas, not the rendered state (#2517): it never splits the cache.
+            identity = tuple(
+                sorted((k, repr(v)) for k, v in sub.effective.items() if k != "paused")
+            )
             key = (sub.ch, sub.replay_session_id, identity)
             gen = source.generation(sub)
             hit = self._entries.get(key)

@@ -347,6 +347,52 @@ def test_ctl_paused_is_echoed() -> None:
     assert _ctl(conn, "trades.BTCUSDT", {"paused": True})["p"]["effective"]["paused"] is True
 
 
+def test_ctl_resume_after_a_pause_forces_resnapshot() -> None:
+    """#2517: deltas dropped while paused took no sequence number, so a resume re-snapshots."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    _sub(conn, "book.BTCUSDT.50")
+    sub = conn.find("book.BTCUSDT.50")
+    assert sub is not None
+    sub.seq, sub.snapshot_pending = 10, False
+    assert "resnapshot" not in _ctl(conn, "book.BTCUSDT.50", {"paused": False})["p"]
+    assert "resnapshot" not in _ctl(conn, "book.BTCUSDT.50", {"paused": True})["p"]
+    assert not sub.snapshot_pending  # pausing keeps the subscription as it is
+    ok = _ctl(conn, "book.BTCUSDT.50", {"paused": False})
+    assert ok["p"]["resnapshot"] is True and ok["p"]["effective"]["paused"] is False
+    assert (sub.seq, sub.snapshot_pending, sub.pending_reason) == (10, True, "reconfigure")
+
+
+@pytest.mark.parametrize("entry", ["book.BTCUSDT.50", {"ch": "positions", "opts": _acc(A)}])
+def test_ctl_without_paused_keeps_the_pause(entry: Any) -> None:
+    """#2517: a ctl that omits `paused` leaves it in place; a later resume re-snapshots."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    _sub(conn, entry)
+    ch = entry if isinstance(entry, str) else entry["ch"]
+    sub = conn.find(ch)
+    assert sub is not None
+    sub.seq, sub.snapshot_pending = 10, False
+    _ctl(conn, ch, {"paused": True})
+    kept = _ctl(conn, ch, {"throttle_ms": 1000})
+    assert kept["p"]["effective"]["paused"] is True and "resnapshot" not in kept["p"]
+    assert sub.effective["paused"] is True and not sub.snapshot_pending
+    ok = _ctl(conn, ch, {"throttle_ms": 500, "paused": False})
+    assert ok["p"]["resnapshot"] is True and ok["p"]["effective"]["paused"] is False
+    assert (sub.seq, sub.snapshot_pending, sub.pending_reason) == (10, True, "reconfigure")
+    assert "paused" not in _ctl(conn, ch, {"throttle_ms": 1000})["p"]["effective"]
+
+
+def test_ctl_resume_keeps_an_already_pending_reason() -> None:
+    """A resume while a snapshot is pending keeps that snapshot's reason (an incident)."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    _sub(conn, "book.BTCUSDT.50")
+    sub = conn.find("book.BTCUSDT.50")
+    assert sub is not None
+    _ctl(conn, "book.BTCUSDT.50", {"paused": True})
+    sub.snapshot_pending, sub.pending_reason = True, "backpressure"
+    assert _ctl(conn, "book.BTCUSDT.50", {"paused": False})["p"]["resnapshot"] is True
+    assert (sub.snapshot_pending, sub.pending_reason) == (True, "backpressure")
+
+
 @pytest.mark.parametrize(
     ("body", "code"),
     [({}, "invalid_options"), ({"history": 5}, "invalid_options"), ({"throttle_ms": -1},

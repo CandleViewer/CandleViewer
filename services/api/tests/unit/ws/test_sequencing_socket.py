@@ -121,3 +121,42 @@ def test_socket_ctl_identity_change_emits_reconfigure_snap() -> None:
         assert snap["meta"] == {"reason": "reconfigure", "source": "live", "previous_seq": 1}
         assert len(w.hub) == 1
     assert len(w.hub) == 0  # unregistered on close
+
+
+def test_socket_ctl_resume_after_a_pause_re_snapshots_before_any_delta() -> None:
+    """#2517: deltas published while paused never consumed `s`, so resuming must restore the
+    client's state with a `snap` rather than continue the sequence as if nothing was missed."""
+    w = _World()
+    book = w.source.books["BTCUSDT"]
+
+    def update(price: str) -> None:  # the producer's state and its delta, on the app loop
+        book.apply([[price, "5"]], [])
+        w.source.gen += 1  # every state change moves the snapshot generation
+        w.hub.publish("book.BTCUSDT.50", {"symbol": "BTCUSDT", "bids": [[price, "5"]], "asks": []})
+
+    with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+        _open(ws)
+        topic = {"ch": "book.BTCUSDT.50", "opts": {"encoding": "structured"}}
+        ws.send_json({"t": "sub", "id": "s1", "p": {"topics": [topic]}})
+        assert _rx(ws)["t"] == "sub_ok"
+        assert _rx(ws)["s"] == 1
+        ws.send_json({"t": "ctl", "id": "c1", "ch": "book.BTCUSDT.50", "p": {"paused": True}})
+        paused = _rx(ws)
+        assert paused["t"] == "ctl_ok" and not paused["p"].get("resnapshot")
+        assert w.client.portal is not None  # set while the client context is open
+        w.client.portal.call(update, "99.0")
+        # A ctl without `paused` (a hidden window's throttle, §8.5) keeps the pause: no `d`.
+        ws.send_json({"t": "ctl", "id": "c2", "ch": "book.BTCUSDT.50", "p": {"throttle_ms": 1000}})
+        kept = _rx(ws)
+        assert kept["t"] == "ctl_ok" and kept["p"]["effective"]["paused"] is True
+        w.client.portal.call(update, "98.0")
+        ws.send_json({"t": "ctl", "id": "c3", "ch": "book.BTCUSDT.50", "p": {"paused": False}})
+        ok = _rx(ws)
+        assert ok["t"] == "ctl_ok" and ok["p"]["resnapshot"] is True
+        snap = _rx(ws)
+        assert (snap["t"], snap["meta"]["reason"]) == ("snap", "reconfigure")
+        assert snap["p"]["bids"] == [["100.0", "1.000"], ["99.0", "5"], ["98.0", "5"]]
+        assert w.source.builds == 2  # rebuilt at the new generation, not served from the cache
+        w.client.portal.call(update, "97.0")
+        delta = _rx(ws)
+        assert (delta["t"], delta["s"]) == ("d", snap["s"] + 1)

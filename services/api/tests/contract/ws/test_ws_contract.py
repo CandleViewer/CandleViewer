@@ -309,11 +309,6 @@ def test_integration_upstream_u_gap_produces_snap_with_reason_upstream_desync() 
         assert c.recv()["s"] == 4
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#2517: ctl paused:false sends no resnapshot and drops the paused updates; "
-    "fixed by #2556 (remove this marker when it merges)",
-)
 def test_integration_ctl_pause_resume_resnapshots_with_the_paused_updates() -> None:
     """Scenario S1 (#409): resuming a paused book yields `ctl_ok resnapshot:true`, then a
     `snap reason:reconfigure` holding the paused updates, before any `d`; next `d` is `snap.s+1`."""
@@ -332,7 +327,7 @@ def test_integration_ctl_pause_resume_resnapshots_with_the_paused_updates() -> N
         assert c.next_of("ctl_ok")["p"]["resnapshot"] is True
         snap = c.recv()
         assert snap["t"] == "snap" and snap["meta"]["reason"] == "reconfigure"
-        assert snap["s"] > n
+        assert (snap["s"], snap["meta"]["previous_seq"]) == (n + 1, n)  # §5.4: never reused
         assert ["99.5", "7.000"] in structured_of(snap)["bids"]  # the paused update is inside
         publish(w, "book", ch)
         d = c.recv()

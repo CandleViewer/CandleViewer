@@ -476,18 +476,28 @@ class ConnectionAuthz:
             changes[key] = spec.check(key, body[key])
         opts = {**sub.opts, **{k: v for k, v in changes.items() if k != "paused"}}
         effective = effective_options(sub.topic, opts)
-        resnapshot = any(
+        # #2517: a pause holds until a ctl lifts it (`opts` never holds it, so carry it over).
+        # A delta suppressed while paused never took a sequence number, so a resume
+        # re-snapshots like an identity change instead of losing that state silently.
+        was_paused = sub.effective.get("paused") is True
+        paused = changes.get("paused", was_paused)
+        resnapshot = (was_paused and not paused) or any(
             k in IDENTITY_OPTIONS and sub.effective.get(k) != effective.get(k) for k in changes
         )
-        if "paused" in changes:
-            effective["paused"] = changes["paused"]
+        if paused or "paused" in changes:
+            effective["paused"] = paused
         if sub.accounts:
             effective["exchange_account_ids"] = sorted(str(a) for a in sub.accounts)
         sub.opts, sub.effective = opts, effective
         if resnapshot:
-            # S3: the sequence continues (never reused); the gateway emits the `snap`.
-            sub.snapshot_pending, sub.pending_reason = True, "reconfigure"
-        echoed = {k: v for k, v in effective.items() if k in changes or k == "throttle_ms"}
+            # S3: the sequence continues (never reused); the gateway emits the `snap`. A reason
+            # already pending (`initial`, an incident) says more than `reconfigure`, so it stays.
+            if not sub.snapshot_pending:
+                sub.pending_reason = "reconfigure"
+            sub.snapshot_pending = True
+        echoed = {
+            k: v for k, v in effective.items() if k in changes or k in ("throttle_ms", "paused")
+        }
         return echoed, resnapshot
 
     # -- live revocation (§9.5, S7) -----------------------------------------------------------
