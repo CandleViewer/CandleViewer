@@ -15,8 +15,10 @@ decoder checks the cap again first. The other limits hold *while* msgpack's C un
 
 Live memory during a decode is bounded by the open levels (at most 1 024, each pre-sized to
 its cap, plus the scalars and map pairs read into them, which the 256 KiB input bounds) and by
-the budget. The derivation and the worst shapes measured are in
-`test_msgpack_decode_bounds.py` (`MAX_PEAK_BYTES`, `HOSTILE`).
+the budget. msgpack also interns every string map key into CPython's process-wide
+interned-string table, so a decode can be the one that resizes it: a transient allocation sized
+by the whole process, not by the frame, which a JSON frame does not cause. The derivation is in
+`tests/unit/ws/_msgpack_bounds.py`, the worst shapes measured in `test_msgpack_decode_bounds.py`.
 
 The decoded value must then be something a JSON frame could carry: maps with string keys,
 arrays, strings, finite numbers, booleans and nil, nested at most `MAX_MSGPACK_DEPTH` deep.
@@ -60,7 +62,9 @@ MAX_MSGPACK_DEPTH: Final = MAX_JSON_DEPTH
 MAX_MSGPACK_ARRAY_LEN: Final = 128
 #: SR-185: entries one map may claim: the widest client object in `ws-schema.json`, a topic's
 #: `opts` (32 properties, `additionalProperties: false`). The server accepts fewer keys in any
-#: one `opts` (`topics.py`); a test keeps both under this cap.
+#: one `opts` (`topics.py`); a test keeps both under this cap. A wider map is malformed here,
+#: although the JSON path ignores extra keys in an envelope or a `hello` / `auth` payload; no
+#: schema-conforming client sends one.
 MAX_MSGPACK_MAP_LEN: Final = 32
 #: SR-185: values charged per frame (see `_Budget`). A `sub` of 50 `rules` topics with every
 #: list that family accepts full costs about 7 500.

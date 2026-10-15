@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import subprocess
@@ -9,6 +10,7 @@ import sys
 import time
 import tracemalloc
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Final
 
@@ -29,20 +31,9 @@ from candleviewer.ws.codec import (
 )
 from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_TOPICS_PER_SUB
 from candleviewer.ws.topics import FAMILIES, UNIVERSAL
+from tests.unit.ws._msgpack_bounds import peak_bound
 
 REPO = Path(__file__).resolve().parents[5]
-#: SR-185: what one decode can hold live, from the codec's caps.
-#: - Open levels: at most 1 024 (the C unpacker's stack), each a list pre-sized to its cap:
-#:   1 024 x (56 + 8 x 128) B, about 1.05 MiB.
-#: - What open levels hold before they complete, at most 127 values per array level: the worst is
-#:   a 32 B int per input byte, 1 024 x 127 x 32 B, about 4 MiB. A map level holds at most 31
-#:   pairs, each a 56 B tuple plus its value: about 2.7 MiB in all, under the array case.
-#: - Completed containers, which the budget charges: at most 16 384 values, about 72 B each at
-#:   the densest (one-entry maps), about 1.1 MiB.
-#: That sums to about 6.2 MiB. The worst shape measured, open array levels each holding five
-#: one-entry maps and 122 ints (`HOSTILE`), peaks at 5.9 MiB. 8 MiB leaves headroom; the JSON
-#: path's worst at the cap is about 6 MiB.
-MAX_PEAK_BYTES: Final = 8 << 20
 #: A msgpack timestamp (ext type -1), which the unpacker decodes without calling `ext_hook`.
 TIMESTAMP: Final = b"\xd6\xff\x00\x00\x00\x01"
 CORPUS: Final[list[dict[str, str]]] = json.loads(
@@ -205,9 +196,11 @@ _CLIENT_SCHEMAS: Final = ("envelope", "hello", "heartbeat", "auth", "sub", "unsu
 
 
 def _client_objects() -> list[tuple[str, dict[str, Any]]]:
-    """(property name, object schema) for every object a client frame may carry. `if`, `then`,
-    `else` and `not` constrain the object they sit in, so they are not objects of their own."""
+    """(property name, object schema) for every object a client frame may carry, `$ref`s into
+    `common` resolved. `if`, `then`, `else` and `not` constrain the object they sit in, so they
+    are not objects of their own."""
     doc = json.loads((REPO / "docs/plan/ws-schema.json").read_text(encoding="utf-8"))["schemas"]
+    defs = doc["cv://ws/v1/common.schema.json"]["$defs"]
     stack: list[tuple[str, Any]] = [
         ("", doc[f"cv://ws/v1/{n}.schema.json"]) for n in _CLIENT_SCHEMAS
     ]
@@ -217,6 +210,9 @@ def _client_objects() -> list[tuple[str, dict[str, Any]]]:
         if isinstance(node, list):
             stack.extend((name, item) for item in node)
         elif isinstance(node, dict):
+            ref = str(node.get("$ref", ""))
+            if ref.startswith("cv://ws/v1/common.schema.json#/$defs/"):
+                stack.append((name, defs[ref.rsplit("/", 1)[1]]))
             if "properties" in node or node.get("type") == "object":
                 found.append((name, node))
             stack.extend(node.get("properties", {}).items())
@@ -336,6 +332,25 @@ def _open_map_levels(value: bytes, distinct: bool = True) -> bytes:
     return _at_cap(level * 2_000, b"")
 
 
+def _unique_keys(salt: int) -> Iterator[bytes]:
+    """4-character map keys, none repeated within a frame (one salt per frame)."""
+    for tail in itertools.product(range(0x21, 0x7F), repeat=3):
+        yield b"\xa4" + bytes([0x21 + salt % 94, *tail])
+
+
+def _unique_key_levels(salt: int, *, maps: bool) -> bytes:
+    """Open levels whose keys are new to the process: map levels of 31 keys, or array levels of
+    five one-entry maps and 122 ints."""
+    keys, out = _unique_keys(salt), bytearray()
+    while len(out) < MAX_INBOUND_FRAME_BYTES:
+        if maps:
+            out += b"\xde\x00\x20" + b"".join(next(keys) + b"\xe0" for _ in range(31)) + next(keys)
+        else:
+            out += b"\xdc\x00\x80" + b"".join(b"\x81" + next(keys) + b"\xe0" for _ in range(5))
+            out += b"\xe0" * 122
+    return bytes(out[:MAX_INBOUND_FRAME_BYTES])
+
+
 def _repeated_keys() -> bytes:
     """31 x 32 x 32 duplicate-key entries `"": {}`: about 31 700 maps before keys collapse."""
     inner = b"\xde\x00\x20" + b"\xa0\x80" * 32
@@ -366,6 +381,8 @@ HOSTILE: Final[dict[str, bytes]] = {
     "open-map-levels-of-negative-fixints": _open_map_levels(b"\xe0", distinct=False),
     "open-map-levels-of-nils": _open_map_levels(b"\xc0", distinct=False),
     "open-map-levels-of-timestamps": _open_map_levels(TIMESTAMP),
+    "open-map-levels-of-unique-keys": _unique_key_levels(0, maps=True),
+    "open-levels-of-unique-key-maps-and-ints": _unique_key_levels(1, maps=False),
     # Round 3's 12 MiB shape: 128-wide levels of `"": -32`, refused now at the first header.
     "128-wide-open-map-levels": _at_cap(
         (b"\xde\x00\x80" + b"\xa0\xe0" * 127 + b"\xa0") * 2_000, b""
@@ -383,7 +400,25 @@ def test_msgpack_hostile_at_cap_frame_is_refused_within_the_allocation_bound(dat
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
-    assert peak <= MAX_PEAK_BYTES
+    assert peak <= peak_bound()
+
+
+def test_msgpack_frames_of_new_keys_stay_bounded_through_an_interned_table_resize() -> None:
+    """#2509 round 4: about 31 000 keys per frame, new to the process, until one decode resizes
+    the interned-string table (a jump in its peak). That decode is still within the bound."""
+    peaks = []
+    for salt in range(2, 26):
+        data = _unique_key_levels(salt, maps=True)
+        tracemalloc.start()
+        try:
+            with pytest.raises(MsgpackFrameError):
+                decode_client_frame(data)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert peak <= peak_bound()
+        peaks.append(peak)
+    assert max(peaks) - min(peaks) > 2 << 20, "no interned-table resize was reached"
 
 
 @pytest.mark.perf
