@@ -34,6 +34,9 @@ from candleviewer.observability.audit_query_metrics import (
 )
 
 VERIFY_ACTION = "admin.audit_verify"
+#: `audit_verify_deadline_s`: how long one run may take before it is stopped (503) and the
+#: single-flight slot is free again; well above a full `audit_verify_max_span` run.
+VERIFY_DEADLINE_S = 60.0
 
 
 def _log() -> Any:

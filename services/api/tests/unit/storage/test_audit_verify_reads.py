@@ -15,8 +15,8 @@ import sqlalchemy as sa
 from structlog.testing import capture_logs
 
 from candleviewer.storage.errors import StorageTierUnavailable
-from candleviewer.storage.repositories import audit_sqlalchemy as mod
 from candleviewer.storage.repositories.audit_sqlalchemy import (
+    VERIFY_BATCH_MAX_BYTES,
     AuditReadFailed,
     SqlAlchemyAuditRepository,
 )
@@ -69,7 +69,15 @@ async def test_batch_is_a_keyset_walk_on_the_id_returned_as_tuples() -> None:
     (budget, budget_params), (read, params) = rel.calls
     assert "statement_timeout" in budget and budget_params == {"v": "10000ms"}
     assert "WHERE id > :after_id AND id <= :to_id ORDER BY id ASC LIMIT :limit" in read
-    assert "IS NULL" not in read and params == {"after_id": 2, "to_id": 9, "limit": 10_000}
+    assert "IS NULL" not in read and params == {
+        "after_id": 2,
+        "to_id": 9,
+        "limit": 10_000,
+        "max_bytes": VERIFY_BATCH_MAX_BYTES,
+    }
+    # The byte budget: bytes rendered before a row, so the first row is always admitted.
+    assert "sum(r.n) OVER (ORDER BY r.id) - r.n AS before" in read
+    assert "WHERE w.before < :max_bytes ORDER BY w.id" in read
 
 
 async def test_anchor_is_the_greatest_id_below_the_range() -> None:
@@ -123,12 +131,11 @@ def _assert_no_db_error_in_chain(err: BaseException) -> None:
         (None, _db_error("57014")),  # `statement_timeout` fired
     ],
 )
-async def test_overrun_raises_builtin_timeout_error(
-    on_enter: Any, on_read: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(mod, "VERIFY_READ_TIMEOUT_MS", 10)
+async def test_overrun_raises_builtin_timeout_error(on_enter: Any, on_read: Any) -> None:
+    rel = _Rel(on_enter=on_enter, on_read=on_read)
+    repo = SqlAlchemyAuditRepository(rel, verify_read_timeout_ms=10)  # type: ignore[arg-type]
     with capture_logs() as logs, pytest.raises(TimeoutError) as err:
-        await _repo(_Rel(on_enter=on_enter, on_read=on_read)).fetch_anchor_hash(5)
+        await repo.fetch_anchor_hash(5)
     _assert_no_db_error_in_chain(err.value)
     assert [e["event"] for e in logs] == ["audit.verify_read.timeout"]
 

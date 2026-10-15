@@ -32,6 +32,7 @@ class FakeAuditRepository:
         self.checkpoints: dict[int, dict[str, Any]] = {}
         self.page_calls: list[dict[str, Any]] = []
         self.verify_calls: list[tuple[int, int, int]] = []  # (after_id, to_id, limit)
+        self.max_bytes: int | None = None  # the batch byte budget, when a test sets one
         self.over_cap: set[int] = set()
         self._up = asyncio.Event()
         self._up.set()
@@ -157,7 +158,14 @@ class FakeAuditRepository:
         self.verify_calls.append((after_id, to_id, limit))
         sel = sorted((r for r in self.rows if after_id < r["id"] <= to_id), key=lambda r: r["id"])
         head = ("id", "prev_hash", "entry_hash")
-        return [tuple(r[k] for k in (*head, *HASHED_FIELDS)) for r in sel[:limit]]
+        rows = [tuple(r[k] for k in (*head, *HASHED_FIELDS)) for r in sel[:limit]]
+        budget, before, out = self.max_bytes, 0, []
+        for row in rows:  # as the repository: cut once the bytes before a row reach the budget
+            if budget is not None and before >= budget:
+                break
+            out.append(row)
+            before += len("".join(v for v in row[3:] if v is not None).encode())
+        return out
 
     async def read_head(self) -> tuple[int, str] | None:
         return (self.rows[-1]["id"], self.rows[-1]["entry_hash"]) if self.rows else None

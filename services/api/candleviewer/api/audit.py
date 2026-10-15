@@ -54,6 +54,7 @@ from candleviewer.api.audit_limiter import (
     AuditVerifyLimiter,
 )
 from candleviewer.api.audit_verify import (
+    VERIFY_DEADLINE_S,
     observe_stop,
     observe_verify,
     result_record,
@@ -135,7 +136,9 @@ class AuditQueryServiceLike(Protocol):
         self, *, from_id: int | None, to_id: int | None, max_span: int = ...
     ) -> VerifyPlan: ...
 
-    async def run_verify(self, plan: VerifyPlan, *, batch_size: int = ...) -> Any: ...
+    async def run_verify(
+        self, plan: VerifyPlan, *, batch_size: int = ..., deadline_s: float | None = ...
+    ) -> Any: ...
 
     @property
     def verify_slot(self) -> VerifySlot: ...
@@ -325,6 +328,7 @@ def make_audit_router(
     query_timeout_ms: int = 4000,
     verify_max_span: int = VERIFY_MAX_SPAN,
     verify_limiter: AuditVerifyLimiter | None = None,
+    verify_deadline_s: float = VERIFY_DEADLINE_S,
 ) -> APIRouter:
     """Bind `/admin/audit*` to a concrete `AuditService` instance.
 
@@ -623,7 +627,7 @@ def make_audit_router(
         try:
             return await _run_verify(service, principal, plan)
         finally:
-            slot.release()  # however the run ends
+            slot.release()  # also after a deadline overrun, which is 503
 
     async def _run_verify(
         service: AuditServiceLike, principal: AuditPrincipal, plan: VerifyPlan
@@ -642,7 +646,7 @@ def make_audit_router(
             return _unavailable()
         verify_limits.record_start(str(principal.user_id))  # only a run that starts counts
         try:
-            result = await service.query.run_verify(plan)
+            result = await service.query.run_verify(plan, deadline_s=verify_deadline_s)
         except _VERIFY_STOP_ERRORS as exc:
             observe_stop(full_chain=plan.full_chain)
             reason, detail = _verify_stop(exc)
