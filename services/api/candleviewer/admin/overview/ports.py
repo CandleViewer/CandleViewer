@@ -41,6 +41,8 @@ class CountsPort(Protocol):
     async def open_incidents(self) -> int:
         """Distinct (component, kind) of unresolved `error`/`critical` system events."""
 
+
+class SubaccountPort(Protocol):
     async def subaccounts_in_use(self) -> int:
         """Most non-deleted sub-accounts under any one main account (the cap is per main)."""
 
@@ -74,6 +76,8 @@ class StorageSnapshot:
     daily_growth_bytes: int | None
     days_until_full: float | None
     symbols: tuple[SymbolStorage, ...]
+    #: The recorder's disk cap; headroom is `min(cap - used, free)`. `None`: no cap, only `free`.
+    cap_bytes: int | None = None
 
 
 class RecorderPort(Protocol):
