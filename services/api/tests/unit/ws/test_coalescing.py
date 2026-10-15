@@ -619,3 +619,34 @@ def test_coalescer_pathologically_nested_update_is_refused(family: str, body: Bo
     queue = CoalescingQueue(family)
     assert not queue.offer(body)
     assert queue.overflowed
+
+
+@pytest.mark.parametrize("malformed", [[{"x": 1}], 5, [3]])
+def test_coalescer_malformed_positions_after_a_removal_is_refused(malformed: Any) -> None:
+    """The removed-then-re-opened check runs inside the refusal guard too."""
+    queue = CoalescingQueue("positions")
+    queue.offer({"positions": [], "removed": ["p1"]})
+    assert not queue.offer({"positions": malformed})
+    assert queue.overflowed
+
+
+def test_coalescer_windows_split_off_count_against_the_frame_bound() -> None:
+    queue = CoalescingQueue("positions", max_frames=3)
+    refused = False
+    for at in range(10):
+        refused = not queue.offer({"positions": [], "removed": ["p1"]})
+        refused = refused or not queue.offer({"positions": [{"id": "p1", "updated_at_ms": at}]})
+        if refused:
+            break
+    assert refused
+    assert queue.overflowed
+
+
+def test_coalescer_uncopyable_private_update_is_refused() -> None:
+    class _Uncopyable:
+        def __deepcopy__(self, memo: Any) -> Any:
+            raise TypeError("cannot copy")
+
+    queue = CoalescingQueue("positions")
+    assert not queue.offer({"positions": [{"id": "p1", "updated_at_ms": 1, "x": _Uncopyable()}]})
+    assert queue.overflowed

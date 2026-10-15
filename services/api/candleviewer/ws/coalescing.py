@@ -425,7 +425,7 @@ class CoalescingQueue:
         if self._private:
             try:
                 body = copy.deepcopy(body)  # SR-190: nothing of a private update is shared
-            except RecursionError:
+            except (*_REFUSED, copy.Error):
                 self._overflowed = True
                 return False
         merge = self._merge
@@ -452,9 +452,11 @@ class CoalescingQueue:
     def _merge_one(
         self, merge: _Merge, body: Payload, part: Frame | None, ts_ms: int | None
     ) -> bool:
-        if self._count and merge.splits(body):
-            self._close_window(merge)
         try:
+            if self._count and merge.splits(body):
+                if len(self._frames) >= self._max_frames:
+                    raise _BufferFullError  # windows split off count against the frame bound
+                self._close_window(merge)
             changed = merge.add(body)
         except _REFUSED:
             self._overflowed = True
