@@ -258,3 +258,55 @@ async def test_hot_drop_treats_empty_listed_partition_as_dropped() -> None:
         DAY_US + 86_400_000_000
     ]
     assert await store.drop_day(T, DAY_US) is False
+
+
+async def test_cold_delete_timeout_bounds_only_lock_acquisition(tmp_path: Path) -> None:
+    """Review M2: a held lock -> TimeoutError and nothing deleted; once the delete starts,
+    the lock is held until the thread finishes even if the caller is cancelled."""
+    from candleviewer.storage.cold.partition_lock import partition_write_lock
+
+    reg = DatasetRegistry(tmp_path)
+    part_dir = _seed(reg)
+    store = ColdRetentionStore(reg, lock_timeout_s=0.05)
+    async with partition_write_lock(part_dir):
+        with pytest.raises(TimeoutError):
+            await store.delete("BTCUSDT", T, KEY)
+    assert part_dir.exists()
+
+    started, release = asyncio.Event(), asyncio.Event()
+    loop = asyncio.get_running_loop()
+    real = store._delete_sync
+
+    def slow(p: Path) -> bool:
+        loop.call_soon_threadsafe(started.set)
+        asyncio.run_coroutine_threadsafe(release.wait(), loop).result()
+        return real(p)
+
+    store._delete_sync = slow  # type: ignore[method-assign]  # gate the thread
+    task = asyncio.ensure_future(store.delete("BTCUSDT", T, KEY))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    assert is_locked(part_dir)  # cancelled caller, but the delete is still running: locked
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for _ in range(200):
+        if not is_locked(part_dir):
+            break
+        await asyncio.sleep(0.005)
+    assert not is_locked(part_dir) and not part_dir.exists()
+
+
+async def test_archive_verifier_reads_manifest_rows_for_the_day(tmp_path: Path) -> None:
+    from candleviewer.storage.cold.retention_ops import ArchiveRowVerifier
+
+    reg = DatasetRegistry(tmp_path)
+    _seed(reg, rows=5)
+    v = ArchiveRowVerifier(_Pg(), reg)
+    assert await v.cold_rows("BTCUSDT", T, DAY_US) == 5
+    assert await v.cold_rows("BTCUSDT", T, DAY_US + 86_400_000_000) is None
+    assert await v.hot_rows(T, DAY_US) == {"BTCUSDT": 7, "ETHUSDT": 2}
+    doc = tmp_path / "_manifests" / "trades" / "symbol=BTCUSDT" / "dt=2026-08-01.json"
+    doc.write_text("{bad", encoding="utf-8")
+    assert await v.cold_rows("BTCUSDT", T, DAY_US) is None

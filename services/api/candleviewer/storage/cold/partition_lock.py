@@ -14,9 +14,12 @@ the Postgres advisory lock the reaper uses (`storage.retention.locks`).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+from candleviewer.observability import spawn
+from candleviewer.observability.context import run_in_thread
 
 _LOCKS: dict[str, asyncio.Lock] = {}
 
@@ -36,3 +39,18 @@ async def partition_write_lock(partition_dir: Path) -> AsyncIterator[None]:
 def is_locked(partition_dir: Path) -> bool:
     lock = _LOCKS.get(_key(partition_dir))
     return lock is not None and lock.locked()
+
+
+async def run_locked_to_completion[T](
+    partition_dir: Path, work: Callable[[], T], *, acquire_timeout_s: float
+) -> T:
+    """Acquire the partition lock within `acquire_timeout_s` (TimeoutError otherwise, nothing
+    started), then run `work` in a thread and keep the lock until it has FINISHED, even if the
+    caller is cancelled meanwhile (E16-T06 review M2): a destructive op never outlives its lock,
+    so no other writer can enter a directory that is still being removed."""
+    lock = _LOCKS.setdefault(_key(partition_dir), asyncio.Lock())
+    async with asyncio.timeout(acquire_timeout_s):
+        await lock.acquire()
+    fut = spawn(run_in_thread(work), name="cold-partition-delete")
+    fut.add_done_callback(lambda _f: lock.release())
+    return await asyncio.shield(fut)

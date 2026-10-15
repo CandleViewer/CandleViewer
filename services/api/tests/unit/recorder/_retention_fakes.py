@@ -50,6 +50,8 @@ class World:
     crash_on_delete: int | None = None  # crash on the N-th delete (1-based), before it happens
     fail_audit: bool = False
     lock_free: bool = True
+    late_rows: dict[tuple[str, int], int] = field(default_factory=dict)
+    cold_override: dict[tuple[str, int], int | None] = field(default_factory=dict)
 
     def add_cold(self, symbol: str, stream: StreamKind, n_ago: int, rows: int = 100) -> str:
         key = f"{stream.value}/symbol={symbol}/dt={day_key(day(n_ago))}"
@@ -66,7 +68,11 @@ class World:
         return len(hot) + len(cold), sum(hot) + sum(cold)
 
     def data_deleted(self) -> list[dict[str, str | int]]:
-        return [d for a, d in self.audit if a == "data.deleted"]
+        """Write-ahead intent records (one per deletion)."""
+        return [d for a, d in self.audit if a == "data.deleted" and d.get("phase") == "intent"]
+
+    def data_deleted_phase(self, phase: str) -> list[dict[str, str | int]]:
+        return [d for a, d in self.audit if a == "data.deleted" and d.get("phase") == phase]
 
 
 class FakeHot:
@@ -131,6 +137,26 @@ class FakeMarks:
         return RollOffWatermark(symbol, stream, self.w.archived.get((symbol, stream), 0))
 
 
+class FakeVerifier:
+    """Cold manifest rows default to "exactly what is hot" (archived); `cold_override` and
+    `late_rows` simulate a mismatch (late/backfilled rows) or a missing manifest."""
+
+    def __init__(self, w: World) -> None:
+        self.w = w
+
+    async def hot_rows(self, stream: StreamKind, day_start_us: int) -> Mapping[str, int]:
+        rows = dict(self.w.hot.get(stream, {}).get(day_start_us, {}))
+        for (sym, d), extra in self.w.late_rows.items():
+            if d == day_start_us:
+                rows[sym] = rows.get(sym, 0) + extra
+        return rows
+
+    async def cold_rows(self, symbol: str, stream: StreamKind, day_start_us: int) -> int | None:
+        if (symbol, day_start_us) in self.w.cold_override:
+            return self.w.cold_override[(symbol, day_start_us)]
+        return self.w.hot.get(stream, {}).get(day_start_us, {}).get(symbol)
+
+
 class FakeAudit:
     def __init__(self, w: World) -> None:
         self.w = w
@@ -172,6 +198,7 @@ def manager(w: World, ckpt: MemoryCheckpoint | None = None) -> RetentionManager:
         hot=FakeHot(w),
         cold=FakeCold(w),
         facts=FakeFacts(w),
+        verifier=FakeVerifier(w),
         watermarks=FakeMarks(w),
         audit=FakeAudit(w),
         events=FakeEvents(w),

@@ -12,6 +12,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from candleviewer.recorder.retention import US_PER_DAY, MemoryCheckpoint, PolicyRow
+from candleviewer.recorder.retention_defaults import STREAM_DEFAULTS
 from tests.unit.recorder._retention_fakes import NOW_US, Crash, T, World, day, manager
 
 SYMS = ("AAAUSDT", "BBBUSDT", "CCCUSDT")
@@ -80,3 +81,27 @@ async def test_retention_never_deletes_protected_and_audits_each_deletion_once(
     records = w.data_deleted()
     ids = [r["deletion_id"] for r in records]
     assert len(ids) == len(set(ids)) == len(deleted_cold) + len(deleted_hot)
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    stream=st.sampled_from([*sorted(STREAM_DEFAULTS), "unknown_x", "funding"]),
+    rows=st.dictionaries(
+        st.tuples(st.sampled_from([None, "BTCUSDT"]), st.sampled_from(["trades", "klines"])),
+        st.tuples(st.integers(1, 50), st.integers(1, 800)),
+        max_size=3,
+    ),
+)
+def test_no_stream_resolves_shorter_than_section7_without_an_explicit_row(
+    stream: str, rows: dict[tuple[str | None, str], tuple[int, int]]
+) -> None:
+    """Review H1: absent an explicit row for (symbol|default, stream), the total horizon is
+    never shorter than the §7 default; unknown streams are kept forever."""
+    from candleviewer.recorder.retention import resolve_policy
+
+    policies = {k: PolicyRow(k[0], k[1], h, t) for k, (h, t) in rows.items()}
+    eff = resolve_policy("BTCUSDT", stream, pinned=False, policies=policies, elevated=False)
+    if ("BTCUSDT", stream) in policies or (None, stream) in policies:
+        return
+    expected = STREAM_DEFAULTS.get(stream, (0, None))[1]
+    assert eff.total_days == expected

@@ -296,4 +296,130 @@ async def test_resolve_uses_stored_policies_and_pin() -> None:
     m = manager(w)
     assert (await m.resolve("ETHUSDT", "trades")).source == "pinned"
     assert (await m.resolve("BTCUSDT", "trades")).total_days == 30
-    assert (await m.resolve("BTCUSDT", "tickers")).source == "hard_default"
+    assert (await m.resolve("BTCUSDT", "tickers")).source == "stream_default"
+
+
+async def test_hot_day_with_late_unarchived_rows_is_kept_and_critical() -> None:
+    """Review H2: the watermark says archived, but rows arrived after the export."""
+    w = _world()
+    w.add_hot(T, 10, {"BTCUSDT": 5})
+    w.archived[("BTCUSDT", T)] = day(9)
+    m = manager(w)
+    plan = await m.preview()  # archived at plan time
+    assert len(plan.items) == 1
+    w.late_rows[("BTCUSDT", day(10))] = 3  # late/backfilled rows land before the delete
+    report = await m.run(plan, dry_run=False)
+    assert report.deleted == [] and w.deletes == []
+    assert [p.reason for p in report.skipped] == ["archive_mismatch"]
+    assert ("CRITICAL", "archive.verification_failed") in w.events
+    held = await manager(w).preview()  # and planning also holds it from now on
+    assert [(p.reason, p.info) for p in held.protected] == [
+        ("archive_mismatch", "BTCUSDT hot=8 cold=5")
+    ]
+
+
+async def test_hot_day_without_cold_manifest_is_kept() -> None:
+    w = _world()
+    w.add_hot(T, 10, {"BTCUSDT": 5})
+    w.archived[("BTCUSDT", T)] = day(9)
+    w.cold_override[("BTCUSDT", day(10))] = None
+    assert (await manager(w).run_nightly()).deleted == [] and w.deletes == []
+
+
+async def test_hot_day_with_new_symbol_since_plan_is_kept() -> None:
+    w = _world()
+    w.add_hot(T, 10, {"BTCUSDT": 5})
+    w.archived[("BTCUSDT", T)] = day(9)
+    m = manager(w)
+    plan = await m.preview()
+    w.hot[T][day(10)]["ETHUSDT"] = 4  # backfilled after planning
+    report = await m.run(plan, dry_run=False)
+    assert report.deleted == [] and "new symbols" in report.skipped[0].info
+
+
+async def test_checkpointed_hot_item_with_empty_symbols_is_refused() -> None:
+    from candleviewer.recorder.retention import PruneItem, PrunePlan
+
+    w = _world()
+    w.add_hot(T, 10, {"BTCUSDT": 5})
+    w.archived[("BTCUSDT", T)] = NOW_US
+    item = PruneItem("hot", "trades", (), "x", day(10), day(9), 5, 5)
+    report = await manager(w).run(PrunePlan(NOW_US, (item,), ()), dry_run=False)
+    assert report.deleted == [] and w.deletes == []
+
+
+async def test_each_deletion_has_intent_then_done_audit_records() -> None:
+    """Review M1: audit before AND after; a crash between them is an intent without a done."""
+    w = _world()
+    w.add_cold("BTCUSDT", T, 40)
+    await manager(w).run_nightly()
+    seq = [d.get("phase") for a, d in w.audit if a == "data.deleted"]
+    assert seq == ["intent", "done"]
+    assert w.data_deleted()[0]["deletion_id"] == w.data_deleted_phase("done")[0]["deletion_id"]
+
+
+async def test_failed_delete_writes_failed_record_with_class_name_only() -> None:
+    w = _world()
+    w.add_cold("BTCUSDT", T, 40)
+    m = manager(w)
+
+    async def boom(symbol: str, stream: object, key: str) -> bool:
+        raise OSError("/secret/path/should/not/leak")
+
+    m._cold.delete = boom  # type: ignore[method-assign]  # inject a failing port
+    report = await m.run_nightly()
+    (failed,) = w.data_deleted_phase("failed")
+    assert failed["error"] == "OSError" and report.failed[0][1] == "OSError"
+    assert all("/secret" not in str(d) for _, d in w.audit)
+
+
+async def test_no_stream_without_rows_is_deleted_before_its_section7_horizon() -> None:
+    """Review H1, end to end: with NO policy rows, nothing younger than §7 is deleted."""
+    from candleviewer.recorder.retention import RetentionConfig
+    from candleviewer.recorder.retention_defaults import STREAM_DEFAULTS
+    from candleviewer.storage.models import StreamKind
+
+    w = World()
+    for stream in StreamKind:
+        w.add_cold("BTCUSDT", stream, 40)
+    m = manager(w)
+    m._cfg = RetentionConfig(hot_streams=(), cold_streams=tuple(StreamKind))
+    report = await m.run_nightly()
+    assert report.deleted == []  # every §7 total is >= 90 d or forever
+    assert all(STREAM_DEFAULTS[s.value][1] in (None, 90, 365, 730) for s in StreamKind)
+
+
+async def test_empty_symbol_item_is_refused_before_any_read() -> None:
+    """Kills mutant H2-a: the empty-symbols guard must fire on its own (nothing is read)."""
+    from candleviewer.recorder.retention import PruneItem, PrunePlan
+
+    w = _world()
+    w.add_hot(T, 10, {"BTCUSDT": 5})
+    m = manager(w)
+    reads: list[int] = []
+    real = m._verify.hot_rows
+
+    async def spy(stream: object, d: int) -> object:
+        reads.append(d)
+        return await real(stream, d)  # type: ignore[arg-type]  # passthrough
+
+    m._verify.hot_rows = spy  # type: ignore[method-assign,assignment]  # spy the port
+    item = PruneItem("hot", "trades", (), "x", day(10), day(9), 5, 5)
+    report = await m.run(PrunePlan(NOW_US, (item,), ()), dry_run=False)
+    assert report.deleted == [] and reads == []
+    assert [(p.reason, p.info) for p in report.skipped] == [("not_archived", "no symbols")]
+
+
+async def test_hot_day_reading_back_no_rows_is_never_dropped() -> None:
+    """Kills mutant H2-d: an empty read-back (day vanished / read failed) proves nothing."""
+    w = _world()
+    w.add_hot(T, 10, {"BTCUSDT": 5})
+    w.archived[("BTCUSDT", T)] = day(9)
+    m = manager(w)
+    plan = await m.preview()
+    w.late_rows[("BTCUSDT", day(10))] = -5  # read-back now returns 0 rows
+    report = await m.run(plan, dry_run=False)
+    assert report.deleted == [] and w.deletes == []
+    assert [(p.reason, p.info) for p in report.skipped] == [
+        ("archive_mismatch", "no rows read back")
+    ]

@@ -7,7 +7,9 @@ behind `retention_enabled` (C-4.13, default off).
 
 Policy facts come from Postgres (`recorded_symbols`, `retention_policies`): `retain_days` is the
 hot window (as E16-T05's roll-off reads it); the total horizon is the §7 matrix seed's
-`cold_days` per stream (no column for it yet — the policy-write API is E16-T08).
+total horizon per stream, shipped in-package (`recorder/retention_defaults.py`; no column for
+it yet — the policy-write API is E16-T08). A build failure or invalid settings return `None`
+(purge -> 503); the API never fails to boot because of recorder config.
 `applies_to_pinned` has no column either, so policy runs never touch pinned data; the only path
 that can is the step-up purge with `include_pinned`.
 
@@ -18,9 +20,10 @@ check reads an empty set — the same documented posture as the compactor idle g
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 import sqlalchemy as sa
+import structlog
 
 from candleviewer.recorder.retention import (
     ColdPartition,
@@ -29,11 +32,13 @@ from candleviewer.recorder.retention import (
     RetentionConfig,
     RetentionManager,
 )
+from candleviewer.recorder.retention_defaults import STREAM_DEFAULTS, canonical_stream
 from candleviewer.recorder.rolloff import AuditEmitter
 from candleviewer.settings import Settings
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.observability import LoggingSystemEventSink
 from candleviewer.storage.cold.retention_ops import (
+    ArchiveRowVerifier,
     ColdRetentionStore,
     FileRetentionCheckpoint,
     QuestDbRetentionHotStore,
@@ -43,10 +48,14 @@ from candleviewer.storage.models import StreamKind
 from candleviewer.storage.questdb.wiring import LazyPgWire
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.retention.locks import PgAdvisoryRunLock
-from candleviewer.storage.retention.policy import load_defaults
 
 #: Audit actor for every reaper record (C-2.9): a system principal, never a user.
 RETENTION_ACTOR = "system:retention"
+
+
+def logger() -> structlog.stdlib.BoundLogger:
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(__name__))
+
 
 _SYMBOLS = sa.text(
     "SELECT symbol::text AS symbol, pinned FROM recorded_symbols WHERE removed_at IS NULL"
@@ -64,9 +73,16 @@ class SystemRetentionAudit:
         self._emitter = emitter
 
     async def write(self, action: str, detail: dict[str, str | int]) -> None:
+        phase = detail.get("phase")
+        # Plain values of `AuditOutcome`/`Severity` (StrEnum, validated by `AuditEmission`):
+        # this module may not import `audit` (C-3.3 write-only boundary).
+        outcome = "failure" if phase == "failed" else "success"
         await self._emitter.emit(
             action,
             actor_label=RETENTION_ACTOR,
+            outcome=outcome,
+            severity="error" if phase == "failed" else "info",
+            reason="intent" if phase == "intent" else None,
             object_kind="recorded_data",
             object_label=f"{detail.get('stream', '')}:{detail.get('partition', '')}",
             after_state=dict(detail),
@@ -78,7 +94,6 @@ class PgRetentionFacts:
 
     def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
         self._rel = relational
-        self._cold_days = {r.stream.value: r.cold_days for r in load_defaults()}
 
     async def _all(self, stmt: sa.TextClause) -> list[dict[str, Any]]:
         async with self._rel.unit_of_work() as uow:
@@ -95,10 +110,16 @@ class PgRetentionFacts:
     async def policies(self) -> Mapping[tuple[str | None, str], PolicyRow]:
         out: dict[tuple[str | None, str], PolicyRow] = {}
         for r in await self._all(_POLICIES):
-            stream = str(r["stream"])
+            stream = canonical_stream(str(r["stream"]))  # DB `funding` -> `funding_rates`
             symbol = None if r["scope"] == "default" else str(r["symbol"])
-            total = self._cold_days.get(stream)
-            out[(symbol, stream)] = PolicyRow(symbol, stream, int(r["retain_days"]), total)
+            seeded = STREAM_DEFAULTS.get(stream)
+            if seeded is None:
+                continue  # unknown stream: no row -> resolution keeps it forever
+            # `retain_days` is the hot window; the total horizon is the §7 default for the
+            # stream (no column yet, E16-T08), never shorter than the hot window.
+            hot = int(r["retain_days"])
+            total = seeded[1] if seeded[1] is None else max(seeded[1], hot)
+            out[(symbol, stream)] = PolicyRow(symbol, stream, hot, total)
         return out
 
 
@@ -137,6 +158,20 @@ def build_retention_manager(
 ) -> RetentionManager | None:
     if settings.storage_backend != "real" or relational is None:
         return None
+    hot, total = settings.recorder_hot_days, settings.recorder_retention_days
+    if not 1 <= hot <= total <= 3650:  # review M3: refuse, never build a misconfigured reaper
+        logger().error("retention_manager_not_built", reason="invalid_recorder_retention_days")
+        return None
+    try:
+        return _build(settings, audit, relational)
+    except Exception as exc:  # review H3: recorder config must never take the API down
+        logger().error("retention_manager_not_built", error=type(exc).__name__)
+        return None
+
+
+def _build(
+    settings: Settings, audit: AuditEmitter, relational: SqlAlchemyRelationalRepository
+) -> RetentionManager:
     host, _, port = settings.questdb_pg.partition(":")
     pg = LazyPgWire(
         host,
@@ -150,6 +185,7 @@ def build_retention_manager(
         hot=_Hot(QuestDbRetentionHotStore(pg)),
         cold=_Cold(ColdRetentionStore(registry)),
         facts=PgRetentionFacts(relational),
+        verifier=ArchiveRowVerifier(pg, registry),
         watermarks=FileWatermarkStore(registry, events),
         audit=SystemRetentionAudit(audit),
         events=events,

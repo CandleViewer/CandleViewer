@@ -33,7 +33,7 @@ from candleviewer.storage.cold.layout import (
     stream_dir_name,
 )
 from candleviewer.storage.cold.manifest import ManifestCorrupt, ManifestStore
-from candleviewer.storage.cold.partition_lock import partition_write_lock
+from candleviewer.storage.cold.partition_lock import run_locked_to_completion
 from candleviewer.storage.cold.rolloff_ops import QuestDbHotPartitions, day_name
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.natural_keys import TABLE_BY_STREAM
@@ -159,11 +159,13 @@ class ColdRetentionStore:
 
     async def delete(self, symbol: str, stream: StreamKind, key: str) -> bool:
         partition_dir = self._resolve(symbol, stream, key)
-        async with asyncio.timeout(self._lock_timeout_s):
-            async with partition_write_lock(partition_dir):
-                # Shielded: a cancelled pass never leaves a half-deleted tree behind a live
-                # manifest without the thread finishing (the checkpoint keeps it `pending`).
-                return await asyncio.shield(asyncio.to_thread(self._delete_sync, partition_dir))
+        # Timeout bounds lock ACQUISITION only; once started the delete finishes before the
+        # lock is released (review M2), even if this pass is cancelled.
+        return await run_locked_to_completion(
+            partition_dir,
+            lambda: self._delete_sync(partition_dir),
+            acquire_timeout_s=self._lock_timeout_s,
+        )
 
 
 class QuestDbRetentionHotStore:
@@ -300,3 +302,39 @@ class FileRetentionCheckpoint:
     async def clear(self) -> None:
         async with self._lock:
             await asyncio.to_thread(self._path.unlink, True)
+
+
+class ArchiveRowVerifier:
+    """Hot-vs-cold row reconciliation for one DAY (E16-T06 review H2), read at delete time.
+
+    `hot_rows`: `count()` per symbol over the day in QuestDB (same query the roll-off verifies
+    with). `cold_rows`: rows recorded in the verified Parquet manifests for the symbol's day
+    (every `hour=` sub-partition for hourly streams). A manifest that fails to parse, or a
+    day with no manifest, is `None` -> the reaper keeps the hot day.
+    """
+
+    def __init__(self, connection: PgWireConnection, registry: DatasetRegistry) -> None:
+        self._hot = QuestDbHotPartitions(connection)
+        self._registry = registry
+        self._manifests = ManifestStore(registry.root / "_manifests")
+
+    async def hot_rows(self, stream: StreamKind, day_start_us: int) -> dict[str, int]:
+        rng = TimeRange(start_us=day_start_us, end_us=day_start_us + US_PER_DAY)
+        return await self._hot.row_counts(stream, rng)
+
+    def _cold_sync(self, symbol: str, stream: StreamKind, day: str) -> int | None:
+        total, seen = 0, False
+        for paths in self._registry.manifested_partitions(stream, symbol):
+            values = dict(p.split("=", 1) for p in paths.partition_dir.parts if "=" in p)
+            if values.get("dt") != day:
+                continue
+            try:
+                entries = self._manifests.read(paths.partition_dir, paths.root)
+            except ManifestCorrupt:
+                return None
+            seen = True
+            total += sum(e.row_count for e in entries)
+        return total if seen else None
+
+    async def cold_rows(self, symbol: str, stream: StreamKind, day_start_us: int) -> int | None:
+        return await asyncio.to_thread(self._cold_sync, symbol, stream, day_name(day_start_us))

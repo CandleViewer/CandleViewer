@@ -33,6 +33,7 @@ from typing import Final, Literal, Protocol, cast
 import structlog
 
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
+from candleviewer.recorder.retention_defaults import STREAM_DEFAULTS
 from candleviewer.storage.cold.observability import SystemEventSink
 from candleviewer.storage.cold.watermarks import RollOffWatermark
 from candleviewer.storage.models import StreamKind
@@ -47,9 +48,12 @@ US_PER_DAY: Final = 86_400_000_000
 INGEST_LAG_YIELD_S: Final = 1.0
 SYSTEM_ACTOR: Final = "system:retention"
 
-Source = Literal["pinned", "symbol", "default", "hard_default"]
+_KNOWN_STREAMS: Final = frozenset(k.value for k in StreamKind)
+Source = Literal["pinned", "symbol", "default", "stream_default", "hard_default", "unknown_stream"]
 Tier = Literal["hot", "cold"]
-Reason = Literal["pinned", "leased", "hot_window", "not_archived", "shared_partition"]
+Reason = Literal[
+    "pinned", "leased", "hot_window", "not_archived", "archive_mismatch", "shared_partition"
+]
 PlanMode = Literal["policy", "purge"]
 
 retention_deleted_bytes_total = Counter(
@@ -128,8 +132,14 @@ def resolve_policy(
     dflt = policies.get((None, stream))
     if dflt is not None:
         return EffectivePolicy(symbol, stream, dflt.hot_days, dflt.total_days, "default")
-    hot, total = hard_default
-    return EffectivePolicy(symbol, stream, hot, total, "hard_default")
+    seeded = STREAM_DEFAULTS.get(stream)
+    if seeded is not None:  # §7 matrix default for this stream (review H1)
+        return EffectivePolicy(symbol, stream, seeded[0], seeded[1], "stream_default")
+    if stream in _KNOWN_STREAMS:  # a known stream missing from §7 (none today)
+        hot, total = hard_default
+        return EffectivePolicy(symbol, stream, hot, total, "hard_default")
+    # Unknown stream: fail toward retaining (never the 30-day hard default).
+    return EffectivePolicy(symbol, stream, None, None, "unknown_stream")
 
 
 # -- plan -------------------------------------------------------------------------------------
@@ -305,6 +315,17 @@ class Watermarks(Protocol):
     async def get(self, symbol: str, stream: StreamKind) -> RollOffWatermark: ...
 
 
+class ArchiveVerifier(Protocol):
+    """Read at delete time (review H2): current hot rows per symbol for the day, and the rows
+    the cold manifest holds for each symbol's day. Dropping requires an exact match."""
+
+    async def hot_rows(self, stream: StreamKind, day_start_us: int) -> Mapping[str, int]: ...
+
+    async def cold_rows(self, symbol: str, stream: StreamKind, day_start_us: int) -> int | None:
+        """Manifest row count for the day; None if no verified manifest exists."""
+        ...
+
+
 #: (symbol, lo_us, hi_us) -> id of an active replay/backtest lease overlapping it, else None.
 LeaseCheck = Callable[[str, int, int], Awaitable[str | None]]
 
@@ -405,6 +426,7 @@ class RetentionManager:
         events: SystemEventSink,
         lock: RunLock,
         checkpoint: Checkpoint,
+        verifier: ArchiveVerifier,
         lease: LeaseCheck = _no_lease,
         ingest_lag_s: Callable[[], float] | None = None,
         config: RetentionConfig | None = None,
@@ -413,7 +435,7 @@ class RetentionManager:
     ) -> None:
         self._hot, self._cold, self._facts, self._marks = hot, cold, facts, watermarks
         self._audit, self._events, self._lock, self._ckpt = audit, events, lock, checkpoint
-        self._lease, self._lag = lease, ingest_lag_s
+        self._lease, self._lag, self._verify = lease, ingest_lag_s, verifier
         self._cfg = config or RetentionConfig()
         self._clock, self._sleep = clock, sleep
 
@@ -564,7 +586,10 @@ class RetentionManager:
         policies: Mapping[tuple[str | None, str], PolicyRow],
         now_us: int,
     ) -> Protected | None:
-        """Pin first (§6), then every symbol's own hot window, the lease, the watermark."""
+        """Pin first (§6), then every symbol's own hot window, the lease, the watermark, then the
+        archive itself: rows on the day NOW, per symbol, must equal the cold manifest's rows."""
+        if not item.symbols:  # review H2: an empty symbol list proves nothing -> never drop
+            return Protected(item, "not_archived", "no symbols")
         hits = [s for s in item.symbols if s in pinned]
         if hits:
             return Protected(item, "pinned", ",".join(hits))
@@ -580,6 +605,26 @@ class RetentionManager:
             mark = await self._marks.get(s, stream)
             if mark.archived_through_us < item.end_us:
                 return Protected(item, "not_archived", s)
+        return await self._archive_blocker(item, stream, pinned)
+
+    async def _archive_blocker(
+        self, item: PruneItem, stream: StreamKind, pinned: set[str]
+    ) -> Protected | None:
+        """Re-read the day's symbols and counts (late / backfilled rows, a new symbol) and
+        require each to equal its verified cold manifest; else keep the day (SR-094/099)."""
+        now_rows = {s: n for s, n in (await self._verify.hot_rows(stream, item.start_us)).items()}
+        live = {s for s, n in now_rows.items() if n > 0}
+        if not live:
+            return Protected(item, "archive_mismatch", "no rows read back")
+        if live - set(item.symbols):
+            new = sorted(live - set(item.symbols))
+            if set(new) & pinned:
+                return Protected(item, "pinned", ",".join(sorted(set(new) & pinned)))
+            return Protected(item, "archive_mismatch", "new symbols: " + ",".join(new))
+        for s in sorted(live):
+            cold = await self._verify.cold_rows(s, stream, item.start_us)
+            if cold is None or cold != now_rows[s]:
+                return Protected(item, "archive_mismatch", f"{s} hot={now_rows[s]} cold={cold}")
         return None
 
     # -- execution ----------------------------------------------------------------------
@@ -657,20 +702,24 @@ class RetentionManager:
                 )
                 if blocker.reason == "not_archived":
                     await self._events.emit("WARNING", "retention.not_archived", item.detail())
+                elif blocker.reason == "archive_mismatch":
+                    await self._events.emit(
+                        "CRITICAL", "archive.verification_failed", item.detail()
+                    )
                 continue
             if doc.get("pending") != did:
                 # Write-ahead (C-2.9): the exact range + row count land BEFORE the delete.
                 await self._audit.write(
                     "data.deleted",
-                    item.detail() | {"actor": SYSTEM_ACTOR, "mode": plan.mode},
+                    item.detail() | {"actor": SYSTEM_ACTOR, "mode": plan.mode, "phase": "intent"},
                 )
                 doc["pending"] = did
                 await ckpt.save(doc)
             try:
                 await self._delete(item)
             except (OSError, TimeoutError, ValueError, RuntimeError) as exc:
-                # Report why the item is held: error class + its (path-free) message.
-                why = f"{type(exc).__name__}: {str(exc)[:200]}"
+                # Class name only: an exception message may carry filesystem paths (review c).
+                why = type(exc).__name__
                 report.failed.append((item, why))
                 logger().error(
                     "retention_delete_failed",
@@ -685,7 +734,17 @@ class RetentionManager:
                     "retention.delete_failed",
                     item.detail() | {"error": type(exc).__name__},
                 )
-                return False  # keep `pending`: the next pass finishes it (no second audit)
+                await self._audit.write(
+                    "data.deleted",
+                    item.detail() | {"actor": SYSTEM_ACTOR, "phase": "failed", "error": why},
+                )
+                return False  # keep `pending`: the next pass finishes it (no second intent)
+            # After-record (review M1): intent + completion both exist, so a crash between the
+            # two is detectable as an intent without a `done` (ticket security notes).
+            await self._audit.write(
+                "data.deleted",
+                {"deletion_id": did, "actor": SYSTEM_ACTOR, "phase": "done", "mode": plan.mode},
+            )
             done.add(did)
             doc["done"] = sorted(done)
             doc["pending"] = None
@@ -850,5 +909,7 @@ def validate_policies(policies: Mapping[tuple[str | None, str], PolicyRow]) -> N
         if stream not in DERIVED_FROM_TRADES:
             continue
         ticks = policies.get((symbol, "trades")) or policies.get((None, "trades"))
-        if ticks is not None and longer(row.total_days, ticks.total_days):
+        # No trades row: compare against the §7 trades default (review e), never skip.
+        tick_total = ticks.total_days if ticks is not None else STREAM_DEFAULTS["trades"][1]
+        if longer(row.total_days, tick_total):
             raise InvalidRetentionPolicy(f"{stream} outlives trades for {symbol or 'default'}")
