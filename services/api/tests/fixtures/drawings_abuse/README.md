@@ -1,7 +1,7 @@
 # drawings_abuse
 
 - `corpus.v1.json`: versioned hostile-text corpus for `/drawings` abuse tests (E14-X02, #474); source: hand-written
-  public vectors (OWASP XSS filter-evasion cheat sheet, the Ge0rg/Gareth Heyes polyglot and DOMPurify mXSS
+  public vectors (OWASP XSS filter-evasion cheat sheet, the 0xSobky "ultimate XSS polyglot" (HackVault wiki) and DOMPurify mXSS
   mutation-XSS examples, Unicode Trojan Source), 2026-10-15,
   no symbol/env/credentials, no redaction needed. Attack data: loaded
   only by `tests/drawings/test_drawings_abuse_*.py`; never ship or serve it. Bump the version for any change.

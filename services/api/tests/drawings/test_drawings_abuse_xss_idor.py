@@ -19,8 +19,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from _drawings_api_env import BATCH, TRENDLINE, USER_A, USER_B, Env, wire
+from _drawings_api_env import BATCH, TRENDLINE, USER_B, Env, wire
 
+from candleviewer.api.drawings_models import sanitize_text
 from candleviewer.storage.repositories.drawings import format_token
 
 CORPUS = json.loads(
@@ -37,10 +38,6 @@ RANDOM = "9b2f6c1e-5d47-4a8e-b3c0-7e1d2a4f8c65"
 KEY = "4d9f1c2e-8a7b-4c3d-9e1f-0a1b2c3d4e5f"
 STALE = "2026-10-14T12:00:00.000000Z"
 JSON_CT = "application/json"
-MAX_LABEL, MAX_TEXT = (
-    120,
-    1000,
-)  # contract caps (OpenAPI Drawing.label / geometry.text), code points
 
 
 def test_corpus_is_the_pinned_version() -> None:
@@ -147,7 +144,7 @@ def test_style_colours_accept_only_a_bare_hex_colour(key: str, payload: str) -> 
     assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [
         (f"style.{key}", "string_pattern_mismatch")
     ]
-    _no_echo(r, "".join(c for c in payload if c.isprintable() and c != " ")[:20] or "xxxx")
+    _no_echo(r, sanitize_text(payload, allow_newline=False)[:20])
     assert env.repo.rows == {}
 
 
@@ -161,10 +158,12 @@ def test_unicode_amplification_counts_code_points_at_both_caps(ch: str) -> None:
     ok = env.c.post("/drawings", json=wire(_text(ch * (MAX_TEXT // n), ch * (MAX_LABEL // n))))
     assert ok.status_code == 201 and ok.json()["geometry"]["text"] == ch * (MAX_TEXT // n)
     text = env.c.post("/drawings", json=_text(ch * (MAX_TEXT // n + 1)))
+    assert text.status_code == 422
     assert [(e["field"], e["rule"]) for e in text.json()["errors"]] == [
         ("geometry.text", "string_too_long")
     ]
     label = env.c.post("/drawings", json=TRENDLINE | {"label": ch * (MAX_LABEL // n + 1)})
+    assert label.status_code == 422
     assert [(e["field"], e["rule"]) for e in label.json()["errors"]] == [
         ("label", "string_too_long")
     ]
@@ -224,12 +223,10 @@ def test_put_delete_probes_return_one_identical_404_and_change_nothing(kind: str
 def test_unusable_if_match_is_a_uniform_412_for_own_foreign_and_missing_ids(value: str) -> None:
     env = Env()
     mine = env.create()
-    ids = {"own": mine["id"], "missing": RANDOM}
+    bodies = {"own": _put(env, mine["id"], **{"If-Match": value})}  # built once, as the owner
     env.user = USER_B
-    ids["foreign"] = mine["id"]
-    bodies = {k: _put(env, v, **{"If-Match": value}) for k, v in ids.items()}
-    env.user = USER_A
-    bodies["own"] = _put(env, mine["id"], **{"If-Match": value})
+    bodies["foreign"] = _put(env, mine["id"], **{"If-Match": value})
+    bodies["missing"] = _put(env, RANDOM, **{"If-Match": value})
     assert {r.status_code for r in bodies.values()} == {412}
     assert len({r.text for r in bodies.values()}) == 1  # no own/foreign/missing oracle
 
