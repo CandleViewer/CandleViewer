@@ -730,7 +730,33 @@ async def test_verify_walks_on_past_batches_cut_short_by_the_byte_budget(
     repo.max_bytes = 1000
     result = await AuditQueryService(repo).verify(batch_size=10)
     assert (result.verified, result.entries_checked) == (True, 4)
-    assert [after for after, _, _ in repo.verify_calls] == [0, 1, 2, 3]  # one row a batch
+    assert repo.verify_calls == [(0, 4, 10), (1, 4, 2), (2, 4, 2), (3, 4, 2)]  # one row a batch
+
+
+async def test_verify_after_a_byte_cut_asks_for_twice_the_rows_that_fit(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Review of #2464: the statement renders every row it may return before it cuts, so
+    after a cut the next batch asks for twice the rows that fit, and a full one doubles
+    back. An oversized entry that is not first ends the batch it lands in."""
+    await _seed(repo, 3, clock)  # ids 1-3
+    await repo.insert(
+        {
+            "record_id": "00000000-0000-4000-9000-000000000000",
+            "action": "auth.login",
+            "actor_label": "u",
+            "outcome": "success",
+            "severity": "info",
+            "after_state": {"blob": "x" * 5000},  # id 4: over the whole budget
+            "event_ts": clock().isoformat(),
+        }
+    )
+    await _seed(repo, 16, clock, first=3)  # ids 5-20
+    repo.max_bytes = 1000
+    result = await AuditQueryService(repo).verify(batch_size=10)
+    assert (result.verified, result.entries_checked) == (True, 20)
+    # Ids 1-4 (cut after the blob), 5-12 (8: twice 4, and full), then 13-20 (back to 10).
+    assert repo.verify_calls == [(0, 20, 10), (4, 20, 8), (12, 20, 10)]
 
 
 async def test_verify_a_range_inside_an_id_gap_checks_nothing(
