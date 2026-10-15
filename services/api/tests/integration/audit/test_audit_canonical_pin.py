@@ -93,6 +93,7 @@ def _sync(dsn: str) -> str:
 def _insert_all_set(dsn: str) -> None:
     """Every column set, through the trigger, in a session unlike the reader's."""
     state = {"注文": {"qty": "0.01", "tags": ["é", "\U0001f600"]}, "e\u0301": None, "n": [1, {}]}
+    state["esc"] = 'quote" back\\ newline\n tab\t ctl\u0001'  # escaped on jsonb output
     ids = (uuid.uuid4(), _ACTOR, uuid.uuid4())
     with psycopg.connect(_sync(dsn)) as conn:
         conn.execute("SET TIME ZONE 'Pacific/Chatham'")
@@ -110,6 +111,8 @@ def _insert_all_set(dsn: str) -> None:
 
 def test_python_framing_equals_the_sql_audit_field(pg_dsn: str) -> None:
     with psycopg.connect(_sync(pg_dsn)) as conn:
+        # `length()` counts characters as `len()` does only in a UTF8 database.
+        assert conn.execute("SHOW server_encoding").fetchone() == ("UTF8",)
         for value in _FRAMING:
             row = conn.execute("SELECT audit_field(%s::text)", (value,)).fetchone()
             assert row is not None and row[0] == _canonical_field(value), value
@@ -137,6 +140,7 @@ async def test_python_canonical_hash_equals_the_trigger_entry_hash(
     assert {k for k, v in rendered[0].items() if v is None} == _NULLABLE
     assert None not in rendered[1].values()
     assert "日本" in rendered[1]["actor_label"] and "注文" in rendered[1]["after_state"]
+    assert "\\u0001" in rendered[1]["after_state"]  # jsonb rendered it escaped
     assert rendered[1]["event_ts"] == "2026-10-14T18:29:59.123456+00"
     for row, fields in zip(rows, rendered, strict=True):
         assert _canonical_hash(row[1], fields) == row[2]  # byte for byte, as hex
