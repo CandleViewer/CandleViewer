@@ -86,7 +86,7 @@ jobs:
     # environment); dispatch-only until that runner is registered.
     if: github.event_name == 'workflow_dispatch' && inputs.profile == 'full'
     runs-on: [self-hosted, bench]
-    timeout-minutes: 1560
+    timeout-minutes: 1740  # 24 h soak + 1 h aggregate + latency 30 m + rest/burst; report must run
     env:
       CV_ENV: test
       CV_BENCH_MACHINE_PROFILE: bench-runner

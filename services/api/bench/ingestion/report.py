@@ -19,7 +19,7 @@ from bench.ingestion.gate import GateResult, render_diff
 
 _ISO = "%Y-%m-%dT%H:%M:%SZ"
 _SECRETISH = re.compile(
-    r"(?i)(authorization|cookie|x-bapi-[a-z-]+|api[_-]?key|secret|token|signature|session"
+    r"(?i)(authorization|cookie|x-[a-z0-9]+-(?:api-key|sign|signature|timestamp|recv-window)|api[_-]?key|secret|token|signature|session"
     r"|uid|account[_-]?id)\s*[:=]\s*\S+"
 )
 

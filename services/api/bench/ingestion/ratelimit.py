@@ -21,6 +21,7 @@ from typing import Any
 import httpx
 
 from bench.ingestion.fixture_app import CORPUS
+from candleviewer.exchange.base.errors import RateLimitError
 
 # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.config import (
@@ -59,6 +60,7 @@ class HeadroomResult:
     would_block: int = 0
     ip_limit_errors: int = 0
     ip_holds: int = 0
+    ip_limit_rejections: int = 0
     tokens_trace: list[float] = field(default_factory=list)
 
 
@@ -141,6 +143,14 @@ async def run_headroom(
             res.would_block += 1  # the bucket would have to wait: headroom reached zero
             return
         res.requests += 1
+        try:
+            await _call(call)
+        except RateLimitError:
+            # The venue answered the IP-limit error: counted so the verdict renders the
+            # `provoked_ip_limit` FAIL row instead of the run crashing.
+            res.ip_limit_rejections += 1
+
+    async def _call(call: str) -> None:
         if call == "catalogue":
             await fetch_catalogue(lambda: int(world.wall() * 1e6))
             res.catalogue_refreshes += 1

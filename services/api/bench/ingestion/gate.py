@@ -23,7 +23,9 @@ from bench.ingestion.config import BASELINES_DIR
 #: `tolerances` ("<metric>": fail band) — loss/lag tight, absolute CPU loose (ticket perf notes).
 WARN_BAND, FAIL_BAND = 0.10, 0.25
 #: Absolute noise floor: a delta below this (same unit as the metric) is never a regression.
-ABS_FLOOR = {"ms": 0.5, "count": 1.0}
+ABS_FLOOR_MS = 0.5
+#: Metrics where a DROP is the regression (headroom). Everything else is lower-is-better.
+HIGHER_IS_BETTER: frozenset[str] = frozenset({"uid_tokens", "ip_window_headroom_min"})
 
 
 @dataclass(slots=True)
@@ -52,7 +54,7 @@ def load_baseline(scenario: str, root: Path = BASELINES_DIR) -> dict[str, Any] |
 
 
 def _floor(metric: str) -> float:
-    return ABS_FLOOR["ms"] if metric.endswith("_ms") else 0.0
+    return ABS_FLOOR_MS if metric.endswith("_ms") else 0.0
 
 
 def compare(
@@ -80,7 +82,8 @@ def compare(
     elif baseline.get("gate") == "warn-only":
         g.gated, g.reason = False, "baseline marked warn-only until a CI-runner baseline exists"
     tol = tolerances or {}
-    higher = set(baseline.get("higher_is_better", ()))
+    # Union with the code-level set: a baseline missing the key must never invert the direction.
+    higher = HIGHER_IS_BETTER | set(baseline.get("higher_is_better", ()))
     for metric, base in sorted(baseline.get("metrics", {}).items()):
         now = verdict.metrics.get(metric)
         if now is None or "p95" not in base:
@@ -125,6 +128,7 @@ def record(
         "machine_profile": profile,
         "gate": "warn-only",
         "run_profile": run_profile,
+        "higher_is_better": sorted(HIGHER_IS_BETTER & set(verdict.metrics)),
         "profile_scaling": scaling,
         "metrics": {k: v for k, v in verdict.metrics.items() if not k.startswith("_")},
     }

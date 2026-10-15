@@ -1,6 +1,10 @@
 {
   "gate": "warn-only",
   "harness_version": "e08-q04/1",
+  "higher_is_better": [
+    "ip_window_headroom_min",
+    "uid_tokens"
+  ],
   "machine_profile": "laptop-i7-8550U",
   "metrics": {
     "ip_window_headroom_min": {
