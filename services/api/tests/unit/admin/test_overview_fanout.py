@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
 from prometheus_client import REGISTRY
@@ -19,7 +20,7 @@ from candleviewer.admin.overview.fanout import (
     SourceUnavailable,
 )
 from candleviewer.admin.overview.metrics import export_overview_metrics, source_errors_total
-from candleviewer.admin.overview.slices import OVERVIEW_SLICES, AdminSlice
+from candleviewer.admin.overview.slices import CAPACITY_SLICES, OVERVIEW_SLICES, AdminSlice
 from candleviewer.observability.context import bind_context
 from candleviewer.observability.metrics import CollectorRegistry
 
@@ -218,7 +219,7 @@ def test_export_serves_the_series_with_the_env_label() -> None:
 
 
 async def test_the_default_budget_is_the_tickets_300_ms() -> None:
-    assert DEFAULT_BUDGET_S == 0.3
+    assert DEFAULT_BUDGET_S == 0.3 and SliceFanOut().budget_s == DEFAULT_BUDGET_S
     result = await SliceFanOut().read(AdminSlice.RECORDER, Source(hang=True))
     assert result.detail == f"timed out after {round(DEFAULT_BUDGET_S * 1000)} ms"
 
@@ -313,3 +314,43 @@ async def test_invalidate_refetches_and_never_caches_a_read_that_predates_it() -
     fan.invalidate(AdminSlice.SUBACCOUNTS)
     await fan.read(AdminSlice.SUBACCOUNTS, slow)
     assert source.calls == 3
+
+
+async def test_a_live_read_never_joins_a_read_in_flight() -> None:
+    state, entered, gate, seen = {"killed": False}, asyncio.Event(), asyncio.Event(), []
+
+    async def kill_switch() -> bool:
+        seen.append(value := state["killed"])
+        if len(seen) == 1:  # the first read is still in flight when the switch flips
+            entered.set()
+            await gate.wait()
+        return value
+
+    fan = _fan(Clock(), budget_s=5.0)
+    first = asyncio.create_task(fan.read(AdminSlice.TRADING, kill_switch, cached=False))
+    await entered.wait()
+    state["killed"] = True
+    later = await fan.read(AdminSlice.TRADING, kill_switch, cached=False)
+    gate.set()
+    assert ((await first).value, later.value) == (False, True)
+
+
+async def test_an_unknown_slice_name_is_refused_at_runtime() -> None:
+    with pytest.raises(ValueError):
+        await _fan(Clock()).read(cast(AdminSlice, "bogus"), Source(1))
+
+
+def test_slice_sets_are_explicit_disjoint_and_cover_the_enum() -> None:
+    assert OVERVIEW_SLICES.isdisjoint(CAPACITY_SLICES)
+    assert OVERVIEW_SLICES | CAPACITY_SLICES == set(AdminSlice)
+
+
+async def test_a_partial_slice_logs_its_reason_never_a_message() -> None:
+    async def partial() -> int | Degraded[int]:
+        return Degraded(1, "error", "open_positions: source failed", "open_positions:OSError")
+
+    with capture_logs() as logs:
+        await _fan(Clock()).read(AdminSlice.TRADING, partial)
+    assert [(e["source"], e["reason"]) for e in logs] == [
+        (AdminSlice.TRADING, "open_positions:OSError")
+    ]

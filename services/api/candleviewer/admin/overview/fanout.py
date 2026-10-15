@@ -34,7 +34,8 @@ DEFAULT_BUDGET_S: Final = 0.3
 DEFAULT_TTL_S: Final = 5.0
 #: The only `detail` for an exception: its message may carry a DSN or a key, so it never leaves.
 FAILED_DETAIL: Final = "source failed"
-#: `AdminSliceStatus.detail`: non-empty, at most 200 chars, and a charset no DSN or key fits.
+#: A seatbelt only: the real protection is that every `detail` is a fixed literal in code. This
+#: rejects anything empty, over 200 chars or outside a charset that no DSN or key fits.
 _DETAIL_RE: Final = re.compile(r"[A-Za-z0-9 _:.-]{1,200}")
 
 
@@ -50,7 +51,8 @@ def logger() -> structlog.stdlib.BoundLogger:
     return structlog.get_logger(__name__)  # type: ignore[no-any-return]  # structlog returns Any
 
 
-def _utc_now() -> datetime:
+def utc_now() -> datetime:
+    """The one UTC clock of the admin read models (tz-aware)."""
     return datetime.now(UTC)
 
 
@@ -76,6 +78,8 @@ class Degraded[T]:
     value: T
     status: Literal["error", "unavailable"]
     detail: str
+    #: Logged, never sent: the failed part and the exception class, e.g. `open_positions:OSError`.
+    reason: str = "partial"
 
     def __post_init__(self) -> None:
         _checked(self.detail)
@@ -98,7 +102,7 @@ class SliceFanOut:
         budget_s: float = DEFAULT_BUDGET_S,
         ttl_s: float = DEFAULT_TTL_S,
         monotonic: Callable[[], float] = time.monotonic,
-        now: Callable[[], datetime] = _utc_now,
+        now: Callable[[], datetime] = utc_now,
     ) -> None:
         self._budget_s, self._ttl_s = budget_s, ttl_s
         self._monotonic, self._now = monotonic, now
@@ -114,8 +118,14 @@ class SliceFanOut:
         *,
         cached: bool = True,
     ) -> SliceResult[T]:
-        """The slice `name`: from the cache while fresh, else from `load` under the budget."""
-        hit = self._cache.get(name) if cached else None
+        """The slice `name`: from the cache while fresh, else from `load` under the budget.
+
+        A live read (`cached=False`) never joins a read already in flight: it would return a
+        value captured before a kill-switch flip."""
+        name = AdminSlice(name)  # runtime guard: the metric label stays bounded
+        if not cached:
+            return await self._run(name, load)
+        hit = self._cache.get(name)
         if hit is not None and self._monotonic() < hit[0]:
             return cast(SliceResult[T], hit[1])
         if (shared := self._inflight.get(name)) is not None:
@@ -124,12 +134,12 @@ class SliceFanOut:
             except asyncio.CancelledError:
                 if _cancelling():
                     raise
-                return await self.read(name, load, cached=cached)  # the leader was cancelled
+                return await self.read(name, load)  # the leader was cancelled
         fut: asyncio.Future[SliceResult[object]] = asyncio.get_running_loop().create_future()
         self._inflight[name] = fut
         try:
             result = await self._run(name, load)
-            if cached and self._inflight.get(name) is fut:  # not invalidated meanwhile
+            if self._inflight.get(name) is fut:  # not invalidated meanwhile
                 self._cache[name] = (
                     self._monotonic() + self._ttl_s,
                     cast(SliceResult[object], result),
@@ -142,6 +152,11 @@ class SliceFanOut:
         finally:
             if self._inflight.get(name) is fut:
                 del self._inflight[name]
+
+    @property
+    def budget_s(self) -> float:
+        """The per-source budget; a source's own sub-budgets must stay below it."""
+        return self._budget_s
 
     def invalidate(self, name: AdminSlice) -> None:
         """Drop the cached slice and detach a read already running (it may predate a write)."""
@@ -173,7 +188,7 @@ class SliceFanOut:
             result = self._degraded(name, "error", FAILED_DETAIL, type(exc).__name__, None)
         else:
             if isinstance(got, Degraded):
-                result = self._degraded(name, got.status, got.detail, "partial", got.value)
+                result = self._degraded(name, got.status, got.detail, got.reason, got.value)
             else:
                 result = SliceResult("ok", self._now(), got)
         finally:
