@@ -49,12 +49,14 @@ async def test_unrecovered_fault_leaves_a_topic_signal(rig: Rig, name: str) -> N
     await _run(rig, name)
     seen = rig.observe()
     book = [f.state for f in seen.feed if f.topic == "orderbook.200.BTCUSDT"]
-    assert book and book[-1] in ("degraded", "stale"), book
-    assert rig.ws.state() != "open"
+    no_signal = f"{name}: no degraded/stale signal on orderbook.200.BTCUSDT (feed states: {book})"
+    assert book and book[-1] in ("degraded", "stale"), no_signal
+    assert rig.ws.state() != "open", f"{name}: socket still open after an unrecovered fault"
     assert rig.books.view("BTCUSDT", 200) is None or rig.book_phase() is not None
 
 
 @pytest.mark.parametrize("name", sorted(UNRECOVERABLE))
 async def test_unrecovered_fault_reports_degraded_health(rig: Rig, name: str) -> None:
     await _run(rig, name)
-    assert rig.health_report() == "degraded"
+    health = rig.health_report()
+    assert health == "degraded", f"{name}: health reports {health!r}, expected 'degraded'"
