@@ -22,6 +22,13 @@ from candleviewer.admin.flags.registry import (
     value_matches,
 )
 from candleviewer.admin.flags.resolver import StoredFlag, resolve, rollout_bucket
+from candleviewer.admin.flags.service import FlagService, ResolvedFlag
+from candleviewer.admin.flags.store import (
+    FlagStore,
+    FlagWrite,
+    StaleWriteError,
+    StoreUnavailableError,
+)
 
 __all__ = [
     "DENIED",
@@ -32,8 +39,14 @@ __all__ = [
     "Category",
     "FlagKind",
     "FlagRegistry",
+    "FlagService",
     "FlagSpec",
+    "FlagStore",
     "FlagValue",
+    "FlagWrite",
+    "ResolvedFlag",
+    "StaleWriteError",
+    "StoreUnavailableError",
     "StoredFlag",
     "UnsafeFlagDefinitionError",
     "Visibility",
