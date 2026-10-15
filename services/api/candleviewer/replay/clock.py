@@ -315,19 +315,28 @@ class ReplayClock:
         return reason
 
     async def _run(self) -> StopReason:
-        time, cfg, burst = self._time, self._cfg, 0
+        """The playback hot path: per event, one deadline, one lag comparison and the delivery;
+        everything else (re-anchoring, window figures, metrics) runs only when due."""
+        time, sink, window = self._time, self._sink, self._window
+        min_wait, max_lag, yield_every = (
+            self._cfg.min_wait_s,
+            self._cfg.max_lag_s,
+            self._cfg.yield_every,
+        )
+        burst = 0
         while True:
             if self._stop:
                 self._cursor = self._position(time.now())
                 return "paused"
             item = await self._peek()
-            pacer, now = self._pacer, time.now()
-            due = None if pacer is None else pacer.due(self._end_us if item is None else item.ts_us)
-            if due is not None and due - now > cfg.min_wait_s:
-                self._wake.clear()
-                await time.wait_until(due, self._wake)
-                burst = 0
-                continue
+            pacer, now, lag = self._pacer, time.now(), 0.0
+            if pacer is not None:
+                lag = now - pacer.due(self._end_us if item is None else item.ts_us)
+                if lag < -min_wait:
+                    self._wake.clear()
+                    await time.wait_until(now - lag, self._wake)
+                    burst = 0
+                    continue
             if item is None:
                 self._cursor = self._end_us
                 return "range_end"
@@ -336,15 +345,27 @@ class ReplayClock:
                 if self._gap(item, now):
                     return "gap"
                 continue
-            behind = 0.0 if pacer is None else self._check_lag(pacer, item.ts_us, now)
-            await self._deliver(item)
-            lost = self._lost_s + behind
-            if self._window.update(
-                wall=now, lost_s=lost, position_us=self._cursor, requested=self._speed
+            if lag > 0.0 and pacer is not None:
+                if lag > self._max_lag:
+                    self._max_lag = lag
+                if lag > max_lag:
+                    lag = self._slow(pacer, item.ts_us, now)
+            if item.ts_us > self._cursor:
+                self._cursor = item.ts_us
+            await sink.deliver(item)
+            self._emitted += 1
+            probe = self.bar_probe
+            if probe is not None:
+                probe.apply(item)
+            if now >= window.closes_at and window.update(
+                wall=now,
+                lost_s=self._lost_s + max(lag, 0.0),
+                position_us=self._cursor,
+                requested=self._speed,
             ):
                 self._window_closed()
             burst += 1
-            if burst >= cfg.yield_every:  # catching up without waits: let the loop run
+            if burst >= yield_every:  # catching up without waits: let the loop run
                 burst = 0
                 await asyncio.sleep(0)
 
@@ -419,13 +440,10 @@ class ReplayClock:
         self._obs.on_gap(gap, stopped=stop)
         return stop
 
-    def _check_lag(self, pacer: Pacer, ts_us: int, now: float) -> float:
-        """Slow the clock if the event is later than `max_lag_s` behind schedule; returns how far
-        behind it still is (counted in the achieved rate, so it reads smoothly)."""
+    def _slow(self, pacer: Pacer, ts_us: int, now: float) -> float:
+        """The event is later than `max_lag_s` behind schedule: re-anchor the clock at it (slow
+        down) and book the lost wall time. It is on schedule again, so nothing is left behind."""
         lag = pacer.late(ts_us, wall=now, max_lag_s=self._cfg.max_lag_s)
-        self._max_lag = max(self._max_lag, lag)
-        if lag <= self._cfg.max_lag_s:
-            return max(0.0, lag)
         self._lost_s += lag
         replay_backpressure_seconds_total.inc(lag)
         self._slow_in_window = True
