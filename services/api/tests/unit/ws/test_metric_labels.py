@@ -67,12 +67,15 @@ async def test_upstream_gauge_symbol_label_bounded_with_other() -> None:
     assert not [k for k in _series() if k[1] == "book"]
 
 
+@pytest.fixture(scope="module")
+def _stray_series_before_isolation() -> None:
+    """Leak a series before per-test isolation runs: module scope sets up first (#2360)."""
+    cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book").set(1)
+
+
+@pytest.mark.usefixtures("_stray_series_before_isolation")
 def test_autouse_fixture_clears_leaked_series(request: pytest.FixtureRequest) -> None:
-    """Collection-time leak must be gone at test start; fails without the autouse fixture."""
+    """A series leaked before the test is gone at test start; fails without the autouse fixture."""
     assert "_clean_upstream_gauge" in request.fixturenames
     assert ("ZZSTRAYUSDT", "book") not in _series()
     assert _series() == {}
-
-
-# Leak at collection time, outside any fixture, so only the autouse fixture can remove it (#2360).
-cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book").set(1)
