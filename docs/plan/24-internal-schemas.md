@@ -3030,6 +3030,55 @@ class RetentionRule(BaseModel):
 
 Daily retention job (03:00 UTC): move hot→cold past `hot_days`; apply `action_after_warm` past `warm_days`; never touch pinned data; never delete a period referenced by an unexported journal trade, a saved replay session or an open investigation. Under disk pressure (<`min_free_disk_pct` free) an emergency pass evicts by ascending `priority` then oldest-first, always skipping pinned data, and raises a `critical` alert **before** deleting anything. Every deletion writes an audit entry with symbol, stream, range and freed bytes. The admin storage screen shows current usage, projected days-to-full at the measured rate, and per-symbol cost.
 
+#### 13.4.1 `DiskBudget` (E16-T07) — measured growth, projection, disk-pressure ladder
+
+`candleviewer.recorder.budget.DiskBudget` measures the recording volume (`statvfs`) and the per-tier /
+per-symbol bytes every `CV_DISK_SAMPLE_INTERVAL_S` (60 s) on one supervised task; a request never
+measures (SCR-142), it reads the last report (the OpenAPI `StorageUsage` shape). One point per 10 min
+is committed to a rolling series kept for the fit window. It never deletes anything: deletion
+authority stays with retention (E16-T06).
+
+- **Growth** = least-squares bytes/day over the last 7 days (the last 24 h while less history
+  exists; no figure below 1 h), with one intercept per contiguous run. Points inside a
+  `recording_gaps` window are dropped and a run restarts across a gap or a sampling hole, so an
+  outage never depresses the rate. The top-level `daily_growth_bytes` is the net trend of the
+  recorded bytes (QuestDB + Parquet); a `symbols[]` run also restarts at every size drop
+  (retention, roll-off), so the per-symbol figure is the measured write rate.
+- **Projection:** `projected_full_at` = now + min(cap − used, volume free) / growth; days of runway
+  are the same quotient; `null` when growth is unknown, ≤ 0 or the wall is over 100 years out,
+  `now` when a wall is reached.
+- **Ladder.** `used` = recorded bytes / `CV_DISK_CAP_GB`, `free` = volume free / total. A level
+  engages at its trigger and re-arms only past its release (5 points on the safe side):
+
+| Level        | Engages when                                      | Releases when                          | Effect                                                                             |
+| ------------ | ------------------------------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------- |
+| 1 `WARN`     | used ≥ `CV_DISK_WARN_PCT` (80) or runway ≤ 7 d    | used < 75 % and runway > 8 d (or none) | WARNING `recorder.disk_budget_warning`: projected date and actions                 |
+| 2 `AUTOSTOP` | used ≥ `CV_DISK_AUTOSTOP_PCT` (90) or free < 15 % | used < 85 % and free ≥ 20 %            | new auto-record starts refused; `accelerate_retention` on                          |
+| 3 `HALT`     | used ≥ `CV_DISK_HALT_PCT` (95) or free < 5 %      | used < 90 % and free ≥ 10 %            | non-pinned auto-recorded paused, then all recording; CRITICAL `recorder.disk_halt` |
+
+`accelerate_retention` engages with level 2 and holds until used < 75 % and free > 25 %
+(`21-database-schema.md` §6). Events name actions as codes (`reduce_depth`, `shorten_retention`,
+`unpin`) and carry symbols and numbers only, never host paths; the level-3 event names the largest
+consumer and whether it is pinned. Order placement never reads the budget (SR-096).
+
+**`DiskPressureChanged`** (bus topic `{env}.recorder.disk_pressure`, consumed by `RecordingPolicy`
+E16-T02 and `RetentionManager` E16-T06) is published after the system event on every change of
+`level` or `accelerate_retention`. Hot-path readers use the plain `DiskBudget.level` /
+`DiskBudget.accelerate_retention` (C-2.20), never the bus.
+
+```python
+class DiskPressureLevel(IntEnum):              # NORMAL 0, WARN 1, AUTOSTOP 2, HALT 3
+class DiskPressureChanged(BaseModel):          # frozen, extra="forbid"
+    level: DiskPressureLevel
+    previous: DiskPressureLevel
+    accelerate_retention: bool
+    used_bytes: int        # recorded bytes (QuestDB + Parquet)
+    cap_bytes: int         # CV_DISK_CAP_GB
+    free_bytes: int        # recording volume
+    total_bytes: int
+    ts_event: TsUs
+```
+
 ### 13.5 Recorder architecture
 
 ```mermaid

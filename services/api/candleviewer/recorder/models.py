@@ -1,13 +1,15 @@
-"""Domain models for the recorder module (M11) — E16-T02 recording policy.
+"""Domain models for the recorder module (M11) — E16-T02 recording policy, E16-T07 disk budget.
 
-`RecorderSetChanged` is the bus contract in `docs/plan/24-internal-schemas.md` §13.1.
+`RecorderSetChanged` is the bus contract in `docs/plan/24-internal-schemas.md` §13.1 and
+`DiskPressureChanged` the one in §13.4.1; `StorageUsage` mirrors the OpenAPI schema.
 """
 
 from __future__ import annotations
 
+from enum import IntEnum
 from typing import Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 Reason = Literal["manual", "position_open", "chart_open"]
 
@@ -72,3 +74,62 @@ class RecorderCapRefused(BaseModel):
     symbol: str
     reason: Reason
     ts_event: int
+
+
+class DiskPressureLevel(IntEnum):
+    """The E16-T07 ladder (24-internal-schemas §13.4.1): a plain enum, never an interpreter."""
+
+    NORMAL = 0
+    WARN = 1
+    AUTOSTOP = 2
+    HALT = 3
+
+
+class DiskPressureChanged(BaseModel):
+    """Published on `{env}.recorder.disk_pressure` on every level / acceleration change."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    level: DiskPressureLevel
+    previous: DiskPressureLevel
+    accelerate_retention: bool
+    used_bytes: int = Field(ge=0)
+    cap_bytes: int = Field(gt=0)
+    free_bytes: int = Field(ge=0)
+    total_bytes: int = Field(gt=0)
+    ts_event: int
+
+
+TierName = Literal["questdb", "parquet", "postgres"]
+
+
+class TierUsage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    tier: TierName
+    used_bytes: int
+    retention_days: int | None
+
+
+class SymbolUsage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    symbol: str = Field(pattern=r"^[A-Z0-9]{2,20}USDT$")
+    used_bytes: int
+    daily_growth_bytes: int
+    pinned: bool
+
+
+class StorageUsage(BaseModel):
+    """OpenAPI `StorageUsage` (`GET /recording/storage`, served by E16-T08) from the last sample."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    disk_total_bytes: int
+    disk_used_bytes: int
+    disk_free_bytes: int
+    projected_full_at: AwareDatetime | None
+    daily_growth_bytes: int
+    tiers: tuple[TierUsage, ...]
+    symbols: tuple[SymbolUsage, ...]
+    generated_at: AwareDatetime
