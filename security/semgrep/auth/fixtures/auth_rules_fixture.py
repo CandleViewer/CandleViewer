@@ -202,6 +202,11 @@ async def delete_layout_ok():
     return await svc.delete()
 
 
+@router.delete("/workspaces/{workspaceId}/share")  # ruleid: audit-write-required
+async def delete_ws_share_bad():
+    return await svc.delete()
+
+
 @router.delete("/drawings/batch")  # ruleid: audit-write-required
 async def delete_batch_bad():
     return await svc.delete()
@@ -210,6 +215,21 @@ async def delete_batch_bad():
 # --- audit-write-required-route-scope -------------------------------------
 @admin.delete("/workspaces/{workspaceId}")  # ruleid: audit-write-required-route-scope
 async def admin_delete_workspace_bad(workspace_id):
+    return await svc.delete(workspace_id)
+
+
+@admin.post("/drawings")  # ruleid: audit-write-required-route-scope
+async def admin_post_drawing_bad(body):
+    return await svc.post(body)
+
+
+@admin.put("/drawings/{drawingId}")  # ruleid: audit-write-required-route-scope
+async def admin_put_drawing_bad(body):
+    return await svc.put(body)
+
+
+@admin.delete("/workspaces/{workspaceId}")  # ok: audit-write-required-route-scope
+async def admin_delete_workspace_audited_ok(workspace_id):
     await _audit("workspace.delete")
     return await svc.delete(workspace_id)
 

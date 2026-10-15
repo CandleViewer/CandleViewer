@@ -61,19 +61,22 @@ rules:
       different endpoint: add an audit call or get it classified.
     metadata:
       sr: SR-112
-    pattern-either:
-      - pattern: |
-          @$R.post("=~/^/(drawings|drawings/batch|workspaces|workspaces/[{]workspaceId[}]/layouts)$/", ...)
-          async def $F(...):
-              ...
-      - pattern: |
-          @$R.put("=~/^/(drawings/[{]drawingId[}]|workspaces/[{]workspaceId[}]|workspaces/[{]workspaceId[}]/layouts/[{]layoutId[}])$/", ...)
-          async def $F(...):
-              ...
-      - pattern: |
-          @$R.delete("=~/^/(drawings/[{]drawingId[}]|workspaces/[{]workspaceId[}]|workspaces/[{]workspaceId[}]/layouts/[{]layoutId[}])$/", ...)
-          async def $F(...):
-              ...
+    patterns:
+      # keep identical to the audit-write-required pattern-not entries above
+      - pattern-either:
+          - pattern: |
+              @$R.post("=~/^/(drawings|drawings/batch|workspaces|workspaces/[{]workspaceId[}]/layouts)$/", ...)
+              async def $F(...):
+                  ...
+          - pattern: |
+              @$R.put("=~/^/(drawings/[{]drawingId[}]|workspaces/[{]workspaceId[}]|workspaces/[{]workspaceId[}]/layouts/[{]layoutId[}])$/", ...)
+              async def $F(...):
+                  ...
+          - pattern: |
+              @$R.delete("=~/^/(drawings/[{]drawingId[}]|workspaces/[{]workspaceId[}]|workspaces/[{]workspaceId[}]/layouts/[{]layoutId[}])$/", ...)
+              async def $F(...):
+                  ...
+      - pattern-not-regex: "(_audit\\(|audit_\\w+\\(|\\.emit\\()"
     paths:
       exclude:
         - "**/tests/**"
