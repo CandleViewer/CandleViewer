@@ -1342,10 +1342,37 @@ def _failures() -> float:
     return REGISTRY.get_sample_value("audit_chain_verification_failures_total") or 0.0
 
 
+def test_verify_over_the_entry_cap_logs_the_entry_id_and_the_class_only() -> None:
+    svc = _FakeAuditService()
+
+    async def stopping(*_a: Any, **_kw: Any) -> VerifyResult:
+        raise AuditEntryTooLarge(42)
+
+    svc.query_service.run_verify = stopping  # type: ignore[method-assign]  # fault injection
+    with capture_logs() as logs:
+        r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
+    assert r.status_code == 503
+    assert [e for e in logs if e["event"] == "audit.verify.entry_too_large"] == [
+        {
+            "event": "audit.verify.entry_too_large",
+            "entry_id": 42,
+            "error": "AuditEntryTooLarge",
+            "log_level": "warning",
+        }
+    ]
+
+
 @pytest.mark.parametrize("before", [1.0, 0.0])
 @pytest.mark.parametrize("full", [True, False])
 @pytest.mark.parametrize(
-    "error", [TimeoutError(), ChainHasherBusy(), AuditReadFailed("08006"), RuntimeError("x")]
+    "error",
+    [
+        TimeoutError(),
+        ChainHasherBusy(),
+        AuditReadFailed("08006"),
+        RuntimeError("x"),
+        AuditEntryTooLarge(42),  # an entry over the cap can neither freeze a 1 nor clear a 0
+    ],
 )
 def test_verify_stop_leaves_the_chain_state_unknown_only_for_a_full_range(
     error: Exception, full: bool, before: float
