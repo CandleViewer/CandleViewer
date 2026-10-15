@@ -97,6 +97,7 @@ from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import access_token_expires_at
+from candleviewer.auth.testnet_clock import build_test_clock
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import export_bars_metrics
 from candleviewer.bars.reader import BarReader, tape_time_bar_reader
@@ -836,6 +837,8 @@ def create_app(
     own ticket); wiring a real sink here is a one-line change once it lands.
     """
     resolved = settings or get_settings()
+    # #2086: the keyless-testnet server test clock; None (real UTC) unless CV_TEST_CLOCK is on.
+    auth_clock = auth_clock or build_test_clock(resolved)
     spec = _cached_spec()
     app = FastAPI(
         title="CandleViewer API",

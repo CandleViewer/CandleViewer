@@ -112,6 +112,8 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="forbid",
         frozen=True,
+        # #2086: a refused setting never echoes the raw input (it holds CV_BYBIT_API_KEY when set).
+        hide_input_in_errors=True,
     )
 
     environment: Environment = Environment.DEMO
@@ -196,6 +198,11 @@ class Settings(BaseSettings):
     # value to `auth_csrf_previous_key_hex` (verify-only) for one refresh lifetime.
     auth_csrf_key_hex: SecretStr | None = None
     auth_csrf_previous_key_hex: SecretStr | None = None
+    # #2086: server test clock for the seeded e2e stack (`candleviewer.auth.testnet_clock`).
+    # Auth time = UTC + the offset in `CV_TEST_CLOCK_FILE`. Both are set together, and only on
+    # testnet with no exchange key; anything else refuses startup (E16-FR-11).
+    test_clock: bool = False
+    test_clock_file: str | None = None
 
     # E03-T10: bounds `pg_advisory_lock` acquisition in the boot-time
     # migration runner (`candleviewer.migrations.boot`). A deadlocked
@@ -372,6 +379,27 @@ class Settings(BaseSettings):
         if root.is_symlink():
             raise ValueError("CV_BARS_STATE_ROOT must not be a symlink")
         object.__setattr__(self, "bars_state_root", str(root.resolve()))
+        return self
+
+    def test_clock_refusal(self) -> str | None:
+        """#2086: why the server test clock may not run here, or None on a keyless testnet."""
+        if self.environment is not Environment.TESTNET:
+            return "CV_TEST_CLOCK is refused unless CV_ENVIRONMENT=testnet"
+        if self.bybit_api_key is not None or self.bybit_api_secret is not None:
+            return "CV_TEST_CLOCK is refused while an exchange key (CV_BYBIT_API_*) is configured"
+        return None
+
+    @model_validator(mode="after")
+    def _refuse_test_clock_outside_keyless_testnet(self) -> Settings:
+        """#2086 Q1 (E16-FR-11, E49 T-E1): the test clock moves auth time, so live, demo or a
+        configured exchange key refuses startup before any module starts."""
+        if not self.test_clock and not self.test_clock_file:
+            return self
+        refusal = self.test_clock_refusal()
+        if refusal is not None:
+            raise ValueError(refusal)
+        if not (self.test_clock and self.test_clock_file):
+            raise ValueError("CV_TEST_CLOCK and CV_TEST_CLOCK_FILE must be set together")
         return self
 
     @field_validator("bind_host")
