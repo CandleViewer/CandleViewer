@@ -226,6 +226,12 @@ class Settings(BaseSettings):
     audit_read_flush_seconds: float = Field(default=300.0, gt=0.0)
     audit_budget_tracked_users: int = Field(default=1024, ge=64)
     audit_inflight_writes: int = Field(default=64, ge=1)
+    # Structure one Owner audit page serves, as the `{`, `[` and `,` of its states'
+    # renderings; past it the remaining states are withheld (`detail.elided`). The page is
+    # serialized on the event loop at a cost per value (C-2.17), so at most twice the
+    # default. At least two states at the 16 Ki-character field cap, so a one-row page
+    # always serves its row's states.
+    audit_page_structure_budget: int = Field(default=50_000, ge=32_768, le=100_000)
 
     # E27-T02 / e27-kek.md §4: KEK source vocabulary. `host-keychain` is a deprecated alias
     # of `handle` for one release. The KEK itself never enters Settings or os.environ.
