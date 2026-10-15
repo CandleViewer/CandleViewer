@@ -1334,15 +1334,17 @@ def _failures() -> float:
     return REGISTRY.get_sample_value("audit_chain_verification_failures_total") or 0.0
 
 
+@pytest.mark.parametrize("before", [1.0, 0.0])
 @pytest.mark.parametrize("full", [True, False])
 @pytest.mark.parametrize(
     "error", [TimeoutError(), ChainHasherBusy(), AuditReadFailed("08006"), RuntimeError("x")]
 )
 def test_verify_stop_leaves_the_chain_state_unknown_only_for_a_full_range(
-    error: Exception, full: bool
+    error: Exception, full: bool, before: float
 ) -> None:
-    """Review of #2462: a full-range run that stops sets the gauge to NaN, so an old 1 cannot
-    stand while such runs keep stopping; a partial range leaves it as it is."""
+    """Reviews of #2462: a full-range run that stops takes a 1 to NaN, so an old 1 cannot
+    stand while such runs keep stopping, and keeps a known break (0); a partial range leaves
+    the gauge as it is."""
     svc = _FakeAuditService()
 
     async def plan(**_kw: Any) -> VerifyPlan:
@@ -1353,11 +1355,11 @@ def test_verify_stop_leaves_the_chain_state_unknown_only_for_a_full_range(
 
     svc.query_service.plan_verify = plan  # type: ignore[method-assign]  # fault injection
     svc.query_service.run_verify = stopping  # type: ignore[method-assign]  # fault injection
-    cv_audit_chain_verified_state.set(1)
+    cv_audit_chain_verified_state.set(before)
     r = TestClient(_app(svc, _FakeResolver(_owner()))).post("/admin/audit/verify", json={})
     state = REGISTRY.get_sample_value("cv_audit_chain_verified_state")
     assert r.status_code == 503 and state is not None
-    assert math.isnan(state) if full else state == 1
+    assert math.isnan(state) if full and before == 1 else state == before
 
 
 def test_verify_break_is_a_critical_record_counted_and_the_chain_state_is_zero() -> None:

@@ -604,8 +604,8 @@ def make_audit_router(
         records go straight to the writer, never through the budget; one that cannot be
         written makes the call 503 and serves nothing. A run that stops early is recorded
         as failure/warning with the reason it stopped (`internal_error` for anything
-        unexpected, also 503), and when planned from genesis to the head it leaves the chain
-        gauge unknown (NaN); a cancellation propagates."""
+        unexpected, also 503), and a full-range stop turns a chain gauge of 1 into NaN (0
+        stays until a full-range run passes); a cancellation propagates."""
         emit, fields = service.writer.emit, _request_fields(principal)
         span = {"from_id": plan.from_id, "to_id": plan.to_id}
         if not await write_verify_record(

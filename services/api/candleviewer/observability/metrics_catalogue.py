@@ -2151,7 +2151,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "state",
         (),
         "Audit chain: 1 verified from genesis to the head, 0 broken, NaN unknown "
-        "(not checked, or a full run stopped).",
+        "(not checked yet); a full-range stop turns 1 into NaN; 0 stays until a "
+        "full-range run passes.",
         "== 0 pages once its alert rule lands (#2465); a partial range only ever sets 0",
         _L,
         "E42",

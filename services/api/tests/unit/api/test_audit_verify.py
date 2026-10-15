@@ -12,6 +12,7 @@ from prometheus_client import REGISTRY
 
 from candleviewer.api import audit_verify as mod
 from candleviewer.audit.models import AuditOutcome, ChainBreakKind, Severity, VerifyResult
+from candleviewer.observability.audit_query_metrics import cv_audit_chain_verified_state
 
 
 def _result(*, verified: bool, full: bool = False) -> VerifyResult:
@@ -46,14 +47,25 @@ def test_gauge_rule_only_a_genesis_to_head_run_sets_one() -> None:
     assert _state() == 0
 
 
-def test_gauge_rule_a_full_range_run_that_stops_is_unknown() -> None:
-    """Review of #2462: a stop must not leave an old 1 standing."""
-    mod.observe_verify(_result(verified=True, full=True))
-    mod.observe_stop(full_chain=False)  # a partial range leaves the gauge as it is
-    assert _state() == 1
-    mod.observe_stop(full_chain=True)
+@pytest.mark.parametrize(
+    ("before", "full", "after"),
+    [
+        (1.0, True, math.nan),  # verified, then a full run stops: unknown
+        (0.0, True, 0.0),  # a known break is kept, so its alert keeps firing
+        (math.nan, True, math.nan),
+        (1.0, False, 1.0),  # a partial range that stops changes nothing
+        (0.0, False, 0.0),
+    ],
+)
+def test_gauge_rule_a_stop_takes_only_a_one_to_unknown(
+    before: float, full: bool, after: float
+) -> None:
+    """Reviews of #2462: a stop must not leave an old 1 standing, and must never clear a 0."""
+    cv_audit_chain_verified_state.set(before)
+    mod.observe_stop(full_chain=full)
     state = _state()
-    assert state is not None and math.isnan(state)
+    assert state is not None
+    assert math.isnan(state) if math.isnan(after) else state == after
 
 
 def test_result_record_is_critical_with_kind_at_id_on_a_break() -> None:
