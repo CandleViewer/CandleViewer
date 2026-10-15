@@ -79,7 +79,7 @@ from candleviewer.audit.models import (
 from candleviewer.audit.query import VERIFY_MAX_SPAN, VerifyPlan, VerifyRangeBeyondHead
 from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.observability.audit_query_metrics import cv_audit_query_duration_seconds
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
 
 
 def _log() -> Any:
@@ -250,10 +250,12 @@ def _unavailable(detail: str = "audit record could not be written") -> JSONRespo
 
 
 #: Why a verify stopped early: the record's reason and the 503 detail. A store error carries
-#: only its SQLSTATE and is logged where it is raised.
+#: only its SQLSTATE and is logged where it is raised. An entry over the per-entry cap is
+#: named in the reason, `entry_too_large@<id>`: never a pass, as it was not checked.
 _VERIFY_STOPS: tuple[tuple[type[Exception], str, str], ...] = (
     (TimeoutError, "timeout", "audit verify exceeded its time budget"),
     (ChainHasherBusy, "hasher_busy", "audit read capacity reached"),
+    (AuditEntryTooLarge, "entry_too_large", "an audit entry is over the verify size cap"),
     (StorageTierUnavailable, "store_unavailable", "audit store unavailable"),
 )
 _VERIFY_STOP_ERRORS = tuple(kind for kind, _, _ in _VERIFY_STOPS)
@@ -262,7 +264,10 @@ _INFO, _WARNING = Severity.INFO, Severity.WARNING
 
 
 def _verify_stop(exc: Exception) -> tuple[str, str]:
-    return next((reason, detail) for kind, reason, detail in _VERIFY_STOPS if isinstance(exc, kind))
+    reason, detail = next((r, d) for kind, r, d in _VERIFY_STOPS if isinstance(exc, kind))
+    if isinstance(exc, AuditEntryTooLarge):
+        reason = f"{reason}@{exc.entry_id}"
+    return reason, detail
 
 
 def _budget_actor(principal: AuditPrincipal) -> BudgetActor:

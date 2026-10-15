@@ -27,6 +27,7 @@ from candleviewer.audit.query import (
     AuditQueryService,
     VerifyRangeBeyondHead,
 )
+from candleviewer.storage.errors import AuditEntryTooLarge
 
 _ME, _OTHER = str(uuid.UUID(int=1)), str(uuid.UUID(int=2))
 
@@ -757,6 +758,34 @@ async def test_verify_after_a_byte_cut_asks_for_twice_the_rows_that_fit(
     assert (result.verified, result.entries_checked) == (True, 20)
     # Ids 1-4 (cut after the blob), 5-12 (8: twice 4, and full), then 13-20 (back to 10).
     assert repo.verify_calls == [(0, 20, 10), (4, 20, 8), (12, 20, 10)]
+
+
+async def test_verify_stops_at_an_entry_over_the_cap_after_the_rows_before_it(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Review of #2464: an entry over the per-entry cap ends the batch before it, and the
+    read that starts with it names it, so the run stops fail-closed; a break before it is
+    still found first."""
+    await _seed(repo, 3, clock)  # ids 1-3
+    await repo.insert(
+        {
+            "record_id": "00000000-0000-4000-9000-000000000000",
+            "action": "auth.login",
+            "actor_label": "u",
+            "outcome": "success",
+            "severity": "info",
+            "after_state": {"blob": "x" * 5000},  # id 4: over the cap
+            "event_ts": clock().isoformat(),
+        }
+    )
+    repo.max_entry = 1000
+    with pytest.raises(AuditEntryTooLarge) as err:
+        await AuditQueryService(repo).verify(batch_size=10)
+    assert err.value.entry_id == 4
+    assert repo.verify_calls == [(0, 4, 10), (3, 4, 6)]  # ids 1-3, then the read naming 4
+    repo.rows[1]["reason"] = "edited"  # id 2 no longer matches its hash
+    result = await AuditQueryService(repo).verify(batch_size=10)
+    assert (result.first_bad_id, result.kind) == (2, ChainBreakKind.ENTRY_HASH_MISMATCH)
 
 
 async def test_verify_a_range_inside_an_id_gap_checks_nothing(

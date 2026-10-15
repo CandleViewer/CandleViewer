@@ -1,8 +1,9 @@
 """Integration: verify's batch statement on Postgres 16 (#2464). A batch stops before a row
 once the renderings before that row reach the byte budget, so it holds at most the budget
 plus one entry: an entry over the whole budget comes alone when it is first, and ends the
-batch it lands in otherwise; the walk goes on past short batches. Entries go in through the
-repository's own `insert`.
+batch it lands in otherwise; the walk goes on past short batches. An entry over the per-entry
+cap is never fetched: the read that starts with it names it, and a run stops there. Entries
+go in through the repository's own `insert`.
 
 Not run locally (no docker); exercised by the CI integration job (testcontainers). Its
 statements were also run by hand on a scratch Postgres 16.4 before review.
@@ -23,6 +24,7 @@ import pytest
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.audit.query import AuditQueryService
+from candleviewer.storage.errors import AuditEntryTooLarge
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -112,3 +114,18 @@ async def test_an_entry_over_the_budget_comes_alone_first_and_ends_a_batch_other
     assert _ids(await fetch(after_id=big, to_id=last, limit=10)) == [base + 4, last]
     result = await AuditQueryService(repo).verify(from_id=base + 1, to_id=last, batch_size=10)
     assert (result.verified, result.entries_checked) == (True, 5)
+
+
+async def test_an_entry_over_the_cap_is_never_fetched_and_stops_the_run(
+    relational: SqlAlchemyRelationalRepository,
+) -> None:
+    repo = SqlAlchemyAuditRepository(relational, verify_max_entry_bytes=2000)
+    base = await _append(repo, [10, 10, 5000, 10])  # the third is over the cap
+    big, last = base + 3, base + 4
+    batch = await repo.fetch_verify_batch(after_id=base, to_id=last, limit=10)
+    assert _ids(batch) == [base + 1, base + 2]  # ends before it
+    with pytest.raises(AuditEntryTooLarge) as err:
+        await repo.fetch_verify_batch(after_id=base + 2, to_id=last, limit=10)
+    assert err.value.entry_id == big
+    with pytest.raises(AuditEntryTooLarge):
+        await AuditQueryService(repo).verify(from_id=base + 1, to_id=last, batch_size=10)

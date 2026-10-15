@@ -14,9 +14,10 @@ import pytest
 import sqlalchemy as sa
 from structlog.testing import capture_logs
 
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
 from candleviewer.storage.repositories.audit_sqlalchemy import (
     VERIFY_BATCH_MAX_BYTES,
+    VERIFY_MAX_ENTRY_BYTES,
     AuditReadFailed,
     SqlAlchemyAuditRepository,
 )
@@ -63,7 +64,7 @@ def _repo(rel: _Rel) -> SqlAlchemyAuditRepository:
 
 
 async def test_batch_is_a_keyset_walk_on_the_id_returned_as_tuples() -> None:
-    rel = _Rel(rows=[[3, "p", "e", "x"]])
+    rel = _Rel(rows=[[3, "p", "e", "x", 1]])  # the byte count `n` comes last, then goes
     rows = await _repo(rel).fetch_verify_batch(after_id=2, to_id=9, limit=10_000)
     assert rows == [(3, "p", "e", "x")] and isinstance(rows[0], tuple)
     (budget, budget_params), (read, params) = rel.calls
@@ -74,10 +75,33 @@ async def test_batch_is_a_keyset_walk_on_the_id_returned_as_tuples() -> None:
         "to_id": 9,
         "limit": 10_000,
         "max_bytes": VERIFY_BATCH_MAX_BYTES,
+        "max_entry": VERIFY_MAX_ENTRY_BYTES,
     }
     # The byte budget: bytes rendered before a row, so the first row is always admitted.
-    assert "sum(r.n) OVER (ORDER BY r.id) - r.n AS before" in read
-    assert "WHERE w.before < :max_bytes ORDER BY w.id" in read
+    assert "sum(r.n) OVER o - r.n AS before" in read and "WINDOW o AS (ORDER BY r.id)" in read
+    assert "WHERE w.before < :max_bytes AND (w.big = 0 OR w.k = 1)" in read
+
+
+@pytest.mark.parametrize("n", [4_097, 9_000_000])
+async def test_an_entry_over_the_cap_is_named_and_never_returned(n: int) -> None:
+    """Review of #2464: one entry is capped too. One over the cap only ever comes first in a
+    batch, without its renderings, and the read names it: the run stops, never a pass."""
+    rel = _Rel(rows=[[7, "p", "e", None, n]])
+    repo = SqlAlchemyAuditRepository(rel, verify_max_entry_bytes=4_096)  # type: ignore[arg-type]
+    with pytest.raises(AuditEntryTooLarge) as err:
+        await repo.fetch_verify_batch(after_id=6, to_id=9, limit=10)
+    assert err.value.entry_id == 7 and rel.calls[1][1] == {
+        "after_id": 6,
+        "to_id": 9,
+        "limit": 10,
+        "max_bytes": VERIFY_BATCH_MAX_BYTES,
+        "max_entry": 4_096,
+    }
+    read = rel.calls[1][0]
+    assert "count(*) FILTER (WHERE r.n > :max_entry) OVER o AS big" in read  # ends a batch
+    assert ") f ON w.n <= :max_entry WHERE" in read  # its renderings stay in the database
+    rel.rows = [[7, "p", "e", "x", 4_096]]  # at the cap: fetched
+    assert await repo.fetch_verify_batch(after_id=6, to_id=9, limit=10) == [(7, "p", "e", "x")]
 
 
 async def test_anchor_is_the_greatest_id_below_the_range() -> None:

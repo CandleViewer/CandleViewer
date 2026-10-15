@@ -23,7 +23,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, ENUM, INET, TIMESTAMP, UUID
 
 from candleviewer.observability.audit_query_metrics import cv_audit_query_timeouts_total
 from candleviewer.settings import Settings
-from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.errors import AuditEntryTooLarge, StorageTierUnavailable
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -99,8 +99,12 @@ _CHECKPOINTS_SQL = sa.text(
     "LEFT JOIN audit_log a ON a.id = c.head_id WHERE c.head_id <= :to_id ORDER BY c.head_id"
 )
 #: Rendered UTF-8 bytes per verify batch: a batch stops before a row once the rows before it
-#: reach this, so it holds at most the budget plus one entry (the first row always goes in).
+#: reach this, so it holds at most the budget plus one entry (the first row always goes in),
+#: and each entry is capped at `VERIFY_MAX_ENTRY_BYTES`.
 VERIFY_BATCH_MAX_BYTES = 8 * 1024 * 1024
+#: The `audit_verify_max_entry_bytes` default: the most rendered UTF-8 bytes one entry may
+#: have for verify to fetch it. A larger entry ends a run with `AuditEntryTooLarge`.
+VERIFY_MAX_ENTRY_BYTES: int = Settings.model_fields["audit_verify_max_entry_bytes"].default
 #: Default per-statement budget for verify's reads (the head, the anchor, each batch),
 #: client-side and as `statement_timeout`: the `audit_verify_statement_timeout_ms` default, a
 #: backstop far above one keyset batch. An overrun is 503.
@@ -163,12 +167,13 @@ def _sqlstate(exc: sa.exc.DBAPIError) -> str | None:
 
 
 #: A keyset batch of at most `:limit` rows, cut once the renderings before a row reach
-#: `:max_bytes` (UTF-8): the first row is always admitted, so the walk always moves on.
+#: `:max_bytes` (UTF-8): the first row is always admitted, so the walk always moves on. A row
+#: over `:max_entry` bytes ends the batch before it, so it only ever comes first, and then
+#: without its renderings (NULL); each row carries its byte count `n` last.
 _VERIFY_BATCH_SQL = sa.text(
-    "SELECT id, prev_hash, entry_hash, actor_user_id, actor_label, actor_ip, session_id, "
-    "action, object_kind, object_id, outcome, severity, reason, before_state, after_state, "
-    "request_id, env, event_ts FROM ("
-    "SELECT r.*, sum(r.n) OVER (ORDER BY r.id) - r.n AS before FROM ("
+    "SELECT w.id, w.prev_hash, w.entry_hash, f.*, w.n FROM ("
+    "SELECT r.*, sum(r.n) OVER o - r.n AS before, row_number() OVER o AS k, "
+    "count(*) FILTER (WHERE r.n > :max_entry) OVER o AS big FROM ("
     "SELECT q.*, octet_length(concat(actor_user_id, actor_label, actor_ip, session_id, "
     "action, object_kind, object_id, outcome, severity, reason, before_state, after_state, "
     "request_id, env, event_ts)) AS n FROM ("
@@ -179,7 +184,11 @@ _VERIFY_BATCH_SQL = sa.text(
     "request_id::text AS request_id, env::text AS env, "
     "to_char(event_ts AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.USOF') AS event_ts "
     "FROM audit_log WHERE id > :after_id AND id <= :to_id ORDER BY id ASC LIMIT :limit"
-    ") q) r) w WHERE w.before < :max_bytes ORDER BY w.id"
+    ") q) r WINDOW o AS (ORDER BY r.id)) w LEFT JOIN LATERAL (SELECT w.actor_user_id, "
+    "w.actor_label, w.actor_ip, w.session_id, w.action, w.object_kind, w.object_id, w.outcome, "
+    "w.severity, w.reason, w.before_state, w.after_state, w.request_id, w.env, w.event_ts"
+    ") f ON w.n <= :max_entry WHERE w.before < :max_bytes AND (w.big = 0 OR w.k = 1) "
+    "ORDER BY w.id"
 )
 
 #: For given rows, by id: the renderings the trigger hashed (as `_VERIFY_BATCH_SQL`, each cut
@@ -305,12 +314,14 @@ class SqlAlchemyAuditRepository:
         read_slots: int = DEFAULT_READ_SLOTS,
         verify_read_timeout_ms: int = VERIFY_READ_TIMEOUT_MS,
         verify_batch_max_bytes: int = VERIFY_BATCH_MAX_BYTES,
+        verify_max_entry_bytes: int = VERIFY_MAX_ENTRY_BYTES,
     ) -> None:
         if read_slots < 2:  # the Owner's slot, and at least one for everyone else
             raise ValueError("read_slots must be at least 2")
         self._relational = relational
         self._verify_timeout_ms = verify_read_timeout_ms
         self._batch_bytes = verify_batch_max_bytes
+        self._entry_bytes = verify_max_entry_bytes
         self._read_slots = read_slots
         self._reads = 0
         self._shared_reads = 0  # reads that are not the Owner's
@@ -432,8 +443,12 @@ class SqlAlchemyAuditRepository:
         self, *, after_id: int, to_id: int, limit: int
     ) -> list[tuple[Any, ...]]:
         params = {"after_id": after_id, "to_id": to_id, "limit": limit}
-        params["max_bytes"] = self._batch_bytes
-        return await self._bounded_read(_VERIFY_BATCH_SQL, params)
+        params.update(max_bytes=self._batch_bytes, max_entry=self._entry_bytes)
+        rows = await self._bounded_read(_VERIFY_BATCH_SQL, params)
+        big = next((row[0] for row in rows if row[-1] > self._entry_bytes), None)
+        if big is not None:  # only ever the first row, its renderings never fetched
+            raise AuditEntryTooLarge(int(big))
+        return [row[:-1] for row in rows]
 
     async def read_head(self) -> tuple[int, str] | None:
         rows = await self._bounded_read(_HEAD_SQL, {})

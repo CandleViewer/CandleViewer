@@ -50,6 +50,7 @@ from candleviewer.observability.audit_query_metrics import (
     cv_audit_chain_verified_state,
 )
 from candleviewer.settings import Settings
+from candleviewer.storage.errors import AuditEntryTooLarge
 from candleviewer.storage.repositories.audit_sqlalchemy import AuditReadBusy, AuditReadFailed
 
 _TS = datetime(2026, 10, 1, 12, 0, 0, 123456, tzinfo=UTC)
@@ -418,7 +419,14 @@ def test_verify_audit_chain_checks_the_caller_before_reading_the_body(
 
 @pytest.mark.parametrize("stage", ["plan_verify", "run_verify"])
 @pytest.mark.parametrize(
-    "error", [TimeoutError(), AuditReadFailed("08006"), AuditReadBusy(), ChainHasherBusy()]
+    "error",
+    [
+        TimeoutError(),
+        AuditReadFailed("08006"),
+        AuditReadBusy(),
+        ChainHasherBusy(),
+        AuditEntryTooLarge(42),
+    ],
 )
 def test_verify_audit_chain_store_failure_is_503_without_a_result(
     error: Exception, stage: str
@@ -433,7 +441,11 @@ def test_verify_audit_chain_store_failure_is_503_without_a_result(
     assert (r.status_code, r.json()["code"]) == (503, "store_unavailable")
     assert "verified" not in r.json() and "08006" not in r.text
     # A run that stopped is recorded with why; nothing started when the plan failed.
-    why = {TimeoutError: "timeout", ChainHasherBusy: "hasher_busy"}.get(type(error))
+    why = {
+        TimeoutError: "timeout",
+        ChainHasherBusy: "hasher_busy",
+        AuditEntryTooLarge: "entry_too_large@42",  # names the entry it could not check
+    }.get(type(error))
     span = {"from_id": 1, "to_id": 1}
     stopped = [("success", "info", "started", span)]
     stopped.append(("failure", "warning", why or "store_unavailable", span))
