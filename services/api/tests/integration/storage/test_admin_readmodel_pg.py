@@ -13,6 +13,7 @@ import itertools
 import os
 import subprocess
 import sys
+import time
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,8 +21,11 @@ from uuid import UUID
 
 import psycopg
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.exc import DBAPIError
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.storage.repositories import admin_readmodel_sqlalchemy as repo
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import (
     AccountTotals,
     SqlAlchemyAdminCounts,
@@ -187,3 +191,22 @@ async def test_subaccounts_in_use_is_the_busiest_main_in_the_bound_environment(
     relational: SqlAlchemyRelationalRepository, env: str, used: int
 ) -> None:
     assert await SqlAlchemyAdminCounts(relational, env=env).subaccounts_in_use() == used
+
+
+async def _pooled_statement_timeout(relational: SqlAlchemyRelationalRepository) -> str:
+    async with relational._engine.connect() as conn:  # a pooled connection, outside any read
+        return str((await conn.execute(sa.text("SHOW statement_timeout"))).scalar())
+
+
+async def test_a_read_is_cut_near_read_timeout_and_leaves_the_pooled_default(
+    relational: SqlAlchemyRelationalRepository,
+) -> None:
+    """Pins the per-read server cap: the transaction-local timeout (not lock_timeout, not a
+    session setting) cuts a slow statement near READ_TIMEOUT, far below the 5 s sleep and the
+    30 s repository default, and the pooled connection keeps its own default afterwards."""
+    before = await _pooled_statement_timeout(relational)
+    started = time.monotonic()
+    with pytest.raises(DBAPIError, match="statement timeout"):
+        await SqlAlchemyAdminCounts(relational, env="demo")._row(sa.text("SELECT pg_sleep(5)"))
+    assert time.monotonic() - started < 2.5
+    assert repo.READ_TIMEOUT == "1s" and await _pooled_statement_timeout(relational) == before
