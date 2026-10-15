@@ -43,6 +43,9 @@ class CountsPort(Protocol):
 
 
 class SubaccountPort(Protocol):
+    """Bound to the process environment at construction (C-2.11): demo or testnet sub-accounts
+    never count against a live cap, and the reverse."""
+
     async def subaccounts_in_use(self) -> int:
         """Most non-deleted sub-accounts under any one main account (the cap is per main)."""
 
@@ -76,8 +79,9 @@ class StorageSnapshot:
     daily_growth_bytes: int | None
     days_until_full: float | None
     symbols: tuple[SymbolStorage, ...]
-    #: The recorder's disk cap; headroom is `min(cap - used, free)`. `None`: no cap, only `free`.
-    cap_bytes: int | None = None
+    #: The recorder's disk cap (`BudgetConfig.cap_bytes`, mandatory); headroom is
+    #: `min(cap - used, free)`.
+    cap_bytes: int
 
 
 class RecorderPort(Protocol):
