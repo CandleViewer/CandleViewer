@@ -38,7 +38,9 @@ class _Resolver:
         return self.snap if request.headers.get("authorization") else None
 
 
-async def _setup(role: str = "owner") -> tuple[TestClient, _Emitter, Any, Any, FakeRepo, Any]:
+async def _setup(
+    role: str = "owner", audit_ok: bool = True
+) -> tuple[TestClient, _Emitter, Any, Any, FakeRepo, Any]:
     c, em, seed, clock, user = await _build()
     repo = FakeRepo()
     svc = InviteService(repo, FakeHasher(), FakeMfa(), clock=clock)  # type: ignore[arg-type]  # fakes
@@ -47,7 +49,8 @@ async def _setup(role: str = "owner") -> tuple[TestClient, _Emitter, Any, Any, F
         roles=frozenset({role}),
         permissions=frozenset({Permission.USERS_WRITE}) if role == "owner" else frozenset(),
     )
-    c.app.include_router(make_invites_router(_InvAuth(svc), em, _Resolver(snap)))  # type: ignore[attr-defined]
+    router = make_invites_router(_InvAuth(svc), em, _Resolver(snap), audit_ready=lambda: audit_ok)
+    c.app.include_router(router)  # type: ignore[attr-defined]
     return c, em, seed, clock, repo, svc
 
 
@@ -81,6 +84,14 @@ async def test_non_owner_forbidden_on_create() -> None:
     _elevate(c, seed, clock)
     r = c.post("/users", headers=_H, json=_BODY)
     assert r.status_code in (403,) and not repo.rows
+
+
+async def test_invite_actions_refused_with_503_before_any_change_when_audit_unavailable() -> None:
+    c, em, seed, clock, repo, _ = await _setup(audit_ok=False)
+    _elevate(c, seed, clock)
+    assert c.post("/users", headers=_H, json=_BODY).status_code == 503
+    assert c.post(f"/invites/{'t' * 43}", json={"password": GOOD_PW}).status_code == 503
+    assert not repo.rows and "users.invited" not in em.actions()
 
 
 async def test_create_rejects_owner_role_and_duplicate() -> None:

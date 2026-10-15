@@ -109,7 +109,7 @@ def _record(user: uuid.UUID) -> SessionRecord:
 
 
 async def _build(
-    owner_role: bool = True, positions: Any = None
+    owner_role: bool = True, positions: Any = None, audit_ok: bool = True
 ) -> tuple[TestClient, _Emitter, bytes, _Clock, uuid.UUID]:
     clock, repo, enc = _Clock(), FakeMfaRepository(), TotpEncryptor(os.urandom(32))
     mfa = MfaService(repo, enc, recovery_code_key=b"k" * 32, clock=clock)
@@ -144,6 +144,7 @@ async def _build(
             principal_resolver=_Resolver(snap),
             positions=positions or _Positions(),
             users=_Users(),
+            audit_ready=lambda: audit_ok,
         )
     )
     app.middleware("http")(make_read_only_guard(auth, emitter))
@@ -207,6 +208,14 @@ async def test_step_up_then_owner_reset_reveals_nothing_and_audits() -> None:
 async def test_non_owner_cannot_reset() -> None:
     c, *_ = await _build(owner_role=False)
     assert c.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=_H).status_code == 403
+
+
+async def test_owner_reset_refused_with_503_before_any_change_when_audit_unavailable() -> None:
+    c, em, seed, clock, _ = await _build(audit_ok=False)
+    body = {"code": _code(seed, clock), "password": _PW, "action_class": "users"}
+    assert c.post("/auth/step-up", headers=_H, json=body).status_code == 200
+    r = c.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=_H)
+    assert r.status_code == 503 and "auth.mfa_reset_by_owner" not in em.actions()
 
 
 async def test_three_failures_make_session_read_only_on_write_routes() -> None:

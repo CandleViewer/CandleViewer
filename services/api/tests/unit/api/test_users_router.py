@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
 from candleviewer.api.users import make_users_router
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import SessionNotFound, StepUpRequired
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.owner_floor import assert_owner_floor
@@ -18,13 +20,17 @@ from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 
 OWNER = uuid.uuid4()
 TARGET = uuid.uuid4()
+_Hook = Callable[[frozenset[str]], Awaitable[None]]
 
 
 class _Emitter:
-    def __init__(self) -> None:
+    def __init__(self, fail: bool = False) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.fail = fail
 
     async def emit(self, action: str, **kw: Any) -> None:
+        if self.fail:
+            raise AuditUnavailable("WAL unwritable")
         self.calls.append({"action": action, **kw})
 
 
@@ -39,10 +45,13 @@ class _Store:
     async def count_active_owners(self) -> int:
         return self.owners
 
-    async def apply_roles(self, user_id: uuid.UUID, roles: frozenset[str]) -> bool:
+    async def apply_roles(
+        self, user_id: uuid.UUID, roles: frozenset[str], *, actor: uuid.UUID, audit: _Hook
+    ) -> bool:
         assert_owner_floor(
             current_roles=self.roles, new_roles=roles, active_owner_count=self.owners
         )
+        await audit(self.roles)  # write-ahead: a refused audit leaves the roles untouched
         self.roles = roles
         return True
 
@@ -216,7 +225,9 @@ def test_put_roles_endpoint_enforces_owner_floor_even_if_store_does_not() -> Non
     the check (e.g. a naive implementation) cannot demote the last owner."""
 
     class _NaiveStore(_Store):
-        async def apply_roles(self, user_id: uuid.UUID, roles: frozenset[str]) -> bool:
+        async def apply_roles(
+            self, user_id: uuid.UUID, roles: frozenset[str], *, actor: uuid.UUID, audit: _Hook
+        ) -> bool:
             self.roles = roles
             return True
 
@@ -237,7 +248,9 @@ def test_put_roles_conflict_is_audited_and_no_role_change_audit_on_failure() -> 
 
 def test_put_roles_missing_user_writes_no_role_audit() -> None:
     class _Gone(_Store):
-        async def apply_roles(self, user_id: uuid.UUID, roles: frozenset[str]) -> bool:
+        async def apply_roles(
+            self, user_id: uuid.UUID, roles: frozenset[str], *, actor: uuid.UUID, audit: _Hook
+        ) -> bool:
             return False
 
     em = _Emitter()
@@ -402,3 +415,21 @@ def test_put_roles_step_up_challenge_is_not_a_permission_denial() -> None:
     )
     assert (r.status_code, r.json()["code"]) == (403, "step_up_required")
     assert _users_write_denied() == before
+
+
+def test_role_change_rejects_self_target() -> None:
+    """SR-055 / threat U4: even with another owner present, no one changes their own roles."""
+    store, em, n = _Store({"owner"}, 2), _Emitter(), _Notifier()
+    r = _client(store, _admin(), em, n).put(f"/users/{OWNER}/roles", json={"roles": ["viewer"]})
+    assert r.status_code == 403 and r.json()["reason"] == "self_target"
+    assert store.roles == {"owner"} and n.users == []
+    assert [(c["action"], c["reason"]) for c in em.calls] == [("rbac.denied", "self_target")]
+
+
+def test_put_roles_audit_unavailable_rolls_back_with_503() -> None:
+    """C-2.9 write-ahead: the role change happens only if its audit record was written."""
+    store, n = _Store({"viewer"}, 2), _Notifier()
+    r = _client(store, _admin(), _Emitter(fail=True), n).put(
+        f"/users/{TARGET}/roles", json={"roles": ["manager"]}
+    )
+    assert r.status_code == 503 and store.roles == {"viewer"} and n.users == []

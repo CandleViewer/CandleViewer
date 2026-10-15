@@ -223,7 +223,10 @@ def make_step_up_router(
     principal_resolver: _Resolver | None = None,
     positions: PositionStateProvider | None = None,
     users: _UserLookup | None = None,
+    audit_ready: Callable[[], bool],
 ) -> APIRouter:
+    """`audit_ready()` false -> the owner TOTP reset answers 503 before changing
+    anything: it cannot be undone, so its audit record must be writable (C-2.9)."""
     if emitter is None:
         raise TypeError("make_step_up_router: audit emitter is required")
     router = APIRouter(tags=["auth"])
@@ -409,6 +412,8 @@ def make_step_up_router(
                     position_source=preview.position_source,
                     requires_acknowledge_unknown_positions=True,
                 )
+        if not audit_ready():
+            return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
         try:
             result = await auth.step_up.reset_totp(
                 actor_session_id=str(record.id),

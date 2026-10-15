@@ -33,7 +33,7 @@ OWNER_ROUTES = tuple(
 
 
 def _delegate(target: Any, name: str) -> Callable[..., Any]:
-    return lambda _self, *args: getattr(target, name)(*args)
+    return lambda _self, *args, **kwargs: getattr(target, name)(*args, **kwargs)
 
 
 @pytest.fixture(scope="module")
@@ -103,6 +103,32 @@ def test_deployed_app_role_change_reaches_the_store_and_is_audited(
         assert {"roles.grant", "roles.revoke"} <= {r["action"] for r in deployed.audit.records}
     finally:
         deployed.users.roles.update(deployed.users.initial_roles)
+
+
+def test_deployed_app_refuses_a_self_target_role_change(deployed: SimpleNamespace) -> None:
+    owner = rbac.user_id_of("owner")
+    headers = _headers(deployed.client, "owner")
+    r = deployed.client.put(f"/users/{owner}/roles", json={"roles": ["viewer"]}, headers=headers)
+    assert r.status_code == 403 and r.json()["reason"] == "self_target"  # SR-055
+    assert deployed.users.roles == deployed.users.initial_roles
+
+
+def test_deployed_app_refuses_unauditable_owner_actions_without_changing_anything(
+    deployed: SimpleNamespace,
+) -> None:
+    audit = deployed.client.app.state.app_context.audit
+    writer, audit._writer = audit._writer, None  # the audit service is not running
+    headers = _headers(deployed.client, "owner")
+    viewer = rbac.user_id_of("viewer")
+    try:
+        put = deployed.client.put(
+            f"/users/{viewer}/roles", json={"roles": ["manager"]}, headers=headers
+        )
+        assert put.status_code == 503  # C-2.9 write-ahead: the change rolled back
+        assert deployed.client.post("/users", json={}, headers=headers).status_code == 503
+    finally:
+        audit._writer = writer
+    assert deployed.users.roles == deployed.users.initial_roles
 
 
 def test_fake_backend_keeps_the_owner_routes_fail_closed() -> None:
