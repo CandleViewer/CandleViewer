@@ -170,7 +170,6 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         # E26-T03: the replay clock's playback ports, config and speeds (24 Sec.13.7).
         "STEP",
         "UNBOUNDED",
-        "BarProbe",
         "ClockConfig",
         "GapPolicy",
         "LoopTime",

@@ -31,7 +31,7 @@ def test_check_speed_refuses_anything_else(speed: float) -> None:
         check_speed(speed)
 
 
-@pytest.mark.parametrize("field", ["max_lag_s", "min_wait_s", "rate_window_s", "yield_every"])
+@pytest.mark.parametrize("field", ["max_lag_s", "min_wait_s", "rate_window_s", "yield_slice_s"])
 def test_clock_config_refuses_a_bound_that_is_not_positive(field: str) -> None:
     bounds: dict[str, Any] = {field: 0}
     with pytest.raises(ValueError, match="positive"):

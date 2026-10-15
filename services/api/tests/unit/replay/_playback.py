@@ -53,7 +53,7 @@ class RecordingObserver:
     def __init__(self) -> None:
         self.gaps: list[tuple[ReplayGap, bool]] = []
         self.edges: list[bool] = []
-        self.stops: list[tuple[StopReason, ReplayError | None]] = []
+        self.stops: list[tuple[StopReason, Exception | None]] = []
 
     def on_gap(self, gap: ReplayGap, *, stopped: bool) -> None:
         self.gaps.append((gap, stopped))
@@ -61,5 +61,5 @@ class RecordingObserver:
     def on_backpressure(self, active: bool) -> None:
         self.edges.append(active)
 
-    def on_stop(self, reason: StopReason, error: ReplayError | None) -> None:
+    def on_stop(self, reason: StopReason, error: Exception | None) -> None:
         self.stops.append((reason, error))
