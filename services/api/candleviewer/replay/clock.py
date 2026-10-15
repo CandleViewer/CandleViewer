@@ -109,6 +109,7 @@ class ReplayClock:
         self._stack: AsyncExitStack | None = None
         self._group: asyncio.TaskGroup | None = None
         self._closing: asyncio.Task[None] | None = None
+        self._sliced = 0.0  # when a step last yielded
         self._emitted = self._gaps = 0
         self._lost_s = 0.0
         self._backpressured = self._slow_in_window = False
@@ -211,6 +212,7 @@ class ReplayClock:
                 if not isinstance(item, RecordedEvent):
                     return "range_end" if item is None else item
                 await self._deliver(item)
+                await self._breathe()
             return "step"
 
     async def step_ms(self, ms: int) -> StopReason:
@@ -221,6 +223,7 @@ class ReplayClock:
             target = min(self._cursor + ms * 1_000, self._end_us)
             while isinstance(item := await self._step_item(before_us=target), RecordedEvent):
                 await self._deliver(item)
+                await self._breathe()
             if item == "gap":
                 return "gap"
             self._cursor = max(self._cursor, target)
@@ -241,6 +244,7 @@ class ReplayClock:
                 if isinstance(item, RecordedEvent):
                     if await self._deliver(item):
                         return "step"
+                    await self._breathe()
                 elif item == "gap":
                     return "gap"
                 elif due is None:
@@ -352,11 +356,17 @@ class ReplayClock:
             raise ReplayClockStateError("the replay clock is not open")
         if self.playing or self._stepping:
             raise ReplayClockStateError("pause playback before stepping")
-        self._stepping = True
+        self._stepping, self._sliced = True, self._time.now()
         try:
             yield
         finally:
             self._stepping = False
+
+    async def _breathe(self) -> None:
+        """A step never waits, so it yields to the loop after `yield_slice_s` of work (C-2.17)."""
+        if self._time.now() - self._sliced >= self._cfg.yield_slice_s:
+            await asyncio.sleep(0)
+            self._sliced = self._time.now()
 
     async def _step_item(
         self, *, before_us: int | None = None

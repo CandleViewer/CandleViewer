@@ -544,7 +544,7 @@ async def test_a_loop_wraps_back_to_its_start_and_plays_the_range_again() -> Non
         assert clock.now_us() == T0 + 10 * SECOND
         assert await clock.play() == "range_end"
         with pytest.raises(ReplayRequestInvalid, match="inside the session"):
-            await clock.reposition(ListStream([]), at_us=T0 + 30 * SECOND)
+            await clock.reposition(ListStream([]), at_us=T0 + 20 * SECOND)  # the end is outside
     assert (r.sink.events, r.stream.closes) == (loop + loop, 1)
 
 
@@ -589,3 +589,29 @@ async def test_stop_at_gap_ends_step_ms_and_step_bar_at_the_boundary() -> None:
         assert await clock.step_ms(5_000) == "gap"
         assert await clock.step_bar() == "gap"
         assert (len(r.sink.events), clock.now_us()) == (1, b)
+
+
+@pytest.mark.parametrize("kind", ["events", "ms", "bar"])
+async def test_a_long_step_yields_to_the_event_loop(kind: str) -> None:
+    """Regression R3: a 5 000-event step through a CPU-bound sink held the loop for the whole
+    step (151 ms for step_bar over the dense minute); it now yields every time slice."""
+    ticks, time = 0, FakeTime()
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    background = asyncio.ensure_future(ticker())
+    r = rig(every_second(5_000), end_s=5_000, speed=STEP, time=time, sink=BusySink(time))
+    r.clock.bar_probe = CountProbe(5_000)
+    async with r.clock as clock:
+        if kind == "events":
+            await clock.step_events(5_000)
+        elif kind == "ms":
+            await clock.step_ms(5_000_000)
+        else:
+            await clock.step_bar()
+    background.cancel()
+    assert len(r.sink.events) == 5_000 and ticks >= 1_000
