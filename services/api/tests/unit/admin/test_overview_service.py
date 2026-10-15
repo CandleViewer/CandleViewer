@@ -19,6 +19,8 @@ from candleviewer.admin.overview.ports import (
     UserCounts,
 )
 from candleviewer.admin.overview.service import (
+    FLAG_BUDGET_S,
+    MIN_MARGIN_S,
     POSITIONS_BUDGET_S,
     AdminOverviewService,
     StorageHeadroom,
@@ -60,8 +62,11 @@ class Recorder:
 
 
 class Oms:
-    def __init__(self, *, positions: str = "ok", kill: str = "ok", live: str = "ok") -> None:
-        self.positions, self.kill, self.live, self.kill_switch_reads = positions, kill, live, 0
+    def __init__(
+        self, *, positions: str = "ok", kill: str = "ok", live: str = "ok", killed: bool = False
+    ) -> None:
+        self.positions, self.kill, self.live, self.killed = positions, kill, live, killed
+        self.kill_switch_reads = 0
 
     async def open_positions(self) -> int:
         if self.positions == "unwired":
@@ -76,20 +81,25 @@ class Oms:
         self.kill_switch_reads += 1
         if self.kill == "raise":
             raise OSError("kill-switch store down")
-        return False
+        return self.killed
 
     async def live_enabled(self) -> bool:
         if self.live == "hang":
             await asyncio.Event().wait()
+        if self.live == "raise":
+            raise OSError("flag store down")
         return True
 
 
-def _service(budget_s: float = 0.3, positions_s: float = 0.2, **ports: Any) -> AdminOverviewService:
-    """Default 300 ms budget: only the hang tests shrink a budget (no flakes under load)."""
-    fan = SliceFanOut(budget_s=budget_s, monotonic=lambda: 0.0, now=lambda: NOW)
+def _service(
+    flag_s: float = FLAG_BUDGET_S, positions_s: float = POSITIONS_BUDGET_S, **ports: Any
+) -> AdminOverviewService:
+    """The default 300 ms slice budget; hang tests shrink only a sub-budget (no flakes)."""
+    fan = SliceFanOut(monotonic=lambda: 0.0, now=lambda: NOW)
     merged: dict[str, Any] = {"counts": Counts(), "recorder": Recorder(), "oms": Oms()} | ports
-    positions_s = min(positions_s, budget_s / 2)  # always inside the slice budget
-    return AdminOverviewService(fan, now=lambda: NOW, positions_budget_s=positions_s, **merged)
+    return AdminOverviewService(
+        fan, now=lambda: NOW, flag_budget_s=flag_s, positions_budget_s=positions_s, **merged
+    )
 
 
 async def test_every_slice_is_populated_when_every_source_answers() -> None:
@@ -106,8 +116,8 @@ async def test_every_slice_is_populated_when_every_source_answers() -> None:
 
 
 async def test_a_recorder_that_misses_its_budget_degrades_only_its_slice() -> None:
-    snap = await _service(recorder=Recorder(hang=True), budget_s=0.01).overview()
-    assert (snap.recorder.status, snap.recorder.detail) == ("error", "timed out after 10 ms")
+    snap = await _service(recorder=Recorder(hang=True)).overview()  # waits the real 300 ms
+    assert (snap.recorder.status, snap.recorder.detail) == ("error", "timed out after 300 ms")
     others = (snap.users, snap.accounts, snap.storage, snap.trading, snap.incidents)
     assert {s.status for s in others} == {"ok"}
 
@@ -167,14 +177,25 @@ async def test_trading_is_read_live_while_the_other_slices_are_cached() -> None:
 async def test_a_failing_flag_read_leaves_no_task_behind() -> None:
     before = asyncio.all_tasks()
     snap = await _service(oms=Oms(kill="raise", live="hang")).overview()
-    assert (snap.trading.status, snap.trading.detail) == ("error", "source failed")
+    assert (snap.trading.status, snap.trading.detail) == ("error", "kill_switch: source failed")
     assert asyncio.all_tasks() == before  # the old nested gather leaked one task per call
 
 
-def test_the_positions_budget_stays_inside_the_slice_budget() -> None:
-    assert POSITIONS_BUDGET_S < DEFAULT_BUDGET_S
-    with pytest.raises(ValueError):
-        AdminOverviewService(SliceFanOut(budget_s=0.1), positions_budget_s=0.2)
+def test_the_trading_sub_budgets_leave_a_margin_of_the_slice_budget() -> None:
+    assert 2 * FLAG_BUDGET_S + POSITIONS_BUDGET_S <= DEFAULT_BUDGET_S - MIN_MARGIN_S
+    for flag_s, positions_s in ((0.05, 0.2), (0.0, 0.14), (0.06, 0.14)):
+        with pytest.raises(ValueError):
+            AdminOverviewService(
+                SliceFanOut(), flag_budget_s=flag_s, positions_budget_s=positions_s
+            )
+
+
+@pytest.mark.parametrize("live", ["hang", "raise"], ids=["live-flag-hangs", "live-flag-raises"])
+async def test_the_kill_switch_survives_a_failed_live_flag_read(live: str) -> None:
+    snap = await _service(oms=Oms(live=live, killed=True), flag_s=0.01).overview()
+    assert snap.trading.status == "error" and snap.trading.detail is not None
+    assert snap.trading.detail.startswith("live_flag: ")
+    assert snap.trading.value == TradingState(None, True, 2)  # kill switch engaged, still shown
 
 
 async def test_a_partial_trading_failure_logs_part_and_class_never_the_message() -> None:

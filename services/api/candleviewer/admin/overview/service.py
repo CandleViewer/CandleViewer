@@ -20,6 +20,8 @@ from candleviewer.admin.overview.fanout import (
     SliceFanOut,
     SliceResult,
     SourceUnavailable,
+    combine,
+    read_part,
     utc_now,
 )
 from candleviewer.admin.overview.ports import (
@@ -34,8 +36,11 @@ from candleviewer.admin.overview.slices import AdminSlice
 
 #: `AdminOverview.accounts.keys_expiring_30d`.
 KEY_EXPIRY_WINDOW: Final = timedelta(days=30)
-#: Open positions must answer well inside the 300 ms slice budget, so the flags still show.
-POSITIONS_BUDGET_S: Final = 0.2
+#: Trading sub-reads run one after another, each under its own sub-budget; together they
+#: must leave `MIN_MARGIN_S` of the slice budget, so a slow OMS never loses the kill switch.
+FLAG_BUDGET_S: Final = 0.05
+POSITIONS_BUDGET_S: Final = 0.14
+MIN_MARGIN_S: Final = 0.05
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,9 +52,10 @@ class StorageHeadroom:
 
 @dataclass(frozen=True, slots=True)
 class TradingState:
-    live_enabled: bool
-    kill_switch_engaged: bool
-    #: `None` while no OMS positions provider is wired (the slice is then `unavailable`).
+    """A field is `None` when its part could not be read (the slice is then degraded)."""
+
+    live_enabled: bool | None
+    kill_switch_engaged: bool | None
     open_positions: int | None
 
 
@@ -62,11 +68,6 @@ class OverviewSnapshot:
     storage: SliceResult[StorageHeadroom]
     trading: SliceResult[TradingState]
     incidents: SliceResult[int]
-
-
-def _why(exc: BaseException | str) -> str:
-    """The logged-only reason of a partial failure: part and exception class, never a message."""
-    return f"open_positions:{exc if isinstance(exc, str) else type(exc).__name__}"
 
 
 def _unwired(source: str) -> SourceUnavailable:
@@ -82,11 +83,14 @@ class AdminOverviewService:
         recorder: RecorderPort | None = None,
         oms: OmsPort | None = None,
         now: Callable[[], datetime] = utc_now,
+        flag_budget_s: float = FLAG_BUDGET_S,
         positions_budget_s: float = POSITIONS_BUDGET_S,
     ) -> None:
-        if not 0 < positions_budget_s < fan.budget_s:  # the flags must survive a slow OMS
-            raise ValueError("positions budget must be inside the slice budget")
-        self._fan, self._now, self._positions_budget_s = fan, now, positions_budget_s
+        spent = 2 * flag_budget_s + positions_budget_s
+        if min(flag_budget_s, positions_budget_s) <= 0 or spent > fan.budget_s - MIN_MARGIN_S:
+            raise ValueError("trading sub-budgets must leave 50 ms of the slice budget")
+        self._fan, self._now = fan, now
+        self._flag_budget_s, self._positions_budget_s = flag_budget_s, positions_budget_s
         self._counts, self._recorder, self._oms = counts, recorder, oms
 
     async def overview(self) -> OverviewSnapshot:
@@ -132,16 +136,12 @@ class AdminOverviewService:
     async def _trading(self) -> TradingState | Degraded[TradingState]:
         if self._oms is None:
             raise _unwired("trading")
-        killed = await self._oms.kill_switch_engaged()  # the kill switch first, then the flag
-        live = await self._oms.live_enabled()
-        flags_only = TradingState(live, killed, None)  # kill switch and flag always shown
-        try:
-            async with asyncio.timeout(self._positions_budget_s):
-                positions = await self._oms.open_positions()
-        except SourceUnavailable as exc:
-            return Degraded(flags_only, "unavailable", exc.detail, "open_positions:unwired")
-        except TimeoutError:
-            return Degraded(flags_only, "error", "open_positions: timed out", _why("TimeoutError"))
-        except Exception as exc:  # the message may carry internals: only the class is logged
-            return Degraded(flags_only, "error", "open_positions: source failed", _why(exc))
-        return TradingState(live, killed, positions)
+        oms, flag_s = self._oms, self._flag_budget_s
+        # The kill switch first: whatever fails after it, the tile keeps showing its state.
+        killed, kill_problem = await read_part("kill_switch", oms.kill_switch_engaged, flag_s)
+        live, live_problem = await read_part("live_flag", oms.live_enabled, flag_s)
+        positions, positions_problem = await read_part(
+            "open_positions", oms.open_positions, self._positions_budget_s
+        )
+        state = TradingState(live, killed, positions)
+        return combine(state, [kill_problem, live_problem, positions_problem])

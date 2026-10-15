@@ -105,6 +105,9 @@ class RateLimitPort(Protocol):
 
 
 class OmsPort(Protocol):
+    """Every read raises (or raises `SourceUnavailable`) when the state cannot be read; an
+    adapter never defaults a flag to `False`, which would show a released kill switch."""
+
     async def open_positions(self) -> int: ...
 
     async def kill_switch_engaged(self) -> bool:
