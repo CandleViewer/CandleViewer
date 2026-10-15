@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
 import structlog
 
+from candleviewer.auth.generated_permissions import Scope
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
 from candleviewer.ws._generated.cvwb_layout import HEADER, KINDS
 from candleviewer.ws.binary import (
@@ -572,9 +573,24 @@ def causal_sort(items: Iterable[tuple[str, Any]]) -> list[tuple[str, Any]]:
     return sorted(items, key=lambda it: _CAUSAL_RANK.get(it[0].split(".", 1)[0], len(_CAUSAL_RANK)))
 
 
-def account_matches(sub: Subscription, account: uuid.UUID | None) -> bool:
-    """Private frames reach only subscriptions scoped to the event's account."""
-    if not sub.topic.family.private:
+def in_scope(
+    authz: ConnectionAuthz, sub: Subscription, account: uuid.UUID | None, user: uuid.UUID | None
+) -> bool:
+    """Whether an event reaches `sub`, by its family's scope (§6.2, #2398). A private family
+    reaches a subscription only while the connection's principal holds the family's
+    permission. Re-evaluation swaps the principal in before it removes anything (§9.5), so this
+    holds even if the removal stops part-way. Then: a family scoped to accounts needs the
+    event's account among the subscription's; a SELF family (`alerts`) reaches only the
+    connections of the user the event belongs to, and nobody when the event names none; a NONE
+    family (`recorder`) reaches every subscription."""
+    family = sub.topic.family
+    if not family.private:
+        return True
+    if family.permission not in authz.principal.permissions:
+        return False
+    if family.scope is Scope.SELF:
+        return user is not None and authz.principal.user_id == user
+    if family.scope is Scope.NONE:
         return True
     return account is not None and account in sub.accounts
 
@@ -607,14 +623,16 @@ class SequencingHub:
         part: Frame | None = None,
         coalesced_count: int = 1,
         account: uuid.UUID | None = None,
+        user: uuid.UUID | None = None,
         replay_session_id: str | None = None,
         ts_ms: int | None = None,
     ) -> int:
-        """One delta for `ch` (live, or one replay session) to every matching subscription."""
+        """One delta for `ch` (live, or one replay session) to every subscription in its scope:
+        `account` for account-scoped private families, `user` (the owner) for SELF ones."""
         sent = 0
         for authz, emitter in list(self._conns.values()):
             sub = authz.find(ch, replay_session_id)
-            if sub is None or not account_matches(sub, account):
+            if sub is None or not in_scope(authz, sub, account, user):
                 continue
             if emitter.delta(sub, body, part=part, coalesced_count=coalesced_count, ts_ms=ts_ms):
                 sent += 1

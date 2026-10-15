@@ -52,11 +52,10 @@ _BASE = "cv://ws/v1/"
 
 #: §16.1 S5 causal order of private topics for one account event.
 PRIVATE_ORDER = ["executions", "orders", "positions", "trade_groups"]
-#: FINDING F5 (#2398): `SequencingHub.publish` -> `account_matches` delivers a private family's
-#: delta only to a subscription holding the event's account. `alerts` (Scope.SELF) and `recorder`
-#: (Scope.NONE) hold none, so no delta can reach them. `system` is also `private` but is NOT
-#: affected: it is never a Subscription and is pushed by the gateway itself (`push_system`).
-F5_UNDELIVERABLE = frozenset({"alerts", "recorder"})
+#: The private families that hold no accounts (F5, fixed by #2398): `alerts` (Scope.SELF) is
+#: fanned out to its owner's connections, `recorder` (Scope.NONE) to every subscription. `system`
+#: is also `private` but is never a Subscription: the gateway pushes it (`push_system`).
+ACCOUNTLESS_PRIVATE = frozenset({"alerts", "recorder"})
 
 SYM = "BTCUSDT"
 ALL_PERMS = frozenset(
@@ -215,11 +214,14 @@ def publish(
     mode: str = "structured",
     *,
     account: uuid.UUID | None = None,
+    user: uuid.UUID | None = None,
     replay: str | None = None,
     ts_ms: int | None = None,
     coalesced_count: int = 1,
 ) -> int:
-    """One owning-module event for `ch` through the real `SequencingHub`, on the app loop."""
+    """One owning-module event for `ch` through the real `SequencingHub`, on the app loop. Like
+    `account` for account-scoped families, `user` defaults to the world's user for SELF ones."""
+    from candleviewer.auth.generated_permissions import Scope
     from candleviewer.ws.topics import FAMILIES
 
     part = BIN_DELTA.get(family) if mode == "binary" and FAMILIES[family].binary else None
@@ -227,12 +229,16 @@ def publish(
     acc = account if FAMILIES[family].private else None
     if FAMILIES[family].account_scoped and acc is None:
         acc = ACC_A
+    # By value: a test that reloads `generated_permissions` (test_rbac_generator) leaves two
+    # `Scope` classes behind, so an identity check would depend on the test order.
+    owner = user if user is not None or FAMILIES[family].scope != Scope.SELF else USER
     sent: int = world.call(
         lambda: world.hub.publish(
             ch,
             body,
             part=part,
             account=acc,
+            user=owner,
             replay_session_id=replay,
             ts_ms=ts_ms,
             coalesced_count=coalesced_count,

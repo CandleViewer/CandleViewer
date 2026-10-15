@@ -20,7 +20,7 @@ from candleviewer.ws.binary import FLAG_ESTIMATED, FLAG_REPLAY, decode_b64
 from candleviewer.ws.sequencing import TopicEmitter, causal_sort
 from candleviewer.ws.topics import FAMILIES
 from tests.contract.ws._harness import (
-    F5_UNDELIVERABLE,
+    ACCOUNTLESS_PRIVATE,
     MODES,
     OFFERS,
     PRIVATE_ORDER,
@@ -58,8 +58,6 @@ def test_s2_snap_precedes_any_delta_on_every_topic_row(
         assert c.sub(e)["p"]["results"][0]["ok"], e
         snap = c.recv()
         assert (snap["t"], snap["s"], snap["meta"]["reason"]) == ("snap", 1, "initial")
-        if family in F5_UNDELIVERABLE:
-            return  # FINDING F5: no delta can be produced for this family; see module note
         assert publish(w, family, e["ch"], mode) == 1
         d = c.recv()
         assert (d["t"], d["ch"], d["s"]) == ("d", e["ch"], 2)
@@ -181,9 +179,8 @@ def test_s3_mutation_a_reused_sequence_number_fails_the_oracle() -> None:
         assert_contiguous(frames)
 
 
-@pytest.mark.xfail(strict=True, reason="#2398: alerts/recorder deltas are never delivered")
-@pytest.mark.parametrize("family", sorted(F5_UNDELIVERABLE))
-def test_s2_xfail_f5_delta_reaches_alerts_and_recorder_subscriptions(family: str) -> None:
+@pytest.mark.parametrize("family", sorted(ACCOUNTLESS_PRIVATE))
+def test_s2_f5_delta_reaches_alerts_and_recorder_subscriptions(family: str) -> None:
     w = World()
     with connect(w) as c:
         c.sub({"ch": family})
