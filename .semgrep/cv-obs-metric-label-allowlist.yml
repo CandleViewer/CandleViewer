@@ -33,9 +33,11 @@ rules:
       #   id_unavailable, idempotency_key_reuse}; max_series=4.
       # status_class (#2421): {1xx, 2xx, 3xx, 4xx, 5xx}.
       # tool (E14-T01): the contract's closed drawing-tool enum; max_series=25.
+      # flag (E42-T03): only feature-flag registry keys, a closed code-reviewed set (about 16);
+      #   unknown keys are refused before any series is touched; max_series=32.
       - metavariable-regex:
           metavariable: $LABEL
-          regex: "^(?!(bucket|cause|endpoint_group|engine|event|filter_class|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|tool|topic|transport|trigger_mode|version)$).*$"
+          regex: "^(?!(bucket|cause|endpoint_group|engine|event|filter_class|flag|kind|method|operation|permission|reason|resource|result|route|rule|rule_id|screen|sha256|socket|stage|state|status_class|stream|symbol|tool|topic|transport|trigger_mode|version)$).*$"
     paths:
       include:
         - "services/api/candleviewer/**"

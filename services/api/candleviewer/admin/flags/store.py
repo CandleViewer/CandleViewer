@@ -44,4 +44,6 @@ class FlagStore(Protocol):
 
     async def write(self, change: FlagWrite) -> StoredFlag:
         """Lock the row, compare `updated_at` with `change.expected_updated_at` and write.
-        Raises `StaleWriteError` on a mismatch and `StoreUnavailableError`."""
+        Raises `StaleWriteError` on a mismatch and `StoreUnavailableError`. The comparison is at
+        the precision the API serialises `updated_at` with, so a value read back through
+        `GET /admin/feature-flags` always matches its row."""
