@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
+from prometheus_client import REGISTRY
 
 from candleviewer.bars.models import BarSpec, BarUpdate
 from candleviewer.bars.time_builder import TimeBarBuilder, bucket_bounds
@@ -667,3 +668,26 @@ async def test_a_reposition_closes_the_old_source_even_if_its_caller_is_cancelle
         gate.set()
         await settle()
         assert moving.cancelled() and old.closes == 1
+
+
+def _sample(name: str) -> float:
+    return REGISTRY.get_sample_value(name) or 0.0
+
+
+async def test_playback_exports_throughput_lag_backpressure_and_the_achieved_ratio() -> None:
+    names = ("replay_events_emitted_total", "replay_backpressure_seconds_total")
+    before = {n: _sample(n) for n in (*names, "replay_clock_lag_ms_count")}
+    items = [trade(i * 100_000, trade_id=f"t{i:04}") for i in range(600)]
+    r = rig(items, end_s=60, speed=10.0)
+    r.sink.cost_s, gauges = 0.02, []
+    async with r.clock as clock:
+        task = clock.play()
+        while not task.done():
+            await asyncio.sleep(0)
+            gauges.append(_sample("replay_achieved_speed_ratio"))
+    after = {n: _sample(n) - before[n] for n in before}
+    assert after["replay_events_emitted_total"] == 600
+    assert after["replay_backpressure_seconds_total"] > 0
+    assert after["replay_clock_lag_ms_count"] > 0
+    assert min(gauges) < 0.6
+    assert _sample("replay_achieved_speed_ratio") == 1.0  # nothing plays any more

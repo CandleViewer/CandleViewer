@@ -23,6 +23,12 @@ the next n market events, `step_ms(n)` everything in the next n ms of replay tim
 `step_bar()` everything until the session's `BarProbe` closes exactly one bar (US-RPL-001). At a
 gap, `stop` ends the step at its boundary; `skip` reports it and steps on.
 
+**Metrics** (ticket observability; served by `replay.metrics`): `replay_clock_lag_ms` observes the
+largest lag of each rate window; `replay_events_emitted_total` is flushed per window and at every
+stop, not per event; `replay_backpressure_seconds_total` is the wall time given up to slow sinks;
+`replay_achieved_speed_ratio` is the lowest ratio among paced sessions (1 when none plays).
+`replay_gap_warnings_total` already counts every gap marker at the source (E26-T02).
+
 **Cursor.** `cursor_us` is the replay time reached and only moves forward; only `reposition`
 (a seek, or a loop wrap back to the loop start, US-RPL-008) moves it back (INV-B12-b). `now_us()`
 is the replay "now" for downstream clocks; it never passes an event not yet delivered, so a bar
@@ -46,6 +52,7 @@ from typing import Any, Self
 import structlog
 
 from candleviewer.observability import spawn
+from candleviewer.observability.metrics import Counter, Gauge, Histogram
 from candleviewer.replay.errors import ReplayClockStateError, ReplayError, ReplayRequestInvalid
 from candleviewer.replay.models import ReplayGap, ReplayItem
 from candleviewer.replay.pacing import Pacer, RateWindow
@@ -62,6 +69,32 @@ from candleviewer.replay.playback import (
     check_speed,
 )
 from candleviewer.storage.repositories.recorded import RecordedEvent
+
+replay_clock_lag_ms = Histogram(
+    "replay_clock_lag_ms",
+    "Largest lag behind schedule in each rate window of a paced replay clock.",
+    buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000),
+)
+replay_events_emitted_total = Counter(
+    "replay_events_emitted_total", "Recorded events replay clocks delivered."
+)
+replay_backpressure_seconds_total = Counter(
+    "replay_backpressure_seconds_total", "Wall time replay clocks gave up to slow consumers."
+)
+replay_achieved_speed_ratio = Gauge(
+    "replay_achieved_speed_ratio", "Lowest achieved/requested speed of the paced replay clocks."
+)
+replay_achieved_speed_ratio.set(1.0)  # nothing plays yet: nothing is behind
+#: Last achieved ratio per playing clock (by id), behind `replay_achieved_speed_ratio`.
+_RATIOS: dict[int, float] = {}
+
+
+def _set_ratio(clock: int, ratio: float | None) -> None:
+    if ratio is None:
+        _RATIOS.pop(clock, None)
+    else:
+        _RATIOS[clock] = ratio
+    replay_achieved_speed_ratio.set(min(_RATIOS.values(), default=1.0))
 
 
 def _log() -> Any:
@@ -114,6 +147,7 @@ class ReplayClock:
         self._emitted = self._gaps = 0
         self._lost_s = 0.0
         self._backpressured = self._slow_in_window = False
+        self._max_lag, self._flushed = 0.0, 0
         #: The session's active-`BarSpec` probe: `step_bar` needs it; every delivery feeds it.
         self.bar_probe: BarProbe | None = None
 
@@ -320,6 +354,8 @@ class ReplayClock:
         finally:  # keep the position reached, even on destroy: the cursor never moves back
             self._cursor = self._position(self._time.now())
             self._pacer = None
+            self._flush()
+            _set_ratio(id(self), None)
             if self._backpressured:  # backpressure is a state of playback, not of the session
                 self._backpressured = False
                 self._obs.on_backpressure(False)
@@ -376,6 +412,7 @@ class ReplayClock:
             yield
         finally:
             self._stepping = False
+            self._flush()
 
     async def _breathe(self) -> None:
         """A step never waits, so it yields to the loop after `yield_slice_s` of work (C-2.17)."""
@@ -452,9 +489,11 @@ class ReplayClock:
         """Slow the clock if the event is later than `max_lag_s` behind schedule; returns how far
         behind it still is (counted in the achieved rate, so it reads smoothly)."""
         lag = pacer.late(ts_us, wall=now, max_lag_s=self._cfg.max_lag_s)
+        self._max_lag = max(self._max_lag, lag)
         if lag <= self._cfg.max_lag_s:
             return max(0.0, lag)
         self._lost_s += lag
+        replay_backpressure_seconds_total.inc(lag)
         self._slow_in_window = True
         if not self._backpressured:
             self._backpressured = True
@@ -468,6 +507,15 @@ class ReplayClock:
             _log().info("replay_backpressure", active=False)
             self._obs.on_backpressure(False)
         self._slow_in_window = False
+        if self._pacer is not None:
+            replay_clock_lag_ms.observe(self._max_lag * 1_000)
+            _set_ratio(id(self), self._window.ratio)
+        self._max_lag = 0.0
+        self._flush()
+
+    def _flush(self) -> None:
+        replay_events_emitted_total.inc(self._emitted - self._flushed)
+        self._flushed = self._emitted
 
     def _position(self, now: float) -> int:
         """While paced: the schedule's position, capped at the next item not yet delivered (the
