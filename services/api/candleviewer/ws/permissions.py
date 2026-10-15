@@ -29,13 +29,19 @@ import structlog
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import Allow, Deny, DenyReason, PrincipalSnapshot, decide
-from candleviewer.bars.errors import BarsError, SpecCapExceeded
+from candleviewer.bars.errors import (
+    BarParamOutOfRange,
+    BarsError,
+    BarServiceStopping,
+    SpecCapExceeded,
+)
 from candleviewer.bars.models import BarSpec
-from candleviewer.bars.spec import from_wire
+from candleviewer.bars.spec import check_param_bounds, from_wire
 from candleviewer.observability.metrics import Counter, Histogram
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.limits import (
     FANOUT_SEND_TIMEOUT_S,
+    MAX_BARS_SUBSCRIPTIONS,
     MAX_SUBSCRIPTIONS,
     MAX_SYMBOLS_PER_CONNECTION,
     MAX_TOPICS_PER_SUB,
@@ -132,6 +138,9 @@ class SubscriptionServices:
     snapshots: SnapshotSource | None = None
     snapshot_cache: SnapshotCache = field(default_factory=SnapshotCache)
     sequencing: SequencingHub | None = None
+    #: §6.1: the deployment runs with `bars_enabled` off, so `bars.*` is refused `unknown_topic`.
+    #: Set by the app from settings (a bare `bars=None` only means "no lease to take").
+    bars_off: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -417,13 +426,20 @@ class ConnectionAuthz:
         """Take the shared upstream refs (live public topics) and, for live bars/footprint, the
         `BarBuilderSet` lease with `user=` the authenticated principal id - never a client
         value. Returns a failure result (and drops the subscription) on refusal."""
+        family = sub.topic.family.family
+        if family == "bars":
+            refused = self._bars_refusal(sub)
+            if refused is not None:
+                self._drop(sub)
+                return refused
         if sub.replay_session_id is not None or sub.topic.family.private:
             return None
         consumer = self._consumer(sub)
         try:
             bars = self.services.bars
-            if sub.topic.family.family in {"bars", "footprint"} and bars is not None:
+            if family in {"bars", "footprint"} and bars is not None:
                 spec = from_wire(sub.topic.bar_type or "", sub.topic.param or "")
+                check_param_bounds(spec, sub.topic.bar_type or "")
                 symbol = sub.topic.symbol or ""
                 await bars.register(spec, symbol, consumer, user=str(self.principal.user_id))
                 sub.bar_lease = (spec.spec_hash, symbol)
@@ -434,9 +450,32 @@ class ConnectionAuthz:
         except SpecCapExceeded:
             self._drop(sub)
             return _fail(sub.ch, "subscription_limit", "Too many distinct bar series.")
+        except BarParamOutOfRange as exc:  # SR-E12-03: names the bound, never the series
+            self._drop(sub)
+            return _fail(sub.ch, "invalid_topic_format", str(exc))
+        except BarServiceStopping:
+            self._drop(sub)
+            return _fail(sub.ch, "internal_error", "The bar service is restarting; retry.")
         except BarsError:
             self._drop(sub)
             return _fail(sub.ch, "invalid_topic_format", "This bar series is not available.")
+        return None
+
+    def _bars_refusal(self, sub: Subscription) -> dict[str, Any] | None:
+        """§6.1: `unknown_topic` while the bars feature is off, and `subscription_limit` past
+        SR-E12-07's per-connection cap (live and replay `bars.*` count alike). `footprint.*`
+        keeps §7.7 until #2197."""
+        if self.services.bars_off:
+            return _fail(sub.ch, "unknown_topic", "This topic is not available on this server.")
+        held = sum(
+            1 for s in self.by_id.values() if s is not sub and s.topic.family.family == "bars"
+        )
+        if held >= MAX_BARS_SUBSCRIPTIONS:
+            return _fail(
+                sub.ch,
+                "subscription_limit",
+                f"At most {MAX_BARS_SUBSCRIPTIONS} bars subscriptions per connection.",
+            )
         return None
 
     # -- unsub / ctl ------------------------------------------------------------------------

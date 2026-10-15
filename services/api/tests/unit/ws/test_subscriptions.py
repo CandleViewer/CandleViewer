@@ -12,9 +12,10 @@ from structlog.testing import capture_logs
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
-from candleviewer.bars.errors import BarsError, BarSpecError, SpecCapExceeded
+from candleviewer.bars.errors import BarsError, BarServiceStopping, BarSpecError, SpecCapExceeded
 from candleviewer.bars.models import BarSpec
 from candleviewer.ws._generated.error_codes import WS_ERROR_CODES
+from candleviewer.ws.limits import MAX_BARS_SUBSCRIPTIONS
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
@@ -277,7 +278,8 @@ def test_sub_snapshot_false_needs_from_seq() -> None:
 def test_sub_limit_200_leaves_existing_untouched() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
     for start in range(0, 200, 50):
-        res = _sub(conn, *[f"bars.BTCUSDT.tick.{i}" for i in range(start + 1, start + 51)])
+        # footprint keeps §7.7 while the bar service is off; bars.* would be refused (§6.1)
+        res = _sub(conn, *[f"footprint.BTCUSDT.tick.{i}" for i in range(start + 1, start + 51)])
         assert all(r["ok"] for r in res)
     before = dict(conn.by_id)
     (r,) = _sub(conn, "trades.BTCUSDT")
@@ -803,3 +805,66 @@ def test_denials_are_audited_and_audit_failure_is_not_fatal() -> None:
     _sub(c3, {"ch": "positions", "opts": _acc(A)})
     asyncio.run(reg.roles_changed(VIEWER_ID))  # revocation audit fails: still delivered
     assert c3.by_id == {}
+
+
+# -- #399 slice E: bars subscribe guards (23-ws-protocol.md §6.1, SR-E12-03, SR-E12-07) ---------
+
+
+def test_bars_topic_is_unknown_while_the_bars_feature_is_off() -> None:
+    conn = ConnectionAuthz(_mgr(A), _services(bars_off=True))
+    bars, footprint = _sub(conn, "bars.BTCUSDT.time.5", "footprint.BTCUSDT.time.5")
+    assert (bars["ok"], bars["error"]["code"]) == (False, "unknown_topic")
+    assert footprint["ok"] is True  # footprint keeps §7.7 (pending) until #2197
+    assert [s.ch for s in conn.by_id.values()] == ["footprint.BTCUSDT.time.5"]
+
+
+@pytest.mark.parametrize(
+    ("ch", "bound"),
+    [("bars.BTCUSDT.tick.99", "100 and 1000000"), ("bars.BTCUSDT.tick.1000001", "100 and 1000000"),
+     ("bars.BTCUSDT.range.1", "2 and 100000"), ("footprint.BTCUSDT.tick.50", "100 and 1000000")],
+)  # fmt: skip
+def test_bars_param_outside_its_bounds_is_refused_naming_the_bound(ch: str, bound: str) -> None:
+    """SR-E12-03 on the WS path, as on REST: refused before any builder is registered."""
+    bars = _Bars()
+    conn = ConnectionAuthz(_mgr(A), _services(bars=bars))
+    (r,) = _sub(conn, ch)
+    assert (r["ok"], r["error"]["code"]) == (False, "invalid_topic_format")
+    assert r["error"]["message"].endswith(f"must be between {bound}.")
+    assert bars.registered == [] and conn.by_id == {}
+
+
+def test_bars_param_at_its_bounds_is_accepted() -> None:
+    bars = _Bars()
+    conn = ConnectionAuthz(_mgr(A), _services(bars=bars))
+    assert all(r["ok"] for r in _sub(conn, "bars.BTCUSDT.tick.100", "bars.BTCUSDT.range.2"))
+    assert len(bars.registered) == 2
+
+
+def test_bars_subscriptions_are_capped_per_connection_live_and_replay_alike() -> None:
+    """SR-E12-07: the 17th `bars.*` subscription on a connection is refused."""
+    conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars()))
+    live = [f"bars.BTCUSDT.tick.{100 + i}" for i in range(MAX_BARS_SUBSCRIPTIONS - 1)]
+    assert all(r["ok"] for r in _sub(conn, *live))
+    assert _sub(conn, "bars.ETHUSDT.time.5", replay_session_id=RS)[0]["ok"]
+    (r,) = _sub(conn, "bars.BTCUSDT.time.5")
+    assert (r["ok"], r["error"]["code"]) == (False, "subscription_limit")
+    assert "16 bars subscriptions" in r["error"]["message"]
+    assert _sub(conn, "footprint.BTCUSDT.time.5")[0]["ok"]  # other families are not capped here
+
+
+def test_bar_service_shutting_down_is_a_retryable_internal_error() -> None:
+    conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars(fail=BarServiceStopping("stopping"))))
+    (r,) = _sub(conn, "bars.BTCUSDT.time.5")
+    assert (r["ok"], r["error"]["code"]) == (False, "internal_error")
+    assert conn.by_id == {}
+
+
+def test_bars_effective_echoes_the_defaults_and_explicit_values() -> None:
+    conn = ConnectionAuthz(_mgr(A), _services(bars=_Bars()))
+    default, explicit = _sub(
+        conn,
+        "bars.BTCUSDT.time.5",
+        {"ch": "bars.BTCUSDT.time.1", "opts": {"history": 0, "include_delta": True}},
+    )
+    assert (default["effective"]["history"], default["effective"]["include_delta"]) == (500, False)
+    assert (explicit["effective"]["history"], explicit["effective"]["include_delta"]) == (0, True)

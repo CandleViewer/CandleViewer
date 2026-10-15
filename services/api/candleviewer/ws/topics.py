@@ -16,6 +16,7 @@ import re
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Final, Literal
 
 from candleviewer.auth.generated_permissions import Permission, Scope
@@ -239,7 +240,7 @@ FAMILIES: Final[Mapping[str, TopicFamily]] = {
             {
                 "include_delta": Opt("bool"),
                 "history": Opt("int", 0, 1000),
-            },
+            },  # defaults: BARS_DEFAULTS
         ),
         _md(
             "footprint",
@@ -486,6 +487,10 @@ def effective_throttle_ms(topic: ParsedTopic, requested: int | None) -> int:
     return max(requested, MIN_THROTTLE_MS)
 
 
+#: §6.1: the `bars` options when the client leaves them out, echoed in `effective`.
+BARS_DEFAULTS: Final[Mapping[str, Any]] = MappingProxyType({"history": 500, "include_delta": False})
+
+
 def effective_options(topic: ParsedTopic, opts: Mapping[str, Any]) -> dict[str, Any]:
     """The `sub_ok.effective` / `ctl_ok.effective` block: options AFTER clamping."""
     fam = topic.family
@@ -499,6 +504,9 @@ def effective_options(topic: ParsedTopic, opts: Mapping[str, Any]) -> dict[str, 
     eff["coalesce"] = False if fam.never_throttled else opts.get("coalesce", True)
     if topic.depth is not None:
         eff["depth"] = topic.depth
+    if fam.family == "bars":
+        for key, value in BARS_DEFAULTS.items():
+            eff.setdefault(key, value)
     if fam.family == "heatmap":
         eff.setdefault("time_bucket_ms", 500)
         eff["throttle_ms"] = (

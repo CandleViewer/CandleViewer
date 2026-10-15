@@ -64,7 +64,7 @@ import structlog
 
 from candleviewer.bars.activity_builders import TickBarBuilder, VolumeBarBuilder
 from candleviewer.bars.emit import EmitRouter
-from candleviewer.bars.errors import BarsError, BarSpecError
+from candleviewer.bars.errors import BarsError, BarServiceStopping, BarSpecError
 from candleviewer.bars.leases import DEFAULT_CAPS, SpecCaps, SpecLeases
 from candleviewer.bars.metrics import (
     bar_builder_cold_start_seconds,
@@ -370,7 +370,9 @@ class BarBuilderSet:
         Raises `SpecCapExceeded` (nothing changed) or `BarSpecError` for an unbuildable kind.
         """
         if self._stopping:
-            raise BarsError("The bar service is shutting down; open the series again later.")
+            raise BarServiceStopping(
+                "The bar service is shutting down; open the series again later."
+            )
         key = (symbol, spec.spec_hash)
         if not self._leases.acquire(key, consumer, user):
             return

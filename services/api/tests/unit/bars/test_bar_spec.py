@@ -13,10 +13,18 @@ from hypothesis import given
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
+from candleviewer.bars.errors import BarParamOutOfRange, BarSpecError
 from candleviewer.bars.limits import RENKO_TICKS_RANGE
 from candleviewer.bars.models import KIND_PARAM, PARAM_FIELDS, BarSpec
 from candleviewer.bars.schema import golden_specs, render_schema, render_vectors
-from candleviewer.bars.spec import SpecRegistry, bar_specs_registered_total, canonical_json, dec_str
+from candleviewer.bars.spec import (
+    SpecRegistry,
+    bar_specs_registered_total,
+    canonical_json,
+    check_param_bounds,
+    dec_str,
+    from_wire,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 GOLDEN = ROOT.parents[1] / "packages" / "fixtures" / "golden" / "bars"
@@ -226,3 +234,28 @@ def test_spec_registry_resolves_and_counts_once() -> None:
 def test_rendered_artifacts_match_committed_in_process() -> None:
     assert render_schema() == (GOLDEN / "bar-model.schema.json").read_text(encoding="utf-8")
     assert render_vectors() == (GOLDEN / "spec_hash_vectors.json").read_text(encoding="utf-8")
+
+
+# -- SR-E12-03: one floor and ceiling for REST and the WS subscribe path (#399 slice E) -------
+
+
+@pytest.mark.parametrize(
+    ("bar_type", "param"),
+    [("tick", "100"), ("tick", "1000000"), ("range", "2"), ("volume", "1"), ("time", "1")],
+)
+def test_check_param_bounds_accepts_the_floor_and_the_ceiling(bar_type: str, param: str) -> None:
+    check_param_bounds(from_wire(bar_type, param), bar_type)
+
+
+@pytest.mark.parametrize(
+    ("bar_type", "param", "lo", "hi"),
+    [("tick", "99", 100, 1_000_000), ("tick", "1000001", 100, 1_000_000),
+     ("range", "1", 2, 100_000), ("delta", "1000000000001", 1, 10**12)],
+)  # fmt: skip
+def test_check_param_bounds_refuses_outside_them_naming_the_bound(
+    bar_type: str, param: str, lo: int, hi: int
+) -> None:
+    with pytest.raises(BarParamOutOfRange) as err:
+        check_param_bounds(from_wire(bar_type, param), bar_type)
+    assert str(err.value) == f"param for bar_type {bar_type} must be between {lo} and {hi}."
+    assert isinstance(err.value, BarSpecError)  # existing BarSpecError handlers still catch it
