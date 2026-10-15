@@ -1,14 +1,19 @@
 """Integration (E16-T06): one real reaper pass over real QuestDB + real Parquet.
 
-Seeds two BTCUSDT days and rolls the old one off with the real `RollOffJob` (archive + verify
-+ drop). Ten LATE rows (12:00 UTC, never exported) then re-create that day in QuestDB: the
-watermark says "archived", but those rows are not in Parquet. One `RetentionManager.run_nightly`
-(injected clock, 1-day total horizon) must therefore (review H2):
-- KEEP the hot day (per-symbol hot rows 10 != manifest rows 1200) and raise CRITICAL
-  `archive.verification_failed`, deleting no unarchived row. The rows are already there when
-  the pass plans, so the day is held while planning (`report.protected`, review round 4 A);
-- delete the expired Parquet partition (its own total horizon has passed), with intent + done
-  `data.deleted` records that outlive the data.
+Seeds three BTCUSDT days and rolls the two old ones off with the real `RollOffJob` (archive +
+verify + drop). The roll-off's DROP of `_ARCH` never lands (a crash between issuing it and its
+apply), so that day stays hot although it is archived and verified. Ten LATE rows (12:00 UTC,
+never exported) then re-create `_OLD` in QuestDB: the watermark says "archived", but those rows
+are not in Parquet. One `RetentionManager.run_nightly` (injected clock, 7-day hot window, 1-day
+total horizon) must therefore:
+- DROP `_ARCH` for real (hot rows 1200 == manifest rows 1200): `DROP PARTITION` plus the
+  `wal_tables()` apply wait, against real QuestDB (review round 4, C-13.3);
+- KEEP `_OLD` (hot rows 10 != manifest rows 1200) and raise CRITICAL
+  `archive.verification_failed`, deleting no unarchived row (review H2). The rows are already
+  there when the pass plans, so the day is held while planning (`report.protected`);
+- delete both expired Parquet partitions (their own total horizon has passed) after the hot
+  drop, which is verified against `_ARCH`'s manifest, each with intent + done `data.deleted`
+  records that outlive the data.
 Needs Docker (testcontainers QuestDB 8.x); only collects locally without Docker.
 """
 
@@ -57,6 +62,7 @@ from tests.integration.storage.test_questdb_hot_tier import (
 pytestmark = pytest.mark.integration
 
 T = StreamKind.TRADES
+_ARCH = datetime(2026, 9, 30, tzinfo=UTC)
 _OLD = datetime(2026, 10, 1, tzinfo=UTC)
 _NEW = datetime(2026, 10, 9, tzinfo=UTC)
 _NOW = datetime(2026, 10, 10, 2, 15, tzinfo=UTC)
@@ -64,6 +70,19 @@ _NOW = datetime(2026, 10, 10, 2, 15, tzinfo=UTC)
 
 def _us(d: datetime) -> int:
     return int(d.timestamp() * 1_000_000)
+
+
+class _SkipDrop(QuestDbHotPartitions):
+    """Roll-off hot port whose DROP of one day never lands: the day is archived + verified and
+    its watermark advanced, yet it is still hot (the leftover the reaper must drop)."""
+
+    def __init__(self, conn: _AsyncpgExecutor, skip: datetime) -> None:
+        super().__init__(conn)
+        self._skip = _us(skip)
+
+    async def drop_day(self, stream: StreamKind, day_start_us: int) -> None:
+        if day_start_us != self._skip:
+            await super().drop_day(stream, day_start_us)
 
 
 class _Audit:
@@ -128,9 +147,10 @@ async def test_retention_real_pass_drops_archived_hot_day_and_expired_parquet(
     conn = await _connect(host, pg_port)
     try:
         await run_migrations(_AsyncpgExecutor(conn), DDL_DIR)
+        await _seed(conn, host, ilp_port, _ARCH, 1200)
         await _seed(conn, host, ilp_port, _OLD, 1200)
         await _seed(conn, host, ilp_port, _NEW, 1200)
-        await wait_for_row_count(conn, "trades", 2400)
+        await wait_for_row_count(conn, "trades", 3600)
         pg = _AsyncpgExecutor(conn)
         reg = DatasetRegistry(tmp_path)
         marks = FileWatermarkStore(reg)
@@ -139,7 +159,7 @@ async def test_retention_real_pass_drops_archived_hot_day_and_expired_parquet(
             return 7
 
         await RollOffJob(
-            hot=QuestDbHotPartitions(pg),
+            hot=_SkipDrop(pg, _ARCH),  # archives + verifies both old days, drops only _OLD
             archiver=ColdArchiver(reg, QuestDbHotTierSource(pg)),
             watermarks=marks,
             hot_days=hot_days,
@@ -150,9 +170,9 @@ async def test_retention_real_pass_drops_archived_hot_day_and_expired_parquet(
             clock=lambda: _NOW,
         ).run()
         await _seed(conn, host, ilp_port, _OLD + timedelta(hours=12), 10)  # late, unexported
-        await wait_for_row_count(conn, "trades", 1210)
+        await wait_for_row_count(conn, "trades", 2410)  # _ARCH 1200 + late 10 + _NEW 1200
         cold = ColdRetentionStore(reg)
-        assert [p.rows for p in await cold.partitions("BTCUSDT", T)] == [1200]
+        assert [p.rows for p in await cold.partitions("BTCUSDT", T)] == [1200, 1200]
 
         audit = _Audit()
         events = _Events()
@@ -178,15 +198,24 @@ async def test_retention_real_pass_drops_archived_hot_day_and_expired_parquet(
             + [(p.item.tier, p.item.key, f"{p.reason}:{p.info}") for p in report.protected]
         )
         parts = await pg.fetch("SELECT * FROM table_partitions('trades')")
-        # Only the expired cold partition goes; the hot day with unarchived late rows stays.
-        assert [i.tier for i in report.deleted] == ["cold"], (held, parts)
+        # _ARCH goes from both tiers; _OLD keeps its unarchived late rows hot; both Parquet go.
+        assert sorted(i.tier for i in report.deleted) == ["cold", "cold", "hot"], (held, parts)
+        assert [i.key for i in report.deleted if i.tier == "hot"] == ["2026-09-30"]
         assert [(t, r.split(":")[0]) for t, _, r in held] == [("hot", "archive_mismatch")], held
         assert ("CRITICAL", "archive.verification_failed") in events.seen
         assert await conn.fetchval("SELECT count() FROM trades WHERE ts < '2026-10-02'") == 10
+        # A dropped partition may stay listed empty (numRows 0, null minTimestamp): not data.
+        names = {
+            str(r["name"])
+            for r in parts
+            if int(str(r["numRows"] or 0)) > 0 and r["minTimestamp"] is not None
+        }
+        assert names == {"2026-10-01", "2026-10-09"}, parts
         assert await cold.partitions("BTCUSDT", T) == []
-        assert not (tmp_path / "trades" / "symbol=BTCUSDT" / "dt=2026-10-01").exists()
+        for dt in ("2026-09-30", "2026-10-01"):
+            assert not (tmp_path / "trades" / "symbol=BTCUSDT" / f"dt={dt}").exists()
         phases = [d.get("phase") for a, d in audit.rows if a == "data.deleted"]
-        assert phases == ["intent", "done"]
+        assert phases == ["intent", "done"] * 3
         assert [a for a, _ in audit.rows][-1] == "retention.run"  # outlives the data
     finally:
         await conn.close()
