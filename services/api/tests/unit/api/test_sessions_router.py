@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import candleviewer.api.sessions as sessions_module
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.sessions import (
     GET_SESSION_QUERY,
@@ -387,8 +388,30 @@ async def test_self_service_read_refusal_bounds_what_it_echoes(env: _Env) -> Non
     body = r.json()
     assert len(body["errors"]) == 8, "at most eight names are echoed"
     assert "(+33 more)" in body["detail"]
-    assert body["errors"][0]["field"] == f"query.{'a' * 64}..."
-    assert "a" * 65 not in r.text, "a long name is cut to 64 characters"
+    assert body["errors"][0]["field"] == "query.<200-character name>"
+    assert "a" * 20 not in r.text, "no prefix of a name over the bound is echoed"
+
+
+async def test_self_service_read_refusal_redacts_each_short_name_once(
+    env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2573 review: the shared redaction backtracks on long input, so it must only ever see names
+    within the echo bound, once each, however long the client-supplied names are."""
+    seen: list[int] = []
+    redact = sessions_module.redact_text
+
+    def counting_redact(value: str) -> str:
+        seen.append(len(value))
+        return redact(value)
+
+    monkeypatch.setattr(sessions_module, "redact_text", counting_redact, raising=True)
+    caller = await env.mint(uuid.uuid4())
+    params = {f"{i:02d}" + "k" * 4094: "1" for i in range(6)} | {"short": "1", "x" * 64: "1"}
+    r = env.client.get("/api/v1/auth/session", params=params, headers=_h(caller.access_token))
+    assert r.status_code == 422
+    assert seen and max(seen) <= 64, seen
+    assert len(seen) == 2, "only the two names within the bound are redacted, once each"
+    assert "query.<4096-character name>" in r.text
 
 
 def test_self_service_read_allow_lists_match_the_contract() -> None:

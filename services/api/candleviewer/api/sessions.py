@@ -188,11 +188,12 @@ _MAX_ECHOED_NAME_LEN = 64
 
 
 def _echoed(name: str) -> str:
-    """A client-supplied parameter name as echoed: redacted first, then cut to the bound."""
-    shown = redact_text(name)
-    if len(shown) > _MAX_ECHOED_NAME_LEN:
-        return f"{shown[:_MAX_ECHOED_NAME_LEN]}..."
-    return shown
+    """A client-supplied parameter name as echoed. A name over the bound is never echoed, only its
+    length: the shared redaction then only ever scans short names (cheap, and a secret shape is
+    seen whole), and no prefix of a long token can leak through a cut (#2573 review)."""
+    if len(name) > _MAX_ECHOED_NAME_LEN:
+        return f"<{len(name)}-character name>"
+    return redact_text(name)
 
 
 def _undeclared_query_refusal(request: Request, declared: frozenset[str]) -> JSONResponse | None:
@@ -206,7 +207,8 @@ def _undeclared_query_refusal(request: Request, declared: frozenset[str]) -> JSO
         return None
     named = undeclared[:_MAX_ECHOED_PARAMS]
     more = len(undeclared) - len(named)
-    listed = ", ".join(_echoed(p) for p in named) + (f" (+{more} more)" if more else "")
+    shown = {p: _echoed(p) for p in named}  # redact each name once, reuse in detail and errors
+    listed = ", ".join(shown[p] for p in named) + (f" (+{more} more)" if more else "")
     return JSONResponse(
         status_code=422,
         content={
@@ -225,7 +227,7 @@ def _undeclared_query_refusal(request: Request, declared: frozenset[str]) -> JSO
                     }
                     if p in _TARGET_USER_PARAMS
                     else {
-                        "field": f"query.{_echoed(p)}",
+                        "field": f"query.{shown[p]}",
                         "rule": "undeclared_parameter",
                         "message": "not a declared parameter of this route",
                     }
