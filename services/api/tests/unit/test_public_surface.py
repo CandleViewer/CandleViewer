@@ -142,6 +142,8 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
         "SecretsLifecycle",
         "CredentialBorrower",
         "mint_borrower",
+        # E09-S11 (#2119): the offline break-glass KEK proof (metadata only, admin only).
+        "prove_kek_possession",
         "KEY_ID_SLOT",
         "Purpose",
         "RequestSignature",

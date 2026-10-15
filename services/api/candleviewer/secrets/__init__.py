@@ -4,8 +4,9 @@ Importable only by M4 (the exchange adapter) and M21 (`admin`, metadata only) â€
 Plaintext keys and unwrapped DEKs never leave this package (C-2.7, #2339). M4 holds one
 caller-bound signing capability (`CredentialBorrower`, minted once by `admin.wiring` via
 `mint_borrower`): it sends a message with `KEY_ID_SLOT` where the key id goes and gets back a
-`RequestSignature` (hex MAC + key id), never the secret. `_kek`, `_envelope`, `_source`,
-`_metrics` and `broker` are internal.
+`RequestSignature` (hex MAC + key id), never the secret. `admin` alone may call the offline
+break-glass proof `prove_kek_possession` (#2119): metadata only, it never enrols a KEK. `_kek`,
+`_envelope`, `_source`, `_metrics` and `broker` are internal.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ from candleviewer.secrets.service import (
     SecretsMetadataFacade,
     SecretsService,
     mint_borrower,
+    prove_kek_possession,
 )
 from candleviewer.secrets.signing import KEY_ID_SLOT, RequestSignature
 from candleviewer.secrets.store import AuditSink, CredentialStore, KcvStore
@@ -57,4 +59,5 @@ __all__ = [
     "WithdrawPermissionRejected",
     "export_secrets_metrics",
     "mint_borrower",
+    "prove_kek_possession",
 ]

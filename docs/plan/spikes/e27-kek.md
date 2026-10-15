@@ -207,6 +207,8 @@ Per the #2119 decision the CLI lives under `candleviewer.admin` (allowed to impo
   (`cv-launch.ps1 breakglass`, same stdin/FIFO handoff), on the VPS via
   `systemd-run -p LoadCredentialEncrypted=...`. No new custody path.
 - Proof of KEK possession = `secrets.verify_kek_possession()` (load + constant-time KCV). Fails closed.
+  **As decided (#2119 O1):** the CLI uses `secrets.prove_kek_possession()` instead. It runs the boot
+  custody path but never enrols a KEK, refusing `kek_not_enrolled` in every environment.
 - Postgres direct, no listener, refuses while `cv-api` holds the run lock; `file` source in `live` refused.
 - ★ **Second factor in `live`:** the operator must supply one unused Owner recovery code (SR-023 sealed
   envelope), verified offline against its hash in the DB and consumed. KEK + host access alone is not

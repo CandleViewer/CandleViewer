@@ -31,7 +31,8 @@ R7  Any class outside `secrets/` subclassing a class imported from `candleviewer
 R8  Last-hop names pinned: `unwrap_dek`, `wrap_dek`, `open_`, `seal`, `cred_aad`, `dek_aad`,
     `rewrap_all`, `verify_kcv`, `drop_kek`, `flush_cache`, `kek_handle`, `kek_prev_handle`,
     `kek_ack_path` (outside `settings.py`); str literals `/run/credentials…` or `CV_KEK_…`.
-R9  Borrow names (see R10); admin metadata outside `admin/`;
+R9  Borrow names (see R10); admin metadata (`_ADMIN_ONLY`: attribute, bare name, import or
+    literal) outside `admin/`;
     `mint_borrower` outside `admin/wiring.py`; every M2-defined private name (harvested with
     rglob, no subtraction) plus `_key`, `_cache`, `_items`, `_broker`, on non-self receivers.
 R10 Plaintext stays in `secrets/` (C-2.7, #2339): the plaintext borrow (`with_credentials`,
@@ -86,7 +87,8 @@ _BORROW = frozenset({"with_credentials", "borrow_handle"})
 #: (refused in the exchange adapter).
 _REVEAL = "reveal"
 _ADAPTER_PLAINTEXT = frozenset({"SecretStr", "get_secret_value"})
-_ADMIN_ONLY = frozenset({"rewrap_deks", "verify_kek_possession"})
+#: Admin metadata; `prove_kek_possession` is the offline break-glass proof (#2119).
+_ADMIN_ONLY = frozenset({"rewrap_deks", "verify_kek_possession", "prove_kek_possession"})
 _AUDIT_TARGETS = frozenset({"emit", "writer", "_writer", "_audit_sink", "_audit"})
 _REFLECT = frozenset({"getattr", "setattr", "hasattr", "delattr", "getattr_static"})
 _OBJ_REFLECT = frozenset({"__getattribute__", "__setattr__", "__delattr__"})
@@ -342,6 +344,8 @@ class _Checker:
                     self.flag(f"{node.id} (credential plaintext in the exchange adapter)")
                 if node.id == "mint_borrower" and self.rel not in MINT_SITES:
                     self.flag("mint_borrower")
+                if node.id in _ADMIN_ONLY and not self.rel.startswith(_ADMIN_SITE):
+                    self.flag(f"{node.id} (admin-only metadata)")
                 if node.id in _INTROSPECTION:
                     self.flag(f"{node.id} (introspection)")
             elif isinstance(node, ast.Call):
@@ -374,6 +378,10 @@ class _Checker:
                     if not (self.rel == "settings.py" and node.value.startswith(_STR_PREFIXES[1:])):
                         self.flag(f"str literal {node.value[:40]!r}")
             elif isinstance(node, ast.Import | ast.ImportFrom):
+                if isinstance(node, ast.ImportFrom) and not self.rel.startswith(_ADMIN_SITE):
+                    for a in node.names:  # an alias would hide the name at the call site
+                        if a.name in _ADMIN_ONLY:
+                            self.flag(f"import {a.name} (admin-only metadata)")
                 if self.rel.startswith(_ADAPTER_SITE):
                     self.adapter_imports(node)
         return self.bad
