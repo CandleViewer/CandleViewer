@@ -75,3 +75,10 @@ def _reset_structlog_state() -> Iterator[None]:
 
     yield
     reset_logging()
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Tag the E09 regression pack so `pytest -m e09_regression` selects it (#2148)."""
+    from tests._e09_regression_pack import tag_pack
+
+    tag_pack(items)

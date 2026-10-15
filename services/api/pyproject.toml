@@ -154,6 +154,7 @@ markers = [
   "perf: wall-clock budget assertion (C-13.9) — enforced in CI, deselected by the orchestrator's local verify_pr gate on shared laptops",
   "harness: E12-T04 heavy determinism-harness runs (100k trades, full adversarial matrix) — nightly only (bar-determinism-nightly), deselected from the PR lane",
   "fuzz: E08-X02 long Hypothesis parser-fuzz session — nightly only, deselected from the PR lane",
+  "e09_regression: E09 auth/RBAC regression pack (qa/plans/e09-regression-pack.md, #2148), tagged by path in tests/_e09_regression_pack.py, never on perf/fuzz/harness items — run with pytest -m e09_regression",
 ]
 addopts = "-m \"not fuzz and not perf and not harness\" --strict-markers --cov=candleviewer --cov-branch --cov-fail-under=85"
 testpaths = ["tests"]
