@@ -7737,7 +7737,10 @@ paths:
         without the KEK cannot trade. `verify: "true` schedules an automatic restore-into-scratch"
         verification after the dump completes.
         A run is a `backup` job (`GET /admin/jobs/{jobId}`), audited as `backup.run` ahead of the
-        response (E42-T05). `backups:write` needs a live step-up elevation.
+        response (E42-T05). Every `backups:write` operation (run, verify, restore, download,
+        delete) needs a fresh `backups` step-up elevation (no grace, single use); the route slice
+        registers the class in `ACTION_CLASSES`, `DANGEROUS_ROUTES` and `DANGEROUS_PATH_PATTERN`
+        (`^/admin/backups`).
       x-rbac: { permissions: [backups:write], scope: none }
       x-idempotency: recommended
       parameters:
@@ -7806,7 +7809,7 @@ paths:
         and sets `verified_at`, or ends `failed` with a stable `error` code
         (`checksum_mismatch` when the stored digest does not match) and records the failed
         verification on the backup row (`status: failed`, `error`). Either outcome is audited as
-        `backup.verified`.
+        `backup.verified`. Needs a fresh `backups` step-up elevation.
       x-rbac: { permissions: [backups:write], scope: none }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
@@ -7831,11 +7834,17 @@ paths:
       description: >
         Backup artefacts are secret-bearing (they hold envelope-encrypted key material), so a
         download is a link that works once and expires 5 minutes after issue (E42-T05).
-        `backups:write` is a dangerous permission and needs a live step-up elevation. Issuing is
-        audited at high severity as `backup.downloaded` before the response. The link is
-        returned exactly once and is never logged or audited; it carries a one-time token, never
-        a bearer credential, and fetching it is an authenticated `GET` by the same user. Only a
-        backup with `status` `ok` or `verified` can be downloaded, else `409 conflict`.
+        `backups:write` needs a fresh `backups` step-up elevation (no grace, single use). Issuing
+        is audited as `backup.downloaded` with `after_state.stage: issued` at severity `error`
+        before the response. The link is returned exactly once and is never logged or audited;
+        it carries a one-time token, never a bearer credential, and fetching it is an
+        authenticated `GET` by the same user (`downloadBackup`). Only a backup with `status`
+        `ok`, `verified` or `restored` can be downloaded; any other status is `409 conflict` with
+        rule `backup_not_usable`. A user may issue at most 10 links per hour, after which the
+        call is `429 rate_limited` with `Retry-After`.
+        This adapts E42-T02's audit-export download rather than following it: the link here is
+        single-use and expires after 5 minutes, issuing it needs a step-up, the fetch is rate
+        limited, and both the issue and the fetch are audited.
       x-rbac: { permissions: [backups:write], scope: none }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
@@ -7860,6 +7869,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /admin/backups/{backupId}/download/{token}:
     parameters:
@@ -7875,18 +7885,32 @@ paths:
       description: >
         Streams the artefact once (E42-T05). The token must have been issued to the calling user
         for this backup less than 5 minutes ago and not used before; it is consumed before the
-        first byte is sent. An unknown, expired, used or foreign token is `404 not_found`, the
-        same answer for each case so a token cannot be probed.
+        first byte is sent. Serving it is audited as `backup.downloaded` with
+        `after_state.stage: served` at severity `error`; the token is never recorded or logged.
+        The calling user's own expired or already used token is `410 gone`; an unknown token
+        or another user's is `404 not_found`, so a token cannot be probed. At most 10 fetches
+        per user per hour, else `429 rate_limited`.
       x-rbac: { permissions: [backups:read], scope: none }
       responses:
         "200":
-          description: The artefact bytes.
+          description: The artefact bytes, never cached and always saved as a file.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+            Content-Disposition:
+              { schema: { type: string, pattern: '^attachment; filename="[^"]+"$' } }
+            X-Content-Type-Options: { schema: { type: string, const: nosniff } }
           content:
             application/octet-stream:
               schema: { type: string, format: binary }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: "The caller's own link expired or was already used (`code: gone`)."
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
 
   /admin/jobs/{jobId}:
     parameters:
@@ -8087,8 +8111,8 @@ paths:
         and never reveals which one failed.
         Grants a **5-minute** server-side grace for `action_class` on the current session
         (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the
-        earlier 15). `live_enablement` and `killswitch` are no-grace classes: the response is
-        `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the
+        earlier 15). `live_enablement`, `killswitch` and `backups` are no-grace classes: the
+        response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the
         session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints
         that require elevation return `403` with `code: step_up_required` until this
         succeeds. Always audited (`auth.step_up_granted`, `auth.step_up_failed`,
@@ -8112,7 +8136,7 @@ paths:
                     `403 step_up_required` challenged on this session; a different
                     value is `400`. Without a pending challenge it is required.
                   type: string
-                  enum: [keys, users, live_enablement, killswitch, risk_caps, flags]
+                  enum: [keys, users, live_enablement, killswitch, risk_caps, flags, backups]
       responses:
         "200":
           description: Elevated.
@@ -9255,7 +9279,8 @@ paths:
         into thousands of incidents. The grouping is a materialised read model refreshed when an
         event is written, never aggregated per request. `occurrences` counts the grouped events.
         `title` is the normalised message and `detail` the latest event's message; both pass
-        through the same redaction allowlist as the audit exporter.
+        through the same redaction allowlist as the audit exporter. A new occurrence reopens a
+        `resolved` incident; an `acknowledged` one stays acknowledged.
         Ordered by `last_seen_at` descending; `status` filters.
       x-rbac: { permissions: [admin:read], scope: none }
       parameters:
@@ -9486,9 +9511,12 @@ paths:
         (`maintenance.mode`) must be on, else `409 conflict` with rule `maintenance_mode_required`;
         when positions are open, `acknowledge_open_positions` must be `true`, else `409 conflict`
         with rule `open_positions_unacknowledged`; if the open-position state cannot be read,
-        the call is refused the same way. A refused call creates no job. `backups:write` needs a
-        live step-up elevation. An accepted restore is a `backup_restore` job, audited at high
-        severity as `backup.restore` before the response.
+        the call is refused the same way; and the backup's `status` must be `ok`, `verified` or
+        `restored`, else `409 conflict` with rule `backup_not_usable`. A refused call creates no
+        job. `backups:write` needs a fresh `backups` step-up elevation (no grace, single use).
+        An accepted restore is a `backup_restore` job, audited as `backup.restore` at severity
+        `error` before the response (`critical` stays reserved for security events such as
+        refresh-token reuse).
       x-rbac: { permissions: [backups:write], scope: none }
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
@@ -9525,7 +9553,10 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
-          description: A restore precondition is not met; no job was created.
+          description: >
+            A restore precondition is not met (no job was created), or the `Idempotency-Key` was
+            reused with another body (`idempotency_key_reuse`) or is still in flight
+            (`idempotency_in_flight`).
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
@@ -13774,6 +13805,7 @@ components:
         kind:
           {
             type: string,
+            description: "**Open-ended for readers:** clients must tolerate values they do not know, so adding a kind is an additive change (C-6.3).",
             enum:
               [
                 instrument_refresh,
