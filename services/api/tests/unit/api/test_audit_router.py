@@ -252,7 +252,10 @@ def test_export_non_owner_malformed_body_is_403_not_422() -> None:
 
 def test_export_unauthenticated_gets_401() -> None:
     client = TestClient(_app(_FakeAuditService(), _FakeResolver(None)))
-    assert client.post("/admin/audit/export", json=_EXPORT_BODY).status_code == 401
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert response.status_code == 401
+    assert response.json()["code"] == "unauthenticated"
+    assert response.json()["type"].endswith("/errors/unauthenticated")
 
 
 def test_export_unauthenticated_with_malformed_body_still_401() -> None:
@@ -272,7 +275,10 @@ def test_export_no_resolver_wired_gives_501_not_implemented_code() -> None:
 
 def test_export_backend_not_wired_gives_503() -> None:
     client = TestClient(_app(None, _FakeResolver(_owner())))
-    assert client.post("/admin/audit/export", json=_EXPORT_BODY).status_code == 503
+    response = client.post("/admin/audit/export", json=_EXPORT_BODY)
+    assert response.status_code == 503
+    assert response.json()["code"] == "store_unavailable"
+    assert response.json()["type"].endswith("/errors/store_unavailable")
 
 
 def test_inactive_audit_service_returns_503() -> None:
@@ -293,6 +299,8 @@ def test_no_audit_service_wired_returns_503() -> None:
     client = TestClient(_app(None, _FakeResolver(_owner())))
     response = client.get("/admin/audit")
     assert response.status_code == 503
+    assert response.json()["code"] == "store_unavailable"
+    assert response.json()["type"].endswith("/errors/store_unavailable")
 
 
 def test_resolver_returning_none_returns_401_unauthorized() -> None:
@@ -302,6 +310,8 @@ def test_resolver_returning_none_returns_401_unauthorized() -> None:
     client = TestClient(_app(service, _FakeResolver(None)))
     response = client.get("/admin/audit")
     assert response.status_code == 401
+    assert response.json()["code"] == "unauthenticated"
+    assert response.json()["type"].endswith("/errors/unauthenticated")
 
 
 def test_query_audit_log_passes_subject_type_through_to_query_service() -> None:

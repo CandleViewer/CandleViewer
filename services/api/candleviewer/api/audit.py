@@ -312,7 +312,14 @@ def make_audit_router(
         request: Request, operation: str
     ) -> tuple[AuditServiceLike, AuditPrincipal, AuditView]:
         if audit_service is None or not audit_service.is_active:
-            raise _HttpProblem(_problem(503, "Service unavailable", "audit backend is not wired"))
+            raise _HttpProblem(
+                _problem(
+                    503,
+                    "Service unavailable",
+                    "audit backend is not wired",
+                    code="store_unavailable",
+                )
+            )
         if principal_resolver is None:
             raise _HttpProblem(
                 _problem(
@@ -326,7 +333,12 @@ def make_audit_router(
         principal = await principal_resolver.resolve(request)
         if principal is None:
             raise _HttpProblem(
-                _problem(401, "Unauthorized", "no verified session for this request")
+                _problem(
+                    401,
+                    "Unauthorized",
+                    "no verified session for this request",
+                    code="unauthenticated",
+                )
             )
         emitter = record_budget.emitter(audit_service.writer, _budget_actor(principal))
         try:
