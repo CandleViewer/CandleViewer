@@ -200,3 +200,13 @@ class PasswordPolicyViolation(AuthError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
         self.reason = reason
+
+
+class BreakGlassRefused(AuthError):
+    """The offline break-glass Owner reset (E09-S11, SR-023) refused and
+    changed zero rows. `reason` is a `BreakGlassRefusal` value from
+    `candleviewer.auth.break_glass`; it names no secret."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"break-glass reset refused: {reason}")
+        self.reason = reason
