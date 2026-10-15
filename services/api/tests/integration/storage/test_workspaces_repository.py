@@ -197,6 +197,20 @@ async def test_stale_token_raises_412_and_keeps_the_layout(
     assert await repo.get_layout(a, wid, lid) == made
 
 
+async def test_a_replace_taking_over_the_default_clears_the_old_default(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    """The default move locks the target and the current default in id order first."""
+    a = _user(pg_dsn)
+    wid, old, new = await _new_ws(repo, a), str(uuid.uuid4()), str(uuid.uuid4())
+    await repo.create_layout(a, wid, old, _lay("Old", 1, default=True))
+    await repo.create_layout(a, wid, new, _lay("New", 1))
+    res = await repo.replace_layout(a, wid, new, _lay("New", 1, default=True), if_match=None)
+    assert res.changed and res.row.is_default
+    stored = await repo.get_layout(a, wid, old)
+    assert stored is not None and not stored.is_default
+
+
 async def test_two_puts_with_one_token_give_exactly_one_winner(
     repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
 ) -> None:
