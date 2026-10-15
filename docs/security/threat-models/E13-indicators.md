@@ -399,7 +399,7 @@ in §3 must be amended here in the same PR that changes the ticket.
 
 - Accepted: IR-18 (trusted-host DB edit of presentation data), IR-27 (memo shared across users; derived from
   public data). **Owner accepted both as written, #1778 item Y (2026-10-09)**, recorded in
-  `32-risk-register.md` under RSK-060 as accepted sub-risks (expiry 2027-03-25, C-12.3). RSK-060 stays Critical until E28-T03/E28-X03
+  `32-risk-register.md` under RSK-060 as accepted sub-risks (expiry 2027-03-25; owner and review date per C-12.1). RSK-060 stays Critical until E28-T03/E28-X03
   (and E13-S08/E13-X02) land.
 - **Residual (not eliminated):**
   - IR-12 (ATR source), IR-45 (fail closed) and IR-11 (provisional swing) are mitigated at the **source** by E13;
@@ -420,8 +420,12 @@ in §3 must be amended here in the same PR that changes the ticket.
 
 ### Review log
 
-| Date       | Reviewer               | Result                                         |
-| ---------- | ---------------------- | ---------------------------------------------- |
-| 2026-10-08 | author (E13-X01 agent) | Draft submitted                                |
-| 2026-10-12 | QA Agent B (#428)      | FAIL, gaps closed by this amendment            |
-| 2026-10-13 | orchestrator Agent A   | APPROVE; security sign-off delegated per #1778 |
+| Date       | Reviewer                                                | Result                                                                                     |
+| ---------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 2026-10-08 | author (E13-X01 agent)                                  | Draft submitted                                                                            |
+| 2026-10-12 | QA Agent B (#428)                                       | FAIL, gaps closed by this amendment                                                        |
+| 2026-10-13 | orchestrator Agent A                                    | APPROVE; security sign-off delegated per #1778                                             |
+| 2026-10-13 | security-reviewer (sonnet, independent; PR #2306)       | APPROVE; period ceiling 5000 (SCR-035) and IR-18/IR-27 acceptance (#1778 item Y) confirmed |
+| 2026-10-15 | code-reviewer #1 (sonnet, independent; PR #2306)        | APPROVE                                                                                    |
+| 2026-10-15 | code-reviewer #2 (sonnet, document integrity; PR #2306) | APPROVE                                                                                    |
+| 2026-10-15 | security-reviewer (Fable, independent; PR #2306)        | APPROVE at 4132550a with four Lows, closed in the rebase                                   |
