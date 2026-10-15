@@ -2,7 +2,8 @@
 and `,` of its rendering. States are served in page order while the page's budget lasts; from
 the first one that does not fit, every remaining state of the page is withheld: `null` and
 listed in `detail.elided`, like a state over the size caps (contract #2446). The accounting
-runs with the parse, on the hasher thread."""
+runs with the parse, on the hasher thread. So does a size cap per number literal, whatever
+the budget."""
 
 from __future__ import annotations
 
@@ -23,7 +24,11 @@ from pydantic import ValidationError
 from candleviewer.api.audit import _jsonable
 from candleviewer.audit import query as query_mod
 from candleviewer.audit.models import AuditPage
-from candleviewer.audit.query import DEFAULT_PAGE_STRUCTURE_BUDGET, AuditQueryService
+from candleviewer.audit.query import (
+    DEFAULT_PAGE_STRUCTURE_BUDGET,
+    NUMBER_MAX_CHARS,
+    AuditQueryService,
+)
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.audit_sqlalchemy import (
     CHAIN_FIELD_MAX_CHARS,
@@ -164,6 +169,35 @@ def test_the_budget_setting_defaults_to_the_service_default_within_its_bounds() 
     for out_of_range in (floor - 1, 100_001):
         with pytest.raises(ValidationError):
             Settings(audit_page_structure_budget=out_of_range)
+
+
+@pytest.mark.parametrize(
+    ("literal", "served"),
+    [
+        ("9" * 64, True),
+        ("9" * 65, False),
+        ("-" + "9" * 64, False),
+        ("0." + "1" * 62, True),
+        ("0." + "1" * 63, False),
+        ("1." + "2" * 58 + "e+300", False),
+        ('"' + "9" * 65 + '"', True),
+    ],
+    ids=["int_64", "int_65", "signed_int_65", "float_64", "float_mantissa_65",
+         "float_exponent_65", "digits_in_a_string"],
+)  # fmt: skip
+def test_a_state_holding_a_number_literal_over_64_characters_is_withheld_and_listed(
+    literal: str, served: bool
+) -> None:
+    """A size cap per number literal (digits, sign, `.`, `e`/`E`), whatever the page's
+    structure budget. A run of digits inside a string is no number literal."""
+    assert NUMBER_MAX_CHARS == 64
+    state = '{"n": ' + literal + "}"
+    chain = {"before_state": state, "after_state": '{"qty": "1"}'}
+    budget = query_mod._StructureBudget(DEFAULT_PAGE_STRUCTURE_BUDGET)
+    detail = query_mod._owner_detail({"chain": chain}, budget)
+    after = {"qty": "1"}
+    withheld = {"before": None, "after": after, "elided": ["before"]}
+    assert detail == ({"before": json.loads(state), "after": after} if served else withheld)
 
 
 # ---- The on-loop render of an Owner page at the page cap once the budget applies ---------
