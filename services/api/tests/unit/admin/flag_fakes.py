@@ -10,6 +10,7 @@ from typing import Any
 
 from candleviewer.admin.flags import FlagSpec, StoredFlag
 from candleviewer.admin.flags.store import FlagWrite, StaleWriteError, StoreUnavailableError
+from candleviewer.audit.actions import validate_action
 
 T0 = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
 
@@ -67,6 +68,7 @@ class FakeAudit:
         self.records: list[tuple[str, dict[str, Any]]] = []
 
     async def emit(self, action: str, **kwargs: Any) -> None:
+        validate_action(action)  # an unregistered action is refused, as `audit.emit` refuses it
         self.records.append((action, kwargs))
 
 
