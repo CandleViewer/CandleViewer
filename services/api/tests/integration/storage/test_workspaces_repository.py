@@ -18,6 +18,7 @@ from pathlib import Path
 import psycopg
 import pytest
 import pytest_asyncio
+from psycopg import sql
 from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 from testcontainers.postgres import PostgresContainer
@@ -548,10 +549,11 @@ async def test_recorder_probe_statements_use_ix_lp_symbol_at_scale(
             ([a, b],),
         ).fetchall()
         assert sorted(str(r[0]) for r in rows) == sorted(three)
-        probe = str(mod._CHART_OPEN)
-        plan = c.execute(
-            "EXPLAIN (FORMAT JSON) " + probe.replace(":symbol", "'BTCUSDT'")
-        ).fetchone()
+        # The shipped statement, composed by psycopg's `sql` module with the symbol bound as a
+        # parameter (an unnamed statement is planned with its actual value), never spliced in.
+        probe = sql.SQL(str(mod._CHART_OPEN).replace(":symbol", "%(symbol)s"))
+        explain = sql.SQL("EXPLAIN (FORMAT JSON) {}").format(probe)
+        plan = c.execute(explain, {"symbol": "BTCUSDT"}).fetchone()
         assert plan is not None
         text = json.dumps(plan[0])
         assert '"Index Name": "ix_lp_symbol"' in text, text
