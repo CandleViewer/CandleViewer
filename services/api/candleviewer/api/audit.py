@@ -605,8 +605,10 @@ def make_audit_router(
             return _problem(404, "Not found", "from_id is beyond the chain head", code="not_found")
         except _VERIFY_STOP_ERRORS as exc:
             return _unavailable(_verify_stop(exc)[1])
-        # Then the per-user limit (429) and single-flight (409): a refusal writes no record;
-        # it is counted and carried by the user's next record (contract "Audit budget").
+        # Then the per-user limit (429) and single-flight (409). The head read (range
+        # defaulting, above) comes first, as the contract orders the checks; a caller who is
+        # not authorised never reaches it. A refusal writes no record: it is counted and
+        # carried by the user's next record (contract "Audit budget").
         actor = _budget_actor(principal)
         retry = verify_limits.retry_after(actor.key)
         if retry is not None:
