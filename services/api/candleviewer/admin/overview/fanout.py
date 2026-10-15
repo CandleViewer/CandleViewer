@@ -5,8 +5,10 @@ through `SliceFanOut.read`: under its own `asyncio.timeout` budget (300 ms); wit
 contained (a timeout or exception becomes an `error` slice, `SourceUnavailable` an `unavailable`
 one, and only cancellation propagates); and through a per-slice 5 s TTL cache on an injected
 monotonic clock. Every outcome is cached, errors too, so reloads never hammer a struggling
-source; kill-switch and flag reads opt out (`cached=False`). Concurrent reads of one slice share
-a single in-flight source call; `invalidate` makes the next read refetch (read-after-write).
+source; kill-switch and flag reads opt out (`cached=False`) and never share an in-flight
+call. Concurrent cached reads of one slice share a single in-flight source call; `invalidate`
+makes the next read refetch (read-after-write). `read_part` and `combine` guard the sub-reads
+of one slice (each under its own sub-budget) so a failed part only degrades that slice.
 Callers fan out with `asyncio.gather(fan.read(...), ...)`, which owns the reads and cancels
 them with the request; a stray `CancelledError` from a source only fails its own slice.
 A degraded run logs `source`, `reason` and `request_id`; every run is timed, errors counted.
@@ -17,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Final, Literal, cast
@@ -34,9 +36,12 @@ DEFAULT_BUDGET_S: Final = 0.3
 DEFAULT_TTL_S: Final = 5.0
 #: The only `detail` for an exception: its message may carry a DSN or a key, so it never leaves.
 FAILED_DETAIL: Final = "source failed"
-#: A seatbelt only: the real protection is that every `detail` is a fixed literal in code. This
-#: rejects anything empty, over 200 chars or outside a charset that no DSN or key fits.
+#: A seatbelt only, not the protection: every `detail` and `reason` is a fixed literal or an
+#: exception class name built in code. This merely refuses empty, oversized or odd strings.
 _DETAIL_RE: Final = re.compile(r"[A-Za-z0-9 _:.-]{1,200}")
+_REASON_RE: Final = re.compile(r"[A-Za-z0-9_.:-]{1,80}")
+#: (status, fixed wire detail, logged-only reason: the part and the exception class).
+Problem = tuple[Literal["error", "unavailable"], str, str]
 
 
 def _checked(detail: str) -> str:
@@ -83,6 +88,8 @@ class Degraded[T]:
 
     def __post_init__(self) -> None:
         _checked(self.detail)
+        if not _REASON_RE.fullmatch(self.reason):
+            raise ValueError("slice reason must be 1-80 chars of [A-Za-z0-9_.:-]")
 
 
 class SourceUnavailable(Exception):
@@ -91,6 +98,44 @@ class SourceUnavailable(Exception):
     def __init__(self, detail: str) -> None:
         super().__init__(_checked(detail))
         self.detail = detail
+
+
+class PartFailed(Exception):
+    """A sub-read failure with its own fixed wire detail (after `<part>: `)."""
+
+    detail = "source failed"
+
+
+async def read_part[T](
+    what: str, load: Callable[[], Awaitable[T]], budget_s: float
+) -> tuple[T | None, Problem | None]:
+    """One independently degradable part of a slice, under its own sub-budget. Never raises
+    but for a real cancellation; only fixed details go out, the exception class is logged."""
+    try:
+        async with asyncio.timeout(budget_s):
+            return await load(), None
+    except SourceUnavailable as exc:
+        return None, ("unavailable", exc.detail, f"{what}:unwired")
+    except PartFailed as exc:
+        return None, ("error", f"{what}: {exc.detail}", f"{what}:{type(exc).__name__}")
+    except TimeoutError:
+        return None, ("error", f"{what}: timed out", f"{what}:TimeoutError")
+    except asyncio.CancelledError:
+        if _cancelling():
+            raise
+        return None, ("error", f"{what}: source failed", f"{what}:CancelledError")
+    except Exception as exc:  # the message may carry internals: only the class is logged
+        return None, ("error", f"{what}: source failed", f"{what}:{type(exc).__name__}")
+
+
+def combine[T](value: T, problems: Sequence[Problem | None]) -> T | Degraded[T]:
+    """`value` if every part was read; else `Degraded` with the first error (or the first
+    unavailable part) as status and detail, and every failed part's reason joined."""
+    found = [p for p in problems if p is not None]
+    if not found:
+        return value
+    worst = next((p for p in found if p[0] == "error"), found[0])
+    return Degraded(value, worst[0], worst[1], "--".join(p[2] for p in found)[:80])
 
 
 class SliceFanOut:

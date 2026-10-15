@@ -16,8 +16,12 @@ from structlog.testing import capture_logs
 from candleviewer.admin.overview.fanout import (
     DEFAULT_BUDGET_S,
     Degraded,
+    PartFailed,
+    Problem,
     SliceFanOut,
     SourceUnavailable,
+    combine,
+    read_part,
 )
 from candleviewer.admin.overview.metrics import export_overview_metrics, source_errors_total
 from candleviewer.admin.overview.slices import CAPACITY_SLICES, OVERVIEW_SLICES, AdminSlice
@@ -354,3 +358,66 @@ async def test_a_partial_slice_logs_its_reason_never_a_message() -> None:
     assert [(e["source"], e["reason"]) for e in logs] == [
         (AdminSlice.TRADING, "open_positions:OSError")
     ]
+
+
+async def test_a_dsn_shaped_reason_is_refused_and_fails_the_slice() -> None:
+    async def leaky() -> int | Degraded[int]:
+        return Degraded(1, "error", "part: source failed", "part:dsn://u:pw@db/x")
+
+    result = await _fan(Clock()).read(AdminSlice.TRADING, leaky)
+    assert (result.status, result.value, result.detail) == ("error", None, "source failed")
+
+
+class Corrupt(PartFailed):
+    detail = "unrecognised value"
+
+
+@pytest.mark.parametrize(
+    ("raised", "problem"),
+    [
+        (
+            SourceUnavailable("part: no provider wired"),
+            ("unavailable", "part: no provider wired", "part:unwired"),
+        ),
+        (Corrupt(), ("error", "part: unrecognised value", "part:Corrupt")),
+        (OSError("postgresql://u:hunter2@db/x"), ("error", "part: source failed", "part:OSError")),
+        (asyncio.CancelledError(), ("error", "part: source failed", "part:CancelledError")),
+    ],
+    ids=["unavailable", "fixed-detail", "class-only-reason", "stray-cancel"],
+)
+async def test_read_part_maps_a_failure_to_a_fixed_problem(
+    raised: BaseException, problem: tuple[str, str, str]
+) -> None:
+    assert await read_part("part", Source(raises=raised), 1.0) == (None, problem)
+
+
+async def test_read_part_returns_the_value_or_times_out_on_its_own_budget() -> None:
+    assert await read_part("part", Source(4), 1.0) == (4, None)
+    timed_out = ("error", "part: timed out", "part:TimeoutError")
+    assert await read_part("part", Source(hang=True), 0.01) == (None, timed_out)
+
+
+def test_combine_prefers_the_error_and_joins_every_reason() -> None:
+    assert combine(1, [None, None]) == 1
+    down: Problem = ("unavailable", "a: no provider wired", "a:unwired")
+    failed: Problem = ("error", "b: source failed", "b:OSError")
+    assert combine(1, [down, failed]) == Degraded(
+        1, "error", "b: source failed", "a:unwired--b:OSError"
+    )
+    long: Problem = ("error", "x: source failed", "x:" + "E" * 70)
+    assert len(combine(1, [long, long]).reason) == 80  # type: ignore[union-attr]  # Degraded here
+
+
+async def test_read_part_lets_a_real_cancellation_through() -> None:
+    entered = asyncio.Event()
+
+    async def hangs() -> int:
+        entered.set()
+        await asyncio.Event().wait()
+        return 0
+
+    task = asyncio.create_task(read_part("part", hangs, 5.0))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
