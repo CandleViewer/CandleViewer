@@ -744,6 +744,40 @@ def test_recorder_delta_reaches_every_subscription() -> None:
     assert [f["t"] for f in first.take() + second.take()] == ["d", "d"]
 
 
+def test_permission_loss_revokes_account_less_subscriptions_and_their_deltas() -> None:
+    """§9.5 for subscriptions that hold no accounts: re-evaluation revokes them."""
+    hub = SequencingHub()
+    alerts, recorder = _scoped(hub, "alerts"), _scoped(hub, "recorder")
+    for conn in (alerts, recorder):
+        frames = conn.authz.apply_snapshot(replace(conn.authz.principal, permissions=PERMS), 9)
+        assert [(f["t"], f["p"]["reason"]) for f in frames[1:]] == [
+            ("revoked", "permission_revoked")
+        ]
+    assert hub.publish("alerts", _ALERT, user=USER) == 0
+    assert hub.publish("recorder", _RECORDER) == 0
+
+
+def test_private_delta_needs_the_permission_even_before_reevaluation() -> None:
+    """#2521 review: a principal swapped in without its subscriptions being removed (a
+    re-evaluation that stopped part-way) gets no private delta for a permission it lacks."""
+    hub = SequencingHub()
+    alerts, recorder = _scoped(hub, "alerts"), _scoped(hub, "recorder")
+    positions = Conn(Source(), ACC_A)
+    hub.register(positions.authz, positions.emitter)
+    _, sub = positions.authz.admit(
+        {"ch": "positions", "opts": {"exchange_account_ids": [str(ACC_A)]}}
+    )
+    assert sub is not None
+    sub.snapshot_pending = False
+    for conn in (alerts, recorder, positions):
+        principal = conn.authz.principal
+        lost = {Permission.ALERTS_READ, Permission.RECORDING_READ, Permission.POSITIONS_READ}
+        conn.authz.principal = replace(principal, permissions=principal.permissions - lost)
+    assert hub.publish("alerts", _ALERT, user=USER) == 0
+    assert hub.publish("recorder", _RECORDER) == 0
+    assert hub.publish("positions", {"positions": []}, account=ACC_A) == 0
+
+
 def test_account_scoped_delta_is_not_widened_by_a_user() -> None:
     hub = SequencingHub()
     conn = Conn(Source(), ACC_A)

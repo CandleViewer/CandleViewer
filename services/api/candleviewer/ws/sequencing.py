@@ -577,13 +577,17 @@ def in_scope(
     authz: ConnectionAuthz, sub: Subscription, account: uuid.UUID | None, user: uuid.UUID | None
 ) -> bool:
     """Whether an event reaches `sub`, by its family's scope (§6.2, #2398). A private family
-    scoped to accounts needs the event's account among the subscription's; a SELF family
-    (`alerts`) reaches only the connections of the user the event belongs to, and nobody when
-    the event names none; a NONE family (`recorder`) reaches every subscription, whose
-    permission was checked at `sub` and is revoked live (§9.5)."""
+    reaches a subscription only while the connection's principal holds the family's
+    permission. Re-evaluation swaps the principal in before it removes anything (§9.5), so this
+    holds even if the removal stops part-way. Then: a family scoped to accounts needs the
+    event's account among the subscription's; a SELF family (`alerts`) reaches only the
+    connections of the user the event belongs to, and nobody when the event names none; a NONE
+    family (`recorder`) reaches every subscription."""
     family = sub.topic.family
     if not family.private:
         return True
+    if family.permission not in authz.principal.permissions:
+        return False
     if family.scope is Scope.SELF:
         return user is not None and authz.principal.user_id == user
     if family.scope is Scope.NONE:
