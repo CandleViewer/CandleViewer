@@ -243,6 +243,7 @@ from candleviewer.ws.upstream import UpstreamRefs
 from candleviewer.ws_wiring import (
     IngestionUpstreamSink,
     KillSwitchView,
+    StorePrincipalLoader,
     WsEvents,
     WsRuntime,
     default_snapshot_router,
@@ -605,7 +606,7 @@ def _cached_spec() -> dict[str, Any]:
 
 
 async def _deny_all_snapshot(user_id: uuid.UUID) -> PrincipalSnapshot:
-    """Fail closed until the session/identity store (E09-S03) resolves real snapshots."""
+    """The fake backend's WS principal: it has no identity store, so nothing is permitted."""
     return PrincipalSnapshot(user_id, frozenset(), frozenset())
 
 
@@ -627,6 +628,22 @@ def _session_authenticator(ctx: AppContext) -> Authenticate:
 
 
 SnapshotLoader = Callable[[uuid.UUID], Awaitable[PrincipalSnapshot]]
+
+
+def build_ws_principal_loader(
+    settings: Settings, identity: SqlAlchemyIdentityProvider | None
+) -> SnapshotLoader:
+    """#2505: the WS principal on the real backend is the store's (`StorePrincipalLoader`):
+    roles, permission codes and account grants, re-read at every `auth` and re-evaluation.
+    The fake backend has no identity store, so its sockets keep the deny-all snapshot."""
+    if settings.storage_backend != "real" or identity is None:
+        return _deny_all_snapshot
+    return StorePrincipalLoader(
+        identity,
+        SqlAlchemyScopeSource(
+            SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "ws-principal")
+        ),
+    )
 
 
 async def gateway_overloaded_handler(_request: Request, exc: Exception) -> JSONResponse:
@@ -965,8 +982,8 @@ def create_app(
     )
     # QA #1648 d1: live WS gateway. Role changes (`PUT /users/{id}/roles`)
     # notify the registry, which pushes `permission_change` and revokes
-    # now-forbidden subscriptions. Snapshots fail closed (no permissions)
-    # until the identity store is injected.
+    # now-forbidden subscriptions. The principal is read from the store on
+    # the real backend and is deny-all on the fake one (#2505).
     # #377 wiring: E08 upstream sink, BarBuilderSet leases, audit, instrument check, snapshots
     # (pending stubs until #2195-#2197), sequencing; lifecycle + shutdown in `WsRuntime`.
     ws_upstream = UpstreamRefs(IngestionUpstreamSink(ingestion_streams(ctx)))
@@ -979,7 +996,9 @@ def create_app(
         sequencing=SequencingHub(),
     )
     ws_registry = ConnectionRegistry(
-        snapshot_loader or _deny_all_snapshot, _now_ms, services=ws_services
+        snapshot_loader or build_ws_principal_loader(resolved, identity),
+        _now_ms,
+        services=ws_services,
     )
     ws_hub = GatewayHub(max_per_user=resolved.ws_max_connections_per_user)
     kill_switch = KillSwitchView()

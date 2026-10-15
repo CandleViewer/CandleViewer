@@ -11,6 +11,9 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   module's adapter (bars #2195, book #2196, order-flow #2197). Until one lands, its family maps
   to `PendingSnapshotSource`, which raises `NotImplementedError`; the router turns that into
   `None`, so the subscription reports `snapshot_pending` and no `d` is ever emitted.
+* **Principal** (E09, #2505): `StorePrincipalLoader` reads a user's roles, permission codes and
+  account grants from the store at every `auth` and every re-evaluation. It fails closed to the
+  deny-all snapshot and never raises.
 * **Events** (E09 / kill switch): `WsEvents` is the one entry point producers call:
   `grants_changed`, `user_disabled`, `kill_switch_changed`.
 * **Shutdown** (§9.4): `WsRuntime.stop()` runs FIRST in the lifespan teardown: the gateway sends
@@ -24,11 +27,13 @@ import contextlib
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import structlog
 
+from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.observability.context import spawn
 from candleviewer.ws.gateway import CLOSE_FLUSH_TIMEOUT_S, GatewayHub
 from candleviewer.ws.permissions import ConnectionRegistry, Subscription
@@ -44,6 +49,10 @@ def logger() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
 
+
+#: Upper bound on one principal load. A hung store denies the principal instead of holding the
+#: socket's `auth` or a role/grant change fan-out.
+PRINCIPAL_LOAD_TIMEOUT_S: Final = 5.0
 
 #: Topic family -> owning-module adapter ticket, for families whose adapter has not landed.
 PENDING_ADAPTERS: Final[Mapping[str, str]] = {
@@ -168,6 +177,81 @@ def default_snapshot_router(
     }
     sources.update(adapters or {})
     return SnapshotRouter(sources)
+
+
+class _Identity(Protocol):
+    """The SQL identity read path (`SqlAlchemyIdentityProvider`), as `/auth/session` reads it."""
+
+    async def user(self, user_id: str) -> dict[str, Any]: ...
+
+    async def session_info(self, user_id: str) -> dict[str, Any]: ...
+
+
+class _Grants(Protocol):
+    """`user_account_access` rows as `(exchange_account_id, can_view, frozen)`
+    (`SqlAlchemyScopeSource`)."""
+
+    async def load_grants(self, owner: uuid.UUID) -> list[tuple[uuid.UUID, bool, bool]]: ...
+
+
+def _deny_all(user_id: uuid.UUID) -> PrincipalSnapshot:
+    return PrincipalSnapshot(user_id, frozenset(), frozenset())
+
+
+class StorePrincipalLoader:
+    """The WS `SnapshotLoader` on the real backend (#2505).
+
+    Roles and permission codes come from the SQL identity read path, account grants from
+    `user_account_access`. They are read at every `auth` and at every role, grant or kill-switch
+    re-evaluation, never cached (C-12.4). Unknown permission codes are dropped. An owner gets no
+    grant rows, because an owner's empty grants mean every account (`auth/scopes.py`).
+    `can_trade` is not loaded and is `False`, because no WS decision asks for trade rights.
+
+    Fails closed and never raises. An unknown or non-active user, a role outside the system set,
+    a store error, or a load slower than `PRINCIPAL_LOAD_TIMEOUT_S` yields the deny-all snapshot.
+    Not raising matters on re-evaluation: an exception there would leave the live sockets on
+    their previous, possibly wider, principal.
+    """
+
+    def __init__(
+        self,
+        identity: _Identity,
+        grants: _Grants,
+        *,
+        timeout_s: float = PRINCIPAL_LOAD_TIMEOUT_S,
+    ) -> None:
+        self._identity = identity
+        self._grants = grants
+        self._timeout_s = timeout_s
+
+    async def __call__(self, user_id: uuid.UUID) -> PrincipalSnapshot:
+        try:
+            return await self._load(user_id)
+        except Exception as exc:  # LookupError (unknown user), ValueError (unknown role), store
+            logger().warning(
+                "ws principal load failed; denying all",
+                user_id=str(user_id),
+                error=type(exc).__name__,
+            )
+            return _deny_all(user_id)
+
+    async def _load(self, user_id: uuid.UUID) -> PrincipalSnapshot:
+        async with asyncio.timeout(self._timeout_s):
+            user = await self._identity.user(str(user_id))
+            info = await self._identity.session_info(str(user_id))
+            rows = await self._grants.load_grants(user_id)
+        if user.get("status") != "active":
+            return _deny_all(user_id)
+        codes = {str(code) for code in info.get("permissions", ())}
+        principal = PrincipalSnapshot(
+            user_id=user_id,
+            roles=frozenset(str(role) for role in user.get("roles") or ()),
+            permissions=frozenset(p for p in Permission if p.value in codes),
+        )
+        if principal.is_owner:
+            return principal
+        grants = tuple(AccountGrant(acc, view, False, frozen) for acc, view, frozen in rows)
+        return replace(principal, account_grants=grants)
 
 
 @dataclass
