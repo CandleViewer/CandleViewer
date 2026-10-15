@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 import tracemalloc
+import uuid
 from pathlib import Path
 from typing import Any, Final
 
@@ -18,13 +19,17 @@ from candleviewer.ws.codec import (
     MAX_MSGPACK_DEPTH,
     MAX_MSGPACK_VALUES,
     MsgpackFrameError,
+    _require_c_unpacker,
     decode_client_frame,
 )
-from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES
+from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_TOPICS_PER_SUB
+from candleviewer.ws.topics import FAMILIES, UNIVERSAL
 
 REPO = Path(__file__).resolve().parents[5]
-#: Worst peak the at-cap shapes below reach is about 1.2 MiB (64-ary trees of empty maps).
-MAX_PEAK_BYTES: Final = 2 << 20
+#: The worst `HOSTILE` shape peaks at about 4.8 MiB (open map levels holding short strings):
+#: the open levels' pre-sized slots and their scalars, which the 256 KiB input bounds, plus the
+#: budgeted values. 8 MiB leaves headroom; the JSON path's worst at the cap is about 6 MiB.
+MAX_PEAK_BYTES: Final = 8 << 20
 CORPUS: Final[list[dict[str, str]]] = json.loads(
     (REPO / "tests/fuzz/ws-frames/msgpack-client.json").read_text(encoding="utf-8")
 )
@@ -138,7 +143,36 @@ def test_msgpack_input_that_is_not_bytes_is_refused() -> None:
 
 
 @pytest.mark.parametrize(
-    "build", [lambda n: [None] * n, lambda n: {str(i): None for i in range(n)}]
+    "view",
+    [memoryview(b"\x90"), memoryview(bytes(16)).cast("B", shape=[2, 8])],
+    ids=["memoryview", "2-d-memoryview"],
+)
+def test_msgpack_memoryview_is_refused_because_its_len_is_not_its_size(view: memoryview) -> None:
+    with pytest.raises(MsgpackFrameError, match="binary"):
+        decode_client_frame(view)  # type: ignore[arg-type]  # ASGI hands the gateway bytes
+
+
+def test_msgpack_fallback_unpacker_is_refused_at_import() -> None:
+    def fallback(packed: bytes) -> Any:
+        return None
+
+    fallback.__module__ = "msgpack.fallback"
+    _require_c_unpacker(msgpack.unpackb)  # the installed one is the C extension
+    with pytest.raises(ImportError, match="C extension"):
+        _require_c_unpacker(fallback)
+
+
+def test_msgpack_container_cap_covers_every_list_the_server_accepts() -> None:
+    """#2509 review: the cap must never turn a valid JSON-path frame into `frame_malformed`."""
+    options = [*UNIVERSAL.values(), *(o for f in FAMILIES.values() for o in f.options.values())]
+    limits = [o.max_items for o in options if o.max_items is not None]
+    assert max([*limits, MAX_TOPICS_PER_SUB]) <= MAX_MSGPACK_CONTAINER_LEN
+
+
+@pytest.mark.parametrize(
+    "build",
+    [lambda n: [None] * n, lambda n: {str(i): None for i in range(n)}],
+    ids=["array", "map"],
 )
 def test_msgpack_container_length_cap_exact_accepted_and_plus_one_rejected(build: Any) -> None:
     assert decode_client_frame(_pack(build(MAX_MSGPACK_CONTAINER_LEN)))
@@ -148,10 +182,9 @@ def test_msgpack_container_length_cap_exact_accepted_and_plus_one_rejected(build
 
 
 def _budget_frame(extra: int) -> bytes:
-    """Exactly `MAX_MSGPACK_VALUES` + `extra` values: 64 + 63 x 256 + 4 x 48 = 16 384."""
-    level2 = [[None] * 3] * 64
-    last = [[None] * 3] * 48 + [None] * extra
-    return _pack([level2] * 63 + [last])
+    """Charged exactly `MAX_MSGPACK_VALUES` + `extra`: [L, R] with L = 126 lists of 127 nils and
+    R = 125 nils costs 3 + (1 + 126 + 126 x 128) + 126 = 16 384."""
+    return _pack([[[None] * 127] * 126, [None] * (125 + extra)])
 
 
 def test_msgpack_value_budget_exact_accepted_and_plus_one_rejected() -> None:
@@ -162,47 +195,85 @@ def test_msgpack_value_budget_exact_accepted_and_plus_one_rejected() -> None:
 
 
 def test_msgpack_map_entries_count_twice_against_the_budget() -> None:
-    entries = {str(i): None for i in range(MAX_MSGPACK_CONTAINER_LEN)}  # 128 values each
-    frame = [[entries] * 2] * 64  # 64 + 128 + 128 maps x 128 = 16 576 (8 384 counted once)
+    entries = {str(i): None for i in range(MAX_MSGPACK_CONTAINER_LEN)}  # 1 + 256 each
+    with pytest.raises(MsgpackFrameError, match="values"):  # 2 + 65 + 64 x 257 = 16 515
+        decode_client_frame(_pack([[entries] * 64]))  # (8 323 if an entry counted once)
+
+
+def test_msgpack_duplicate_map_keys_are_charged_as_read() -> None:
+    """128 pairs of one key decode to one entry, and still cost 1 + 256: 65 + 64 x 257."""
+    duplicates = b"\xde\x00\x80" + b"\xa0\xc0" * 128  # {"": None} written 128 times
+    assert decode_client_frame(duplicates) == {"": None}
     with pytest.raises(MsgpackFrameError, match="values"):
-        decode_client_frame(_pack(frame))
+        decode_client_frame(b"\xdc\x00\x40" + duplicates * 64)
 
 
-def test_msgpack_schema_maximal_sub_fits_the_budget() -> None:
+def test_msgpack_every_container_costs_one_even_when_empty() -> None:
+    with pytest.raises(MsgpackFrameError, match="values"):  # 65 + 64 x 129 + 8 192 = 16 513
+        decode_client_frame(_pack([[[]] * 128] * 64))  # (8 256 with empty containers free)
+
+
+def test_msgpack_largest_schema_valid_sub_fits_the_budget() -> None:
+    """50 topics, each with every bounded option list full (`topics.py`)."""
+    ids = [str(uuid.UUID(int=i)) for i in range(100)]
     opts = {
-        "metrics": [f"m{j}" for j in range(12)],
-        "exchange_account_ids": [f"a{j}" for j in range(25)],
+        "rule_ids": ids,
+        "exchange_account_ids": ids[:25],
         "symbols": [f"S{j}" for j in range(40)],
+        "metrics": [f"m{j}" for j in range(12)],
+        "status": [f"s{j}" for j in range(16)],
         "throttle_ms": 100,
         "coalesce": True,
-        "depth": 50,
-        "encoding": "structured",
     }
-    topics = [{"ch": f"positions.S{i}", "opts": opts} for i in range(50)]
+    topics = [{"ch": f"rules.S{i}", "opts": opts} for i in range(MAX_TOPICS_PER_SUB)]
     frame = {"t": "sub", "id": "s", "p": {"topics": topics}}
     assert decode_client_frame(_pack(frame)) == frame
 
 
-def _at_cap(prefix: bytes) -> bytes:
-    return (prefix + b"\xc0" * MAX_INBOUND_FRAME_BYTES)[:MAX_INBOUND_FRAME_BYTES]
+def _at_cap(prefix: bytes, filler: bytes = b"\xc0") -> bytes:
+    return (prefix + filler * MAX_INBOUND_FRAME_BYTES)[:MAX_INBOUND_FRAME_BYTES]
 
 
 def _tree(leaf: bytes) -> bytes:
-    """A 64-ary tree, three levels deep, of `leaf`, cut at the inbound cap."""
-    inner = b"\xdc\x00\x40" + leaf * 64
-    return (b"\xdc\x00\x3c" + (b"\xdc\x00\x40" + inner * 64) * 60)[:MAX_INBOUND_FRAME_BYTES]
+    """A 128-ary tree, three levels deep, of `leaf`, cut at the inbound cap."""
+    inner = b"\xdc\x00\x80" + leaf * 128
+    return _at_cap(b"\xdc\x00\x80" + (b"\xdc\x00\x80" + inner * 128) * 128, b"")
 
 
-#: #2509 security review: at-cap shapes that reserved 2 GiB or cost 160 ms per frame before the
-#: container caps and the value budget.
+def _open_levels(child: bytes) -> bytes:
+    """Array levels of 127 `child` values each, the 128th the next level: never completed."""
+    return _at_cap((b"\xdc\x00\x80" + child * 127) * 2_000, b"")
+
+
+def _open_map_levels(value: bytes) -> bytes:
+    """Map levels of 127 distinct keys to `value`, the 128th key's value the next level."""
+    keys = [b"\xa2" + bytes([0x41 + i // 32, 0x41 + i % 32]) for i in range(128)]
+    level = b"\xde\x00\x80" + b"".join(k + value for k in keys[:127]) + keys[127]
+    return _at_cap(level * 2_000, b"")
+
+
+def _repeated_keys() -> bytes:
+    """31 x 64 x 64 duplicate-key entries `"": {}`: about 129 000 maps before keys collapse."""
+    inner = b"\xde\x00\x40" + b"\xa0\x80" * 64
+    return _at_cap(b"\xdc\x00\x1f" + (b"\xde\x00\x40" + (b"\xa0" + inner) * 64) * 31, b"")
+
+
+#: #2509 security reviews: at-cap shapes that reserved 2 GiB, cost 160 ms per frame, or slipped
+#: past the round-1 budget (open levels, empty containers, duplicate keys).
 HOSTILE: Final[dict[str, bytes]] = {
     "1024-nested-array32-claiming-262144": _at_cap(b"\xdd\x00\x04\x00\x00" * 1024),
-    "1024-nested-array16-claiming-64": _at_cap(b"\xdc\x00\x40" * 1024),
+    "1024-nested-array16-claiming-128": _at_cap(b"\xdc\x00\x80" * 1024),
     "1100-nested-fixarray": _at_cap(b"\x9f" * 1100),
     "array32-of-262139-empty-maps": _at_cap(b"\xdd" + (262_139).to_bytes(4, "big")),
     "tree-of-empty-maps": _tree(b"\x80"),
     "tree-of-empty-arrays": _tree(b"\x90"),
     "tree-of-nils": _tree(b"\xc0"),
+    "open-levels-of-empty-maps": _open_levels(b"\x80"),
+    "open-levels-of-short-strings": _open_levels(b"\xa2ab"),
+    "open-levels-of-uint16": _open_levels(b"\xcd\x12\x34"),
+    "open-map-levels-of-empty-maps": _open_map_levels(b"\x80"),
+    "open-map-levels-of-short-strings": _open_map_levels(b"\xa2ab"),
+    "duplicate-key-maps": _repeated_keys(),
 }
 
 
@@ -221,7 +292,7 @@ def test_msgpack_hostile_at_cap_frame_is_refused_within_the_allocation_bound(dat
 @pytest.mark.perf
 @pytest.mark.parametrize("data", HOSTILE.values(), ids=HOSTILE.keys())
 def test_msgpack_hostile_at_cap_frame_blocks_the_loop_far_below_c_2_17(data: bytes) -> None:
-    """C-2.17: no more than 50 ms on the event loop; these take about 2 ms at most."""
+    """C-2.17: no more than 50 ms on the event loop; the worst of these takes about 7 ms."""
     started = time.perf_counter()
     with pytest.raises(MsgpackFrameError):
         decode_client_frame(data)

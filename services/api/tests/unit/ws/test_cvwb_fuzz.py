@@ -9,7 +9,8 @@ never allocates more than ``MAX_PEAK_BYTES`` (SR-128: wire counts never size an 
 msgpack decoder returns a JSON-like value within ``MAX_MSGPACK_DEPTH`` or raises ONLY
 ``MsgpackFrameError``, within ``MSGPACK_MAX_PEAK_BYTES``. Its second target builds frames from
 array and map headers (claims up to 2^32 - 1, nesting past 1 024, padding to the inbound cap),
-which byte mutation of small seeds cannot reach.
+which byte mutation of small seeds cannot reach; its third builds open levels, each holding up to
+the container cap of children before opening the next (distinct or duplicate map keys).
 Failing inputs are written to ``CV_FUZZ_ARTIFACT_DIR`` (uploaded as a CI artefact, never the repo).
 """
 
@@ -30,7 +31,12 @@ from hypothesis import HealthCheck, given, seed, settings
 from hypothesis import strategies as st
 
 from candleviewer.ws.binary import FrameMalformedError, decode
-from candleviewer.ws.codec import MAX_MSGPACK_DEPTH, MsgpackFrameError, decode_client_frame
+from candleviewer.ws.codec import (
+    MAX_MSGPACK_CONTAINER_LEN,
+    MAX_MSGPACK_DEPTH,
+    MsgpackFrameError,
+    decode_client_frame,
+)
 from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES
 
 REPO = Path(__file__).resolve().parents[5]
@@ -46,8 +52,9 @@ MSGPACK_SEEDS: Final[list[bytes]] = [
 ]
 EXAMPLES: Final[int] = int(os.environ.get("CV_FUZZ_EXAMPLES", "200"))
 MAX_PEAK_BYTES: Final[int] = 1 << 20
-#: The msgpack decoder's worst at-cap peak is about 1.2 MiB (`test_msgpack_decode_bounds.py`).
-MSGPACK_MAX_PEAK_BYTES: Final[int] = 2 << 20
+#: The msgpack decoder's worst at-cap peak is about 4.8 MiB; the bound is derived next to
+#: `test_msgpack_decode_bounds.py::MAX_PEAK_BYTES`.
+MSGPACK_MAX_PEAK_BYTES: Final[int] = 8 << 20
 _INTERESTING: Final[tuple[int, ...]] = (0, 1, 2, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, 0xFFFFFFFE)
 
 _op = st.one_of(
@@ -255,3 +262,33 @@ def test_every_unfittable_wire_count_is_rejected_up_front() -> None:
                     decode(bytes(data))
                 probes += 1
     assert probes > 20
+
+
+def _level(kind: str, width: int, child: bytes, distinct: bool) -> bytes:
+    """One level holding `width` children; its last slot opens the next level."""
+    if kind == "array":
+        return _header("array", width + 1) + child * width
+    keys = [
+        b"\xa2" + bytes([0x41 + i // 32, 0x41 + i % 32]) if distinct else b"\xa0"
+        for i in range(width + 1)
+    ]
+    return _header("map", width + 1) + b"".join(k + child for k in keys[:-1]) + keys[-1]
+
+
+@pytest.mark.fuzz
+@seed(SEED)
+@_FUZZ_SETTINGS
+@given(
+    kind=st.sampled_from(["array", "map"]),
+    width=st.integers(0, MAX_MSGPACK_CONTAINER_LEN),
+    child=st.sampled_from(
+        [b"\x80", b"\x90", b"\xc0", b"\xa2ab", b"\xcd\x12\x34", b"\xcb" + bytes(8)]
+    ),
+    levels=st.integers(1, 1_100),
+    distinct=st.booleans(),
+)
+def test_msgpack_client_decode_open_levels_stay_bounded(
+    kind: str, width: int, child: bytes, levels: int, distinct: bool
+) -> None:
+    """#2509 review: values held in containers that never complete are charged late."""
+    _check_msgpack((_level(kind, width, child, distinct) * levels)[:MAX_INBOUND_FRAME_BYTES])

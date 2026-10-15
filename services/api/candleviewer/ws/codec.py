@@ -1,14 +1,20 @@
 """MessagePack decoding of `cv.v1.msgpack` client frames (`23-ws-protocol.md` §2.2, SR-185).
 
 A client frame reaches this decoder only below the 256 KiB inbound cap (SR-040), and the
-decoder checks the cap again first. Every other limit holds *while* msgpack's C unpacker runs,
-before anything large exists:
+decoder checks the cap again first. The other limits hold *while* msgpack's C unpacker runs
+(the pure-Python fallback is refused at import: it would break the C-2.17 time bound):
 - its nesting stack stops at 1 024 levels;
 - no array or map may claim more than `MAX_MSGPACK_CONTAINER_LEN` entries, so a header never
   reserves room for more (msgpack pre-sizes an array to the length its header claims);
 - ext types are refused on sight;
-- a value budget, `MAX_MSGPACK_VALUES`, stops the decode once the frame holds more values than
-  any schema-valid client frame can.
+- a value budget, `MAX_MSGPACK_VALUES`, charges every completed container: the container,
+  its elements, and each map key and value (before duplicate keys collapse). The decode ends
+  once the budget is spent, so the decoded value, and the check below, stay small.
+
+Live memory during a decode is bounded by the open levels (at most 1 024, each pre-sized to
+the container cap, plus the scalars read into them, which the 256 KiB input bounds) and by the
+budget. The worst shapes found peak at about 7 MiB for about 15 ms, the same order as the JSON
+path's worst case at the cap (`test_msgpack_decode_bounds.py::HOSTILE`).
 
 The decoded value must then be something a JSON frame could carry: maps with string keys,
 arrays, strings, finite numbers, booleans and nil, nested at most `MAX_MSGPACK_DEPTH` deep.
@@ -33,13 +39,23 @@ import msgpack
 
 from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_JSON_DEPTH
 
+
+def _require_c_unpacker(unpackb: Any) -> None:
+    """SR-185's time bound holds for msgpack's C unpacker only: never load the fallback."""
+    if getattr(unpackb, "__module__", None) != "msgpack._cmsgpack":  # e.g. MSGPACK_PUREPYTHON
+        raise ImportError("SR-185: the msgpack C extension is required, not the fallback")
+
+
+_require_c_unpacker(msgpack.unpackb)
+
 #: SR-185: the nesting cap SR-184 sets for JSON client frames.
 MAX_MSGPACK_DEPTH: Final = MAX_JSON_DEPTH
-#: SR-185: entries one array or map may claim. The longest list a client frame carries is a
-#: `sub`'s 50 topics (`ws-schema.json`); a longer one is malformed here, not `too_many_topics`.
-MAX_MSGPACK_CONTAINER_LEN: Final = 64
-#: SR-185: values in one frame (array elements, map keys and map values). A schema-maximal
-#: `sub` (50 topics, every bounded option list full) holds about 6 000.
+#: SR-185: entries one array or map may claim. The longest list the server accepts in a client
+#: frame is a `rules` sub's 100 `rule_ids` (`topics.py`); a test keeps every server limit under
+#: this cap. A longer list is malformed here, where JSON would get the per-option error.
+MAX_MSGPACK_CONTAINER_LEN: Final = 128
+#: SR-185: values charged per frame (see `_Budget`). The largest schema-valid frames, a `sub` of
+#: 50 topics with every option list full, cost about 5 400.
 MAX_MSGPACK_VALUES: Final = 16_384
 _SCALARS: Final = (str, int, type(None))  # a bool is an int
 
@@ -51,21 +67,29 @@ class MsgpackFrameError(ValueError):
 
 
 class _Budget:
-    """Counts values as the unpacker completes each container; ends the decode past the budget."""
+    """Charges each container as the unpacker completes it: 1 for the container, 1 per array
+    element, 2 per map entry as read (so duplicate keys still cost). Ends the decode once spent."""
 
     def __init__(self) -> None:
         self.left = MAX_MSGPACK_VALUES
 
-    def spend[C: (dict[Any, Any], list[Any])](self, container: C) -> C:
-        self.left -= len(container) * (2 if isinstance(container, dict) else 1)
+    def _charge(self, cost: int) -> None:
+        self.left -= cost
         if self.left < 0:
             raise MsgpackFrameError(f"more than {MAX_MSGPACK_VALUES} values")
-        return container
+
+    def array(self, items: list[Any]) -> list[Any]:
+        self._charge(1 + len(items))
+        return items
+
+    def map(self, pairs: list[tuple[Any, Any]]) -> dict[Any, Any]:
+        self._charge(1 + 2 * len(pairs))
+        return dict(pairs)
 
 
 def decode_client_frame(raw: bytes) -> JsonValue:
     """One client frame's decoded value, or `MsgpackFrameError` (SR-185)."""
-    if not isinstance(raw, bytes | bytearray | memoryview):
+    if not isinstance(raw, bytes | bytearray):  # a memoryview's len() is not its byte count
         raise MsgpackFrameError("a msgpack frame is binary")
     if len(raw) > MAX_INBOUND_FRAME_BYTES:
         raise MsgpackFrameError("frame exceeds the inbound cap")
@@ -78,8 +102,8 @@ def decode_client_frame(raw: bytes) -> JsonValue:
             ext_hook=_refuse_ext,
             max_array_len=MAX_MSGPACK_CONTAINER_LEN,
             max_map_len=MAX_MSGPACK_CONTAINER_LEN,
-            list_hook=budget.spend,
-            object_hook=budget.spend,
+            list_hook=budget.array,
+            object_pairs_hook=budget.map,
         )
     except MsgpackFrameError:
         raise
