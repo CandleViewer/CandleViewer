@@ -125,6 +125,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "onboarding.checklist_tamper_rejected",
         "backup.run",
         "backup.restore",
+        # E42-T05: verify outcome, the high-severity download-link issue, and the acknowledge
+        # transition of the incidents read model.
+        "backup.verified",
+        "backup.downloaded",
+        "incident.acknowledged",
         "env.switch_live",
         "admin.audit_read",
         "admin.audit_verify",
