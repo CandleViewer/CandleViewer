@@ -1,17 +1,68 @@
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from candleviewer.recorder.retention import (
     HARD_DEFAULT_DAYS,
     PolicyRow,
     RetentionStepUpRequired,
+    family_policy,
+    partition_family,
     resolve_policy,
 )
+from candleviewer.storage.models import StreamKind
 
 SYM = PolicyRow("BTCUSDT", "trades", 7, 90)
 SYM_PIN = PolicyRow("BTCUSDT", "trades", 7, 90, applies_to_pinned=True)
 DFLT = PolicyRow(None, "trades", 3, 60)
+
+_REPO = Path(__file__).resolve().parents[5]
+#: §7 names the QuestDB tables; two differ from their `StreamKind` value.
+_TABLE_STREAM = {"orderbook_deltas": "orderbook_delta", "orderbook_snapshots": "orderbook_snapshot"}
+_Row = tuple[int | None, int | None]
+
+
+def _horizon(cell: str) -> int | None:
+    """A §7 cell in days (`∞` = keep forever); like the seed, 12 mo = 365 d."""
+    if cell == "∞":
+        return None
+    n, unit = cell.split()
+    if unit == "d":
+        return int(n)
+    assert unit == "mo" and int(n) % 12 == 0, f"unparsed §7 horizon {cell!r}"
+    return int(n) // 12 * 365
+
+
+def _section7() -> tuple[dict[str, _Row], dict[tuple[str, str], _Row], dict[str, frozenset[str]]]:
+    """Parse `21-database-schema.md` §7: per-stream rows (hot, total horizon), single-family
+    rows of a split stream, and the families a split stream's shared row covers."""
+    text = (_REPO / "docs/plan/21-database-schema.md").read_text("utf-8")
+    body = text.split("## 7. Retention policy matrix", 1)[1].split("\n## ", 1)[0]
+    streams: dict[str, _Row] = {}
+    families: dict[tuple[str, str], _Row] = {}
+    covered: dict[str, frozenset[str]] = {}
+    known = {k.value for k in StreamKind}
+    for line in body.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        name = re.fullmatch(r"`([a-z_/]+)`", cells[0])
+        if name is None or len(cells) < 4:
+            continue  # header, separator, pinned row, Postgres tables
+        table = name.group(1)
+        stream = "bars" if table.startswith("bars_") else _TABLE_STREAM.get(table, table)
+        if stream not in known:
+            continue  # e.g. `engine_metrics` (not recorded data)
+        row = (_horizon(cells[1]), _horizon(cells[3]))
+        fams = table.removeprefix("bars_").split("/") if table.startswith("bars_") else []
+        if len(fams) == 1:
+            families[(stream, fams[0])] = row
+        else:
+            streams[stream] = row
+            if fams:
+                covered[stream] = frozenset(fams)
+    return streams, families, covered
 
 
 def test_resolve_pinned_without_override_is_infinite() -> None:
@@ -71,17 +122,56 @@ def test_resolve_unknown_stream_keeps_forever() -> None:
     assert (p.hot_days, p.total_days, p.source) == (None, None, "unknown_stream")
 
 
-def test_stream_defaults_equal_the_repo_seed() -> None:
-    """The in-package table (review H3) must equal `backend/db/seeds/retention_defaults.yaml`."""
-    from pathlib import Path
-
-    from candleviewer.recorder.retention_defaults import STREAM_DEFAULTS
+def test_in_package_defaults_and_repo_seed_equal_section7() -> None:
+    """Review round 4 (1): §7 is the reference, not the seed. The in-package table, the bar
+    family split and the repo seed must all equal the parsed §7 matrix. The seed has one
+    stream-wide row per stream (for `bars`: §7's non-`time` families), so it never shortens
+    `bars_time` (keep forever), which only the per-family table expresses."""
+    from candleviewer.recorder.retention_defaults import (
+        FAMILY_DEFAULTS,
+        STREAM_DEFAULTS,
+        STREAM_ROW_FAMILIES,
+    )
     from candleviewer.storage.retention.policy import load_defaults
 
-    seed = Path(__file__).resolve().parents[5] / "backend/db/seeds/retention_defaults.yaml"
-    assert {r.stream.value: (r.hot_days, r.cold_days) for r in load_defaults(seed)} == dict(
-        STREAM_DEFAULTS
-    )
+    streams, families, covered = _section7()
+    assert set(streams) == {k.value for k in StreamKind}  # §7 covers every recorder stream
+    assert dict(STREAM_DEFAULTS) == streams
+    assert dict(FAMILY_DEFAULTS) == families and dict(STREAM_ROW_FAMILIES) == covered
+    seed = load_defaults(_REPO / "backend/db/seeds/retention_defaults.yaml")
+    assert {r.stream.value: (r.hot_days, r.cold_days) for r in seed} == streams
+    assert len(seed) == len(streams)  # one row per stream: no second row can override §7
+
+
+@pytest.mark.parametrize(
+    ("family", "total", "source"),
+    [
+        ("family=time/", None, "family_default"),  # §7 `bars_time`: keep forever
+        ("family=tick/", 730, "stream_default"),  # §7 `bars_tick/...`: 24 mo
+        ("family=delta/", 730, "stream_default"),
+        ("family=pnf/", None, "family_default"),  # not in §7: fail toward retaining
+        ("", None, "family_default"),  # no `family=` segment: fail toward retaining
+    ],
+)
+def test_bars_family_policy_keeps_time_and_unlisted_families_forever(
+    family: str, total: int | None, source: str
+) -> None:
+    eff = resolve_policy("BTCUSDT", "bars", pinned=False, policies={}, elevated=False)
+    p = family_policy(eff, f"bars/{family}symbol=BTCUSDT/bar_param=1m/ym=2024-01")
+    assert (p.total_days, p.source) == (total, source)
+
+
+def test_family_policy_never_shortens_and_leaves_unsplit_streams_alone() -> None:
+    seed_row = {(None, "bars"): PolicyRow(None, "bars", 90, 730)}  # the seed's stream-wide row
+    eff = resolve_policy("BTCUSDT", "bars", pinned=False, policies=seed_row, elevated=False)
+    assert eff.source == "default"
+    assert family_policy(eff, "bars/family=time/symbol=BTCUSDT/ym=2024-01").total_days is None
+    fp = resolve_policy("BTCUSDT", "footprint_cells", pinned=False, policies={}, elevated=False)
+    key = "footprint_cells/symbol=BTCUSDT/bar_family=time/bar_param=1m/dt=2024-01-01"
+    assert family_policy(fp, key) == fp  # `bar_family=` is not a §7 split
+    pinned = resolve_policy("BTCUSDT", "bars", pinned=True, policies={}, elevated=False)
+    assert family_policy(pinned, "bars/family=tick/symbol=BTCUSDT/ym=2024-01") == pinned
+    assert partition_family("bars/family=renko/symbol=BTCUSDT/ym=2024-01") == "renko"
 
 
 def test_stream_defaults_load_from_the_package_not_the_repo() -> None:

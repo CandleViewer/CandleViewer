@@ -413,6 +413,30 @@ async def test_no_stream_without_rows_is_deleted_before_its_section7_horizon() -
     assert all(STREAM_DEFAULTS[s.value][1] in (None, 90, 365, 730) for s in StreamKind)
 
 
+async def test_bars_time_partitions_are_kept_forever_other_families_expire() -> None:
+    """Review round 4 (1): §7 `bars_time` keeps forever, even under the seed's stream-wide
+    `bars` row; `bars_tick/...` go at 24 mo. Checked again right before the delete."""
+    from candleviewer.recorder.retention import PruneItem, PrunePlan, RetentionConfig
+    from candleviewer.storage.models import StreamKind
+
+    b = StreamKind.BARS
+    w = World()
+    w.policies[(None, "bars")] = PolicyRow(None, "bars", 90, 730)  # the repo seed's row
+    keys = {f: f"bars/family={f}/symbol=BTCUSDT/bar_param=1m/ym=2024-01" for f in ("time", "tick")}
+    for key in keys.values():
+        w.cold.setdefault(("BTCUSDT", b), {})[key] = (day(800), 100)
+    m = manager(w)
+    m._cfg = RetentionConfig(hot_streams=(), cold_streams=(b,))
+    assert [i.key for i in (await m.preview()).items] == [keys["tick"]]  # never planned
+    report = await m.run_nightly()
+    assert [i.key for i in report.deleted] == [keys["tick"]] and report.skipped == []
+    assert list(w.cold[("BTCUSDT", b)]) == [keys["time"]]
+    forged = PruneItem("cold", "bars", ("BTCUSDT",), keys["time"], day(800), day(799), 100, 1)
+    again = await m.run(PrunePlan(NOW_US, (forged,), ()), dry_run=False)
+    assert again.deleted == [] and [p.reason for p in again.skipped] == ["hot_window"]
+    assert list(w.cold[("BTCUSDT", b)]) == [keys["time"]]
+
+
 async def test_empty_symbol_item_is_refused_before_any_read() -> None:
     """Kills mutant H2-a: the empty-symbols guard must fire on its own (nothing is read)."""
     from candleviewer.recorder.retention import PruneItem, PrunePlan

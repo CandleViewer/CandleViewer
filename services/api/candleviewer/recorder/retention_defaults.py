@@ -2,8 +2,8 @@
 
 `21-database-schema.md` §7 "Retention policy matrix". This is the in-image source of truth for
 the reaper: it needs no repo path and no file I/O, so it cannot fail at boot (the repo seed
-`backend/db/seeds/retention_defaults.yaml` is not in the API image). A unit test asserts this
-table equals that seed, so the two cannot drift.
+`backend/db/seeds/retention_defaults.yaml` is not in the API image). A unit test parses the §7
+table and asserts that this table AND the repo seed both equal it, so neither can drift.
 
 `(hot_days, total_days)`; `None` total = keep forever. A stream that is NOT listed here resolves
 to keep-forever (fail toward retaining, never toward the 30-day hard default).
@@ -31,6 +31,18 @@ STREAM_DEFAULTS: Final[Mapping[str, tuple[int, int | None]]] = MappingProxyType(
         "orderflow_metrics": (90, 730),
         "heatmap_cells": (7, 90),
     }
+)
+
+#: §7 splits `bars` by family and the cold keys carry `family=<f>` (21 §5.1). The `bars` row
+#: above is §7's `bars_tick/volume/range/renko/delta` row: it covers ONLY these families.
+STREAM_ROW_FAMILIES: Final[Mapping[str, frozenset[str]]] = MappingProxyType(
+    {"bars": frozenset({"tick", "volume", "range", "renko", "delta"})}
+)
+
+#: §7 rows for single families of a split stream, keyed `(stream, family)`. Any other family
+#: (`pnf`, `heikin_ashi`, a key without `family=`) keeps forever (fail toward retaining).
+FAMILY_DEFAULTS: Final[Mapping[tuple[str, str], tuple[int, int | None]]] = MappingProxyType(
+    {("bars", "time"): (365, None)}
 )
 
 #: Postgres `stream_kind` enum value -> recorder stream name (the DB enum predates the split).

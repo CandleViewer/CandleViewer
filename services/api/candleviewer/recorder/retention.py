@@ -1,7 +1,9 @@
 """`RetentionManager` — policy resolution, dry-run preview, reaper and purge (E16-T06).
 
 Resolution order (`21-database-schema.md` §3.6.3):
-  pinned symbol -> infinite; symbol policy; default policy; hard default.
+  pinned symbol -> infinite; symbol policy; default policy; §7 stream default; hard default.
+  A cold partition of a family-split stream then takes §7's per-family horizon
+  (`family_policy`: `bars` partitions with `family=time` keep forever).
 A policy with `applies_to_pinned` overrides the pin only when the caller holds the
 step-up scope (checked server-side; `RetentionStepUpRequired` maps to a 403 problem).
 
@@ -35,7 +37,11 @@ from typing import Final, Literal, Protocol, cast
 import structlog
 
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
-from candleviewer.recorder.retention_defaults import STREAM_DEFAULTS
+from candleviewer.recorder.retention_defaults import (
+    FAMILY_DEFAULTS,
+    STREAM_DEFAULTS,
+    STREAM_ROW_FAMILIES,
+)
 from candleviewer.storage.cold.observability import SystemEventSink
 from candleviewer.storage.cold.watermarks import RollOffWatermark
 from candleviewer.storage.models import StreamKind
@@ -51,7 +57,15 @@ INGEST_LAG_YIELD_S: Final = 1.0
 SYSTEM_ACTOR: Final = "system:retention"
 
 _KNOWN_STREAMS: Final = frozenset(k.value for k in StreamKind)
-Source = Literal["pinned", "symbol", "default", "stream_default", "hard_default", "unknown_stream"]
+Source = Literal[
+    "pinned",
+    "symbol",
+    "default",
+    "stream_default",
+    "family_default",
+    "hard_default",
+    "unknown_stream",
+]
 Tier = Literal["hot", "cold"]
 Reason = Literal[
     "pinned", "leased", "hot_window", "not_archived", "archive_mismatch", "shared_partition"
@@ -144,6 +158,32 @@ def resolve_policy(
         return EffectivePolicy(symbol, stream, hot, total, "hard_default")
     # Unknown stream: fail toward retaining (never the 30-day hard default).
     return EffectivePolicy(symbol, stream, None, None, "unknown_stream")
+
+
+def partition_family(key: str) -> str | None:
+    """`<f>` of a cold partition key's `family=<f>` segment (`bars/family=time/...`, 21 §5.1)."""
+    for segment in key.split("/"):
+        name, sep, value = segment.partition("=")
+        if sep and name == "family":
+            return value
+    return None
+
+
+def family_policy(eff: EffectivePolicy, key: str) -> EffectivePolicy:
+    """§7 per-family horizon for one cold partition of a family-split stream (review round 4).
+
+    The stream-wide horizon (a `bars` policy row, or the §7 `bars` default) covers only the
+    families §7 gives that row (`tick/volume/range/renko/delta`); no policy row can name a
+    family until E16-T08. `bars_time` keeps forever, and so does any other or missing family
+    (fail toward retaining): the result is never shorter than the stream-wide horizon."""
+    covered = STREAM_ROW_FAMILIES.get(eff.stream)
+    family = partition_family(key)
+    if covered is None or eff.total_days is None or family in covered:
+        return eff
+    hot, total = FAMILY_DEFAULTS.get((eff.stream, family or ""), (None, None))
+    if total is not None and total <= eff.total_days:
+        return eff
+    return EffectivePolicy(eff.symbol, eff.stream, hot, total, "family_default")
 
 
 # -- plan -------------------------------------------------------------------------------------
@@ -519,9 +559,10 @@ class RetentionManager:
                 eff = self._resolve(symbol, stream.value, policies, pinned=False)
                 if eff.total_days is None:
                     continue
-                cutoff = now_us - eff.total_days * US_PER_DAY
                 for part in await self._cold.partitions(symbol, stream):
-                    if part.end_us > cutoff:
+                    # Per partition: a family-split stream keys its §7 horizon by `family=`.
+                    total = family_policy(eff, part.key).total_days
+                    if total is None or part.end_us > now_us - total * US_PER_DAY:
                         continue
                     item = PruneItem(
                         "cold", stream.value, (symbol,), part.key, part.start_us, part.end_us,
@@ -655,7 +696,7 @@ class RetentionManager:
         symbol = item.symbols[0]
         if symbol in pinned:
             return Protected(item, "pinned", symbol)
-        eff = self._resolve(symbol, item.stream, policies, pinned=False)
+        eff = family_policy(self._resolve(symbol, item.stream, policies, pinned=False), item.key)
         if eff.total_days is None or item.end_us > now_us - eff.total_days * US_PER_DAY:
             return Protected(item, "hot_window", "inside total horizon")
         lease = await self._lease(symbol, item.start_us, item.end_us)
