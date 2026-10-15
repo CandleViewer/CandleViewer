@@ -89,6 +89,32 @@ def test_outbound_encode_classifies_lanes_and_droppable_frames() -> None:
     assert encode(_frame("err")).family is None
 
 
+def test_outbound_encode_marks_only_backpressure_snapshots() -> None:
+    meta = {"reason": "backpressure", "source": "live"}
+    assert encode(_frame("snap", "book.BTCUSDT.50") | {"meta": meta}).resnap
+    initial = _frame("snap", "book.BTCUSDT.50") | {"meta": {**meta, "reason": "initial"}}
+    assert not encode(initial).resnap
+    assert not encode(_frame("d", "book.BTCUSDT.50") | {"meta": meta}).resnap
+    assert not encode(_frame("snap", "orders") | {"meta": meta}).resnap  # never dropped
+    assert not encode(_frame("snap", "book.BTCUSDT.50") | {"meta": "backpressure"}).resnap
+
+
+def test_outbound_resnap_stays_queued_until_its_last_chunk_leaves() -> None:
+    queue = OutboundQueue()
+    meta = {"meta": {"reason": "backpressure"}}
+    chunks = [encode(_frame("snap", "book.BTCUSDT.50", n=i) | meta) for i in range(2)]
+    for chunk in chunks:
+        queue.push(chunk)
+    queue.push(encode(_frame("snap", "book.ETHUSDT.50") | meta))
+    assert queue.pop() == chunks[0]
+    assert queue.resnap_queued("book.BTCUSDT.50")
+    assert queue.pop() == chunks[1]
+    assert not queue.resnap_queued("book.BTCUSDT.50")
+    assert queue.resnap_queued("book.ETHUSDT.50")
+    queue.drop({"book.ETHUSDT.50"})
+    assert not queue.resnap_queued("book.ETHUSDT.50")
+
+
 def test_outbound_priority_lane_drains_first_and_bytes_are_exact() -> None:
     queue = OutboundQueue()
     frames = [encode(_frame("d", "book.BTCUSDT.50")), encode(_frame("d", "orders"))]
@@ -355,3 +381,43 @@ def test_backpressure_a_delivered_snapshot_resets_the_redrop_count() -> None:
     pacer.drop(book)
     ladder.drain()
     assert [e.action for e in ladder.check([book])] == ["drop"]  # a fresh count, not the third
+
+
+@pytest.mark.parametrize("drained", [True, False], ids=["drain-after-send", "check-first"])
+def test_backpressure_busy_topic_whose_snapshot_was_sent_never_closes(drained: bool) -> None:
+    """#2503 review: deltas queued behind a sent `backpressure` snap must not make the topic's
+    next drop count as a redrop, however often the cycle repeats; the check may also run while
+    the writer is still sending, before its `drain`."""
+    conn, pacer, queue, _ = _setup(max_frames=4)
+    book = _sub(conn, queue, "book.BTCUSDT.50")
+    ladder = Backpressure(queue, pacer)
+    pacer.drop(book)
+    for i in range(MAX_REDROPS + 1):
+        assert ladder.drain() == [LadderEvent("resnapshot", ("book.BTCUSDT.50",))]
+        conn.clock.now += 1.0
+        pacer.offer(book, _bid("BTCUSDT", str(100 + i)))  # queued behind the snap
+        snap = queue.pop()
+        assert snap is not None and json.loads(snap.text)["t"] == "snap"  # the writer sends it
+        if drained:
+            assert ladder.drain() == []
+        for j in range(4):  # the topic stays busy until the queue is over budget again
+            conn.clock.now += 1.0
+            pacer.offer(book, _bid("BTCUSDT", str(200 + j)))
+        assert ladder.check([book]) == [LadderEvent("drop", ("book.BTCUSDT.50",))]
+
+
+def test_backpressure_forgets_the_counts_of_ended_subscriptions() -> None:
+    conn, pacer, queue, source = _setup(max_bytes=600)
+    book, other = _sub(conn, queue, "book.BTCUSDT.50"), _sub(conn, queue, "book.ETHUSDT.50")
+    source.books["BTCUSDT"].apply([[str(p), "1"] for p in range(100, 150)], [])
+    source.gen += 1
+    ladder = Backpressure(queue, pacer)
+    pacer.drop(book)
+    ladder.drain()
+    assert [e.action for e in ladder.check([book, other])] == ["drop"]
+    assert ladder._redrops == {book.sub_id: 1}
+    ladder.drain()  # a new snapshot of it is queued again; then the client unsubscribes
+    pacer.forget(book.sub_id)
+    queue.push(encode(_frame("d", "book.ETHUSDT.50", pad="x" * 700)))
+    assert [e.action for e in ladder.check([other])] == ["drop"]
+    assert (ladder._redrops, ladder._snapped) == ({}, {})
