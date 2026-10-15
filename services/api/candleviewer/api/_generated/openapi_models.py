@@ -4397,6 +4397,7 @@ class Job(BaseModel):
             "audit_export",
             "backup",
             "backup_verify",
+            "backup_restore",
             "rule_simulation",
             "retention_sweep",
             "reconciliation",
@@ -5165,6 +5166,13 @@ class Incident(BaseModel):
     acknowledged_by: UUID | None = None
     resolved_at: AwareDatetime | None = None
     runbook_ref: str | None = None
+    acknowledged_at: AwareDatetime | None = None
+    signature: Annotated[
+        str | None,
+        Field(
+            description="Stable grouping key (E42-T05): a hash of the component, the error class and the normalised message. Equal signatures in one component are the same fault.\n"
+        ),
+    ] = None
 
 
 class Key(BaseModel):
