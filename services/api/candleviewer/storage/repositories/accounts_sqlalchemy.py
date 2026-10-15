@@ -20,18 +20,25 @@ parameters (exchange_uid, label).
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime
+from typing import Any, cast
 from uuid import UUID
 
 import sqlalchemy as sa
+from sqlalchemy.exc import IntegrityError
 
 from candleviewer.storage.repositories.accounts import (
     AccountKey,
     AccountScope,
     AccountsPage,
+    AccountsStoreConflictError,
+    AccountsStoreRuleError,
     AccountsStoreScopeDeniedError,
+    AccountsStoreStaleError,
+    ExchangeAccountPatch,
     ExchangeAccountRow,
     GrantScope,
+    NewExchangeAccount,
     OwnerScope,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -77,6 +84,27 @@ _OWNER_GATE = sa.text(
     "AND (ur.expires_at IS NULL OR ur.expires_at > now()))"
 )
 
+_CREATE = sa.text(
+    "INSERT INTO exchange_accounts AS ea (id, exchange, env, kind, exchange_uid, "
+    "parent_account_id, label, created_by, updated_by) "
+    "SELECT CAST(:id AS uuid), CAST(:exchange AS exchange_code), CAST(:env AS exchange_env), "
+    "CAST(:kind AS account_kind), CAST(:uid AS text), CAST(:parent AS uuid), "
+    "CAST(:label AS text), CAST(:caller AS uuid), CAST(:caller AS uuid) "
+    "WHERE CAST(:parent AS uuid) IS NULL OR EXISTS (SELECT 1 FROM exchange_accounts p "
+    "WHERE p.id = CAST(:parent AS uuid) AND p.deleted_at IS NULL AND p.kind = 'main' "
+    "AND p.env::text = CAST(:env AS text)) "
+    "RETURNING "
+    "ea.id::text AS id, ea.exchange::text AS exchange, ea.env::text AS env, "
+    "ea.kind::text AS kind, ea.exchange_uid AS exchange_uid, "
+    "ea.parent_account_id::text AS parent_account_id, ea.label AS label, "
+    "ea.colour_token AS colour_token, ea.is_enabled AS is_enabled, "
+    "ea.trading_enabled AS trading_enabled, ea.position_mode AS position_mode, "
+    "ea.margin_mode AS margin_mode, ea.account_type AS account_type, ea.quote_ccy AS quote_ccy, "
+    "ea.equity_cached_usd AS equity_cached_usd, ea.equity_cached_at AS equity_cached_at, "
+    "ea.max_sub_accounts_hint AS max_sub_accounts_hint, "
+    "ea.last_reconciled_at AS last_reconciled_at, ea.created_at AS created_at, "
+    "ea.updated_at AS updated_at, ea.deleted_at AS deleted_at"
+)
 _GET_OWNER = sa.text(
     "SELECT "
     "ea.id::text AS id, ea.exchange::text AS exchange, ea.env::text AS env, "
@@ -157,9 +185,64 @@ _LIST_GRANT = sa.text(
     "(ea.created_at, ea.id) > (CAST(:after_ts AS timestamptz), CAST(:after_id AS uuid))) "
     "ORDER BY ea.created_at, ea.id LIMIT :limit"
 )
+_UPDATE = sa.text(
+    "UPDATE exchange_accounts AS ea SET "
+    "label = COALESCE(CAST(:label AS text), ea.label), "
+    "is_enabled = COALESCE(CAST(:is_enabled AS boolean), ea.is_enabled), "
+    "position_mode = COALESCE(CAST(:position_mode AS text), ea.position_mode), "
+    "margin_mode = COALESCE(CAST(:margin_mode AS text), ea.margin_mode), "
+    "updated_by = CAST(:caller AS uuid), "
+    "updated_at = greatest(clock_timestamp(), ea.updated_at + interval '1 microsecond') "
+    "WHERE ea.id = CAST(:id AS uuid) AND ea.deleted_at IS NULL "
+    "AND (CAST(:if_match AS timestamptz) IS NULL OR ea.updated_at = CAST(:if_match AS timestamptz))"
+    " RETURNING "
+    "ea.id::text AS id, ea.exchange::text AS exchange, ea.env::text AS env, "
+    "ea.kind::text AS kind, ea.exchange_uid AS exchange_uid, "
+    "ea.parent_account_id::text AS parent_account_id, ea.label AS label, "
+    "ea.colour_token AS colour_token, ea.is_enabled AS is_enabled, "
+    "ea.trading_enabled AS trading_enabled, ea.position_mode AS position_mode, "
+    "ea.margin_mode AS margin_mode, ea.account_type AS account_type, ea.quote_ccy AS quote_ccy, "
+    "ea.equity_cached_usd AS equity_cached_usd, ea.equity_cached_at AS equity_cached_at, "
+    "ea.max_sub_accounts_hint AS max_sub_accounts_hint, "
+    "ea.last_reconciled_at AS last_reconciled_at, ea.created_at AS created_at, "
+    "ea.updated_at AS updated_at, ea.deleted_at AS deleted_at"
+)
+_SOFT_DELETE = sa.text(
+    "UPDATE exchange_accounts AS ea SET deleted_at = now(), trading_enabled = false, "
+    "updated_by = CAST(:caller AS uuid), "
+    "updated_at = greatest(clock_timestamp(), ea.updated_at + interval '1 microsecond') "
+    "WHERE ea.id = CAST(:id AS uuid) AND ea.deleted_at IS NULL"
+)
 
-OWNER_STATEMENTS = frozenset({_GET_OWNER, _LIST_OWNER})
+OWNER_STATEMENTS = frozenset({_CREATE, _GET_OWNER, _LIST_OWNER, _UPDATE, _SOFT_DELETE})
 GRANT_STATEMENTS = frozenset({_GET_GRANT, _LIST_GRANT})
+
+_CONFLICT_CONSTRAINTS = frozenset({"exchange_accounts_pkey", "ux_ea_uid", "ux_ea_label"})
+_RULE_CONSTRAINTS = frozenset(
+    {"ea_parent_shape", "ea_no_self_parent", "ea_uid_fmt", "ea_posmode", "ea_marginmode"}
+)
+
+
+def _sqlstate_and_constraint(exc: IntegrityError) -> tuple[str | None, str | None]:
+    """SQLSTATE + constraint name; asyncpg hides the name on the wrapper, so look on
+    `orig`, `__cause__`, `driver_exception` and `diag`."""
+    orig: Any = exc.orig
+    state = getattr(orig, "sqlstate", None)
+    for src in (orig, getattr(orig, "__cause__", None), getattr(orig, "driver_exception", None)):
+        name = getattr(src, "constraint_name", None) or getattr(
+            getattr(src, "diag", None), "constraint_name", None
+        )
+        if name:
+            return state, str(name)
+    return state, None
+
+
+def _raise_mapped(exc: IntegrityError) -> None:
+    state, name = _sqlstate_and_constraint(exc)
+    if state == "23505" and name in _CONFLICT_CONSTRAINTS:
+        raise AccountsStoreConflictError(name) from None
+    if state == "23514" and name in _RULE_CONSTRAINTS:
+        raise AccountsStoreRuleError(name) from None
 
 
 def _uuid(value: object) -> UUID:
@@ -223,6 +306,34 @@ class SqlAlchemyAccountsStore:
             return list(res.mappings())
 
     # -- accounts ---------------------------------------------------------------------------
+    async def create_account(
+        self, scope: OwnerScope, new: NewExchangeAccount
+    ) -> ExchangeAccountRow:
+        owner = _require_owner(scope)
+        if new.env not in _ENVS or new.kind not in _KINDS:
+            raise ValueError("unknown env or kind")
+        params: dict[str, Any] = {
+            "id": str(new.id),
+            "exchange": new.exchange,
+            "env": new.env,
+            "kind": new.kind,
+            "uid": new.exchange_uid,
+            "parent": None if new.parent_account_id is None else str(new.parent_account_id),
+            "label": new.label,
+            "caller": str(owner.user_id),
+        }
+        try:
+            async with self._relational.unit_of_work() as uow:
+                await self._gate(uow, owner)
+                row = (await uow.session.execute(_CREATE, params)).mappings().first()
+                if row is None:
+                    raise AccountsStoreRuleError("parent_unavailable")
+                await uow.commit()
+        except IntegrityError as exc:
+            _raise_mapped(exc)
+            raise
+        return _account(row)
+
     async def get_account(self, scope: AccountScope, account_id: UUID) -> ExchangeAccountRow | None:
         rows = await self._scoped_rows(scope, _GET_OWNER, _GET_GRANT, {"id": str(account_id)})
         return _account(rows[0]) if rows else None
@@ -255,3 +366,61 @@ class SqlAlchemyAccountsStore:
         if len(rows) > limit:
             nxt = AccountKey(page[-1].created_at, page[-1].id)
         return AccountsPage(tuple(page), nxt)
+
+    async def update_account(
+        self,
+        scope: OwnerScope,
+        account_id: UUID,
+        patch: ExchangeAccountPatch,
+        *,
+        if_match: datetime | None,
+    ) -> ExchangeAccountRow | None:
+        owner = _require_owner(scope)
+        if (
+            patch.label is None
+            and patch.is_enabled is None
+            and patch.position_mode is None
+            and patch.margin_mode is None
+        ):
+            raise ValueError("empty patch")
+        params: dict[str, Any] = {
+            "id": str(account_id),
+            "caller": str(owner.user_id),
+            "label": patch.label,
+            "is_enabled": patch.is_enabled,
+            "position_mode": patch.position_mode,
+            "margin_mode": patch.margin_mode,
+            "if_match": if_match,
+        }
+        try:
+            async with self._relational.unit_of_work() as uow:
+                await self._gate(uow, owner)
+                row = (await uow.session.execute(_UPDATE, params)).mappings().first()
+                if row is None:
+                    live = await uow.session.execute(
+                        _GET_OWNER, {"id": str(account_id), "caller": str(owner.user_id)}
+                    )
+                    if live.mappings().first() is not None:
+                        raise AccountsStoreStaleError
+                    return None
+                await uow.commit()
+        except IntegrityError as exc:
+            _raise_mapped(exc)
+            raise
+        return _account(row)
+
+    async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> bool:
+        owner = _require_owner(scope)
+        async with self._relational.unit_of_work() as uow:
+            await self._gate(uow, owner)
+            # A DML `text()` statement returns a CursorResult at runtime; `AsyncSession.execute`
+            # is typed as the base `Result`, so the cast only informs mypy. No getattr default:
+            # a wrong result object fails loudly instead of reading as "not found".
+            res = cast(
+                "sa.CursorResult[Any]",
+                await uow.session.execute(
+                    _SOFT_DELETE, {"id": str(account_id), "caller": str(owner.user_id)}
+                ),
+            )
+            await uow.commit()
+        return res.rowcount == 1
