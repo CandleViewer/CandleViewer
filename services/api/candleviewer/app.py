@@ -614,6 +614,7 @@ def _build_audit(settings: Settings) -> AuditHandle:
         SqlAlchemyAuditRepository(
             SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "audit"),
             read_slots=settings.audit_query_global_max_concurrent,
+            verify_read_timeout_ms=settings.audit_verify_statement_timeout_ms,
         )
     )
 
@@ -1378,6 +1379,7 @@ def create_app(
                 rate_per_hour=resolved.audit_verify_rate_per_hour,
                 tracked_users=resolved.audit_budget_tracked_users,
             ),
+            verify_deadline_s=resolved.audit_verify_deadline_s,
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))

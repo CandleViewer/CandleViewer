@@ -38,12 +38,14 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
             audit_inflight_writes=29,
             audit_verify_max_span=31,
             audit_verify_rate_per_hour=37,
+            audit_verify_deadline_s=41.0,
         )
     )
     lim, bud = seen["limiter"], seen["budget"]
     assert (lim._rate, lim._max_concurrent, lim._cap) == (7, 3, 71)
     assert (seen["query_timeout_ms"], seen["verify_max_span"]) == (1500, 31)
     assert (seen["verify_limiter"]._rate, seen["verify_limiter"]._cap) == (37, 71)
+    assert seen["verify_deadline_s"] == 41.0
     assert (bud._per_hour, bud._owner_per_hour) == (11, 13)
     assert (bud._flush_pages, bud._flush_s) == (17, 19.0)
     assert (bud._tracked, bud._inflight_cap) == (71, 29)
@@ -54,6 +56,11 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
 
 def test_real_audit_backend_caps_reads_with_the_global_setting() -> None:
     svc = app_mod._build_audit(
-        Settings(storage_backend="real", audit_query_global_max_concurrent=3)
+        Settings(
+            storage_backend="real",
+            audit_query_global_max_concurrent=3,
+            audit_verify_statement_timeout_ms=4321,
+        )
     )
     assert svc._repository._read_slots == 3  # constructed only; nothing connects
+    assert svc._repository._verify_timeout_ms == 4321

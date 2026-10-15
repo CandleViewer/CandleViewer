@@ -62,6 +62,7 @@ class _FakeQuery:
         self.verify_result: VerifyResult | None = None  # a run's result, when a test sets one
         self.runs = 0
         self.verify_slot = VerifySlot()
+        self.deadlines: list[float | None] = []
 
     async def query(self, **kwargs: Any) -> AuditPage:
         # Mirrors `AuditQueryService.query`'s own validation (QA defect
@@ -76,8 +77,9 @@ class _FakeQuery:
         self.verify_calls.append(kwargs)
         return VerifyPlan(kwargs["from_id"] or 1, kwargs["to_id"] or 1, 1)
 
-    async def run_verify(self, plan: VerifyPlan, **_kw: Any) -> VerifyResult:
+    async def run_verify(self, plan: VerifyPlan, **kw: Any) -> VerifyResult:
         self.runs += 1
+        self.deadlines.append(kw.get("deadline_s"))
         if self.verify_result is not None:
             return self.verify_result
         return VerifyResult(
@@ -1433,7 +1435,11 @@ _VERIFY = "/admin/audit/verify"
 def _limited_verify(svc: _FakeAuditService, rate: int = 30) -> TestClient:
     limiter = AuditVerifyLimiter(rate_per_hour=rate, clock=_Clock())
     app = FastAPI()
-    app.include_router(make_audit_router(svc, _FakeResolver(_owner()), verify_limiter=limiter))
+    app.include_router(
+        make_audit_router(
+            svc, _FakeResolver(_owner()), verify_limiter=limiter, verify_deadline_s=41.0
+        )
+    )
     return TestClient(app)
 
 
@@ -1453,7 +1459,7 @@ def test_verify_runs_over_the_hourly_limit_are_429_and_only_started_runs_count()
         "rate_limited",
         "3600",
     )
-    assert svc.query_service.runs == 1
+    assert (svc.query_service.runs, svc.query_service.deadlines) == (1, [41.0])
 
 
 def test_verify_while_another_runs_is_409_unrecorded_and_carried_as_suppressed() -> None:
@@ -1482,7 +1488,7 @@ def test_verify_frees_the_slot_however_the_run_ends(ending: str) -> None:
     svc = _FakeAuditService()
 
     async def stopping(*_a: Any, **_kw: Any) -> VerifyResult:
-        raise TimeoutError  # e.g. a statement over its budget
+        raise TimeoutError  # e.g. the run's deadline
 
     if ending == "stopped":
         svc.query_service.run_verify = stopping  # type: ignore[method-assign]  # fault injection

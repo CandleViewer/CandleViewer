@@ -665,6 +665,74 @@ async def test_verify_echoes_the_anchor_and_the_last_entry_that_passed(
     assert (await svc.verify(from_id=4)).last_hash is None  # none passed
 
 
+class _FakeTimer:
+    """A fake clock for the run deadline: `sleep` returns once the test moves time past it."""
+
+    def __init__(self) -> None:
+        self.passed, self.asked = asyncio.Event(), list[float]()
+
+    async def sleep(self, delay: float) -> None:
+        self.asked.append(delay)
+        await self.passed.wait()
+
+
+async def test_verify_past_its_deadline_is_stopped_with_its_statement(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 3, clock)
+    timer, entered, stalled = _FakeTimer(), asyncio.Event(), list[asyncio.Task[Any]]()
+
+    async def never(**_kw: Any) -> list[tuple[Any, ...]]:
+        stalled.append(asyncio.current_task())  # type: ignore[arg-type]  # inside a task
+        entered.set()
+        await asyncio.Event().wait()
+        return []
+
+    repo.fetch_verify_batch = never  # type: ignore[method-assign]  # a fetch that never answers
+    svc = AuditQueryService(repo, sleep=timer.sleep)
+    plan = await svc.plan_verify(from_id=None, to_id=None)
+    run = asyncio.ensure_future(svc.run_verify(plan, deadline_s=60))
+    await entered.wait()
+    timer.passed.set()  # the fake clock moves past the deadline
+    with pytest.raises(TimeoutError):
+        await run
+    assert timer.asked == [60] and stalled and all(t.done() for t in stalled)
+
+
+async def test_verify_within_its_deadline_returns_and_drops_its_timer(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 3, clock)
+    svc = AuditQueryService(repo, sleep=_FakeTimer().sleep)
+    plan = await svc.plan_verify(from_id=None, to_id=None)
+    assert (await svc.run_verify(plan, deadline_s=60)).verified
+    timers = [t for t in asyncio.all_tasks() if t.get_name() == "audit.verify.deadline"]
+    assert all(t.done() for t in timers)
+
+
+async def test_verify_walks_on_past_batches_cut_short_by_the_byte_budget(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    """Oversized entries: each batch stops at the byte budget (its first row always
+    admitted), and a short batch does not end the walk."""
+    for i in range(4):
+        await repo.insert(
+            {
+                "record_id": f"00000000-0000-4000-8000-{i:012d}",
+                "action": "auth.login",
+                "actor_label": "u",
+                "outcome": "success",
+                "severity": "info",
+                "after_state": {"blob": "x" * 5000},
+                "event_ts": clock().isoformat(),
+            }
+        )
+    repo.max_bytes = 1000
+    result = await AuditQueryService(repo).verify(batch_size=10)
+    assert (result.verified, result.entries_checked) == (True, 4)
+    assert [after for after, _, _ in repo.verify_calls] == [0, 1, 2, 3]  # one row a batch
+
+
 async def test_verify_a_range_inside_an_id_gap_checks_nothing(
     repo: FakeAuditRepository, clock: FakeClock
 ) -> None:
