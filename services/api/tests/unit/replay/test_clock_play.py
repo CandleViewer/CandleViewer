@@ -1,24 +1,31 @@
-"""`ReplayClock` playback (E26-T03): faithful drift-free pacing, pause and resume, unbounded mode,
-failures and per-session task ownership. Fake time only (C-13.7)."""
+"""`ReplayClock` playback (E26-T03): faithful drift-free pacing, speed changes, pause and resume,
+unbounded mode, gaps, backpressure, failures and per-session task ownership. Fake time only
+(C-13.7)."""
 
 from __future__ import annotations
 
 import asyncio
 import itertools
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from candleviewer.replay import (
     STEP,
     UNBOUNDED,
     ClockConfig,
+    GapPolicy,
     ReplayClock,
     ReplayClockStateError,
+    ReplayGap,
     ReplayItem,
     ReplaySourceUnavailable,
     StopReason,
 )
+from candleviewer.storage.models import StreamKind
 from candleviewer.storage.repositories.recorded import RecordedEvent
 from tests.unit.replay._events import SECOND, T0, trade
 from tests.unit.replay._playback import ListStream, RecordingObserver, RecordingSink
@@ -35,7 +42,7 @@ class Rig:
 
 
 def rig(
-    items: list[ReplayItem],
+    items: Sequence[ReplayItem],
     *,
     end_s: int,
     speed: float = 1.0,
@@ -61,6 +68,16 @@ async def settle() -> None:
         await asyncio.sleep(0)
 
 
+async def run_for(time: FakeTime, seconds: float, *, step: float = 0.05) -> None:
+    """Let `seconds` of fake time pass in steps well inside `max_lag_s`, as a punctual sleeper
+    would (one big jump is a 1 s oversleep, which the clock rightly treats as falling behind).
+    It settles first, so a just-started `play()` reads its first event and anchors before."""
+    await settle()
+    for _ in range(round(seconds / step)):
+        time.advance(step)
+        await settle()
+
+
 async def test_one_hour_at_1x_is_faithful_and_drift_free() -> None:
     """Ticket AC 1: every wait oversleeps up to 4 ms, yet the hour ends within 0.5 % of an hour
     and the last event is no later against its schedule than the first."""
@@ -81,19 +98,15 @@ async def test_pause_stops_at_the_reached_position_and_play_resumes_from_it() ->
     r = rig(every_second(10), end_s=10, time=FakeTime(auto=False))
     async with r.clock as clock:
         first = clock.play()
-        await settle()
-        r.time.advance(2.5)
-        await settle()
+        await run_for(r.time, 2.5)
         await clock.pause()
         assert (first.result(), len(r.sink.events)) == ("paused", 3)
         assert clock.now_us() == T0 + 2_500_000
         r.time.advance(100.0)
         second = clock.play()
-        await settle()
-        r.time.advance(0.5)  # t3 is due 0.5 s after resuming at 2.5 s
-        await settle()
+        await run_for(r.time, 0.5)  # t3 is due 0.5 s after resuming at 2.5 s
         assert len(r.sink.events) == 4
-        r.time.advance(7.0)
+        await run_for(r.time, 7.5)
         assert await second == "range_end"
     assert r.sink.events == every_second(10)
 
@@ -160,9 +173,7 @@ async def test_destroying_a_playing_session_keeps_the_cursor_it_reached() -> Non
     r = rig(every_second(5), end_s=5, time=FakeTime(auto=False))
     async with r.clock as clock:
         clock.play()
-        await settle()
-        r.time.advance(2.5)
-        await settle()
+        await run_for(r.time, 2.5)
         assert clock.now_us() == T0 + 2_500_000
     assert r.clock.now_us() == T0 + 2_500_000  # not the last delivered event, 2 s
 
@@ -277,3 +288,115 @@ async def test_the_schedule_starts_after_a_slow_first_read() -> None:
     async with r.clock as clock:
         await clock.play()
     assert [round(b - a, 6) for a, b in itertools.pairwise(r.sink.at)] == [0.1] * 4
+
+
+async def test_speed_change_takes_effect_from_the_current_position() -> None:
+    r = rig(every_second(60), end_s=60, time=FakeTime(auto=False))
+    async with r.clock as clock:
+        task = clock.play()
+        await run_for(r.time, 10.0)
+        assert len(r.sink.events) == 11
+        clock.set_speed(10.0)
+        await run_for(r.time, 1.0)  # 10 s of replay at 10x
+        assert len(r.sink.events) == 21
+        clock.set_speed(STEP)
+        assert await task == "paused"
+    assert r.clock.now_us() == T0 + 20 * SECOND
+
+
+async def test_switching_to_unbounded_mid_playback_stops_waiting() -> None:
+    r = rig(every_second(60), end_s=60, time=FakeTime(auto=False))
+    async with r.clock as clock:
+        task = clock.play()
+        await settle()
+        clock.set_speed(UNBOUNDED)
+        assert await task == "range_end"
+    assert len(r.sink.events) == 60
+
+
+@pytest.mark.parametrize(("policy", "reason"), [("skip", "range_end"), ("stop", "gap")])
+async def test_a_gap_is_counted_reported_and_handled_per_policy(
+    policy: GapPolicy, reason: StopReason
+) -> None:
+    """Ticket AC 5: skip jumps the clock to the gap end; stop pauses at the boundary."""
+    two, end = T0 + 2 * SECOND, T0 + 600 * SECOND
+    marker = ReplayGap(two, "BTCUSDT", StreamKind.TRADES, two, end, "ws_disconnect")
+    items: list[ReplayItem] = [*every_second(2), marker, trade(601 * SECOND, trade_id="after")]
+    r = rig(items, end_s=602, config=ClockConfig(gap_policy=policy))
+    start = r.time.now()
+    async with r.clock as clock:
+        assert await clock.play() == reason
+        assert clock.stats().gap_warnings == 1
+    assert r.obs.gaps == [(marker, policy == "stop")]
+    if policy == "skip":
+        assert r.sink.at[-1] - start == pytest.approx(3.0)  # 598 empty seconds compressed
+    else:
+        assert (len(r.sink.events), r.clock.now_us()) == (2, two)
+
+
+async def _play_sampling(r: Rig, *, recover_after: int = 1 << 30) -> list[float]:
+    """Play to the end, sampling the live achieved ratio; the sink speeds up after
+    `recover_after` events."""
+    ratios: list[float] = []
+    async with r.clock as clock:
+        task = clock.play()
+        while not task.done():
+            await asyncio.sleep(0)
+            if len(r.sink.events) >= recover_after:
+                r.sink.cost_s = 0.0
+            ratio = clock.stats().achieved_ratio
+            if ratio is not None:
+                ratios.append(ratio)
+        assert task.result() == "range_end"
+    return ratios
+
+
+async def test_backpressure_at_half_rate_slows_the_clock_and_drops_nothing() -> None:
+    """Ticket AC 2: at 10x, a consumer needing 20 ms per event accepts half the required rate.
+    Every event still arrives in order and the session reports an achieved rate below 10x."""
+    items = [trade(i * 100_000, trade_id=f"t{i:04}") for i in range(600)]
+    r = rig(items, end_s=60, speed=10.0)
+    r.sink.cost_s = 0.02
+    ratios = await _play_sampling(r)
+    assert r.sink.events == items
+    assert ratios and all(0.4 < ratio < 0.6 for ratio in ratios)
+    stats = r.clock.stats()
+    assert (stats.events_emitted, stats.backpressured, r.obs.edges) == (600, True, [True])
+    assert stats.backpressure_s > 0
+
+
+async def test_backpressure_clears_once_the_consumer_keeps_up_again() -> None:
+    items = [trade(i * 100_000, trade_id=f"t{i:04}") for i in range(600)]
+    r = rig(items, end_s=60, speed=10.0)
+    r.sink.cost_s = 0.02
+    ratios = await _play_sampling(r, recover_after=200)
+    assert r.obs.edges == [True, False]
+    assert ratios[-1] == 1.0 and not r.clock.stats().backpressured
+
+
+@given(
+    offsets=st.lists(st.integers(0, 30 * SECOND), max_size=40),
+    speed=st.sampled_from([0.5, 1.0, 10.0, 100.0, UNBOUNDED]),
+    cost_ms=st.integers(0, 40),
+)
+def test_playback_never_drops_reorders_or_runs_early_and_the_cursor_never_goes_back(
+    offsets: list[int], speed: float, cost_ms: int
+) -> None:
+    items: list[ReplayItem] = [trade(o, trade_id=f"t{i:03}") for i, o in enumerate(sorted(offsets))]
+
+    async def main() -> tuple[Rig, list[int], float]:
+        r = rig(items, end_s=31, speed=speed)
+        r.sink.cost_s, start, cursors = cost_ms / 1_000, r.time.now(), []
+        async with r.clock as clock:
+            task = clock.play()
+            while not task.done():
+                cursors.append(clock.now_us())
+                await asyncio.sleep(0)
+        return r, cursors, start
+
+    r, cursors, start = asyncio.run(main())
+    assert r.sink.events == items
+    assert cursors == sorted(cursors) and all(T0 <= c <= T0 + 31 * SECOND for c in cursors)
+    if speed > 0:
+        for event, at in zip(r.sink.events, r.sink.at, strict=True):
+            assert at - start >= (event.ts_us - T0) / (speed * SECOND) - 0.001 - 1e-9
