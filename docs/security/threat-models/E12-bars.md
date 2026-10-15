@@ -458,6 +458,5 @@ rejects a number, the number in §3 must be amended here in the same PR that cha
 | 2026-10-12 | QA Agent B (#346)                                       | FAIL, gaps closed by this amendment                      |
 | 2026-10-13 | orchestrator Agent A                                    | APPROVE; Owner acceptance per #1778 2026-10-12           |
 | 2026-10-13 | security-reviewer (sonnet, independent; PR #2306)       | APPROVE                                                  |
-| 2026-10-15 | code-reviewer #1 (sonnet, independent; PR #2306)        | APPROVE                                                  |
 | 2026-10-15 | code-reviewer #2 (sonnet, document integrity; PR #2306) | APPROVE                                                  |
 | 2026-10-15 | security-reviewer (Fable, independent; PR #2306)        | APPROVE at 4132550a with four Lows, closed in the rebase |

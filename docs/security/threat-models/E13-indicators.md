@@ -426,6 +426,5 @@ in §3 must be amended here in the same PR that changes the ticket.
 | 2026-10-12 | QA Agent B (#428)                                       | FAIL, gaps closed by this amendment                                                        |
 | 2026-10-13 | orchestrator Agent A                                    | APPROVE; security sign-off delegated per #1778                                             |
 | 2026-10-13 | security-reviewer (sonnet, independent; PR #2306)       | APPROVE; period ceiling 5000 (SCR-035) and IR-18/IR-27 acceptance (#1778 item Y) confirmed |
-| 2026-10-15 | code-reviewer #1 (sonnet, independent; PR #2306)        | APPROVE                                                                                    |
 | 2026-10-15 | code-reviewer #2 (sonnet, document integrity; PR #2306) | APPROVE                                                                                    |
 | 2026-10-15 | security-reviewer (Fable, independent; PR #2306)        | APPROVE at 4132550a with four Lows, closed in the rebase                                   |
