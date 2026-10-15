@@ -846,6 +846,8 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_IMPORT_MAX_MBPS`             | float  | `50`                      | process | archive import bandwidth cap, megabits/s                                                                            |
 | `CV_IMPORT_MAX_UNCOMPRESSED_MB`  | int    | `2048`                    | process | per-file decompressed cap (zip-bomb guard)                                                                          |
 | `CV_BYBIT_ARCHIVE_BASE`          | str    | adapter default           | process | https origin, host allow-listed in adapter                                                                          |
+| `CV_TEST_CLOCK`                  | bool   | `false`                   | process | auth server test clock (#2086); refused unless testnet with no exchange key (E16-FR-11)                             |
+| `CV_TEST_CLOCK_FILE`             | path   | unset                     | process | offset file (signed decimal seconds) read per auth decision; set with `CV_TEST_CLOCK`; no HTTP route                |
 
 ### 7.3 Environment parity for developers
 

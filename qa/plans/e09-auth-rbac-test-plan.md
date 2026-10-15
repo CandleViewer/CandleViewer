@@ -144,9 +144,12 @@ value inlined here.
 ### 6.3 Frozen-clock helper
 
 `freeze_at(t: datetime)` / `advance(delta: timedelta)` — the same clock-injection point used by backend
-unit tests (`docs/plan/20-architecture.md` clock-injection convention) is exposed to the staging/e2e
-harness so idle-timeout (C02), absolute-lifetime (C03), step-up-expiry (C06) and MFA-challenge-expiry
-(A10) cases never use a real `sleep`. No case in this plan waits on wall-clock time.
+unit tests (`docs/plan/20-architecture.md` clock-injection convention) is exposed to the seeded e2e
+harness only, so idle-timeout (C02), absolute-lifetime (C03), step-up-expiry (C06) and
+MFA-challenge-expiry (A10) cases never use a real `sleep`. The server reads auth time as UTC plus the
+offset in `CV_TEST_CLOCK_FILE`, which the helper rewrites; there is no HTTP route. `CV_TEST_CLOCK` is
+refused unless `CV_ENVIRONMENT=testnet` with no exchange key, so staging (demo) never has it (#2086).
+No case in this plan waits on wall-clock time.
 
 ---
 
