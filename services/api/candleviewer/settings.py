@@ -28,6 +28,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _QUESTDB_DEV_PASSWORD = "quest"  # noqa: S105 - the QuestDB OSS default, refused on live
 _REDACT_NAME_RE = re.compile(r"(key|secret|token|password|dsn)", re.IGNORECASE)
+#: QuestDB PGWire port: the `questdb_pg` default and the fallback when a `host[:port]` omits it.
+QUESTDB_PG_DEFAULT_PORT = 8812
 
 
 class Environment(StrEnum):
@@ -169,7 +171,7 @@ class Settings(BaseSettings):
     # (trg_ad_append refuses DELETE for every other role). Unset => purge off.
     pg_owner_dsn: SecretStr | None = None
     questdb_ilp: str = "questdb:9009"
-    questdb_pg: str = "questdb:8812"
+    questdb_pg: str = f"questdb:{QUESTDB_PG_DEFAULT_PORT}"
     # PG-wire credentials for the bars ILP sink probes (#2037).
     questdb_pg_user: str = "admin"
     questdb_pg_password: SecretStr = SecretStr("quest")

@@ -21,7 +21,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 
 import structlog
 
@@ -36,7 +36,7 @@ from candleviewer.recorder.budget import (
 from candleviewer.recorder.metrics import recorder_bytes_written_total
 from candleviewer.recorder.models import TierName
 from candleviewer.recorder.writer import STREAM_KIND
-from candleviewer.settings import Settings
+from candleviewer.settings import QUESTDB_PG_DEFAULT_PORT, Settings
 from candleviewer.storage.cold.observability import LoggingSystemEventSink
 from candleviewer.storage.cold.rolloff_ops import QuestDbHotPartitions
 from candleviewer.storage.models import StreamKind
@@ -45,6 +45,9 @@ from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyReco
 
 #: The recorder's hot tables: one per `StreamWriter` lane.
 HOT_STREAMS = tuple(StreamKind(kind) for kind in STREAM_KIND.values())
+#: Budget of each breakdown part (Parquet walk, QuestDB sizes), under `BREAKDOWN_TIMEOUT_S`
+#: (5 s), so a slow part fails as itself, not as the whole pass.
+METER_PART_BUDGET_S: Final = 4.0
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -92,6 +95,7 @@ class _OneThread[T]:
         self._pending: Future[T] | None = None
 
     async def run(self, fn: Callable[[], T]) -> T:
+        # A cancelled `wrap_future` may leave a stale done future here; the next pass consumes it.
         if self._pending is None:
             self._pending = self._pool.submit(contextvars.copy_context().run, fn)
         future = self._pending
@@ -131,7 +135,7 @@ class VolumeMeter:
         pg: LazyPgWire | None,
         written: Callable[[], Mapping[str, int]] = written_by_symbol,
         *,
-        budget_s: float = 4.0,
+        budget_s: float = METER_PART_BUDGET_S,
     ) -> None:
         self._root, self._pg, self._written, self._budget_s = root, pg, written, budget_s
         self._hot = None if pg is None else QuestDbHotPartitions(pg, timeout_s=budget_s)
@@ -279,7 +283,7 @@ def build_disk_budget(
     host, _, port = settings.questdb_pg.partition(":")
     pg = LazyPgWire(
         host,
-        int(port or 8812),
+        int(port or QUESTDB_PG_DEFAULT_PORT),
         settings.questdb_pg_user,
         settings.questdb_pg_password.get_secret_value(),
     )

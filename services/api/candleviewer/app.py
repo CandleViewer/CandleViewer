@@ -178,7 +178,7 @@ from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.service import RulesService
 from candleviewer.rules_store_pg import PostgresRuleStore
-from candleviewer.settings import Environment, FeedMode, Settings, get_settings
+from candleviewer.settings import QUESTDB_PG_DEFAULT_PORT, Environment, FeedMode, Settings, get_settings
 from candleviewer.statechart.bindings.b16_session import set_audit_sink as set_b16_audit_sink
 from candleviewer.statechart.gateway import GatewayOverloadedError
 from candleviewer.storage.cold.archive_import import FileImportLedger
@@ -943,7 +943,7 @@ def create_app(
             health_registry,
             pg_repo=health_pg,
             questdb_host=q_host,
-            questdb_port=int(q_port or 8812),
+            questdb_port=int(q_port or QUESTDB_PG_DEFAULT_PORT),
             parquet_root=resolved.parquet_root,
             disk_path=resolved.parquet_root,
         )
