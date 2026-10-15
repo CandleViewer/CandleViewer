@@ -6,10 +6,11 @@ Run: `cd services/api && uv run pytest tests/chaos/ingestion -m chaos --no-cov`.
 **Harness.** `_stub_exchange.StubExchange` is the fault-injecting proxy at the transport seam:
 it is the `ConnectionManager` socket factory and the `httpx` transport of a real
 `BybitRestClient`. `inject(Fault)` arms a fault; `replay(frames)` / `_feed.Feeder` stream the
-recorded E08-T05 corpus (re-timed only). `_rig.Rig` wires the production composition
-(`IngestionService` pump, B13 `ws_conn` chart via the factory, `TradeStream`, `BookStream`,
-`InstrumentsRefreshScheduler`, bus) exactly as `app.wire_public_ws` does. Time is a
-`VirtualClock` (no wall-clock sleeps, C-13.7); jitter is seeded; `settle()` is the
+recorded E08-T05 corpus (re-timed only). `_rig.Rig` wires the production composition in
+`app.wire_public_ws` order (`InstrumentsRefreshScheduler`, `ClockGuard`, B13 `ws_conn` chart
+via the factory, `TradeStream`, `BookStream` with its B14 chart, `TickerStream`, frame router,
+bus) and starts it through `IngestionService.start()`; `test_rig_parity.py` pins each element.
+Time is a `VirtualClock` (no wall-clock sleeps, C-13.7); jitter is seeded; `settle()` is the
 quiescence barrier assertions run after. The venue keeps a book/trade **oracle** (the REST
 snapshot truth). No sockets are opened; the live host is asserted unreachable.
 
@@ -23,19 +24,22 @@ fix lands, so the fix PR removes the marker and the cell becomes `✅ (#NNNN fix
 
 ## Deviations from the composition root
 
-`Rig` is modelled on `app.wire_public_ws`, not identical to it:
+`Rig` is `app.wire_public_ws` over the stub exchange, started through
+`IngestionService.start()` (#1975). What differs from the deployed app:
 
-- Virtual clock/RNG and the stub transport replace the real ones.
+- Virtual clock, seeded RNG and the stub transport replace the real ones, through the seams
+  the production classes expose (`clock=`, `now_us=`, `sleep=`, `rand=`, `transport=`, ...).
+- Storage is outside the seam: `FlakyWriter` stands in for the hot-tier writers (s11's outage
+  switch) and a null double for the catalogue's Postgres repository. Not composed, as neither
+  touches the feed path: `_wire_klines`' request-path kline service and
+  `wire_instrument_catalogue`'s `instruments.*.updated` bus publisher.
 - s08's signed client wires `on_signature_failure` although production has no signed-client
   composition yet (#1949, #1911): s08 proves client + guard, not the app.
-- No `B14BookSupervisor`; no ticker stream.
-- Instrument launch-time callback is `lambda _s: None`.
-- `ClockGuard` feeds the `EventWindow` but is not attached to `IngestionService`.
-- The book timeout loop is replaced by `check_timeouts()` on the virtual clock.
-- `IngestionService.start()` is never called, so the rig registers `prune_unlisted`, the frame
-  router and the pump itself.
-
-Parity follow-up: #1975.
+- Intended, not deployed, composition: `create_app()` does not call `wire_instrument_catalogue`
+  yet (#2561), so a deployed `_is_listed`, `_tick_size` and `_launch_us` see no catalogue and
+  no topic can be acquired; the rig attaches the catalogue as that function would.
+- Not composed: the E04-T06 stage-latency recorder (`create_app` -> `attach_latency`), so the
+  WS reader never takes its 1-in-N sampled `_record_sampled` branch.
 
 ## Catalogue
 
@@ -77,16 +81,18 @@ Parity follow-up: #1975.
 
 **Mutation runs** (one mechanism neutered at a time; full suite each run, then restored):
 
-| Mechanism               | Neutered (file:function → behaviour)                                                                                                                                     | Fails                                                                   | Readable message                                                                                                                                                                                               |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Staleness watchdog      | `ingestion/watchdog.py:StalenessWatchdog.check` → returns `[]`: no topic ever goes stale, no `stale` signal, no recycle                                                  | 2 (1 test); also AC `[stall-then-refuse]` (2 tests, built on the stall) | `watchdog did not fire within threshold`; AC: `stall-then-refuse: no degraded/stale signal on orderbook.200.BTCUSDT (feed states: ['healthy'])`, `stall-then-refuse: health reports 'ok', expected 'degraded'` |
-| Book resync             | `orderbook_wiring.py:BookStream._make_engine.resub` → returns instead of `resubscribe_topic`: gap still detected and DESYNCED published, no unsub+sub, no fresh snapshot | 3 (3 tests)                                                             | `assert ['subscribe'] == ['unsubscribe', 'subscribe']`; duplicate: `assert <BookPhase.SNAPSHOT_PENDING: 'snapshot_pending'> is <BookPhase.LIVE: 'live'>`                                                       |
-| 10002 drift re-measure  | `ingestion/clock.py:ClockGuard.resync_after_signature_failure` → returns `0`: no re-measure, no `clock_resync_triggered_total`                                           | 8 (1 test)                                                              | `10002 retry still rejected: clock re-measure missing or ineffective (invalid request, …)`                                                                                                                     |
-| Connection token bucket | `ingestion/reconnect.py:ConnectionRateGuard.reserve` → returns `0.0`: every dial immediate, nothing recorded                                                             | 7 (1 test)                                                              | `251 dials in a 300 s window > budget 120`                                                                                                                                                                     |
+| Mechanism               | Neutered (file:function → behaviour)                                                                                                                                     | Fails                                                                             | Readable message                                                                                                                                                                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Staleness watchdog      | `ingestion/watchdog.py:StalenessWatchdog.check` → returns `[]`: no topic ever goes stale, no `stale` signal, no recycle                                                  | 2 (1 test); also AC `[stall-then-refuse]` (2 tests, built on the stall)           | `watchdog did not fire within threshold`; AC: `stall-then-refuse: no degraded/stale signal on orderbook.200.BTCUSDT (feed states: ['healthy'])`, `stall-then-refuse: health reports 'ok', expected 'degraded'` |
+| Book resync             | `orderbook_wiring.py:BookStream._make_engine.resub` → returns instead of `resubscribe_topic`: gap still detected and DESYNCED published, no unsub+sub, no fresh snapshot | 3 (3 tests); on the parity rig also the `test_rig_parity` withheld-snapshot guard | `assert ['subscribe'] == ['unsubscribe', 'subscribe']`; guard: `snapshot never re-requested`; duplicate: `assert <BookPhase.SNAPSHOT_PENDING: 'snapshot_pending'> is <BookPhase.LIVE: 'live'>`                 |
+| 10002 drift re-measure  | `ingestion/clock.py:ClockGuard.resync_after_signature_failure` → returns `0`: no re-measure, no `clock_resync_triggered_total`                                           | 8 (1 test)                                                                        | `10002 retry still rejected: clock re-measure missing or ineffective (invalid request, …)`                                                                                                                     |
+| Connection token bucket | `ingestion/reconnect.py:ConnectionRateGuard.reserve` → returns `0.0`: every dial immediate, nothing recorded                                                             | 7 (1 test)                                                                        | `251 dials in a 300 s window > budget 120`                                                                                                                                                                     |
 
 Recorded 2026-10-15 by hcl-worker-2 (#1976): failure counts identical on main 6f9818f7, 6200a73f and
 ee67d6eb; the AC-pair and s08 message text is as of #1976. Unmutated baseline
 `45 passed`, no xfail. Production code unchanged.
+Re-run on the parity rig (#1975): the same failures, plus the withheld-snapshot parity guard on
+the resync run; unmutated baseline `50 passed` (45 + 5 parity guards).
 
 - **Against the #280 test plan** ("each must fail exactly one scenario with a readable message"):
   every run fails with a readable message: the scenario's own assert message, pytest's assertion
@@ -97,8 +103,9 @@ ee67d6eb; the AC-pair and s08 message text is as of #1976. Unmutated baseline
   scenario 2 and also the AC `[stall-then-refuse]` pair, which needs stall detection by
   construction; the AC rows are the cross-scenario "degradation is visible" check, not a
   scenario of their own.
-- **Flake budget:** 20 consecutive full-suite runs, 20/20 green (`45 passed` each) on 6200a73f,
-  2026-10-15 (#1976); the #1921 record was `43 passed, 1 xfailed`.
+- **Flake budget:** 20 consecutive full-suite runs on the parity rig, 20/20 green (`50 passed`
+  each), 2026-10-15 (#1975). Before parity: 20/20 at `45 passed` on 6200a73f (#1976);
+  the #1921 record was `43 passed, 1 xfailed`.
 - **Determinism:** same seed ⇒ identical fault trace (`test_harness_guards.py`).
 - **Not covered here (scope):** private-WS / order-path halves of C-13.6 #2, #4, #5, #7–#9, #12
   (E29-Q04, E45-T07); client-WS fan-out (E17); a11y text of SCR-152 (E08-Q05/E47-Q06).

@@ -1,40 +1,44 @@
-"""Production composition over the stub exchange (modelled on `app.wire_public_ws`).
+"""Production composition over the stub exchange: `app.wire_public_ws`, in its order.
 
-`IngestionService` + `ConnectionManager` (B13 chart via the factory) +
-`TradeStream` + `BookStream`, all on one `Bus`, with the stub exchange as the
-socket factory and as the REST transport of a real `BybitRestClient`.
+`IngestionService` is started through `start(ctx)`, as the module supervisor starts it, and
+owns everything: the instrument catalogue (attached as `wire_instrument_catalogue` attaches
+it), the `ClockGuard` (as `wire_clock_offset` attaches it), the public WS `ConnectionManager`
+(B13 chart via the factory), `TradeStream`, `BookStream` (supervised by `B14BookSupervisor`),
+`TickerStream`, the per-topic frame router and the pump, all on one `Bus`. The stub exchange
+is the socket factory and the REST transport of a real `BybitRestClient`.
 
 Deviations from the composition root (keep in sync with SCENARIOS.md):
 
-* Virtual clock/RNG and the stub transport replace the real ones (the seams the
-  production classes expose).
+* Virtual clock, seeded RNG and the stub transport replace the real ones, through the seams
+  the production classes expose (`clock=`, `now_us=`, `sleep=`, `rand=`, `transport=`, ...).
+* Storage is outside the seam: `FlakyWriter` stands in for the hot-tier writers (s11's outage
+  switch) and `_NullRepo` for the catalogue's Postgres repository. Not composed, as neither
+  touches the feed path: `_wire_klines`' request-path kline service and
+  `wire_instrument_catalogue`'s `instruments.*.updated` bus publisher.
 * s08's signed client wires `on_signature_failure=ClockGuard.resync_after_signature_failure`
   although production has no signed-client composition yet (#1949 / #1911): s08 proves
   client + guard, not the app.
-* No `B14BookSupervisor` on the `BookStream`.
-* No ticker stream.
-* The instrument launch-time callback is `lambda _s: None` (no launch-time plausibility).
-* The `ClockGuard` feeds the `EventWindow` but is not attached to `IngestionService`
-  (`attach_clock`), so no stage-latency offset.
-* `BookStream._timeout_loop` is replaced by `check_timeouts()` on the virtual clock.
-* The rig never calls `IngestionService.start()` (it starts the pieces itself), so it
-  registers `prune_unlisted` as the catalogue listener, wires the router and spawns the
-  pump itself.
+* Intended, not deployed, composition: `create_app()` does not call `wire_instrument_catalogue`
+  yet (#2561), so a deployed `_is_listed`, `_tick_size` and `_launch_us` see no catalogue and
+  no topic can be acquired; the rig attaches the catalogue as that function would.
+* Not composed: the E04-T06 stage-latency recorder (`create_app` -> `attach_latency`), so the
+  WS reader never takes its 1-in-N sampled `_record_sampled` branch.
 """
 
 from __future__ import annotations
 
-import asyncio
 import random
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any, TypeVar, cast
+from types import SimpleNamespace
+from typing import Any, TypeVar
 
 from candleviewer.book.models import BookPhase, BookStatus
 from candleviewer.bus.bus import Bus, Subscription
 from candleviewer.bus.models import QueuePolicy
-from candleviewer.exchange.base.models import BookDelta, BookSnapshot
+from candleviewer.domain.events import Instrument
+from candleviewer.exchange.base.models import BookDelta, BookSnapshot, TickerEvent
 
 # nosemgrep: cv-adapter-isolation reason=Q03 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.config import RestClientConfig
@@ -55,19 +59,25 @@ from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 
 # nosemgrep: cv-adapter-isolation reason=Q03 owner=@CandleViewer/security review=2026-12-31
+from candleviewer.exchange.bybit.ticker import parse_ticker_frame, ticker_topic
+
+# nosemgrep: cv-adapter-isolation reason=Q03 owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.trades import parse_trade_frame, recent_trades_fetcher, trade_topic
+from candleviewer.ingestion.book_supervisor import B14BookSupervisor
 from candleviewer.ingestion.clock import ClockGuard, rest_client_fetcher
 from candleviewer.ingestion.connection import ConnectionManager
 from candleviewer.ingestion.instruments_refresh import InstrumentsRefreshScheduler
+from candleviewer.ingestion.metrics import ingest_enabled
 from candleviewer.ingestion.planner import SubscriptionPlanner
 from candleviewer.ingestion.reconnect import ConnectionRateGuard, ReconnectPolicy
 from candleviewer.ingestion.rejection import EventWindow, corrected_now_us
 from candleviewer.ingestion.service import IngestionService
+from candleviewer.ingestion.ticker_stream import TickerStream
 from candleviewer.ingestion.trade_stream import GapEvent, TradeStream
 from candleviewer.ingestion.watchdog import FeedHealthEvent, StalenessWatchdog
 from candleviewer.observability.context import spawn
 from candleviewer.orderbook_wiring import BookStream
-from tests._corpus import TICKS
+from candleviewer.settings import FeedMode
 from tests.chaos.ingestion._clock import VirtualClock
 from tests.chaos.ingestion._stub_exchange import StubExchange
 
@@ -76,15 +86,11 @@ from tests.chaos.ingestion._stub_exchange import StubExchange
 # nosemgrep: cv-adapter-isolation reason=B5-b-harness owner=@CandleViewer/security review=2026-12-31
 STUB_BASE_URL = "https://api.bybit.com"
 T = TypeVar("T")
-TICK_ALL: dict[str, Decimal] = {
-    **TICKS,
-    "ETHUSDT": Decimal("0.01"),
-    "LUNAUSDT": Decimal("0.0001"),  # rest/instruments_before.json
-}
-
-
-def _tick(symbol: str) -> Decimal | None:
-    return TICK_ALL.get(symbol)
+#: All `IngestionService.start(ctx)` reads is `ctx.settings.feed`: a non-synthetic feed, so
+#: the E02-T12 replay generator stays off and the attached public stack is what starts.
+LIVE_FEED_CTX: Any = SimpleNamespace(settings=SimpleNamespace(feed=FeedMode.LIVE))
+#: `IngestionService.stop(grace_s)`: a real-time guard around the WS stop only.
+STOP_GRACE_S = 5.0
 
 
 @dataclass
@@ -95,6 +101,7 @@ class Observed:
     book_status: list[BookStatus] = field(default_factory=list)
     book_events: list[BookSnapshot | BookDelta] = field(default_factory=list)
     gaps: list[GapEvent] = field(default_factory=list)
+    tickers: list[TickerEvent] = field(default_factory=list)
     trades: list[Any] = field(default_factory=list)
     order: list[str] = field(default_factory=list)  # "status:desynced", "delta:42", ...
 
@@ -105,6 +112,7 @@ class FlakyWriter:
     def __init__(self) -> None:
         self.down = False
         self.persisted_trades: list[Any] = []
+        self.persisted_tickers: list[Any] = []
         self.persisted_book_rows = 0
         self.failed_batches = 0
 
@@ -116,6 +124,10 @@ class FlakyWriter:
     async def write_trades(self, events: Any) -> None:
         self._check()
         self.persisted_trades.extend(events)
+
+    async def write_ticker(self, event: Any) -> None:
+        self._check()
+        self.persisted_tickers.append(event)
 
     async def write_book_deltas(self, rows: Any) -> None:
         self._check()
@@ -156,27 +168,30 @@ class Rig:
         self.clock = VirtualClock()
         self.rng = random.Random(seed)  # noqa: S311  (deterministic jitter)
         self.ex = StubExchange(self.clock, seed=seed)
+        self.host_skew_s = 0.0  # market-data host clock skew (WSL sleep)
         self.bus = Bus()
         self.env = "live"
         self.symbols = symbols
         self.writer = FlakyWriter()
         self.seen = Observed()
+        # `build_app_context`: the module; its health reads these clocks.
+        self.svc = IngestionService(clock=self.clock, now_us=self.clock.now_us)
+        # `adapter.public_rest_client(env)`: the default client and governor.
+        config = RestClientConfig(base_url=STUB_BASE_URL)
         self.governor = TokenBucketGovernor(
-            default_capacity=50.0,
-            default_refill_per_s=5.0,
+            ip_budget_per_5s=config.ip_budget_per_5s,
             clock=self.clock,
             sleep=self.clock.sleep,  # 10018 IP hold (#1908) runs on virtual time
         )
         self.rest = BybitRestClient(
-            RestClientConfig(base_url=STUB_BASE_URL),
+            config,
             governor=self.governor,
             transport=self.ex.transport,
             sleep=self.clock.sleep,
             random_fn=self.rng.random,
             wall_clock=self.host_wall_s,
         )
-        self.host_skew_s = 0.0  # market-data host clock skew (WSL sleep)
-        self.svc = IngestionService()
+        # `wire_instrument_catalogue`: the catalogue gates every topic (E08-S03).
         self.instruments = InstrumentsRefreshScheduler(
             fetch_instruments_info=make_instruments_info_fetcher(self.rest),
             repository=_NullRepo(),
@@ -184,8 +199,11 @@ class Rig:
             sleep=self.clock.sleep,
             random_fn=self.rng.random,
         )
-        self.guard = ConnectionRateGuard(self.clock, limit=conn_limit)
+        self.svc.attach_instruments(self.instruments)
+
+        # ---- `app.wire_public_ws` --------------------------------------------------------
         self.watchdog = StalenessWatchdog(self.clock, lambda _e: None, kind_of=topic_kind)
+        self.guard = ConnectionRateGuard(self.clock, limit=conn_limit)
         self.ws = ConnectionManager(
             self.ex.socket_factory,
             SubscriptionPlanner(),
@@ -196,20 +214,28 @@ class Rig:
             sleep=self.clock.sleep,
             bus=self.bus,
             env=self.env,
+            clock=self.clock,
         )
-        self._demand: dict[str, set[str]] = {}
-        # Composition-root parity (`app.wire_public_ws`, #1912): the plausibility
-        # window runs on host clock + ClockGuard offset; the guard sees the same
+        self.svc.attach_ws(self.ws)
+        ingest_enabled.set(1.0)  # silent-death meta-alert keys on this (E08-T06)
+        # `wire_clock_offset`: started and stopped with ingestion. The guard sees the
         # (skewable) host wall clock and the virtual monotonic clock.
         self.clock_guard = ClockGuard(
             rest_client_fetcher(self.rest, wall_clock=self.host_wall_s, monotonic=self.clock),
             clock=self.clock,
             sleep=self.clock.sleep,
+            random_fn=self.rng.random,
             wall_ns=lambda: self.host_now_us() * 1_000,
             mono_ns=lambda: int(self.clock.now * 1_000_000_000),
         )
+        self.svc.attach_clock(self.clock_guard)
+        self.svc.attach_closer(self.rest.aclose)
+        # Each stream owns a slice of the upstream topic set; the socket gets the union.
+        self._demand: dict[str, set[str]] = {}
+        # #1892/#1912: wall clock (not the monotonic demand clock) bounds event time,
+        # shifted by ClockGuard's measured offset so the exchange clock is truth.
         window = EventWindow(
-            corrected_now_us(self.clock_guard.offset_us, self.host_now_us), lambda _s: None
+            corrected_now_us(self.clock_guard.offset_us, self.host_now_us), self._launch_us
         )
         self.trades = TradeStream(
             bus=self.bus,
@@ -220,7 +246,7 @@ class Rig:
             is_listed=self.is_listed,
             touch=self.watchdog.touch,
             fetch_recent=recent_trades_fetcher(self.rest.get_public),
-            tick_size=_tick,
+            tick_size=self._tick_size,
             clock=self.clock,
             now_us=self.clock.now_us,
             event_window=window,
@@ -228,11 +254,13 @@ class Rig:
             write_sleep=self.clock.sleep,  # #1918 write-behind backoff on virtual time
             write_rand=self.rng.random,
         )
+        self.svc.attach_trades(self.trades)
+        self.book_supervisor = B14BookSupervisor()
         self.books = BookStream(
             bus=self.bus,
             env=self.env,
             set_desired=lambda t: self._set_desired("book", t),
-            parse_frame=lambda f: parse_book_frame(f, _tick),
+            parse_frame=lambda f: parse_book_frame(f, self._tick_size),
             topic_for=book_topic,
             resubscribe=self.ws.resubscribe_topic,
             is_listed=self.is_listed,
@@ -240,23 +268,58 @@ class Rig:
             clock=self.clock,
             now_us=self.clock.now_us,
             writer=self.writer,
+            supervisor=self.book_supervisor,
             rand=self.rng.random,
+            write_sleep=self.clock.sleep,
+            sleep=self.clock.sleep,  # the SNAPSHOT_TIMEOUT tick on virtual time
         )
-        self.svc.attach_ws(self.ws)
-        self.svc.attach_router(frame_route, self.watchdog.touch)  # #1916 per-topic lanes
-        self.instruments.add_listener(self.svc.prune_unlisted)  # #1913 delist teardown
-        self.svc.attach_trades(self.trades)
         self.svc.attach_books(self.books)
+        self.tickers = TickerStream(
+            bus=self.bus,
+            env=self.env,
+            set_desired=lambda t: self._set_desired("ticker", t),
+            parse_frame=parse_ticker_frame,
+            topic_for=ticker_topic,
+            is_listed=self.is_listed,
+            touch=self.watchdog.touch,
+            clock=self.clock,
+            now_us=self.clock.now_us,
+            event_window=window,
+            writer=self.writer,
+            sleep=self.clock.sleep,
+        )
+        self.svc.attach_tickers(self.tickers)
+        # #1916/#1905: per-topic dispatch lanes behind the pump; the pump touches
+        # the watchdog on routing, so freshness reflects the venue.
+        self.svc.attach_router(frame_route, self.watchdog.touch)
+        # ---- end of `app.wire_public_ws` -------------------------------------------------
+
         self._ui: Subscription = self.bus.subscribe(
             "chaos-ui", f"{self.env}.*.*.*", QueuePolicy.NEVER_DROP, maxsize=1_000_000
         )
 
-    # ---- composition-root callbacks ---------------------------------------
+    # ---- composition-root callbacks (`app.wire_public_ws`) --------------------------
+    def _instrument(self, symbol: str) -> Instrument | None:
+        scheduler = self.svc.instruments
+        snap = scheduler.snapshot() if scheduler is not None else None
+        return snap.get(symbol) if snap is not None else None
+
     def is_listed(self, symbol: str) -> bool:
-        """Exactly `app.wire_public_ws._is_listed`: catalogue says `trading`."""
-        snap = self.instruments.snapshot()
-        inst = snap.get(symbol) if snap is not None else None
+        """`_is_listed`: only catalogue symbols may become topics (E08-S03 security note)."""
+        inst = self._instrument(symbol)
         return inst is not None and inst.status == "trading"
+
+    def _tick_size(self, symbol: str) -> Decimal | None:
+        inst = self._instrument(symbol)
+        return None if inst is None else inst.tick_size
+
+    def _launch_us(self, symbol: str) -> int | None:
+        inst = self._instrument(symbol)
+        return None if inst is None else int(inst.launch_time)
+
+    def _set_desired(self, stream: str, topics: set[str]) -> None:
+        self._demand[stream] = set(topics)
+        self.ws.set_desired(set().union(*self._demand.values()))
 
     def host_now_us(self) -> int:
         """The host wall clock: venue time plus every injected host jump."""
@@ -266,47 +329,19 @@ class Rig:
     def host_wall_s(self) -> float:
         return self.host_now_us() / 1_000_000
 
-    def _set_desired(self, stream: str, topics: set[str]) -> None:
-        self._demand[stream] = set(topics)
-        self.ws.set_desired(set().union(*self._demand.values()))
-
     # ---- lifecycle -----------------------------------------------------------
     async def start(self) -> None:
-        """`IngestionService.start` minus the settings-bound synthetic feed.
-
-        `BookStream._timeout_loop` sleeps on the real loop clock (not injectable),
-        so the rig runs the same `check_timeouts()` on the virtual clock instead."""
-
-        await self.instruments.refresh_now()  # the catalogue gates every topic (E08-S03)
-        await self.ws.start()
-        await self.trades.start()
-        b = cast(Any, self.books)
-        self._tasks: list[asyncio.Task[None]] = [
-            spawn(b._health_loop(), name="chaos-book-health"),
-            spawn(b._write_loop(), name="chaos-book-write"),
-            spawn(self._book_ticks(), name="chaos-book-ticks"),
-            spawn(cast(Any, self.svc)._pump_frames(), name="chaos-pump"),
-        ]
-        self.svc.ws = self.ws
-        cast(Any, self.svc)._started = True  # what `IngestionService.start` sets last
+        """Start ingestion as the module supervisor does, then the scenario's chart
+        demand (book + tape) on every symbol."""
+        await self.svc.start(LIVE_FEED_CTX)
         for sym in self.symbols:
             self.trades.acquire("chaos", sym)
             self.books.acquire("chaos", sym)
         await self.clock.settle()
 
-    async def _book_ticks(self) -> None:
-        while True:
-            await self.clock.sleep(0.25)
-            await self.books.check_timeouts()
-
     async def stop(self) -> None:
-
-        for t in self._tasks:
-            t.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
-        await self.trades.stop()
-        await self.ws.stop()
-        await self.rest.aclose()
+        await self.svc.stop(grace_s=STOP_GRACE_S)
+        await self.clock.settle()  # `B14BookSupervisor.detach` stops each chart in a task
 
     # ---- observation -----------------------------------------------------------
     def observe(self) -> Observed:
@@ -327,6 +362,8 @@ class Rig:
             elif isinstance(ev, FeedHealthEvent):
                 self.seen.feed.append(ev)
                 self.seen.order.append(f"feed:{ev.state}")
+            elif isinstance(ev, TickerEvent):
+                self.seen.tickers.append(ev)
             else:
                 self.seen.trades.append(ev)
         return self.seen
