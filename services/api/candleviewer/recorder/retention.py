@@ -682,14 +682,7 @@ class RetentionManager:
         pinned = await self._facts.pinned()
         stream = StreamKind(item.stream)
         if plan.mode == "purge":
-            hits = [s for s in item.symbols if s in pinned]
-            if hits and not plan.allow_pinned:
-                return Protected(item, "pinned", ",".join(hits))
-            for s in item.symbols:
-                lease = await self._lease(s, item.start_us, item.end_us)
-                if lease is not None:
-                    return Protected(item, "leased", f"lease={lease}")
-            return None
+            return await self._purge_blocker(item, plan, pinned, stream)
         policies = await self._facts.policies()
         if item.tier == "hot":
             return await self._hot_blocker(item, stream, pinned, policies, now_us)
@@ -702,6 +695,30 @@ class RetentionManager:
         lease = await self._lease(symbol, item.start_us, item.end_us)
         if lease is not None:
             return Protected(item, "leased", f"lease={lease}")
+        return None
+
+    async def _purge_blocker(
+        self, item: PruneItem, plan: PrunePlan, pinned: set[str], stream: StreamKind
+    ) -> Protected | None:
+        """Purge re-check (review round 4, 2). A DAY partition holds every symbol, so a hot item
+        re-reads who is in the day NOW: rows of another symbol may have landed since
+        `plan_purge`. Pin first (§6) over every live symbol (`include_pinned` covers only the
+        purged symbol), then refuse a day that is no longer the purged symbol's alone."""
+        own = set(item.symbols)
+        live: set[str] = set()
+        if item.tier == "hot":
+            rows = await self._verify.hot_rows(stream, item.start_us)
+            live = {s for s, n in rows.items() if n > 0}
+        hits = sorted(s for s in own | live if s in pinned)
+        blocked = [s for s in hits if s not in own] if plan.allow_pinned else hits
+        if blocked:
+            return Protected(item, "pinned", ",".join(blocked))
+        if live - own:
+            return Protected(item, "shared_partition", ",".join(sorted(live - own)))
+        for s in item.symbols:
+            lease = await self._lease(s, item.start_us, item.end_us)
+            if lease is not None:
+                return Protected(item, "leased", f"lease={lease}")
         return None
 
     async def _delete(self, item: PruneItem) -> bool:

@@ -294,6 +294,36 @@ async def test_purge_run_rechecks_pin_added_after_plan() -> None:
     assert report.deleted == [] and [p.reason for p in report.skipped] == ["pinned"]
 
 
+async def test_purge_hot_day_gaining_another_symbol_after_plan_is_refused_shared() -> None:
+    """Review round 4 (2): rows of another symbol land in the purged symbol's sole-symbol day
+    between `plan_purge` and the drop -> refused `shared_partition`, nothing dropped."""
+    w = _world()
+    w.add_hot(T, 3, {"BTCUSDT": 4})
+    m = manager(w)
+    plan = await m.plan_purge("BTCUSDT", NOW_US, include_pinned=False)
+    assert [(i.tier, i.symbols) for i in plan.items] == [("hot", ("BTCUSDT",))]
+    w.hot[T][day(3)]["ETHUSDT"] = 2
+    report = await m.run(plan, dry_run=False)
+    assert report.deleted == [] and w.deletes == [] and w.data_deleted() == []
+    assert [(p.reason, p.info) for p in report.skipped] == [("shared_partition", "ETHUSDT")]
+
+
+async def test_purge_include_pinned_never_covers_a_pinned_symbol_arriving_after_plan() -> None:
+    """Review round 4 (2): the pin check runs over the day's LIVE symbols; `include_pinned`
+    is the owner's elevation for the purged symbol only."""
+    w = _world()
+    w.pinned = {"BTCUSDT"}
+    w.add_hot(T, 3, {"BTCUSDT": 4})
+    m = manager(w)
+    plan = await m.plan_purge("BTCUSDT", NOW_US, include_pinned=True)
+    assert len(plan.items) == 1
+    w.pinned.add("ETHUSDT")
+    w.hot[T][day(3)]["ETHUSDT"] = 2
+    report = await m.run(plan, dry_run=False)
+    assert report.deleted == [] and w.deletes == []
+    assert [(p.reason, p.info) for p in report.skipped] == [("pinned", "ETHUSDT")]
+
+
 async def test_resolve_uses_stored_policies_and_pin() -> None:
     w = _world()
     w.pinned = {"ETHUSDT"}

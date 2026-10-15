@@ -21,8 +21,8 @@ from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_r
 from candleviewer.api.recorder_purge import make_recorder_purge_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import AUDIT_ACTIONS
-from candleviewer.recorder.retention import PrunePlan, RetentionManager, RunReport
-from tests.unit.recorder._retention_fakes import NOW, T, World, manager
+from candleviewer.recorder.retention import PrunePlan, RetentionManager, RunReport, day_key
+from tests.unit.recorder._retention_fakes import NOW, T, World, day, manager
 
 OWNER = {"recording:write", "admin:read"}
 BODY = {"symbol": "BTCUSDT", "confirm_symbol": "BTCUSDT", "reason": "free disk"}
@@ -152,6 +152,25 @@ async def test_purge_accepted_audits_exact_window_before_job_then_executes() -> 
     assert first[1]["object_id"] == r.json()["job_id"]
     assert env.w.cold[("BTCUSDT", T)] == {} and len(env.w.data_deleted()) == 2
     assert _actions(env)[-1] == "retention.purge"  # outcome record after the job
+
+
+async def test_purge_day_shared_after_plan_is_kept_and_outcome_audit_names_reason() -> None:
+    """Review round 4 (2): another symbol's rows land in the purged symbol's sole-symbol day
+    after the plan (and its write-ahead audit) -> the day is kept, no `data.deleted` for it,
+    and the `retention.purge` outcome record names `shared_partition`."""
+    env = _Env()
+    env.w.add_hot(T, 3, {"BTCUSDT": 4})
+    env.backend.gate.clear()
+    r = await env.post(BODY)
+    assert r.status_code == 202
+    env.w.hot[T][day(3)]["ETHUSDT"] = 2  # lands between plan_purge and the drop
+    env.backend.gate.set()
+    job = await env.wait(r.json()["job_id"])
+    skipped = [{"partition": day_key(day(3)), "reason": "shared_partition"}]
+    assert job["result"]["skipped"] == skipped and day(3) in env.w.hot[T]
+    assert [d["tier"] for d in env.w.data_deleted()] == ["cold", "cold"]
+    action, outcome = env.audit.calls[-1]
+    assert action == "retention.purge" and outcome["after_state"]["result"]["skipped"] == skipped
 
 
 async def test_purge_without_step_up_is_403_and_nothing_deleted() -> None:
