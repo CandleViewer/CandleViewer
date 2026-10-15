@@ -5,23 +5,26 @@ caps and strict parsing run before anything else. FastAPI therefore generates th
 without parameters, request bodies or the documented status codes, and `/openapi.json` drifts
 from `docs/plan/22-api-openapi.yaml`, which is normative (C-6.1).
 
-`install_contract_openapi()` wraps `app.openapi`. Each operation the app serves under
-`RAW_BODY_PREFIXES` is replaced by the contract's own operation, read from the packaged subset
-(#2555), with the contract's path-level parameters, and the components those reference are
-merged in. An operation the app does not serve is never added, every other route is left as
-generated, and handlers and runtime behaviour do not change: only the published document does.
+`install_contract_openapi()` wraps `app.openapi`. In the document FastAPI generates, each
+operation under `RAW_BODY_PREFIXES` is replaced by the contract's own operation, read from the
+packaged subset (#2555), together with the contract's path-level parameters, and the components
+those reference are merged in. Only operations already in the generated document are replaced:
+a route the app does not serve, or serves with `include_in_schema=False`, is never published,
+and every other route stays as generated. Handlers and runtime behaviour do not change.
+
+Not published: a raw-body route outside `RAW_BODY_PREFIXES` keeps its generated form, and the
+contract's root `security` is not copied (the generated document declares none, as today).
 """
 
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi import FastAPI
 
 from candleviewer.api.contract_conformance import component_closure, under_raw_body_prefix
-from candleviewer.api.deny_by_default import served_operations
 
 
 class ContractPublishError(Exception):
@@ -29,58 +32,78 @@ class ContractPublishError(Exception):
 
 
 def publish_raw_body_operations(
-    doc: dict[str, Any], contract: Mapping[str, Any], served: Iterable[tuple[str, str]]
-) -> dict[str, Any]:
-    """`doc`, updated in place: each served raw-body `(METHOD, path)` gets the contract's operation.
+    doc: dict[str, object], contract: Mapping[str, object]
+) -> dict[str, object]:
+    """`doc`, updated in place: each raw-body operation it holds becomes the contract's.
 
-    A served operation the contract lacks keeps its generated form; `create_app()` already
-    refuses to build with one (RBAC-CON-003). A generated component that shares a name with a
-    merged contract component must be identical. Otherwise this raises `ContractPublishError`
-    before changing anything: overwriting it would change what other operations document, and
-    keeping it would publish the wrong schema.
+    An operation or path the contract lacks keeps its generated form; `create_app()` already
+    refuses to build with an undeclared route (RBAC-CON-003). A generated component that shares
+    a name with a merged contract component must be identical. Otherwise this raises
+    `ContractPublishError` before changing anything: overwriting it would change what other
+    operations document, and keeping it would publish the wrong schema. A dangling reference in
+    the contract raises `ValueError` (`component_closure`).
     """
-    published: list[tuple[str, str, Mapping[str, Any]]] = []
-    for method, path in sorted(served):
-        item = contract["paths"].get(path)
-        if under_raw_body_prefix(path) and isinstance(item, dict) and method.lower() in item:
-            published.append((method.lower(), path, item))
-    roots = [[item[method], item.get("parameters", [])] for method, _, item in published]
-    closure = component_closure(contract["components"], roots)
-    generated = doc.get("components", {})
+    paths, contract_paths = doc.get("paths"), contract.get("paths")
+    if not isinstance(paths, dict) or not isinstance(contract_paths, Mapping):
+        return doc
+    replaced: list[tuple[dict[str, object], str, Mapping[str, object]]] = []
+    for path, item in paths.items():
+        source = contract_paths.get(path)
+        if not under_raw_body_prefix(path) or not isinstance(item, dict):
+            continue
+        if not isinstance(source, Mapping):
+            continue  # a raw-body path the contract lacks stays as generated
+        replaced += [(item, key, source) for key in item if isinstance(source.get(key), Mapping)]
+    contract_components = contract.get("components")
+    closure = component_closure(
+        contract_components if isinstance(contract_components, Mapping) else {},
+        [[source[key], source.get("parameters", [])] for _, key, source in replaced],
+    )
+    components = doc.get("components")
+    generated = components if isinstance(components, dict) else {}
     for kind, entries in closure.items():
+        existing = generated.get(kind)
         for name, component in entries.items():
-            if generated.get(kind, {}).get(name, component) != component:
+            if isinstance(existing, Mapping) and existing.get(name, component) != component:
                 raise ContractPublishError(
                     f"components.{kind}.{name}: the generated document defines it differently "
                     "from the contract"
                 )
-    for method, path, item in published:
-        target = doc.setdefault("paths", {}).setdefault(path, {})
-        target[method] = copy.deepcopy(item[method])
-        if "parameters" in item:
-            target["parameters"] = copy.deepcopy(item["parameters"])
-    for kind, entries in closure.items():
-        doc.setdefault("components", {}).setdefault(kind, {}).update(copy.deepcopy(entries))
+    for item, key, source in replaced:
+        item[key] = copy.deepcopy(source[key])
+        if "parameters" in source:
+            item["parameters"] = copy.deepcopy(source["parameters"])
+    if closure:
+        doc["components"] = generated
+        for kind, entries in closure.items():
+            existing = generated.get(kind)
+            merged = existing if isinstance(existing, dict) else {}
+            merged.update(copy.deepcopy(entries))
+            generated[kind] = merged
     return doc
 
 
-def install_contract_openapi(app: FastAPI, contract: Mapping[str, Any]) -> None:
+def install_contract_openapi(app: FastAPI, contract: Mapping[str, object]) -> None:
     """Make `app.openapi()` publish the contract's raw-body operations.
 
-    Call once every router is included. The served operations are read when the document is
-    first built; FastAPI caches it in `app.openapi_schema`, as before.
+    FastAPI keeps owning the cache (`app.openapi_schema`): every call goes through FastAPI's
+    own `openapi()`, a document it returns is published once (recognised by identity), and any
+    exception clears the cache, so an unpublished or half-published document is never served
+    from it.
     """
     generate = app.openapi
+    published: dict[str, Any] | None = None
 
     def openapi() -> dict[str, Any]:
-        schema = app.openapi_schema
-        if schema is None:
-            try:
-                schema = publish_raw_body_operations(generate(), contract, served_operations(app))
-            except ContractPublishError:
-                app.openapi_schema = None  # never cache the unpublished document
-                raise
-            app.openapi_schema = schema
+        nonlocal published
+        try:
+            schema = generate()
+            if schema is not published:
+                publish_raw_body_operations(schema, contract)
+                published = schema
+        except BaseException:
+            app.openapi_schema = None
+            raise
         return schema
 
     app.openapi = openapi  # type: ignore[method-assign]  # FastAPI's documented override (#2551)
