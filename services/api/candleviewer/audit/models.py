@@ -209,6 +209,16 @@ class AuditPage(BaseModel):
     meta: AuditPageMeta = Field(default_factory=AuditPageMeta)
 
 
+class ChainBreakKind(StrEnum):
+    """How the first divergent entry diverges (design §5), checked in this order."""
+
+    #: Its `prev_hash` is not the `entry_hash` of the entry before it: an entry was
+    #: deleted, inserted or re-ordered.
+    PREV_HASH_MISMATCH = "prev_hash_mismatch"
+    #: Its hashed fields do not recompute to its `entry_hash`: the entry was altered.
+    ENTRY_HASH_MISMATCH = "entry_hash_mismatch"
+
+
 class VerifyResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -216,6 +226,8 @@ class VerifyResult(BaseModel):
     entries_checked: int
     first_bad_id: int | None
     checked_at: datetime
+    #: For the verify record (`admin.audit_verify`); not part of the response.
+    kind: ChainBreakKind | None = Field(default=None, exclude=True)
 
 
 class ExportResult(BaseModel):

@@ -13,9 +13,11 @@ breaking the link, ticket AC "Tampering is detected and located").
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import hashlib
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,13 +29,16 @@ from candleviewer.audit.models import (
     AuditPage,
     AuditPageMeta,
     AuditQueryRequest,
+    ChainBreakKind,
     VerifyResult,
 )
 from candleviewer.audit.repository import AuditRepository
+from candleviewer.observability.context import spawn
 
 _GENESIS_HASH = "0" * 64
 #: Rows per verify batch (ticket "Technical notes").
 VERIFY_BATCH_SIZE = 10_000
+_PREFETCH = "audit.verify.prefetch"
 #: The hashed columns after `prev_hash`, in the order `audit_chain()` hashes them
 #: (`21-database-schema.md` §3.10.1).
 HASHED_FIELDS = (
@@ -83,6 +88,40 @@ def _canonical_hash(prev_hash: str, row: Mapping[str, Any]) -> str:
     return _canonical_digest(prev_hash, (row[name] for name in HASHED_FIELDS))
 
 
+@dataclass(frozen=True, slots=True)
+class _Walk:
+    checked: int  # rows examined, the first divergent one included
+    last_hash: str  # `entry_hash` of the last row that passed (else the expected predecessor)
+    bad_id: int | None = None
+    kind: ChainBreakKind | None = None
+
+
+def _walk_batch(expected_prev: str, rows: Sequence[Sequence[Any]]) -> _Walk:
+    """Check one batch, on the hasher's thread. `rows` are `(id, prev_hash, entry_hash,
+    *renderings)` in id order; the link is checked before the hash (design §5)."""
+    for index, row in enumerate(rows):
+        if row[1] != expected_prev:
+            return _Walk(index + 1, expected_prev, row[0], ChainBreakKind.PREV_HASH_MISMATCH)
+        if _canonical_digest(expected_prev, row[3:]) != row[2]:
+            return _Walk(index + 1, expected_prev, row[0], ChainBreakKind.ENTRY_HASH_MISMATCH)
+        expected_prev = row[2]
+    return _Walk(len(rows), expected_prev)
+
+
+async def _discard(task: asyncio.Future[Any]) -> None:
+    """Cancel a prefetch nobody will read and wait for it, so no statement outlives the
+    call and its error is not reported as unretrieved. Never swallows the caller's own
+    cancellation: `asyncio.wait` raises it."""
+    task.cancel()
+    await asyncio.wait([task])
+    if not task.cancelled():
+        task.exception()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 def _page_chain_verified(rows: list[dict[str, Any]]) -> bool:
     """Design §5 on a page: every row's hashed fields recompute to its `entry_hash`, and its
     `prev_hash` is the `entry_hash` of the row before it in the chain (genesis for the
@@ -113,12 +152,20 @@ class AuditQueryService:
     """Backs the three `/admin/audit*` endpoints. Constructed with the same
     `RelationalRepository` the `AuditWriter` uses — read-only queries only,
     never an INSERT/UPDATE/DELETE (the DB grants forbid the latter two
-    anyway). A page's chain check runs on `hasher`, a bounded executor of its
-    own; `close()` shuts it down."""
+    anyway). A page's chain check and verify's batches run on `hasher`, a
+    bounded executor of its own; `close()` shuts it down. `clock` stamps
+    `checked_at`."""
 
-    def __init__(self, repository: AuditRepository, hasher: ChainHasher | None = None) -> None:
+    def __init__(
+        self,
+        repository: AuditRepository,
+        hasher: ChainHasher | None = None,
+        *,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> None:
         self._repository = repository
         self._hasher = hasher if hasher is not None else ChainHasher()
+        self._clock = clock
 
     def close(self) -> None:
         self._hasher.shutdown()
@@ -231,33 +278,51 @@ class AuditQueryService:
         `from_id` (genesis when there is none): ids have gaps, so `from_id - 1` may not
         exist (design §1 gap 10). `to_id` is clamped to the head read when the run starts,
         so entries appended during the run are not checked; a range past the head checks
-        nothing. Keyset batches of `batch_size` rows; the walk stops at the first entry
-        whose `prev_hash` or recomputed hash diverges."""
+        nothing. Keyset batches of `batch_size` rows, hashed off the event loop; the walk
+        stops at the first divergence (`kind` says which check failed). A database failure,
+        a read over its time budget or a full hasher raises and returns nothing."""
         head = await self._repository.read_head()
         last_id = 0 if head is None else head[0]
         if to_id is not None:
             last_id = min(to_id, last_id)
-        after_id = 0 if from_id is None else from_id - 1
-        checked = 0
-        first_bad_id: int | None = None
-        if after_id < last_id:
-            expected = await self._repository.fetch_anchor_hash(after_id + 1) or _GENESIS_HASH
-            while first_bad_id is None:
-                rows = await self._repository.fetch_verify_batch(
-                    after_id=after_id, to_id=last_id, limit=batch_size
-                )
-                for row in rows:  # (id, prev_hash, entry_hash, *renderings)
-                    checked += 1
-                    if row[1] != expected or _canonical_digest(expected, row[3:]) != row[2]:
-                        first_bad_id = row[0]
-                        break
-                    expected, after_id = row[2], row[0]
-                if len(rows) < batch_size or after_id >= last_id:
-                    break
-
+        first_id = 1 if from_id is None else from_id
+        walk = _Walk(0, _GENESIS_HASH)
+        if first_id <= last_id:
+            anchor = await self._repository.fetch_anchor_hash(first_id)
+            walk = await self._walk(anchor or _GENESIS_HASH, first_id - 1, last_id, batch_size)
         return VerifyResult(
-            verified=first_bad_id is None,
-            entries_checked=checked,
-            first_bad_id=first_bad_id,
-            checked_at=datetime.now(UTC),
+            verified=walk.bad_id is None,
+            entries_checked=walk.checked,
+            first_bad_id=walk.bad_id,
+            checked_at=self._clock(),
+            kind=walk.kind,
+        )
+
+    async def _walk(self, expected: str, after_id: int, last_id: int, batch_size: int) -> _Walk:
+        """Keyset batches `after_id < id <= last_id`; batch n+1 is fetched while batch n
+        is hashed, and batch n+2 only after batch n is done (at most two held)."""
+        checked = 0
+        pending: asyncio.Future[list[tuple[Any, ...]]] | None
+        pending = spawn(self._fetch(after_id, last_id, batch_size), name=_PREFETCH)
+        try:
+            while pending is not None:
+                rows = await pending
+                pending = None
+                if not rows:
+                    break
+                if len(rows) == batch_size and rows[-1][0] < last_id:
+                    pending = spawn(self._fetch(rows[-1][0], last_id, batch_size), name=_PREFETCH)
+                walk = await self._hasher.run(functools.partial(_walk_batch, expected, rows))
+                checked += walk.checked
+                if walk.bad_id is not None:
+                    return _Walk(checked, walk.last_hash, walk.bad_id, walk.kind)
+                expected = walk.last_hash
+            return _Walk(checked, expected)
+        finally:
+            if pending is not None:  # a prefetch nobody read: a break, an error, a cancel
+                await _discard(pending)
+
+    async def _fetch(self, after_id: int, last_id: int, limit: int) -> list[tuple[Any, ...]]:
+        return await self._repository.fetch_verify_batch(
+            after_id=after_id, to_id=last_id, limit=limit
         )
