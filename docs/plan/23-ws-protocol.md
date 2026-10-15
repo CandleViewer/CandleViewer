@@ -1058,6 +1058,14 @@ Before a deploy or restart the server broadcasts on `system`, then closes with `
 
 The UI uses `expected_downtime_ms` to show a countdown instead of a bare "disconnected", and — critically — **disables the order ticket** for the duration, because a restart mid-submission is exactly when a double-send would happen.
 
+**As built (#2546).** The sequence runs when the server is asked to exit (SIGTERM, Ctrl+C), before uvicorn's own shutdown. uvicorn fails every open WebSocket with `1012` before the application's shutdown hook runs, so the planned shutdown cannot live in that hook. Order:
+1. The server stops accepting connections. A client that reconnects during the grace is refused at TCP and retries with backoff, instead of connecting and then getting a bare `1012`.
+2. Every authenticated connection gets the `shutdown_notice`.
+3. After the grace period, every connection gets `bye` `shutdown` with `retry_after_ms` = `expected_downtime_ms`, then close `1001`.
+4. uvicorn's shutdown and the application's teardown follow.
+
+The grace and downtime come from `CV_WS_SHUTDOWN_GRACE_MS` and `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS`. Only the development reloader (`--reload`) still closes with `1012`.
+
 ### 9.5 Mid-connection authorisation changes
 
 Authorisation is re-evaluated on every change to the user's roles, permissions or account grants, and on kill-switch transitions. Affected subscriptions are terminated with `revoked` — never silently emptied, which would look like a flat book or a closed position.

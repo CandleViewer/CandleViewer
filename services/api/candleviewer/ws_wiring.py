@@ -16,8 +16,9 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   deny-all snapshot and never raises.
 * **Events** (E09 / kill switch): `WsEvents` is the one entry point producers call:
   `grants_changed`, `user_disabled`, `kill_switch_changed`.
-* **Shutdown** (§9.4): `WsRuntime.stop()` runs FIRST in the lifespan teardown: the gateway sends
-  `shutdown_notice` on `system`, waits the grace period, then `bye` + `1001`.
+* **Shutdown** (§9.4): `candleviewer.server.PlannedShutdownServer` runs `WsRuntime.stop()` before
+  uvicorn's own shutdown (#2546): the gateway sends `shutdown_notice` on `system`, waits the grace
+  period, then `bye` + `1001`. The lifespan teardown's later call only stops the sweeper.
 """
 
 from __future__ import annotations
@@ -318,22 +319,35 @@ class WsRuntime:
         self._settings = settings
         self._clock = clock
         self._sweeper: asyncio.Task[None] | None = None
+        self._notified = False
 
     def start(self) -> None:
+        self._notified = False
         if self._sweeper is None:
             self._sweeper = spawn(self.upstream.run(self._clock), name="ws-upstream-sweeper")
 
     async def stop(self) -> int:
         """§9.4: `shutdown_notice`, grace, `bye` + `1001`; then wait (bounded) for the sockets
-        to flush and stop the sweeper. Returns the number of connections notified."""
-        s = self._settings
-        notified = await self.hub.shutdown(
-            grace_ms=s.ws_shutdown_grace_ms,
-            expected_downtime_ms=s.ws_shutdown_expected_downtime_ms,
-        )
-        with contextlib.suppress(TimeoutError):
-            async with asyncio.timeout(CLOSE_FLUSH_TIMEOUT_S):
-                await self.hub.wait_empty()
+        to flush and stop the sweeper. Returns the number of connections notified.
+
+        The notice and grace run once (#2546): the server runs this before uvicorn's own
+        shutdown closes the sockets, and the lifespan teardown's later call only stops the
+        sweeper."""
+        notified = 0
+        if not self._notified:
+            self._notified = True
+            s = self._settings
+            try:
+                notified = await self.hub.shutdown(
+                    grace_ms=s.ws_shutdown_grace_ms,
+                    expected_downtime_ms=s.ws_shutdown_expected_downtime_ms,
+                )
+            except asyncio.CancelledError:
+                self._notified = False  # cut short (force_exit): a later call may notify again
+                raise
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(CLOSE_FLUSH_TIMEOUT_S):
+                    await self.hub.wait_empty()
         if self._sweeper is not None:
             self._sweeper.cancel()
             await asyncio.wait({self._sweeper})  # never raises; our own cancel is consumed

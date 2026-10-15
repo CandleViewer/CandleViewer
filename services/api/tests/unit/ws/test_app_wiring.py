@@ -3,6 +3,7 @@ planned shutdown and the `cv_ws_*` catalogue (no network, no sleeps, no I/O in c
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -219,6 +220,45 @@ def test_runtime_stop_sends_shutdown_notice_then_1001(world: tuple[TestClient, _
         bye = ws.receive_json()
         assert (bye["t"], bye["p"]["reason"], bye["p"]["code"]) == ("bye", "shutdown", 1001)
     assert notified == 1
+
+
+def test_runtime_stop_notifies_once(
+    world: tuple[TestClient, _Kill], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2546: the server runs the planned shutdown before uvicorn's own, so the lifespan's later
+    `stop()` must not notify, or wait the grace, a second time."""
+    client, _ = world
+    runtime: WsRuntime = client.app.state.ws_runtime  # type: ignore[attr-defined]
+    calls: list[dict[str, Any]] = []
+    real = runtime.hub.shutdown
+
+    async def shutdown(**kw: Any) -> int:
+        calls.append(kw)
+        return await real(**kw)
+
+    monkeypatch.setattr(runtime.hub, "shutdown", shutdown)
+    assert client.portal is not None
+    client.portal.call(runtime.start)
+    assert (client.portal.call(runtime.stop), client.portal.call(runtime.stop)) == (0, 0)
+    assert len(calls) == 1 and runtime._sweeper is None
+
+
+async def test_runtime_stop_cut_short_may_notify_again() -> None:
+    """A planned shutdown cancelled mid-grace (a second Ctrl+C) leaves a later `stop()` free to
+    notify again; `start()` re-arms it too."""
+    long_grace = _settings().model_copy(update={"ws_shutdown_grace_ms": 60_000})
+    runtime = WsRuntime(GatewayHub(), UpstreamRefs(), long_grace)
+    first = asyncio.ensure_future(runtime.stop())
+    await asyncio.sleep(0)  # a scheduling yield: `first` is now in the grace
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert runtime._notified is False
+    runtime._notified = True
+    runtime.start()
+    assert runtime._notified is False and runtime._sweeper is not None
+    runtime._sweeper.cancel()
+    await asyncio.wait({runtime._sweeper})
 
 
 def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _Kill]) -> None:

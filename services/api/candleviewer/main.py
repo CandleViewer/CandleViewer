@@ -117,8 +117,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # §9.4: the client gateway stops FIRST (shutdown_notice, grace, bye 1001) so clients
-        # are told before any module they read from goes away.
+        # §9.4: the client gateway stops FIRST. Under `candleviewer.server` the notice, grace and
+        # bye already ran before uvicorn's shutdown (#2546); this call then stops the sweeper.
         if ws_runtime is not None:
             await ws_runtime.stop()
         if metrics_runtime is not None:
