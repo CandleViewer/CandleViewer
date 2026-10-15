@@ -831,6 +831,22 @@ ALTER TABLE api_keys ADD CONSTRAINT ak_no_transfer CHECK (can_transfer = false);
 > follow-up #2270). One shared corpus tests the model and the CHECK
 > (`tests/unit/accounts/_permission_cases.py`).
 
+Additional invariant, enforced by trigger `trg_api_keys_write_once` (BEFORE UPDATE, per row,
+`ENABLE ALWAYS`; function `api_keys_write_once_check()`): `id`, `exchange_account_id`,
+`key_id_enc`, `key_id_last4`, `secret_enc`, `enc_nonce` and `enc_alg` are write-once. An UPDATE
+that changes one fails with SQLSTATE 23514 and `trg_api_keys_write_once: api_keys.<column> is
+write-once; store a new row (SR-003)`, which names the column and never a value. Columns are
+compared with `IS DISTINCT FROM`, so setting one to its own value passes. `dek_ref`/`kek_version`
+(KEK re-wrap), status, revocation and metadata stay updatable; an edited or rotated key is always
+a new row. Postgres fires BEFORE triggers in name order, so this one must stay the last BEFORE
+UPDATE row trigger on `api_keys` (tested). The same revision revokes DELETE on `api_keys` from
+`cv_app` where the role exists. What the trigger does not cover is in §3.2.3a.
+
+> **Landed:** `0024_api_keys_write_once` (#2336), the condition of the #835 Security sign-off on
+> SR-003. `lock_timeout` (5 s) bounds the wait for the SHARE ROW EXCLUSIVE lock. The downgrade
+> re-grants DELETE and drops the trigger and function, which re-opens the rollback (KV-T02); use
+> it only to roll back.
+
 #### 3.2.3 `api_key_rotations`
 
 Rotation is a two-phase operation: new key imported as `pending` → validated (signed `GET /v5/account/wallet-balance`) → old key set `rotating`, new key `active` → old key revoked after the grace window with zero in-flight orders.
@@ -882,12 +898,22 @@ CREATE TABLE kek_versions (
   on read.
 - `dek_ref`: `v1:` + hex of the DEK sealed under the KEK of `kek_version` (the wrapped DEK itself;
   useless without the KEK, which never touches the database).
-- AADs are length-prefixed (u16 big-endian per part): data layer `cv-cred-v2 ‖ environment ‖
-account_id ‖ id ‖ field` (SR-003; `environment` is the account's `exchange_accounts.env`); wrap
-  layer `cv-dek-v1 ‖ id ‖ kek_version`.
-- SR-003 `key_version`: recorded deviation — there is no key-version column; each Bybit key
-  rotation inserts a new `api_keys` row (linked by `api_key_rotations`), so the row id already
-  binds the key version.
+- AADs are length-prefixed (u16 big-endian per part): data layer
+  `cv-cred-v2 ‖ environment ‖ account_id ‖ id ‖ field`, wrap layer `cv-dek-v1 ‖ id ‖ kek_version`
+  (SR-003). `environment` is the process environment: `CredentialBroker.store` refuses any other,
+  and `CredentialBroker._borrow` binds its own. It equals the account's `exchange_accounts.env`
+  only because every read is filtered by `ea.env` and `_check_row` refuses drift;
+  `_rotation._rewrap_one` binds `row.env` from that same filtered read.
+- SR-003 `key_version`: there is no key-version column. Each key version is its own `api_keys`
+  row (`store()` mints a fresh id; rotation links old and new rows in `api_key_rotations`), and
+  the sealed and identity columns are write-once (`trg_api_keys_write_once`, §3.2.2), so the row
+  id binds the key version. This is the equivalence the #835 Security sign-off accepted.
+- The trigger refuses UPDATEs only. No trigger fires on DELETE or INSERT, and every AAD input is
+  reproducible under the same id, so a captured older row re-inserted under its old id still
+  decrypts. `cv_app` has no DELETE on `api_keys`, but a `cv_app` DELETE of the parent
+  `exchange_accounts` row cascades to its keys (referential actions run as the table owner), and
+  the owner role and superusers can bypass the trigger. That residual stays covered by audit,
+  revoke-at-Bybit on rotation and SR-031 (#835 sign-off (a)).
 - `kek_versions.kcv` is `UNIQUE` (`kv_kcv_unique`): one KEK can never be enrolled under two
   versions (no no-op "rotation"). Start-up refuses a reused, retired or out-of-sequence KEK.
 - Only `status IN ('active','rotating')` rows are signable; `pending` only for key verification.
@@ -3135,7 +3161,7 @@ NAMING_CONVENTION = {
 | `0006_admin_write_permission` | fix-forward data seed: `admin:write` permission + `owner` grant (added to the spec by #1637; 0001 is immutable, C-5.4) — **landed in E09-T03**                                                                                             |
 | `0007_sessions_idle_timeout`  | `sessions.idle_timeout_s` (per-session idle-lock timeout, B16) (fix #1634) — **landed in E09-S03**                                                                                                                                         |
 | `0009_sessions_step_up_state` | `sessions.step_up_elevations`, `step_up_failures`, `readonly_until` (step-up state on the session row, B16) — **E09-S04**                                                                                                                  |
-| `0005_api_keys`               | `api_keys`, `api_key_rotations`, withdrawal-off constraint                                                                                                                                                                                 |
+| `0005_api_keys`               | `api_keys`, `api_key_rotations`, withdrawal-off constraint — landed as `0017_exchange_accounts_api_keys` (E27-T01); write-once trigger `0024_api_keys_write_once` (#2336)                                                                  |
 | `0005_profiles`               | `account_profiles` + ladder trigger                                                                                                                                                                                                        |
 | `0006_trading_core`           | `trade_groups`, `trade_group_legs`, `orders`, `order_events`, `executions`, `positions`, `position_snapshots`, `wallet_balances`                                                                                                           |
 | `0007_recorder`               | `recorded_symbols`, `recording_sessions`, `recording_gaps`, `retention_policies` — landed as `0011_recorder` (E16-T01); `replay_sessions` landed in E26-T01 as `0023_replay_sessions` (#624)                                               |

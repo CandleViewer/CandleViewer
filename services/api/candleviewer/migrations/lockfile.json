@@ -111,6 +111,11 @@
       "path": "services/api/candleviewer/migrations/versions/0023_replay_sessions.py",
       "sha256": "f27bfa74b3e157156fc9240196ec4ec053bbe9705212c8800bd4c822fa0df54a",
       "down_revision": "0022_workspaces"
+    },
+    "0024_api_keys_write_once": {
+      "path": "services/api/candleviewer/migrations/versions/0024_api_keys_write_once.py",
+      "sha256": "6c1ed1778a979d15c5ca4741206aa06a0d6ce2e99ed5ee0212f7ee52a34874ac",
+      "down_revision": "0023_replay_sessions"
     }
   }
 }
