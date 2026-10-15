@@ -7,8 +7,8 @@ write-ahead `started` record, then the result or the reason it stopped. A run ca
 while it walks (a client that goes away, a shutdown) leaves only its `started` record. A
 record that cannot be written in `WRITE_TIMEOUT_S` makes the call `503` with nothing served
 (fail closed, C-2.9). The writer's `emit` is cancellation-safe, so the timeout never tears
-an append. Outside the budget, these records are bounded only by verify's own run limits
-(the per-user rate limit and single-flight that follow in the stack).
+an append. Outside the budget, these records are bounded only by verify's own run limits:
+the per-user rate limit and single-flight.
 
 Gauge rule (design §5): a break sets `cv_audit_chain_verified_state` to 0 and counts in
 `audit_chain_verification_failures_total`; only a run from genesis to the head that found no

@@ -29,7 +29,7 @@ from candleviewer.api.audit_budget import (
     AuditRecordBudget,
     BudgetActor,
 )
-from candleviewer.api.audit_limiter import AuditQueryLimiter
+from candleviewer.api.audit_limiter import AuditQueryLimiter, AuditVerifyLimiter
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.cursor import AuditCursor, encode_cursor
 from candleviewer.audit.hashing import ChainHasher, ChainHasherBusy
@@ -44,6 +44,7 @@ from candleviewer.audit.models import (
     VerifyResult,
 )
 from candleviewer.audit.query import AuditQueryService, VerifyPlan, VerifyRangeBeyondHead
+from candleviewer.audit.verify_slot import VerifySlot
 from candleviewer.observability.audit_query_metrics import (
     FILTER_CLASSES,
     cv_audit_chain_verified_state,
@@ -60,6 +61,7 @@ class _FakeQuery:
         self.verify_calls: list[dict[str, Any]] = []
         self.verify_result: VerifyResult | None = None  # a run's result, when a test sets one
         self.runs = 0
+        self.verify_slot = VerifySlot()
 
     async def query(self, **kwargs: Any) -> AuditPage:
         # Mirrors `AuditQueryService.query`'s own validation (QA defect
@@ -1421,3 +1423,70 @@ def test_verify_records_a_break_when_the_owners_record_budget_is_spent() -> None
         ("success", "info", "started"),
         ("failure", "critical", "entry_hash_mismatch@3"),
     ]
+
+
+# ---- verify limits: 429 per user, 409 single-flight, the run deadline (#2446) -------------
+
+_VERIFY = "/admin/audit/verify"
+
+
+def _limited_verify(svc: _FakeAuditService, rate: int = 30) -> TestClient:
+    limiter = AuditVerifyLimiter(rate_per_hour=rate, clock=_Clock())
+    app = FastAPI()
+    app.include_router(make_audit_router(svc, _FakeResolver(_owner()), verify_limiter=limiter))
+    return TestClient(app)
+
+
+def test_verify_runs_over_the_hourly_limit_are_429_and_only_started_runs_count() -> None:
+    svc = _FakeAuditService()
+    client = _limited_verify(svc, rate=1)
+    assert svc.query_service.verify_slot.try_acquire()
+    assert client.post(_VERIFY, json={}).status_code == 409  # refused: does not count
+    svc.query_service.verify_slot.release()
+    svc.writer_service.fail = True
+    assert client.post(_VERIFY, json={}).status_code == 503  # nothing started: does not count
+    svc.writer_service.fail = False
+    assert client.post(_VERIFY, json={}).status_code == 200  # the hour's one run
+    r = client.post(_VERIFY, json={})
+    assert (r.status_code, r.json()["code"], r.headers["Retry-After"]) == (
+        429,
+        "rate_limited",
+        "3600",
+    )
+    assert svc.query_service.runs == 1
+
+
+def test_verify_while_another_runs_is_409_unrecorded_and_carried_as_suppressed() -> None:
+    client, svc = _budgeted(_owner())
+    assert svc.query_service.verify_slot.try_acquire()  # e.g. the nightly job
+    r = client.post(_VERIFY, json={})
+    assert (r.status_code, r.json()["code"]) == (409, "conflict")
+    assert (_verify_records(svc), svc.query_service.runs) == ([], 0)
+    assert client.get("/admin/audit").status_code == 200
+    [(action, read)] = svc.writer_service.emitted  # the next record carries the refusal
+    assert action == "admin.audit_read" and read["after_state"]["suppressed"] == 1
+    other = _budgeted(_manager_with_read(), svc)[0].post(_VERIFY, json={})
+    assert other.status_code == 403  # an unauthorised caller never learns a run is going on
+
+
+def test_verify_rate_limit_is_checked_before_single_flight() -> None:
+    svc = _FakeAuditService()
+    client = _limited_verify(svc, rate=1)
+    assert client.post(_VERIFY, json={}).status_code == 200
+    assert svc.query_service.verify_slot.try_acquire()
+    assert client.post(_VERIFY, json={}).status_code == 429
+
+
+@pytest.mark.parametrize("ending", ["verified", "stopped", "unrecorded"])
+def test_verify_frees_the_slot_however_the_run_ends(ending: str) -> None:
+    svc = _FakeAuditService()
+
+    async def stopping(*_a: Any, **_kw: Any) -> VerifyResult:
+        raise TimeoutError  # e.g. a statement over its budget
+
+    if ending == "stopped":
+        svc.query_service.run_verify = stopping  # type: ignore[method-assign]  # fault injection
+    svc.writer_service.fail = ending == "unrecorded"
+    expected = 200 if ending == "verified" else 503
+    assert _limited_verify(svc).post(_VERIFY, json={}).status_code == expected
+    assert not svc.query_service.verify_slot.held

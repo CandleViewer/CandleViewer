@@ -37,11 +37,13 @@ def test_create_app_wires_audit_settings_into_limiter_and_budget(
             audit_budget_tracked_users=71,
             audit_inflight_writes=29,
             audit_verify_max_span=31,
+            audit_verify_rate_per_hour=37,
         )
     )
     lim, bud = seen["limiter"], seen["budget"]
     assert (lim._rate, lim._max_concurrent, lim._cap) == (7, 3, 71)
     assert (seen["query_timeout_ms"], seen["verify_max_span"]) == (1500, 31)
+    assert (seen["verify_limiter"]._rate, seen["verify_limiter"]._cap) == (37, 71)
     assert (bud._per_hour, bud._owner_per_hour) == (11, 13)
     assert (bud._flush_pages, bud._flush_s) == (17, 19.0)
     assert (bud._tracked, bud._inflight_cap) == (71, 29)
