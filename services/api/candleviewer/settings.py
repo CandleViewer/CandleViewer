@@ -382,6 +382,12 @@ class Settings(BaseSettings):
     # The most rendered UTF-8 bytes one entry may have for verify to fetch it (4 MiB; at most
     # the 8 MiB batch budget). A larger entry stops the run (503, `entry_too_large@<id>`).
     audit_verify_max_entry_bytes: int = Field(default=4_194_304, ge=65_536, le=8_388_608)
+    # Structure one Owner audit page serves, as the `{`, `[` and `,` of its states'
+    # renderings; past it the remaining states are withheld (`detail.elided`). The page is
+    # serialized on the event loop at a cost per value (C-2.17), so at most twice the
+    # default. At least two states at the 16 Ki-character field cap, so a one-row page
+    # always serves its row's states.
+    audit_page_structure_budget: int = Field(default=50_000, ge=32_768, le=100_000)
 
     # E27-T02 / e27-kek.md §4: KEK source vocabulary. `host-keychain` is a deprecated alias
     # of `handle` for one release. The KEK itself never enters Settings or os.environ.
