@@ -12,7 +12,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from candleviewer.api.sessions import REFRESH_COOKIE, make_session_router
+from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.sessions import (
+    GET_SESSION_QUERY,
+    LIST_SESSIONS_QUERY,
+    REFRESH_COOKIE,
+    make_session_router,
+)
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
@@ -256,6 +262,7 @@ async def test_self_service_read_with_a_target_user_parameter_is_422_naming_it(
     assert body["code"] == "validation_failed"
     assert body["type"] == "https://candleviewer.local/errors/validation_failed"
     assert [e["field"] for e in body["errors"]] == [f"query.{param}"]
+    assert [e["rule"] for e in body["errors"]] == ["target_user_not_accepted"]
     assert param in body["detail"]
     assert str(other) not in r.text, "the supplied value is never echoed"
     assert not {"user", "session", "items"} & set(body), "a refusal carries no session data"
@@ -306,7 +313,97 @@ async def test_self_service_read_with_a_target_user_parameter_unauthenticated_is
 async def test_list_sessions_declared_parameters_are_still_accepted(env: _Env) -> None:
     caller = await env.mint(uuid.uuid4())
     r = env.client.get(
-        "/api/v1/auth/sessions", params={"limit": 1}, headers=_h(caller.access_token)
+        "/api/v1/auth/sessions", params={"cursor": "0", "limit": 1}, headers=_h(caller.access_token)
     )
     assert r.status_code == 200
     assert r.json()["meta"]["count"] == 1
+
+
+#: Spellings no contract operation declares. Before the allow-list each was silently ignored and
+#: the read answered 200 with the caller's own data (review of #2573).
+_UNDECLARED = (
+    "USER_ID",
+    "User_Id",
+    "user-id",
+    "uid",
+    "userid",
+    "user",
+    "username",
+    "email",
+    "user_id[]",
+    "user_ids",
+)
+
+
+@pytest.mark.parametrize("param", _UNDECLARED)
+@pytest.mark.parametrize("path", _SELF_READS)
+async def test_self_service_read_with_an_undeclared_query_parameter_is_422_naming_it(
+    env: _Env, path: str, param: str
+) -> None:
+    caller = await env.mint(uuid.uuid4())
+    r = env.client.get(path, params={param: str(uuid.uuid4())}, headers=_h(caller.access_token))
+    assert r.status_code == 422, f"{path}?{param}=: refused, not silently ignored"
+    body = r.json()
+    assert body["code"] == "validation_failed"
+    assert [e["field"] for e in body["errors"]] == [f"query.{param}"]
+    assert [e["rule"] for e in body["errors"]] == ["undeclared_parameter"]
+    assert param in body["detail"]
+    assert not {"user", "session", "items"} & set(body), "a refusal carries no session data"
+
+
+@pytest.mark.parametrize(
+    ("path", "param"),
+    [
+        ("/api/v1/auth/session", "cursor"),  # authGetSession declares no parameter at all
+        ("/api/v1/auth/session", "limit"),
+        ("/api/v1/auth/sessions", "Limit"),  # only the exact declared name binds
+    ],
+)
+async def test_self_service_read_accepts_only_its_own_declared_parameters(
+    env: _Env, path: str, param: str
+) -> None:
+    caller = await env.mint(uuid.uuid4())
+    r = env.client.get(path, params={param: "1"}, headers=_h(caller.access_token))
+    assert r.status_code == 422
+    assert [e["field"] for e in r.json()["errors"]] == [f"query.{param}"]
+
+
+async def test_self_service_read_refusal_redacts_a_secret_shaped_parameter_name(env: _Env) -> None:
+    caller = await env.mint(uuid.uuid4())
+    shaped = "x" * 24  # the shared key-shape rule: an 18-36 character alphanumeric run
+    r = env.client.get(
+        "/api/v1/auth/session", params={shaped: "1"}, headers=_h(caller.access_token)
+    )
+    assert r.status_code == 422
+    assert shaped not in r.text, "a client-supplied name passes the shared redaction rules"
+    assert "[redacted:key-shape]" in r.json()["detail"]
+
+
+async def test_self_service_read_refusal_bounds_what_it_echoes(env: _Env) -> None:
+    caller = await env.mint(uuid.uuid4())
+    params = {"a" * 200: "1"} | {f"p{i:02d}": "1" for i in range(40)}
+    r = env.client.get("/api/v1/auth/session", params=params, headers=_h(caller.access_token))
+    assert r.status_code == 422
+    body = r.json()
+    assert len(body["errors"]) == 8, "at most eight names are echoed"
+    assert "(+33 more)" in body["detail"]
+    assert body["errors"][0]["field"] == f"query.{'a' * 64}..."
+    assert "a" * 65 not in r.text, "a long name is cut to 64 characters"
+
+
+def test_self_service_read_allow_lists_match_the_contract() -> None:
+    """The allow-lists are the operations' declared query parameters (22-api-openapi.yaml), so a
+    parameter the contract adds is accepted only once the handler is taught it."""
+    spec = load_openapi_spec()
+
+    def declared(path: str) -> frozenset[str]:
+        names: set[str] = set()
+        for p in spec["paths"][path]["get"].get("parameters", []):
+            if "$ref" in p:
+                p = spec["components"]["parameters"][p["$ref"].rsplit("/", 1)[-1]]
+            if p["in"] == "query":
+                names.add(p["name"])
+        return frozenset(names)
+
+    assert declared("/auth/session") == GET_SESSION_QUERY
+    assert declared("/auth/sessions") == LIST_SESSIONS_QUERY

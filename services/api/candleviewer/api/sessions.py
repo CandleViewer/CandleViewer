@@ -71,6 +71,7 @@ from candleviewer.auth.models import (
 )
 from candleviewer.auth.step_up import grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.observability.redaction import redact_text
 
 REFRESH_COOKIE = "cv_refresh"
 REFRESH_COOKIE_PATH = "/api/v1/auth"
@@ -172,21 +173,40 @@ def _unauthorized(detail: str = "authentication required") -> JSONResponse:
     return _problem(401, "Unauthorized", detail)
 
 
-#: SR-026: a self-service read answers only for the authenticated caller, so a target-user
-#: parameter is refused, never silently ignored (#2573). `userId` is the contract's own name for
-#: a target user (`components/parameters/UserId`, the owner-only `/users/{userId}` routes).
-_TARGET_USER_PARAMS = ("user_id", "userId")
+#: SR-026: a self-service read answers only for the authenticated caller, so it takes only the
+#: query parameters its contract operation declares. A target user under any spelling, or any other
+#: undeclared key, is refused, never silently ignored (#2573). `userId` is the contract's own name
+#: for a target user (`components/parameters/UserId`, the owner-only `/users/{userId}` routes).
+_TARGET_USER_PARAMS = frozenset({"user_id", "userId"})
+#: Declared query parameters (22-api-openapi.yaml): `authGetSession` has none; `authListSessions`
+#: has `Cursor` and `Limit`.
+GET_SESSION_QUERY: frozenset[str] = frozenset()
+LIST_SESSIONS_QUERY = frozenset({"cursor", "limit"})
+#: Echo bounds for client-supplied parameter names, which also pass the shared redaction rules.
+_MAX_ECHOED_PARAMS = 8
+_MAX_ECHOED_NAME_LEN = 64
 
 
-def _target_user_refusal(request: Request) -> JSONResponse | None:
-    """422 `validation_failed` when a self-service read names a target user (SR-026).
+def _echoed(name: str) -> str:
+    """A client-supplied parameter name as echoed: redacted first, then cut to the bound."""
+    shown = redact_text(name)
+    if len(shown) > _MAX_ECHOED_NAME_LEN:
+        return f"{shown[:_MAX_ECHOED_NAME_LEN]}..."
+    return shown
 
-    Decided on the parameter's presence alone, so the answer is identical for any value (no
-    existence oracle), and it echoes only the parameter name, never the supplied value.
+
+def _undeclared_query_refusal(request: Request, declared: frozenset[str]) -> JSONResponse | None:
+    """422 `validation_failed` when a self-service read gets an undeclared query key (SR-026).
+
+    Decided on the parameter names alone, so the answer is identical for any value (no existence
+    oracle). It echoes at most `_MAX_ECHOED_PARAMS` redacted, bounded names and never a value.
     """
-    named = [p for p in _TARGET_USER_PARAMS if p in request.query_params]
-    if not named:
+    undeclared = sorted(set(request.query_params) - declared)
+    if not undeclared:
         return None
+    named = undeclared[:_MAX_ECHOED_PARAMS]
+    more = len(undeclared) - len(named)
+    listed = ", ".join(_echoed(p) for p in named) + (f" (+{more} more)" if more else "")
     return JSONResponse(
         status_code=422,
         content={
@@ -194,14 +214,22 @@ def _target_user_refusal(request: Request) -> JSONResponse | None:
             "title": "Request body or parameters failed schema validation",
             "status": 422,
             "code": "validation_failed",
-            "detail": f"Target-user parameter not accepted: {', '.join(named)}. "
-            "This route answers only for the authenticated caller.",
+            "detail": f"Query parameter not accepted: {listed}. This route answers only for the "
+            "authenticated caller and takes no target-user or undeclared parameter.",
             "errors": [
-                {
-                    "field": f"query.{p}",
-                    "rule": "target_user_not_accepted",
-                    "message": "self-service routes do not accept a target-user parameter",
-                }
+                (
+                    {
+                        "field": f"query.{p}",
+                        "rule": "target_user_not_accepted",
+                        "message": "self-service routes do not accept a target-user parameter",
+                    }
+                    if p in _TARGET_USER_PARAMS
+                    else {
+                        "field": f"query.{_echoed(p)}",
+                        "rule": "undeclared_parameter",
+                        "message": "not a declared parameter of this route",
+                    }
+                )
                 for p in named
             ],
         },
@@ -579,7 +607,7 @@ def make_session_router(
         record = await _authenticate(request)
         if record is None:
             return _unauthorized()
-        if (refusal := _target_user_refusal(request)) is not None:
+        if (refusal := _undeclared_query_refusal(request, GET_SESSION_QUERY)) is not None:
             return refusal  # SR-026: before any session data is read
         if identity is None:
             return _problem(
@@ -620,7 +648,7 @@ def make_session_router(
         record = await _authenticate(request)
         if record is None:
             return _unauthorized()
-        if (refusal := _target_user_refusal(request)) is not None:
+        if (refusal := _undeclared_query_refusal(request, LIST_SESSIONS_QUERY)) is not None:
             return refusal  # SR-026: before any session data is read
         try:
             offset = int(cursor) if cursor else 0
