@@ -261,14 +261,14 @@ Standing assumptions for all areas: no public listener exists; all human actors 
 **E28 per-account profiles & trade groups** (`docs/security/threat-models/E28-profiles-trade-groups.md`, ticket
 E28-X01) re-derives F1-F6 above, with O3, O4, O8 and R2, against the E28 design before any of it is built: profile CRUD,
 the sizer, the risk guard, group definitions, the preview, per-trade overrides and the `trade_groups` projection, plus
-the fan-out flows E34 builds. 51 rows (PF-S01..PF-E07): 11 inherent Critical and 22 High. Main findings: the contract
-resolves request defaults and per-leg overrides "later wins", with a free `profile_id`, so `orders:write` can widen an
-account's caps per ticket; a NULL cap or an empty allow-list means "unlimited", and the DDL lacks four caps and any table
-or route for group definitions; a preview or a group view can leak an ungranted account; Managers hold the permission
-that clears a risk lockout; the kill switch is checked once per command rather than before each leg is sent; and no
-check keeps a stop inside the liquidation price. It also carries the TB-8 consumer rows E13-X01 asked for (IR-11, IR-12,
-IR-20, IR-45). Controls SR-E28-01..31 (model §9); the four schema requirements are due before E28-T01 merges; abuse
-cases AC-01..AC-31 go to E28-X03 and E28-Q01. Status Draft.
+the fan-out flows E34 builds. 53 rows (PF-S01..PF-E08): 11 inherent Critical and 24 High. Main findings: the contract
+resolves request defaults and per-leg overrides "later wins", with a free `profile_id`, and a group amend can raise a leg
+or clear its stop; a NULL cap or an empty allow-list means "unlimited", and the DDL lacks four caps and any table or
+route for group definitions; a preview or a group view can leak an ungranted account; Managers hold the permission that
+clears a risk lockout; concurrent admissions can pass the same cap headroom; the kill switch is not re-checked before
+each leg is sent; and no check keeps a stop inside the liquidation price. It also carries the TB-8 consumer rows E13-X01
+asked for (IR-11, IR-12, IR-20, IR-45). Controls SR-E28-01..33 (model §9); the four schema requirements are due before
+E28-T01 merges; abuse cases AC-01..AC-33 go to E28-X03 and E28-Q01. Status Draft.
 
 ### 5.5 Area 5 — WebSocket ingestion & fan-out (A-10, A-06)
 
