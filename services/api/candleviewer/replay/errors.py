@@ -30,6 +30,13 @@ class ReplayWindowTooLarge(ReplayRequestInvalid):
     code = "REPLAY_WINDOW_TOO_LARGE"
 
 
+class ReplayClockStateError(ReplayError):
+    """A clock control call its current state does not allow: playing at speed 0, a step while
+    playing, playing while a stop is still in progress, or any call after the clock closed."""
+
+    code = "REPLAY_CLOCK_STATE"
+
+
 class ReplayMemoryCeilingExceeded(ReplayError):
     """The per-session memory budget cannot hold even the smallest read of one stream: the
     replay stops with this error instead of growing memory (ticket E26-T02)."""
