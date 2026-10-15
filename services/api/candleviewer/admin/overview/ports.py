@@ -15,8 +15,6 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from candleviewer.observability.health_probes import HealthSnapshot
-
 
 @dataclass(frozen=True, slots=True)
 class UserCounts:
@@ -76,12 +74,9 @@ class RecorderPort(Protocol):
     async def recorder_status(self) -> RecorderStatus: ...
 
     async def storage_snapshot(self) -> StorageSnapshot | None:
-        """The last DiskBudget sample, or `None` before the first one."""
-
-
-class HealthPort(Protocol):
-    def health_snapshot(self) -> HealthSnapshot | None:
-        """E04's cached snapshot (`/admin/health`); never runs a probe on the request path."""
+        """The last DiskBudget sample, or `None` before the first one. Fail-closed (SR-096): an
+        adapter returns `None` or raises `SourceUnavailable` once the last sample is older than
+        a few sample intervals, never a stale headroom."""
 
 
 @dataclass(frozen=True, slots=True)

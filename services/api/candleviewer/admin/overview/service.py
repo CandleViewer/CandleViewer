@@ -3,7 +3,8 @@
 Six slices, read concurrently through the shared `SliceFanOut` (one budget, cache and failure
 mapping each): users, accounts and incidents from the relational counts; recorder and storage
 from the recorder port; trading from the OMS port, read live on every call because kill-switch
-and flag state are never cached. A port that is not wired makes its slice `unavailable`.
+and flag state are never cached. A port that is not wired makes its slice `unavailable`. The
+trading flags are awaited in turn; open positions get a shorter budget so the flags survive.
 """
 
 from __future__ import annotations
@@ -11,10 +12,16 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Final
 
-from candleviewer.admin.overview.fanout import Degraded, SliceFanOut, SliceResult, SourceUnavailable
+from candleviewer.admin.overview.fanout import (
+    Degraded,
+    SliceFanOut,
+    SliceResult,
+    SourceUnavailable,
+    _utc_now,
+)
 from candleviewer.admin.overview.ports import (
     AccountCounts,
     CountsPort,
@@ -27,6 +34,8 @@ from candleviewer.admin.overview.slices import AdminSlice
 
 #: `AdminOverview.accounts.keys_expiring_30d`.
 KEY_EXPIRY_WINDOW: Final = timedelta(days=30)
+#: Open positions must answer well inside the 300 ms slice budget, so the flags still show.
+POSITIONS_BUDGET_S: Final = 0.2
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,9 +76,10 @@ class AdminOverviewService:
         counts: CountsPort | None = None,
         recorder: RecorderPort | None = None,
         oms: OmsPort | None = None,
-        now: Callable[[], datetime] = lambda: datetime.now(UTC),
+        now: Callable[[], datetime] = _utc_now,
+        positions_budget_s: float = POSITIONS_BUDGET_S,
     ) -> None:
-        self._fan, self._now = fan, now
+        self._fan, self._now, self._positions_budget_s = fan, now, positions_budget_s
         self._counts, self._recorder, self._oms = counts, recorder, oms
 
     async def overview(self) -> OverviewSnapshot:
@@ -115,11 +125,16 @@ class AdminOverviewService:
     async def _trading(self) -> TradingState | Degraded[TradingState]:
         if self._oms is None:
             raise _unwired("trading")
-        live, killed = await asyncio.gather(
-            self._oms.live_enabled(), self._oms.kill_switch_engaged()
-        )
+        live = await self._oms.live_enabled()
+        killed = await self._oms.kill_switch_engaged()
+        flags_only = TradingState(live, killed, None)  # kill switch and flag always shown
         try:
-            positions = await self._oms.open_positions()
-        except SourceUnavailable as exc:  # kill switch and flag still shown (partial slice)
-            return Degraded(TradingState(live, killed, None), "unavailable", exc.detail)
+            async with asyncio.timeout(self._positions_budget_s):
+                positions = await self._oms.open_positions()
+        except SourceUnavailable as exc:
+            return Degraded(flags_only, "unavailable", exc.detail)
+        except TimeoutError:
+            return Degraded(flags_only, "error", "open_positions: timed out")
+        except Exception:  # the message may carry internals: never forwarded
+            return Degraded(flags_only, "error", "open_positions: source failed")
         return TradingState(live, killed, positions)
