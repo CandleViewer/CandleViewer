@@ -67,6 +67,7 @@ class FakeStore:
     points: list[Point] = field(default_factory=list)
     appended: list[Point] = field(default_factory=list)
     broken: bool = False
+    closed: bool = False
 
     async def load(self, since_us: int) -> list[Point]:
         if self.broken:
@@ -77,6 +78,9 @@ class FakeStore:
         if self.broken:
             raise OSError("volume full")
         self.appended.append(point)
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 @dataclass

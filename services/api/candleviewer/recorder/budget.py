@@ -167,6 +167,8 @@ class SeriesStore(Protocol):
 
     async def append(self, point: Point) -> None: ...
 
+    async def close(self) -> None: ...
+
 
 class PressurePublisher(Protocol):
     async def publish(self, topic: Topic, event: DiskPressureChanged) -> None: ...
@@ -611,6 +613,8 @@ class DiskBudget:
                 raise
         finally:
             await self._meter.close()
+            if self._store is not None:
+                await self._store.close()
 
     async def _run(self) -> None:
         loaded = False

@@ -11,6 +11,7 @@ No shell-out anywhere (SR-096). Deviations: 24-internal-schemas §13.4.1.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import shutil
@@ -82,17 +83,25 @@ def written_by_symbol() -> dict[str, int]:
 
 
 class _OneThread[T]:
-    """One dedicated worker thread. A call still running is awaited again, never stacked, so a
-    slow walk or a hung `statvfs` cannot pile into the default pool (audit write-ahead)."""
+    """One dedicated worker thread holding at most one call, off the default pool (which audit
+    write-ahead uses). A call that outlives its pass keeps running and the next pass consumes
+    its result instead of restarting it; a failed call is consumed, so the next pass retries."""
 
     def __init__(self, name: str) -> None:
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
         self._pending: Future[T] | None = None
 
     async def run(self, fn: Callable[[], T]) -> T:
-        if self._pending is None or self._pending.done():
-            self._pending = self._pool.submit(fn)
-        return await asyncio.wrap_future(self._pending)
+        if self._pending is None:
+            self._pending = self._pool.submit(contextvars.copy_context().run, fn)
+        future = self._pending
+        try:
+            result = await asyncio.wrap_future(future)
+        except Exception:
+            self._pending = None
+            raise
+        self._pending = None  # consumed; a cancelled await leaves it for the next pass
+        return result
 
     def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
@@ -111,36 +120,51 @@ def _volume(root: Path) -> tuple[int, int]:
 
 
 class VolumeMeter:
-    """`StorageMeter`: `statvfs` of the volume under `CV_PARQUET_ROOT`, then the best-effort
-    breakdown (QuestDB `table_partitions` sizes, the Parquet walk), each on its own thread."""
+    """`StorageMeter`: `statvfs` of the volume under `CV_PARQUET_ROOT`; the breakdown measures
+    the Parquet walk and the QuestDB `table_partitions` sizes in parallel, each within its own
+    budget and on its own connection or thread. Any part that fails or times out fails the
+    pass: a size that was never measured is never reported as 0."""
 
     def __init__(
         self,
         root: Path,
         pg: LazyPgWire | None,
         written: Callable[[], Mapping[str, int]] = written_by_symbol,
+        *,
+        budget_s: float = 4.0,
     ) -> None:
-        self._root, self._pg, self._written, self._questdb = root, pg, written, 0
-        self._hot = None if pg is None else QuestDbHotPartitions(pg, timeout_s=4.0)
+        self._root, self._pg, self._written, self._budget_s = root, pg, written, budget_s
+        self._hot = None if pg is None else QuestDbHotPartitions(pg, timeout_s=budget_s)
         self._statvfs = _OneThread[tuple[int, int]]("disk-budget-statvfs")
         self._walk = _OneThread[tuple[int, dict[str, int]]]("disk-budget-walk")
 
     async def volume(self) -> tuple[int, int]:
         return await self._statvfs.run(partial(_volume, self._root))
 
+    async def _parquet(self) -> tuple[int, dict[str, int]]:
+        async with asyncio.timeout(self._budget_s):
+            return await self._walk.run(partial(parquet_usage, self._root))
+
+    async def _questdb(self) -> int:
+        if self._hot is None:
+            return 0
+        async with asyncio.timeout(self._budget_s):
+            return await self._hot.disk_bytes(HOT_STREAMS)
+
     async def breakdown(self) -> Breakdown:
-        if self._hot is not None:
-            try:
-                self._questdb = await self._hot.disk_bytes(HOT_STREAMS)
-            except Exception as exc:  # any QuestDB failure: the cap path keeps the last size
-                logger().warning("disk_budget_questdb_unavailable", error=type(exc).__name__)
-        parquet, symbols = await self._walk.run(partial(parquet_usage, self._root))
-        written = self._written()
+        walk, hot = await asyncio.gather(self._parquet(), self._questdb(), return_exceptions=True)
+        if isinstance(walk, BaseException):
+            raise walk
+        if isinstance(hot, BaseException):
+            raise hot
+        (parquet, symbols), written = walk, self._written()
         total_written = sum(written.values())
         for symbol, n in written.items():
             if total_written and symbol:
-                symbols[symbol] = symbols.get(symbol, 0) + self._questdb * n // total_written
-        tiers: dict[TierName, int] = {"questdb": self._questdb, "parquet": parquet}
+                symbols[symbol] = symbols.get(symbol, 0) + hot * n // total_written
+        tiers: dict[TierName, int] = {"parquet": parquet}
+        if self._hot is not None:
+            tiers["questdb"] = hot
         return Breakdown(tiers, symbols)
 
     async def close(self) -> None:
@@ -151,13 +175,21 @@ class VolumeMeter:
 
 
 class FileSeriesStore:
-    """`SeriesStore`: one NDJSON file per UTC day, the newest `keep_days` kept (bounded)."""
+    """`SeriesStore`: one NDJSON file per UTC day under `<CV_PARQUET_ROOT>/_disk_budget/<env>`
+    (C-2.11), the newest `keep_days` kept. Its own worker thread; it never creates the root."""
 
-    def __init__(self, directory: Path, *, keep_days: int = 8) -> None:
-        self._dir, self._keep = directory, keep_days
+    def __init__(self, root: Path, env: str, *, keep_days: int = 8) -> None:
+        self._root, self._dir, self._keep = root, root / "_disk_budget" / env, keep_days
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="disk-budget-series")
+
+    async def _run[R](self, fn: Callable[[], R]) -> R:
+        return await asyncio.wrap_future(self._pool.submit(contextvars.copy_context().run, fn))
 
     async def load(self, since_us: int) -> list[Point]:
-        return await asyncio.to_thread(self._load, since_us)
+        return await self._run(partial(self._load, since_us))
+
+    async def close(self) -> None:
+        self._pool.shutdown(wait=False)
 
     def _load(self, since_us: int) -> list[Point]:
         points: list[Point] = []
@@ -175,10 +207,12 @@ class FileSeriesStore:
         return points
 
     async def append(self, point: Point) -> None:
-        await asyncio.to_thread(self._append, point)
+        await self._run(partial(self._append, point))
 
     def _append(self, point: Point) -> None:
-        self._dir.mkdir(parents=True, exist_ok=True)
+        if not self._root.is_dir():  # never recreate a missing root on the wrong volume
+            raise FileNotFoundError("the recording root is missing")
+        self._dir.mkdir(parents=True, exist_ok=True)  # only below the existing root
         day = datetime.fromtimestamp(point.ts_us / US_PER_S, tz=UTC).strftime("%Y%m%d")
         line = json.dumps({"t": point.ts_us, "b": point.recorded_bytes, "s": point.symbols})
         with (self._dir / f"{day}.ndjson").open("a", encoding="utf-8") as f:
@@ -267,6 +301,6 @@ def build_disk_budget(
         now_us=lambda: time.time_ns() // 1_000,
         gaps=partial(recorded_gaps, recorder_repo),
         pinned=partial(pinned_symbols, recorder_repo),
-        store=FileSeriesStore(root / "_disk_budget" / settings.environment.value),
+        store=FileSeriesStore(root, settings.environment.value),
         recording_refused=refusal is not None,
     )

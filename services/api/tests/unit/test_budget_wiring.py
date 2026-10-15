@@ -4,6 +4,7 @@ SR-096 shared-volume refusal, and `CV_DISK_*` settings (E16-FR-11). I/O only und
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -16,6 +17,7 @@ from candleviewer.budget_wiring import (
     HOT_STREAMS,
     FileSeriesStore,
     VolumeMeter,
+    _OneThread,
     build_disk_budget,
     parquet_usage,
     pinned_symbols,
@@ -64,16 +66,17 @@ class _Pg:
         self.closed = True
 
 
-async def test_meter_apportions_hot_bytes_and_keeps_the_last_size_on_outage(
+async def test_meter_apportions_hot_bytes_and_fails_the_pass_on_a_questdb_outage(
     tmp_path: Path,
 ) -> None:
     _tree(tmp_path, {"trades/symbol=BTCUSDT/dt=2026-10-01/a.parquet": 10})
     pg = _Pg([200] * len(HOT_STREAMS))
     meter = VolumeMeter(tmp_path, cast(Any, pg), written=lambda: {"BTCUSDT": 3, "ETHUSDT": 1})
-    for _ in range(2):  # the second pass: QuestDB down, the cap path keeps 1 000
-        b = await meter.breakdown()
-        assert b.tiers == {"questdb": 1_000, "parquet": 10}
-        assert b.symbols == {"BTCUSDT": 760, "ETHUSDT": 250}
+    b = await meter.breakdown()
+    assert b.tiers == {"questdb": 1_000, "parquet": 10}
+    assert b.symbols == {"BTCUSDT": 760, "ETHUSDT": 250}
+    with pytest.raises(OSError, match="questdb down"):  # never reported as 0 or as fresh
+        await meter.breakdown()
     total, free = await meter.volume()
     assert 0 < free <= total
     await meter.close()
@@ -103,14 +106,20 @@ async def test_a_hung_questdb_never_freezes_the_ladder(
 
 
 async def test_series_store_round_trips_skips_a_torn_line_and_keeps_n_days(tmp_path: Path) -> None:
-    store = FileSeriesStore(tmp_path / "db", keep_days=2)
+    store = FileSeriesStore(tmp_path, "demo", keep_days=2)
     for day in range(3):
         await store.append(Point(NOW + day * US_PER_DAY, day, (("BTCUSDT", day),)))
-    files = sorted((tmp_path / "db").glob("*.ndjson"))
+    files = sorted((tmp_path / "_disk_budget" / "demo").glob("*.ndjson"))
     with files[-1].open("a", encoding="utf-8") as f:
         f.write('{"t": 1')  # a crash mid-append
     points = await store.load(0)
     assert len(files) == 2 and [p.symbols for p in points] == [(("BTCUSDT", 1),), (("BTCUSDT", 2),)]
+    await store.close()
+    missing = FileSeriesStore(tmp_path / "unmounted", "demo")
+    with pytest.raises(FileNotFoundError):  # a missing root is never recreated
+        await missing.append(Point(NOW, 0, ()))
+    assert not (tmp_path / "unmounted").exists()
+    await missing.close()
 
 
 def test_builder_runs_on_the_real_backend_only_and_refuses_unsafe_volumes(
@@ -174,3 +183,34 @@ async def test_gap_pin_and_written_sources() -> None:
     assert await pinned_symbols(repo) == {"BTCUSDT"}
     recorder_bytes_written_total.labels(symbol="ZZWIRINGUSDT", stream="trades").inc(5)
     assert written_by_symbol()["ZZWIRINGUSDT"] >= 5
+
+
+async def test_one_thread_consumes_a_late_result_instead_of_restarting() -> None:
+    lane, release, calls = _OneThread[int]("test-lane"), threading.Event(), [0]
+
+    def slow() -> int:
+        calls[0] += 1
+        release.wait(5)
+        return 7
+
+    with pytest.raises(TimeoutError):
+        async with asyncio.timeout(0.01):  # the pass ends; the call keeps running
+            await lane.run(slow)
+    release.set()
+    assert (await lane.run(slow), calls[0]) == (7, 1)
+    lane.close()
+
+
+async def test_one_thread_starts_a_fresh_call_after_a_failure() -> None:
+    lane, answers = _OneThread[int]("test-lane"), [OSError("io"), 3]
+
+    def call() -> int:
+        answer = answers.pop(0)
+        if isinstance(answer, OSError):
+            raise answer
+        return answer
+
+    with pytest.raises(OSError, match="io"):
+        await lane.run(call)
+    assert await lane.run(call) == 3
+    lane.close()
