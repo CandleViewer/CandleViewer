@@ -199,4 +199,6 @@ def test_every_coalesced_family_declares_the_disclosure_fields() -> None:
     for family in families:
         props = schemas[f"cv://ws/v1/{family}.schema.json"]["properties"]
         assert {"coalesced", "coalesced_count"} <= props.keys(), family
+        assert props["coalesced"].get("type") == "boolean", family
+        assert props["coalesced_count"].get("type") == "integer", family
         assert props["coalesced_count"].get("minimum") == 1, family

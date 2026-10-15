@@ -971,12 +971,14 @@ Each connection has a **bounded** outbound budget: 8 MiB or 2 000 frames, whiche
 
 On overflow the server acts in this order:
 
-1. **Drop coalescable pending state** for the offending topics and mark them `resnapshot_required`.
+1. **Drop the queued frames and coalescable pending state** of the offending topics and mark them `resnapshot_required`. Every throttled topic can be dropped this way, the append-only `trades` and `liquidations` included; a dropped topic recovers through its snapshot (step 2), never by a replay of what was dropped. `orders` and `executions` (never throttled), control frames (`sub_ok`, `err`, `pong`, ...) and `system` frames are never dropped.
 2. Send `snap` with `reason: "backpressure"` for each such topic once the queue drains below 50 %.
-3. If the queue is still over budget after the drop **and** the affected topics include `orders` or `executions` (which cannot be dropped), send `bye` with `slow_consumer` and close `4429`. Control frames (`sub_ok`, `err`, `pong`, ...) and `system` frames are never dropped either, so a backlog of them that alone keeps the queue over budget ends in this step too (S6).
+3. Send `bye` with `slow_consumer` and close `4429` when either:
+   - the queue is still over budget after the drop, because what remains cannot be dropped: `orders` or `executions`, or a backlog of control or `system` frames (S6); or
+   - three drops in a row each remove a topic's `backpressure` snapshot before it was sent (a snapshot larger than the budget could never be delivered).
 4. Record `cv_ws_overflow_total{action}` (`action`: `drop`, `resnapshot` or `close`) and, if step 3 fires, write a `warning` audit entry (`ws.slow_consumer.closed`).
 
-A client that is closed as a slow consumer should reconnect with backoff and _reduce its subscription set_ — the `bye` payload names the topics that were most expensive (up to five, by queued bytes when the overflow began, largest first):
+A client that is closed as a slow consumer should reconnect with backoff and _reduce its subscription set_ — the `bye` payload names the topics that were most expensive (up to five, by queued plus pending bytes when the overflow began, largest first; empty when no topic held any):
 
 ```jsonc
 {
