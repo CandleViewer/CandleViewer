@@ -70,6 +70,7 @@ from candleviewer.api.admin_overview import make_admin_overview_router
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_limiter import AuditQueryLimiter
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
+from candleviewer.api.auth_perf import auth_perf_enabled, make_auth_perf_router
 from candleviewer.api.contract_conformance import load_contract_subset
 from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
 from candleviewer.api.deny_by_default import (
@@ -982,6 +983,8 @@ def create_app(
     # until S4 threads it into the exchange adapter.
     account_fixture = build_account_fixture(resolved)
     spec = _cached_spec()
+    # #2097: the auth perf switch; refused outside a keyless testnet before anything is built.
+    auth_perf = auth_perf_enabled(resolved)
     app = FastAPI(
         title="CandleViewer API",
         version=resolved.version,
@@ -1137,7 +1140,11 @@ def create_app(
     # In-flight CSRF-refusal audits; drained (bounded) at shutdown before audit stops.
     csrf_audits = RefusalAuditTracker()
     app.state.csrf_refusal_audits = csrf_audits
-    app.include_router(make_auth_router(ctx.auth, ctx.audit, identity=identity, csrf=csrf_codec))
+    app.include_router(
+        make_auth_router(
+            ctx.auth, ctx.audit, identity=identity, csrf=csrf_codec, server_timing=auth_perf
+        )
+    )
     # E09-S03: session routes; revocation is pushed to sockets via the hub
     # (4401). Identity provider is E09-T03, so refresh/session return 501 and
     # every route answers 503 until a session repository is wired.
@@ -1282,6 +1289,8 @@ def create_app(
         )
     )
     app.include_router(make_hotkey_audit_router(_LazyAuditEmitter(ctx.audit), audit_resolver))
+    if auth_perf:  # #2097: owner-only Argon2id params; never mounted with the switch off
+        app.include_router(make_auth_perf_router(audit_resolver))
     # E04-T06: frontend telemetry push. One facade per process on ctx.metrics
     # (the lifespan's MetricsRuntime reuses it). Session-authenticated via the
     # same session resolver; `None` (fake backend) fails closed with 501.
