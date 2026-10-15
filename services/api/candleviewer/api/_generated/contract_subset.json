@@ -2,7 +2,7 @@
   "x-cv-generated": {
     "notice": "GENERATED FILE — DO NOT EDIT BY HAND. Regenerate from services/api with `uv run python scripts/generate_protocol_models.py`.",
     "source": "docs/plan/22-api-openapi.yaml",
-    "source_sha256": "4f07a29df522d34400b16fd2831810e31a97a1558cd9572a73110520e10b188e"
+    "source_sha256": "bba161e3ebc22bc79d20067ad7656043e835a0dab8798fcd1efdaacf84fb79c3"
   },
   "components": {
     "headers": {
@@ -1395,6 +1395,46 @@
         "required": [
           "slot_index",
           "pane_kind"
+        ],
+        "type": "object"
+      },
+      "LayoutPreset": {
+        "description": "Response object. Readers must ignore unknown properties (C-6.3); the embedded `layout` is a closed `LayoutInput`.",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "Stable for the life of the catalogue entry.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "is_builtin": {
+            "description": "Always `true`: the catalogue is static. User-saved presets are layouts with a `hotkey_slot`.",
+            "type": "boolean"
+          },
+          "layout": {
+            "$ref": "#/components/schemas/LayoutInput"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pane_count": {
+            "maximum": 16,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "is_builtin",
+          "pane_count",
+          "layout"
         ],
         "type": "object"
       },
@@ -3116,6 +3156,66 @@
     },
     "/layout-presets": {
       "get": {
+        "description": "Static built-in catalogue served from the code (no rows, nothing user-scoped). Each entry\ncarries a complete `LayoutInput` for `createLayout`, symbols left for the client to fill\n(\"Keep current symbols\", SCR-022). User-saved presets are layouts with a `hotkey_slot`\n(`listLayouts`). Ids are stable and new entries are additive. Thumbnails are static client\nassets keyed by `id`; the API never serves markup. `cursor` as on `listWorkspaces`.\n",
+        "operationId": "listLayoutPresets",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Page"
+                    },
+                    {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "$ref": "#/components/schemas/LayoutPreset"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Presets page."
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Malformed request. For this operation `code: invalid_cursor` signals a malformed or expired `cursor`."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          }
+        },
+        "summary": "Built-in layout presets",
+        "tags": [
+          "workspaces"
+        ],
         "x-rbac": {
           "permissions": [
             "workspaces:read"

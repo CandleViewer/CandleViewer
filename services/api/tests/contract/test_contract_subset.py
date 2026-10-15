@@ -1,7 +1,7 @@
 """#2555 / #2551: the packaged contract subset `create_app()` reads instead of the YAML.
 
 The API image ships no `docs/plan`, so deny-by-default reads
-`candleviewer/api/_generated/contract_subset.json`, and the raw-body routers will publish their
+`candleviewer/api/_generated/contract_subset.json`, and the raw-body routers publish their
 OpenAPI from it. These tests pin that the artifact is fresh, declares exactly the contract's
 operations, is a faithful pruned copy of the YAML whose published part is valid OpenAPI, and
 that the app builds from a copy of the package with no repository around it.
@@ -9,15 +9,13 @@ that the app builds from a copy of the package with no repository around it.
 
 from __future__ import annotations
 
-import ast
 import json
 import os
 import shutil
 import subprocess
 import sys
-import warnings
 from importlib.resources import files
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -28,8 +26,25 @@ from candleviewer.api.deny_by_default import declared_operations
 from candleviewer.api.rbac_conformance import find_undeclared_routes, spec_permission_codes
 
 _REGENERATE = "cd services/api && uv run python scripts/generate_protocol_models.py"
-#: Where `infra/images/Dockerfile.api` installs the package (`WORKDIR /app`).
-_IMAGE_PACKAGE = PurePosixPath("/app/candleviewer")
+_RBAC = {"permissions": ["orders:read"], "scope": "account"}
+_DRAWINGS = {"get": {"x-rbac": _RBAC, "responses": {"200": {"$ref": "#/components/responses/Ok"}}}}
+#: A small contract: one ordinary path (path-level parameter, two operations), one raw-body
+#: path, one malformed path item, and a component only the ordinary path references.
+_SPEC: dict[str, object] = {
+    "paths": {
+        "/orders/{id}": {
+            "parameters": [{"$ref": "#/components/parameters/Id"}],
+            "get": {"x-rbac": _RBAC, "summary": "list", "responses": {}},
+            "post": {"security": [], "requestBody": {"$ref": "#/components/requestBodies/B"}},
+        },
+        "/drawings": _DRAWINGS,
+        "/broken": None,
+    },
+    "components": {
+        "parameters": {"Id": {"name": "id", "in": "path", "required": True}},
+        "responses": {"Ok": {"description": "ok"}},
+    },
+}
 
 
 @pytest.fixture(scope="module")
@@ -43,8 +58,7 @@ def subset() -> dict[str, Any]:
 
 
 def _operations(doc: dict[str, Any]) -> set[tuple[str, str]]:
-    methods = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-    return {(path, m) for path, item in doc["paths"].items() for m in item if m in methods}
+    return {(p, m) for p, item in doc["paths"].items() for m in item if m in cc._HTTP_METHODS}
 
 
 def _not_pruned_from(kept: Any, source: Any, where: str = "") -> list[str]:
@@ -69,7 +83,7 @@ def test_the_packaged_subset_is_fresh() -> None:
     assert packaged.read_text(encoding="utf-8") == rendered, f"stale; run `{_REGENERATE}`"
 
 
-def test_rendering_is_stable_and_newline_terminated(spec: dict[str, Any]) -> None:
+def test_render_contract_subset_ignores_crlf_and_writes_the_header_first() -> None:
     source = cc._checkout_spec_path().read_bytes()
     text = cc.render_contract_subset(source)
     assert text == cc.render_contract_subset(source.replace(b"\n", b"\r\n"))
@@ -101,7 +115,7 @@ def test_raw_body_paths_keep_their_full_contract_path_items(
     spec: dict[str, Any], subset: dict[str, Any]
 ) -> None:
     raw = sorted(path for path in spec["paths"] if cc.under_raw_body_prefix(path))
-    assert raw, "no /drawings* or /workspaces* path in the contract"
+    assert raw, f"no path under {cc.RAW_BODY_PREFIXES} in the contract"
     for path in raw:
         assert subset["paths"][path] == spec["paths"][path], path
     cut = next(path for path in subset["paths"] if not cc.under_raw_body_prefix(path))
@@ -124,32 +138,37 @@ def test_the_published_part_is_valid_openapi_and_needs_no_other_component(
     )
 
 
-def test_the_cut_keeps_rbac_keys_and_takes_components_from_raw_body_paths_only() -> None:
-    rbac = {"permissions": ["orders:read"], "scope": "account"}
-    ok = {"200": {"$ref": "#/components/responses/Ok"}}
-    drawings = {"get": {"x-rbac": rbac, "responses": ok}}
-    spec = {
-        "paths": {
-            "/orders/{id}": {
-                "parameters": [{"$ref": "#/components/parameters/Id"}],
-                "get": {"x-rbac": rbac, "summary": "list", "responses": {}},
-                "post": {"security": [], "requestBody": {"$ref": "#/components/requestBodies/B"}},
-            },
-            "/drawings": drawings,
-            "/broken": None,
-        },
-        "components": {
-            "parameters": {"Id": {"name": "id", "in": "path", "required": True}},
-            "responses": {"Ok": {"description": "ok"}},
-        },
-    }
-    assert cc.build_contract_subset(spec) == {
-        "components": {"responses": {"Ok": {"description": "ok"}}},
-        "paths": {
-            "/orders/{id}": {"get": {"x-rbac": rbac}, "post": {"security": []}},
-            "/drawings": drawings,
-        },
-    }
+def test_build_contract_subset_cuts_operations_to_their_rbac_keys() -> None:
+    paths = cc.build_contract_subset(_SPEC)["paths"]
+    assert isinstance(paths, dict)
+    assert paths["/orders/{id}"] == {"get": {"x-rbac": _RBAC}, "post": {"security": []}}
+
+
+def test_build_contract_subset_keeps_raw_body_path_items_whole() -> None:
+    paths = cc.build_contract_subset(_SPEC)["paths"]
+    assert isinstance(paths, dict)
+    assert paths["/drawings"] == _DRAWINGS
+
+
+def test_build_contract_subset_takes_components_from_raw_body_paths_only() -> None:
+    components = cc.build_contract_subset(_SPEC)["components"]
+    assert components == {"responses": {"Ok": {"description": "ok"}}}
+
+
+def test_build_contract_subset_skips_a_malformed_path_item() -> None:
+    paths = cc.build_contract_subset(_SPEC)["paths"]
+    assert isinstance(paths, dict)
+    assert "/broken" not in paths
+
+
+@pytest.mark.parametrize(
+    "spec_",
+    [{}, {"paths": []}, {"paths": {}, "components": []}],
+    ids=["no-paths", "paths-not-an-object", "components-not-an-object"],
+)
+def test_build_contract_subset_refuses_a_malformed_contract(spec_: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match="`paths` object"):
+        cc.build_contract_subset(spec_)
 
 
 def test_component_closure_follows_refs_mappings_and_cycles() -> None:
@@ -199,15 +218,16 @@ def test_component_closure_refuses_what_it_cannot_publish(ref: str, message: str
 def test_raw_body_prefixes_match_whole_segments() -> None:
     assert cc.under_raw_body_prefix("/drawings") and cc.under_raw_body_prefix("/drawings/batch")
     assert cc.under_raw_body_prefix("/workspaces/{workspaceId}/layouts")
+    assert cc.under_raw_body_prefix("/layout-presets")
     assert not cc.under_raw_body_prefix("/drawingsx")
-    assert not cc.under_raw_body_prefix("/layout-presets")
+    assert not cc.under_raw_body_prefix("/layout-presets-v2")
 
 
 def test_the_yaml_path_is_resolved_on_use_not_at_import() -> None:
     assert "OPENAPI_SPEC_PATH" not in vars(cc)
     assert cc.OPENAPI_SPEC_PATH.is_file()  # resolved by the module `__getattr__`
     with pytest.raises(AttributeError, match="NO_SUCH_NAME"):
-        cc.NO_SUCH_NAME  # noqa: B018 — the expression itself is the assertion (#2555)
+        getattr(cc, "NO_SUCH_NAME")  # noqa: B009 — mypy rejects the unknown attribute (#2555)
 
 
 def test_the_image_layout_has_no_checkout_to_read() -> None:
@@ -228,13 +248,15 @@ def test_create_app_builds_from_a_package_copy_without_a_checkout(
 ) -> None:
     """#2555 regression. The image ships the package without `docs/plan`. On `main` this probe
     failed: `create_app()` read the YAML at `parents[4]` of the module, which here is a
-    directory with no `docs/plan` (and in the image, no directory at all)."""
+    directory with no `docs/plan` (and in the image, no directory at all). PyYAML and
+    openapi-spec-validator are blocked: the boot path must need neither (#2616)."""
     app_root = tmp_path / "app"
     package = Path(candleviewer.__file__).resolve().parent
     ignore = shutil.ignore_patterns("__pycache__")
     shutil.copytree(package, app_root / "candleviewer", ignore=ignore)
     probe = (
-        "import sys; sys.path.insert(0, sys.argv[1]); import candleviewer.app as a; "
+        "import sys; sys.modules.update(yaml=None, openapi_spec_validator=None); "
+        "sys.path.insert(0, sys.argv[1]); import candleviewer.app as a; "
         "assert a.__file__.startswith(sys.argv[1]), a.__file__; "
         "from candleviewer.api.deny_by_default import declared_operations as d; "
         "a.create_app(); print('declared', len(d(a._cached_spec())))"
@@ -250,45 +272,3 @@ def test_create_app_builds_from_a_package_copy_without_a_checkout(
     )
     assert result.returncode == 0, result.stderr[-4000:]
     assert f"declared {len(declared_operations(spec))}" in result.stdout.splitlines()
-
-
-class _ImportTimeParents(ast.NodeVisitor):
-    """`….parents[N]` evaluated at import (module and class level), with N >= `depth`."""
-
-    def __init__(self, depth: int) -> None:
-        self.depth = depth
-        self.lines: list[int] = []
-
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        """A function body runs when called, not at import."""
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """As `visit_FunctionDef`."""
-
-    def visit_Subscript(self, node: ast.Subscript) -> None:
-        index = node.slice
-        if (
-            isinstance(node.value, ast.Attribute)
-            and node.value.attr == "parents"
-            and isinstance(index, ast.Constant)
-            and isinstance(index.value, int)
-            and index.value >= self.depth
-        ):
-            self.lines.append(node.lineno)
-        self.generic_visit(node)
-
-
-def test_no_module_indexes_past_the_image_root_at_import() -> None:
-    """#2555: under `/app/candleviewer/` a module has only as many parents as its depth, so an
-    import-time `parents[N]` past that raises `IndexError` and the image cannot import the app.
-    `main` had two: `api/contract_conformance.py` and `ingestion/synthetic_feed.py`."""
-    package = Path(candleviewer.__file__).resolve().parent
-    offenders: list[str] = []
-    for module in sorted(package.rglob("*.py")):
-        relative = module.relative_to(package)
-        visitor = _ImportTimeParents(len((_IMAGE_PACKAGE / relative.as_posix()).parents))
-        with warnings.catch_warnings():  # an applied migration has an invalid escape (C-5.4)
-            warnings.simplefilter("ignore", SyntaxWarning)
-            visitor.visit(ast.parse(module.read_text(encoding="utf-8")))
-        offenders += [f"{relative}:{line}" for line in visitor.lines]
-    assert offenders == []

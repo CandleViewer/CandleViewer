@@ -23,6 +23,7 @@ test:
 
 gen:
 	pnpm generate
+	uv run --project services/api python services/api/scripts/generate_protocol_models.py
 	uv run --project services/api python tools/statechart/render_catalogue.py
 	uv run --project services/api python tools/contracts/extract_ws_schemas.py
 	uv run --project services/api python tools/contracts/gen_ws_constants.py
