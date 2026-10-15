@@ -437,6 +437,27 @@ async def test_verify_a_checkpoint_naming_no_entry_is_a_break(
     assert all(after <= 3 for after, _, _ in repo.verify_calls)  # the walk stops below it
 
 
+async def test_verify_walks_on_past_a_matching_checkpoint_below_the_range(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 5, clock)
+    _checkpoint(repo, 2)
+    result = await AuditQueryService(repo).verify(from_id=4)
+    assert (result.verified, result.entries_checked) == (True, 2)
+
+
+async def test_verify_a_missing_checkpointed_entry_at_from_id_walks_nothing(
+    repo: FakeAuditRepository, clock: FakeClock
+) -> None:
+    await _seed(repo, 3, clock)
+    repo.burn_ids(1)  # id 4 is never written
+    await _seed(repo, 2, clock, first=3)  # ids 5-6
+    _checkpoint(repo, 4, head_hash="e" * 64)
+    result = await AuditQueryService(repo).verify(from_id=4)
+    assert (result.first_bad_id, result.kind) == (4, ChainBreakKind.CHECKPOINT_MISSING)
+    assert (result.entries_checked, result.last_hash, repo.verify_calls) == (0, None, [])
+
+
 async def test_verify_reports_an_entrys_own_break_before_its_checkpoint(
     repo: FakeAuditRepository, clock: FakeClock
 ) -> None:
