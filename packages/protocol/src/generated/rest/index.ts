@@ -854,6 +854,72 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/admin/statecharts": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Statechart inspector - live machines and their supervision counters
+     * @description Read model for the statechart inspector (E42-T07). One row per live machine of a kind that has a public entity id (the `machines.{entity}.state` grammar of E17-T08: B8, B9, B13 and B15 have none yet, so they are not listed). Rows come from the persisted quiescent snapshots and the `cv_machine_*` metric families; the read path never holds, builds or queries an `Interpreter` (MUSTNOT-03). Per-entity visibility follows the `machines.{entity}.state` topic: the Owner sees every entity of an account-scoped or unscoped kind, while `alert`, `replay` and `session` stay self-scoped for every role, so only the caller's own appear. A row the caller may not see is omitted, never redacted. When the snapshot store cannot be read, `items` is empty and `snapshots` says why (`AdminSliceStatus`); the response is still `200`.
+     */
+    get: operations["listStatecharts"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/statecharts/{machineKey}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). */
+        machineKey: components["parameters"]["MachineKey"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Statechart inspector - one machine's redacted context, chart and configuration
+     * @description One live machine (E42-T07), with the same visibility rules as `listStatecharts`. Adds the redacted `context_summary` (only the keys the `machines.{entity}.state` topic allows for the kind; never secrets, user ids, free text, deadlines, exchange ids, prices, quantities, balances or limits), the full active `configuration` (ancestors included, from the snapshot), the registered chart (`config`), and the latest `machine_events` rows without their payloads. An unknown machine and one the caller may not see are the same `404 not_found`. When the snapshot store cannot be read, the answer is `200` with `snapshots` saying why and no machine fields.
+     */
+    get: operations["getStatechart"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/admin/statecharts/{machineKey}/export": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). */
+        machineKey: components["parameters"]["MachineKey"];
+      };
+      cookie?: never;
+    };
+    /**
+     * Stately-compatible export of a machine's registered chart
+     * @description The chart registered in `statechart/registry.py` for the key's kind, projected for Stately Studio (`export_stately`: the CV policy keys removed), with its `machine_hash` (E42-T07). `machineKey` may also be a bare catalogue `machine_kind`, which covers every B1-B20 chart, live or not. The export reveals chart structure only: no instance is read, so the answer is the same for any id of a registered kind. A kind that is not registered is `404 not_found`.
+     */
+    get: operations["exportStatechart"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/admin/support-bundle": {
     parameters: {
       query?: never;
@@ -8014,6 +8080,70 @@ export interface components {
      */
     SizingMode:
       "fixed_qty" | "fixed_notional" | "pct_equity" | "risk_based" | "pct_position" | "profile";
+    StatechartExport: {
+      /** @description sha256 of the registered chart's canonical JSON (`registry.machine_hash`). */
+      machine_hash: string;
+      machine_kind: string;
+      /** @description The chart with the CV policy keys removed, importable into Stately Studio. */
+      stately: {
+        [key: string]: unknown;
+      };
+    };
+    /** @description One live machine (E42-T07), read from its persisted quiescent snapshot and the `cv_machine_*` metric families, never from a live interpreter. */
+    StatechartMachine: {
+      /** @description The snapshot's `chain_trips` count; above 0 the machine is latched degraded. */
+      chain_trips: number;
+      /** @description Deferred events held in the snapshot (`onUnhandled: defer`). */
+      deferred_depth?: number;
+      /** @description `chain_trips > 0`; cleared only by an operator. */
+      degraded: boolean;
+      /** @description `cv_machine_dropped_receipts_total` for this machine's kind since process start. The library counts dropped receipts per interpreter and never persists them, so the value is per kind, not per machine; `null` when the metric cannot be read. */
+      dropped_receipts?: number | null;
+      /** @enum {string} */
+      environment: "live" | "demo" | "testnet";
+      /** @description Whether `machine_hash` equals the committed `machine_hashes.lock` entry. */
+      lock_matches?: boolean;
+      /** @description The snapshot's chart hash (sha256 of the canonical chart JSON). */
+      machine_hash: string;
+      /** @description The `machineKey` of this machine. */
+      machine_key: string;
+      /** @description Catalogue id (`28-statechart-catalogue.md`). */
+      machine_kind: string;
+      /** @description The published state as on the `machines.{entity}.state` topic: the active direct child of the chart root (the first region's, for a parallel chart). */
+      state: string;
+      /**
+       * Format: date-time
+       * @description When the snapshot was written.
+       */
+      updated_at?: string;
+    };
+    /** @description `getStatechart` (E42-T07). `snapshots` and `events` give each source's outcome; machine fields are present only when `snapshots.status` is `ok`. */
+    StatechartMachineDetail: {
+      /** @description The chart JSON registered for the kind (`statechart/machines/*.machine.json`). */
+      config?: {
+        [key: string]: unknown;
+      };
+      /** @description Every active state id, ancestors included, sorted. */
+      configuration?: string[];
+      /** @description Redacted scalar context; only the keys allowed for the kind. */
+      context_summary?: {
+        [key: string]: string | number | boolean | null;
+      };
+      events?: components["schemas"]["AdminSliceStatus"];
+      machine?: components["schemas"]["StatechartMachine"];
+      /** @description The latest `machine_events` rows, newest first, without payloads. */
+      recent_events?: {
+        event_type: string;
+        faulted?: boolean;
+        from_states?: string[];
+        /** Format: date-time */
+        occurred_at: string;
+        /** @enum {string} */
+        phase: "ahead" | "commit" | "fault";
+        to_states?: string[];
+      }[];
+      snapshots: components["schemas"]["AdminSliceStatus"];
+    };
     StorageUsage: {
       /** Format: int64 */
       daily_growth_bytes?: number;
@@ -8639,6 +8769,8 @@ export interface components {
     LayoutId: string;
     /** @description Page size. */
     Limit: number;
+    /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). */
+    MachineKey: string;
     /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (open time is unique there). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
     MarketCursor: string;
     MethodId: string;
@@ -9748,6 +9880,93 @@ export interface operations {
           "application/json": components["schemas"]["SecuritySummary"];
         };
       };
+    };
+  };
+  listStatecharts: {
+    parameters: {
+      query?: {
+        /** @description Opaque forward cursor from `meta.next_cursor`. Cursors expire after 1 hour. */
+        cursor?: components["parameters"]["Cursor"];
+        /** @description Only machines whose `chain_trips` latch is set (`true`) or clear (`false`). */
+        degraded?: boolean;
+        /** @description Only machines of this catalogue `machine_kind`. */
+        kind?: string;
+        /** @description Page size. */
+        limit?: components["parameters"]["Limit"];
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Machines page. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["Page"] & {
+            items?: components["schemas"]["StatechartMachine"][];
+            metrics?: components["schemas"]["AdminSliceStatus"];
+            snapshots?: components["schemas"]["AdminSliceStatus"];
+          };
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+    };
+  };
+  getStatechart: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). */
+        machineKey: components["parameters"]["MachineKey"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The machine. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["StatechartMachineDetail"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+    };
+  };
+  exportStatechart: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). */
+        machineKey: components["parameters"]["MachineKey"];
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The Stately projection of the registered chart. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["StatechartExport"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
     };
   };
   createSupportBundle: {

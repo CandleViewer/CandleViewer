@@ -2225,6 +2225,36 @@
         }
       }
     },
+    "/admin/statecharts": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/statecharts/{machineKey}": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/admin/statecharts/{machineKey}/export": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "admin:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/admin/support-bundle": {
       "post": {
         "x-rbac": {
