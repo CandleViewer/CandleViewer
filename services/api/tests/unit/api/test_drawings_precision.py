@@ -152,6 +152,9 @@ def rendered(x: float) -> int:
     return len(format(Decimal(repr(x)), "f"))
 
 
+# band examples: refused (skipped) under the real floor; a weakened floor accepts
+# them and they exceed MAX_RENDERED
+@example(-1.0094174924396806e-07)
 @example(-1.0094174924396806e-06)
 @example(1e-06)
 @example(-1e-06)
@@ -165,6 +168,9 @@ def test_accepted_level_renders_within_the_bound(x: float) -> None:
     assert rendered(levels[0]) <= MAX_RENDERED
 
 
+# band examples: refused (skipped) under the real floor; a weakened floor accepts
+# them and they exceed MAX_RENDERED
+@example(1.0094174924396806e-08)
 @example(1e-06)
 @given(x=st.floats(min_value=0, max_value=1, allow_nan=False, allow_infinity=False))
 def test_accepted_fill_opacity_renders_within_the_bound(x: float) -> None:
