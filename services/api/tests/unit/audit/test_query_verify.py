@@ -359,6 +359,28 @@ async def test_verify_beyond_the_head_with_a_checkpoint_above_is_the_truncation(
     assert repo.verify_calls == []
 
 
+@pytest.mark.parametrize(("head_hash", "truncated_at"), [(None, None), ("e" * 64, 4)])
+async def test_a_checkpoint_above_the_head_read_is_a_truncation_only_if_its_entry_differs(
+    repo: FakeAuditRepository, clock: FakeClock, head_hash: str | None, truncated_at: int | None
+) -> None:
+    """Review of #2460: the checkpoint job may name an entry written after the head was read.
+    If that entry exists with the checkpoint's hash it is no truncation (here, `from_id` past
+    the head read is then a 404); a missing entry or another hash is one."""
+    await _seed(repo, 4, clock)
+    repo.checkpoints[4] = {"head_id": 4, "head_hash": head_hash or repo.rows[3]["entry_hash"]}
+
+    async def head_read_before_id_4() -> tuple[int, int]:
+        return (1, 3)
+
+    repo.read_bounds = head_read_before_id_4  # type: ignore[method-assign]  # the race, staged
+    svc = AuditQueryService(repo)
+    if truncated_at is None:
+        with pytest.raises(VerifyRangeBeyondHead):
+            await svc.plan_verify(from_id=5, to_id=None)
+    else:
+        assert (await svc.plan_verify(from_id=5, to_id=None)).truncated_at == truncated_at
+
+
 @pytest.mark.parametrize("checkpoint", [None, 4])
 async def test_verify_an_empty_log_echoes_no_range(
     repo: FakeAuditRepository, checkpoint: int | None

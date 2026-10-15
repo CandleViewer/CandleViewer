@@ -96,7 +96,8 @@ async def test_checkpoint_above_is_the_smallest_head_id_past_the_head() -> None:
     rel = _Rel(rows=[[57]])
     assert await _repo(rel).fetch_checkpoint_above(41) == 57
     read, params = rel.calls[1]
-    assert "SELECT min(head_id) FROM audit_checkpoints WHERE head_id > :head_id" in read
+    assert "LEFT JOIN audit_log a ON a.id = c.head_id WHERE c.head_id > :head_id" in read
+    assert "a.entry_hash IS DISTINCT FROM c.head_hash" in read  # missing, or another hash
     assert params == {"head_id": 41}
     assert await _repo(_Rel(rows=[[None]])).fetch_checkpoint_above(41) is None
 

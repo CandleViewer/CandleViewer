@@ -168,7 +168,13 @@ class FakeAuditRepository:
         return (min(ids), max(ids)) if ids else None
 
     async def fetch_checkpoint_above(self, head_id: int) -> int | None:
-        return min((h for h in self.checkpoints if h > head_id), default=None)
+        stored = {r["id"]: r["entry_hash"] for r in self.rows}
+        differs = [  # as the SQL: the entry is missing or has another hash
+            h
+            for h, cp in self.checkpoints.items()
+            if h > head_id and (h not in stored or stored[h] != cp.get("head_hash"))
+        ]
+        return min(differs, default=None)
 
     async def count(self) -> int:
         return len(self.rows)
