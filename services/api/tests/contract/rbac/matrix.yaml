@@ -207,6 +207,13 @@ operations:
     state: not_mounted
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+  POST /alerts/deliveries/{deliveryId}/desktop-outcome:
+    permissions: ['alerts:write']
+    scope: self
+    public: false
+    state: not_mounted
+    reason: declared in 22-api-openapi.yaml; handler lands with E40-T04 part 2 (#1016); a delivery not owned by the caller is a handler-level 404
+    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   GET /alerts/{alertId}:
     permissions: ['alerts:read']
     scope: self
