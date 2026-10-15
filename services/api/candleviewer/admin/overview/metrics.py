@@ -12,6 +12,7 @@ from typing import Final
 from candleviewer.observability.metrics import (
     CollectorRegistry,
     Counter,
+    Gauge,
     Histogram,
     ReexportCollector,
 )
@@ -31,8 +32,17 @@ source_errors_total = Counter(
     ["source"],
 )
 
+capacity_projection_bytes = Gauge(
+    "cv_admin_capacity_projection_bytes",
+    "Projected steady-state recorder bytes: sum of daily growth x retention (E42-T01).",
+)
+
 EXPORTED_NAMES: Final = frozenset(
-    {"cv_admin_overview_source_duration_seconds", "cv_admin_overview_source_errors_total"}
+    {
+        "cv_admin_overview_source_duration_seconds",
+        "cv_admin_overview_source_errors_total",
+        "cv_admin_capacity_projection_bytes",
+    }
 )
 
 
