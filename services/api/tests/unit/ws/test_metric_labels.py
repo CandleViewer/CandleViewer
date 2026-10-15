@@ -67,12 +67,22 @@ async def test_upstream_gauge_symbol_label_bounded_with_other() -> None:
     assert not [k for k in _series() if k[1] == "book"]
 
 
-def test_autouse_fixture_clears_leaked_series(request: pytest.FixtureRequest) -> None:
-    """Collection-time leak must be gone at test start; fails without the autouse fixture."""
+def test_autouse_fixture_is_active_and_starts_clean(request: pytest.FixtureRequest) -> None:
     assert "_clean_upstream_gauge" in request.fixturenames
-    assert ("ZZSTRAYUSDT", "book") not in _series()
     assert _series() == {}
 
 
-# Leak at collection time, outside any fixture, so only the autouse fixture can remove it (#2360).
-cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book").set(1)
+def test_fixture_clears_stray_series_before_and_after() -> None:
+    """Drive the fixture generator by hand so both halves are proven (#2360)."""
+    fixture_fn = getattr(_clean_upstream_gauge, "__wrapped__", None)
+    if fixture_fn is None:  # pytest >= 8.4 wraps fixtures in a definition object
+        fixture_fn = _clean_upstream_gauge._get_wrapped_function()  # type: ignore[attr-defined]  # noqa: SLF001 - pytest>=8.4 API
+    stray = cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book")
+    stray.set(1)
+    assert ("ZZSTRAYUSDT", "book") in _series()
+    gen = fixture_fn()
+    next(gen)  # setup half: pre-existing leak is cleared
+    assert _series() == {}
+    cv_ws_upstream_consumers_in_use.labels(symbol="ZZSTRAYUSDT", topic="book").set(1)
+    assert next(gen, None) is None  # teardown half: leak created during the test is cleared
+    assert _series() == {}
