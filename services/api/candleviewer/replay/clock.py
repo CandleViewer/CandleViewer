@@ -8,10 +8,10 @@ to B12 events (`range_end` to `RANGE_END`, `error` to `SOURCE_ERROR`).
 **Ownership.** `async with ReplayClock(...)` opens the session's `asyncio.TaskGroup`
 (`20-architecture.md` Sec.4.1 "TaskGroup: replay sessions"), held by the session's runner task.
 Playback runs as a task of that group. Leaving the block (session destroy) cancels it and closes
-the source, exactly once (INV-B12-e).
+the source exactly once (INV-B12-e), even if the runner is cancelled again meanwhile.
 
 **Pacing.** `replay.pacing` sets each deadline from one anchor, so pacing is drift-free. An event
-due within `min_wait_s` goes out without a wait; after `yield_every` deliveries without one the
+due within `min_wait_s` goes out without a wait; after `yield_slice_s` of work without one the
 clock yields to the loop (C-2.17). `cursor_us` is the replay time reached and only moves forward
 during playback (INV-B12-b). `now_us()` is the replay "now" for downstream clocks; it never passes
 an event not yet delivered, so a bar never closes ahead of its own trades.
@@ -28,6 +28,7 @@ from typing import Any, Self
 
 import structlog
 
+from candleviewer.observability import spawn
 from candleviewer.replay.errors import ReplayClockStateError, ReplayError
 from candleviewer.replay.models import ReplayGap, ReplayItem
 from candleviewer.replay.pacing import Pacer
@@ -85,6 +86,7 @@ class ReplayClock:
         self._task: asyncio.Task[StopReason] | None = None
         self._stack: AsyncExitStack | None = None
         self._group: asyncio.TaskGroup | None = None
+        self._closing: asyncio.Task[None] | None = None
         self._emitted = 0
 
     async def __aenter__(self) -> Self:
@@ -103,15 +105,21 @@ class ReplayClock:
         return None if stack is None else await stack.__aexit__(et, exc, tb)
 
     async def aclose(self) -> None:
-        """Destroy: cancel playback and close the source, exactly once. Idempotent."""
-        if self._closed:
-            return
+        """Destroy: cancel playback, then close the source exactly once. Every caller awaits the
+        same shielded close, so a caller cancelled again meanwhile cannot leave the source open."""
         self._closed = True
+        if self._closing is None:
+            self._closing = spawn(self._shutdown(), name="replay-clock-close")
+        await asyncio.shield(self._closing)
+
+    async def _shutdown(self) -> None:
         task = self._task
-        if task is not None and not task.done():
-            task.cancel()
-            await asyncio.wait({task})
-        await self._source.aclose()
+        try:
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.wait({task})
+        finally:
+            await self._source.aclose()
 
     @property
     def playing(self) -> bool:
@@ -154,24 +162,27 @@ class ReplayClock:
         except ReplayError as exc:  # a source failure: every event before it was delivered
             reason, error = "error", exc
             _log().warning("replay_source_failed", code=exc.code)
-        finally:
+        finally:  # keep the position reached, even on destroy: the cursor never moves back
+            self._cursor = self._position(self._time.now())
             self._pacer = None
         self._obs.on_stop(reason, error)
         return reason
 
     async def _run(self) -> StopReason:
-        time, cfg, burst = self._time, self._cfg, 0
+        time, cfg = self._time, self._cfg
+        sliced = time.now()  # when the clock last yielded or waited
         while True:
+            self._wake.clear()  # before every check of `_stop`, so no wake-up is lost
             if self._stop:
-                self._cursor = self._position(time.now())
                 return "paused"
             item = await self._peek()
+            if self._stop:  # paused during the source read
+                return "paused"
             pacer, now = self._pacer, time.now()
             due = None if pacer is None else pacer.due(self._end_us if item is None else item.ts_us)
             if due is not None and due - now > cfg.min_wait_s:
-                self._wake.clear()
                 await time.wait_until(due, self._wake)
-                burst = 0
+                sliced = time.now()
                 continue
             if item is None:
                 self._cursor = self._end_us
@@ -180,10 +191,9 @@ class ReplayClock:
             if isinstance(item, ReplayGap):  # the gap policy lands with E26-T03 slice 4
                 continue
             await self._deliver(item)
-            burst += 1
-            if burst >= cfg.yield_every:  # catching up without waits: let the loop run
-                burst = 0
+            if now - sliced >= cfg.yield_slice_s:  # catching up without waits: let the loop run
                 await asyncio.sleep(0)
+                sliced = time.now()
 
     async def _peek(self) -> ReplayItem | None:
         """The next item before the range end, read ahead by one and kept until consumed."""
