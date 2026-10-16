@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import statistics
 import time
 import tracemalloc
 import zlib
@@ -169,11 +170,26 @@ async def test_never_idle_stream_does_not_starve_loop() -> None:
     assert any(0 < q < 2_000 for q in observed), observed[:5]
 
 
+#: Samples for the huge-exponent budget, each timed with the collector quiesced: the median
+#: must fit, so one runner stall cannot fail it, while the >1 s regression it guards (#1893)
+#: puts every sample over the budget (#2714). The 50 ms budget itself is unchanged.
+_HUGE_EXPONENT_SAMPLES = 5
+
+
 @pytest.mark.perf
 # fixed by #1898 (#1893): huge-exponent prices cost >1 s of loop CPU
 async def test_huge_exponent_levels_rejected_cheaply() -> None:
     frame = book("snapshot", 1, [["1e4200", "1"]] * 1000, [])
-    rig = Rig()
-    t0 = time.perf_counter()
-    await rig.feed(frame)
-    assert time.perf_counter() - t0 < 0.05
+    timings = []
+    for _ in range(_HUGE_EXPONENT_SAMPLES):
+        rig = Rig()  # a fresh rig per sample: nothing from the last feed is cached
+        gc.collect()
+        gc.disable()
+        try:
+            t0 = time.perf_counter()
+            await rig.feed(frame)
+            timings.append(time.perf_counter() - t0)
+        finally:
+            gc.enable()
+    median = statistics.median(timings)
+    assert median < 0.05, f"median of {_HUGE_EXPONENT_SAMPLES}: {sorted(timings)}"
