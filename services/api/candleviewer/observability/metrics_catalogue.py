@@ -590,11 +590,14 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "emissions",
         ("reason",),
-        "Bar emissions a sink (questdb, ws) failed to accept.",
-        "any = bars missing downstream",
+        "Bar emissions a sink (questdb, ws) failed to accept, by sink or <sink>_timeout; ws also"
+        " counts generation swaps (ws_generation_swap) and binary groups sent structured"
+        " (ws_no_scales, ws_binary_refused).",
+        "questdb/ws = bars missing downstream; ws_generation_swap several a minute = two builders"
+        " on one series; ws_no_scales/ws_binary_refused = binary subscribers on structured frames",
         _L,
         "E12",
-        max_series=4,
+        max_series=7,
         exported=True,
     ),
     _s(
