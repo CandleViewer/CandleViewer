@@ -83,6 +83,19 @@ class FakeSessionRepository:
         self.sessions[session_id] = updated
         return updated
 
+    async def consume_step_up_key(
+        self, session_id: str, *, key: str, now: datetime
+    ) -> SessionRecord | None:
+        """Atomic like the conditional UPDATE: no await between the check and the write."""
+        session = self.sessions.get(session_id)
+        until = None if session is None else session.step_up_elevations.get(key)
+        if session is None or session.revoked_at is not None or until is None or until <= now:
+            return None
+        remaining = {k: v for k, v in session.step_up_elevations.items() if k != key}
+        updated = session.model_copy(update={"step_up_elevations": remaining})
+        self.sessions[session_id] = updated
+        return updated
+
     async def revoke_all_for_user(
         self, user_id: str, *, reason: str, now: datetime, except_session_id: str | None = None
     ) -> tuple[SessionRecord, ...]:

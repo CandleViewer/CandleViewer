@@ -79,6 +79,15 @@ _STEP_UP_SQL = _sql(
     "step_up_failures = :failures, readonly_until = :readonly_until "
     "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING @COLS@"
 )
+# #2304: consume a one-shot grant in one conditional statement. A concurrent consumer of the
+# same key re-evaluates the predicate after the first commits, finds the key gone and updates
+# no row, so the grant is used once.
+_CONSUME_STEP_UP_SQL = _sql(
+    "UPDATE sessions SET step_up_elevations = step_up_elevations - CAST(:key AS text) "
+    "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
+    "AND CAST(step_up_elevations ->> CAST(:key AS text) AS timestamptz) > :now "
+    "RETURNING @COLS@"
+)
 _LINK_SQL = sa.text(
     "INSERT INTO sessions_rotation (prev_session_id, next_session_id) "
     "VALUES (CAST(:prev AS uuid), CAST(:next AS uuid))"
@@ -217,6 +226,9 @@ class SqlAlchemySessionRepository:
                 "readonly_until": readonly_until,
             },
         )
+
+    async def consume_step_up_key(self, session_id: str, *, key: str, now: datetime) -> Any:
+        return await self._one(_CONSUME_STEP_UP_SQL, {"id": session_id, "key": key, "now": now})
 
     async def link_rotation(self, *, prev_session_id: str, next_session_id: str) -> None:
         async with self._relational.unit_of_work() as uow:

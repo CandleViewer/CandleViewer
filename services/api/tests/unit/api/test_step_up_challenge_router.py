@@ -33,11 +33,15 @@ from candleviewer.api.step_up_challenge import (
     request_fingerprint,
     typed_target,
 )
+from candleviewer.api.users import make_users_router
+from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
+from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.step_up import StepUpService
+from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.statechart.bindings import b16_session
 from tests.contract.test_step_up_challenge_contract import (
@@ -60,6 +64,7 @@ from tests.unit.api.test_step_up_router import (
     _record,
     _Sessions,
 )
+from tests.unit.api.test_users_router import _Notifier, _Resolver, _Store
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -224,7 +229,9 @@ async def test_restatement_comes_from_server_records_never_the_request(
 
 @pytest.mark.parametrize("stale", ["expired", "unknown", "superseded"])
 async def test_stale_challenge_id_is_400_challenge_expired(stale: str) -> None:
-    """AC "Challenge expiry": a challenge issued more than 5 minutes ago is refused 400."""
+    """AC "Challenge expiry": a challenge issued more than 5 minutes ago is refused 400. The
+    refusal is audited with the presented id (a replayed or probed id is visible); no factor
+    is checked or counted."""
     w = await _world()
     challenge_id = w.send(_RELEASE).json()["challenge_id"]
     if stale == "expired":
@@ -233,10 +240,49 @@ async def test_stale_challenge_id_is_400_challenge_expired(stale: str) -> None:
         challenge_id = str(uuid.uuid4())
     else:
         w.send({"engaged": False, "scope": "account"})
+    code = _code(w.seed, w.clock)
     r = w.step_up(challenge_id=challenge_id)
     assert r.status_code == 400 and r.json()["errors"][0]["rule"] == "challenge_expired"
     _validator(_SPEC, _ref(_PROBLEM)).validate(r.json())
-    assert not w.of("auth.step_up_failed")
+    (refused,) = w.of("auth.step_up_failed")
+    assert (refused["outcome"], refused["reason"]) == (AuditOutcome.DENIED, "challenge_expired")
+    assert (refused["object_kind"], refused["object_id"]) == ("step_up_challenge", challenge_id)
+    assert all(secret not in repr(refused) for secret in (_PW, f"'{code}'", f'"{code}"'))
+    assert w.rows.sessions[str(w.sessions["tok"].id)].step_up_failures == 0
+
+
+async def test_challenge_refusals_are_audited_within_a_per_session_budget() -> None:
+    w = await _world()
+    budget = PerIpLoginThrottle(max_attempts=2, window_s=60.0, clock=lambda: 0.0)
+    app = FastAPI()
+    app.include_router(
+        make_step_up_router(w.auth, w.audit, audit_ready=lambda: True, refusal_budget=budget)
+    )
+    probe = {"code": "000000", "password": _PW, "action_class": "keys"}
+    for _ in range(3):  # each presents an id the session never issued
+        sent = probe | {"challenge_id": str(uuid.uuid4())}
+        assert TestClient(app).post("/auth/step-up", headers=w.h(), json=sent).status_code == 400
+    assert len(w.of("auth.step_up_failed")) == 2  # the third is refused, not audited
+
+
+@pytest.mark.parametrize(
+    ("member", "rule"),
+    [({"remember": True}, "extra_forbidden"), ({"code": "12345"}, "string_pattern_mismatch")],
+    ids=["unknown-member", "code-not-six-digits"],
+)
+async def test_step_up_body_outside_its_schema_is_400_before_any_factor(
+    member: dict[str, Any], rule: str
+) -> None:
+    """`extra="forbid"` and the contract's `code` pattern hold server-side: nothing is checked,
+    counted or elevated."""
+    w = await _world()
+    w.client.put(f"/users/{uuid.uuid4()}/roles", headers=w.h())  # a live grace challenge
+    r = w.step_up(**member)
+    assert r.status_code == 400
+    _validator(_SPEC, _ref(_PROBLEM)).validate(r.json())
+    assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [(next(iter(member)), rule)]
+    assert w.rows.sessions[str(w.sessions["tok"].id)].step_up_failures == 0
+    assert not w.of("auth.step_up_failed") and not w.of("auth.step_up_granted")
 
 
 @pytest.mark.parametrize("who", ["tok2", "other"], ids=["other-session", "other-user"])
@@ -286,6 +332,32 @@ async def test_unregistered_class_fails_closed_without_a_challenge() -> None:
     assert denied is not None and denied.status_code == 500
     assert b"challenge_id" not in denied.body
     assert await w.auth.step_up.live_challenge(sid) is None
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="#2304 route slice: the path-gated middleware (`make_read_only_guard`) challenges "
+    "before the route's own RBAC; remove this marker when the route slice gates behind it",
+)
+async def test_challenge_not_issued_to_a_refused_caller() -> None:
+    """Contract: a challenge goes only to a caller the operation would otherwise admit, so a
+    Manager without `users:write` gets `403 forbidden`, never a challenge (threat model U33)."""
+    w = await _world()
+    manager = PrincipalSnapshot(
+        user_id=w.sessions["tok"].user_id, roles=frozenset({"manager"}), permissions=frozenset()
+    )
+    app = FastAPI()
+    app.include_router(
+        make_users_router(
+            _Store({"viewer"}, 1), w.audit, _Resolver(manager), _Notifier(), auth=w.auth
+        )
+    )
+    app.middleware("http")(make_read_only_guard(w.auth, w.audit))
+    roles = {"roles": ["viewer"]}
+    r = TestClient(app).put(f"/users/{uuid.uuid4()}/roles", headers=w.h(), json=roles)
+    assert r.status_code == 403 and r.json()["code"] == "forbidden"
+    assert "challenge_id" not in r.json() and not w.of("auth.step_up_required")
 
 
 async def test_elevated_owner_self_reset_is_403_forbidden_not_another_challenge() -> None:

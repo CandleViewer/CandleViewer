@@ -4,6 +4,7 @@ and only the identical request can use the 60-second grant it leaves."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import timedelta
 
@@ -17,6 +18,7 @@ from candleviewer.auth.errors import (
     StepUpMismatch,
     StepUpRequired,
 )
+from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.step_up import (
     CHALLENGE_WINDOW,
     SINGLE_USE_WINDOW,
@@ -89,6 +91,28 @@ async def test_bound_grant_is_used_once_by_the_identical_request() -> None:
     with pytest.raises(StepUpRequired) as again:
         await svc.consume_single_use("s1", "killswitch", fingerprint=_A)
     assert not isinstance(again.value, StepUpMismatch)
+
+
+async def test_identical_requests_racing_inside_the_window_use_the_grant_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both re-sends read the row before either writes; one conditional write consumes the
+    grant, so exactly one executes and the other is refused as if it had no grant."""
+    svc, clock, seed, user, sessions = await _setup()
+    await _granted(svc, clock, seed, user)
+    read = sessions.find_by_id
+
+    async def interleaved(session_id: str) -> SessionRecord | None:
+        found = await read(session_id)
+        await asyncio.sleep(0)  # yield to the other request, which reads the same row
+        return found
+
+    monkeypatch.setattr(sessions, "find_by_id", interleaved)
+    consumers = (svc.consume_single_use("s1", "killswitch", fingerprint=_A) for _ in range(2))
+    results = await asyncio.gather(*consumers, return_exceptions=True)
+    used = [r for r in results if isinstance(r, StepUpChallenge)]
+    refused = [r for r in results if type(r) is StepUpRequired]
+    assert (len(used), len(refused)) == (1, 1) and _grants(sessions) == []
 
 
 async def test_bound_grant_refuses_a_swapped_payload() -> None:

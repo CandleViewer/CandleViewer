@@ -78,6 +78,15 @@ class SessionRepository(Protocol):
         not revoked. Returns the updated row, or `None` if revoked/absent."""
         ...
 
+    async def consume_step_up_key(
+        self, session_id: str, *, key: str, now: datetime
+    ) -> SessionRecord | None:
+        """#2304: remove the one-shot grant `key` from `step_up_elevations` iff
+        the row is live and still holds it unexpired at `now`, in one
+        conditional statement: of two concurrent consumers exactly one gets
+        the updated row, every other caller `None`."""
+        ...
+
     async def revoke_all_for_user(
         self, user_id: str, *, reason: str, now: datetime, except_session_id: str | None = None
     ) -> tuple[SessionRecord, ...]:

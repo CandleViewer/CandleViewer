@@ -518,7 +518,9 @@ class StepUpService:
     ) -> StepUpChallenge:
         """Handler-side check for no-grace classes: the one-shot grant is used by the
         request it is bound to, once, within 60 s of the step-up; then it is gone (#2304).
-        Another request of the class raises `StepUpMismatch` and leaves the grant bound."""
+        Another request of the class raises `StepUpMismatch` and leaves the grant bound.
+        The grant is removed by one conditional write, so of two identical requests
+        racing inside the window one uses it; the other is refused as if it had none."""
         await self.assert_writable(session_id)
         record = await self._live(session_id)
         if record is None:
@@ -537,14 +539,9 @@ class StepUpService:
                 bound=grant.fingerprint or "",
                 refused=fingerprint,
             )
-        key = grant.key(_ONCE)
-        remaining = {k: v for k, v in record.step_up_elevations.items() if k != key and v > now}
-        await self._save(
-            session_id,
-            elevations=remaining,
-            failures=record.step_up_failures,
-            readonly_until=None,
-        )
+        used = await self._sessions.consume_step_up_key(session_id, key=grant.key(_ONCE), now=now)
+        if used is None:  # a concurrent request used it first, or the session just ended
+            raise StepUpRequired(action_class)
         return grant
 
     async def require_elevation(self, session_id: str, action_class: str) -> None:

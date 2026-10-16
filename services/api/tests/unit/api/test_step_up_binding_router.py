@@ -112,7 +112,10 @@ async def test_no_grace_step_up_without_challenge_id_is_400_before_any_factor(
     _validator(_SPEC, _ref(_PROBLEM)).validate(r.json())
     assert r.json()["errors"][0]["field"] == "challenge_id"
     assert r.json()["errors"][0]["rule"] == "challenge_required"
-    assert not w.of("auth.step_up_failed") and not w.of("auth.step_up_granted")
+    (refused,) = w.of("auth.step_up_failed")  # the refusal, audited; no factor was checked
+    assert (refused["outcome"], refused["reason"]) == (AuditOutcome.DENIED, "challenge_required")
+    assert w.rows.sessions[str(w.sessions["tok"].id)].step_up_failures == 0
+    assert not w.of("auth.step_up_granted")
 
 
 async def test_no_grace_gate_that_cannot_bind_its_request_fails_closed() -> None:

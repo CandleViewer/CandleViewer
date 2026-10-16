@@ -2,15 +2,18 @@
 (E09-S04, US-ONB-005/010).
 
 Thin HTTP adapter over `auth.step_up.StepUpService`. `auth` may not import
-`audit`: the B16 chart writes `auth.step_up_granted`, `auth.step_up_failed`,
-`auth.step_up_required` and `auth.session_readonly_downgrade`; this module
-writes `auth.mfa_reset_by_owner` and `auth.step_up_mismatch`. Elevation state
+`audit`: the B16 chart writes `auth.step_up_granted`, `auth.step_up_failed`
+(a wrong factor), `auth.step_up_required` and `auth.session_readonly_downgrade`;
+this module writes `auth.mfa_reset_by_owner`, `auth.step_up_mismatch` and the
+`auth.step_up_failed` of a refused challenge (see below). Elevation state
 is server-side, keyed by the session id resolved from the bearer token -
 nothing the client sends can forge it. `require_elevation_for` is the
 `is_dangerous` gate E09-T03 routes call: every refusal is a challenge for the
 one request it refused, and a no-grace class passes only with the one-shot
 grant bound to that request (#2304). `make_read_only_guard` is the middleware
-refusing every write during the 5-minute downgrade.
+refusing every write during the 5-minute downgrade. A step-up that cannot
+answer its challenge is audited `auth.step_up_failed` (DENIED, the refusal
+rule as reason) within a per-session budget; no factor is checked or counted.
 """
 
 from __future__ import annotations
@@ -21,14 +24,17 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Protocol
 
+import structlog
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 # The function `starlette.routing` itself matches routes with (it only re-imports
 # it, so mypy --strict refuses that path): the guard classifies what the router
 # dispatches on, by construction. A move upstream fails the import, never open.
 from starlette._utils import get_route_path
 
+from candleviewer.api.csrf import ANON_REFUSAL_WINDOW_S, SESSION_REFUSALS_PER_WINDOW
 from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -53,6 +59,8 @@ from candleviewer.auth.step_up import (
     StepUpChallenge,
     StepUpService,
 )
+from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.observability.redaction import redact_text
 
 _PROBLEM = "application/problem+json"
 #: `400 validation_failed` details for a step-up that cannot answer its challenge (#2304).
@@ -70,6 +78,23 @@ _WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up"})
 
 class _AuditRefused(Exception):
     """The reset's write-ahead audit record could not be written; nothing was changed."""
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
+
+class _StepUpBody(BaseModel):
+    """`authStepUp`'s request body, validated whole (C-12.4): unknown members are refused."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    code: str = Field(pattern=r"^[0-9]{6}$")
+    password: str = Field(min_length=1)
+    challenge_id: uuid.UUID | None = None
+    #: Checked against the closed class set by `StepUpService` (`UnknownActionClass`).
+    action_class: str | None = None
 
 
 class _Emitter(Protocol):
@@ -145,6 +170,28 @@ def _challenge_refused(field: str, rule: str) -> JSONResponse:
         "Request body or parameters failed schema validation",
         detail,
         errors=[{"field": field, "rule": rule, "message": detail}],
+    )
+
+
+def _invalid_body(exc: ValidationError) -> JSONResponse:
+    """The body is not `authStepUp`'s schema: a missing or empty `password` is 422 (contract), a
+    malformed `challenge_id` the `format` refusal, anything else 400. Decided before any factor
+    is checked; no input value is echoed."""
+    errors = exc.errors(include_url=False, include_context=False, include_input=False)
+    fields = [str(err["loc"][0]) if err["loc"] else "body" for err in errors]
+    if "password" in fields:
+        return _problem(422, "validation_failed", "Unprocessable entity", "password is required")
+    if "challenge_id" in fields:
+        return _challenge_refused("challenge_id", "format")
+    return _problem(
+        400,
+        "validation_failed",
+        "Request body or parameters failed schema validation",
+        "The step-up body does not match its schema.",
+        errors=[
+            {"field": field, "rule": err["type"], "message": redact_text(err["msg"])}
+            for field, err in zip(fields, errors, strict=True)
+        ],
     )
 
 
@@ -351,12 +398,18 @@ def make_step_up_router(
     positions: PositionStateProvider | None = None,
     users: _UserLookup | None = None,
     audit_ready: Callable[[], bool],
+    refusal_budget: PerIpLoginThrottle | None = None,
 ) -> APIRouter:
     """`audit_ready()` false -> the owner TOTP reset answers 503 before changing
     anything: it cannot be undone, so its audit record must be writable (C-2.9)."""
     if emitter is None:
         raise TypeError("make_step_up_router: audit emitter is required")
     router = APIRouter(tags=["auth"])
+    # Challenge refusals are audited up to a per-session budget, as `auth.csrf_refused` is,
+    # so an in-session flood cannot grow the audit log without bound.
+    refusals = refusal_budget or PerIpLoginThrottle(
+        max_attempts=SESSION_REFUSALS_PER_WINDOW, window_s=ANON_REFUSAL_WINDOW_S
+    )
 
     async def _session(request: Request) -> SessionRecord | JSONResponse:
         if not auth.step_up_is_active or not auth.sessions_is_active:
@@ -379,6 +432,24 @@ def make_step_up_router(
             **kw,
         )
 
+    async def _refused(record: SessionRecord, rule: str, challenge_id: uuid.UUID | None) -> None:
+        """Audit a step-up that cannot answer its challenge (C-12.8), before its 400: the rule
+        and the presented `challenge_id`, never a factor or a body."""
+        key = f"sid:{record.id}"
+        if refusals.is_blocked(key):  # over budget: still refused, not audited
+            _log().warning("auth.step_up_refused.unaudited", rule=rule)
+            return
+        refusals.record_failure(key)
+        await _audit(
+            "auth.step_up_failed",
+            record,
+            outcome=AuditOutcome.DENIED,
+            severity=Severity.WARNING,
+            reason=rule,
+            object_kind="step_up_challenge",
+            object_id=None if challenge_id is None else str(challenge_id),
+        )
+
     @router.post("/auth/step-up")
     async def step_up(request: Request) -> JSONResponse:
         got = await _session(request)
@@ -386,37 +457,26 @@ def make_step_up_router(
             return got
         record = got
         try:
-            body = await request.json()
+            raw = await request.json()
         except ValueError:
-            body = None
-        code = body.get("code") if isinstance(body, dict) else None
-        action_class = body.get("action_class") if isinstance(body, dict) else None
-        password = body.get("password") if isinstance(body, dict) else None
-        if not isinstance(password, str) or not password:
-            return _problem(
-                422, "validation_failed", "Unprocessable entity", "password is required"
-            )
-        if not isinstance(code, str) or (
-            action_class is not None and not isinstance(action_class, str)
-        ):
-            return _problem(400, "validation_failed", "Bad request", "code is required")
-        raw_challenge = body.get("challenge_id") if isinstance(body, dict) else None
-        try:
-            challenge_id = None if raw_challenge is None else uuid.UUID(str(raw_challenge))
-        except ValueError:
-            return _challenge_refused("challenge_id", "format")
+            raw = None
+        try:  # a body that is not an object has none of the members
+            body = _StepUpBody.model_validate(raw if isinstance(raw, dict) else {})
+        except ValidationError as exc:
+            return _invalid_body(exc)
         # The server decides the class: the one its live challenge names. A
         # client-supplied value is only a cross-check (mismatch -> 400, #2304).
         try:
             grant = await auth.step_up.step_up(
                 str(record.user_id),
                 str(record.id),
-                action_class,
-                code,
-                password,
-                challenge_id=challenge_id,
+                body.action_class,
+                body.code,
+                body.password,
+                challenge_id=body.challenge_id,
             )
         except StepUpChallengeRefused as exc:  # decided before any factor is checked
+            await _refused(record, exc.rule, body.challenge_id)
             return _challenge_refused(exc.field, exc.rule)
         except SessionRevoked:
             return _unauthenticated()

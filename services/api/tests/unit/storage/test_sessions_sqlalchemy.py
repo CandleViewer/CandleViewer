@@ -150,3 +150,22 @@ async def test_lift_idle_lock_restamps_and_clears_elevations_in_one_conditional_
     assert "revoked_at IS NULL" in sql and "RETURNING" in sql
     assert params == {"id": "sid", "now": _NOW}
     assert rel.commits == 1 and got["step_up_failures"] == 2
+
+
+async def test_consume_step_up_key_is_one_conditional_update_of_the_live_unexpired_key() -> None:
+    """#2304: a one-shot grant is removed by one conditional UPDATE, never read-modify-write, so
+    of two concurrent consumers only one gets the row."""
+    key = "once:killswitch:" + str(uuid.UUID(int=1)) + ":" + "a" * 64
+    repo, rel = _repo([_row()])
+    got = await repo.consume_step_up_key("sid", key=key, now=_NOW)
+    sql, params = rel.session.calls[0]
+    assert "SET step_up_elevations = step_up_elevations - CAST(:key AS text)" in sql
+    assert "revoked_at IS NULL" in sql and "RETURNING" in sql
+    assert "CAST(step_up_elevations ->> CAST(:key AS text) AS timestamptz) > :now" in sql
+    assert params == {"id": "sid", "key": key, "now": _NOW}
+    assert got is not None and rel.commits == 1
+
+
+async def test_consume_step_up_key_that_updates_no_row_returns_none() -> None:
+    repo, _ = _repo([])
+    assert await repo.consume_step_up_key("sid", key="once:killswitch", now=_NOW) is None
