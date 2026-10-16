@@ -75,8 +75,8 @@ class InMemoryRecordedTier:
         return max(found, key=order_key, default=None)
 
 
-class StaticArchiveCoverage:
-    """`ArchiveCoverage` over fixed manifested spans; `archive` adds one, as a roll-off would.
+class StaticManifestCoverage:
+    """`ManifestCoverage` over fixed manifested spans; `archive` adds one, as a roll-off would.
     `calls` counts lookups."""
 
     def __init__(

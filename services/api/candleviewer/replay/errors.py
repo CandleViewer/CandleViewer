@@ -17,8 +17,12 @@ class ReplayError(Exception):
     code: str = "REPLAY_ERROR"
 
 
-class ReplayRequestInvalid(ReplayError, ValueError):
-    """A replay read was asked for something outside the session (symbol, instant, window)."""
+class ReplayRequestInvalid(ReplayError):
+    """A replay request breaks one of `ReplayRequest`'s bounds (symbols, streams, window,
+    depth, tier, the window cap). The message names the fields at fault, never a value.
+
+    Deliberately not a `ValueError`: pydantic folds a `ValueError` raised during validation
+    into its own `ValidationError`, so the request could not raise this type."""
 
     code = "REPLAY_REQUEST_INVALID"
 

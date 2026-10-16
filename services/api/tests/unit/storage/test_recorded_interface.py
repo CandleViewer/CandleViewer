@@ -24,7 +24,7 @@ from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
     REPLAYABLE_STREAMS,
     STREAM_BY_DB_KIND,
-    ArchiveCoverage,
+    ManifestCoverage,
     RecordedBookDelta,
     RecordedBookSnapshot,
     RecordedEvent,
@@ -38,8 +38,8 @@ from candleviewer.storage.repositories.recorded import (
 )
 from candleviewer.storage.testing import (
     InMemoryRecordedTier,
-    StaticArchiveCoverage,
     StaticGapReader,
+    StaticManifestCoverage,
 )
 
 SYM = "BTCUSDT"
@@ -76,7 +76,7 @@ async def test_fakes_conform_to_the_reader_protocols_by_signature() -> None:
     (a runtime `isinstance` on a `runtime_checkable` Protocol checks member names only), and
     the calls below go through the Protocol types."""
     reader: RecordedStreamReader = InMemoryRecordedTier()
-    coverage: ArchiveCoverage = StaticArchiveCoverage()
+    coverage: ManifestCoverage = StaticManifestCoverage()
     gaps: RecordingGapReader = StaticGapReader()
     window = _window(0, 10)
 
@@ -305,7 +305,7 @@ def test_covered_parts_is_the_canonical_cover_of_the_range_and_the_union(
 
 
 async def test_archiving_a_span_grows_the_coverage() -> None:
-    coverage = StaticArchiveCoverage({(SYM, StreamKind.TRADES): [_window(20, 30)]})
+    coverage = StaticManifestCoverage({(SYM, StreamKind.TRADES): [_window(20, 30)]})
     coverage.archive(SYM, StreamKind.TRADES, _window(0, 20))
 
     got = await coverage.archived(SYM, StreamKind.TRADES, _window(5, 25))
@@ -319,13 +319,13 @@ async def test_archiving_a_span_grows_the_coverage() -> None:
 async def test_archive_coverage_is_scoped_to_its_symbol_and_stream(
     symbol: str, stream: StreamKind
 ) -> None:
-    coverage = StaticArchiveCoverage({(SYM, StreamKind.TRADES): [_window(0, 50)]})
+    coverage = StaticManifestCoverage({(SYM, StreamKind.TRADES): [_window(0, 50)]})
 
     assert await coverage.archived(symbol, stream, _window(0, 50)) == []
 
 
 async def test_archive_coverage_counts_lookups() -> None:
-    coverage = StaticArchiveCoverage()
+    coverage = StaticManifestCoverage()
 
     for _ in range(2):
         await coverage.archived(SYM, StreamKind.TRADES, _window(0, 10))
@@ -357,7 +357,7 @@ async def test_gap_reader_ignores_other_symbols() -> None:
     [
         (RecordedStreamReader, "read"),
         (RecordedStreamReader, "snapshot_at"),
-        (ArchiveCoverage, "archived"),
+        (ManifestCoverage, "archived"),
         (RecordingGapReader, "recording_gaps"),
     ],
 )

@@ -1,4 +1,4 @@
-"""Replay request, in-stream gap marker, storage ports and read-ahead bounds (E26-T02)."""
+"""Replay request, in-stream gap marker and storage ports (E26-T02)."""
 
 from __future__ import annotations
 
@@ -6,25 +6,39 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ModelWrapValidatorHandler,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from candleviewer.domain.primitives import Symbol
 from candleviewer.domain.sql_names import EPOCH
+from candleviewer.replay.errors import ReplayRequestInvalid
 from candleviewer.storage.models import StreamKind
 from candleviewer.storage.repositories.recorded import (
     REPLAYABLE_STREAMS,
-    ArchiveCoverage,
+    ManifestCoverage,
     RecordedEvent,
     RecordedStreamReader,
     RecordingGapReader,
 )
 
-#: `replay_sessions.source_tier` (21 Sec.3.6.4 `rps_tier`).
+#: `replay_sessions.source_tier` (21 Sec.3.6.4 `rps_tier`). Internal and operator-only: the
+#: client contract `CreateReplaySessionRequest` (22-api) has no such field, so every client
+#: session reads `auto` (RP-T07).
 SourceTier = Literal["auto", "questdb", "parquet"]
 
+US_PER_HOUR: Final = 3_600_000_000
+#: Default of `ReplayRequest.max_span_us`: the default of E26-T01's `CV_REPLAY_MAX_WINDOW_HOURS`
+#: (24 h), which owns the cap. Only a default: callers pass the configured value.
+DEFAULT_MAX_SPAN_US: Final = 24 * US_PER_HOUR
 _ONE_US = timedelta(microseconds=1)
-#: Hard ceiling on one request's window: E26-T01's `CV_REPLAY_MAX_WINDOW_HOURS` default (24).
-MAX_REPLAY_SPAN: Final = timedelta(hours=24)
 
 
 def to_us(moment: datetime) -> int:
@@ -33,14 +47,16 @@ def to_us(moment: datetime) -> int:
 
 
 class ReplayRequest(BaseModel):
-    """What one `ReplaySource` reads: `symbols` x `streams` over `[start, end)` at one recorded
+    """What one replay read covers: `symbols` x `streams` over `[start, end)` at one recorded
     book depth, from `source_tier`. Bounds mirror `CreateReplaySessionRequest` (22-api).
 
-    The window is capped at three points, so a crafted request cannot scan the whole lake (ticket
-    security notes): E26-T01's session service applies `CV_REPLAY_MAX_WINDOW_HOURS` first
-    (configurable, default 24); this model refuses any window over `MAX_REPLAY_SPAN` (24 h);
-    and `ReplaySource` refuses one over its `ReadAheadConfig.max_span_us` (default 24 h) with
-    `ReplayWindowTooLarge` before any read."""
+    The window cap has one source of truth, E26-T01's `CV_REPLAY_MAX_WINDOW_HOURS` (bounded in
+    `settings.py`): the caller passes it in µs as `max_span_us`, defaulting to the setting's
+    default of 24 h, so a window the session service accepted is never refused here and a
+    crafted request still cannot scan the whole lake (ticket security notes). Every refusal,
+    the cap included, raises `ReplayRequestInvalid` naming the fields at fault, never a value.
+
+    `source_tier` is internal and operator-only (see `SourceTier`, RP-T07)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -50,30 +66,52 @@ class ReplayRequest(BaseModel):
     end: AwareDatetime
     depth: Literal[1, 50, 200, 500] = 200
     source_tier: SourceTier = "auto"
+    max_span_us: int = Field(default=DEFAULT_MAX_SPAN_US, gt=0, strict=True)
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _typed_refusal(
+        cls, data: object, handler: ModelWrapValidatorHandler[ReplayRequest]
+    ) -> ReplayRequest:
+        """Pydantic's own refusals leave as `ReplayRequestInvalid`, not a `ValidationError`.
+        Raised after the handler, so no exception context keeps the refused input."""
+        try:
+            return handler(data)
+        except ValidationError as exc:
+            faults: dict[str, set[str]] = {}
+            for err in exc.errors():
+                faults.setdefault(_field(err["loc"]), set()).add(err["type"])
+        detail = "; ".join(f"{name} ({', '.join(sorted(kinds))})" for name, kinds in faults.items())
+        raise ReplayRequestInvalid(f"invalid replay request: {detail}")
 
     @field_validator("symbols")
     @classmethod
     def _unique_symbols(cls, value: tuple[str, ...]) -> tuple[str, ...]:
         if len(set(value)) != len(value):
-            raise ValueError("symbols must be unique")
+            raise ReplayRequestInvalid("invalid replay request: symbols must be unique")
         return value
 
     @field_validator("streams")
     @classmethod
     def _replayable_streams(cls, value: tuple[StreamKind, ...]) -> tuple[StreamKind, ...]:
         if len(set(value)) != len(value):
-            raise ValueError("streams must be unique")
-        derived = sorted(s.value for s in value if s not in REPLAYABLE_STREAMS)
-        if derived:
-            raise ValueError(f"not recorded streams: {derived}")
+            raise ReplayRequestInvalid("invalid replay request: streams must be unique")
+        if any(stream not in REPLAYABLE_STREAMS for stream in value):
+            raise ReplayRequestInvalid(
+                "invalid replay request: streams must be recorded streams (derived data is "
+                "rebuilt, never replayed)"
+            )
         return value
 
     @model_validator(mode="after")
     def _ordered_and_bounded(self) -> ReplayRequest:
-        if self.end <= self.start:
-            raise ValueError("end must be after start")
-        if self.end - self.start > MAX_REPLAY_SPAN:
-            raise ValueError("the replay window exceeds the 24 h cap")
+        span_us = self.end_us - self.start_us
+        if span_us <= 0:
+            raise ReplayRequestInvalid("invalid replay request: end must be after start")
+        if span_us > self.max_span_us:
+            raise ReplayRequestInvalid(
+                f"invalid replay request: the window exceeds the {self.max_span_us} µs cap"
+            )
         return self
 
     @property
@@ -83,6 +121,10 @@ class ReplayRequest(BaseModel):
     @property
     def end_us(self) -> int:
         return to_us(self.end)
+
+
+def _field(loc: tuple[int | str, ...]) -> str:
+    return str(loc[0]) if loc else "request"
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,5 +154,5 @@ class ReplayTiers:
 
     hot: RecordedStreamReader
     cold: RecordedStreamReader
-    coverage: ArchiveCoverage
+    coverage: ManifestCoverage
     gaps: RecordingGapReader
