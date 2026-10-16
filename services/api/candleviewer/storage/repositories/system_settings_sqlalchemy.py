@@ -52,10 +52,12 @@ _LOCK = sa.text(
 _SELECT = sa.text(
     "SELECT value #>> '{}' AS value, updated_at FROM settings WHERE scope = 'system' AND key = :key"
 )
+# FOR UPDATE: the row lock too, so a writer that skips the advisory lock still waits for this one.
 _SELECT_LOCKED = sa.text(
     "SELECT value #>> '{}' AS value, updated_at FROM settings "
     "WHERE scope = 'system' AND key = :key FOR UPDATE"
 )
+# clock_timestamp(), not now(): now() is the transaction's start, before a queued writer's wait.
 _UPSERT = sa.text(
     "INSERT INTO settings (id, scope, key, value, value_type, is_secret, updated_by, "
     "created_at, updated_at) SELECT gen_random_uuid(), 'system', :key, "
