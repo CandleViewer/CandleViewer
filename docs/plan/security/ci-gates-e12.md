@@ -36,7 +36,7 @@ the rule. They are listed under "Known findings" and are not counted as false po
 | cv-no-float-prices | 4 / 4 | 0 (2 TP fixed: #2140, #2141) | 0 | 100 % |
 | cv-no-raw-sql-interpolation | 4 / 4 | 0 | 0 | 100 % |
 | cv-unbounded-query-window | 2 / 2 | 0 | 0 | 100 % |
-| cv-no-debug-probe-in-prod | 5 / 2 | 0 | 0 | 100 % |
+| cv-no-debug-probe-in-prod | 14 / 8 | 0 | 0 | 100 % |
 | cv-untrusted-exchange-response | 3 / 2 | 0 (1 TP fixed: #2142) | 0 | 100 % |
 | cv-nosec-needs-reason-owner | 3 / 2 | 0 (1 conformed) | 0 | 100 % |
 
@@ -105,15 +105,35 @@ fix merged (#2140 → #2137, #2141 → #2138, #2142 → #2139). The rules now co
 ## cv-no-debug-probe-in-prod
 
 - **What:** in `candleviewer/**` (not tests/conftest), any of: a route whose path segment is
-  `debug`, `probe`, `diag(nostics)`, `__test*`, `test-clock` or `e2e`; `freezegun` /
-  `time_machine` / `tests.*` imports; `breakpoint()` or `pdb`. Allowed only inside
-  `if settings.environment is not Environment.LIVE:`.
+  `debug`, `probe`, `perf`, `diag(nostics)`, `__test*`, `test-clock` or `e2e` (a leading `_` is
+  allowed, and the segment must be whole, so `/auth/performance` is an ordinary route);
+  `freezegun` / `time_machine` / `tests.*` imports; `breakpoint()` or `pdb`. Allowed only inside
+  `if settings.environment is not Environment.LIVE:` or inside the keyless-testnet perf gate
+  (below).
 - **Why:** **SR-E12-16** / BR-26 / AC-12.
+- **Perf gate (#2755):** perf-only routes such as `GET /auth/_perf/argon2-params` (#2097) exist
+  only on a keyless testnet (`CV_ENVIRONMENT=testnet`, no exchange key). The rule accepts a
+  registration inside `if auth_perf:` (the flag `auth_perf_enabled(settings)` returned in
+  `create_app`) or inside `if auth_perf_enabled(...):`. Three shapes are deliberately **not** a
+  gate: the raw `settings.auth_perf_enabled` field (it skips the build-time re-check that
+  `auth_perf_enabled()` repeats), `if not auth_perf:`, and any `if`/`else`. Semgrep matches an
+  if/else as one block, so an `else:` would exempt the branch where the switch is off. The gate is
+  stricter than the environment guard, so it also exempts the other seams inside it.
+- **Limit:** the rule reads the path literal at the registration (`@router.<verb>(...)` and
+  `add_api_route(...)`). `include_router(..., prefix=...)`, `mount(...)` and a path held in a
+  constant are not read. The #2097 route is declared that way (`ARGON2_PARAMS_PATH` in
+  `api/auth_perf.py`, mounted by `create_app` only inside `if auth_perf:`), so it is not flagged.
+  Its RBAC is enforced by the deny-by-default build gate (RBAC-CON-003) and its switch-only mount
+  by the `create_app` test `test_create_app_mounts_the_params_route_only_with_the_switch_on`, not
+  by Semgrep. Semgrep also cannot follow a router factory to its gated mount: the same route with
+  a literal path in that factory is flagged. Register it inside the gate, or suppress it as under
+  "Requesting an exception" once those two controls cover the mount.
 - **Note:** at merge no such seam exists in the backend. The E12-Q03 probe and the SCR-046
   feed have not landed, and health checks use `register_*_probe` functions, not routes. The rule
   therefore implements the documented pattern. The web-bundle half of AC-12 (SCR-046 in a
   production JS build) belongs to the frontend build check, not this Python rule.
-- **Fix:** move the seam under `tests/`, or register it inside the environment guard.
+- **Fix:** move the seam under `tests/`, or register it inside the environment guard (a perf
+  route: inside the perf gate).
 
 ## cv-untrusted-exchange-response
 

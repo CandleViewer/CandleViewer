@@ -3,14 +3,17 @@ rules:
     languages: [python]
     severity: ERROR
     message: >-
-      SR-E12-16 / BR-26: a diagnostics probe, debug dump or test-clock seam is
-      reachable from production backend code. Probe/diagnostics surfaces (the
-      SCR-046 diagnostics overlay feed, the E12-Q03 E2E probe, builder debug dumps)
-      and clock-freezing seams must live in test-only modules (`tests/**`,
-      `conftest.py`) or be registered behind the non-production guard
-      (`if settings.environment is not Environment.LIVE:`). A probe route in a live
-      build leaks internal state and lets a caller steer bar timing. Fix: move the
-      seam to the test tree, or register it inside the environment guard. Rule doc:
+      SR-E12-16 / BR-26: a diagnostics probe, debug dump, perf-only route or test-clock
+      seam is reachable from production backend code. Probe/diagnostics surfaces (the
+      SCR-046 diagnostics overlay feed, the E12-Q03 E2E probe, builder debug dumps),
+      perf-only routes (`/_perf/*`, the #2097 Argon2 parameters route) and clock-freezing
+      seams must live in test-only modules (`tests/**`, `conftest.py`) or be registered
+      behind the non-production guard (`if settings.environment is not Environment.LIVE:`).
+      A perf route may instead sit inside the keyless-testnet perf gate: `if auth_perf:`
+      (the flag `auth_perf_enabled(settings)` returned) or `if auth_perf_enabled(settings):`,
+      with no `else:` branch. A probe route in a live build leaks internal state and lets a
+      caller steer bar timing. Fix: move the seam to the test tree, or register it inside
+      one of those guards. Rule doc:
       docs/plan/security/ci-gates-e12.md#cv-no-debug-probe-in-prod.
     metadata:
       rule-id: cv-no-debug-probe-in-prod
@@ -20,7 +23,7 @@ rules:
         - docs/plan/security/ci-gates-e12.md
     patterns:
       - pattern-either:
-          # A route whose path is a probe/debug/diagnostics/test seam.
+          # A route whose path is a probe/debug/diagnostics/perf/test seam.
           - patterns:
               - pattern-either:
                   - pattern: |
@@ -32,7 +35,7 @@ rules:
                   - pattern: $R.add_api_route($URL, ...)
               - metavariable-regex:
                   metavariable: $URL
-                  regex: '(?i)^["'']?(.*/)?(_*debug|_*probe|_*diag(nostics)?|__test\w*|test-?clock|e2e)(/|\{|["'']?$)'
+                  regex: '(?i)^["'']?(.*/)?(_*debug|_*probe|_*perf|_*diag(nostics)?|__test\w*|test-?clock|e2e)(/|\{|["'']?$)'
           # Test-only clock/time-freezing libraries or test-tree imports in production.
           - pattern: import freezegun
           - pattern: import time_machine
@@ -50,6 +53,32 @@ rules:
       - pattern-not-inside: |
           if $S.environment != Environment.LIVE:
               ...
+      # #2755: the keyless-testnet perf gate (#2097, the #2086 gate). Only the build-time
+      # gate counts: `if auth_perf:` (the flag `auth_perf_enabled(settings)` returned) or the
+      # call itself. The raw `settings.auth_perf_enabled` field skips that re-check, so it is
+      # not a gate. Semgrep matches `if X: ...` against an if/else as one block, which would
+      # also exempt a route in the `else:` branch (switch OFF); each clause therefore
+      # excludes the form that has an `else:`.
+      - pattern-not-inside:
+          patterns:
+            - pattern: |
+                if auth_perf:
+                    ...
+            - pattern-not: |
+                if auth_perf:
+                    ...
+                else:
+                    ...
+      - pattern-not-inside:
+          patterns:
+            - pattern: |
+                if auth_perf_enabled(...):
+                    ...
+            - pattern-not: |
+                if auth_perf_enabled(...):
+                    ...
+                else:
+                    ...
     paths:
       include:
         - "services/api/candleviewer/**"
