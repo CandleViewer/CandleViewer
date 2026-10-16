@@ -66,7 +66,7 @@ class Dms:
         if self.hold is not None:
             await self.hold.wait()
         if transition.account_id in self.failing:
-            raise RuntimeError("policy store said: retMsg=invalid api_key")
+            raise RuntimeError("echoed exchange text: invalid key")
 
 
 class Standings(dict[UUID, KeyStanding]):

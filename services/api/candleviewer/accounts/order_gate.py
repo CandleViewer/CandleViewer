@@ -73,8 +73,8 @@ class KeyStanding:
 
 class KeyStandingPort(Protocol):
     """Verification port: an in-memory read of the verifier's last result; `None` is unknown and
-    refuses. It holds only the codes above, never anything exchange-supplied (`retMsg` text, key
-    ids, permission lists): the gate's answer reaches the 403 body seen by callers without
+    refuses. It holds only the codes above, never anything exchange-supplied (exchange error text,
+    key ids, permission lists): the gate's answer reaches the 403 body seen by callers without
     `keys:read`."""
 
     def standing(self, account_id: UUID) -> KeyStanding | None: ...

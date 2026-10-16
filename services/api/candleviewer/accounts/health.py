@@ -205,8 +205,9 @@ class AccountHealthMonitor:
 
         Cadence contract for the private-WS client (E08): evidence at least every `heartbeat_s`
         (`CV_ACCOUNT_HEARTBEAT_S`, capped at US-ACCT-010's 10 s), so it pings every
-        `heartbeat_s / 2` (5 s at the default). Bybit's suggested 20 s ping would degrade every
-        idle account between pongs, flipping `rest_only` and logging two transitions each time.
+        `heartbeat_s / 2` (5 s at the default). The exchange's suggested 20 s ping would degrade
+        every idle account between pongs, flipping `rest_only` and logging two transitions each
+        time.
         """
         if (acc := self._accounts.get(account_id)) is None:
             return None

@@ -215,7 +215,7 @@ async def test_a_raising_hook_is_logged_per_account_and_stops_no_other_account()
             "error": "RuntimeError",
         }
     ]
-    assert "retMsg" not in repr(logs)
+    assert "echoed exchange text" not in repr(logs)
 
 
 async def test_the_hook_runs_as_a_named_task_under_the_account_and_caller_context() -> None:
