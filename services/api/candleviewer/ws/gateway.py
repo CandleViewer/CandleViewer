@@ -78,6 +78,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.net import RESOLVED_SOURCE_KEY
 from candleviewer.observability.context import current_request_id, spawn
 from candleviewer.settings import CLOSE_AUDIT_TIMEOUT_S, CLOSE_FLUSH_TIMEOUT_S
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.codec import decode_client_frame, encode_server_frame
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.lifecycle import (
@@ -105,6 +106,7 @@ from candleviewer.ws.lifecycle import (
     header_values,
     negotiate_subprotocol,
     origin_refusal,
+    welcome_features,
     welcome_payload,
 )
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
@@ -603,13 +605,19 @@ def make_ws_router(
     git_sha: str = "unknown",
     kill_switch: Callable[[], dict[str, Any]] | None = None,
     system_notices: Callable[[], list[dict[str, Any]]] | None = None,
+    backpressure: BackpressureConfig | None = None,
 ) -> APIRouter:
     """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline,
-    so tests inject a fake clock; `tick_s` is only the poll cadence."""
+    so tests inject a fake clock; `tick_s` is only the poll cadence.
+
+    `backpressure` (E17-T03, #412) selects the budgeted outbound pipeline: `None`, today's path,
+    keeps the `OUTBOUND_QUEUE_MAX` push bound. Nothing reads the budget yet (S2a wires it); the
+    one effect of a config is that the `welcome` advertises `features.coalescing` (D11)."""
     router = APIRouter()
     gateway_hub = hub if hub is not None else GatewayHub()
     killed = kill_switch or (lambda: {"engaged": False, "scope": "global"})
     refusal_log = RefusalLogLimiter()
+    features = welcome_features(coalescing=backpressure is not None)
 
     def log_refusal(cause: OriginRefusal, scope: Mapping[str, Any]) -> None:
         """§2.5: a capped warning per refused upgrade; never a header value."""
@@ -899,6 +907,7 @@ def make_ws_router(
                 connection_id=conn.connection_id,
                 server_time_ms=now_ms,
                 client_clock_ms=clock_ms,
+                features=features,
                 auth_timeout_s=auth_timeout_s,
             )
             conn.push(_reply("welcome", fid, ts=now_ms, p=welcome))

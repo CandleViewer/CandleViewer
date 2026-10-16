@@ -336,6 +336,22 @@ class Settings(BaseSettings):
     # E17 client WS gateway (`23-ws-protocol.md` §4, §9.4): `CV_WS_*`. Defaults = the doc.
     ws_auth_timeout_s: float = Field(default=10.0, gt=0, le=60)
     ws_max_inbound_frame_bytes: int = Field(default=262_144, ge=1024, le=1_048_576)
+    # E17-T03 (#412): the WS backpressure pipeline (coalescing, adaptive throttling and the §8.4
+    # outbound budget) behind `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: off by default; removal ticket
+    # #2900). It swaps the mechanism that bounds a connection's outbound frames and never removes
+    # the bound (C-2.18): off keeps today's 1 024-frame push bound, so it gates no safety invariant
+    # (C-4.14). Inert until the wiring slices land: for now its only effect is that
+    # `welcome.features.coalescing` mirrors it, so keep it off until S4 and #410 scenarios 2 and 3.
+    ws_backpressure_enabled: bool = False
+    # The per-connection outbound budget (§8.4) and the classification cadence (§8.3). D10: the
+    # contract values (`ws.outbound.QUEUE_BYTES` / `QUEUE_FRAMES`) are the ceilings, so either may
+    # be lowered and never raised (a raise needs a security review: E17 threat model §6). M1 may
+    # not import `ws`, so the numbers are spelled out here and a test pins them. The floors catch
+    # a typo that would close every connection: one maximum outbound frame (4 MiB, as in
+    # `welcome.limits`), and one snapshot per allowed subscription (200) plus control replies.
+    ws_queue_bytes: int = Field(default=8_388_608, ge=4_194_304, le=8_388_608)
+    ws_queue_frames: int = Field(default=2_000, ge=256, le=2_000)
+    ws_classify_interval_ms: int = Field(default=2_000, ge=500, le=10_000)
     ws_max_connections_per_user: int = Field(default=8, ge=1, le=64)
     # #2558: new sockets one user may authenticate per sliding 60 s (§4.3). The excess is refused
     # `bye client_rate_limited` + 4429 before `auth_ok`. Default = `ws.lifecycle` constant of the

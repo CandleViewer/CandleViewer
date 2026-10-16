@@ -273,6 +273,7 @@ from candleviewer.storage.retention.policy import RetentionPolicy, RetentionRule
 from candleviewer.storage.retention.rule_prune import RulePruneTask
 from candleviewer.storage.retention.schedule import RetentionSchedule
 from candleviewer.storage.service import StorageService
+from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.gateway import Authenticate, GatewayHub, make_ws_router
 from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
@@ -1168,6 +1169,11 @@ def create_app(
     app.state.ws_hub = ws_hub
     app.state.ws_events = WsEvents(ws_registry, ws_hub, kill_switch)
     app.state.ws_runtime = WsRuntime(ws_hub, ws_upstream, resolved)
+    # E17-T03 (#412, C-4.13): the budgeted outbound pipeline, off by default. Without a config
+    # the gateway keeps its 1 024-frame push bound: the flag swaps the bound, never removes it.
+    ws_backpressure = (
+        BackpressureConfig.from_settings(resolved) if resolved.ws_backpressure_enabled else None
+    )
     app.include_router(
         make_ws_router(
             authenticate=ws_authenticate or _session_authenticator(ctx),
@@ -1183,6 +1189,7 @@ def create_app(
             kill_switch=kill_switch.snapshot,
             # After a first `auth_ok`: the read-only gate, then an unresolved break-glass (O4).
             system_notices=lambda: _gate_notices(ctx) + ctx.auth.break_glass_notice.notices(),
+            backpressure=ws_backpressure,
         )
     )
     # E27-T02: gate transitions (KEK latch, mesh trip) reach connected clients directly.
