@@ -144,7 +144,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.DUPLICATE_SUBSCRIPTION: ErrorMeta(("ws",), "topic", False, "conflict", None, "Already subscribed; retune with ctl"),
     ErrorCode.NOT_SUBSCRIBED: ErrorMeta(("ws",), "topic", False, "not_found", None, "ctl/resync on a topic with no subscription"),
     ErrorCode.RESYNC_RATE_LIMITED: ErrorMeta(("ws",), "topic", True, "rate_limited", None, "More than 5 resyncs per minute on one topic; subscription revoked"),
-    ErrorCode.CLIENT_RATE_LIMITED: ErrorMeta(("ws",), "connection", True, "rate_limited", 4429, "Inbound frame rate exceeded"),
+    ErrorCode.CLIENT_RATE_LIMITED: ErrorMeta(("ws",), "connection", True, "rate_limited", 4429, "Inbound frame rate or per-user connect rate exceeded"),
     ErrorCode.SLOW_CONSUMER: ErrorMeta(("ws",), "connection", True, None, 4429, "Outbound queue overflow; connection closed"),
     ErrorCode.REPLAY_SESSION_NOT_FOUND: ErrorMeta(("ws",), "topic", False, "not_found", None, "Unknown or destroyed replay_session_id"),
     ErrorCode.REPLAY_SESSION_ENDED: ErrorMeta(("ws",), "topic", False, "gone", None, "Replay finished or was destroyed; subscription revoked"),

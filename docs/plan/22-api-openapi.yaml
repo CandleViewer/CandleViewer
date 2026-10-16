@@ -463,7 +463,7 @@ x-error-codes-ws:
     scope: connection
     retryable: true
     close_code: 4429
-    title: Inbound frame rate exceeded
+    title: Inbound frame rate or per-user connect rate exceeded
     rest_analogue: rate_limited
   - code: slow_consumer
     scope: connection

@@ -26,6 +26,11 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   any failed `auth`. Revocation is pushed through the `RevocationHub`; the
   idle lock intentionally does not end the socket (E09-S03; #2259).
   Three failures -> `bye auth_failed` + `4401` + a `warning` audit entry.
+- **Connect rate** (§4.3, #2558): a new socket's first successful `auth` is counted per user
+  (`GatewayHub.admit_connect`, `CV_WS_MAX_AUTHS_PER_USER_PER_MIN` per sliding minute). Past the
+  limit the socket gets `bye client_rate_limited` + `4429` instead of `auth_ok`: it never
+  authenticates, so it writes no `ws.connection.closed` row. Failed and in-place re-`auth`s are
+  not counted.
 - **In-place re-auth** (§4.1): a later `auth` re-validates and swaps the
   principal without touching subscriptions. The old session stays registered
   with the hub until the new one is accepted.
@@ -50,7 +55,9 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
 
 Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
 close), rate-limiter window, `MAX_CONNECTIONS_PER_USER` per user (oldest idle
-connection closed). Transport only: no business logic, no data fan-out.
+connection closed), `MAX_AUTHS_PER_USER_PER_MIN` new sockets per user per minute
+(state only for users active in the last window). Transport only: no business
+logic, no data fan-out.
 """
 
 from __future__ import annotations
@@ -75,7 +82,9 @@ from candleviewer.ws.codec import decode_client_frame, encode_server_frame
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.lifecycle import (
     CLOSE_REASONS,
+    CONNECT_RATE_MESSAGE,
     MAX_AUTH_FAILURES,
+    MAX_AUTHS_PER_USER_PER_MIN,
     MAX_CONNECTIONS_PER_USER,
     MAX_PROTOCOL_VIOLATIONS,
     MAX_UNAUTHENTICATED_FRAMES,
@@ -85,6 +94,7 @@ from candleviewer.ws.lifecycle import (
     REFUSAL_LOG_WINDOW_S,
     SHUTDOWN_GRACE_MS,
     SUBPROTOCOL_MSGPACK,
+    ConnectRateLimiter,
     ConnEvent,
     InboundRateLimiter,
     Lifecycle,
@@ -111,6 +121,7 @@ from candleviewer.ws.metrics import (
     cv_ws_auth_failures_total,
     cv_ws_clock_skew_ms,
     cv_ws_closes_total,
+    cv_ws_connect_rate_limited_total,
     cv_ws_connections_in_use,
     cv_ws_handshake_seconds,
 )
@@ -183,17 +194,23 @@ _WRITER_DONE: Final = "cv-ws-writer-done"  # cancel msg: writer finished, stop r
 
 
 class GatewayHub:
-    """Every live connection: per-user cap (§4, 8 per user) and the §9.4
-    planned-shutdown broadcast. Bounded by the per-user cap after auth and
-    by the auth timeout before it."""
+    """Every live connection: per-user cap (§4, 8 per user), the per-user connect rate (§4.3,
+    20 new sockets per user per minute) and the §9.4 planned-shutdown broadcast. Bounded by the
+    per-user cap after auth and by the auth timeout before it."""
 
-    def __init__(self, *, max_per_user: int = MAX_CONNECTIONS_PER_USER) -> None:
+    def __init__(
+        self,
+        *,
+        max_per_user: int = MAX_CONNECTIONS_PER_USER,
+        max_auths_per_min: int = MAX_AUTHS_PER_USER_PER_MIN,
+    ) -> None:
         self.max_per_user = max_per_user
         #: The server is shutting down: set by `shutdown()` and by `candleviewer.server` when its
         #: own shutdown begins (a forced exit or a failure may never reach `shutdown()`). Only
         #: `WsRuntime.start()` clears it, for an in-process restart. `closed_reason` reads it to
         #: tell uvicorn's own `1012` from one a client sends.
         self.shutting_down = False
+        self.connect_rate = ConnectRateLimiter(max_auths_per_min)
         self._live: set[_Connection] = set()
         self._empty = asyncio.Event()
         self._empty.set()
@@ -216,6 +233,11 @@ class GatewayHub:
 
     def of_user(self, user_id: uuid.UUID) -> list[_Connection]:
         return [c for c in self._live if c.user_id == user_id]
+
+    def admit_connect(self, user_id: uuid.UUID, now: float) -> int | None:
+        """Count one new socket of `user_id` at monotonic `now` (its first successful `auth`):
+        None admits it, else the `retry_after_ms` of the refusal (`ConnectRateLimiter.admit`)."""
+        return self.connect_rate.admit(user_id, now)
 
     def enforce_cap(self, newcomer: _Connection) -> None:
         """Close the oldest-idle connections of `newcomer`'s user above the cap."""
@@ -661,6 +683,34 @@ def make_ws_router(
                 "ws close audit not confirmed", connection_id=conn.connection_id, exc_info=True
             )
 
+    def refuse_connect(conn: _Connection, user_id: uuid.UUID, retry_after_ms: int) -> None:
+        """§4.3 (#2558): the user's connect budget is spent. `bye client_rate_limited` + `4429`
+        instead of `auth_ok`, so the socket never authenticates: `conn.user_id` and the session
+        stay unset, no revocation hook is registered and `audit_close` writes no row, which is
+        the point of the limit. The permission registration this `auth` made for the SR-189
+        re-check is undone by the handler's teardown, as for any closing socket. Every refusal
+        is counted in `cv_ws_connect_rate_limited_total` (and, as a close, in
+        `cv_ws_closes_total`). The user-attributed warning is capped: it is logged for a user's
+        first refusal in a window and names the user and the peer address, never the token. Every
+        close still writes the generic `ws close` line, which names no user."""
+        cv_ws_connect_rate_limited_total.inc()
+        if gateway_hub.connect_rate.first_refusal(user_id, conn.clock()):
+            _log().warning(
+                "ws connect rate limited",
+                connection_id=conn.connection_id,
+                user_id=str(user_id),
+                source_ip=_source_ip(conn.ws.scope),
+                limit=gateway_hub.connect_rate.limit,
+                retry_after_ms=retry_after_ms,
+            )
+        bye = lifecycle_bye(
+            "client_rate_limited",
+            now_ms=conn.wall_ms(),
+            retry_after_ms=retry_after_ms,
+            message=CONNECT_RATE_MESSAGE,
+        )
+        conn.close_with("client_rate_limited", bye=bye)
+
     async def do_auth(conn: _Connection, frame: dict[str, Any]) -> None:
         """One `auth` frame. However it ends short of `auth_ok` (a failure, a refusal, a close,
         a cancellation), the hub registration `run_auth` made for the presented session is
@@ -744,6 +794,18 @@ def make_ws_router(
             # user), sealed, no auth_ok.
             await conn.closer(*revocation_hub.close_for(ended))
             return
+        if not reauth:
+            # Only a new socket's first SUCCESSFUL auth is counted (failures have their own 3
+            # strikes, a re-auth is a token refresh), and only here. `admit_connect` checks and
+            # records in one synchronous step, so concurrent sockets of one user cannot overshoot
+            # the limit. Nothing awaits between it and `auth_ok`, so no other task can close or
+            # cancel a counted socket before it is answered. It precedes `enforce_cap`, so a
+            # refused socket never evicts a live one. The clock is read here, after the awaits
+            # above: `now` predates them and would age the stamp.
+            retry_after_ms = gateway_hub.admit_connect(user_id, conn.clock())
+            if retry_after_ms is not None:
+                refuse_connect(conn, user_id, retry_after_ms)
+                return
         conn.auth_failures = 0
         conn.watchdog.auth_deadline = None
         conn.watchdog.token_expires_at = now + (expires_ms - now_ms) / 1000

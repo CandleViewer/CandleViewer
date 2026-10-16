@@ -215,7 +215,8 @@ cv_ws_closes_total = Counter(
 # Nothing closes with the first two. `other` has no producer: `lifecycle.bye_frame` raises on an
 # unknown reason on a connection's first close (a sealed close on one already closing skips it, and
 # its only caller without `bye=` passes `token_expired`), and a `bye=` frame is built only by
-# `user_disabled_bye` (a fixed reason) and by `revocation.bye_frame`, which does not validate its
+# `user_disabled_bye` (a fixed reason), by the gateway's `refuse_connect` (through
+# `lifecycle.bye_frame`, so validated) and by `revocation.bye_frame`, which does not validate its
 # reason and is reached through `RevocationHub.close_for` (from `_close_all` and from `run_auth`'s
 # revoked-before-registration check), whose reasons are the ones `revoke` remembered. So only
 # `app._hub_publisher` (it narrows a revoke reason to `user_disabled` or `session_revoked`) keeps
@@ -223,6 +224,10 @@ cv_ws_closes_total = Counter(
 # is not coverage.
 for _close_reason in (*CLOSE_REASONS, OTHER_CLOSE_REASON):
     cv_ws_closes_total.labels(reason=_close_reason)
+cv_ws_connect_rate_limited_total = Counter(
+    "cv_ws_connect_rate_limited_total",
+    "WS sockets refused by the per-user connect rate (bye client_rate_limited after a valid auth).",
+)
 cv_ws_clock_skew_ms = Histogram(
     "cv_ws_clock_skew_ms",
     "Absolute client clock skew reported in welcome (milliseconds).",
@@ -268,6 +273,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_handshake_seconds",
         "cv_ws_auth_failures_total",
         "cv_ws_closes_total",
+        "cv_ws_connect_rate_limited_total",
         "cv_ws_clock_skew_ms",
         "cv_ws_subscribe_total",
         "cv_ws_client_topics_depth",
