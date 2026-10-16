@@ -22,6 +22,11 @@ from typing import Annotated, Any, Protocol
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse, Response
 
+# The function `starlette.routing` itself matches routes with (it only re-imports
+# it, so mypy --strict refuses that path): the guard classifies what the router
+# dispatches on, by construction. A move upstream fails the import, never open.
+from starlette._utils import get_route_path
+
 from candleviewer.audit.models import Severity
 from candleviewer.auth.errors import (
     AuthError,
@@ -181,36 +186,49 @@ def make_read_only_guard(
     emitter: _Emitter | None = None,
 ) -> Callable[[Request, Callable[[Request], Awaitable[Response]]], Awaitable[Response]]:
     """HTTP middleware body: refuse every write from a session in the
-    read-only downgrade (enforced on all write routes, not just step-up)."""
+    read-only downgrade (enforced on all write routes, not just step-up) and
+    demand a step-up on the path-gated `DANGEROUS_ROUTES`.
+
+    #2752: requests are classified on the routed path - `get_route_path`, the
+    ASGI `root_path` stripped exactly as the router does - never on
+    `request.url.path`, which keeps a `uvicorn --root-path` prefix that no
+    registry pattern matches. Sessions wired without step-up is a wiring
+    fault, not "no step-up needed": the path-gated routes answer 503 rather
+    than run unchecked (C-2.21). With no session store (the fake backend)
+    nothing can authenticate and every route fails closed on its own."""
 
     async def guard(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
+        path = get_route_path(request.scope)
+        action_class = dangerous_action_class(request.method, path)
         if (
-            (
-                request.method not in _SAFE_METHODS
-                or dangerous_action_class(request.method, request.url.path)
-            )
-            and request.url.path not in _WRITE_EXEMPT_PATHS
-            and auth.step_up_is_active
-            and auth.sessions_is_active
+            (request.method in _SAFE_METHODS and action_class is None)
+            or path in _WRITE_EXEMPT_PATHS
+            or not auth.sessions_is_active
         ):
-            token = _bearer(request)
-            if token is not None:
-                try:
-                    record = await auth.sessions.authenticate_access_token(token)
-                    await auth.step_up.assert_writable(str(record.id))
-                    action_class = dangerous_action_class(request.method, request.url.path)
-                    if action_class is not None:
-                        # E09-T03 decision point: dangerous route, no elevation -> 403.
-                        # `auth.step_up_required` is written by B16 (`ACTION_REQUEST`).
-                        denied = await require_elevation_for(auth, str(record.id), action_class)
-                        if denied is not None:
-                            return denied
-                except SessionReadOnly as exc:
-                    return readonly_problem(exc)
-                except AuthError:
-                    pass  # unauthenticated: the route answers 401 itself
+            return await call_next(request)
+        if not auth.step_up_is_active:
+            if action_class is not None:
+                return _problem(
+                    503, "service_unavailable", "Service unavailable", "step-up not wired"
+                )
+            return await call_next(request)  # no step-up, so no read-only downgrade
+        token = _bearer(request)
+        if token is not None:
+            try:
+                record = await auth.sessions.authenticate_access_token(token)
+                await auth.step_up.assert_writable(str(record.id))
+                if action_class is not None:
+                    # E09-T03 decision point: dangerous route, no elevation -> 403.
+                    # `auth.step_up_required` is written by B16 (`ACTION_REQUEST`).
+                    denied = await require_elevation_for(auth, str(record.id), action_class)
+                    if denied is not None:
+                        return denied
+            except SessionReadOnly as exc:
+                return readonly_problem(exc)
+            except AuthError:
+                pass  # unauthenticated: the route answers 401 itself
         return await call_next(request)
 
     return guard
