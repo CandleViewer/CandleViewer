@@ -12,7 +12,7 @@
 // environment (same split as generate-policy-rules.mjs).
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { compile } from "json-schema-to-typescript";
 import prettier from "prettier";
 
@@ -27,7 +27,17 @@ const schemaPath = join(
   "bar-model.schema.json",
 );
 const outDir = join(__dirname, "..", "src", "generated", "bars");
-const outPath = join(outDir, "index.ts");
+const defaultOutPath = join(outDir, "index.ts");
+// Usage: node scripts/generate-bar-types.mjs [--out <path>]
+// `--out` writes the same bytes elsewhere, so the drift test never rewrites the tracked file under
+// src/generated while other test files read it (#2965). Any other argument is refused.
+function outputPath(args) {
+  if (args.length === 0) return defaultOutPath;
+  if (args.length === 2 && args[0] === "--out" && args[1]) return resolve(args[1]);
+  console.error("usage: node scripts/generate-bar-types.mjs [--out <path>]");
+  process.exit(2);
+}
+const outPath = outputPath(process.argv.slice(2));
 
 const HEADER = `// ==========================================================================
 // GENERATED FILE — DO NOT EDIT BY HAND.
@@ -69,11 +79,12 @@ async function main() {
   // The synthetic root only anchors the three models; it is not part of the domain.
   const body = ts.replace(/export interface BarModel \{[^}]*\}\n*/, "");
   const chunks = [HEADER, body];
-  mkdirSync(outDir, { recursive: true });
-  const config = (await prettier.resolveConfig(outPath)) ?? {};
+  mkdirSync(dirname(outPath), { recursive: true });
+  // Format as the tracked file, whatever the output path, so both paths get identical bytes.
+  const config = (await prettier.resolveConfig(defaultOutPath)) ?? {};
   writeFileSync(
     outPath,
-    await prettier.format(chunks.join("\n"), { ...config, filepath: outPath }),
+    await prettier.format(chunks.join("\n"), { ...config, filepath: defaultOutPath }),
     "utf8",
   );
   console.log(`[generate-bar-types] wrote ${outPath}.`);
