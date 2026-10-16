@@ -8,7 +8,6 @@ import json
 import uuid
 from dataclasses import replace
 from decimal import Decimal
-from pathlib import Path
 from typing import Any, get_args
 
 import pytest
@@ -51,10 +50,9 @@ from candleviewer.ws.sequencing import (
 )
 from candleviewer.ws.upstream import UpstreamRefs
 from tests._corpus import frames as corpus_frames
-from tests.unit.ws._seq_support import ACC_A, ACC_B, PERMS, USER, Book, Conn, Source
+from tests.unit.ws._seq_support import _BUNDLE, ACC_A, ACC_B, PERMS, USER, Book, Conn, Source
 
 RS = "bb000000-0000-4000-8000-000000000001"
-_BUNDLE = Path(__file__).resolve().parents[5] / "docs" / "plan" / "ws-schema.json"
 
 
 def _book_source(symbol: str = "BTCUSDT", levels: int = 60) -> Source:

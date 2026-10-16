@@ -316,7 +316,7 @@ export interface Error {
  */
 export interface SnapMeta {
   /**
-   * Closed for the server; a client treats an unknown value as a routine re-snapshot (§7.4).
+   * The server's closed set. A client MUST NOT validate against it: an unknown value is a routine re-snapshot (§7.4, C18).
    */
   reason?:
     | "initial"
@@ -425,7 +425,7 @@ export type CandleViewerWSEnvelope = {
 
 export interface SnapMeta {
   /**
-   * Closed for the server; a client treats an unknown value as a routine re-snapshot (§7.4).
+   * The server's closed set. A client MUST NOT validate against it: an unknown value is a routine re-snapshot (§7.4, C18).
    */
   reason?:
     | "initial"
