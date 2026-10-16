@@ -8,7 +8,8 @@ then the audit write, so a drain shorter than flush + audit cancels it mid-write
 cannot flush: `pause_writing()` and a `transport.close()` that does not complete.
 
 The gateway's two bounds are scaled down (the floor is the sum of whatever the gateway spends), so
-each case takes about a second. No network beyond 127.0.0.1; every wait is bounded.
+each case takes a couple of seconds. No network beyond 127.0.0.1; every wait is bounded. Real
+timers: the margins that decide each case are set in `_WRITE_S` and are at least 0.45 s.
 """
 
 from __future__ import annotations
@@ -31,8 +32,13 @@ from tests.unit.ws.test_app_wiring import _authenticate, _Kill, _settings
 from tests.unit.ws.test_planned_shutdown_real_socket import _JSON, _ORIGIN, _open
 
 _DEADLINE_S = 10.0
-_BOUND_S = 0.5  # the scaled CLOSE_FLUSH_TIMEOUT_S and CLOSE_AUDIT_TIMEOUT_S
-_WRITE_S = 0.4  # a slow audit write, inside its bound
+_BOUND_S = 1.0  # the scaled CLOSE_FLUSH_TIMEOUT_S and CLOSE_AUDIT_TIMEOUT_S
+# A slow audit write, inside its bound. Counted from `connection.shutdown()`, the handler's row
+# lands at flush + write, the audit bound ends at flush + audit, and uvicorn cuts at its 0.1 s
+# settle plus the drain (the floor, or one bound below it). The row is 0.45 s inside the audit
+# bound (`_BOUND_S - _WRITE_S`) and 0.45 s after the lower cut (`_WRITE_S - 0.1`), so a loop
+# stall shorter than that cannot flip a case.
+_WRITE_S = 0.55
 _FLOOR_S = 2 * _BOUND_S  # flush + audit, as `MIN_DRAIN_TIMEOUT_S` is for the real bounds
 
 
@@ -73,10 +79,11 @@ async def _close_rows_written(drain_s: float, monkeypatch: pytest.MonkeyPatch) -
     async with asyncio.timeout(_DEADLINE_S), _serve(drain_s) as (server, url):
         async with connect(url, subprotocols=_JSON, origin=_ORIGIN, close_timeout=0.1) as ws:
             await _open(ws)
-            (proto,) = server.server_state.connections
-            proto.pause_writing()  # type: ignore[attr-defined]  # the peer stopped reading
+            (conn,) = server.server_state.connections
+            proto: Any = conn  # uvicorn's `Protocols` union: not every member has a transport
+            proto.pause_writing()  # the peer stopped reading
             # `close()` cannot flush to that peer, so the connection is not lost either.
-            proto.transport.close = lambda: None  # type: ignore[attr-defined,method-assign]
+            proto.transport.close = lambda: None
             await server.shutdown()
     return rows
 
