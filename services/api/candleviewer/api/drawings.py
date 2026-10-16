@@ -12,7 +12,8 @@ and batch-size caps run before pydantic; no content is logged. POST and batch re
 `Idempotency-Key` from a bounded per-user cache.
 
 A denial whose `rbac.denied` record cannot be made durable is answered 503 `store_unavailable`
-with no state change, never 403/404/409; allowed requests never reach the audit writer.
+with no state change, never 403/404/409; an allowed request on the caller's own rows never
+reaches the audit writer, while a foreign-id probe does (DR18).
 """
 
 import base64
