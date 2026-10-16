@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -123,7 +124,7 @@ def test_unreadable_input_exits_2(tmp_path: Path) -> None:
 GOOD_BENCH = {"summary_by_busy_level": {"500": {"p99": 28.7}}}
 
 
-def _with(*extra: tuple[str, str, str]) -> dict:
+def _with(*extra: tuple[str, str, str]) -> dict[str, Any]:
     """The baseline's own rows plus ``extra`` (so only ``extra`` can regress)."""
     cur = _res(*extra)
     cur["checks"] = BASE["checks"] + cur["checks"]
