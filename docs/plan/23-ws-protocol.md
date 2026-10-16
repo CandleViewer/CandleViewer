@@ -687,7 +687,7 @@ The 2 000-column snapshot cap applies at every bucket size: the server sends the
 
 ### 6.2 Private topics
 
-All private topics are **account-scoped**: the server intersects the requested `exchange_account_ids` with the caller's granted scope and silently narrows (reporting the effective list in `sub_ok.effective`). Requesting _only_ out-of-scope accounts is an error (`account_scope_denied`).
+All private topics are **account-scoped**: the server intersects the requested `exchange_account_ids` with the caller's granted scope and silently narrows (reporting the effective list in `sub_ok.effective`). Requesting _only_ out-of-scope accounts is an error (`account_scope_denied`). The exception is `machines.{entity}.state`, which is scoped by the entity it names (§6.4).
 
 | Topic          | Options                                        | Snapshot                             | Default throttle       | Payload schema                              |
 | -------------- | ---------------------------------------------- | ------------------------------------ | ---------------------- | ------------------------------------------- |
@@ -731,8 +731,110 @@ introduced, and deliveries are discrete records, so none are coalesced away. Per
 | `alerts`                                                                                         | `alerts:read`       | own alerts only             |
 | `recorder`                                                                                       | `recording:read`    | none                        |
 | `system`                                                                                         | — (implicit)        | content filtered by role    |
+| `machines.{entity}.state`                                                                        | per kind, §6.4      | per entity, §6.4            |
 
 Permissions are checked **at subscribe time and again on every change to the user's grants** (§9.5). A viewer subscribing to `orders` succeeds (read-only) but any attempt to act comes over REST, where `orders:write` is enforced.
+
+### 6.4 Statechart machine state: `machines.{entity}.state` (E17-T08)
+
+One topic per instance of a catalogue machine (`28-statechart-catalogue.md` B1–B20). It carries the state the machine publishes on state entry (C-2.20). The statechart side feeds it: the plugin's `on_transition` hook (E50-T60), plus the bring-up and latch publishes below. The gateway answers `sub`, `snap`, `resync` and deltas only from what was published, never imports `statechart/factory.py` or `statechart/persistence.py`, and never holds or queries an `Interpreter`. The publisher slice adds an import-linter `forbidden` contract that keeps `candleviewer.ws` off those two modules, because the existing C-2.20 contract covers only the market-data modules. **Status: contract only.** Until the E17-T08 publisher lands, the server answers `unknown_topic`.
+
+| Topic                     | Options               | Snapshot                            | Default throttle | Payload schema                                   |
+| ------------------------- | --------------------- | ----------------------------------- | ---------------- | ------------------------------------------------ |
+| `machines.{entity}.state` | universal only (§5.1) | The entity's latest published state | 100 ms           | [`MachineStateUpdate`](#1510-machinestateupdate) |
+
+**Entity grammar.** `{entity}` is `{kind}` for a singleton, otherwise `{kind}:{id}`. The kind set is closed. `uuid` means the lowercase canonical form (`0a000000-0000-4000-8000-000000000001`), so each machine has exactly one topic name, and `symbol` is the §13 `symbol`. An unknown kind, or an id that does not fit its kind, is `invalid_topic_format`. The longest topic, `machines.reconciliation:{uuid}.state`, has 66 characters; every topic fits the §13 `topic` pattern and its 120-character limit. `book:{symbol}` names the B14 machine of the symbol's active book tier: the supervisor keys its machines by environment, symbol and tier depth, but the tier is internal, so a tier change continues on the same topic.
+
+| B     | `{entity}`                    | `machine_kind`                    | Id format | Scope (bound by the owning module) | `context_summary` keys                         |
+| ----- | ----------------------------- | --------------------------------- | --------- | ---------------------------------- | ---------------------------------------------- |
+| B1    | `order:{order_id}`            | `order`                           | uuid      | the order's account                | `symbol`, `halted_by_kill`, `recon_misses`     |
+| B2    | `trade_group:{group_id}`      | `trade_group`                     | uuid      | every leg's account                | —                                              |
+| B3    | `leg:{leg_id}`                | `leg`                             | uuid      | the leg's account                  | —                                              |
+| B4–B7 | `algo:{algo_id}`              | `oco`, `iceberg`, `twap`, `chase` | uuid      | the run's account                  | —                                              |
+| B10   | `alert:{alert_id}`            | `alert`                           | uuid      | its user (`user_id`)               | `severity`, `delivery_attempts`, `storm_count` |
+| B11   | `recording:{symbol}`          | `recording`                       | symbol    | none                               | `symbol`, `gap_count_24h`                      |
+| B12   | `replay:{replay_id}`          | `replay`                          | uuid      | its user (`user_id`)               | —                                              |
+| B14   | `book:{symbol}`               | `book`                            | symbol    | none                               | `symbol`, `resync_count`                       |
+| B16   | `session:{session_id}`        | `session`                         | uuid      | its user (`user_id`)               | `mfa_satisfied`, `step_up_failures`            |
+| B17   | `live_gate`                   | `live_gate`                       | singleton | none                               | —                                              |
+| B18   | `kill_switch`                 | `kill_switch`                     | singleton | none                               | `scope`, `cancel_working`, `flatten`           |
+| B19   | `reconciliation:{account_id}` | `reconciliation`                  | uuid      | that account                       | —                                              |
+| B20   | `risk_lockout:{account_id}`   | `risk_lockout`                    | uuid      | that account                       | —                                              |
+
+B8 `position_protection`, B9 `rule_instance`, B13 `ws_conn` and B15 `paper_account` have no public id yet (§16.6 W9), so they are not in the grammar.
+
+**Scope binding.** Each registry entry carries the immutable scope in the column above. The owning module takes it from its own record, not from the machine's context (the B4–B7, B10 and B12 contexts hold no account or user), and binds it when it builds the machine and again when it restores one. An entry of a scoped kind that has no scope is refused to every role: `decide()` refuses a missing account to every role, and a user-scoped kind has no wider view (D2 on #414). The publisher counts and logs each such entry when it is published (Observability, below), so a missing binding is never a silent refusal.
+
+**Payload** ([`MachineStateUpdate`](#1510-machinestateupdate); the field list is owned by `24-internal-schemas.md` §17.6). A `snap` and a `d` carry the same whole object. A `d` replaces the previous payload; nothing is merged.
+
+- `state` is the published state: the active direct child of the chart root. The `order` and `session` charts are parallel, so `state` is the active state of their first region (`lifecycle`, `auth`), and `regions` maps every region to its active state. Values are the chart's own state ids (`statechart/machines/*.machine.json`, C-2.19) and change only with `machine_hash`. `state` is never a nested path, and never the owning section's domain enum (`orders.state` and the other domain topics carry those).
+- `tags` is the sorted union of the chart `tags` on every active state, for example `terminal`, `protected`, `naked`, `trading_blocked` or `critical`.
+- `degraded` is the `chain_trips` latch (`29-statechart-adoption-plan.md` §1.3). While it is set, the synchronous `ChainTripLatch.admit_command` refuses order-path commands for the machine until an operator acknowledges it (C-2.21). It is unrelated to the `degraded` chart tag.
+- `machine_hash` is the chart's sha256 (`machine_hashes.lock`), so a client can tell when it is reading a chart build it was not built against.
+- `environment` and `updated_at_ms` (the time of the reported change) are always present; `context_summary` is optional.
+
+**`context_summary` redaction.** These rules also bind the context summary of E42-T07. Only the keys listed for the kind above are sent, and a kind with none never sends the field; §15.10 closes the keys per `machine_kind`. Values are scalars read from the machine's own context. Never sent:
+
+- secrets, keys, signatures or tokens (C-2.7, C-12.6);
+- user ids or names (C-12.4);
+- free text such as `reason` or `error`, and `_fault` or `_deferred`;
+- `*_us` deadlines, exchange ids such as `order_link_id`, and ids of other entities;
+- prices, quantities, P&L, balances or limits, which have their own topics, because a machine's context is not the book of record (`28` §1.3 A7);
+- counts that span accounts.
+
+Adding a key is a contract change to this table and to §15.10.
+
+**Snapshot and deltas.** The server keeps each entity's latest payload in a registry that only the publisher writes.
+
+- An authorised `sub` gets `sub_ok` with `snapshot_pending: true`, then a `snap` from the registry (`meta.reason: initial`).
+- There is never a `snap` without a published state. For a scoped kind, an entity with no entry (unknown, not yet published or removed) is refused exactly like a foreign one (Authorisation, below); the client subscribes again once the entity appears on its domain topic. For an unscoped kind (`recording`, `book`, `live_gate`, `kill_switch`), an entity with no entry is not refused, because there is no scope to protect: the subscription stays `snapshot_pending` until the first publish on its topic wakes it (§7.7). A pending `machines` subscription is never retried on inbound frames. A `symbol` that is not a known instrument is `unsupported_symbol`.
+- A `machines` subscription never takes an upstream or bar lease and never triggers auto-record. A `recording:` or `book:` entity counts toward the 40-symbol cap per connection (§16.2).
+- Every later publish is a `d` on the subscription's own sequence (§7.7). `resync` works as for every topic (§7.4, §7.5).
+- A machine is published when it enters its initial state, on every transition, once at bring-up after a restore (a restore re-runs no entry action, `28` §21.4), and whenever `degraded` changes.
+- The registry holds one entry per running machine, so it is bounded by the live interpreters it mirrors (C-2.18). The payload whose `tags` contain `terminal` is the entity's last; its entry stays for 60 s, and at most 10 000 terminal entries are kept, oldest removed first (§16.2).
+- When an entry is removed (retention expiry, a supervisor stopping its machine, or shutdown), each live subscription to it gets `revoked` with `topic_removed`. `resubscribe_allowed` is `true` for an unscoped kind, whose fresh `sub` is accepted as pending, and `false` for a scoped kind, whose fresh `sub` is refused.
+
+**Coalescing and options.** Whole-object last-write-wins, with at most one pending payload per subscription (§8.2). A burst of transitions, such as a chain of `after:` timers, therefore yields one `d` carrying the latest state. Intermediate states are not delivered: this is a state topic, not an event log (history is in `machine_events`, E42-T07).
+
+- Structured only: `encoding: "binary"` is `encoding_unsupported`.
+- Universal options only: any other key, including `exchange_account_ids`, is `invalid_options`.
+- As a private topic it cannot be replayed (`replay_session_id` is `invalid_options`), and its snapshots are never shared between subscriptions.
+- `snapshot: false` needs `from_seq`, as on every topic (otherwise `invalid_options`), and is then always answered with `snapshot_forced: true`, because no per-entity history is kept.
+
+**Authorisation.** Checked per entity at `sub`, in this order; the first step that refuses decides the result.
+
+1. **Permission.** Lacking the kind's read permission is `forbidden`.
+2. **Role.** A `deny_pending_decision` cell (W6–W8) is `forbidden` for every entity of that kind.
+3. **Registry and scope.** The decision reads the in-memory registry entry synchronously, never through an awaited lookup, so it cannot interleave with a §9.5 re-evaluation (SR-189).
+   - Account-scoped kind (B1, B3, B4–B7, B20): an entity with no entry, an entry with no account, or an account outside the caller's grants is `account_scope_denied`, with the §6.2 message.
+   - User-scoped kind (B10, B12, B16): an entity with no entry, an entry with no user, or another user's entity is `forbidden`, Owner included (D2).
+   - B2 and B19 reach this step only for the Owner until W6 and W8 are decided, and then follow the account-scoped results. An unscoped kind has nothing to check here (Snapshot and deltas, above).
+
+The columns use the actors and outcomes of the RBAC matrix (`services/api/tests/contract/rbac/matrix.yaml`). The entity is on account A, which only `manager_with_grant` holds; for `alert`, `replay` and `session`, the entity is the caller's own. An unauthenticated caller always gets `not_authenticated`.
+
+| B     | Kind             | Read rule (the REST read it mirrors)                              | owner    | manager_with_grant | manager_without_grant  | viewer                 | State                        |
+| ----- | ---------------- | ----------------------------------------------------------------- | -------- | ------------------ | ---------------------- | ---------------------- | ---------------------------- |
+| B1    | `order`          | `orders:read` on its account (`GET /orders/{orderId}`)            | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable                   |
+| B2    | `trade_group`    | `orders:read`; a group spans accounts                             | `sub_ok` | `forbidden`        | `forbidden`            | `forbidden`            | `deny_pending_decision` (W6) |
+| B3    | `leg`            | `orders:read` on its account (`GET /trade-groups/{tradeGroupId}`) | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable                   |
+| B4–B7 | `algo`           | `orders:read` on its account (E33-T02)                            | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable                   |
+| B10   | `alert`          | `alerts:read`, own alerts (`GET /alerts/{alertId}`)               | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B11   | `recording`      | `recording:read` (`GET /recording/status`)                        | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B12   | `replay`         | `replay:read`, own sessions (`GET /replay/sessions/{replayId}`)   | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B14   | `book`           | `marketdata:read`, as `book.{symbol}.{depth}`                     | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B16   | `session`        | own sessions, no permission (`GET /me/sessions`)                  | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B17   | `live_gate`      | none defined                                                      | `sub_ok` | `forbidden`        | `forbidden`            | `forbidden`            | `deny_pending_decision` (W7) |
+| B18   | `kill_switch`    | `orders:read` (`GET /trading/kill-switch`)                        | `sub_ok` | `sub_ok`           | `sub_ok`               | `sub_ok`               | executable                   |
+| B19   | `reconciliation` | none defined                                                      | `sub_ok` | `forbidden`        | `forbidden`            | `forbidden`            | `deny_pending_decision` (W8) |
+| B20   | `risk_lockout`   | `positions:read` on its account (`GET /risk/summary`)             | `sub_ok` | `sub_ok`           | `account_scope_denied` | `account_scope_denied` | executable                   |
+
+- **Owner.** The Owner may watch every entity of an account-scoped or unscoped kind: C-12.4 makes the Owner full admin, `decide()` grants the Owner every account, and the statechart inspector (E42-T07, E42-S08) is an Owner surface. A user-scoped kind (`alert`, `replay`, `session`) stays self-scoped for every role, Owner included, because it mirrors self-scoped REST reads (D2 on #414).
+- **No existence oracle.** A refusal depends only on the kind and the caller, never on whether the entity exists or whose it is, and the server does the same work for an unknown entity as for a foreign one.
+- **`deny_pending_decision`.** A cell whose rule waits for an owner decision (§16.6 W6–W8). It is not the RBAC matrix's `not_executable` (authorisation unreachable in CI): its cells run and expect `forbidden`. The publisher slice adds this table to the matrix as executed per-kind cells (13 kinds × 5 actors).
+- **On a change.** Every RBAC change (§9.5) re-applies the whole row to each live subscription, not just the permission. A subscription the new principal may no longer hold is revoked with `permission_revoked` (role or permission lost, so a demoted Owner loses `trade_group`, `live_gate` and `reconciliation`) or `account_scope_changed` (account lost), with `resubscribe_allowed: false`. A disabled user gets `bye` with 4403, and a revoked own session closes with 4401.
+- **Audit.** Each refusal (`ws.subscribe.denied`) and revocation (`ws.subscription.revoked`) of a `machines` subscription records the full `ch` and one internal reason, in the `reason` column only: `role`, `unknown`, `foreign` or `unscoped` on a refusal, and `role`, `foreign` or `evicted` on a revocation (C-12.8). The `action`, `object_kind`, `outcome` and `severity` are identical for every reason, so the fields a Manager can read about their own events (SR-067) never vary with it. The reason stays server-side; the client sees only the codes above. `evicted` is used only when a subscription is revoked, so no tombstone of a removed entity is kept, and a later `sub` to it is `unknown`.
+
+**Observability.** `cv_machine_ws_publish_total{entity_kind}` counts one per payload the publisher records, not per subscriber frame. `entity_kind` takes only the kind names above. The publisher registers it in the metric catalogue next to E50-T60's `cv_machine_*` families. `cv_machine_ws_scope_missing_total{entity_kind}` counts each payload of a scoped kind published without a scope, with a warning log; any increase is a binding defect, because that entry is refused to every role. Subscribe outcomes stay on `cv_ws_subscribe_total{topic="machines",result}`.
 
 ---
 
@@ -946,6 +1048,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 | `heatmap`                       | Per time-bucket column, last-write-wins; whole columns dropped only if the bucket is complete and already sent.                                               | Columns are the atomic render unit.                            |
 | `metrics`                       | Per series (metric code and `params`), last point wins.                                                                                                       | Scalar time series.                                            |
 | `ticker`, `wallet`, `positions` | Whole-object last-write-wins.                                                                                                                                 | Snapshot-shaped.                                               |
+| `machines`                      | Whole-object last-write-wins; at most one pending payload per subscription (§6.4).                                                                            | A state topic: only the latest state matters.                  |
 | `trades`, `liquidations`        | **Append, never merge** — throttling batches them into arrays.                                                                                                | Every print matters for the tape and CVD.                      |
 | `orders`, `executions`          | **Never coalesced, never throttled.**                                                                                                                         | State-machine transitions and fills must be seen individually. |
 
@@ -1410,6 +1513,21 @@ C→S {"t":"unsub","id":"c-81","p":{"topics":["heatmap.BTCUSDT","profile.BTCUSDT
 S→C {"t":"unsub_ok","id":"c-81","ts":1789133202100,"p":{"results":[{"ch":"heatmap.BTCUSDT","ok":true},{"ch":"profile.BTCUSDT.volume","ok":true}]}}
 S→C {"t":"d","ch":"system","s":31,"ts":1789133210000,"e":"j","p":{"kind":"connection_quality","class":"healthy","queue_pct":8,"rtt_ms":31,"applied":{"throttle_multiplier":1,"forced_coalesce":false,"degraded_topics":[]}}}
 ```
+
+### 12.8 Watching an order's machine state (`machines.{entity}.state`, §6.4)
+
+```jsonc
+// a manager granted account a1…01 only: the order is on a1…01, the lockout is on a1…02
+C→S {"t":"sub","id":"c-100","p":{"topics":[{"ch":"machines.order:0a000000-0000-4000-8000-000000000001.state"},{"ch":"machines.risk_lockout:a1000000-0000-4000-8000-000000000002.state"}]}}
+S→C {"t":"sub_ok","id":"c-100","ts":1789134000000,"p":{"results":[{"ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","ok":true,"sub_id":"s_41","snapshot_pending":true,"effective":{"throttle_ms":100,"encoding":"structured","coalesce":true}},{"ch":"machines.risk_lockout:a1000000-0000-4000-8000-000000000002.state","ok":false,"error":{"code":"account_scope_denied","message":"None of the requested accounts are in scope."}}]}}
+S→C {"t":"snap","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","s":1,"ts":1789134000010,"e":"j","meta":{"reason":"initial","source":"live"},"p":{"machine_kind":"order","state":"submitted","regions":{"lifecycle":"submitted","protection":"sl_pending"},"tags":[],"degraded":false,"machine_hash":"743dfaada4e382a4c29d40a582e454285aa3f4d5142b1ade45603086c8087255","environment":"live","updated_at_ms":1789133999990,"context_summary":{"symbol":"BTCUSDT","halted_by_kill":false,"recon_misses":0}}}
+// a fill and the exchange-confirmed native SL land inside one 100 ms window: one d, latest state only
+S→C {"t":"d","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","s":2,"ts":1789134000120,"e":"j","p":{"machine_kind":"order","state":"partially_filled","regions":{"lifecycle":"partially_filled","protection":"sl_present"},"tags":["protected"],"degraded":false,"machine_hash":"743dfaada4e382a4c29d40a582e454285aa3f4d5142b1ade45603086c8087255","environment":"live","updated_at_ms":1789134000101,"context_summary":{"symbol":"BTCUSDT","halted_by_kill":false,"recon_misses":0}}}
+// later the owner withdraws the manager's grant on a1…01 (after the §9.5 permission push)
+S→C {"t":"revoked","ch":"machines.order:0a000000-0000-4000-8000-000000000001.state","ts":1789134060000,"p":{"reason":"account_scope_changed","message":"Access to one or more accounts was withdrawn.","removed_accounts":["a1000000-0000-4000-8000-000000000001"],"resubscribe_allowed":false}}
+```
+
+The refused lockout and an unknown order id would get the identical `account_scope_denied` result, so the reply never says whether an entity exists (§6.4).
 
 ---
 
@@ -3449,6 +3567,160 @@ on an in-place re-auth. Internal details (listening addresses, remediation text)
 to clients; they appear in logs and `/readyz` only. This uses the existing schema; no schema
 change.
 
+### 15.10 `MachineStateUpdate`
+
+Payload of `machines.{entity}.state` (§6.4). The per-kind `context_summary` keys are the §6.4 table;
+the schema below closes `context_summary` per `machine_kind`, and its `allOf` must equal that table.
+`state`, `regions` and `tags` take the chart's own identifiers, so they are typed as identifiers
+here and checked against the charts by the contract test, never restated (C-2.19).
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cv://ws/v1/machines.schema.json",
+  "title": "machines.{entity}.state",
+  "type": "object",
+  "required": [
+    "machine_kind",
+    "state",
+    "tags",
+    "degraded",
+    "machine_hash",
+    "environment",
+    "updated_at_ms"
+  ],
+  "properties": {
+    "machine_kind": {
+      "enum": [
+        "order",
+        "trade_group",
+        "leg",
+        "oco",
+        "iceberg",
+        "twap",
+        "chase",
+        "alert",
+        "recording",
+        "replay",
+        "book",
+        "session",
+        "live_gate",
+        "kill_switch",
+        "reconciliation",
+        "risk_lockout"
+      ]
+    },
+    "state": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+    "regions": {
+      "type": "object",
+      "description": "Parallel charts only: region id -> active top-level state of that region.",
+      "minProperties": 2,
+      "maxProperties": 4,
+      "propertyNames": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+      "additionalProperties": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }
+    },
+    "degraded": {
+      "type": "boolean",
+      "description": "chain_trips latch: order-path commands are refused until acknowledged."
+    },
+    "machine_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "environment": { "$ref": "cv://ws/v1/common.schema.json#/$defs/environment" },
+    "updated_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
+    "context_summary": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "symbol": { "$ref": "cv://ws/v1/common.schema.json#/$defs/symbol" },
+        "halted_by_kill": { "type": "boolean" },
+        "recon_misses": { "type": "integer", "minimum": 0 },
+        "severity": { "enum": ["debug", "info", "warning", "error", "critical"] },
+        "delivery_attempts": { "type": "integer", "minimum": 0 },
+        "storm_count": { "type": "integer", "minimum": 0 },
+        "gap_count_24h": { "type": "integer", "minimum": 0 },
+        "resync_count": { "type": "integer", "minimum": 0 },
+        "mfa_satisfied": { "type": "boolean" },
+        "step_up_failures": { "type": "integer", "minimum": 0 },
+        "scope": { "enum": ["global", "accounts"] },
+        "cancel_working": { "type": "boolean" },
+        "flatten": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "machine_kind": { "const": "order" } } },
+      "then": {
+        "properties": {
+          "context_summary": {
+            "propertyNames": { "enum": ["symbol", "halted_by_kill", "recon_misses"] }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "machine_kind": { "const": "alert" } } },
+      "then": {
+        "properties": {
+          "context_summary": {
+            "propertyNames": { "enum": ["severity", "delivery_attempts", "storm_count"] }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "machine_kind": { "const": "recording" } } },
+      "then": {
+        "properties": {
+          "context_summary": { "propertyNames": { "enum": ["symbol", "gap_count_24h"] } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "machine_kind": { "const": "book" } } },
+      "then": {
+        "properties": {
+          "context_summary": { "propertyNames": { "enum": ["symbol", "resync_count"] } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "machine_kind": { "const": "session" } } },
+      "then": {
+        "properties": {
+          "context_summary": { "propertyNames": { "enum": ["mfa_satisfied", "step_up_failures"] } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "machine_kind": { "const": "kill_switch" } } },
+      "then": {
+        "properties": {
+          "context_summary": { "propertyNames": { "enum": ["scope", "cancel_working", "flatten"] } }
+        }
+      }
+    },
+    {
+      "if": { "required": ["context_summary"] },
+      "then": {
+        "properties": {
+          "machine_kind": {
+            "enum": ["order", "alert", "recording", "book", "session", "kill_switch"]
+          }
+        }
+      }
+    }
+  ]
+}
+```
+
 ---
 
 ## 16. Conformance, limits and test matrix
@@ -3507,6 +3779,7 @@ change.
 | Heartbeat interval / timeout   | 15 s / 45 s                                        |
 | Auth timeout                   | 10 s; 3 failed attempts                            |
 | Replay `history` caps          | bars ≤1 000, footprint ≤200, heatmap window ≤900 s |
+| Terminal machine retention     | 60 s, at most 10 000 entries (oldest first)        |
 
 ### 16.3 Performance budgets
 
@@ -3533,6 +3806,7 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Contract         | No emitted error code outside §10.2.                                                                                                                                                                  | Error catalogue closure.                                  |
 | Contract         | `error_registry_single_source`: §10.2 code column == union of `x-error-codes-ws` and `x-error-codes[surface⊃ws]` in `22-api-openapi.yaml`; `$defs.errorCode` regenerated and byte-identical.          | One canonical error registry across REST + WS; no drift.  |
 | Contract         | `ws_message_schemas`: every §13–§15 fenced schema passes JSON-Schema-2020-12 meta-validation; every `$ref` resolves inside the bundle; every §12 example frame validates against its declared schema. | Structural validity at a size manual review cannot cover. |
+| Contract         | `machines.{entity}.state` frames validate against §15.10; kinds, states and tags match the charts; `context_summary` keys stay within the kind's §6.4 list.                                           | §6.4 grammar and redaction.                               |
 | Unit             | `heatmap_bucket_selection`: the §6.1.1 formula + ladder clamp returns the documented value for every row of the reference-display table, and the server applies `500` when the option is absent.      | W3 resolution is enforced, not aspirational.              |
 | Unit             | Sequence generator never skips/reuses under concurrent topic writes.                                                                                                                                  | S3.                                                       |
 | Unit             | Coalescer produces state identical to applying every source update.                                                                                                                                   | §8.2 correctness.                                         |
@@ -3541,6 +3815,7 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Integration      | Grant revocation mid-stream → `revoked` within 1 s, other topics intact.                                                                                                                              | S7, §9.5.                                                 |
 | Integration      | Token expiry → in-place re-`auth` preserves subscriptions and sequences.                                                                                                                              | §4.1.                                                     |
 | Integration      | Replay subscribe → seek → finish emits the documented frame series.                                                                                                                                   | §11.                                                      |
+| Integration      | A burst of transitions inside one throttle window yields one `d` with the latest state; a resubscribe mid-burst gets a `snap` of the latest state.                                                    | §6.4, §8.2.                                               |
 | Chaos            | Kill the upstream public WS; assert resync, no gap delivered to client.                                                                                                                               | G3.                                                       |
 | Chaos            | Client stops reading for 60 s; assert bounded memory, degradation order, `4429`.                                                                                                                      | §8.4, G4, S6.                                             |
 | Chaos            | 5 000 msg/s burst on one symbol; assert coalescing and no sequence break.                                                                                                                             | §8.                                                       |
@@ -3552,6 +3827,9 @@ Measured at the client, on the reference workspace (4 panes: 1 m chart, 5 m foot
 | Security         | A missing, duplicated, `null` or unlisted `Origin` is refused before `accept` (`4403`, HTTP `403`) and never reaches auth; a listed `Origin` passes whatever `Sec-Fetch-Site` says.                   | §2.5, S13.                                                |
 | Security         | Manager cannot subscribe to another manager's accounts, even by raw frame.                                                                                                                            | §6.3, arch P8.                                            |
 | Security         | Fuzzed binary bodies never panic the server or the client decoder.                                                                                                                                    | C10, S12.                                                 |
+| Security         | An unknown, unpublished or foreign entity gets the identical refusal; a grant change revokes a `machines` subscription.                                                                               | §6.4 (no existence oracle), S7.                           |
+| Security         | A scoped `machines` entry without its scope is refused to every role; `sub` reads the in-memory entry synchronously; the owning module binds the scope at build and at restore.                       | §6.4 scope binding (fail closed).                         |
+| Security         | Demoting the Owner re-applies every §6.4 row: its `trade_group`, `live_gate` and `reconciliation` subscriptions are revoked with `permission_revoked`.                                                | §6.4 on a change, S7.                                     |
 
 ### 16.5 Validation tooling and the CI contract gate
 
@@ -3584,3 +3862,7 @@ Both this document and `22-api-openapi.yaml` are too large for manual review to 
 | ~~W3~~ | **CLOSED.** `heatmap.time_bucket_ms` is no longer a placeholder constant: §6.1.1 makes it a normative _derived_ value (device-pixel-per-column formula + ladder clamp + `500` server fallback), with bandwidth and snapshot-cap consequences specified. Design retains only the visual legibility band (2–8 device px), tracked as **DES-HEATMAP-01**, and cannot change it without editing §6.1.1.                               | Protocol + Chart Engine (resolved) | Resolved in this document. |
 | W4     | Whether session resumption (§9.3) is worth adding in v2 once real reconnect frequency over Tailscale is known.                                                                                                                                                                                                                                                                                                                    | Architect                          | Post-R2 review.            |
 | W5     | Exact per-topic coalescing thresholds under `saturated` class — currently fixed multipliers, may become adaptive per topic cost.                                                                                                                                                                                                                                                                                                  | Backend                            | Load test in Sprint 05.    |
+| W6     | `machines.{entity}.state` B2 `trade_group` for Manager and Viewer: a group spans accounts. Is it visible when any leg's account is granted, or only when all are? The group must not reveal legs on accounts the caller cannot see. Refused until decided (§6.4).                                                                                                                                                                 | Owner + Security                   | Before E34 consumes it.    |
+| W7     | `machines.{entity}.state` B17 `live_gate` for Manager and Viewer: no REST read rule exists, and the gate reaches clients only as the `system` feature flag. Refused until decided (§6.4).                                                                                                                                                                                                                                         | Owner                              | Before E44 consumes it.    |
+| W8     | `machines.{entity}.state` B19 `reconciliation` for Manager and Viewer: no REST read rule exists. Refused until decided (§6.4).                                                                                                                                                                                                                                                                                                    | Owner + Security                   | Before E45 consumes it.    |
+| W9     | Public ids for `machines.{entity}.state`: B8 `position_protection` (per position, or per account and symbol, given hedge mode), B9 `rule_instance` (rule × scope; `scope_instance` contains `@`), B13 `ws_conn` (an internal connection key) and B15 `paper_account` (identity and owner). Not exposed until decided (§6.4).                                                                                                      | Architect                          | On first consumer need.    |

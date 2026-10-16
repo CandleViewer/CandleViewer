@@ -4121,18 +4121,21 @@ CREATE TABLE machine_events (              -- append-only; CvAuditPlugin; order_
 
 A context carrying `_fault` is never written to `machine_snapshots`. Instead a quarantine row goes to `machine_events` with `fault` set, and P1 pages (MUST-01). The order family writes `machine_events` **write-ahead**. The other families write it write-behind.
 
-**WS projection, topic `machines.{entity}.state`** (owned here; framed per `23-ws-protocol.md`). It is published by the machine **on state entry** and is never produced by querying an interpreter (MUSTNOT-03):
+**WS projection, topic `machines.{entity}.state`** (owned here; framed per `23-ws-protocol.md` §6.4 and §15.10, which own the entity grammar, the per-entity RBAC and the `context_summary` redaction). It is published by the machine **on state entry** and is never produced by querying an interpreter (MUSTNOT-03):
 
-| Field            | Type        | Notes                                                          |
-| ---------------- | ----------- | -------------------------------------------------------------- |
-| `machine_kind`   | string enum | catalogue `id`                                                 |
-| `entity_id`      | uuid        | RBAC-scoped per entity                                         |
-| `state_ids`      | string[]    | active leaf configuration                                      |
-| `tags`           | string[]    | e.g. `protected`, `naked`, `trading_blocked`, `critical`       |
-| `published_enum` | string      | the plain enum the owning section exposes (e.g. `OrderStatus`) |
-| `degraded`       | bool        | `chain_trips > 0` latch                                        |
-| `machine_hash`   | string      | lets clients and the admin inspector match the Stately JSON    |
-| `seq`            | int         | monotonic per entity; snapshot + delta semantics               |
+| Field             | Type        | Notes                                                                                                                                |
+| ----------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `machine_kind`    | string enum | catalogue `id`                                                                                                                       |
+| `state`           | string      | the active direct child of the chart root (of the first region for a parallel chart); chart-owned ids, not the owning section's enum |
+| `regions`         | object      | parallel charts only: region → its active state                                                                                      |
+| `tags`            | string[]    | chart tags of the active states, e.g. `protected`, `naked`, `trading_blocked`, `critical`                                            |
+| `degraded`        | bool        | `chain_trips > 0` latch                                                                                                              |
+| `machine_hash`    | string      | lets clients and the admin inspector match the Stately JSON                                                                          |
+| `environment`     | string enum | the machine's environment                                                                                                            |
+| `updated_at_ms`   | int         | time of the reported change                                                                                                          |
+| `context_summary` | object      | optional; the closed per-kind allow-list of 23 §6.4                                                                                  |
+
+_Revised 2026-10-14 (E17-T08 contract)._ The topic `ch` names the entity, so `entity_id` is not repeated. Sequencing is the envelope `s` shared by every topic (23 §3.3), so there is no per-entity `seq`. `state` and `regions` replace `state_ids` and `published_enum`: no document maps chart states to the owning sections' enums (`28` §22 records gaps for B1, B10, B11, B19 and B20), and those enums already travel on their own topics (`orders`, `trade_groups`, `rules`, `recorder`, `system`).
 
 **Versioning.** `machine_hash` is fixed per chart. Changing a chart without a version bump and a registered upcaster with a golden-snapshot test fails CI (MUST-12). A no-op upcaster is forbidden (MUSTNOT-09). The library version is pinned exactly: a snapshot whose `lib_snapshot_ver` is below 3 is refused at restore.
 

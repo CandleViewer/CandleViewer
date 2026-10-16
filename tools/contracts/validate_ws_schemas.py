@@ -69,6 +69,7 @@ CHANNEL_SCHEMA = {
     "alerts": "alerts",
     "recorder": "recorder",
     "system": "system",
+    "machines": "machines",
 }
 SECTION12 = re.compile(r"^## 12\..*?(?=^## 13\.)", re.MULTILINE | re.DOTALL)
 JSONC = re.compile(r"^```jsonc[ \t]*\r?\n(.*?)\r?\n```[ \t]*$", re.MULTILINE | re.DOTALL)

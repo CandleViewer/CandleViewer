@@ -38,8 +38,7 @@ def _doc(*blocks: str) -> str:
 def test_extract_bundle_has_one_entry_per_fence() -> None:
     bundle = ext.build_bundle(MD_TEXT)
     section = ext.schema_section(MD_TEXT)
-    # #2438 (E17-T08) adds one more fence; whichever of #2569/#2438 merges second bumps this to 36.
-    assert bundle["schemaCount"] == len(ext.FENCE.findall(section)) == 35
+    assert bundle["schemaCount"] == len(ext.FENCE.findall(section)) == 36
     assert list(bundle["schemas"]) == sorted(bundle["schemas"])
 
 
@@ -155,6 +154,8 @@ def test_payload_schema_id_routing() -> None:
     assert val.payload_schema_id({"t": "ping"}).endswith("heartbeat.schema.json")  # type: ignore[union-attr]
     assert val.payload_schema_id({"t": "d", "ch": "book.BTCUSDT.50", "e": "b"}) is None
     assert val.payload_schema_id({"t": "d", "ch": "orders"}).endswith("orders.schema.json")  # type: ignore[union-attr]
+    machines = val.payload_schema_id({"t": "snap", "ch": "machines.kill_switch.state"})
+    assert machines is not None and machines.endswith("machines.schema.json")
     assert val.payload_schema_id({"t": "err"}) is None
 
 

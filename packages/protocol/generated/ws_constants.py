@@ -56,6 +56,7 @@ TOPIC_PATTERNS: tuple[str, ...] = (
     "alerts",
     "recorder",
     "system",
+    "machines.{entity}.state",
 )
 
 TOPIC_FAMILIES: tuple[str, ...] = (
@@ -66,6 +67,7 @@ TOPIC_FAMILIES: tuple[str, ...] = (
     "footprint",
     "heatmap",
     "liquidations",
+    "machines",
     "metrics",
     "orders",
     "positions",

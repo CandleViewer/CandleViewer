@@ -697,6 +697,63 @@ export interface LiquidationsSymbolLiquidations {
   note?: string;
 }
 
+// Source: cv://ws/v1/machines.schema.json
+export type MachinesEntityState = {
+  machine_kind:
+    | "order"
+    | "trade_group"
+    | "leg"
+    | "oco"
+    | "iceberg"
+    | "twap"
+    | "chase"
+    | "alert"
+    | "recording"
+    | "replay"
+    | "book"
+    | "session"
+    | "live_gate"
+    | "kill_switch"
+    | "reconciliation"
+    | "risk_lockout";
+  state: string;
+  /**
+   * Parallel charts only: region id -> active top-level state of that region.
+   */
+  regions?: {
+    [k: string]: string;
+  };
+  /**
+   * @maxItems 32
+   */
+  tags: string[];
+  /**
+   * chain_trips latch: order-path commands are refused until acknowledged.
+   */
+  degraded: boolean;
+  machine_hash: string;
+  environment: "live" | "demo" | "testnet";
+  /**
+   * Epoch milliseconds, UTC.
+   */
+  updated_at_ms: number;
+  context_summary?: {
+    symbol?: string;
+    halted_by_kill?: boolean;
+    recon_misses?: number;
+    severity?: "debug" | "info" | "warning" | "error" | "critical";
+    delivery_attempts?: number;
+    storm_count?: number;
+    gap_count_24h?: number;
+    resync_count?: number;
+    mfa_satisfied?: boolean;
+    step_up_failures?: number;
+    scope?: "global" | "accounts";
+    cancel_working?: boolean;
+    flatten?: boolean;
+  };
+};
+
 // Source: cv://ws/v1/metrics.schema.json
 export interface MetricsSymbol {
   symbol: string;
@@ -1639,4 +1696,5 @@ export type WsTopicPayloadMap = {
   alerts: Alerts;
   recorder: Recorder;
   system: System;
+  "machines.{entity}.state": MachinesEntityState;
 };
