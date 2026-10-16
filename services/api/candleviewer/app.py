@@ -76,6 +76,7 @@ from candleviewer.api.market_bars import make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
 from candleviewer.api.onboarding import make_onboarding_router
 from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restriction
+from candleviewer.api.openapi_publish import install_contract_openapi
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
@@ -1452,6 +1453,8 @@ def create_app(
     app.add_middleware(CorrelationMiddleware)
     # E09-T03 / #1648: a served route without an RBAC declaration fails the build.
     assert_app_routes_declared(app, spec)
+    # #2551: /openapi.json publishes the contract's operations for the raw-body routers.
+    install_contract_openapi(app, spec)
     return app
 
 
