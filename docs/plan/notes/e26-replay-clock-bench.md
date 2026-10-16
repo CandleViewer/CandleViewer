@@ -38,7 +38,11 @@ Once the first event is read, the clock keeps 100x through the densest recorded 
 this load. The worst of five runs reached 0.9994 of the requested speed, and no run fell past
 `max_lag_s` or dropped or reordered an event. The wall time is longer than the 0.6 s schedule by
 the cold first read: the source fills its read-ahead before it hands over the first batch. That is
-E26-T02's producer (#2368), which blocks the loop for about 0.2 s to 0.3 s at start.
+E26-T02's producer (#2368). On this in-memory tier it blocks the loop for about 0.2 s to 0.3 s at
+start, which breaks C-2.17's 50 ms cap; that is bug #2731. The real hot and cold tiers await I/O
+between batches, so their stall may be shorter; #2731 asks for both to be measured.
+
+Caveat: ~100 ms mid-run stalls seen in review runs are cyclic GC over the bench's heap (#2731).
 
 An earlier run on the same laptop, before this round's fixes, recorded 0.999 at 100x and 512 k/s
 unbounded. Its load was not recorded, so it is not comparable, and it is not claimed as an

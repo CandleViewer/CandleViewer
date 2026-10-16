@@ -149,7 +149,8 @@ async def test_a_destroy_cancelled_again_still_closes_the_source_exactly_once() 
     assert (stream.closes, obs.stops) == (1, [])
 
 
-async def test_a_pause_during_a_parked_source_read_is_not_lost() -> None:
+@pytest.mark.parametrize("late_s", [0.0, 2.0])  # 2.0: the parked read returns a due event
+async def test_a_pause_during_a_parked_source_read_is_not_lost(late_s: float) -> None:
     """Regression R1: pause() arrives while the source read is parked. Once the read returns,
     the clock stops at once, with no fake time passing (before the fix it waited for the next
     event's deadline)."""
@@ -168,10 +169,11 @@ async def test_a_pause_during_a_parked_source_read_is_not_lost() -> None:
         await settle()
         pausing = asyncio.ensure_future(clock.pause())
         await settle()
+        r.time.advance(late_s)
         gate.set()
         await settle()
         assert pausing.done() and task.result() == "paused"
-    assert (r.time.now(), len(r.sink.events)) == (start, 1)
+    assert (r.time.now(), len(r.sink.events)) == (start + late_s, 1)
 
 
 async def test_destroying_a_playing_session_keeps_the_cursor_it_reached() -> None:
@@ -240,10 +242,13 @@ async def test_catching_up_yields_to_the_event_loop_every_time_slice() -> None:
 
 
 async def test_control_calls_the_clock_state_refuses() -> None:
+    with pytest.raises(ValueError, match="end after it starts"):
+        rig([], end_s=0)
     r = rig(every_second(3), end_s=3, time=FakeTime(auto=False))
     with pytest.raises(ReplayClockStateError, match="not open"):
         r.clock.play()
     async with r.clock as clock:
+        await clock.pause()  # nothing plays: a silent no-op, which B12's stop_clock relies on
         clock.play()
         with pytest.raises(ReplayClockStateError, match="already running"):
             clock.play()
@@ -293,6 +298,7 @@ async def test_the_schedule_starts_after_a_slow_first_read() -> None:
     async with r.clock as clock:
         await clock.play()
     assert [round(b - a, 6) for a, b in itertools.pairwise(r.sink.at)] == [0.1] * 4
+    assert (r.clock.stats().backpressure_s, r.obs.edges) == (0.0, [])  # primed, not booked
 
 
 async def test_speed_change_takes_effect_from_the_current_position() -> None:
@@ -415,6 +421,7 @@ async def test_speed_resends_never_forgive_lateness_or_hide_backpressure(
     per event. The same speed is a no-op, and a real change re-anchors from the schedule's own
     position, so the lateness builds up and is booked. Before the fix every re-send forgave it."""
     time, speeds = FakeTime(), itertools.cycle(resent)
+    ratios: list[float | None] = []
 
     class ResendingSink(RecordingSink):
         clock: ReplayClock | None = None
@@ -422,6 +429,7 @@ async def test_speed_resends_never_forgive_lateness_or_hide_backpressure(
         async def deliver(self, event: RecordedEvent) -> None:
             await super().deliver(event)
             if self.clock is not None:
+                ratios.append(self.clock.stats().achieved_ratio)
                 self.clock.set_speed(next(speeds))
 
     sink = ResendingSink(time, cost_s=0.15)
@@ -431,6 +439,8 @@ async def test_speed_resends_never_forgive_lateness_or_hide_backpressure(
     async with r.clock as clock:
         assert await clock.play() == "range_end"
     assert r.clock.stats().backpressure_s > 0 and r.obs.edges[:1] == [True]
+    if resent == (1.0,):  # a no-op leaves the rate window alone: the achieved rate is reported
+        assert any(ratio is not None for ratio in ratios)
 
 
 async def test_an_event_exactly_at_the_range_end_is_not_delivered() -> None:
@@ -456,6 +466,9 @@ async def test_step_ms_delivers_its_window_and_lands_the_cursor_at_the_end() -> 
     async with r.clock as clock:
         assert await clock.step_ms(1_500) == "step"
         assert (len(r.sink.events), clock.now_us()) == (2, T0 + 1_500_000)
+        clock.set_speed(10.0)  # not playing: only recorded, nothing is scheduled
+        r.time.advance(1.0)
+        assert (clock.now_us(), clock.stats().speed) == (T0 + 1_500_000, 10.0)
         assert await clock.step_ms(60_000) == "range_end"
         assert (len(r.sink.events), clock.now_us()) == (10, T0 + 10 * SECOND)
 
@@ -667,8 +680,11 @@ async def test_a_reposition_closes_the_old_source_even_if_its_caller_is_cancelle
         await settle()
         moving.cancel()
         await settle()
-        gate.set()
+        destroying = asyncio.ensure_future(clock.aclose())  # the session is destroyed meanwhile
         await settle()
+        assert not destroying.done()  # fix round 2: a destroy waits for that close too
+        gate.set()
+        await destroying
         assert moving.cancelled() and old.closes == 1
 
 
@@ -676,22 +692,41 @@ def _sample(name: str) -> float:
     return REGISTRY.get_sample_value(name) or 0.0
 
 
+class SpeedSink(RecordingSink):
+    """Changes the speed in its `nth` delivery, `lag_s` of fake time in (the UI, mid-delivery)."""
+
+    def __init__(self, time: FakeTime, *, nth: int, speed: float, lag_s: float = 0.0) -> None:
+        super().__init__(time)
+        self.nth, self.speed, self.lag_s = nth, speed, lag_s
+        self.clock: ReplayClock | None = None
+
+    async def deliver(self, event: RecordedEvent) -> None:
+        await super().deliver(event)
+        if len(self.events) == self.nth and self.clock is not None:
+            self.time.advance(self.lag_s)
+            self.clock.set_speed(self.speed)
+
+
 async def test_playback_exports_throughput_lag_backpressure_and_the_achieved_ratio() -> None:
+    """The 500th delivery switches to unbounded, which takes the clock out of the ratio gauge
+    (fix round 2, #2724 NIT 3: it kept reporting its last paced ratio)."""
     names = ("replay_events_emitted_total", "replay_backpressure_seconds_total")
     before = {n: _sample(n) for n in (*names, "replay_clock_lag_ms_count")}
     items = [trade(i * 100_000, trade_id=f"t{i:04}") for i in range(600)]
-    r = rig(items, end_s=60, speed=10.0)
-    r.sink.cost_s, gauges = 0.02, []
+    sink = SpeedSink(FakeTime(), nth=500, speed=UNBOUNDED)
+    r = rig(items, end_s=60, speed=10.0, time=sink.time, sink=sink)
+    sink.clock, sink.cost_s, gauges = r.clock, 0.02, []
     async with r.clock as clock:
         task = clock.play()
         while not task.done():
             await asyncio.sleep(0)
-            gauges.append(_sample("replay_achieved_speed_ratio"))
+            gauges.append((len(sink.events) > 500, _sample("replay_achieved_speed_ratio")))
     after = {n: _sample(n) - before[n] for n in before}
     assert after["replay_events_emitted_total"] == 600
     assert after["replay_backpressure_seconds_total"] > 0
     assert after["replay_clock_lag_ms_count"] > 0
-    assert min(gauges) < 0.6
+    assert min(ratio for unbounded, ratio in gauges if not unbounded) < 0.6
+    assert {ratio for unbounded, ratio in gauges if unbounded} == {1.0}
     assert _sample("replay_achieved_speed_ratio") == 1.0  # nothing plays any more
 
 
@@ -713,19 +748,92 @@ async def test_playback_feeds_the_bar_probe_so_step_bar_closes_the_bar_play_left
 async def test_switching_from_unbounded_back_to_paced_paces_from_the_event_in_flight() -> None:
     """The fifth delivery switches unbounded playback back to 1x: the rest is paced again, one
     second apart, from the event in flight (not one event late, from the last completed one)."""
-
-    class SwitchingSink(RecordingSink):
-        clock: ReplayClock | None = None
-
-        async def deliver(self, event: RecordedEvent) -> None:
-            await super().deliver(event)
-            if len(self.events) == 5 and self.clock is not None:
-                self.clock.set_speed(1.0)
-
     time = FakeTime()
-    sink = SwitchingSink(time)
+    sink = SpeedSink(time, nth=5, speed=1.0)
     r = rig(every_second(20), end_s=20, speed=UNBOUNDED, time=time, sink=sink)
     sink.clock = r.clock
     async with r.clock as clock:
         assert await clock.play() == "range_end"
     assert [round(b - a, 6) for a, b in itertools.pairwise(r.sink.at)] == [0.0] * 4 + [1.0] * 15
+
+
+@pytest.mark.parametrize(
+    ("to", "lag_s", "booked", "edges"),
+    [
+        (1.0, 0.25, 0.0, []),  # carried, then caught up: under max_lag_s nothing is lost
+        (1.0, 0.6, 0.5, [True, False]),  # carried, then booked past max_lag_s, less 0.1 s
+        (UNBOUNDED, 0.25, 0.25, []),  # leaving the schedule books it as lost time
+        (STEP, 0.25, 0.25, []),
+    ],
+)
+async def test_a_speed_change_while_behind_carries_the_lag_and_never_rescales_it(
+    to: float, lag_s: float, booked: float, edges: list[bool]
+) -> None:
+    """Fix round 2 (#2723 F1): 10x to 1x while 0.25 s behind re-scaled the lag to the new speed
+    and booked 2.40 s (5.90 s for 0.6 s). A paced change now takes effect from the pending
+    event's due time, so the lag carries over as it is."""
+    time = FakeTime()
+    sink = SpeedSink(time, nth=5, speed=to, lag_s=lag_s)
+    items = [trade(i * 100_000, trade_id=f"t{i}") for i in range(10)]
+    r = rig(items, end_s=1, speed=10.0, time=time, sink=sink)
+    sink.clock = r.clock
+    async with r.clock as clock:
+        await clock.play()
+    assert (r.clock.stats().backpressure_s, r.obs.edges) == (pytest.approx(booked, abs=1e-5), edges)
+
+
+@pytest.mark.parametrize(("speed", "to"), [(1.0, 10.0), (UNBOUNDED, 10.0), (1.0, STEP)])
+async def test_a_speed_change_before_playback_anchors_never_moves_now_back(
+    speed: float, to: float
+) -> None:
+    """Fix round 2 (INV-B12-b): set_speed between play() and its first step, with an event
+    pending, re-anchored at that event; play then anchored at the cursor, so now_us() went back
+    (1.0 s, then 0.5 s). Until play anchors, a change is only recorded; STEP pauses it."""
+    r = rig(every_second(5), end_s=5, speed=speed, time=FakeTime(auto=False))
+    async with r.clock as clock:
+        await clock.step_ms(500)
+        task = clock.play()
+        clock.set_speed(to)
+        before = clock.now_us()
+        await asyncio.sleep(0)
+        assert clock.now_us() >= before == T0 + 500_000
+        if to == STEP:
+            assert (task.result(), len(r.sink.events)) == ("paused", 1)
+
+
+async def test_any_source_exception_is_a_source_failure_until_a_reposition() -> None:
+    """Fix round 2 (#2721 F1): `ReplaySource` hands over any exception, then ends. A
+    RuntimeError read as a sink failure, so the next play() reported a false range_end."""
+    boom = RuntimeError("an unwrapped tier failure")
+    stream = ListStream(every_second(5), fail_at=3, error=boom)
+    r = rig([], end_s=5, speed=UNBOUNDED, stream=stream)
+    async with r.clock as clock:
+        assert await clock.play() == "error"
+        with pytest.raises(ReplayClockStateError, match="source failed"):
+            clock.play()
+        with pytest.raises(ReplayClockStateError, match="source failed"):
+            await clock.step_events()
+        await clock.reposition(ListStream(every_second(5)[3:]), at_us=T0 + 3 * SECOND)
+        assert await clock.play() == "range_end"
+    assert r.sink.events == every_second(5)
+    assert r.obs.stops == [("error", boom), ("range_end", None)]
+
+
+async def test_a_step_the_sink_failed_on_leaves_its_event_for_the_next_step() -> None:
+    """The failed-event contract on the step path (a mutant clearing the event before the sink
+    survived): the step raises, and the next step delivers that event first, once, in order."""
+    failures = [RuntimeError("consumer down")]
+
+    class FlakySink(RecordingSink):
+        async def deliver(self, event: RecordedEvent) -> None:
+            if len(self.events) == 2 and failures:  # the third event fails, once
+                raise failures.pop()
+            await super().deliver(event)
+
+    time = FakeTime()
+    r = rig(every_second(5), end_s=5, speed=STEP, time=time, sink=FlakySink(time))
+    async with r.clock as clock:
+        with pytest.raises(RuntimeError, match="consumer down"):
+            await clock.step_events(5)
+        assert await clock.step_events(5) == "range_end"
+    assert r.sink.events == every_second(5)

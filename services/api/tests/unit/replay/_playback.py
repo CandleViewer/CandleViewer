@@ -5,17 +5,18 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable
 
-from candleviewer.replay import ReplayError, ReplayGap, ReplayItem, StopReason
+from candleviewer.replay import ReplayGap, ReplayItem, StopReason
 from candleviewer.storage.repositories.recorded import RecordedEvent
 from tests.unit.replay._time import FakeTime
 
 
 class ListStream:
     """`ReplayStream` over `items`; `closes` counts `aclose` calls. `fail_at` raises `error` in
-    place of that item, as a storage failure mid-replay would."""
+    place of that item, as a failure mid-replay would, and then the stream ends, as a
+    `ReplaySource` does."""
 
     def __init__(
-        self, items: Iterable[ReplayItem], *, fail_at: int = -1, error: ReplayError | None = None
+        self, items: Iterable[ReplayItem], *, fail_at: int = -1, error: Exception | None = None
     ) -> None:
         self._items, self._next, self._fail_at, self._error = list(items), 0, fail_at, error
         self.closes = 0
@@ -24,6 +25,7 @@ class ListStream:
         if self.closes or self._next >= len(self._items):
             raise StopAsyncIteration
         if self._next == self._fail_at and self._error is not None:
+            self._next = len(self._items)
             raise self._error
         self._next += 1
         return self._items[self._next - 1]
