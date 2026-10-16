@@ -28,6 +28,7 @@ import candleviewer.app as appmod
 from candleviewer.auth.csrf import CSRF_COOKIE
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
+from candleviewer.auth.recovery_codes import normalize_recovery_code
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
@@ -303,11 +304,18 @@ def test_login_mfa_refresh_stepup_never_log_a_credential(
         mfa_token3 = r.json()["mfa_token"]
         literals["mfa_token_3"] = mfa_token3
         literals["recovery_code"] = recovery_codes[0]
+        literals["recovery_code_normalised"] = normalize_recovery_code(recovery_codes[0])
         r = client.post(
             "/auth/mfa/recovery",
             json={"mfa_token": mfa_token3, "recovery_code": recovery_codes[0]},
         )
         assert r.status_code == 200, r.text
+        # #2344: the recovery mints an enrolment-only session; its credentials are secrets too
+        refresh5 = r.cookies.get("cv_refresh")
+        assert refresh5
+        literals["access_token_5"] = r.json()["tokens"]["access_token"]
+        literals["refresh_cookie_5"] = refresh5
+        literals["csrf_token_5"] = _csrf(r)
         # wrong password / wrong code failure paths
         client.post("/auth/login", json={"identifier": "basiltt", "password": "pw-bad-7"})
         literals["bad_login_password"] = "pw-bad-7"  # noqa: S105
