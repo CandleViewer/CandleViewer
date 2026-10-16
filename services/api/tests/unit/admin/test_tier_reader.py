@@ -108,6 +108,17 @@ def test_only_the_real_backend_has_a_settings_store(monkeypatch: pytest.MonkeyPa
     )
 
 
+def test_the_admin_area_builds_one_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    made: list[str] = []
+    monkeypatch.setattr(
+        wiring, "SqlAlchemyRelationalRepository", lambda _d, name: made.append(name)
+    )
+    monkeypatch.setattr(wiring, "SqlAlchemyAdminCounts", lambda _rel, *, env: made.append("counts"))
+    settings = Settings(storage_backend="real")
+    wiring.build_admin_read_models(settings, system_settings=wiring.build_system_settings(settings))
+    assert made == ["admin", "counts"]  # the settings store's repository, once; the counts ride it
+
+
 async def test_the_read_models_get_the_tier_only_when_a_store_is_passed() -> None:
     fake = Settings(storage_backend="fake")
     _, wired = wiring.build_admin_read_models(

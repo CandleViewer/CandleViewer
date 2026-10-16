@@ -73,7 +73,8 @@ class SettingsTierReader:
 
 
 def build_system_settings(settings: Settings) -> SystemSettings | None:
-    """The `settings` store on the real backend; `None` on the fake one (nothing to read)."""
+    """The `settings` store on the real backend; `None` on the fake one (nothing to read). Its
+    repository is the admin area's one engine: the counts share it (`build_admin_read_models`)."""
     if settings.storage_backend != "real":
         return None
     relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
@@ -88,7 +89,13 @@ def build_admin_read_models(
 ) -> tuple[AdminOverviewService, AdminCapacityService]:
     counts = None
     if settings.storage_backend == "real":
-        relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
+        # The counts ride the settings store's repository: one lazy engine for the admin area, not
+        # two. Like every repository `create_app` builds it is never disposed at shutdown (#2526).
+        relational = (
+            system_settings.relational
+            if isinstance(system_settings, SqlAlchemySystemSettings)
+            else SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
+        )
         counts = AdminCountsAdapter(
             SqlAlchemyAdminCounts(relational, env=settings.environment.value)
         )

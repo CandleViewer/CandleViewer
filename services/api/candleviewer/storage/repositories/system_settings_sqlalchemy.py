@@ -129,6 +129,11 @@ class SqlAlchemySystemSettings:
     ) -> None:
         self._relational, self._audit_timeout_s = relational, audit_timeout_s
 
+    @property
+    def relational(self) -> SqlAlchemyRelationalRepository:
+        """The repository the store works through, so the composition root can share its engine."""
+        return self._relational
+
     async def get_string(self, key: str) -> StoredSetting | None:
         with _outage():
             async with self._relational.unit_of_work() as uow:  # read-only: no commit
