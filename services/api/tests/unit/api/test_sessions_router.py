@@ -163,9 +163,7 @@ async def test_refresh_reuse_is_401_with_critical_audit(env: _Env) -> None:
     assert ev["outcome"] == AuditOutcome.DENIED
 
 
-async def test_refresh_of_a_user_who_is_not_active_is_401_audited_and_rotates_nothing(
-    env: _Env,
-) -> None:
+async def test_refresh_of_a_disabled_user_is_401_audited_and_rotates_nothing(env: _Env) -> None:
     """#2911: refused before the claim (nothing rotated or minted); the refusal is audited
     after the write-ahead intent, like the concurrent-reuse outcome."""
     user = uuid.uuid4()
@@ -181,7 +179,7 @@ async def test_refresh_of_a_user_who_is_not_active_is_401_audited_and_rotates_no
         ("auth.session_refreshed", AuditOutcome.DENIED),
     ]
     refused = env.audit.writer.events[-1]
-    assert (refused["reason"], refused["severity"]) == ("user_not_active", Severity.WARNING)
+    assert (refused["reason"], refused["severity"]) == ("user_disabled", Severity.WARNING)
     assert refused["session_id"] == m.session_id
     assert list(env.repo.sessions) == [str(m.session_id)]
     assert env.repo.sessions[str(m.session_id)].revoked_at is None

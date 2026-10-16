@@ -2,9 +2,10 @@
 
 A refresh parked between its claim and its mint across a disable mints no live session; a mint
 queues behind a disable's lock on the user row and is then refused; a disabled user's live session
-that no disable revoked is refused at refresh, before the claim, and revoked on its next use. The
-disable is the E42-T04 store's order: lock the user row (`LOCK_USER`), set `disabled`, revoke the
-live sessions, commit. Not run locally (no docker); exercised by CI `integration`.
+that no disable revoked is refused at refresh, before the claim, and revoked on its next use. A
+`locked` or `invited` user still mints and rotates, and the reads that carry the status populate
+it. The disable is the E42-T04 store's order: lock the user row (`LOCK_USER`), set `disabled`,
+revoke the live sessions, commit. Not run locally (no docker); exercised by CI `integration`.
 """
 
 from __future__ import annotations
@@ -25,9 +26,9 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
-from candleviewer.auth.errors import SessionRevoked, UserNotActive
+from candleviewer.auth.errors import SessionRevoked, UserDisabled
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.session_service import SessionService
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import LOCK_USER
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -47,6 +48,9 @@ _USER = sa.text(
     "(CAST(:id AS uuid), :email, :name, '$argon2id$fixture', 'active')"
 )
 _SET_DISABLED = sa.text("UPDATE users SET status = 'disabled' WHERE id = CAST(:id AS uuid)")
+_SET_STATUS = sa.text(
+    "UPDATE users SET status = CAST(:status AS user_status) WHERE id = CAST(:id AS uuid)"
+)
 _REVOKE_LIVE = sa.text(
     "UPDATE sessions SET revoked_at = now(), revoked_reason = 'user_disabled' "
     "WHERE user_id = CAST(:id AS uuid) AND revoked_at IS NULL"
@@ -149,7 +153,7 @@ async def test_refresh_parked_across_a_disable_mints_no_live_session(pg_dsn: str
         assert await service.revoke_all(uid, reason="user_disabled") == ()  # the S4b sweep
         repo.release.set()
 
-        with pytest.raises(UserNotActive):
+        with pytest.raises(UserDisabled):
             await asyncio.wait_for(refresh, _WAIT_S)
         assert await _live(engine, uid) == 0
 
@@ -164,7 +168,7 @@ async def test_disable_and_mint_serialise(pg_dsn: str) -> None:
                 await _disable(conn, uid)
                 mint = asyncio.create_task(service.mint(uid))
                 await _until_blocked(probe, 1)
-            with pytest.raises(UserNotActive):
+            with pytest.raises(UserDisabled):
                 await asyncio.wait_for(mint, _WAIT_S)
         assert await _live(engine, uid) == 0
 
@@ -180,7 +184,7 @@ async def test_a_disabled_users_live_session_is_refused_at_refresh_and_revoked_o
         async with engine.begin() as conn:
             await conn.execute(_SET_DISABLED, {"id": uid})
 
-        with pytest.raises(UserNotActive):
+        with pytest.raises(UserDisabled):
             await service.refresh(rotated.refresh_token)
         assert await _live(engine, uid) == 1  # refused before the claim: nothing changed
         with pytest.raises(SessionRevoked) as refused:
@@ -204,4 +208,37 @@ async def test_the_mint_holds_the_user_row_until_its_insert_commits(pg_dsn: str)
                 assert getattr(refused.value.orig, "sqlstate", None) == "55P03"
                 await disable.rollback()
             await asyncio.wait_for(mint, _WAIT_S)
+        assert await _live(engine, uid) == 1
+
+
+@pytest.mark.parametrize("status", ["locked", "invited"])
+async def test_a_locked_or_invited_user_still_mints_and_rotates(pg_dsn: str, status: str) -> None:
+    """#2911 refuses `disabled` (or a gone user) only, as login does: the status read under the
+    user-row lock lets `locked` and `invited` through, and their sessions stay usable."""
+    async with _env(pg_dsn) as (engine, _repo, service):
+        uid = await _user(engine)
+        async with engine.begin() as conn:
+            await conn.execute(_SET_STATUS, {"id": uid, "status": status})
+
+        rotated = (await service.refresh((await service.mint(uid)).refresh_token)).minted
+
+        assert (await service.require_active(str(rotated.session_id))).id == rotated.session_id
+        assert await _live(engine, uid) == 1
+
+
+async def test_the_reads_that_carry_the_status_populate_it_for_an_active_user(
+    pg_dsn: str,
+) -> None:
+    """Repository contract: `require_active` revokes a session whose `user_status` reads `None`
+    (fail closed), so `find_by_id` and `find_by_refresh_hash` must populate it on Postgres."""
+    async with _env(pg_dsn) as (engine, repo, service):
+        uid = await _user(engine)
+        minted = await service.mint(uid)
+
+        by_id = await repo.find_by_id(str(minted.session_id))
+        by_hash = await service.peek_refresh(minted.refresh_token)  # find_by_refresh_hash
+
+        assert by_id is not None and by_hash is not None
+        assert by_id.user_status is UserStatus.ACTIVE and by_hash.user_status is UserStatus.ACTIVE
+        assert (await service.require_active(str(minted.session_id))).id == minted.session_id
         assert await _live(engine, uid) == 1

@@ -1,9 +1,13 @@
-"""#2911: a session is minted or rotated only for an `active` user, and a disabled user's live
-session is refused and revoked on its next use (SR-029, E42-T04's in-flight refresh window).
+"""#2911: no session is minted or rotated for a disabled (or deleted) user, and a disabled user's
+live session is refused and revoked on its next use (SR-029, E42-T04's in-flight refresh window).
+`locked` and `invited` users are not refused: login refuses `disabled` only, and the issue keeps
+the other two as they are.
 
 On the fakes: `FakeSessionRepository.user_statuses` plays `users.status`, read with the session
 row and checked in the same step as the insert, like the real repository under the user-row
-lock. The Postgres side is `tests/integration/auth/test_disabled_user_sessions_pg.py`.
+lock. The Postgres side is `tests/integration/auth/test_disabled_user_sessions_pg.py`; REST 401
+is `tests/unit/api/test_sessions_router.py`, the socket's `bye user_disabled` + 4403 the SR-029
+drill (`tests/security/auth/test_disable_user_drill.py`).
 """
 
 from __future__ import annotations
@@ -14,8 +18,9 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+from prometheus_client import REGISTRY
 
-from candleviewer.auth.errors import SessionRevoked, UserNotActive
+from candleviewer.auth.errors import SessionRevoked, UserDisabled
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.session_service import SessionService
@@ -24,7 +29,10 @@ from .session_fakes import FakeSessionRepository
 
 _NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 _WAIT_S = 5.0  # bounds every wait on the parked refresh: a regression fails instead of hanging
-_NOT_ACTIVE = [UserStatus.DISABLED, UserStatus.LOCKED, UserStatus.INVITED, None]
+#: Refused: `disabled`, or the user row gone (absent or soft-deleted).
+_REFUSED = [pytest.param(UserStatus.DISABLED, id="disabled"), pytest.param(None, id="gone")]
+#: Not refused: `active`, and `locked` / `invited` as #2911 keeps them.
+_KEPT = [UserStatus.ACTIVE, UserStatus.LOCKED, UserStatus.INVITED]
 
 
 def _service(
@@ -37,6 +45,10 @@ def _service(
     return SessionService(
         repo, Hasher(pepper=os.urandom(16).hex()), clock=lambda: _NOW, publish_revocation=publish
     )
+
+
+def _sample(name: str, **labels: str) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
 
 
 class _ParkedMint(FakeSessionRepository):
@@ -56,36 +68,38 @@ class _ParkedMint(FakeSessionRepository):
         return await super().create_session(session)
 
 
-@pytest.mark.parametrize("status", _NOT_ACTIVE)
-async def test_mint_refuses_a_user_who_is_not_active(status: UserStatus | None) -> None:
+@pytest.mark.parametrize("status", _REFUSED)
+async def test_mint_refuses_a_disabled_user(status: UserStatus | None) -> None:
     repo, user = FakeSessionRepository(), str(uuid.uuid4())
     repo.user_statuses[user] = status
 
-    with pytest.raises(UserNotActive):
+    with pytest.raises(UserDisabled):
         await _service(repo).mint(user)
 
     assert repo.sessions == {}
 
 
-async def test_mint_for_an_active_user_still_stores_the_session() -> None:
+@pytest.mark.parametrize("status", _KEPT)
+async def test_mint_still_stores_the_session_of_a_user_who_is_not_disabled(
+    status: UserStatus,
+) -> None:
     repo, user = FakeSessionRepository(), str(uuid.uuid4())
-    repo.user_statuses[user] = UserStatus.ACTIVE
+    repo.user_statuses[user] = status
 
     minted = await _service(repo).mint(user)
 
     assert list(repo.sessions) == [str(minted.session_id)]
 
 
-@pytest.mark.parametrize("status", _NOT_ACTIVE)
-async def test_refresh_refuses_a_user_who_is_not_active_before_the_claim(
-    status: UserStatus | None,
-) -> None:
+@pytest.mark.parametrize("status", _REFUSED)
+async def test_refresh_refuses_a_disabled_user(status: UserStatus | None) -> None:
+    """Refused before the claim: the presented session is untouched and nothing is minted."""
     repo, user = FakeSessionRepository(), str(uuid.uuid4())
     service = _service(repo)
     minted = await service.mint(user)
     repo.user_statuses[user] = status
 
-    with pytest.raises(UserNotActive) as refused:
+    with pytest.raises(UserDisabled) as refused:
         await service.refresh(minted.refresh_token)
 
     assert refused.value.status == (None if status is None else status.value)
@@ -94,15 +108,18 @@ async def test_refresh_refuses_a_user_who_is_not_active_before_the_claim(
     assert list(repo.sessions) == [str(minted.session_id)] and repo.rotation_next == {}
 
 
-async def test_refresh_of_an_active_user_still_rotates() -> None:
+@pytest.mark.parametrize("status", _KEPT)
+async def test_refresh_still_rotates_for_a_user_who_is_not_disabled(status: UserStatus) -> None:
     repo, user = FakeSessionRepository(), str(uuid.uuid4())
     service = _service(repo)
     minted = await service.mint(user)
+    repo.user_statuses[user] = status
 
     outcome = await service.refresh(minted.refresh_token)
 
     assert repo.sessions[str(minted.session_id)].revoked_reason == "rotated"
     assert repo.rotation_next == {str(minted.session_id): str(outcome.minted.session_id)}
+    assert repo.sessions[str(outcome.minted.session_id)].revoked_at is None
 
 
 async def test_refresh_parked_between_claim_and_mint_across_a_disable_mints_nothing() -> None:
@@ -119,24 +136,27 @@ async def test_refresh_parked_between_claim_and_mint_across_a_disable_mints_noth
     swept = await service.revoke_all(user, reason="user_disabled")
     repo.release.set()
 
-    with pytest.raises(UserNotActive):
+    with pytest.raises(UserDisabled):
         await asyncio.wait_for(refresh, _WAIT_S)
     assert swept == ()  # the claimed session was no longer live, and no successor existed yet
     assert await repo.find_live_by_user(user) == ()
     assert repo.rotation_next == {}
 
 
-@pytest.mark.parametrize("status", [UserStatus.DISABLED, None])
-async def test_require_active_revokes_a_disabled_users_live_session(
+@pytest.mark.parametrize("status", _REFUSED)
+async def test_require_active_refuses_a_disabled_users_live_session(
     status: UserStatus | None,
 ) -> None:
     """Fail closed: refused as revoked with `user_disabled`, the row revoked and the id
-    published, so the hub ends its sockets with `bye user_disabled` + 4403 (§9.5)."""
+    published, so the hub ends its sockets with `bye user_disabled` + 4403 (§9.5). The breach
+    signal is counted once, and the revocation under `user_disabled`, not `other`."""
     repo, published = FakeSessionRepository(), list[tuple[str, str]]()
     service = _service(repo, published)
     user, bystander = str(uuid.uuid4()), str(uuid.uuid4())
     minted, kept = await service.mint(user), await service.mint(bystander)
     repo.user_statuses[user] = status
+    signals = _sample("auth_disabled_user_sessions_revoked_total")
+    revocations = _sample("auth_session_revocations_total", reason="user_disabled")
 
     with pytest.raises(SessionRevoked) as refused:
         await service.authenticate_access_token(minted.access_token, touch=True)
@@ -145,18 +165,23 @@ async def test_require_active_revokes_a_disabled_users_live_session(
     assert refused.value.reason == "user_disabled"
     assert repo.sessions[sid].revoked_reason == "user_disabled"
     assert published == [(sid, "user_disabled")]
+    assert _sample("auth_disabled_user_sessions_revoked_total") == signals + 1
+    assert _sample("auth_session_revocations_total", reason="user_disabled") == revocations + 1
     assert (await service.require_active(str(kept.session_id))).id == kept.session_id
 
 
-@pytest.mark.parametrize("status", [UserStatus.LOCKED, UserStatus.INVITED])
-async def test_require_active_keeps_a_locked_or_invited_users_live_session(
+@pytest.mark.parametrize("status", _KEPT)
+async def test_require_active_keeps_the_live_session_of_a_user_who_is_not_disabled(
     status: UserStatus,
 ) -> None:
-    """The issue keeps `locked` and `invited` as they are for a live session: such a session
-    cannot be rotated (above), so it ends at its access token's expiry."""
-    repo, user = FakeSessionRepository(), str(uuid.uuid4())
-    service = _service(repo)
+    """`active`, and `locked` / `invited` as the issue keeps them: nothing revoked or counted."""
+    repo, published = FakeSessionRepository(), list[tuple[str, str]]()
+    service = _service(repo, published)
+    user = str(uuid.uuid4())
     minted = await service.mint(user)
     repo.user_statuses[user] = status
+    signals = _sample("auth_disabled_user_sessions_revoked_total")
 
     assert (await service.require_active(str(minted.session_id))).id == minted.session_id
+    assert published == [] and repo.sessions[str(minted.session_id)].revoked_at is None
+    assert _sample("auth_disabled_user_sessions_revoked_total") == signals

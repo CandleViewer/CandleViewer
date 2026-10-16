@@ -29,6 +29,13 @@ auth_refresh_reuse_total = Counter(
 auth_idle_locks_total = Counter(
     "auth_idle_locks_total", "Requests refused because the session was idle-locked."
 )
+#: #2911 (SR-029): each is a live session of a disabled or deleted user that no disable revoked,
+#: found by `require_active` and revoked there, so any increase is a breach signal. No label:
+#: the log line names the session. In-process like the counters above.
+auth_disabled_user_sessions_revoked_total = Counter(
+    "auth_disabled_user_sessions_revoked_total",
+    "Live sessions of a disabled or deleted user refused and revoked on use (SR-029).",
+)
 auth_step_up_total = Counter(
     "auth_step_up_total", "Successful step-up re-authentications.", ["action_class"]
 )
@@ -113,6 +120,7 @@ _KNOWN_REASONS = frozenset(
         "locked",
         "timeout",
         "unlock_attempts_exceeded",
+        "user_disabled",
     }
 )
 

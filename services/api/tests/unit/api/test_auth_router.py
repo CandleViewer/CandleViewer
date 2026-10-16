@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import MutableMapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from structlog.testing import capture_logs
 
 from candleviewer.api.auth import make_auth_router
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     AccountDisabled,
@@ -19,7 +23,7 @@ from candleviewer.auth.errors import (
     InvalidCredentials,
     MfaChallengeInvalid,
     RecoveryCodesExhausted,
-    UserNotActive,
+    UserDisabled,
 )
 from candleviewer.auth.models import (
     LoginRequest,
@@ -191,7 +195,7 @@ class _RecordingAuditWriter:
         actor_ip: str | None = None,
         outcome: AuditOutcome = AuditOutcome.SUCCESS,
         severity: Severity = Severity.INFO,
-        **_extra: object,
+        **extra: object,
     ) -> None:
         self.calls.append(
             {
@@ -200,6 +204,7 @@ class _RecordingAuditWriter:
                 "actor_ip": actor_ip,
                 "outcome": outcome,
                 "severity": severity,
+                **extra,
             }
         )
 
@@ -447,31 +452,36 @@ class _RefusingMinter(_FakeMinter):
         self, user_id: str, *, ip: str | None = None, user_agent: str | None = None
     ) -> MintedSession:
         self.minted_for.append(user_id)
-        raise UserNotActive("disabled")
+        raise UserDisabled("disabled")
 
 
-class _KwargsAuditWriter:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
+class _RefusingAuditWriter(_RecordingAuditWriter):
+    """The started writer refusing every record of *action* (`AuditUnavailable`: WAL full)."""
 
-    async def emit(self, action: str, **kwargs: object) -> None:
-        self.calls.append({"action": action, **kwargs})
+    def __init__(self, action: str) -> None:
+        super().__init__()
+        self.action = action
 
-
-class _KwargsAuditService:
-    is_active = True
-
-    def __init__(self) -> None:
-        self.writer = _KwargsAuditWriter()
+    async def emit(self, action: str, **kwargs: Any) -> None:
+        if action == self.action:
+            raise AuditUnavailable("audit WAL unavailable: OSError")
+        await super().emit(action, **kwargs)
 
 
-def test_mfa_verify_for_a_user_who_is_not_active_mints_nothing_and_audits_the_refusal() -> None:
-    """#2911: a correct second factor for a user disabled since the password step gets the
-    operation's 401 and no session; the refusal is audited like login's disabled refusal."""
+class _InactiveAuditService(_RecordingAuditService):
+    @property
+    def is_active(self) -> bool:
+        return False
+
+
+def _verify_for_a_disabled_user(
+    audit_service: _RecordingAuditService,
+) -> tuple[httpx.Response, uuid.UUID, list[str], list[MutableMapping[str, Any]]]:
+    """#2911: a correct second factor for a user disabled since the password step. Returns the
+    response, the user, the mint attempts (each refused) and the captured log events."""
     uid = uuid.uuid4()
     auth = _MintingAuthService(MfaVerifiedResult(user_id=uid))
     auth.minter = _RefusingMinter()
-    audit_service = _KwargsAuditService()
     app = FastAPI()
     app.include_router(
         make_auth_router(
@@ -481,17 +491,56 @@ def test_mfa_verify_for_a_user_who_is_not_active_mints_nothing_and_audits_the_re
             csrf=_CSRF_CODEC,
         )
     )
+    with capture_logs() as logs:
+        response = TestClient(app).post(
+            "/auth/mfa/verify", json={"mfa_token": "tok", "method": "totp", "code": "123456"}
+        )
+    return response, uid, auth.minter.minted_for, logs
 
-    response = TestClient(app).post(
-        "/auth/mfa/verify", json={"mfa_token": "tok", "method": "totp", "code": "123456"}
-    )
 
-    assert (response.status_code, response.json()["detail"]) == (401, "account is not active")
+def test_mfa_verify_for_a_disabled_user_mints_nothing_and_audits_the_refusal() -> None:
+    """The operation's 401 and no session; the refusal is audited like login's disabled one."""
+    audit_service = _RecordingAuditService()
+
+    response, uid, attempts, _ = _verify_for_a_disabled_user(audit_service)
+
+    assert (response.status_code, response.json()["detail"]) == (401, "account is disabled")
     assert "set-cookie" not in response.headers
-    assert auth.minter.minted_for == [str(uid)]
+    assert attempts == [str(uid)]
     calls = audit_service.writer.calls
     assert [(c["action"], c["outcome"]) for c in calls] == [
         ("auth.mfa_verified", AuditOutcome.SUCCESS),
         ("auth.login_failed", AuditOutcome.DENIED),
     ]
-    assert (calls[-1]["reason"], calls[-1]["actor_user_id"]) == ("user_not_active", uid)
+    assert (calls[-1]["reason"], calls[-1]["actor_user_id"]) == ("user_disabled", uid)
+
+
+def test_mfa_verify_for_a_disabled_user_with_the_refusal_record_refused_is_still_401() -> None:
+    """Error path: the writer refuses `auth.login_failed`. Not write-ahead (nothing was minted),
+    so the 401 stands, never a 500, and the lost record is logged."""
+    audit_service = _RecordingAuditService()
+    audit_service.writer = _RefusingAuditWriter("auth.login_failed")
+
+    response, uid, attempts, logs = _verify_for_a_disabled_user(audit_service)
+
+    assert (response.status_code, response.json()["detail"]) == (401, "account is disabled")
+    assert "set-cookie" not in response.headers
+    assert attempts == [str(uid)]
+    assert [c["action"] for c in audit_service.writer.calls] == ["auth.mfa_verified"]
+    (lost,) = [e for e in logs if e["event"] == "auth.login_failed.audit_unavailable"]
+    assert (lost["log_level"], lost["error"]) == ("error", "AuditUnavailable")
+
+
+def test_mfa_verify_for_a_disabled_user_with_audit_inactive_is_still_401_and_logged() -> None:
+    """Error path: no audit sink. The 401 stands, nothing is minted, and the unrecorded refusal
+    is logged."""
+    audit_service = _InactiveAuditService()
+
+    response, uid, attempts, logs = _verify_for_a_disabled_user(audit_service)
+
+    assert (response.status_code, response.json()["detail"]) == (401, "account is disabled")
+    assert "set-cookie" not in response.headers
+    assert attempts == [str(uid)]
+    assert audit_service.writer.calls == []
+    (lost,) = [e for e in logs if e["event"] == "auth.login_failed.audit_unavailable"]
+    assert (lost["log_level"], lost["error"]) == ("error", "inactive")

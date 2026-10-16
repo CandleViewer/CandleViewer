@@ -47,10 +47,11 @@ from candleviewer.auth.errors import (
     SessionNotFound,
     SessionRevoked,
     UnlockPasswordInvalid,
-    UserNotActive,
+    UserDisabled,
 )
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.metrics import (
+    auth_disabled_user_sessions_revoked_total,
     auth_idle_locks_total,
     auth_refresh_reuse_total,
     auth_refresh_total,
@@ -231,10 +232,11 @@ class SessionService:
         login callers never pass it, so a brand-new session still gets
         `now + ABSOLUTE_LIFETIME`.
 
-        Raises `UserNotActive` when the user is not `active` (#2911): the
-        repository reads `users.status` under the user-row lock in the
+        Raises `UserDisabled` when the user is `disabled` or gone (#2911):
+        the repository reads `users.status` under the user-row lock in the
         insert's own transaction, so a disable that commits before the insert
-        refuses it, and one that commits after it revokes it.
+        refuses it, and one that commits after it revokes it. `locked` and
+        `invited` users are not refused (login refuses `disabled` only).
         """
         now = self._clock()
         raw_token = self._refresh_token_factory()
@@ -258,7 +260,7 @@ class SessionService:
         )
         created = await self._repository.create_session(session)
         if created is None:
-            raise UserNotActive(None)  # nothing was inserted (#2911)
+            raise UserDisabled(None)  # nothing was inserted (#2911)
         auth_sessions_active.inc()
         return MintedSession(
             session_id=created.id,
@@ -289,7 +291,7 @@ class SessionService:
         """`POST /auth/refresh`. Raises `SessionNotFound`,
         `RefreshReuseDetected` (family already revoked as a side effect of
         raising), `SessionRevoked`/`SessionIdleLocked` for a
-        non-reuse-but-dead presented session, or `UserNotActive` (#2911): before
+        non-reuse-but-dead presented session, or `UserDisabled` (#2911): before
         the claim, which then changes nothing, or from the successor's mint when a
         disable commits after the claim (the claim stands; no successor exists).
         """
@@ -327,8 +329,8 @@ class SessionService:
             await self._publish_row(expired, "expired")
             raise SessionRevoked("expired")
 
-        if presented.user_status is not UserStatus.ACTIVE:
-            raise UserNotActive(presented.user_status)  # read with the row (#2911)
+        if presented.user_status in (UserStatus.DISABLED, None):
+            raise UserDisabled(presented.user_status)  # read with the row (#2911)
 
         if presented.is_idle_locked(now=now):
             # Ticket "The lock does not refresh tokens in the background":
@@ -409,7 +411,10 @@ class SessionService:
         if session.is_revoked:
             raise SessionRevoked(session.revoked_reason or "revoked")
 
-        if session.user_status in (None, UserStatus.DISABLED):
+        if session.user_status in (UserStatus.DISABLED, None):
+            # A session no disable revoked (SR-029 breach signal): counted and logged here,
+            # and its revocation is counted under `user_disabled` like the disable's own.
+            auth_disabled_user_sessions_revoked_total.inc()
             _log().warning(
                 "auth.disabled_user_session_revoked",
                 session_id=session_id,

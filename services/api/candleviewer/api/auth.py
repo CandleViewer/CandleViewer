@@ -83,7 +83,7 @@ from candleviewer.auth.errors import (
     MfaCodeReused,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
-    UserNotActive,
+    UserDisabled,
 )
 from candleviewer.auth.metrics import auth_session_fixation_attempts_total
 from candleviewer.auth.models import (
@@ -289,7 +289,11 @@ def make_auth_router(
         return True
 
     async def _audit_refusal(request: Request, user_id: uuid.UUID) -> None:
+        """#2911: record a disabled user's refused mint. Not write-ahead (the refusal is
+        already decided and nothing was minted): a record that cannot be written is logged,
+        and the caller's 401 stands."""
         if audit_service is None or not audit_service.is_active:
+            _log().error("auth.login_failed.audit_unavailable", error="inactive")
             return
         try:
             await audit_service.writer.emit(
@@ -299,7 +303,7 @@ def make_auth_router(
                 actor_ip=_client_ip(request),
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
-                reason="user_not_active",
+                reason="user_disabled",
             )
         except AuditError as exc:
             _log().error("auth.login_failed.audit_unavailable", error=type(exc).__name__)
@@ -418,12 +422,12 @@ def make_auth_router(
                 ip=_client_ip(request),
                 user_agent=request.headers.get("user-agent"),
             )
-        except UserNotActive:
-            # #2911: disabled (or otherwise not active) since the password step; nothing was
-            # minted. Audited like login's refusal of a disabled account, then this operation's
-            # 401 whether or not the record could be written.
+        except UserDisabled:
+            # #2911: disabled (or deleted) since the password step; nothing was minted.
+            # Audited like login's refusal of a disabled account, then this operation's 401
+            # whether or not the record could be written.
             await _audit_refusal(request, result.user_id)
-            return _problem(401, "MFA verification failed", "account is not active")
+            return _problem(401, "MFA verification failed", "account is disabled")
         if audit_service is not None and audit_service.is_active:
             await audit_service.writer.emit(
                 "auth.session_created",

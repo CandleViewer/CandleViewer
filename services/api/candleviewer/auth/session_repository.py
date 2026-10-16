@@ -30,13 +30,15 @@ class SessionRepository(Protocol):
         """Insert a new `sessions` row. Callers always pass a fully-formed
         `SessionRecord` (id/hash/timestamps already computed) — this method
         never generates an id or a token hash itself. #2911: inserts nothing and
-        returns `None` unless the user is `active`, read under a lock on the
-        user's row that a disable's own lock on it waits for (and vice versa),
-        in the insert's transaction."""
+        returns `None` when the user is `disabled` or gone (absent or soft-
+        deleted), read under a lock on the user's row that a disable's own lock
+        on it waits for (and vice versa), in the insert's transaction."""
         ...
 
     async def find_by_id(self, session_id: str) -> SessionRecord | None:
-        """The row with its user's `users.status` (`user_status`, #2911)."""
+        """The row with its user's `users.status` (`user_status`, #2911). Always
+        populated for a user that exists: `require_active` reads `None` as a
+        gone user and revokes the session."""
         ...
 
     async def find_by_refresh_hash(self, refresh_token_hash: str) -> SessionRecord | None:

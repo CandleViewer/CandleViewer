@@ -10,9 +10,9 @@ what makes `SessionService.refresh()`'s claim-by-revoke race-free and keeps
 the first revocation reason immutable (INV-B16-d). The step-up columns are
 written only from a read taken under the row lock (`update_step_up_state`)
 or by one conditional statement (`consume_step_up_key`), never from a stale
-copy of the row (#2304). A session is inserted only for an `active` user, read
-under the user-row lock in the insert's transaction, and the reads by id and by
-refresh hash carry the user's status (#2911).
+copy of the row (#2304). A session is inserted only for a user who exists and is
+not `disabled`, read under the user-row lock in the insert's transaction, and the
+reads by id and by refresh hash carry the user's status (#2911).
 """
 
 from __future__ import annotations
@@ -178,10 +178,11 @@ class SqlAlchemySessionRepository:
         self._make = record_factory
 
     async def create_session(self, session: Any) -> Any:
-        """Insert *session*, or nothing and `None` unless its user is `active` (#2911)."""
+        """Insert *session*, or nothing and `None` when its user is `disabled` or gone (absent
+        or soft-deleted, #2911). `locked` and `invited` users still get their row, as at login."""
         async with self._relational.unit_of_work() as uow:
             user = (await uow.session.execute(_LOCK_USER_SQL, {"id": str(session.user_id)})).first()
-            if user is None or user._mapping["status"] != "active":
+            if user is None or user._mapping["status"] == "disabled":
                 return None  # rolled back: the lock goes, nothing was written
             await uow.session.execute(
                 _INSERT_SQL,

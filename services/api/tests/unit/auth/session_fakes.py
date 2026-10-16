@@ -27,9 +27,9 @@ class FakeSessionRepository:
         return session.model_copy(update={"user_status": self._user_status(session.user_id)})
 
     async def create_session(self, session: SessionRecord) -> SessionRecord | None:
-        """#2911: nothing is stored unless the user is `active`; the check and the insert are
-        one step, as the real insert runs under the user row's lock."""
-        if self._user_status(session.user_id) is not UserStatus.ACTIVE:
+        """#2911: nothing is stored when the user is `disabled` or gone; the check and the
+        insert are one step, as the real insert runs under the user row's lock."""
+        if self._user_status(session.user_id) in (UserStatus.DISABLED, None):
             return None
         self.sessions[str(session.id)] = session
         return session

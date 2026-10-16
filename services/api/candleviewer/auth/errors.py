@@ -119,15 +119,16 @@ class SessionIdleLocked(AuthError):
     the client believes, without tearing the session down."""
 
 
-class UserNotActive(AuthError):
-    """#2911 (SR-029): no session is minted or rotated for a user who is not `active`
-    (disabled, locked or invited, or whose row is gone). `mint()` raises it when the insert is
-    refused under the user-row lock, `refresh()` before its claim and when that mint is refused.
-    `status` is the `users.status` read, `None` when unknown or gone. The HTTP edge answers the
-    operation's 401 and audits the refusal."""
+class UserDisabled(AuthError):
+    """#2911 (SR-029): no session is minted or rotated for a `disabled` user, or one whose row
+    is gone (absent or soft-deleted). `locked` and `invited` are not refused here: login refuses
+    `disabled` only, and #2911 keeps the other two as they are. `mint()` raises it when the
+    insert is refused under the user-row lock, `refresh()` before its claim and when that mint
+    is refused. `status` is the `users.status` read, `None` when unknown or gone. The HTTP edge
+    answers the operation's 401 and audits the refusal."""
 
     def __init__(self, status: str | None) -> None:
-        super().__init__(f"user is not active: {status or 'unknown'}")
+        super().__init__(f"user is disabled or gone: {status or 'unknown'}")
         self.status = status
 
 

@@ -70,7 +70,7 @@ from candleviewer.auth.errors import (
     SessionIdleLocked,
     SessionNotFound,
     SessionRevoked,
-    UserNotActive,
+    UserDisabled,
 )
 from candleviewer.auth.metrics import auth_csrf_refused_total, auth_session_fixation_attempts_total
 from candleviewer.auth.models import (
@@ -552,9 +552,10 @@ def make_session_router(
                     )
             # The service already closed every family member's sockets (#2272).
             return _unauthorized("refresh_token_invalid")
-        except UserNotActive:
-            # #2911: nothing was minted. The intent record above is followed by the refusal;
-            # as for the reuse outcome, a lost record is logged and the 401 stands.
+        except UserDisabled:
+            # #2911: the user is disabled (or deleted); nothing was minted. The intent record
+            # above is followed by the refusal; as for the reuse outcome, a lost record is
+            # logged and the 401 stands.
             try:
                 await _audit(
                     "auth.session_refreshed",
@@ -562,7 +563,7 @@ def make_session_router(
                     ip=ip,
                     outcome=AuditOutcome.DENIED,
                     severity=Severity.WARNING,
-                    reason="user_not_active",
+                    reason="user_disabled",
                 )
             except AuditUnavailableError:
                 _log().error(

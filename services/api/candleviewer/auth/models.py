@@ -263,6 +263,8 @@ class SessionRecord(BaseModel):
     readonly_until: datetime | None = None
     #: #2911: the owner's `users.status`, read with the row by `find_by_id` and
     #: `find_by_refresh_hash`; `None` from any other read, or when the user row is gone.
+    #: `require_active` revokes on `None` from `find_by_id` (fail closed), so that read
+    #: must always populate it (pinned on Postgres by the #2911 integration tests).
     user_status: UserStatus | None = None
 
     @property

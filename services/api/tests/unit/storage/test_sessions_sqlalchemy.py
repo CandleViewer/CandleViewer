@@ -228,15 +228,24 @@ async def test_create_session_inserts_under_the_users_row_lock_in_one_transactio
     assert (rel.units, rel.commits) == (1, 1) and got is session
 
 
-@pytest.mark.parametrize("status", ["disabled", "locked", "invited", None])
-async def test_create_session_for_a_user_who_is_not_active_inserts_nothing(
-    status: str | None,
-) -> None:
+@pytest.mark.parametrize("status", ["disabled", None])
+async def test_create_session_for_a_disabled_user_inserts_nothing(status: str | None) -> None:
     """`None`: no such user, or a soft-deleted one."""
     repo, rel = _repo([] if status is None else [SimpleNamespace(_mapping={"status": status})])
 
     assert await repo.create_session(_new_session()) is None
     assert len(rel.session.calls) == 1 and rel.commits == 0
+
+
+@pytest.mark.parametrize("status", ["locked", "invited"])
+async def test_create_session_for_a_locked_or_invited_user_still_inserts(status: str) -> None:
+    """#2911 keeps `locked` and `invited` as login does: only `disabled` (or gone) is refused."""
+    repo, rel = _repo([SimpleNamespace(_mapping={"status": status})])
+    session = _new_session()
+
+    assert await repo.create_session(session) is session
+    assert len(rel.session.calls) == 2 and rel.commits == 1  # the lock read, then the insert
+    assert rel.session.calls[1][0].lstrip().startswith("INSERT INTO sessions")
 
 
 async def test_reads_by_id_and_refresh_hash_carry_the_users_status_in_one_statement() -> None:

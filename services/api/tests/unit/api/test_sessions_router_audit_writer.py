@@ -24,7 +24,7 @@ from candleviewer.api.sessions import REFRESH_COOKIE, make_session_router
 from candleviewer.audit.actions import validate_action
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
-from candleviewer.auth.models import MintedSession, RefreshOutcome
+from candleviewer.auth.models import MintedSession, RefreshOutcome, UserStatus
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.csrf_helpers import arm_csrf
@@ -197,6 +197,28 @@ async def test_refresh_race_outcome_record_refused_keeps_the_401_and_closes_the_
     assert {sid for sid, _ in w.published} == family  # every socket still closes
     assert {reason for _, reason in w.published} == {"rotation_reuse"}  # the service publishes
     (lost,) = [e for e in logs if e["event"] == "auth.refresh_reuse_detected.audit_unavailable"]
+    assert (lost["log_level"], lost["session_id"]) == ("error", str(m.session_id))
+
+
+@pytest.mark.parametrize("make_error", _WRITER_ERRORS, ids=_ERROR_IDS)
+async def test_refresh_refusal_record_of_a_disabled_user_refused_keeps_the_401_and_logs_it(
+    make_error: ErrorFactory,
+) -> None:
+    """#2911: the user was disabled with this session live. The write-ahead intent lands, the
+    refusal record is refused: the 401 stands (never a 500), nothing is rotated, minted or
+    published, and the lost record is logged."""
+    w = _World(make_error)
+    m = await w.mint()
+    w.repo.user_statuses[str(_USER)] = UserStatus.DISABLED
+    w.writer.accept = 1  # the write-ahead record lands; the refusal record is refused
+    with capture_logs() as logs:
+        r = w.refresh(m.refresh_token)
+    assert (r.status_code, r.json()["detail"]) == (401, "refresh_token_invalid")
+    assert "set-cookie" not in r.headers
+    assert w.writer.refused == ["auth.session_refreshed"]
+    assert await w.live() == {str(m.session_id)} and len(w.repo.sessions) == 1
+    assert w.published == []
+    (lost,) = [e for e in logs if e["event"] == "auth.session_refresh_refused.audit_unavailable"]
     assert (lost["log_level"], lost["session_id"]) == ("error", str(m.session_id))
 
 

@@ -220,9 +220,10 @@ async def test_mfa_verify_after_a_disable_mints_nothing(
             assert minted.scalar_one() == 0
     finally:
         await engine.dispose()
-    await client.app_context.audit.writer.flush(10.0)  # type: ignore[attr-defined]
+    ctx = client.app_context  # type: ignore[attr-defined]  # set by the client fixture
+    await ctx.audit.writer.flush(10.0)
     rows = await _audit_rows(pg_dsn, user_id)
-    assert ("auth.login_failed", "denied", "user_not_active") in {
+    assert ("auth.login_failed", "denied", "user_disabled") in {
         (x["action"], x["outcome"], x["reason"]) for x in rows
     }
 
