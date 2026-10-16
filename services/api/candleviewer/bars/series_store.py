@@ -10,7 +10,8 @@ a WS snapshot source reads `latest` and `version`.
   repeated) replaces it in place; an amended close of a bar not held is ignored. A different bar
   at or below the newest index (a builder cold start restarts `index`) resets the series, and so
   does an emission in any other generation, lower or higher: there is one live builder per series,
-  so its generation is never stale (§8.2 generation swap).
+  so its generation is never stale (§8.2 generation swap). Generations are opaque epochs: none is
+  assumed, and a series has none until its first emission.
 - **Live bars only:** a series holds what the store has seen live, nothing from storage. The first
   `ensure` starts it from its ring, replayed by the sink rules; the sink keeps it current.
 - **Holds and bounds (C-2.18):** `ensure` returns a `Hold`, released once. The last release keeps
@@ -35,7 +36,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Final, NamedTuple
 
-from candleviewer.bars.emit import LIVE_GENERATION, BarEmission
+from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.errors import SpecCapExceeded
 from candleviewer.bars.leases import CAP_GLOBAL, GRACE_US, Key
 from candleviewer.bars.metrics import bars_spec_cap_rejected_total
@@ -57,11 +58,11 @@ Close = tuple[BarUpdate, int]
 
 
 class Latest(NamedTuple):
-    """`latest`: the series' change counter and generation, its closed bars in index order and
-    the forming bar."""
+    """`latest`: the series' change counter and generation (None before its first emission), its
+    closed bars in index order and the forming bar."""
 
     version: int
-    generation: int
+    generation: int | None
     closed: list[Bar]
     forming: Bar | None
 
@@ -86,16 +87,16 @@ class Hold:
 class _Series:
     version: int
     refs: int = 0
-    generation: int = LIVE_GENERATION
+    generation: int | None = None  # set by the first emission
     closed: OrderedDict[int, Bar] = field(default_factory=OrderedDict)  # index -> bar
     forming: Bar | None = None
     #: Store-clock time a released series is freed at (None while held).
     expires_at: float | None = None
 
 
-def _reset(s: _Series, generation: int) -> None:
+def _clear(s: _Series) -> None:
     s.closed.clear()
-    s.forming, s.generation = None, generation
+    s.forming = None
 
 
 def _holds(s: _Series, bar: Bar) -> bool:
@@ -110,7 +111,7 @@ def _apply(s: _Series, u: BarUpdate) -> bool:
     last = next(reversed(s.closed), -1)
     if u.kind != "close":
         if i <= last:
-            _reset(s, s.generation)  # a bar at or below the newest close re-opened: restarted
+            _clear(s)  # a bar at or below the newest close re-opened: restarted
         s.forming = bar
         return True
     if _holds(s, bar):
@@ -119,7 +120,7 @@ def _apply(s: _Series, u: BarUpdate) -> bool:
     if i <= last:
         if u.amended:
             return False  # an amended close of a bar this window does not hold
-        _reset(s, s.generation)  # another bar at or below the newest index: the builder restarted
+        _clear(s)  # another bar at or below the newest index: the builder restarted
     s.closed[i] = bar
     if len(s.closed) > MAX_HISTORY:
         s.closed.popitem(last=False)
@@ -130,9 +131,10 @@ def _apply(s: _Series, u: BarUpdate) -> bool:
 
 def _live(s: _Series, u: BarUpdate, generation: int) -> bool:
     """A sink emission. One live builder per series: any other generation, lower or higher, is
-    the series' new one (§8.2 generation swap)."""
+    the series' new one (§8.2 generation swap), and the first emission names it."""
     if generation != s.generation:
-        _reset(s, generation)
+        _clear(s)
+        s.generation = generation
     return _apply(s, u)
 
 

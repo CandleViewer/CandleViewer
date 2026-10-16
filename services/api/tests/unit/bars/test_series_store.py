@@ -55,7 +55,7 @@ def closes(store: SeriesStore, history: int = MAX_HISTORY) -> list[tuple[int, st
     return [(b.index, str(b.close)) for b in got.closed]
 
 
-def generation(store: SeriesStore) -> int:
+def generation(store: SeriesStore) -> int | None:
     got = store.latest(SYM, H, 1)
     assert got is not None
     return got.generation
@@ -114,11 +114,19 @@ async def test_sink_a_live_generation_change_resets_the_series_in_both_direction
     assert (generation(store), view(store)) == (0, ([7], None))
 
 
+async def test_a_series_has_no_generation_until_its_first_emission() -> None:
+    """Generations are opaque epochs (#2662): none is assumed, the first emission names it."""
+    store = await held()
+    assert generation(store) is None and view(store) == ([], None)
+    await emit(store, up("open", 0), generation=7)
+    assert (generation(store), view(store)) == (7, ([], 0))
+
+
 @pytest.mark.parametrize(("kind", "after"), [("open", ([], 0)), ("close", ([0], None))])
 async def test_sink_index_going_backwards_restarts_the_series(
     kind: str, after: tuple[list[int], int | None]
 ) -> None:
-    """A builder cold start restarts `index` at 0 in generation 0: clients key by index."""
+    """`index` going back within one generation means the builder restarted: clients key by it."""
     store = await held(*(up("close", i) for i in range(5)), up("open", 5))
     await emit(store, up(kind, 0, shift=6))  # a new bar 0, opening after bar 5
     assert view(store) == after
