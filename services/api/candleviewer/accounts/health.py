@@ -122,7 +122,9 @@ class DeadMansSwitch(Protocol):
     that raises or times out is logged and made again at the account's next evaluation until one
     returns, so the hook must be idempotent, and a retry may land after the account recovered
     (`transition.at` dates the episode). An account has at most one call in flight and one owed:
-    a newer transition into `down` replaces an older one whose call never succeeded."""
+    a newer transition into `down` replaces an older one whose call never succeeded. A call still
+    owed at shutdown is logged and listed by `owed()`; replaying it after a restart is the
+    wiring's job (E39), as a restarted monitor starts every account `down` owing nothing."""
 
     async def account_down(self, transition: HealthTransition) -> None: ...
 
@@ -143,11 +145,18 @@ class _Account:
         return max((t for t in (self.ws_at, self.rest_at) if t is not None), default=None)
 
 
+def _log_dropped(owed: HealthTransition) -> None:
+    """An owed hook call this process will not make: its account was untracked, or shutdown."""
+    structlog.get_logger(__name__).warning(
+        "account.dms_hook_dropped", account_id=str(owed.account_id), reason=owed.reason
+    )
+
+
 class AccountHealthMonitor:
     """Health for every tracked account. Feed it evidence as it arrives and call `tick()` at
     least once a second to commit transitions and retry owed dead-man's-switch calls; `current()`
     and `view()` derive on every read. Evidence and `tick()` run on the event loop, which runs
-    the hook calls; `drain()` waits for them at shutdown.
+    the hook calls; `drain()` waits for them at shutdown and logs the calls still owed.
 
     An evidence call first commits any lapse the old evidence reached, so a down window that
     passed between two ticks is still a transition and a dead-man's-switch call, and returns the
@@ -178,9 +187,7 @@ class AccountHealthMonitor:
         """Stop monitoring an account. A call in flight finishes; an owed one is not retried."""
         acc = self._accounts.pop(account_id, None)
         if acc is not None and acc.dms_owed is not None:
-            structlog.get_logger(__name__).warning(
-                "account.dms_hook_dropped", account_id=str(account_id), reason=acc.dms_owed.reason
-            )
+            _log_dropped(acc.dms_owed)
 
     def ws_heartbeat(self, account_id: UUID) -> HealthTransition | None:
         """Evidence that the account's private WS is connected and authenticated: its successful
@@ -217,10 +224,18 @@ class AccountHealthMonitor:
         return [t for t in moved if t is not None]
 
     async def drain(self) -> None:
-        """Wait until no dead-man's-switch call is in flight (shutdown). Each ends within the hook
-        timeout; a call still owed afterwards stays owed in memory only."""
+        """Shutdown: wait until no dead-man's-switch call is in flight; each ends within the hook
+        timeout. This process makes no call still owed afterwards, so each is logged as
+        `account.dms_hook_dropped`; `owed()` lists them for the wiring to persist and replay
+        after a restart (E39)."""
         while self._dms_calls:
             await asyncio.wait(set(self._dms_calls))
+        for owed in self.owed():
+            _log_dropped(owed)
+
+    def owed(self) -> list[HealthTransition]:
+        """The transitions into `down` whose hook call has not returned, one per account."""
+        return [acc.dms_owed for acc in self._accounts.values() if acc.dms_owed is not None]
 
     def current(self, account_id: UUID) -> HealthState | None:
         """The state the evidence supports now, without side effects; `None` if untracked."""

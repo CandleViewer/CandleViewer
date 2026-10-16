@@ -327,6 +327,27 @@ async def test_untracking_an_account_that_is_owed_a_call_logs_the_drop() -> None
     assert len(dms.calls) == 1
 
 
+async def test_draining_with_a_call_still_owed_logs_the_drop() -> None:
+    clock, dms = FakeClock(), Dms(ACC)
+    monitor = AccountHealthMonitor(clock, dms)
+    for account in (ACC, ACC_B):
+        monitor.track(account)
+        monitor.rest_ok(account)
+    clock.advance(30)
+    owed, _ = monitor.tick()  # ACC's hook call fails, ACC_B's returns
+    with capture_logs() as logs:
+        await monitor.drain()
+    assert [e for e in logs if e["event"] == "account.dms_hook_dropped"] == [
+        {
+            "event": "account.dms_hook_dropped",
+            "log_level": "warning",
+            "account_id": str(ACC),
+            "reason": "no_success",
+        }
+    ]
+    assert monitor.owed() == [owed]
+
+
 @pytest.mark.parametrize("evidence", ["ws_heartbeat", "ws_dropped", "rest_ok"])
 def test_evidence_for_an_untracked_account_is_ignored(evidence: str) -> None:
     monitor, _, dms = _monitor()
