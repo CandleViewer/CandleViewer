@@ -160,13 +160,13 @@ def test_authz_denied_total_counts_a_decided_denial_even_if_the_audit_write_fail
 def test_a_failed_audit_write_is_logged_with_the_actor_and_the_request(role: str) -> None:
     client, _ = _guarded(Resolver(), FailingAudit())
     with capture_logs() as logs:
-        client.get("/admin/probe", headers={"x-role": role})
+        client.get("/admin/probe/42", headers={"x-role": role})
     who = principal(role)
     assert logs == [
         {
             "event": "admin.area_entered.audit_failed",
             "log_level": "error",
-            "route": "/admin/probe",
+            "route": "/admin/probe/{item}",
             "actor_user_id": who.user_id,
             "request_id": who.request_id,
             "error": "RuntimeError",  # the class only, never "wal full at /var/lib/cv"
