@@ -10293,7 +10293,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       429: components["responses"]["RateLimited"];
-      /** @description A dependency is unavailable or data is degraded. This keeps every meaning of `ServiceUnavailable` (such as `store_unavailable`). For a user with a confirmed MFA method it can also be `code: auth_unavailable` (see `AuthUnavailable`), answered only after the password verified, in place of the `mfa_required` challenge. */
+      /** @description A dependency is unavailable or data is degraded. This keeps every meaning of `ServiceUnavailable` (such as `store_unavailable`), whose examples apply unchanged. For a user with a confirmed MFA method it can also be `code: auth_unavailable` (see `AuthUnavailable`), answered only after the password verified, in place of the `mfa_required` challenge. */
       503: {
         headers: {
           "Retry-After": components["headers"]["RetryAfter"];

@@ -1,17 +1,6 @@
-"""MFA fails closed with `503 auth_unavailable` (#2152 S1): contract and design only (C-6.1).
+"""MFA fails closed with `503 auth_unavailable` (#2152 S1, rulings D1-D7): contract and design pins.
 
-Pins main-orchestrator's rulings D1-D7 of 2026-10-16 on #2152. When the KEK or the needed auth key
-is unavailable, the eight operations that check or seal a second factor answer
-`503 auth_unavailable`: seven through the shared `AuthUnavailable` response, and `POST /auth/login`
-through a 503 that keeps every `ServiceUnavailable` meaning and adds this one (C-6.3). Login
-answers it only for a user with a confirmed MFA method and only after the password verified; the
-answer counts, consumes and changes nothing and stores no idempotency record (D4). The response
-states, per operation, where the 503 sits among the other checks; step-up decides it before either
-factor. The registry title names no cause. The code is a new REST-only registry entry, regenerated
-into the Python and TypeScript enums. The design the later slices build on is ADR-0009 Amendment 4,
-the `auth_keys` table of `21-database-schema.md` section 3.1.5a (byte formats, privileges and
-triggers), its section 12 rows, SR-022 and `e27-kek.md` section 6. No route emits the code yet: the
-switch-over slice (S5b) maps it, audits it and adds the provider test.
+No route emits the code yet; S5b maps it, audits it and adds the provider test (C-6.1).
 """
 
 from __future__ import annotations
@@ -91,11 +80,6 @@ def _example(spec: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
-def _login_503(spec: dict[str, Any]) -> dict[str, Any]:
-    response: dict[str, Any] = spec["paths"]["/auth/login"]["post"]["responses"]["503"]
-    return response
-
-
 def _title(spec: dict[str, Any]) -> str:
     return str({e["code"]: e["title"] for e in spec["x-error-codes"]}[_CODE])
 
@@ -153,11 +137,12 @@ def test_registry_auth_unavailable_is_a_retryable_rest_only_503(spec: dict[str, 
     assert ErrorCode(_CODE) not in WS_ERROR_CODES
 
 
-def test_title_names_no_cause(spec: dict[str, Any]) -> None:
-    title = _title(spec).lower()
-    assert "unavailable" in title
+@pytest.mark.parametrize("field", ["title", "detail"])
+def test_example_names_no_cause_and_no_key(spec: dict[str, Any], field: str) -> None:
+    text = _example(spec)[field].lower()  # the example title is the registry title (test below)
+    assert "unavailable" in text
     for word in ("kek", "key", "loaded", "missing", "mismatch", "stranded", "version"):
-        assert word not in title
+        assert word not in text
 
 
 def test_response_is_a_problem_with_retry_after_and_a_conforming_example(
@@ -193,20 +178,18 @@ def test_only_the_mfa_operations_use_the_response(spec: dict[str, Any]) -> None:
 def test_login_503_keeps_every_generic_meaning_and_adds_auth_unavailable(
     spec: dict[str, Any],
 ) -> None:
-    login, generic = _login_503(spec), _response(spec, "ServiceUnavailable")
-    assert spec["paths"]["/auth/login"]["post"]["operationId"] == "authLogin"
+    login = spec["paths"]["/auth/login"]["post"]["responses"]["503"]
+    generic = _response(spec, "ServiceUnavailable")
     assert login["headers"] == generic["headers"]
     assert login["content"][_PROBLEM]["schema"] == generic["content"][_PROBLEM]["schema"]
     description = _flat(login["description"])
     assert _flat(generic["description"]) in description  # C-6.3: the meaning does not narrow
-    assert "`code: auth_unavailable` (see `AuthUnavailable`), answered only after the password" in (
-        description
-    )
-    examples = _examples(login)
-    for name, example in _examples(generic).items():
-        assert examples[name] == example
-    assert examples["mfaUnavailable"] == _examples(_response(spec))["mfaUnavailable"]
-    assert set(examples) == {*_examples(generic), "mfaUnavailable"}
+    for rule in (
+        "`ServiceUnavailable` (such as `store_unavailable`), whose examples apply unchanged",
+        "`code: auth_unavailable` (see `AuthUnavailable`), answered only after the password",
+    ):
+        assert rule in description
+    assert _examples(login) == {"mfaUnavailable": _examples(_response(spec))["mfaUnavailable"]}
 
 
 def test_description_names_exactly_the_eight_operations(spec: dict[str, Any]) -> None:
@@ -268,12 +251,6 @@ def test_step_up_decides_the_503_before_either_factor_and_says_why(spec: dict[st
         "consumed), as with the `challenge_id` `400`s.",
     ):
         assert reason in step_up
-
-
-def test_example_detail_names_no_cause_and_no_key(spec: dict[str, Any]) -> None:
-    detail = _example(spec)["detail"].lower()
-    for word in ("kek", "key", "version", "missing", "mismatch", "stranded"):
-        assert word not in detail
 
 
 def test_schema_doc_defines_the_kek_wrapped_auth_keys_table() -> None:
