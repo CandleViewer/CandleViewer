@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import types
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -491,6 +492,91 @@ async def test_broker_aclose_is_idempotent_and_later_signings_start_no_touch(
     assert (await _borrow(b, meta.key_id))[0] == API_KEY
     await _drain_touches()
     assert writes == [] and not b._touches
+
+
+async def test_broker_aclose_with_a_wedged_write_cleanup_recancels_until_it_ends(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776 review: a cancelled write whose cleanup stalls again and again (the UPDATE, then a
+    rollback, then a close, on a connection that never answers) cannot hold shutdown forever:
+    `aclose` cancels what still runs every `io_timeout_s`, so each stalled step ends, the write
+    ends, nothing is left pending, and cancellation is still not counted as a failure."""
+    entered = asyncio.Event()
+    steps: list[str] = []
+
+    async def wedged(step: str) -> None:
+        steps.append(step)
+        await asyncio.Event().wait()  # never answers: only a cancellation ends this step
+
+    async def write(key_id: UUID) -> None:
+        entered.set()
+        try:
+            try:
+                await wedged("update")
+            finally:
+                await wedged("rollback")
+        finally:
+            await wedged("close")
+
+    store.touch_last_used = write
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=0.01)
+    meta = await _store(b)
+    before = m.credential_touch_failures_total._value.get()
+    await _borrow(b, meta.key_id)
+    await entered.wait()
+    (task,) = b._touches.values()
+    await b.aclose()
+    assert task.cancelled() and steps == ["update", "rollback", "close"] and not b._touches
+    assert asyncio.all_tasks() == {asyncio.current_task()}
+    assert m.credential_touch_failures_total._value.get() == before
+
+
+async def test_touch_done_callback_with_a_newer_entry_for_the_key_keeps_it(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776 review: an ending write removes its own entry only (by identity), never a newer
+    write's, so the one-write-per-key bound cannot silently reopen."""
+    writes, stalled, touch = _stalling_touch(clock)
+    store.touch_last_used = touch
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=60.0)
+    key = uuid4()
+    b._touch(key)
+    old = b._touches[key]
+    await stalled.wait()
+
+    async def later_write() -> None:
+        await asyncio.Event().wait()
+
+    newer = asyncio.create_task(later_write(), name=_TOUCH_TASK)
+    b._touches[key] = newer  # stands in for a later write of the same key
+    old.cancel()
+    await asyncio.gather(old, return_exceptions=True)
+    assert old.cancelled() and b._touches == {key: newer} and writes == [0.0]
+    await b.aclose()
+    assert newer.cancelled()
+
+
+async def test_touch_task_with_a_stalled_write_holds_no_broker(
+    store: Any, clock: FakeClock
+) -> None:
+    """#2776 review: the write task's frame holds the store's write, the key id and the bound,
+    never the broker, so its KEK and DEK cache are not reachable from the task."""
+    entered = asyncio.Event()
+
+    async def stall(key_id: UUID) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    store.touch_last_used = stall
+    b = CredentialBroker(store, AuditLog(), kek(), clock=clock, io_timeout_s=60.0)
+    key = uuid4()
+    b._touch(key)
+    await entered.wait()
+    (task,) = b._touches.values()
+    coro = task.get_coro()
+    assert isinstance(coro, types.CoroutineType) and coro.cr_frame is not None
+    assert dict(coro.cr_frame.f_locals) == {"write": stall, "key_id": key, "timeout_s": 60.0}
+    await b.aclose()
 
 
 async def test_destroy_cancels_only_that_keys_in_flight_touch(store: Any, clock: FakeClock) -> None:

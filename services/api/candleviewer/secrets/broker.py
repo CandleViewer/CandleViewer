@@ -293,32 +293,44 @@ class CredentialBroker:
         self._last_touch[key_id] = now
         # The write is handed over as a bound method: this debouncer stays the only code that
         # names it (#2580), and no store coroutine exists unless the task really starts.
-        task = spawn(
-            self._write_touch(self._store.touch_last_used, key_id), name="secrets-credential-touch"
-        )
-        self._touches[key_id] = task
-        task.add_done_callback(lambda _: self._touches.pop(key_id, None))
+        write = self._write_touch(self._store.touch_last_used, key_id, self._timeout)
+        task = spawn(write, name="secrets-credential-touch")
+        touches = self._touches
+        touches[key_id] = task
 
-    async def _write_touch(self, write: Callable[[UUID], Awaitable[None]], key_id: UUID) -> None:
+        def forget(done: asyncio.Task[None]) -> None:
+            if touches.get(key_id) is done:  # by identity: never drops another write's entry
+                del touches[key_id]
+
+        task.add_done_callback(forget)
+
+    @staticmethod
+    async def _write_touch(
+        write: Callable[[UUID], Awaitable[None]], key_id: UUID, timeout_s: float
+    ) -> None:
         """Body of a `_touch` task: one write, bounded by `io_timeout_s`. A failure or timeout is
         counted, never raised (nothing awaits it); cancellation (`destroy`, `aclose`) is not a
-        failure and propagates. It holds only the key id: no plaintext, no DEK."""
+        failure and propagates. Static, so the task holds the store's write, the key id and the
+        bound, and never the broker: no KEK, no DEK, no plaintext."""
         try:
-            async with asyncio.timeout(self._timeout):
+            async with asyncio.timeout(timeout_s):
                 await write(key_id)
         except Exception:
             m.credential_touch_failures_total.inc()
 
     async def aclose(self) -> None:
         """Shutdown of the broker's own tasks; its owner calls this on stop (`SecretsService.stop`,
-        after `drop_kek`). No `last_used_at` write starts from now on, and every in-flight one is
-        cancelled and awaited (within the owner's stop budget), so none is left pending.
+        after `drop_kek`). No `last_used_at` write starts from now on. Every in-flight one is
+        cancelled and awaited, so none is left pending. Each wait is bounded by `io_timeout_s`;
+        a write still running then (its cleanup stalled again, e.g. a rollback and then a close
+        on a wedged connection) is cancelled again, until every write has ended.
         Idempotent; signing is not affected."""
         self._touch_closed = True
-        writes = list(self._touches.values())
-        for write in writes:
-            write.cancel()
-        await asyncio.gather(*writes, return_exceptions=True)
+        pending = set(self._touches.values())
+        while pending:
+            for write in pending:
+                write.cancel()
+            _, pending = await asyncio.wait(pending, timeout=self._timeout)
 
     def _check_row(self, row: CredentialRow | None, key_id: UUID, purpose: str) -> CredentialRow:
         if row is None or row.revoked or key_id in self._destroyed or row.env != self._env:
