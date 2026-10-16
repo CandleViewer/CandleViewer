@@ -4,7 +4,7 @@ One page. Owner: E04. Authoritative detail: ADR-0014, `20-architecture.md` secti
 
 ## Register a metric
 
-1. Add a `_s(...)` row to `services/api/candleviewer/observability/metrics_catalogue.py` (name, kind, unit, labels, help, alert, status, owner epic, `max_series`). The golden snapshot test fails on unreviewed changes.
+1. Add a `_s(...)` row to `services/api/candleviewer/observability/metrics_catalogue.py` (name, kind, unit, labels, help, alert, status, owner epic, `max_series`). The golden snapshot test fails on unreviewed changes: review the row it reports, then rerun it with `CV_REGEN_GOLDEN=1` to rewrite `services/api/tests/unit/observability/golden/metrics_catalogue.jsonl` (one sorted row per metric, so two PRs adding different metrics merge cleanly).
 2. Add the row to the table in `20-architecture.md` section 12.1; `test_architecture_doc_sync.py` fails if you forget.
 3. Pre-bind label children once outside hot loops (`metric.labels(...)` at startup); never call `.labels()` per message (ADR-0014 addendum, E04-K01).
 4. Do not declare `env`; the registry injects it.

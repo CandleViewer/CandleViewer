@@ -2,16 +2,22 @@
 
 Exercises the four Gherkin scenarios from the ticket by faking `subprocess.run`
 so the test never actually invokes `pnpm generate` or touches real git state
-(no network, deterministic, fast).
+(no network, deterministic, fast). The #2743 scenarios at the end run the real
+gate in a throwaway git repository instead, with a stand-in for `pnpm generate`.
+The contract-subset scenarios render with the generator's real renderer, which
+needs PyYAML (scripts/requirements-ci.txt), as the gate does in CI.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import posixpath
 import re
+import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,14 +34,26 @@ def _proc(returncode: int, stdout: str = "", stderr: str = "") -> SimpleNamespac
     return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
-_YAML = b"openapi: 3.1.0\npaths: {}\n"
+def _contract(*names: str) -> bytes:
+    """A small contract: one GET per name, each with its own permission. The subset keeps
+    `x-rbac` and drops the summary."""
+    lines = ["openapi: 3.1.0", "paths:"]
+    for name in names:
+        lines += [
+            f"  /{name}:",
+            "    get:",
+            f'      x-rbac: {{permissions: ["{name}:read"], scope: account}}',
+            "      summary: cut from the subset",
+        ]
+    return "".join(f"{line}\n" for line in lines).encode()
 
 
-def _subset(source: bytes) -> str:
-    """A contract-subset artifact header recording the SHA-256 of `source`."""
-    return json.dumps(
-        {"x-cv-generated": {"source_sha256": hashlib.sha256(source).hexdigest()}}
-    )
+_YAML = _contract("alpha", "middle", "omega")
+
+
+def _render(source: bytes) -> bytes:
+    """The artifact the generator writes for `source`: the real renderer (needs PyYAML)."""
+    return gen_gate.render_contract_subset(source).encode("utf-8")
 
 
 @pytest.fixture(autouse=True)
@@ -52,7 +70,7 @@ def contract_pair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path
         tmp_path / "contract_subset.json",
     )
     source.write_bytes(_YAML)
-    artifact.write_text(_subset(_YAML), encoding="utf-8")
+    artifact.write_bytes(_render(_YAML))
     monkeypatch.setattr(gen_gate, "CONTRACT_SOURCE", source)
     monkeypatch.setattr(gen_gate, "CONTRACT_ARTIFACT", artifact)
     return source, artifact
@@ -178,33 +196,66 @@ def _clean_run(cmd, cwd=None, env=None):
     raise AssertionError(f"unexpected command: {cmd}")
 
 
-def test_contract_subset_from_another_yaml_fails_with_the_regenerate_command(
+def test_contract_subset_from_an_edited_yaml_fails_with_the_regenerate_command(
     contract_pair: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """#2555: a YAML edit without regenerating the packaged subset fails CI-GEN-001."""
+    """#2555: a YAML edit without regenerating the packaged subset fails CI-GEN-001; the
+    report shows what regenerating would change."""
     source, _ = contract_pair
-    source.write_bytes(_YAML + b"x-new: 1\n")
+    source.write_bytes(_contract("alpha", "beta", "middle", "omega"))
     monkeypatch.setattr(gen_gate, "_run", _clean_run)
     assert gen_gate.main([]) == 1
     err = capsys.readouterr().err
-    assert "CI-GEN-001" in err and "is stale" in err
+    assert "CI-GEN-001" in err and "is stale or hand-edited" in err
     assert "scripts/generate_protocol_models.py" in err
+    assert '+    "/beta": {' in err
 
 
-@pytest.mark.parametrize("body", ["", "{}", '{"x-cv-generated": {}}', "[]", "not json"])
-def test_contract_subset_without_a_source_hash_fails(
-    body: str,
+def test_regenerated_contract_subset_passes(
+    contract_pair: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, artifact = contract_pair
+    source.write_bytes(_contract("alpha", "beta", "middle", "omega"))
+    artifact.write_bytes(_render(source.read_bytes()))
+    monkeypatch.setattr(gen_gate, "_run", _clean_run)
+    assert gen_gate.main([]) == 0
+
+
+def _with_digest_line(text: str, digest: str = "0" * 64) -> str:
+    """The pre-#2743 header: a digest of the whole YAML after `source`."""
+    source = '    "source": "docs/plan/22-api-openapi.yaml"\n'
+    assert source in text
+    digest_line = f'    "source_sha256": "{digest}"\n'
+    return text.replace(source, source.replace("\n", ",\n") + digest_line, 1)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        pytest.param(_with_digest_line, id="digest-line"),
+        pytest.param(lambda t: t.replace("alpha:read", "alpha:write"), id="value"),
+        pytest.param(lambda t: json.dumps(json.loads(t)), id="reformatted"),
+        pytest.param(lambda t: "", id="empty"),
+        pytest.param(lambda t: "not json", id="not-json"),
+    ],
+)
+def test_hand_edited_contract_subset_fails(
+    edit: Callable[[str], str],
     contract_pair: tuple[Path, Path],
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """The committed artifact must be byte for byte what the generator renders."""
     _, artifact = contract_pair
-    artifact.write_text(body, encoding="utf-8")
+    artifact.write_text(
+        edit(artifact.read_text(encoding="utf-8")), encoding="utf-8", newline="\n"
+    )
     monkeypatch.setattr(gen_gate, "_run", _clean_run)
     assert gen_gate.main([]) == 1
-    assert "records no source hash" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "CI-GEN-001" in err and "is stale or hand-edited" in err
 
 
 def test_missing_contract_subset_fails(
@@ -215,17 +266,59 @@ def test_missing_contract_subset_fails(
     contract_pair[1].unlink()
     monkeypatch.setattr(gen_gate, "_run", _clean_run)
     assert gen_gate.main([]) == 1
-    assert "CI-GEN-001" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "CI-GEN-001" in err and "is missing" in err
 
 
-def test_contract_subset_hash_ignores_crlf_checkouts(
+def test_contract_subset_check_ignores_crlf_checkouts(
     contract_pair: tuple[Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The generator hashes LF bytes; a CRLF checkout of the same YAML still matches."""
-    source, _ = contract_pair
-    source.write_bytes(_YAML.replace(b"\n", b"\r\n"))
+    """The generator folds CRLF in the YAML, and the gate in the artifact."""
+    for path in contract_pair:
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
     monkeypatch.setattr(gen_gate, "_run", _clean_run)
     assert gen_gate.main([]) == 0
+
+
+def test_contract_subset_check_without_pyyaml_fails_ci_gen_004(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setitem(sys.modules, "yaml", None)  # `import yaml` raises
+    monkeypatch.setattr(gen_gate, "_run", _clean_run)
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert "CI-GEN-004" in err and "'yaml'" in err
+    assert gen_gate.PYYAML_INSTALL in err
+
+
+@pytest.mark.parametrize(
+    "source",
+    [b"paths: []\n", b"paths: {\n", b""],
+    ids=["no-paths-object", "syntax", "empty"],
+)
+def test_contract_that_cannot_be_rendered_fails_ci_gen_004(
+    source: bytes,
+    contract_pair: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    contract_pair[0].write_bytes(source)
+    monkeypatch.setattr(gen_gate, "_run", _clean_run)
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert "CI-GEN-004" in err and "failed" in err
+
+
+def test_unreadable_contract_fails_ci_gen_004(
+    contract_pair: tuple[Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    contract_pair[0].unlink()
+    monkeypatch.setattr(gen_gate, "_run", _clean_run)
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert "CI-GEN-004" in err and "cannot read" in err
 
 
 def test_generator_runs_with_turbo_force_and_the_inherited_environment(
@@ -472,15 +565,24 @@ def test_generator_access_is_derived_from_the_scripts() -> None:
     } <= writes
 
 
-@pytest.mark.parametrize("config", ["turbo.json", "packages/protocol/turbo.json"])
-def test_generate_inputs_hash_every_repo_level_file_the_generators_read(
-    config: str,
-) -> None:
+def test_generate_inputs_hash_every_repo_level_file_the_generators_read() -> None:
     """#2783: a read the cache key misses lets a cache hit replay stale output."""
     reads, _ = _generator_access()
-    inputs = _generate_globs(config, "inputs")
+    inputs = _generate_globs("packages/protocol/turbo.json", "inputs")
     assert _uncovered(reads, inputs) == []
     assert [path for path in inputs if not (_REPO_ROOT / path).is_file()] == []
+
+
+@pytest.mark.parametrize("field", ["inputs", "outputs"])
+def test_root_generate_task_stays_package_local(field: str) -> None:
+    """#2743: every package inherits the root `generate` entry, and every package's
+    typecheck and build depend on its `generate` (a task with no script still has a
+    hash). A repo-level glob there would make a spec edit re-hash chart-engine, config
+    and fixtures too; packages/protocol/turbo.json lists the protocol generators'."""
+    tasks = json.loads((_REPO_ROOT / "turbo.json").read_text(encoding="utf-8"))["tasks"]
+    globs = [g.removeprefix("!") for g in tasks["generate"].get(field, [])]
+    repo_level = [g for g in globs if g.startswith("$") or ".." in g.split("/")]
+    assert repo_level == []
 
 
 def test_generate_outputs_keep_every_repo_level_file_the_generators_write() -> None:
@@ -488,3 +590,160 @@ def test_generate_outputs_keep_every_repo_level_file_the_generators_write() -> N
     _, writes = _generator_access()
     outputs = _generate_globs("packages/protocol/turbo.json", "outputs")
     assert _uncovered(writes, outputs) == []
+
+
+# #2743: packages/protocol no longer commits a manifest of generated-file hashes, so
+# this gate alone must catch a committed hand edit of a generated file: regenerating
+# overwrites the edit and `git diff` reports it (CI-GEN-001). These scenarios run the
+# real gate against a throwaway git repository with the repo's own .gitignore; only
+# `pnpm generate` is replaced, by a stand-in that rewrites two generated files and
+# the git-ignored local manifest (no node toolchain, no network). The contract
+# subset pair is the autouse `contract_pair`.
+_HEADER = "// GENERATED FILE — DO NOT EDIT BY HAND.\n"
+_GENERATED_DIR = "packages/protocol/src/generated"
+_GENERATED = {
+    f"{_GENERATED_DIR}/rest/index.ts": _HEADER + "export type Rest = 1;\n",
+    f"{_GENERATED_DIR}/ws/index.ts": _HEADER + "export type Ws = 1;\n",
+}
+_LOCAL_MANIFEST = "packages/protocol/.cache/generated-manifest.json"
+_GENERATOR = f"""
+import json, pathlib
+files = {_GENERATED!r}
+for rel, text in files.items():
+    path = pathlib.Path(rel)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="\\n")
+manifest = pathlib.Path({_LOCAL_MANIFEST!r})
+manifest.parent.mkdir(parents=True, exist_ok=True)
+manifest.write_text(json.dumps(sorted(files)), encoding="utf-8")
+"""
+
+
+def _git_run(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _git(repo: Path, *args: str) -> str:
+    result = _git_run(repo, *args)
+    result.check_returncode()
+    return result.stdout
+
+
+@pytest.fixture
+def isolated_git(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Git ignores the global and system config and any repository it was run from."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def generated_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_git: None
+) -> Path:
+    """A freshly generated, committed tree; the gate's cwd for the test."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".gitignore").write_text(
+        (_REPO_ROOT / ".gitignore").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    generator = tmp_path / "generate.py"
+    generator.write_text(_GENERATOR, encoding="utf-8")
+    monkeypatch.setattr(gen_gate, "GENERATE_CMD", [sys.executable, str(generator)])
+    monkeypatch.chdir(root)
+    subprocess.run(gen_gate.GENERATE_CMD, check=True)
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "generated")
+    return root
+
+
+def test_fresh_tree_passes_and_the_local_manifest_stays_untracked(
+    generated_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The real gate passes a fresh tree; the repo's .gitignore keeps the manifest out."""
+    assert (generated_repo / _LOCAL_MANIFEST).is_file()
+    assert _LOCAL_MANIFEST not in _git(generated_repo, "ls-files").splitlines()
+    assert gen_gate.main([]) == 0
+    assert "OK" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("rel", sorted(_GENERATED))
+def test_committed_hand_edit_of_a_generated_file_fails_ci_gen_001(
+    generated_repo: Path, rel: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A committed hand edit fails with no committed manifest to compare against."""
+    path = generated_repo / rel
+    path.write_text(
+        path.read_text(encoding="utf-8") + "export type HandEdited = true;\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    _git(generated_repo, "commit", "-qam", "hand edit")
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert "CI-GEN-001" in err
+    assert f"a/{rel}" in err and "-export type HandEdited = true;" in err
+
+
+def test_local_manifest_would_fail_ci_gen_002_if_it_were_not_ignored(
+    generated_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With no ignore rule covering it (the test empties .gitignore; in the repo the
+    generic `.cache/` line covers it), the local manifest is untracked output."""
+    (generated_repo / ".gitignore").write_text("", encoding="utf-8")
+    _git(generated_repo, "commit", "-qam", "no ignores")
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert "CI-GEN-002" in err and "packages/protocol/.cache/" in err
+
+
+# #2743 acceptance 1, for the packaged contract subset: two PRs that each add a different
+# operation merge back-to-back without a rebase. Each branch regenerates the artifact with
+# the real renderer, as a contract PR does; the merged tree must pass the gate as merged.
+def _merge_two_contract_prs(
+    source: Path, artifact: Path, render: Callable[[bytes], bytes]
+) -> subprocess.CompletedProcess[str]:
+    repo = source.parent
+    artifact.write_bytes(render(source.read_bytes()))
+    _git(repo, "init", "-q", "-b", "main")
+    _git(repo, "add", source.name, artifact.name)
+    _git(repo, "commit", "-qm", "base")
+    for branch, added in (("first", "beta"), ("second", "psi")):
+        _git(repo, "checkout", "-q", "-b", branch, "main")
+        source.write_bytes(_contract(*sorted({"alpha", "middle", "omega", added})))
+        artifact.write_bytes(render(source.read_bytes()))
+        _git(repo, "commit", "-qam", f"add GET /{added}")
+    _git(repo, "checkout", "-q", "first")
+    return _git_run(repo, "merge", "--no-edit", "second")
+
+
+def test_contract_prs_adding_different_operations_merge_cleanly_and_pass(
+    isolated_git: None, contract_pair: tuple[Path, Path]
+) -> None:
+    source, artifact = contract_pair
+    merged = _merge_two_contract_prs(source, artifact, _render)
+    assert merged.returncode == 0, merged.stdout + merged.stderr
+    assert source.read_bytes() == _contract("alpha", "beta", "middle", "omega", "psi")
+    gen_gate.check_contract_subset()  # raises GenGateError unless the merge is fresh
+
+
+def test_a_digest_of_the_whole_yaml_in_the_subset_makes_them_conflict(
+    isolated_git: None, contract_pair: tuple[Path, Path]
+) -> None:
+    """The control for the test above: the pre-#2743 header, with `source_sha256`."""
+
+    def render_with_digest(source: bytes) -> bytes:
+        text = _render(source).decode("utf-8")
+        return _with_digest_line(text, hashlib.sha256(source).hexdigest()).encode()
+
+    merged = _merge_two_contract_prs(*contract_pair, render_with_digest)
+    assert merged.returncode != 0
+    assert "CONFLICT" in merged.stdout and "contract_subset.json" in merged.stdout

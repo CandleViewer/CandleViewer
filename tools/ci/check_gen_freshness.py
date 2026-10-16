@@ -17,24 +17,33 @@ This script is the single implementation invoked by
    and we fail *before* even looking at git diff, so a flaky generator never
    masquerades as a "someone forgot to regenerate" freshness failure.
 2. Runs ``git diff --exit-code -- packages/protocol`` (CI-GEN-001: drift
-   against a committed schema change).
+   against a committed schema change). This is also the hand-edit guard for
+   committed generated files: regenerating overwrites the edit, so it shows
+   up as a diff. No committed manifest takes part (#2743).
 3. Runs ``git status --porcelain -- packages/protocol`` (CI-GEN-002:
    untracked generated output the first check cannot see).
-4. Checks that the packaged contract subset (#2555) was cut from the committed
-   ``docs/plan/22-api-openapi.yaml`` (CI-GEN-001), by the SHA-256 the artifact
-   records: its generator needs the backend venv, which this job does not have.
+4. Renders the packaged contract subset (#2555) again from the committed
+   ``docs/plan/22-api-openapi.yaml`` with the generator's own renderer and
+   compares it with the committed artifact (CI-GEN-001), the way step 2 does
+   for packages/protocol: a YAML edit that skipped regeneration and a hand
+   edit of the artifact both fail. The artifact records no digest of the YAML
+   (#2743), so two PRs that change different operations do not conflict on it.
 
 Exit codes: 0 clean, 1 a CI-GEN-* violation was found, 2 internal error
 (generator command failed to run at all).
 
-Stdlib only (subprocess/git/node are external processes, not imports).
+Stdlib only at import (subprocess/git/node are external processes, not
+imports). Step 4's renderer imports PyYAML when it runs; _job-gen.yml installs
+the version pinned in scripts/requirements-ci.txt.
 """
 
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
-import json
+import importlib.util
+import itertools
 import os
 import shutil
 import subprocess
@@ -59,16 +68,25 @@ EXTRA_GENERATED: tuple[Path, ...] = (
 )
 GENERATED_PATHS: tuple[Path, ...] = (GENERATED_ROOT, *EXTRA_GENERATED)
 # #2555: services/api/scripts/generate_protocol_models.py writes the packaged
-# contract subset the API reads at runtime. Its `--check` (py lane) compares the
-# content; this always-on job only compares the source hash the artifact records,
-# so a YAML-only PR cannot leave the runtime contract stale.
+# contract subset the API reads at runtime. Its `--check` runs in the py lane only,
+# so this always-on job renders the subset again as well, or a YAML-only PR could
+# leave the runtime contract stale. The renderer is loaded by path from this
+# script's checkout, as the generator loads it: it imports only the stdlib, and
+# rendering needs PyYAML, not the backend venv.
 CONTRACT_SOURCE = Path("docs/plan/22-api-openapi.yaml")
 CONTRACT_ARTIFACT = Path(
     "services/api/candleviewer/api/_generated/contract_subset.json"
 )
+CONTRACT_RENDERER = (
+    Path(__file__).resolve().parents[2]
+    / "services/api/candleviewer/api/contract_conformance.py"
+)
 CONTRACT_REGENERATE = (
     "cd services/api && uv run python scripts/generate_protocol_models.py"
 )
+PYYAML_INSTALL = "python -m pip install -c scripts/requirements-ci.txt PyYAML"
+# Lines of the artifact diff a CI-GEN-001 report shows.
+CONTRACT_DIFF_LINES = 40
 # shutil.which resolves pnpm.cmd on Windows (a bare "pnpm" is not executable there).
 GENERATE_CMD = [shutil.which("pnpm") or "pnpm", "generate"]
 # #2783: the gate judges what the generators produce from this checkout, never a
@@ -180,26 +198,68 @@ def check_untracked() -> None:
         )
 
 
-def check_contract_subset() -> None:
-    """CI-GEN-001: the packaged contract subset was generated from the committed YAML."""
+def render_contract_subset(source: bytes) -> str:
+    """The artifact the generator writes for the YAML bytes ``source``."""
+    spec = importlib.util.spec_from_file_location(
+        "_cv_contract_renderer", CONTRACT_RENDERER
+    )
+    if spec is None or spec.loader is None:
+        raise GenGateError("CI-GEN-004", f"cannot load {CONTRACT_RENDERER}")
+    module = importlib.util.module_from_spec(spec)
     try:
-        artifact = json.loads(CONTRACT_ARTIFACT.read_text(encoding="utf-8"))
-        recorded = artifact["x-cv-generated"]["source_sha256"]
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+        spec.loader.exec_module(module)
+        rendered = module.render_contract_subset(source)
+    except ModuleNotFoundError as exc:
+        raise GenGateError(
+            "CI-GEN-004",
+            f"the contract subset renderer cannot import {exc.name!r} in "
+            f"{sys.executable}; it needs PyYAML: `{PYYAML_INSTALL}`.",
+        ) from exc
+    except Exception as exc:  # a YAML syntax error, a dangling $ref: no artifact
+        raise GenGateError(
+            "CI-GEN-004",
+            f"rendering {CONTRACT_ARTIFACT} from {CONTRACT_SOURCE} failed: {exc!r}",
+        ) from exc
+    if not isinstance(rendered, str):
+        raise GenGateError("CI-GEN-004", f"{CONTRACT_RENDERER} rendered no text")
+    return rendered
+
+
+def check_contract_subset() -> None:
+    """CI-GEN-001: the packaged contract subset is what the generator renders from the
+    committed YAML, byte for byte apart from CRLF line ends."""
+    try:
+        source = CONTRACT_SOURCE.read_bytes()
+    except OSError as exc:
+        raise GenGateError(
+            "CI-GEN-004", f"cannot read {CONTRACT_SOURCE}: {exc}"
+        ) from exc
+    rendered = render_contract_subset(source)
+    try:
+        committed = CONTRACT_ARTIFACT.read_bytes().replace(b"\r\n", b"\n")
+    except OSError as exc:
         raise GenGateError(
             "CI-GEN-001",
-            f"{CONTRACT_ARTIFACT} is missing or records no source hash ({exc!r}). "
+            f"{CONTRACT_ARTIFACT} is missing ({exc}). "
             f"Regenerate it with `{CONTRACT_REGENERATE}` and commit the result.",
         ) from exc
-    source = CONTRACT_SOURCE.read_bytes().replace(b"\r\n", b"\n")
-    committed = hashlib.sha256(source).hexdigest()
-    if recorded != committed:
-        raise GenGateError(
-            "CI-GEN-001",
-            f"{CONTRACT_ARTIFACT} is stale: it was generated from a {CONTRACT_SOURCE} with "
-            f"sha256 {recorded}, but the committed one has sha256 {committed}. "
-            f"Regenerate it with `{CONTRACT_REGENERATE}` and commit the result.",
-        )
+    if committed == rendered.encode("utf-8"):
+        return
+    diff = difflib.unified_diff(
+        committed.decode("utf-8", errors="replace").splitlines(keepends=True),
+        rendered.splitlines(keepends=True),
+        f"a/{CONTRACT_ARTIFACT} (committed)",
+        f"b/{CONTRACT_ARTIFACT} (rendered from {CONTRACT_SOURCE})",
+    )
+    shown = list(itertools.islice(diff, CONTRACT_DIFF_LINES + 1))
+    if len(shown) > CONTRACT_DIFF_LINES:
+        shown[CONTRACT_DIFF_LINES:] = ["... (diff truncated)\n"]
+    raise GenGateError(
+        "CI-GEN-001",
+        f"{CONTRACT_ARTIFACT} is stale or hand-edited: it is not what the generator "
+        f"renders from the committed {CONTRACT_SOURCE}. Regenerate it with "
+        f"`{CONTRACT_REGENERATE}` and commit the result.\n\n" + "".join(shown),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

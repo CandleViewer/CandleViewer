@@ -47,6 +47,12 @@ jobs:
         with:
           python-version: "3.13"
 
+      # The gate renders the packaged contract subset again with the generator's
+      # renderer, which parses the YAML with PyYAML (#2743). `-c` takes the version
+      # pinned in scripts/requirements-ci.txt without installing the rest of it.
+      - name: Install PyYAML (contract subset renderer)
+        run: python -m pip install --quiet -c scripts/requirements-ci.txt PyYAML
+
       - name: Determinism + freshness + untracked-output check
         id: gen-check
         run: python tools/ci/check_gen_freshness.py

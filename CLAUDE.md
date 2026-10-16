@@ -26,20 +26,20 @@ Every session, in this order:
 1. **`CONSTITUTION.md`** — the non-negotiables. Appendix A is the rule index; cite rule ids in PRs.
 2. **`AGENTS.md`** — the operating manual (repo map, ticket workflow, commands §4, coding standards §5,
    test rules §6, PR checklist §7, NEVER list §8, escalation §9).
-3. **Your ticket, in full** — the GitHub issue *and* its JSON in `docs/plan/backlog/E*.json`, especially
+3. **Your ticket, in full** — the GitHub issue _and_ its JSON in `docs/plan/backlog/E*.json`, especially
    the **`## Agent execution brief`** (Stories/Tasks/Spikes/Bugs/Chores) or **`## Agent guidance`** (Epics).
 4. **`docs/plan/README.md`** — the plan index; follow its reading order for your role:
 
-| Role / ticket area | Read (in `docs/plan/`) |
-|---|---|
-| Everyone | `01-sdlc-and-branching.md`, `02-definition-of-ready-done.md`, `03-testing-strategy.md` |
-| Backend / OMS / ingestion | `20-architecture.md`, `21-database-schema.md`, `22-api-openapi.yaml`, `23-ws-protocol.md`, `24-internal-schemas.md` |
-| Any lifecycle / state machine | `28-statechart-catalogue.md`, `29-statechart-adoption-plan.md`, `27-adrs/ADR-0016-statechart-runtime.md` |
-| Chart engine | `26-chart-engine-design.md`, `27-adrs/ADR-0002-custom-webgl-chart-engine.md`, `06-performance-and-load-standard.md` |
-| Frontend / design | `12-sitemap.md`, `13-user-flows.md`, `14-screens-catalogue.md`, `15-component-catalogue.md`, `16-design-system-brief.md`, `05-accessibility-standard.md` |
-| Security-labelled | `04-security-program.md`, `27-adrs/ADR-0009…0010` |
-| Release / infra | `07-release-and-prr.md`, `27-adrs/ADR-0013-ci-pipeline.md`, `30-release-roadmap.md` |
-| Planning / traceability | `10-personas.md`, `11-user-stories.md`, `18-traceability-matrix.md`, `31-sprint-plan.md`, `32-risk-register.md`, `33-raci.md` |
+| Role / ticket area            | Read (in `docs/plan/`)                                                                                                                                   |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Everyone                      | `01-sdlc-and-branching.md`, `02-definition-of-ready-done.md`, `03-testing-strategy.md`                                                                   |
+| Backend / OMS / ingestion     | `20-architecture.md`, `21-database-schema.md`, `22-api-openapi.yaml`, `23-ws-protocol.md`, `24-internal-schemas.md`                                      |
+| Any lifecycle / state machine | `28-statechart-catalogue.md`, `29-statechart-adoption-plan.md`, `27-adrs/ADR-0016-statechart-runtime.md`                                                 |
+| Chart engine                  | `26-chart-engine-design.md`, `27-adrs/ADR-0002-custom-webgl-chart-engine.md`, `06-performance-and-load-standard.md`                                      |
+| Frontend / design             | `12-sitemap.md`, `13-user-flows.md`, `14-screens-catalogue.md`, `15-component-catalogue.md`, `16-design-system-brief.md`, `05-accessibility-standard.md` |
+| Security-labelled             | `04-security-program.md`, `27-adrs/ADR-0009…0010`                                                                                                        |
+| Release / infra               | `07-release-and-prr.md`, `27-adrs/ADR-0013-ci-pipeline.md`, `30-release-roadmap.md`                                                                      |
+| Planning / traceability       | `10-personas.md`, `11-user-stories.md`, `18-traceability-matrix.md`, `31-sprint-plan.md`, `32-risk-register.md`, `33-raci.md`                            |
 
 Do not write code before step 3. If the Definition of Ready (C-11.1, `02-definition-of-ready-done.md`)
 is not met, **stop and comment on the issue** listing exactly what is missing.
@@ -100,8 +100,9 @@ Full flow: `AGENTS.md` §3 (flowchart) and `docs/plan/01-sdlc-and-branching.md` 
   **flags never gate a safety invariant** (C-4.14).
 - **One ticket = one branch = one PR**, preferred **≤400 changed LOC** excluding generated/lockfiles/
   snapshots; larger needs a "why this can't be split" note (C-4.8).
-- **Conventional commits**: `type(scope): summary`; types `feat fix chore docs test refactor perf build
-  ci`; scope = the `area/*` slug without prefix (`chart-engine`, `charting-ui`, `order-flow`,
+- **Conventional commits**: `type(scope): summary`;
+  types `feat fix chore docs test refactor perf build ci`; scope = the `area/*` slug without prefix
+  (`chart-engine`, `charting-ui`, `order-flow`,
   `oms-execution`, `rule-engine`, `paper-trading`, `accounts-admin`, `auth-rbac`, `ingestion`,
   `recorder-replay`, `journal-analytics`, `backend-platform`, `frontend-platform`, `electron-shell`,
   `design-system`, `infra-devops`, `docs`) — `01-sdlc-and-branching.md` §5.2/§6.2. Breaking: `!` + footer.
@@ -140,14 +141,15 @@ Full flow: `AGENTS.md` §3 (flowchart) and `docs/plan/01-sdlc-and-branching.md` 
 - **Mandatory config block** (`28-statechart-catalogue.md` §1.3c — copy from there, never from memory):
   `strict_config=True`, `strict=True`, `event_schemas=CV_EVENT_SCHEMAS`, bounded `max_queue_size` +
   `overflow_policy="refuse"` (async only), `.use(CvErrorHooks())`, chart root `"onUnhandled": "defer"` +
-  ordered unguarded audit arm, `"maxIterations": 500`. Restore via `from_snapshot(..., minimum_version=3,
-  plugins=[CvErrorHooks()])`; drain + journal before `stop()`; `cv_re_mint()` payload-only (CV-C68).
+  ordered unguarded audit arm, `"maxIterations": 500`. Restore via
+  `from_snapshot(..., minimum_version=3, plugins=[CvErrorHooks()])`; drain + journal before `stop()`;
+  `cv_re_mint()` payload-only (CV-C68).
   The CV-C constraint list in C-2.22 is binding.
 - **Hot paths are never statecharts** (C-2.20): book deltas, bar builders, footprint aggregation, per-tick
   rule evaluation, paper fill/queue/fee math, rate-limit governor and fan-out admission. Nothing >~100 Hz
   queries an interpreter — machines publish a plain `bool`/enum on state entry.
 - **Statecharts record; synchronous code enforces** (C-2.21): kill switch, live gate, risk caps, rate
-  budgets are sync checks consulted *before* any interpreter.
+  budgets are sync checks consulted _before_ any interpreter.
 - **Gates (blocking):** `tests/xstate_contract/` (golden traces on the library), `tools/lint_statecharts.py`
   (`29-statechart-adoption-plan.md` §1.6), the committed `machine_hashes.lock` diff, and attestation verify.
 - **`machine_hash`:** any semantic change needs a hash bump **plus** a version bump or a registered
@@ -167,7 +169,7 @@ Full flow: `AGENTS.md` §3 (flowchart) and `docs/plan/01-sdlc-and-branching.md` 
   msgspec/orjson for hot serialization, `Decimal` for money/prices, tz-aware UTC, typed domain errors,
   order retries reuse `orderLinkId` (C-2.10), structured logs with `traceId` and no secrets.
 - **Module boundaries** enforced by `import-linter` (CONSTITUTION §3); `packages/protocol/src/generated` is
-  regenerated (`pnpm generate`), never hand-edited.
+  regenerated (`pnpm generate`, `AGENTS.md` §4) and committed, never hand-edited.
 
 ## 8. Commands
 
@@ -217,8 +219,9 @@ These rules keep agents from colliding:
    you stop.
 2. **Respect `blocked_by`.** Only start when every blocker is Done. Epic `## Agent guidance` gives the
    dependency order and the parallel lanes — stay in your lane.
-3. **File ownership.** Before editing a file, check open PRs/claimed tickets that touch it (`gh pr list
-   --search`, the ticket's *Repo paths*). Never edit a file owned by another in-flight ticket without first
+3. **File ownership.** Before editing a file, check open PRs/claimed tickets that touch it
+   (`gh pr list --search`, the ticket's _Repo paths_). Never edit a file owned by another in-flight
+   ticket without first
    commenting on that ticket and agreeing; otherwise, wait for it to merge and rebase.
 4. **Interface first.** Changes to shared contracts — `packages/protocol` (OpenAPI `22-api-openapi.yaml`,
    WS `23-ws-protocol.md`), internal schemas (`24-internal-schemas.md`), DB migrations, statechart JSON —
