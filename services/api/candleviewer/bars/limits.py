@@ -19,6 +19,8 @@ QUERY_TIMEOUT_S: Final = 2.0
 MAX_TIME_WINDOW_US: Final = 400 * 86_400 * 1_000_000
 MAX_NON_TIME_WINDOW_US: Final = 31 * 86_400 * 1_000_000
 MAX_WINDOW_BARS: Final = 250_000
+#: SR-E12-07: a WS `bars` snapshot's `history` is 0..1000; `BarReader.read_tail` reads at most this.
+MAX_TAIL: Final = 1_000
 #: SR-E12-03: param floors/ceilings per non-time bar type.
 TICK_PARAM_RANGE: Final = (100, 1_000_000)
 RANGE_TICKS_RANGE: Final = (2, 100_000)
@@ -35,6 +37,7 @@ __all__ = [
     "MAX_LIMIT",
     "MAX_NON_TIME_WINDOW_US",
     "MAX_REVERSAL_BRICKS",
+    "MAX_TAIL",
     "MAX_TIME_WINDOW_US",
     "MAX_WINDOW_BARS",
     "QTY_PARAM_MAX",

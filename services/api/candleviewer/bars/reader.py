@@ -22,6 +22,7 @@ from typing import Any, Final, Protocol
 import structlog
 
 from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TIME_WINDOW_US
+from candleviewer.bars.limits import MAX_TAIL as MAX_TAIL  # still importable here (the WS store)
 from candleviewer.bars.metrics import bars_tape_read_degraded_total
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import BUILD_VERSIONS, bar_param_for, row_checksum
@@ -141,8 +142,6 @@ def build_range_query(
     return sql, params
 
 
-#: `read_tail` cap: a WS `bars` snapshot holds at most 1 000 bars (`23-ws-protocol.md` §6.1).
-MAX_TAIL: Final = 1_000
 #: A time-bar tail looks back this many times the span of `limit` bars (room for recording gaps).
 TAIL_SPAN_FACTOR: Final = 2
 #: `read_tail` yields to the loop after every this many rows (~24 µs of CPU a row, C-2.17).
@@ -162,15 +161,18 @@ def tail_window_us(spec: BarSpec, limit: int) -> int:
 
 
 def build_tail_query(
-    kind: str, symbol: str, bar_param: str, limit: int, from_us: int
+    kind: str, symbol: str, bar_param: str, limit: int, from_us: int, *, now_us: int
 ) -> tuple[str, tuple[object, ...]]:
     """The newest `limit` builder rows of one series at or after `from_us`, newest first by the
     full bar key (the caller reverses). Kline rows (NULL `index`) carry no bar key and are left
-    out."""
+    out. A `from_us` further back from `now_us` than the kind's SR-E12-02 window cap is refused:
+    a check against the caller's clock (`read_tail` passes the one it windows with), not a clamp."""
     if kind not in _FAMILIES:
         raise ValueError(f"unknown bar kind {kind!r}")
     if not 1 <= limit <= MAX_TAIL:
         raise ValueError(f"limit must be between 1 and {MAX_TAIL}")
+    if from_us < now_us - (MAX_TIME_WINDOW_US if kind == "time" else MAX_NON_TIME_WINDOW_US):
+        raise ValueError(f"from_us is older than the {kind} bars window cap (SR-E12-02)")
     # QuestDB 8.1.1 predates upstream #5148 (a multi-key DESC LIMIT sorts its whole scan): bound ts.
     sql = (
         f"SELECT * FROM bars_{kind} WHERE symbol = $1 AND bar_param = $2 AND ts >= $3 "  # noqa: S608  # nosec B608 reason=table-from-closed-allowlist owner=@CandleViewer/backend
@@ -322,9 +324,15 @@ class BarReader:
         """The newest `limit` closed, tape-built bars of a series inside `tail_window_us`, oldest
         first (WS `bars` snapshot hydration, #2195): one `build_tail_query` read, reversed.
         Untrusted rows are dropped and counted as in `read_bars`; stale `build_version` rows are
-        served as-is. A malformed row is skipped, never fatal to the whole tail."""
-        since = self._now_us() - tail_window_us(spec, limit)
-        sql, params = build_tail_query(spec.kind, symbol, bar_param_for(spec), limit, since)
+        served as-is. A malformed row is skipped, never fatal to the whole tail.
+
+        Callers skip a `history` of 0 (a `limit` below 1 raises) and bound every read with a
+        timeout, degrading when it expires (SR-E12-01), as the WS series store does with its
+        `timeout_s`."""
+        now = self._now_us()
+        since = now - tail_window_us(spec, limit)
+        bar_param = bar_param_for(spec)
+        sql, params = build_tail_query(spec.kind, symbol, bar_param, limit, since, now_us=now)
         raw = await self._conn.fetch(sql, *params)
         current = BUILD_VERSIONS[spec.kind]
         bars: list[tuple[int, Bar]] = []
@@ -355,7 +363,7 @@ class BarReader:
                 "bars_tail_rows_malformed", table=f"bars_{spec.kind}", spec_hash=spec.spec_hash,
                 rows=malformed, error_type=error,
             )  # fmt: skip
-        return BarTail(bars, skipped=skipped + malformed, builds=builds, dropped=dropped)
+        return BarTail(bars, skipped + malformed, builds, dropped, since_us=since, fetched=len(raw))
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,6 +382,10 @@ class BarTail:
     #: `meta.build_version` is the lowest among the bars a snapshot sends).
     builds: dict[BuildKey, int] = field(default_factory=dict)
     dropped: int = 0
+    #: Where the read stopped: its window start (µs) and the rows it fetched. Fewer rows than the
+    #: limit mean the window holds no more, whether the series or the SR-E12-02 cap ended it.
+    since_us: int = 0
+    fetched: int = 0
 
     @property
     def integrity_degraded(self) -> bool:
