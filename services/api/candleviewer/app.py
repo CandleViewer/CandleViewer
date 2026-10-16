@@ -19,7 +19,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
@@ -180,13 +180,18 @@ from candleviewer.recorder.coverage import CoverageService
 from candleviewer.recorder.metrics import current_write_backlog_rows, export_recorder_metrics
 from candleviewer.recorder.service import RecorderService
 from candleviewer.replay.service import ReplayService
+from candleviewer.replay.sessions_service import (
+    ReplayLimits,
+    ReplaySessionService,
+    WindowCoverage,
+)
 from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.service import RulesService
 from candleviewer.rules_store_pg import PostgresRuleStore
 from candleviewer.settings import Environment, FeedMode, Settings, get_settings
 from candleviewer.statechart.bindings.b16_session import set_audit_sink as set_b16_audit_sink
-from candleviewer.statechart.gateway import GatewayOverloadedError
+from candleviewer.statechart.gateway import Gateway, GatewayOverloadedError
 from candleviewer.storage.cold.archive_import import FileImportLedger
 from candleviewer.storage.cold.compaction_run import compact_all
 from candleviewer.storage.cold.compactor import Compactor
@@ -218,6 +223,9 @@ from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOn
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+)
+from candleviewer.storage.repositories.replay_sessions_sqlalchemy import (
+    SqlAlchemyReplaySessionRepository,
 )
 from candleviewer.storage.repositories.rows import (
     BookDeltaRow,
@@ -326,6 +334,54 @@ class _LazyAuditEmitter:
 
     async def emit(self, action: str, **kwargs: Any) -> None:
         await self._audit.writer.emit(action, **kwargs)
+
+
+class _ReplayCoverage:
+    """E26-T01: `replay.CoverageReader` over E16-T04 `CoverageService` (M12 may not import the
+    recorder, C-3.1): the recorded `trades` intervals of the window; the rest is a gap."""
+
+    def __init__(self, coverage: CoverageService) -> None:
+        self._coverage = coverage
+
+    async def window(self, symbol: str, lo_us: int, hi_us: int) -> WindowCoverage:
+        [trades] = await self._coverage.coverage(symbol, [StreamKind.TRADES.value], lo_us, hi_us)
+        return WindowCoverage(covered=tuple((i.lo, i.hi) for i in trades.intervals))
+
+
+def _build_replay_sessions(
+    settings: Settings,
+    pg: SqlAlchemyRelationalRepository,
+    coverage: CoverageService,
+    audit: AuditHandle,
+) -> ReplaySessionService:
+    """E26-T01: the B12 session lifecycle. Paper-account grants and source handles are ports
+    E26-T05/E36 wire: until then a paper-trading session is refused (fail closed)."""
+    limits = ReplayLimits(
+        idle_ttl=timedelta(seconds=settings.replay_idle_ttl_s),
+        max_sessions_per_user=settings.replay_max_sessions_per_user,
+        max_window=timedelta(hours=settings.replay_max_window_hours),
+        reclaim_interval_s=settings.replay_reclaim_interval_s,
+    )
+    return ReplaySessionService(
+        SqlAlchemyReplaySessionRepository(pg),
+        coverage=_ReplayCoverage(coverage),
+        audit=_LazyAuditEmitter(audit),
+        limits=limits,
+        gateway=Gateway(),
+        env=settings.environment.value,
+    )
+
+
+def _attach_replay_sessions(
+    ctx: AppContext,
+    settings: Settings,
+    pg: SqlAlchemyRelationalRepository | None,
+    coverage: CoverageService | None,
+) -> None:
+    """Replay sessions need Postgres and the recorded-coverage service (real backend only);
+    without them the module stays scaffold-only and nothing is attached."""
+    if pg is not None and coverage is not None:
+        ctx.replay.attach_sessions(_build_replay_sessions(settings, pg, coverage, ctx.audit))
 
 
 def _audit_ready(audit: AuditHandle) -> Callable[[], bool]:
@@ -900,6 +956,7 @@ def create_app(
     app.state.coverage_service = coverage_service
     if coverage_service is not None:
         ctx.recorder.attach_coverage(coverage_service)
+    _attach_replay_sessions(ctx, resolved, _kb_pg, coverage_service)  # started by the supervisor
     # E16-T07 (#491): DiskBudget on the real backend (no recorder flag; lifespan-started).
     app.state.disk_budget = build_disk_budget(
         resolved,

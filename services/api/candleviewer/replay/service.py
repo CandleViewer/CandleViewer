@@ -1,9 +1,9 @@
 """Lifecycle contract for the replay module (M12).
 
 Every module implements the lifecycle contract from
-`docs/plan/20-architecture.md` Sec.3: `start`, `stop`, `health`. This is an
-empty scaffold — the supervisor (Sec.6.2) can construct and sequence this
-module, but it does no real work until its owning epic lands.
+`docs/plan/20-architecture.md` Sec.3: `start`, `stop`, `health`. E26-T01: the composition root
+attaches a `ReplaySessionService` (real storage backend only); `start` then revives the live
+sessions and starts its mirror and idle-reclaim tasks, and `stop` persists or stops every chart.
 """
 
 from __future__ import annotations
@@ -14,23 +14,39 @@ from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.replay.sessions_service import ReplaySessionService
 
 
 class ReplayService:
-    """Empty scaffold for the M12 `replay` module lifecycle."""
+    """The M12 `replay` module lifecycle."""
 
     def __init__(self) -> None:
         self._started = False
+        self.sessions: ReplaySessionService | None = None
+
+    def attach_sessions(self, sessions: ReplaySessionService) -> None:
+        self.sessions = sessions
 
     async def start(self, ctx: AppContext) -> None:
-        """Start the module. No-op until the owning epic implements it."""
+        """Start the module (and the session service when one is attached)."""
+        if self.sessions is not None:
+            await self.sessions.start()
         self._started = True
 
     async def stop(self, grace_s: float) -> None:
-        """Stop the module within `grace_s` seconds. No-op scaffold."""
+        """Stop the module (the supervisor bounds this by `grace_s`)."""
+        if self.sessions is not None:
+            await self.sessions.stop()
         self._started = False
 
     def health(self) -> HealthReport:
-        """Report module health. Scaffold modules report `ok` when constructed."""
-        status = HealthStatus.OK if self._started else HealthStatus.STOPPED
-        return HealthReport(module="", status=status, detail="scaffold module — no real logic yet")
+        """STOPPED until started; DEGRADED when the session service's mirror or reclaim task
+        has died (sessions would stop mirroring or being reclaimed)."""
+        if not self._started:
+            return HealthReport(module="", status=HealthStatus.STOPPED, detail="replay stopped")
+        if self.sessions is None:
+            return HealthReport(module="", status=HealthStatus.OK, detail="replay sessions off")
+        if not self.sessions.tasks_alive:
+            detail = "replay session tasks stopped"
+            return HealthReport(module="", status=HealthStatus.DEGRADED, detail=detail)
+        return HealthReport(module="", status=HealthStatus.OK, detail="replay sessions on")
