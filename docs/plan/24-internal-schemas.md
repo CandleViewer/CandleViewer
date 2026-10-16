@@ -1272,7 +1272,7 @@ class Order(BaseModel):
 class Execution(BaseModel):        # immutable fill record
     exec_id: str                   # exchange execId — dedupe key
     order_id: OrderId
-    order_link_id: OrderLinkId
+    order_link_id: OrderLinkId     # its order's id, normalised (§14.2 rule 11)
     account_id: AccountId
     symbol: Symbol
     side: Side
@@ -1369,7 +1369,7 @@ stateDiagram-v2
 | S6  | Terminal states are immutable. A post-terminal exchange push raises `ReconcileAnomaly`, is audited and alerted, and does not mutate the order.                                                                              |
 | S7  | Postgres is authoritative. If Postgres is unavailable, order entry is blocked — we never accept an order we cannot durably record.                                                                                          |
 | S8  | Every transition writes an append-only `order_events` row before the in-memory state changes (write-ahead), so a crash mid-transition is recoverable.                                                                       |
-| S9  | `untracked` is a distinct state for orders discovered on the exchange that we never created (manual Bybit-app order, or pre-existing). They are displayed, adoptable by the user, but never auto-managed by rules.          |
+| S9  | `untracked` is a distinct state for exchange orders with no local row (manual Bybit-app order, pre-existing, or ours whose row was lost). They are displayed, adoptable by the user, but never auto-managed by rules.       |
 
 ### 8.3 Idempotency — `orderLinkId` scheme
 
@@ -1390,21 +1390,21 @@ order_link_id = "{prefix}{env}-{group22}-{acct4}-{seq2}{suffix}"
 
 Base62 digits are `0-9A-Za-z` in value order. `crc32` is `zlib.crc32` over the ASCII bytes of `str(account_id).lower()`. A full crc32 needs up to six base62 digits, so `mod 62^4` keeps the low four: `acct4` only labels the account for diagnostics, and uniqueness comes from `group22`, `seq2` and the collision check (rule 5).
 
-`env` comes from the order, never from a process-wide setting: `ExecutionMode` `exchange` takes the letter of the account's `Environment` and `paper` takes `p`, so a paper order and a demo order for the same group differ. `replay` has no letter, so generation raises a typed `OmsError` (#846 Q4).
+`env` comes from the order, never from a process-wide setting: `ExecutionMode` `exchange` takes the letter of the account's `Environment` and `paper` takes `p`, so a paper order and a demo order for the same group differ. `replay` has no letter, so generation raises a typed `OmsError` ([#846 ruling Q4](https://github.com/basiltt/CandleViewer/issues/846#issuecomment-6204432470)).
 
 `OrderIntent.purpose` (§8.1) maps to `suffix` as follows: `entry` and `reverse` → `en` (a reverse opens the new side, so it carries the native SL, C-2.6); `stop_loss` → `sl`; `take_profit` → `tp`; `scale_in` and `scale_out` → `sc`; `flatten`, including the §9.5.1 unwind close, → `fl`; `algo_child` → `ac`. There is no seventh tag.
 
-Total `2+1+1+22+1+4+1+2+2 = 36` including three `-` separators. A 128-bit value needs 22 base62 digits and its leading digit is at most `7` (62^21 < 2^128 ≤ 8·62^21), so every id matches `^cv[ldtp]-[0-7][0-9A-Za-z]{21}-[0-9A-Za-z]{4}-[0-9A-Za-z]{2}(en|sl|tp|sc|fl|ac)$`, the first arm of `ord_link_fmt` (`21-database-schema.md` §3.3.4). In-process validators apply both arms with `re.fullmatch`, because `re.match` with `$` also accepts a trailing newline and Postgres `~` does not. Example: live, trade group `0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f`, account `5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d`, `seq2` 0, entry → `cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en` (the group value has 21 base62 digits, so padding adds one leading `0`).
+Total `2+1+1+22+1+4+1+2+2 = 36` including three `-` separators. A 128-bit value needs 22 base62 digits and its leading digit is at most `7` (62^21 < 2^128 ≤ 8·62^21), so every id matches `^cv[ldtp]-[0-7][0-9A-Za-z]{21}-[0-9A-Za-z]{4}-[0-9A-Za-z]{2}(en|sl|tp|sc|fl|ac)$`, the first arm of `ord_link_fmt` (`21-database-schema.md` §3.3.4), called `OUR_ID` below. In-process validators apply both arms with `re.fullmatch`, because `re.match` with `$` also accepts a trailing newline and Postgres `~` does not. Example: live, trade group `0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f`, account `5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d`, `seq2` 0, entry → `cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en` (the group value has 21 base62 digits, so padding adds one leading `0`).
 
-**Adopted rows.** An order that reconciliation finds on the exchange without a local row (§8.5 step 3c) never stores Bybit's own `orderLinkId`, which may be empty and is unique only within one account (`04-security-program.md` SR-057). Its `order_link_id` is `ext_key(orderId)`: `ext-` plus 32 lowercase hex digits, which are Bybit's `orderId`, lowercased and without its hyphens, when it is a UUID in canonical `8-4-4-4-12` form, and otherwise the first 32 hex digits of `sha256` over its UTF-8 bytes. That is the second `ord_link_fmt` arm, `^ext-[0-9a-f]{32}$`. The key is 36 chars, so it satisfies `OrderLinkId` (§1.2) and every 36-char REST and WS `order_link_id` field. It depends only on the Bybit `orderId`, so one Bybit order always gets the same key; a clash would fail the adoption on `ux_orders_link` instead of merging two orders. A generated id never starts with `ext-`, and Bybit never sees an `ext-` key: it knows that order by `orderId` alone.
+**Adopted rows.** Reconciliation adopts an exchange order that no local row holds (§8.5 step 3c) under the id the adapter normalised (§14.2 rule 11): its own `orderLinkId` when that is an `OUR_ID` (an order of ours whose row was lost, for example by a restore, `21-database-schema.md` §8.3), and otherwise `ext_key(orderId)`. A foreign or empty `orderLinkId` is never stored: it may be empty and is unique only within one account (`04-security-program.md` SR-057). `ext_key(orderId)` is `ext-` plus 32 lowercase hex digits, which are Bybit's `orderId`, lowercased and without its hyphens, when it is a UUID in canonical `8-4-4-4-12` form, and otherwise the first 32 hex digits of `sha256` over its UTF-8 bytes. That is the second `ord_link_fmt` arm, `^ext-[0-9a-f]{32}$`, called `EXT_ID` below. The key is 36 chars, so it satisfies `OrderLinkId` (§1.2) and every 36-char REST and WS `order_link_id` field. It depends only on the Bybit `orderId`, so one Bybit order always gets the same key; a clash would surface as a `ReconcileAnomaly` (§8.5 step 3c) instead of merging two orders. A generated id never starts with `ext-`, and Bybit never sees an `ext-` key: it knows that order by `orderId` alone. `OUR_ID`, `EXT_ID` and `ext_key` live in `candleviewer.domain` beside `OrderLinkId` (§1.2), because the Bybit adapter (M4) applies them and may not import the OMS (M14, `CONSTITUTION.md` §3).
 
 Rules:
 
-1. Generated **once, before the first send**, by the server from the segments above (no client-supplied string, such as the HTTP `Idempotency-Key`, which only dedupes the request, goes into it), persisted in Postgres, and reused **unchanged** on every retry of that logical order.
-2. It is the correlation key everywhere: logs, metrics exemplars, audit, journal, reconciliation, UI deep links.
+1. Generated **once, before the first send**, by the server from the segments above (no client-supplied string, such as the HTTP `Idempotency-Key`, goes into it), persisted in Postgres, and reused **unchanged** on every retry of that logical order. A replayed request reaches the same ids through its trade group instead: the server stores the request's `Idempotency-Key` as that group's `client_group_ref` (UNIQUE, `21-database-schema.md` §3.3.2), so a replay after a crash finds the group and its order rows before any send rather than minting a new group and new ids.
+2. It is the correlation key everywhere: logs, metrics exemplars, audit, journal, reconciliation, UI deep links. It is not an ownership proof: whether an order belongs to a group is decided by its row's relations (§9.5.1).
 3. A duplicate-id rejection from the exchange (retCode 10001 with a duplicate message, or 110072) is **not** an error: the OMS immediately queries `GET /v5/order/realtime` + `/v5/order/history` for that id and adopts the true state. This is the "success-after-lookup" rule from `20-architecture.md` §9.
 4. Amends never change the id. Cancel-and-replace algos (chase, §10.4) allocate a **new** id with an incremented `seq2` and record `replaces_order_id`.
-5. A collision check runs at generation: if any local row, in any state, already has the id (`ux_orders_link` is unique over all rows, and Bybit deduplicates whatever our local state is), `seq2` increments and both ids are logged at `warning`. After 16 increments, and never past `seq2` = 3843, a typed `OrderLinkIdExhausted` is raised (#846 Q1, Q6). Practically impossible given the UUID content, but a silent collision would be catastrophic, so it is checked.
+5. A collision check runs at generation: if any local row, in any state, already has the id (`ux_orders_link` is unique over all rows, and Bybit deduplicates whatever our local state is), `seq2` increments and both ids are logged at `warning`. After 16 increments, and never past `seq2` = 3843, a typed `OrderLinkIdExhausted` is raised ([#846 ruling Q1, Q6](https://github.com/basiltt/CandleViewer/issues/846#issuecomment-6204432470)). Practically impossible given the UUID content, but a silent collision would be catastrophic, so it is checked.
 6. **Demo retains orders only 7 days** — the reconciler treats an id older than 6 days as unresolvable-by-history on demo and closes it as `Rejected` with `reject_code=DEMO_RETENTION_EXPIRED`.
 
 ### 8.4 Submission pipeline
@@ -1459,27 +1459,22 @@ The synchronous REST response is an **accept acknowledgement, not a fill confirm
 Runs: **on startup**, **on every private-WS reconnect**, **every 30 s**, and **on demand** from the admin screen.
 
 ```python
-# OUR_ID and EXT_ID: the two ord_link_fmt arms; ext_key: the adopted-row key (both §8.3).
-def link_key(o: Order, local: Mapping[str, Order]) -> str:
-    """The order_link_id a remote order pairs on: one of ours keeps its §8.3 id, any
-    other order (foreign or empty orderLinkId) maps to the key its adopted row stores."""
-    if o.order_link_id in local and OUR_ID.fullmatch(o.order_link_id):
-        return o.order_link_id
-    return ext_key(o.exchange_order_id)
-
+# OUR_ID, EXT_ID (§8.3): the adapter has normalised every remote order_link_id to one of
+# the two (§14.2 rule 11), so both sides compare whole ids, never a prefix.
 async def reconcile(account: AccountRef, gap_from: TsUs) -> ReconcileReport:
     # 1. Authoritative snapshots
     remote_open = await port.open_orders(account)           # GET /v5/order/realtime
     remote_pos  = await port.positions(account)             # GET /v5/position/list
     remote_exec = await port.executions(account, gap_from, now())  # GET /v5/execution/list
 
-    # 2. Apply every execution first (additive, deduped by exec_id).
+    # 2. Apply every execution first (additive, deduped by exec_id); an execution pairs
+    #    with its order on order_link_id alone.
     for e in sorted(remote_exec, key=lambda x: (x.ts_exec, x.seq)):
         oms.apply_execution(e)            # may resolve Unknown orders on its own
 
-    # 3. Index both sides by order_link_id (a remote order by link_key)
+    # 3. Index both sides by order_link_id
     local = {o.order_link_id: o for o in oms.non_terminal_orders(account)}
-    remote = {link_key(o, local): o for o in remote_open}
+    remote = {o.order_link_id: o for o in remote_open}
 
     report = ReconcileReport(account_id=account.id)
     # 3a. Present both sides -> adopt exchange state
@@ -1490,15 +1485,18 @@ async def reconcile(account: AccountRef, gap_from: TsUs) -> ReconcileReport:
     # 3b. Local non-terminal, absent remotely
     for lid in local.keys() - remote.keys():
         o = local[lid]
-        if EXT_ID.fullmatch(lid):         # adopted: Bybit knows it by orderId; never Unknown
-            if hist := await port.order_history(account, exchange_order_id=o.exchange_order_id):
-                oms.apply_remote(o, hist)              # e.g. untracked -> cancelled
-                report.resolved_from_history.append(lid)
-            continue
-        hist = await port.order_history(account, order_link_id=lid)
+        if EXT_ID.fullmatch(lid):         # Bybit knows an ext- row by orderId only (§8.3)
+            hist = await port.order_history(account, exchange_order_id=o.exchange_order_id)
+        else:
+            hist = await port.order_history(account, order_link_id=lid)
         if hist:
             oms.apply_remote(o, hist)                  # filled/cancelled/rejected while we were away
             report.resolved_from_history.append(lid)
+        elif o.state is OrderState.UNTRACKED:          # adopted, unmanaged: never Unknown
+            o.unknown_passes += 1                      # passes that found no record of it
+            if o.unknown_passes >= 2 or expired_from_history(o):         # §14.3
+                oms.transition(o, OrderState.CANCELLED, reason="missing_remote")
+                report.abandoned.append(lid)
         elif o.state is OrderState.UNKNOWN:
             o.unknown_passes += 1
             if o.unknown_passes >= 2:
@@ -1508,10 +1506,14 @@ async def reconcile(account: AccountRef, gap_from: TsUs) -> ReconcileReport:
             oms.transition(o, OrderState.UNKNOWN, reason="missing_remote")
             report.newly_unknown.append(lid)
 
-    # 3c. Remote orders we never created (lid is always an ext- key here)
+    # 3c. Remote orders with no non-terminal local row on this account
     for lid in remote.keys() - local.keys():
-        oms.adopt_untracked(remote[lid], order_link_id=lid)  # state=untracked, never rule-managed
-        report.untracked.append(lid)
+        if oms.order_by_link(lid):                     # held by a terminal or another account's row
+            oms.flag_anomaly(remote[lid])              # ReconcileAnomaly (S6): audited, alerted, no mutation
+            report.anomalies.append(lid)
+        else:                                          # no row: foreign, or ours whose row was lost
+            oms.adopt_untracked(remote[lid])           # state=untracked under lid, never rule-managed
+            report.untracked.append(lid)
 
     # 4. Positions: exchange is truth
     for p in remote_pos:
@@ -1532,11 +1534,12 @@ async def reconcile(account: AccountRef, gap_from: TsUs) -> ReconcileReport:
 Guarantees and operational rules:
 
 - **Executions are applied before order diffing**, so a fill that arrived while we were disconnected resolves the order without a history lookup in most cases.
-- **Adopted rows (§8.3) pair on the Bybit `orderId`** through `link_key`, so an adopted order that is still open always lands in 3a: it is never adopted twice and never reaches 3b. Once it has left the open orders, 3b looks it up by `exchange_order_id` (a keyword-only `order_history` filter added in the PR that builds the Bybit `TradingPort`, as #846 Q5 does for `open_orders`) and never makes it `Unknown`, because we never sent it. `adopt_untracked` is idempotent on `(exchange_account_id, exchange_order_id)` (`ux_orders_exch_id`): it inserts nothing when a row already holds that Bybit order.
-- The Bybit adapter never returns an empty `order_link_id`: when Bybit's `orderLinkId` is empty it fills in `ext_key(orderId)` on `Order` and `Execution` alike (`OrderLinkId` needs at least one char), and step 2 pairs an execution with its order by the same rule as `link_key`.
+- **Ids are compared whole, never by prefix.** The adapter normalises the `order_link_id` of every `Order` and `Execution` it returns or publishes to an `OUR_ID` or an `EXT_ID` (§14.2 rule 11), so step 2 pairs an execution with its order on `order_link_id` alone, and an adopted row and its fills share one id.
+- **An open exchange order whose id is held only by a terminal row, or by another account's row, is a `ReconcileAnomaly`** (as S6): 3c audits and alerts it, lists it in `report.anomalies`, and neither mutates nor adopts anything. `adopt_untracked` never merges silently either: when `ux_orders_exch_id` already holds that Bybit order, it inserts nothing and raises `ReconcileAnomaly`.
+- **Untracked rows (S9, §8.3) are never `Unknown`.** One that is still open lands in 3a. Once it has left the open orders, 3b looks it up in the order history (an `ext-` row by `exchange_order_id`, a keyword-only `order_history` filter added in the PR that builds the Bybit `TradingPort`, as [#846 ruling Q5](https://github.com/basiltt/CandleViewer/issues/846#issuecomment-6204432470) does for `open_orders`). Two passes with no record of it, or §14.3's `expired_from_history`, close it as `Cancelled` (`untracked → cancelled`, `21-database-schema.md` §3.3.1; `order_events.source = 'reconcile'`, audited), which also ends the lookups. An `ext-` row adopted under management (E45-S01) follows the B1 lifecycle like any order and is still looked up by `exchange_order_id`.
 - `gap_from = min(last_private_ws_message_ts, last_successful_reconcile_ts) - 5s` (a 5 s safety overlap; dedupe makes overlap free).
 - **`oms_unknown_orders > 0` for 60 s pages the operator.** An unknown order is an incident, not a background condition.
-- Reconciliation is idempotent; running it twice back to back produces an empty second report.
+- Reconciliation is idempotent; running it twice back to back produces an empty second report, except for `anomalies`, which repeat until a human resolves them.
 - Position drift beyond `qty_step` is alerted at `critical` — it means our fill accounting disagrees with the exchange.
 - Every report is persisted and shown on the admin "System health → OMS" screen.
 
@@ -1956,8 +1959,12 @@ cancel_children: cancel-all for (uid, symbol) filtered to this leg's children
                  Prefer POST /v5/order/cancel-all with symbol filter; fall back to
                  per-order cancels if any non-group order exists for that symbol
                  (never cancel orders we do not own: an order is this group's only
-                 when a local row holds its order_link_id and that id is a §8.3 id
-                 with this group's group22; never by prefix, never an ext- row).
+                 when a local orders row holds its order_link_id and that row's
+                 trade_group_leg_id is one of this group's legs, or its
+                 parent_order_id chain reaches such a row. The relation decides,
+                 never the id text: an ext- row bound to the group by adoption
+                 under management (E45-S01) is the group's, an unbound untracked
+                 row never is, and a §8.3 group22 is a cross-check, not the test).
                  Treat retCode 110001 "order does not exist" as SUCCESS (already gone).
 close_position:  read authoritative filled_qty (position qty from /v5/position/list,
                  NOT our local fill accumulator), then submit reduce-only MARKET
@@ -3330,6 +3337,15 @@ class ExchangeCapabilities(BaseModel):
     opens a tape gap for backfill. A rejected ticker frame is dropped, and the merged state keeps
     its last plausible values. The pump isolates every per-frame exception (`stream="pump"`). After
     32 consecutive failing frames it resyncs (`pump_breaker`); it never stops.
+
+11. **`order_link_id` normalisation (§8.3, §8.5).** On every `Order` and `Execution` it returns or
+    publishes, the adapter sets `order_link_id` to Bybit's `orderLinkId` when that fullmatches
+    `OUR_ID`, and otherwise, when it is empty or foreign, to `ext_key(orderId)`; Bybit's own value
+    stays in the raw payload only (rule 4). An `EXT_ID` key never goes on the wire: the adapter
+    amends or cancels such an order by its `orderId` alone (`exchange_order_id`, which
+    `AmendOrderRequest` and `CancelOrderRequest` carry) and refuses the request when that is
+    missing, so a `110001` there (§8.6) means the order is gone, never that Bybit did not know the
+    key.
 
 ### 14.3 Bybit implementation notes
 
