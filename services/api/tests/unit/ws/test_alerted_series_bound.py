@@ -5,11 +5,13 @@ An alert on `increase()` needs a sample to subtract from. A labelled series crea
 event is a single sample, so the first close or re-snapshot under a reason after every restart is
 invisible to it (#2264 found the same for the CSRF counter). Every closed reason is bound at import
 instead. A fresh interpreter proves it: another test in this process may already have created a
-series, which would make an in-process check vacuous. That interpreter never imports the gateway,
-because `export_ws_metrics` must serve the close series without it.
+series, which would make an in-process check vacuous. That interpreter blocks the gateway before
+its first import, so an import of it, direct or transitive, fails the probe: `export_ws_metrics`
+must serve the close series without it.
 
 The two closes that happened but were never counted (a refused subprotocol, a connection fault)
-are pinned as counted, so their bound zero is a real zero.
+are pinned as counted, so their bound zero is a real zero. A fault after a close counts under both
+reasons, and that is pinned too.
 """
 
 from __future__ import annotations
@@ -19,6 +21,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from prometheus_client import REGISTRY
@@ -26,18 +29,18 @@ from starlette.websockets import WebSocketDisconnect
 
 from candleviewer.ws.lifecycle import CLOSE_REASONS, OTHER_CLOSE_REASON
 from candleviewer.ws.sequencing import COUNTED_SNAP_REASONS, INCIDENT_REASONS
-from tests.unit.ws.test_lifecycle_socket import _closed
-from tests.unit.ws.test_token_expiry import _JSON, _USER, _bare_gateway, _Clock, _open
+from tests.unit.ws.test_lifecycle_socket import _closed, _no_sleep
+from tests.unit.ws.test_token_expiry import _JSON, _USER, _Bare, _bare_gateway, _Clock, _open
 
 _API_ROOT = Path(__file__).resolve().parents[3]
 _PROBE = """
 import json
 import sys
 
+sys.modules["candleviewer.ws.gateway"] = None  # first: any import of it, however indirect, raises
 from candleviewer.observability.metrics import CollectorRegistry
 from candleviewer.ws.metrics import export_ws_metrics
 
-sys.modules["candleviewer.ws.gateway"] = None  # an import of it now raises: no series needs it
 scraped = CollectorRegistry()
 export_ws_metrics(scraped, env="demo")
 
@@ -137,3 +140,24 @@ def test_a_connection_fault_is_counted_as_internal_error() -> None:
         code = _closed(ws)
     assert (bye["p"]["reason"], code) == ("internal_error", 1011)
     assert _closes("internal_error") == before + 1
+
+
+def test_a_fault_after_a_close_counts_under_both_reasons() -> None:
+    """A fault after a `close_with` counts both: that close was initiated, and the fault's own
+    `bye` and 1011 supersede it on the wire. The sum over reasons is not a socket-close count, so
+    alerts (#571) key on `reason="internal_error"`."""
+    closed_by_hub, faulted = _closes("shutdown"), _closes("internal_error")
+    bare: _Bare
+
+    async def close_then_report_no_expiry(_token: str) -> Any:
+        # `GatewayHub.shutdown` ends in `close_with("shutdown")` for every live socket, this one
+        # included. Nothing suspends before the fault below, so the writer never flushes that `bye`.
+        await bare.hub.shutdown(sleep=_no_sleep)
+        return ("sess", _USER)  # no expiry: the server fault of the test above
+
+    bare = _bare_gateway(close_then_report_no_expiry, _Clock())
+    with bare.client, bare.client.websocket_connect("/ws", subprotocols=_JSON) as ws:
+        bye = _open(ws, "any")
+        code = _closed(ws)
+    assert (bye["p"]["reason"], code) == ("internal_error", 1011)  # the one close the wire shows
+    assert (_closes("shutdown"), _closes("internal_error")) == (closed_by_hub + 1, faulted + 1)

@@ -11,7 +11,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   client offers none we serve -> close `1002` before the handshake completes.
   `cv.v1.msgpack` whenever offered: then client frames go to the SR-185 decoder and
   server frames are MessagePack (`ws/codec.py`). A frame of the other subprotocol's
-  kind (text on msgpack, binary on JSON) is malformed.
+  kind (text on msgpack, binary on JSON) is malformed. The refusal
+  is counted like the origin refusal.
 - **hello -> welcome** (§4.2): any other first frame -> `bye` + `1002`.
 - **auth -> auth_ok** (§4.3): the token is read ONLY from the `auth` frame
   body, never the URL. Verified by the injected E09 `authenticate`; the
@@ -36,9 +37,10 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   excluding `pong` (`client_rate_limited`, then `4429`). An envelope `id` that is not a
   string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped before the frame is
   handled, so no reply echoes it (§13.1, #2572).
-- Every server-initiated close goes through `_Connection.close_with`, which
-  queues `bye` ahead of the close frame (requirement S11). Token expiry and
-  revocation seal the close: anything still queued is dropped, `bye` next.
+- Every server-initiated close after `accept` goes through `_Connection.close_with`, which
+  queues `bye` ahead of the close frame (requirement S11), except the handler's own fault `bye`
+  and 1011, which the handler counts itself. Token expiry and revocation seal the close:
+  anything still queued is dropped, `bye` next.
 - **Fan-out span** (the gateway segment of budget #6, from the subscription's hub turn, not bus
   receipt): `TopicEmitter` queues one data frame (`snap` / `d`) of a subscription in
   `SAMPLE_EVERY` with the clock reading at which the hub took it, and the writer observes
@@ -997,6 +999,9 @@ def make_ws_router(
                     fault = await _join_writer(write_task)
                 if fault is not None:
                     # The handler's own `bye` and 1011 do not go through `close_with`: count here.
+                    # A fault after a `close_with` is counted under both reasons (that close was
+                    # initiated, and this `bye` plus 1011 supersedes it on the wire), so alerts
+                    # should key on `reason="internal_error"`, not on the sum.
                     cv_ws_closes_total.labels(reason="internal_error").inc()
                     _log().error(
                         "ws connection fault", connection_id=conn.connection_id, exc_info=fault

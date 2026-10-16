@@ -56,6 +56,7 @@ from candleviewer.ws.revocation import (
 from candleviewer.ws.sequencing import (
     RESYNC_MAX_PER_WINDOW,
     SequencingHub,
+    SnapReason,
     SnapshotCache,
     SnapshotSource,
 )
@@ -205,7 +206,7 @@ class Subscription:
     upstream: tuple[UpstreamKey, ...] = ()
     bar_lease: tuple[str, str] | None = None  # (spec_hash, symbol)
     #: §7.4 reason the pending `snap` will carry (E17-S03).
-    pending_reason: str = "initial"
+    pending_reason: SnapReason = "initial"
     #: §7.5 client-resync times (monotonic s); bounded to the 5-per-minute window.
     resyncs: collections.deque[float] = field(
         default_factory=lambda: collections.deque(maxlen=RESYNC_MAX_PER_WINDOW)

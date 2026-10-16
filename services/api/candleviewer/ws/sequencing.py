@@ -468,7 +468,7 @@ class TopicEmitter:
 
     # -- snapshots --
 
-    def snapshot(self, sub: Subscription, reason: str) -> bool:
+    def snapshot(self, sub: Subscription, reason: SnapReason) -> bool:
         """Emit a (possibly chunked) `snap`; False when the state cannot be built yet (the
         subscription stays pending and no `d` is emitted until a later flush succeeds)."""
         if self.source is None:
@@ -734,7 +734,7 @@ class SequencingHub:
             sent += self.publish(ch, body, account=account)
         return sent
 
-    def resnapshot(self, match: Callable[[Subscription], bool], reason: str) -> int:
+    def resnapshot(self, match: Callable[[Subscription], bool], reason: SnapReason) -> int:
         """Server-initiated resync (§7.4): mark every matching subscription pending FIRST (so no
         delta can slip across the gap), then emit the snapshots."""
         if reason not in SNAP_REASONS:
