@@ -46,7 +46,8 @@ forming bar is unknown until the next `open` or `update` (builders expose none);
 stored rows (a row the read withheld or skipped, or one the writer never landed) stays a hole and
 is not flagged; a jump is seen on a close only; with no stored row below its ring (an empty read)
 a series cannot see its junction, so a writer lagging past the ring goes unflagged, and a series
-read empty with nothing seen live is read again only after a swap or a gap.
+read clean and empty with nothing seen live is read again only after a swap or a gap; a degraded
+re-read drops a held bar whose stored row it withheld; a swap inside a first read goes unseen.
 """
 
 from __future__ import annotations
