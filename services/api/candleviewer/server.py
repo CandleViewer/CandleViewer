@@ -63,21 +63,28 @@ class PlannedShutdownServer(uvicorn.Server):
     lifespan `shutdown` event (#2546), so the §9.4 planned shutdown in the lifespan teardown
     would reach no client. This server runs it first: it stops accepting connections, runs the
     app's `WsRuntime.stop()` (`shutdown_notice`, grace, `bye` + `1001`), then uvicorn's own
-    shutdown. The lifespan's later `stop()` then only stops the sweeper."""
+    shutdown. The lifespan's later `stop()` then only stops the sweeper. It first marks the
+    gateway's hub as shutting down, so a `1012` that reaches a socket afterwards is attributed to
+    the server (`closed_reason`) however the planned shutdown ends: done, cut short or failed."""
 
     async def shutdown(self, sockets: list[socket.socket] | None = None) -> None:
         for server in self.servers:
             server.close()  # a connection opened during the grace would miss the notice
         runtime = _ws_runtime(self.config.loaded_app)
-        if runtime is not None and not self.force_exit:
-            await self._planned(runtime)
+        if runtime is not None:
+            runtime.hub.shutting_down = True
+            if not self.force_exit:
+                await self._planned(runtime)
         await super().shutdown(sockets)
 
     async def _planned(self, runtime: Any) -> None:
         """`runtime.stop()`, cut short by a second Ctrl+C (`force_exit`), which uvicorn's own
         drain also polls every 0.1 s. A failure is logged and never skips uvicorn's shutdown or
-        the module teardown after it."""
-        logger().info("planned ws shutdown")
+        the module teardown after it. Cutting it short is logged too: uvicorn then also skips
+        the lifespan teardown, and the clients get its bare `1012`."""
+        logger().info(
+            "planned ws shutdown (CTRL+C again to force quit)", connections=len(runtime.hub)
+        )
         task = spawn(runtime.stop(), name="ws-planned-shutdown")
         try:
             while not task.done() and not self.force_exit:
@@ -85,8 +92,15 @@ class PlannedShutdownServer(uvicorn.Server):
         finally:
             task.cancel()  # a no-op once done; else force_exit, or this coroutine was cancelled
         outcome: list[object] = await asyncio.gather(task, return_exceptions=True)
-        if isinstance(outcome[0], Exception):
-            logger().error("planned ws shutdown failed", error=type(outcome[0]).__name__)
+        failure = outcome[0]
+        if isinstance(failure, Exception):
+            logger().error(
+                "planned ws shutdown failed", error=type(failure).__name__, exc_info=failure
+            )
+        elif task.cancelled():
+            logger().warning(
+                "planned ws shutdown cut short", reason="force_exit", lifespan_teardown="skipped"
+            )
 
 
 def _ws_runtime(app: Any) -> Any:

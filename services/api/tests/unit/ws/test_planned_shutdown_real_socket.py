@@ -22,12 +22,14 @@ from websockets.exceptions import ConnectionClosed
 from websockets.typing import Origin, Subprotocol
 
 from candleviewer import server as entry
-from candleviewer.app import create_app
+from candleviewer.app import _LazyAuditEmitter, create_app
 from candleviewer.server import PlannedShutdownServer, uvicorn_kwargs
 from candleviewer.ws_wiring import WsRuntime
 from tests.unit.ws.test_app_wiring import JSON, ORIGIN, _authenticate, _Kill, _settings
 
 _DEADLINE_S = 10.0
+#: The §9.4 start line: the count of open connections and the hint uvicorn gives its own drain.
+PLANNED = "planned ws shutdown (CTRL+C again to force quit)"
 _ORIGIN = Origin(ORIGIN)
 _JSON = [Subprotocol(p) for p in JSON]
 
@@ -56,6 +58,23 @@ async def _serve(
         sock.close()
 
 
+@pytest.fixture
+def close_rows(monkeypatch: pytest.MonkeyPatch) -> asyncio.Queue[dict[str, Any]]:
+    """The `ws.connection.closed` rows the app's gateway writes, in order."""
+    rows: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    async def emit(self: _LazyAuditEmitter, action: str, **kw: Any) -> None:
+        if action == "ws.connection.closed":
+            rows.put_nowait(kw)
+
+    monkeypatch.setattr(_LazyAuditEmitter, "emit", emit)
+    return rows
+
+
+def _planned(logs: list[Any]) -> list[Any]:
+    return [e for e in logs if "planned ws" in e["event"]]
+
+
 async def _open(ws: ClientConnection) -> None:
     await ws.send(json.dumps({"t": "hello", "id": "h", "p": {"clock_ms": 1}}))
     assert json.loads(await ws.recv())["t"] == "welcome"
@@ -74,16 +93,21 @@ async def _until_closed(ws: ClientConnection) -> tuple[list[dict[str, Any]], int
 
 
 async def test_server_shutdown_sends_the_planned_shutdown_before_closing() -> None:
-    async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer) as (server, url):
-        async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
-            await _open(ws)
-            stopping = asyncio.create_task(server.shutdown())
-            frames, code = await _until_closed(ws)
-            await stopping
+    with capture_logs() as logs:
+        async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer) as (server, url):
+            async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
+                await _open(ws)
+                stopping = asyncio.create_task(server.shutdown())
+                frames, code = await _until_closed(ws)
+                await stopping
     notice, bye = frames
     assert (notice["ch"], notice["p"]["kind"]) == ("system", "shutdown_notice")
     assert (bye["t"], bye["p"]["reason"], bye["p"]["retry_after_ms"]) == ("bye", "shutdown", 7000)
     assert code == 1001
+    # one info line, with the open connections: neither a failure nor a cut-short warning
+    assert [(e["log_level"], e["event"], e["connections"]) for e in _planned(logs)] == [
+        ("info", PLANNED, 1)
+    ]
 
 
 async def test_plain_uvicorn_shutdown_closes_1012_with_no_notice() -> None:
@@ -112,22 +136,48 @@ async def test_no_connection_opens_during_the_planned_shutdown() -> None:
     assert code == 1001
 
 
-async def test_a_second_ctrl_c_cuts_the_grace_short() -> None:
+async def test_a_second_ctrl_c_cuts_the_grace_short(close_rows: asyncio.Queue[Any]) -> None:
     """`force_exit` during a 60 s grace ends the planned shutdown within uvicorn's 0.1 s poll;
-    the client got the notice, then uvicorn's `1012`."""
+    the client got the notice, then uvicorn's `1012`, and the server says so in its log."""
+    async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer, 60_000) as (server, url):
+        with capture_logs() as logs:
+            async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
+                await _open(ws)
+                stopping = asyncio.create_task(server.shutdown())
+                assert json.loads(await ws.recv())["p"]["kind"] == "shutdown_notice"
+                server.force_exit = True
+                frames, code = await _until_closed(ws)
+                await stopping
+                row = await close_rows.get()
+    assert (frames, code) == ([], 1012)
+    assert row["reason"] == "shutdown"  # uvicorn's own 1012, from a server that was shutting down
+    started, cut = _planned(logs)
+    assert (started["event"], cut["log_level"], cut["event"]) == (
+        PLANNED,
+        "warning",
+        "planned ws shutdown cut short",
+    )
+    assert (cut["reason"], cut["lifespan_teardown"]) == ("force_exit", "skipped")
+
+
+async def test_a_forced_exit_before_the_grace_still_marks_the_server_as_shutting_down(
+    close_rows: asyncio.Queue[Any],
+) -> None:
+    """The planned shutdown never starts, yet uvicorn's `1012` is still the server's own."""
     async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer, 60_000) as (server, url):
         async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
             await _open(ws)
-            stopping = asyncio.create_task(server.shutdown())
-            assert json.loads(await ws.recv())["p"]["kind"] == "shutdown_notice"
             server.force_exit = True
+            stopping = asyncio.create_task(server.shutdown())
             frames, code = await _until_closed(ws)
             await stopping
-    assert (frames, code) == ([], 1012)
+            row = await close_rows.get()
+    assert (frames, code) == ([], 1012)  # no notice, no bye
+    assert row["reason"] == "shutdown"
 
 
 async def test_a_failing_planned_shutdown_still_runs_uvicorns(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, close_rows: asyncio.Queue[Any]
 ) -> None:
     async def boom(self: WsRuntime) -> int:
         raise RuntimeError("boom")
@@ -140,9 +190,27 @@ async def test_a_failing_planned_shutdown_still_runs_uvicorns(
                 stopping = asyncio.create_task(server.shutdown())
                 frames, code = await _until_closed(ws)
                 await stopping
+                row = await close_rows.get()
     assert (frames, code) == ([], 1012)  # uvicorn's own shutdown still ran
-    events = [(e["log_level"], e["event"]) for e in logs if "planned ws" in e["event"]]
-    assert events == [("info", "planned ws shutdown"), ("error", "planned ws shutdown failed")]
+    assert row["reason"] == "shutdown"  # the server was shutting down, though its stop() failed
+    started, failed = _planned(logs)
+    assert [(e["log_level"], e["event"]) for e in (started, failed)] == [
+        ("info", PLANNED),
+        ("error", "planned ws shutdown failed"),
+    ]
+    assert failed["error"] == "RuntimeError"
+    assert isinstance(failed["exc_info"], RuntimeError) and str(failed["exc_info"]) == "boom"
+
+
+async def test_a_1012_the_client_sends_is_a_client_close(close_rows: asyncio.Queue[Any]) -> None:
+    """uvicorn forwards a client's own `1012` as it does its own: while the server runs, the
+    close audit must say the client closed."""
+    async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer) as (_, url):
+        async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
+            await _open(ws)
+            await ws.close(code=1012)
+        row = await close_rows.get()
+    assert row["reason"] == "client_closed"
 
 
 def test_main_runs_the_planned_shutdown_server(monkeypatch: pytest.MonkeyPatch) -> None:

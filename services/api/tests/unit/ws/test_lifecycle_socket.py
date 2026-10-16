@@ -510,9 +510,11 @@ def test_planned_shutdown_notice_then_bye_1001(world: _World) -> None:
             _auth(ws)
             _hello(unauth)
             assert world.client.portal is not None
+            assert not world.hub.shutting_down
             n = world.client.portal.call(
                 lambda: world.hub.shutdown(expected_downtime_ms=20_000, sleep=sleep)
             )
+            assert world.hub.shutting_down  # uvicorn's `1012` after this is the server's own
             notice = _recv(ws)
             assert notice["p"] == {
                 "kind": "shutdown_notice",
@@ -663,13 +665,55 @@ def test_server_close_audits_the_bye_reason(world: _World) -> None:
 
 
 def test_server_transport_close_is_audited_as_shutdown(world: _World) -> None:
-    """uvicorn's shutdown closes every socket with 1012 before the planned §9.4 shutdown runs."""
+    """When the planned §9.4 shutdown is cut short or fails, uvicorn's own shutdown closes
+    every socket with 1012: the server has marked its hub as shutting down by then."""
+    world.hub.shutting_down = True
     with world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _hello(ws)
         _auth(ws)
         ws.close(gateway.SERVER_RESTART_CLOSE)
         (rec,) = _close_audits(world)
     assert (rec["reason"], rec["severity"]) == ("shutdown", "info")
+
+
+def test_a_1012_the_client_sends_is_a_client_close(world: _World) -> None:
+    """A non-browser client may send 1012 itself, and uvicorn forwards it: while the server is
+    not shutting down it is the client's close, not the server's."""
+    with world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+        _hello(ws)
+        _auth(ws)
+        ws.close(gateway.SERVER_RESTART_CLOSE)
+        (rec,) = _close_audits(world)
+    assert (rec["reason"], rec["severity"]) == ("client_closed", "info")
+
+
+_BYE = {"p": {"reason": "slow_consumer"}}
+
+
+@pytest.mark.parametrize(
+    ("bye", "fault", "code", "shutting_down", "expected"),
+    [
+        (_BYE, None, None, False, "slow_consumer"),  # the bye decides, whatever else is set
+        ({"p": {"reason": "made_up"}}, None, None, False, "other"),  # bounded like the metric
+        ({"t": "bye"}, None, None, False, "other"),  # malformed: no `p`
+        ({"p": "slow_consumer"}, None, None, False, "other"),  # malformed: `p` is not a mapping
+        (None, RuntimeError(), 1012, True, "internal_error"),
+        (None, None, gateway.SERVER_RESTART_CLOSE, True, "shutdown"),  # uvicorn's own 1012
+        (None, None, None, True, "shutdown"),  # the host cancelled the handler
+        (None, None, gateway.SERVER_RESTART_CLOSE, False, "client_closed"),  # the client's 1012
+        (None, None, None, False, "client_closed"),
+        (None, None, 1000, True, "client_closed"),  # the client closed first
+    ],
+)
+def test_closed_reason_attribution(
+    bye: dict[str, Any] | None,
+    fault: BaseException | None,
+    code: int | None,
+    shutting_down: bool,
+    expected: str,
+) -> None:
+    conn: Any = SimpleNamespace(bye_frame=bye, disconnect_code=code)
+    assert gateway.closed_reason(conn, fault, server_shutting_down=shutting_down) == expected
 
 
 def test_fault_close_is_audited_as_a_warning() -> None:
@@ -687,7 +731,7 @@ def test_unauthenticated_close_writes_no_close_audit(world: _World) -> None:
     assert world.audit.records == []
 
 
-@pytest.mark.parametrize("failure", ["raises", "hangs"])
+@pytest.mark.parametrize("failure", ["raises", "hangs", "reason"])
 def test_close_audit_failure_never_holds_the_teardown(
     world: _World, failure: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -696,7 +740,13 @@ def test_close_audit_failure_never_holds_the_teardown(
             raise RuntimeError("audit sink down")
         await asyncio.Event().wait()  # never set: a stalled sink
 
-    monkeypatch.setattr(world.audit, "emit", broken)
+    def broken_reason(conn: Any, fault: Any, **kw: Any) -> str:
+        raise RuntimeError("reason lookup failed")  # runs inside the audit's own `try`
+
+    if failure == "reason":
+        monkeypatch.setattr(gateway, "closed_reason", broken_reason)
+    else:
+        monkeypatch.setattr(world.audit, "emit", broken)
     monkeypatch.setattr(gateway, "CLOSE_AUDIT_TIMEOUT_S", 0)
     with capture_logs() as logs:
         with world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
@@ -705,3 +755,17 @@ def test_close_audit_failure_never_holds_the_teardown(
             ws.close(1000)
             _settle(world, lambda: any(e["event"] == "ws close audit not confirmed" for e in logs))
     assert len(world.hub) == 0 and not world.registry._conns.get(USER)
+
+
+def test_a_malformed_bye_still_writes_the_close_audit(world: _World) -> None:
+    """Unreachable today (every bye is server-built), but a `bye` without `p` must not lose the
+    row: its reason is the bounded `other`."""
+    with world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+        _hello(ws)
+        _auth(ws)
+        (conn,) = world.hub.of_user(USER)
+        assert world.client.portal is not None
+        world.client.portal.call(setattr, conn, "bye_frame", {"t": "bye"})
+        ws.close(1000)
+        (rec,) = _close_audits(world)
+    assert (rec["reason"], rec["severity"]) == ("other", "info")

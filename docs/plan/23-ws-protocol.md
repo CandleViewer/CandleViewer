@@ -399,7 +399,7 @@ Rules:
 - Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_SHUTDOWN_GRACE_MS` (5 000), `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000), `CV_WS_QUEUE_BYTES` (8 388 608), `CV_WS_QUEUE_FRAMES` (2 000) and `CV_WS_CLASSIFY_INTERVAL_MS` (2 000). The defaults are the values in this section, §8.3, §8.4 and §9.4.
 - `auth_ok` carries `user_id`, `roles`, `permissions`, `account_scope`, `session_id`, `token_expires_at_ms` and `kill_switch`. It does not carry `username` or `allowed_environments`, which the examples above show and §13.4 marks optional (#2486).
 - When an authenticated connection ends, one `ws.connection.closed` audit row is written (#2486):
-  - its reason is the close reason: the `bye`'s; else `internal_error` after a fault, `shutdown` when the server transport closed the socket (uvicorn's own shutdown sends `1012`), or `client_closed`;
+  - its reason is the close reason: the `bye`'s (`other` if it is not a §13.6 reason); else `internal_error` after a fault; else `shutdown` when the server is shutting down (§9.4) and its host ended the socket, which is uvicorn's own `1012` or the cancellation of the handler when uvicorn's graceful timeout expires; else `client_closed`. A `1012` that a client sends itself is `client_closed`, and so is uvicorn's own `1012` under `--reload`, which does not mark the server as shutting down;
   - it is `warning` for `auth_failed`, `slow_consumer` and `internal_error`, and `info` otherwise;
   - it carries E04's `request_id` and never the token;
   - it is best effort, bounded at 2 s.
@@ -417,6 +417,7 @@ Rules:
 | `1002` | protocol error  | Malformed handshake or frame sequence.        | Fix client; do not hot-loop reconnect.       |
 | `1009` | too big         | Inbound frame exceeded the limit.             | Fix client.                                  |
 | `1011` | internal error  | Unhandled server fault.                       | Reconnect with backoff.                      |
+| `1012` | service restart | Server exiting without the §9.4 sequence.     | Reconnect with backoff; see §9.4.            |
 | `1013` | try again later | Server shedding load.                         | Reconnect after `Retry-After` hint in `bye`. |
 | `4401` | unauthenticated | Auth timeout, auth failure, or token expiry.  | Refresh token over REST, reconnect.          |
 | `4403` | forbidden       | Permissions revoked entirely (user disabled). | Return to login; do not retry.               |
@@ -1080,7 +1081,13 @@ The UI uses `expected_downtime_ms` to show a countdown instead of a bare "discon
 3. After the grace period, every connection gets `bye` `shutdown` with `retry_after_ms` = `expected_downtime_ms`, then close `1001`.
 4. uvicorn's shutdown and the application's teardown follow.
 
-The grace and downtime come from `CV_WS_SHUTDOWN_GRACE_MS` and `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS`. Only the development reloader (`--reload`) still closes with `1012`.
+The grace and downtime come from `CV_WS_SHUTDOWN_GRACE_MS` and `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS`. Three cases still close with uvicorn's own `1012`, and no `bye`:
+
+- the development reloader (`--reload`), which runs a plain uvicorn server;
+- a forced exit: a second Ctrl+C (SIGINT), before or during the grace, cuts the planned shutdown short and uvicorn then skips the application's teardown. A cut-short shutdown logs the warning `planned ws shutdown cut short` (reason `force_exit`, lifespan teardown skipped);
+- a failed planned shutdown: it logs `planned ws shutdown failed` with its traceback, and uvicorn's shutdown and the application's teardown still run.
+
+A client treats `1012` like `1001`: it reconnects with backoff (§4.4). In the last two cases the server has marked itself as shutting down, so the close audit row (§4.3) says `shutdown`; under `--reload` it says `client_closed`. The start of the planned shutdown logs `connections`, the number of open connections.
 
 ### 9.5 Mid-connection authorisation changes
 

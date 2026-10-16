@@ -112,7 +112,8 @@ CLOSE_FLUSH_TIMEOUT_S: Final = 2.0
 CLOSE_AUDIT_TIMEOUT_S: Final = 2.0
 #: Close reasons audited at `warning` rather than `info` (E17-S01 Security notes; a fault too).
 WARNING_CLOSES: Final = frozenset({"auth_failed", "slow_consumer", "internal_error"})
-#: The close code uvicorn's own shutdown sends every socket, before the lifespan's §9.4 one runs.
+#: The close code uvicorn's own shutdown sends every socket it closes (no `bye`). A client may send
+#: it too, which uvicorn forwards alike: `closed_reason` tells them apart by the server's state.
 SERVER_RESTART_CLOSE: Final = 1012
 
 #: (raw access token) -> (session_id, user_id, token expires_at); raises on any
@@ -169,6 +170,11 @@ class GatewayHub:
 
     def __init__(self, *, max_per_user: int = MAX_CONNECTIONS_PER_USER) -> None:
         self.max_per_user = max_per_user
+        #: The server is shutting down: set by `shutdown()` and by `candleviewer.server` when its
+        #: own shutdown begins (a forced exit or a failure may never reach `shutdown()`). Never
+        #: cleared: a restart builds a new hub. `closed_reason` reads it to tell uvicorn's own
+        #: `1012` from one a client sends.
+        self.shutting_down = False
         self._live: set[_Connection] = set()
         self._empty = asyncio.Event()
         self._empty.set()
@@ -219,6 +225,7 @@ class GatewayHub:
     ) -> int:
         """§9.4: `shutdown_notice` on `system`, wait the grace period, close
         `1001`. Returns the number of connections notified."""
+        self.shutting_down = True
         conns = [c for c in self._live if c.lifecycle.authenticated]
         for conn in conns:
             conn.push_system(
@@ -241,15 +248,22 @@ def close_reason_label(reason: str) -> str:
     return reason if reason in CLOSE_REASONS else "other"
 
 
-def closed_reason(conn: _Connection, fault: BaseException | None) -> str:
+def closed_reason(
+    conn: _Connection, fault: BaseException | None, *, server_shutting_down: bool = False
+) -> str:
     """Why a connection ended, for its audit row: the `bye`'s reason (bounded like the metric
-    label), else `internal_error` after a fault, `shutdown` when the server transport closed it
-    (`SERVER_RESTART_CLOSE`), else `client_closed`."""
+    label, `other` for a malformed `bye`), else `internal_error` after a fault, else `shutdown`
+    when the server is shutting down and its host ended the socket (uvicorn's own `1012`, or the
+    handler's cancellation when its graceful timeout expires), else `client_closed`. A `1012`
+    that a client sends itself is the client's close."""
     if conn.bye_frame is not None:
-        return close_reason_label(str(conn.bye_frame["p"].get("reason", "")))
+        body = conn.bye_frame.get("p")
+        return close_reason_label(str(body.get("reason", "")) if isinstance(body, dict) else "")
     if fault is not None:
         return "internal_error"
-    return "shutdown" if conn.disconnect_code == SERVER_RESTART_CLOSE else "client_closed"
+    if server_shutting_down and conn.disconnect_code in (None, SERVER_RESTART_CLOSE):
+        return "shutdown"
+    return "client_closed"
 
 
 def _source_ip(scope: Mapping[str, Any]) -> str | None:
@@ -542,11 +556,12 @@ def make_ws_router(
         """`ws.connection.closed` for a socket that authenticated (E17-S01, #2486): `warning`
         for `WARNING_CLOSES`, `info` otherwise. An unauthenticated close is not audited, so a
         peer without a session cannot flood the log (its 3rd failed `auth` already is). Never
-        the token. Best effort and bounded: the teardown never waits on the sink."""
+        the token. Best effort and bounded: the teardown never waits on the sink, and a failure
+        anywhere in here, working out the reason included, is logged and never raised."""
         if audit is None or conn.user_id is None:
             return
-        reason = closed_reason(conn, fault)
         try:
+            reason = closed_reason(conn, fault, server_shutting_down=gateway_hub.shutting_down)
             async with asyncio.timeout(CLOSE_AUDIT_TIMEOUT_S):
                 await audit.emit(
                     "ws.connection.closed",
@@ -854,30 +869,38 @@ def make_ws_router(
         finally:
             reading = False
             write_task.cancel()
-            if fault is None:
-                fault = await _join_writer(write_task)
-            if fault is not None:
-                _log().error(
-                    "ws connection fault", connection_id=conn.connection_id, exc_info=fault
-                )
-                with contextlib.suppress(Exception):  # S11: bye before the 1011 close
-                    bye = lifecycle_bye("internal_error", now_ms=wall_ms())
-                    await ws.send_text(json.dumps(bye))
-                    await ws.close(code=int(CLOSE_REASONS["internal_error"][0]))
-            gateway_hub.discard(conn)
-            cv_ws_connections_in_use.dec()
-            if conn.authz is not None:
-                if registry.services.sequencing is not None:
-                    registry.services.sequencing.unregister(conn.authz)
-                registry.unregister(conn.authz)
-            if conn.session_id is not None:
-                revocation_hub.unregister(conn.session_id, conn.closer)
             try:
-                await audit_close(conn, fault)
+                if fault is None:
+                    fault = await _join_writer(write_task)
+                if fault is not None:
+                    _log().error(
+                        "ws connection fault", connection_id=conn.connection_id, exc_info=fault
+                    )
+                    with contextlib.suppress(Exception):  # S11: bye before the 1011 close
+                        bye = lifecycle_bye("internal_error", now_ms=wall_ms())
+                        await ws.send_text(json.dumps(bye))
+                        await ws.close(code=int(CLOSE_REASONS["internal_error"][0]))
             finally:
-                if conn.lifecycle.can(ConnEvent.CLOSE):
-                    conn.lifecycle.fire(ConnEvent.CLOSE)
-                conn.lifecycle.fire(ConnEvent.CLOSED)
-                structlog.contextvars.unbind_contextvars("connection_id", "user_id", "session_id")
+                # Whatever leaves the `try` above runs the whole tail: `_join_writer` re-raises the
+                # handler's own cancellation (uvicorn's graceful-timeout cancel, mid-read), and a
+                # skipped tail leaks the hub entry, registries, upstream leases and the close
+                # audit. That `CancelledError` still propagates once the tail is done.
+                gateway_hub.discard(conn)
+                cv_ws_connections_in_use.dec()
+                if conn.authz is not None:
+                    if registry.services.sequencing is not None:
+                        registry.services.sequencing.unregister(conn.authz)
+                    registry.unregister(conn.authz)
+                if conn.session_id is not None:
+                    revocation_hub.unregister(conn.session_id, conn.closer)
+                try:
+                    await audit_close(conn, fault)
+                finally:
+                    if conn.lifecycle.can(ConnEvent.CLOSE):
+                        conn.lifecycle.fire(ConnEvent.CLOSE)
+                    conn.lifecycle.fire(ConnEvent.CLOSED)
+                    structlog.contextvars.unbind_contextvars(
+                        "connection_id", "user_id", "session_id"
+                    )
 
     return router
