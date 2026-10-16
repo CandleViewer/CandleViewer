@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from candleviewer.api.rules_crud import make_rules_crud_router
-from candleviewer.rules.manager import Actor, InMemoryRuleStore, RulesManager
+from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RulesManager
 from candleviewer.rules.vocabulary import default_registry
 
 FIX = Path(__file__).parents[1] / "fixtures/rule_ir"
@@ -52,8 +52,8 @@ class _Env:
         )
 
         async def consume() -> bool:
-            if self.grants <= 0:
-                return False
+            if self.grants <= 0:  # as the real resolver: refuse with the challenge it issued
+                raise RuleError(403, "step_up_required", "Step-up required.")
             self.grants -= 1
             return True
 

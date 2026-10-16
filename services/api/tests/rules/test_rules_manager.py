@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.rules.arming import ArmingFacts, check_arming
 from candleviewer.rules.manager import Actor, InMemoryRuleStore, RuleError, RulesManager
@@ -380,6 +382,28 @@ async def test_live_arming_consumes_step_up_exactly_once() -> None:
     await _ready_to_arm(m, rid)
     await m.set_mode(rid, "armed", actor, "k1")
     assert calls == [1]
+
+
+async def test_actor_that_refuses_live_arming_without_a_challenge_fails_closed_logged() -> None:
+    """#2304: the resolver refuses by raising the `step_up_required` challenge it issued. A bare
+    False carries none, so no client could answer it: a logged server defect, never a
+    challenge-less `step_up_required`, and the rule is not armed."""
+    m, audits, _ = _mgr()
+
+    async def declines() -> bool:
+        return False
+
+    scope = {"level": "symbol", "symbols": ["BTCUSDT"], "environments": ["demo", "live"]}
+    rid = (await m.create(_ir(scope=scope), OWNER))["id"]
+    await _ready_to_arm(m, rid)
+
+    with capture_logs() as logs, pytest.raises(RuleError) as refused:
+        await m.set_mode(rid, "armed", replace(OWNER, consume_step_up=declines), "k1")
+
+    assert (refused.value.status, refused.value.code) == (500, "internal_error")
+    assert [(e["log_level"], e["user_id"]) for e in logs] == [("error", "u1")]
+    assert (await m.get(rid, OWNER))["mode"] == "simulate"
+    assert "rule.armed" not in [action for action, _ in audits]
 
 
 class _CopyStore(InMemoryRuleStore):

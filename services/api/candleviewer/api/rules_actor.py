@@ -3,24 +3,37 @@
 Everything is re-derived server-side per request (C-12.4): permissions and granted
 accounts from the identity store, the owner flag from the user's roles, and live-arming
 step-up from the session's one-shot `live_enablement` grant (no-grace class, consumed
-exactly once by the transition that uses it).
+exactly once by the transition that uses it). A refusal carries the challenge it issued
+(#2304), which records the request it refused (the SHA-256 of the method, raw target and
+canonical body of `PUT /rules/{id}/mode`), so the client answers that challenge by id and
+re-sends the held request.
 """
 
 from __future__ import annotations
 
-import contextlib
 import uuid
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from fastapi import Request
 
+from candleviewer.api.step_up import (
+    SESSION_READ_ONLY_DETAIL,
+    SESSION_READ_ONLY_TITLE,
+    STEP_UP_REQUIRED_DETAIL,
+    STEP_UP_REQUIRED_TITLE,
+)
+from candleviewer.api.step_up_challenge import raw_request_target, request_fingerprint
 from candleviewer.audit.models import AuditOutcome
-from candleviewer.auth.errors import AuthError, StepUpRequired
+from candleviewer.auth.errors import AuthError, SessionReadOnly, SessionRevoked, StepUpRequired
 from candleviewer.auth.scopes import PrincipalSnapshot
-from candleviewer.rules.manager import Actor
+from candleviewer.auth.step_up import StepUpChallenge
+from candleviewer.rules.manager import Actor, RuleError
 
 STEP_UP_CLASS = "live_enablement"
+#: A body that is not I-JSON (RFC 7493) has no RFC 8785 form, so no grant can be bound to it.
+_UNBINDABLE = "The request body is not I-JSON, so a step-up cannot be bound to it."
 
 #: `RulesManager` audit event -> registered `audit.actions` verb (the closed 3.10.1 list);
 #: the full event name is preserved in `after_state.event`.
@@ -52,6 +65,35 @@ def _before(payload: dict[str, Any]) -> dict[str, Any] | None:
     if "b9_from" in payload:
         before["b9_state"] = payload["b9_from"]
     return before
+
+
+def _challenged(challenge: StepUpChallenge) -> RuleError:
+    """`403 step_up_required` carrying the challenge issued for this request (#2304): a no-grace
+    step-up must name it, so a refusal without it could never be answered. Its title and detail
+    are the ones every challenge states (`api.step_up.required_problem`)."""
+    return RuleError(
+        403,
+        "step_up_required",
+        STEP_UP_REQUIRED_DETAIL,
+        title=STEP_UP_REQUIRED_TITLE,
+        action_class=challenge.action_class,
+        challenge_id=str(challenge.challenge_id),
+        challenge_expires_at=challenge.expires_at.isoformat(),
+    )
+
+
+def _unanswerable(exc: SessionReadOnly | SessionRevoked) -> RuleError:
+    """A session that cannot answer a challenge gets its own refusal, never a challenge."""
+    if isinstance(exc, SessionReadOnly):
+        until = exc.until.isoformat() if isinstance(exc.until, datetime) else None
+        return RuleError(
+            403,
+            "session_read_only",
+            SESSION_READ_ONLY_DETAIL,
+            title=SESSION_READ_ONLY_TITLE,
+            readonly_until=until,
+        )
+    return RuleError(401, "unauthorized", "no verified session")
 
 
 def make_rules_audit(emitter: Any) -> Callable[[str, dict[str, Any]], Any]:
@@ -103,16 +145,31 @@ class SessionRulesActorResolver:
         session_id = str(record.id)
         step_up = self._step_up
 
-        async def consume() -> bool:
+        async def challenge() -> StepUpChallenge | None:
+            # None: this transition used the one-shot grant; else the challenge issued for it,
+            # which records the request it refused. The body `set_mode` validated: Starlette
+            # caches the one parsed object.
+            try:
+                body = await request.json()
+                fingerprint = request_fingerprint(request.method, raw_request_target(request), body)
+            except (ValueError, TypeError) as exc:  # not I-JSON: never bound, so never armed
+                raise RuleError(400, "validation_failed", _UNBINDABLE) from exc
             try:
                 await step_up().consume_single_use(session_id, STEP_UP_CLASS)
             except StepUpRequired:
-                # #2304: issuing the challenge refuses a session revoked meanwhile; so is this.
-                with contextlib.suppress(AuthError):
-                    await step_up().record_pending(session_id, STEP_UP_CLASS)
-                return False
-            except AuthError:
-                return False
+                issued: StepUpChallenge = await step_up().record_pending(
+                    session_id, STEP_UP_CLASS, fingerprint=fingerprint
+                )
+                return issued
+            return None
+
+        async def consume() -> bool:
+            try:
+                issued = await challenge()
+            except (SessionReadOnly, SessionRevoked) as exc:
+                raise _unanswerable(exc) from exc
+            if issued is not None:
+                raise _challenged(issued)
             return True
 
         return Actor(

@@ -44,9 +44,11 @@ def _problem(status: int, code: str, title: str, detail: str, **extra: Any) -> J
 
 
 def _from_error(exc: RuleError) -> JSONResponse:
-    return _problem(
-        exc.status, exc.code, exc.code.replace("_", " ").capitalize(), exc.message, **exc.extra
-    )
+    """The problem a `RuleError` names: its `title` when it carries one (#2304: the contract's
+    step-up title), else the humanised code."""
+    extra = dict(exc.extra)
+    title = str(extra.pop("title", exc.code.replace("_", " ").capitalize()))
+    return _problem(exc.status, exc.code, title, exc.message, **extra)
 
 
 def _doc(body: dict[str, Any]) -> dict[str, Any] | None:
