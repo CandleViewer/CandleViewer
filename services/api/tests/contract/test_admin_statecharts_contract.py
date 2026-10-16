@@ -172,6 +172,9 @@ def test_read_path_rules() -> None:
     event = "a `system_events` row (component `statechart`, severity `critical`, a fixed message)"
     assert event in listing and "so it shows in `listIncidents`" in listing
     assert "`kind` and `environment` narrow it as they narrow `items` (`degraded`" in listing
+    assert "(`degraded` does not)" in listing
+    assert "once per machine, environment and snapshot `updated_at`, not once per read" in listing
+    assert "seal also writes the `system_events` row described on `listStatecharts`" in detail
     assert (
         "An unknown machine and one the caller may not see are the same `404 not_found`" in detail
     )

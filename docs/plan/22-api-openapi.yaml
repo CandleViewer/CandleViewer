@@ -10126,7 +10126,8 @@ paths:
         `state`, `chain_trips` or `degraded` is shown. A snapshot that fails is left out of `items`
         and `kinds`, and `snapshots` is `error` with the fixed reason "snapshot seal did not
         verify". A failed seal also writes a `system_events` row (component `statechart`, severity
-        `critical`, a fixed message), so it shows in `listIncidents`. When the snapshot store
+        `critical`, a fixed message), once per machine, environment and snapshot `updated_at`, not
+        once per read, so it shows in `listIncidents`. When the snapshot store
         cannot be read, `items` and `kinds` are empty and `snapshots` says why (`AdminSliceStatus`);
         the response is still `200`.
       x-rbac: { permissions: [admin:read], scope: none }
