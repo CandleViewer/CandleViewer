@@ -1,34 +1,54 @@
 """Composition-root wiring of the admin read models (E42-T01): `GET /admin/overview` and
 `GET /admin/capacity`.
 
-Real sources on the real storage backend: the Postgres counts repository (users, accounts and
-keys, open incidents, sub-accounts in use), bound to the serving environment
-(`settings.environment`, `CV_ENVIRONMENT`; C-2.11), and the recorded sub-account tier, read from
-the `settings` row `accounts.subaccount_tier` (migration `0025`): no row is "unrecorded".
+Real sources on the real storage backend:
+- the Postgres counts repository (users, accounts and keys, open incidents, sub-accounts in use),
+  bound to the serving environment (`settings.environment`, `CV_ENVIRONMENT`; C-2.11);
+- the recorded sub-account tier, read from the `settings` row `accounts.subaccount_tier`
+  (migration `0025`): no row is "unrecorded";
+- the storage snapshot, whenever `app.state.disk_budget` exists (the real backend, #2370):
+  `DiskBudgetAdapter` maps the recorder's `DiskBudget` to the `StorageSnapshot` behind the overview
+  `storage` tile and the capacity `storage` section. It serves the last sample and never measures,
+  fails closed once that sample is older than three sample intervals, takes growth from
+  `measured_growth()` (so "not measured yet" is `None`, never the `0` of `report()`), and takes the
+  cap from the budget's `BudgetConfig`.
 
-Every other port stays unwired (`None`), so its slice is honestly `unavailable` ("no provider
-wired yet" in the contract), never a made-up figure: the recorder (its service is still a
-scaffold whose `recorded_symbols()` is always empty, so `0` would be a guess), the storage
-snapshot (`app.state.disk_budget` exists on the real backend, #2370, but no adapter maps it to a
-`StorageSnapshot` yet: growth from `measured_growth()`, `cap_bytes` from `BudgetConfig`),
-ingestion stats, the per-UID rate-budget peak (the governor keeps no per-minute peak), and the OMS
-kill switch / live flag / positions. On the fake backend the tier is unwired too.
+Every other port stays unwired (`None`), so its slice is honestly `unavailable` ("no provider wired
+yet" in the contract), never a made-up figure:
+- the recorder status: its service is still a scaffold whose `recorded_symbols()` is always empty,
+  so `0` symbols recording would be a guess (E16-T08, #492, adds the recording status surface);
+- ingestion stats: `messages_per_sec` and `dropped_last_hour` are rates over a window, but
+  ingestion exports only cumulative counters and instantaneous gauges and keeps no rolling sample,
+  so both would be invented (a counter since process start is not "the last hour"; the delta
+  between two admin reads is not a per-second rate), and "queue depth" has three candidates (the
+  WS frame queue, the dispatch lanes, the write-behind buffers). No ticket owns an in-process
+  sampler yet; E16-T08's `recorder` topic (`ingest_rate_msgs_per_sec`) is the nearest;
+- the per-UID rate-budget peak: the governor keeps no per-minute peak (E34-T02, #859);
+- the OMS kill switch, live flag and positions (E39-S03 #956, E44-T04 #1247, E29-T05 #848 and
+  E29-T07 #915).
+On the fake backend there is no budget and the tier is unwired too.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
+from typing import Final
 
-from candleviewer.admin.overview.capacity import AdminCapacityService
-from candleviewer.admin.overview.fanout import SliceFanOut, utc_now
+from candleviewer.admin.overview.capacity import AdminCapacityService, project
+from candleviewer.admin.overview.fanout import SliceFanOut, SourceUnavailable, utc_now
 from candleviewer.admin.overview.ports import (
     SUBACCOUNT_TIER_KEY,
     AccountCounts,
     RecordedTier,
+    RecorderStatus,
+    StorageSnapshot,
+    SymbolStorage,
     UserCounts,
 )
 from candleviewer.admin.overview.service import AdminOverviewService
+from candleviewer.recorder.budget import DiskBudget
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import SqlAlchemyAdminCounts
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -72,6 +92,86 @@ class SettingsTierReader:
         return None if row is None else RecordedTier(row.value, row.updated_at)
 
 
+#: A disk sample is shown for this many sample intervals, then the slice fails closed. The budget
+#: itself tolerates three intervals of lateness in its own series before it calls a sampling hole
+#: (`BudgetConfig.hole_us`: one series step plus three intervals), so a sample that old means at
+#: least two passes were missed. A live sampler replaces its report every interval plus a pass,
+#: and a pass is bounded by its own timeouts (about a minute at worst): two slow passes in a row
+#: still keep the age under three default intervals, so a healthy budget is shown.
+MAX_SAMPLE_AGE_INTERVALS: Final = 3
+#: The tiers the budget counts against its cap: QuestDB and Parquet, never Postgres
+#: (`24-internal-schemas.md` 13.4.1, "`used` = recorded bytes").
+_RECORDED_TIERS: Final = frozenset({"questdb", "parquet"})
+
+
+class DiskBudgetAdapter:
+    """The admin `RecorderPort` over the recorder's `DiskBudget`: the storage snapshot only.
+
+    A request reads the last sample and never measures (SCR-142). Fail closed (SR-096): no sample
+    yet is `None`, a sample older than `MAX_SAMPLE_AGE_INTERVALS` of the budget's own sample
+    interval, or one stamped in the future of the admin clock, raises `SourceUnavailable`, so a
+    stuck sampler never shows a stale headroom. Growth is the fit's (`measured_growth()`): `None`
+    until measured, never the `0` `report()` folds it into. The cap, the interval and the
+    retention come from the budget's own `BudgetConfig`.
+
+    Two fields are not known to the budget, so they are stated as what is safe, not measured:
+    `recording` is `True` for every symbol with bytes on disk (the recorder service knows no set
+    yet), so an unmeasured symbol gets the flagged estimate of `/admin/capacity` and growth is
+    never under-stated; and a symbol's `retention_days` is the budget's configured retention
+    (`None` when pinned), since per-symbol retention overrides are not visible to it.
+
+    `days_until_full` is the capacity projection's own (`project`): 0 at zero headroom, with or
+    without growth; `None` when growth is not fully measured, because the estimate belongs to
+    `/admin/capacity`, and when the steady state fits on disk. The overview tile and the capacity
+    section therefore tell one story.
+
+    The recorder status is not served: its slice stays `unavailable`, as when nothing is wired."""
+
+    def __init__(self, budget: DiskBudget, *, now: Callable[[], datetime]) -> None:
+        self._budget, self._now = budget, now
+
+    async def recorder_status(self) -> RecorderStatus:
+        raise SourceUnavailable("recorder: no provider wired")
+
+    async def storage_snapshot(self) -> StorageSnapshot | None:
+        budget = self._budget
+        report = budget.report()
+        if report is None:
+            return None  # before the first sample; the services say "no disk sample yet"
+        config = budget.config
+        age_s = (self._now() - report.generated_at).total_seconds()
+        if not 0 <= age_s <= MAX_SAMPLE_AGE_INTERVALS * config.sample_interval_s:
+            raise SourceUnavailable("storage: disk sample is stale")
+        total, rates = budget.measured_growth()  # one synchronous step with `report()` above
+        snapshot = StorageSnapshot(
+            used_bytes=sum(t.used_bytes for t in report.tiers if t.tier in _RECORDED_TIERS),
+            free_bytes=report.disk_free_bytes,
+            daily_growth_bytes=total,
+            days_until_full=None,
+            symbols=tuple(
+                SymbolStorage(
+                    symbol=s.symbol,
+                    used_bytes=s.used_bytes,
+                    daily_growth_bytes=rates.get(s.symbol),  # no fit for it yet: `None`, not 0
+                    pinned=s.pinned,
+                    retention_days=None if s.pinned else config.retention_days,
+                    recording=True,  # the budget knows no recorded set: see the class docstring
+                )
+                for s in report.symbols
+            ),
+            cap_bytes=config.cap_bytes,
+        )
+        return replace(snapshot, days_until_full=_days_until_full(snapshot))
+
+
+def _days_until_full(snapshot: StorageSnapshot) -> float | None:
+    """The overview tile's days: the capacity projection's, but never an estimate."""
+    if snapshot.headroom_bytes == 0:
+        return 0.0  # at the cap or on a full volume: exhausted now, growth or not
+    projection = project(snapshot)
+    return None if projection.estimated else projection.days_until_full
+
+
 def build_system_settings(settings: Settings) -> SystemSettings | None:
     """The `settings` store on the real backend; `None` on the fake one (nothing to read). Its
     repository is the admin area's one engine: the counts share it (`build_admin_read_models`)."""
@@ -86,6 +186,7 @@ def build_admin_read_models(
     *,
     now: Callable[[], datetime] = utc_now,
     system_settings: SystemSettings | None = None,
+    disk_budget: DiskBudget | None = None,
 ) -> tuple[AdminOverviewService, AdminCapacityService]:
     counts = None
     if settings.storage_backend == "real":
@@ -100,7 +201,8 @@ def build_admin_read_models(
             SqlAlchemyAdminCounts(relational, env=settings.environment.value)
         )
     fan = SliceFanOut(now=now)
-    overview = AdminOverviewService(fan, counts=counts, now=now)
+    recorder = None if disk_budget is None else DiskBudgetAdapter(disk_budget, now=now)
+    overview = AdminOverviewService(fan, counts=counts, recorder=recorder, now=now)
     tier = None if system_settings is None else SettingsTierReader(system_settings)
-    capacity = AdminCapacityService(fan, subaccounts=counts, tier=tier, now=now)
+    capacity = AdminCapacityService(fan, recorder=recorder, subaccounts=counts, tier=tier, now=now)
     return overview, capacity
