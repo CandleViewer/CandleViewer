@@ -800,14 +800,14 @@ chronyc tracking | grep 'System time'
 
 ### DiskCritical
 
-| Element               | Detail                                                                                                                                                                                                 |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1. What fired         | Disk above 95% for 2 minutes (`disk_used_ratio`). Page.                                                                                                                                                |
-| 2. User impact        | Recorder, QuestDB and Postgres writes will fail within minutes.                                                                                                                                        |
-| 3. What is still safe | Trading and native stop-losses.                                                                                                                                                                        |
-| 5. Remediation        | Free space: prune stopped containers and images (`docker system prune`, never `--volumes`); run the recorder retention roll-off; move cold Parquet to the archive disk. Never delete database volumes. |
-| 6. Escalation         | Owner immediately.                                                                                                                                                                                     |
-| 7. Verify recovery    | Ratio under 0.8 for 15 minutes.                                                                                                                                                                        |
+| Element               | Detail                                                                                                                                                                                                                                                                |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | Recorded data above 95% of `CV_DISK_CAP_GB` for 2 minutes (`disk_used_ratio`). Page.                                                                                                                                                                                  |
+| 2. User impact        | New rows of symbols without an open position are dropped as explicit gaps; open positions keep recording.                                                                                                                                                             |
+| 3. What is still safe | Trading, native stop-losses and recorded data (nothing is deleted).                                                                                                                                                                                                   |
+| 5. Remediation        | The recorder's write gate already drops new rows of symbols without an open position (`backpressure_drop` gaps). Run the recorder retention roll-off, shorten retention, unpin or reduce depth; move cold Parquet to the archive disk. Never delete database volumes. |
+| 6. Escalation         | Owner immediately.                                                                                                                                                                                                                                                    |
+| 7. Verify recovery    | Ratio under 0.8 for 15 minutes.                                                                                                                                                                                                                                       |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: ratio under 0.8.)
 
@@ -926,14 +926,14 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 
 ### DiskHigh
 
-| Element               | Detail                                                                |
-| --------------------- | --------------------------------------------------------------------- |
-| 1. What fired         | Disk between 80% and 95% for 5 minutes. Ticket.                       |
-| 2. User impact        | Headroom shrinking; DiskCritical follows.                             |
-| 3. What is still safe | Everything.                                                           |
-| 5. Remediation        | Run recorder roll-off, archive cold data, prune images (not volumes). |
-| 6. Escalation         | Owner within one working session.                                     |
-| 7. Verify recovery    | Ratio below 0.8.                                                      |
+| Element               | Detail                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------ |
+| 1. What fired         | Recorded data between 80% and 95% of `CV_DISK_CAP_GB` for 5 minutes (`disk_used_ratio`). Ticket. |
+| 2. User impact        | Headroom shrinking; DiskCritical follows.                                                        |
+| 3. What is still safe | Everything.                                                                                      |
+| 5. Remediation        | Run recorder roll-off, archive cold data, prune images (not volumes).                            |
+| 6. Escalation         | Owner within one working session.                                                                |
+| 7. Verify recovery    | Ratio below 0.8.                                                                                 |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: ratio under 0.8.)
 

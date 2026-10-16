@@ -68,6 +68,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scrub_task = getattr(app.state, "scrub_task", None)
     if scrub_task is not None:
         scrub_task.start()
+    disk_budget = getattr(app.state, "disk_budget", None)
+    if disk_budget is not None:  # E16-T07: one supervised sampling task
+        disk_budget.start()
     rule_prune = getattr(app.state, "rule_prune_task", None)
     if rule_prune is not None:
         rule_prune.start()
@@ -125,6 +128,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             await metrics_runtime.stop()
         if health_registry is not None:
             await health_registry.stop()
+        if disk_budget is not None:  # before the PG engines its repository uses
+            await disk_budget.stop()
         health_pg = getattr(app.state, "health_pg", None)
         if health_pg is not None:
             await health_pg.dispose()

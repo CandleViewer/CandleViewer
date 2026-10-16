@@ -28,6 +28,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _QUESTDB_DEV_PASSWORD = "quest"  # noqa: S105 - the QuestDB OSS default, refused on live
 _REDACT_NAME_RE = re.compile(r"(key|secret|token|password|dsn)", re.IGNORECASE)
+#: QuestDB PGWire default port, for a `questdb_pg` `host[:port]` that omits the port.
+QUESTDB_PG_DEFAULT_PORT = 8812
 
 
 class Environment(StrEnum):
@@ -252,7 +254,15 @@ class Settings(BaseSettings):
     cold_kline_concurrency: int = 2
     # #2060: seconds between reloads of the klines hot-retention rule (rules are editable).
     kline_boundary_refresh_s: int = 600
-    disk_cap_gb: int = 500
+    # E16-T07 disk budget (ADR-0015 d6, 24-internal-schemas §13.4.1). 600 GB is the E16-K01
+    # recommendation for <= 2 symbols at depth 200 (provisional until its live re-measure).
+    disk_cap_gb: int = Field(default=600, gt=0)
+    disk_warn_pct: int = Field(default=80, gt=0, le=100)
+    disk_autostop_pct: int = Field(default=90, gt=0, le=100)
+    disk_halt_pct: int = Field(default=95, gt=0, le=100)
+    disk_sample_interval_s: float = Field(default=60.0, gt=0)
+    # SR-096 escape hatch (recording volume shared with the backend): testnet only (E16-FR-11).
+    allow_shared_volume: bool = False
     # E08-T04: public WS ingestion skeleton flag (C-4.13: off by default;
     # removal tracked by E08-T05). Public data only — no credentials.
     ingestion_ws_enabled: bool = False
@@ -324,6 +334,15 @@ class Settings(BaseSettings):
         return frozenset(
             o.strip().rstrip("/") for o in self.allowed_origins.split(",") if o.strip()
         )
+
+    @model_validator(mode="after")
+    def _refuse_shared_volume_outside_testnet(self) -> Settings:
+        """E16-FR-11 (#1741, SR-096): live and demo never boot with the shared-volume hatch."""
+        if self.allow_shared_volume and self.environment is not Environment.TESTNET:
+            raise ValueError(
+                "CV_ALLOW_SHARED_VOLUME is refused when CV_ENVIRONMENT is live or demo"
+            )
+        return self
 
     @model_validator(mode="after")
     def _refuse_file_kek_on_live(self) -> Settings:

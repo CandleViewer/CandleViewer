@@ -93,6 +93,13 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "recorder_spill_bytes",
         "recorder_write_backlog_rows",
         "recorder_flush_duration_seconds",
+        "disk_used_ratio",
+        "disk_free_bytes",
+        "recorder_disk_pressure_level",
+        "recorder_bytes_per_day",
+        "recorder_projected_full_timestamp",
+        "recorder_disk_budget_last_sample_timestamp_seconds",
+        "recorder_disk_budget_breakdown_age_seconds",
     }
 )
 

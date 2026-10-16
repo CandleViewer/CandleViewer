@@ -3077,6 +3077,19 @@ refits; its age is `recorder_disk_budget_breakdown_age_seconds`.
    True until `positions_reloaded()` (warm-up assumes a position), and a failing gate check
    keeps writing. A gate window is sealed by the next row the gate admits for its (symbol,
    stream), so no gap spans written data (C-2.14). A refused volume reports level 3.
+2. _No recorder flag._ None exists, and a safety monitor is never default-off (C-4.14): the
+   budget runs whenever `storage_backend=real`.
+3. _Free space is the volume under `CV_PARQUET_ROOT`._ The api cannot `statvfs` QuestDB's volume,
+   so that tier counts only against the cap (`table_partitions` sizes, measured in parallel with
+   the Parquet walk, each in its own budget; a part never measured fails the pass, never reads
+   as 0). Per-symbol hot bytes are
+   apportioned by `recorder_bytes_written_total`; Parquet bytes are exact (`symbol=` path). A
+   recording volume shared with the audit WAL or bars state keeps the gate closed unless
+   `CV_ALLOW_SHARED_VOLUME` (testnet only, E16-FR-11). Volume layout: `CV_PARQUET_ROOT` must
+   exist; the audit WAL directory and `CV_BARS_STATE_ROOT` live on other filesystems (device
+   of the nearest existing parent, every boot); a filesystem error at boot refuses recording
+   instead of failing the app. `CV_DISK_CAP_GB` must not exceed QuestDB's data volume, or that
+   volume needs its own host disk alert.
 
 **`DiskPressureChanged`** (bus topic `{env}.recorder.disk_pressure`, consumed by `RecordingPolicy`
 E16-T02 and `RetentionManager` E16-T06) is published after the system event on every change of

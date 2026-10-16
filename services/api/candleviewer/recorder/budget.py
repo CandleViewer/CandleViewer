@@ -50,6 +50,8 @@ US_PER_DAY: Final = 86_400 * US_PER_S
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _MAX_RUNWAY_DAYS: Final = 36_500
 _PCT: Final = 100  # every threshold is an integer percentage
+#: Default budget of each pass's best-effort breakdown (`BudgetConfig.breakdown_timeout_s`).
+BREAKDOWN_TIMEOUT_S: Final = 5.0
 _LADDER: Final = (DiskPressureLevel.WARN, DiskPressureLevel.AUTOSTOP, DiskPressureLevel.HALT)
 #: Suggested actions named by every ladder event: codes only, never host paths.
 SUGGESTED_ACTIONS: Final = "reduce_depth,shorten_retention,unpin"
@@ -95,7 +97,7 @@ class BudgetConfig:
     max_symbols: int = 64
     io_timeout_s: float = 10.0
     #: The best-effort per-tier / per-symbol breakdown; never delays the free-space path.
-    breakdown_timeout_s: float = 5.0
+    breakdown_timeout_s: float = BREAKDOWN_TIMEOUT_S
     hot_days: int = 7
     retention_days: int = 30
 
@@ -166,6 +168,8 @@ class SeriesStore(Protocol):
     async def load(self, since_us: int) -> Sequence[Point]: ...
 
     async def append(self, point: Point) -> None: ...
+
+    async def close(self) -> None: ...
 
 
 class PressurePublisher(Protocol):
@@ -611,6 +615,8 @@ class DiskBudget:
                 raise
         finally:
             await self._meter.close()
+            if self._store is not None:
+                await self._store.close()
 
     async def _run(self) -> None:
         loaded = False

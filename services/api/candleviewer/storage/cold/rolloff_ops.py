@@ -24,7 +24,7 @@ import os
 import re
 import tempfile
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -210,13 +210,21 @@ class QuestDbHotPartitions:
         async with asyncio.timeout(self._timeout_s):
             return await self._conn.fetch(sql, *params)
 
-    async def closed_days(self, stream: StreamKind, before_us: int) -> list[int]:
-        """Start (UTC µs) of every DAY partition that ends at or before `before_us`."""
+    async def _partitions(self, stream: StreamKind) -> list[dict[str, object]]:
         # Table from the TABLE_BY_STREAM allowlist, emitted as an escaped literal.
         literal = sql_string_literal(_hot_table(stream))
-        sql = f"SELECT name FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted
+        sql = f"SELECT name, diskSize FROM table_partitions({literal})"  # noqa: S608  # nosec B608 - allowlisted
+        return await self._fetch(sql)
+
+    async def disk_bytes(self, streams: Sequence[StreamKind]) -> int:
+        """On-disk bytes of every partition of the given hot tables (E16-T07 QuestDB tier)."""
+        rows = [r for stream in streams for r in await self._partitions(stream)]
+        return sum(int(str(r.get("diskSize") or 0)) for r in rows)
+
+    async def closed_days(self, stream: StreamKind, before_us: int) -> list[int]:
+        """Start (UTC µs) of every DAY partition that ends at or before `before_us`."""
         days: list[int] = []
-        for row in await self._fetch(sql):
+        for row in await self._partitions(stream):
             name = str(row.get("name", ""))
             if not _DATE_RE.fullmatch(name):
                 continue
