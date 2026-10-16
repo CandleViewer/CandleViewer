@@ -213,6 +213,12 @@ def test_parse_bare_json_without_a_json_object_is_empty() -> None:
         assert run_gate.parse_bare_json(text) == {}, text
 
 
+def test_parse_bare_json_skips_braces_that_do_not_start_the_document() -> None:
+    doc = {"summary_by_busy_level": {"500": {"p99": 28.7}}}
+    out = "starting {worker}\nconfig {oops\n" + json.dumps(doc, indent=2) + "\n"
+    assert run_gate.parse_bare_json(out) == doc
+
+
 def test_upstream_dev_python_missing_venv_exits_skip_env(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

@@ -1329,21 +1329,23 @@ def parse_bench_blocks(text: str) -> dict[str, Any]:
 
 
 def parse_bare_json(text: str) -> dict[str, Any]:
-    """The first top-level JSON object in ``text``, or ``{}`` (#579).
+    """The first JSON object in ``text`` that parses, or ``{}`` (#579).
 
     `bench_c_timers_v2.py` (BENCH-6) prints one bare JSON document rather than
     `=== name ===` blocks, so its THRESHOLDS path starts at that object's top
     level. Without this fallback the row could never find its metric and was an
-    ERROR on every `--with-bench` run.
+    ERROR on every `--with-bench` run. Every `{` is tried in turn, so a log line
+    such as `starting {worker}` ahead of the document does not hide it.
     """
-    start = text.find("{")
-    if start < 0:
-        return {}
-    try:
-        obj, _ = json.JSONDecoder().raw_decode(text, start)
-    except json.JSONDecodeError:
-        return {}
-    return obj if isinstance(obj, dict) else {}
+    decoder = json.JSONDecoder()
+    for brace in re.finditer(r"\{", text):
+        try:
+            obj, _ = decoder.raw_decode(text, brace.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):  # always true after a `{`; narrows the type for mypy
+            return obj
+    return {}
 
 
 def dig(blocks: dict[str, Any], path: list[str]) -> float | None:
