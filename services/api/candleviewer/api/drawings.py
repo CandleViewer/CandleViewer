@@ -611,22 +611,23 @@ def make_drawings_router(
         ops = [_op(op, new_id) for op in body.operations]
         if metrics is not None:
             metrics.batch_ops.child().observe(len(ops))
-        failed: BatchOpFailed | None = None
+        failed: tuple[int, str] | None = None  # (index, rule): the exception would pin this frame
         try:
             res = await store().apply_batch(owner, ops)
         except BatchOpFailed as exc:
-            failed = exc  # answered below, outside the `except`: nothing raised there chains it
+            failed = (exc.index, exc.rule)  # answered below, outside the `except`: nothing chains
         if failed is not None:
-            field = f"operations.{failed.index}"
-            if failed.rule == "immutable_field":  # as on PUT; checked under the row lock (C2)
+            index, internal = failed
+            field = f"operations.{index}"
+            if internal == "immutable_field":  # as on PUT; checked under the row lock (C2)
                 msg = "symbol and tool cannot change"
-                raise _invalid([_rule(f"{field}.drawing", failed.rule, msg)])
-            not_owned = failed.rule == "target_not_owned"  # foreign or missing: not told apart
-            rule = "target_unavailable" if not_owned else failed.rule  # the wire rule and label
+                raise _invalid([_rule(f"{field}.drawing", internal, msg)])
+            not_owned = internal == "target_not_owned"  # foreign or missing: not told apart
+            rule = "target_unavailable" if not_owned else internal  # the wire rule and label
             conflict(rule)  # counted and logged before the audit write, as `enforce()` (SR-125)
             _log().info("drawings_batch_conflict", user_id=owner, op_count=len(ops), rule=rule)
             if not_owned:  # `rbac.denied` first; a refused audit write fails the request closed
-                await audit_not_owner(principal, ops[failed.index].id)
+                await audit_not_owner(principal, ops[index].id)
             msg = _BATCH_RULES.get(rule, "This operation cannot be applied.")
             errs = [_rule(field, rule, msg)]
             raise _Problem("conflict", "The batch was rolled back.", errors=errs)
