@@ -863,7 +863,7 @@ export interface paths {
     };
     /**
      * Statechart inspector - live machines and their supervision counters
-     * @description Read model for the statechart inspector (E42-T07). One row per live machine of a kind that has a public entity id (the `machines.{entity}.state` grammar of E17-T08: B8, B9, B13 and B15 have none yet, so they are not listed). Rows come from the persisted quiescent snapshots and the `cv_machine_*` metric families; the read path never holds, builds or queries an `Interpreter` (MUSTNOT-03). Per-entity visibility follows the `machines.{entity}.state` topic: the Owner sees every entity of an account-scoped or unscoped kind, while `alert`, `replay` and `session` stay self-scoped for every role, so only the caller's own appear. A row the caller may not see is omitted, never redacted. When the snapshot store cannot be read, `items` is empty and `snapshots` says why (`AdminSliceStatus`); the response is still `200`.
+     * @description Read model for the statechart inspector (E42-T07). One row per live machine of a kind that has a public entity id (the `machines.{entity}.state` grammar of E17-T08: B8, B9, B13 and B15 have none yet, so they get no row). Rows come from the persisted quiescent snapshots and the `cv_machine_*` metric families; the read path never holds, builds or queries an `Interpreter` (MUSTNOT-03). Per-entity visibility follows the `machines.{entity}.state` topic: the Owner sees every entity of an account-scoped or unscoped kind, while `alert`, `replay` and `session` stay self-scoped for every role, so only the caller's own appear. A row the caller may not see is omitted, never redacted. `kinds` adds one counters-only summary per kind and environment with no entity id, every live machine counted, so a latched machine without a row (a B8 `position_protection`, another user's `session`) still shows; it is the same on every page. Machines are per environment (`machine_snapshots` is keyed by kind, entity and `env`): the singletons `kill_switch` and `live_gate` run once per environment, and a `machine_key` is unique within one environment. `environment` filters; each row carries its own. Rows are ordered by `machine_kind`, `machine_key`, then `environment`, ascending. Each snapshot's HMAC envelope is verified (`persistence.open_sealed`, CV-C53) before its `state`, `chain_trips` or `degraded` is shown. A snapshot that fails is left out of `items` and `kinds`, and `snapshots` is `error` with the fixed reason "snapshot seal did not verify". When the snapshot store cannot be read, `items` and `kinds` are empty and `snapshots` says why (`AdminSliceStatus`); the response is still `200`.
      */
     get: operations["listStatecharts"];
     put?: never;
@@ -879,14 +879,14 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so each machine has exactly one key. */
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a `23-ws-protocol.md` §13 `symbol` (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so a machine has exactly one key in its environment. */
         machineKey: components["parameters"]["MachineKey"];
       };
       cookie?: never;
     };
     /**
      * Statechart inspector - one machine's redacted context, chart and configuration
-     * @description One live machine (E42-T07), with the same visibility rules as `listStatecharts`. Adds the redacted `context_summary` (only the keys the `machines.{entity}.state` topic allows for the kind; never secrets, user ids, free text, deadlines, exchange ids, prices, quantities, balances or limits), the full active `configuration` (ancestors included, from the snapshot), the registered chart (`config`), and the latest `machine_events` rows without their payloads. An unknown machine and one the caller may not see are the same `404 not_found`. When the snapshot store cannot be read, the answer is `200` with `snapshots` saying why and no machine fields.
+     * @description One live machine (E42-T07), with the same visibility rules as `listStatecharts`. Adds the redacted `context_summary` (only the keys the `machines.{entity}.state` topic allows for the kind; never secrets, user ids, free text, deadlines, exchange ids, prices, quantities, balances or limits), the full active `configuration` (ancestors included, from the snapshot), the registered chart (`config`), and the latest `machine_events` rows without their payloads. An unknown machine and one the caller may not see are the same `404 not_found`. `environment` is required, because a `machineKey` is unique only within one environment. When the snapshot store cannot be read, or the machine's HMAC envelope does not verify (`persistence.open_sealed`, CV-C53), the answer is `200` with `snapshots` `error` and a fixed reason, and no machine fields.
      */
     get: operations["getStatechart"];
     put?: never;
@@ -902,14 +902,14 @@ export interface paths {
       query?: never;
       header?: never;
       path: {
-        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so each machine has exactly one key. */
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a `23-ws-protocol.md` §13 `symbol` (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so a machine has exactly one key in its environment. */
         machineKey: components["parameters"]["MachineKey"];
       };
       cookie?: never;
     };
     /**
      * Stately-compatible export of a machine's registered chart
-     * @description The chart registered in `statechart/registry.py` for the key's kind, projected for Stately Studio (`export_stately`: the CV policy keys removed), with its `machine_hash` (E42-T07). `machineKey` may also be a bare catalogue `machine_kind`, which covers every B1-B20 chart, live or not. The export reveals chart structure only: no instance is read, so the answer is the same for any id of a registered kind. An `algo:{id}` key is `404 not_found`, because without reading the instance the export cannot tell which of the four algo charts it is; export by the bare kind (`oco`, `iceberg`, `twap` or `chase`) instead. A key outside the grammar (a singleton with an id, an empty id) or a kind that is not registered is `404 not_found` too.
+     * @description The chart registered in `statechart/registry.py` for the key's kind, projected for Stately Studio by `export_stately`, with its `machine_hash` (E42-T07). The projection removes exactly the six CV policy keys (`strictConfig`, `strict`, `strictTargets`, `actionErrorPolicy`, `guardErrorPolicy`, `spawnBlockingTimeout`) and keeps every other key, `id`, `initial` and `states` included, so it validates against the authoring schema (`statechart/schema.py` `MACHINE_SCHEMA`) with those six keys taken out. `machineKey` may also be a bare catalogue `machine_kind`, which covers every B1-B20 chart, live or not. The export reveals chart structure only: no instance is read, so the answer is the same for any id of a registered kind. An `algo:{id}` key is `404 not_found`, because without reading the instance the export cannot tell which of the four algo charts it is; export by the bare kind (`oco`, `iceberg`, `twap` or `chase`) instead. A key outside the grammar (a singleton with an id, an empty id) or a kind that is not registered is `404 not_found` too.
      */
     get: operations["exportStatechart"];
     put?: never;
@@ -8084,10 +8084,26 @@ export interface components {
       /** @description sha256 of the registered chart's canonical JSON (`registry.machine_hash`). */
       machine_hash: string;
       machine_kind: string;
-      /** @description The chart with the CV policy keys removed, importable into Stately Studio. */
+      /** @description The chart without the six CV policy keys, importable into Stately Studio. */
       stately: {
         [key: string]: unknown;
       };
+    };
+    /** @description Counters for one machine kind in one environment (E42-T07), with no entity id. Every live machine of the kind is counted, including the kinds without a public id (B8, B9, B13, B15) and the machines no row is shown for. */
+    StatechartKindSummary: {
+      /** @description Live machines per published `state`; a state with none is left out. */
+      by_state: {
+        [key: string]: number;
+      };
+      /** @description Sum over the machines. */
+      chain_trips: number;
+      /** @description Machines whose latch is set. */
+      degraded: number;
+      /** @description `cv_machine_dropped_receipts_total` for the kind since process start (the library counts per interpreter and never persists it); `null` when the metric cannot be read. */
+      dropped_receipts: number | null;
+      environment: components["schemas"]["Environment"];
+      machine_kind: string;
+      machines: number;
     };
     /** @description One live machine (E42-T07), read from its persisted quiescent snapshot and the `cv_machine_*` metric families, never from a live interpreter. */
     StatechartMachine: {
@@ -8097,12 +8113,9 @@ export interface components {
       deferred_depth: number | null;
       /** @description `chain_trips > 0`; cleared only by an operator. */
       degraded: boolean;
-      /** @description `cv_machine_dropped_receipts_total` for this machine's kind since process start. The library counts dropped receipts per interpreter and never persists them, so the value is per kind, not per machine; `null` when the metric cannot be read. */
-      dropped_receipts: number | null;
-      /** @enum {string} */
-      environment: "live" | "demo" | "testnet";
+      environment: components["schemas"]["Environment"];
       /** @description Whether `machine_hash` equals the committed `machine_hashes.lock` entry. */
-      lock_matches?: boolean;
+      lock_matches: boolean;
       /** @description The snapshot's chart hash (sha256 of the canonical chart JSON). */
       machine_hash: string;
       /** @description The `machineKey` of this machine. */
@@ -8115,7 +8128,7 @@ export interface components {
        * Format: date-time
        * @description When the snapshot was written.
        */
-      updated_at?: string;
+      updated_at: string;
     };
     /** @description `getStatechart` (E42-T07). `snapshots` and `events` give each source's outcome; machine fields are present only when `snapshots.status` is `ok`. */
     StatechartMachineDetail: {
@@ -8769,7 +8782,7 @@ export interface components {
     LayoutId: string;
     /** @description Page size. */
     Limit: number;
-    /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so each machine has exactly one key. */
+    /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a `23-ws-protocol.md` §13 `symbol` (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so a machine has exactly one key in its environment. */
     MachineKey: string;
     /** @description The single cursor statement for `/market/klines` and `/market/bars`: an opaque, server-issued cursor from `meta.next_cursor`. Ordering and the cursor are by `(generation, index)` for non-time bars (the cursor carries the last position's `t`, `generation` and `index`, #2017); `/market/klines` and time bars use a `t` position (open time is unique there). Clients must treat the cursor as opaque and never parse it, so the switch is non-breaking. Malformed, expired or foreign -> `invalid_cursor`. A cursor is bound to the request that issued it (route, symbol, interval or `bar_type`+`param`); replaying it on a different request is `invalid_cursor`. Uncursored requests are served as the first page (see the route text). */
     MarketCursor: string;
@@ -9889,6 +9902,7 @@ export interface operations {
         cursor?: components["parameters"]["Cursor"];
         /** @description Only machines whose `chain_trips` latch is set (`true`) or clear (`false`). */
         degraded?: boolean;
+        environment?: components["parameters"]["EnvironmentQuery"];
         /** @description Only machines of this catalogue `machine_kind`. */
         kind?: string;
         /** @description Page size. */
@@ -9907,9 +9921,10 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["Page"] & {
-            items?: components["schemas"]["StatechartMachine"][];
-            metrics?: components["schemas"]["AdminSliceStatus"];
-            snapshots?: components["schemas"]["AdminSliceStatus"];
+            items: components["schemas"]["StatechartMachine"][];
+            kinds: components["schemas"]["StatechartKindSummary"][];
+            metrics: components["schemas"]["AdminSliceStatus"];
+            snapshots: components["schemas"]["AdminSliceStatus"];
           };
         };
       };
@@ -9919,10 +9934,12 @@ export interface operations {
   };
   getStatechart: {
     parameters: {
-      query?: never;
+      query: {
+        environment: components["schemas"]["Environment"];
+      };
       header?: never;
       path: {
-        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so each machine has exactly one key. */
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a `23-ws-protocol.md` §13 `symbol` (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so a machine has exactly one key in its environment. */
         machineKey: components["parameters"]["MachineKey"];
       };
       cookie?: never;
@@ -9948,7 +9965,7 @@ export interface operations {
       query?: never;
       header?: never;
       path: {
-        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a symbol (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so each machine has exactly one key. */
+        /** @description A machine's `machines.{entity}.state` entity (E17-T08): the kind for a singleton (`kill_switch`), else `{kind}:{id}` with a lowercase canonical uuid or a `23-ws-protocol.md` §13 `symbol` (`order:0a000000-0000-4000-8000-000000000001`, `book:BTCUSDT`). A uuid is always the lowercase canonical form, so a machine has exactly one key in its environment. */
         machineKey: components["parameters"]["MachineKey"];
       };
       cookie?: never;

@@ -5385,7 +5385,12 @@ class Incident(BaseModel):
 class StatechartMachine(BaseModel):
     machine_key: Annotated[str, Field(description="The `machineKey` of this machine.")]
     machine_kind: Annotated[str, Field(description="Catalogue id (`28-statechart-catalogue.md`).")]
-    environment: Literal["live", "demo", "testnet"]
+    environment: Annotated[
+        Literal["live", "demo", "testnet"],
+        Field(
+            description="Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`."
+        ),
+    ]
     state: Annotated[
         str,
         Field(
@@ -5400,11 +5405,11 @@ class StatechartMachine(BaseModel):
         ),
     ]
     lock_matches: Annotated[
-        bool | None,
+        bool,
         Field(
             description="Whether `machine_hash` equals the committed `machine_hashes.lock` entry."
         ),
-    ] = None
+    ]
     chain_trips: Annotated[
         int,
         Field(
@@ -5416,20 +5421,11 @@ class StatechartMachine(BaseModel):
     deferred_depth: Annotated[
         int | None,
         Field(
-            description="Deferred events held in the snapshot (`onUnhandled: defer`); `null` if it carries no deferred list.",
+            description="Deferred events held in the snapshot (`onUnhandled: defer`); `null` if it carries no deferred list.\n",
             ge=0,
         ),
     ]
-    dropped_receipts: Annotated[
-        int | None,
-        Field(
-            description="`cv_machine_dropped_receipts_total` for this machine's kind since process start. The library counts dropped receipts per interpreter and never persists them, so the value is per kind, not per machine; `null` when the metric cannot be read.\n",
-            ge=0,
-        ),
-    ]
-    updated_at: Annotated[
-        AwareDatetime | None, Field(description="When the snapshot was written.")
-    ] = None
+    updated_at: Annotated[AwareDatetime, Field(description="When the snapshot was written.")]
 
 
 class RecentEvent(BaseModel):
@@ -5446,7 +5442,7 @@ class StatechartMachineDetail(BaseModel):
     events: AdminSliceStatus | None = None
     machine: StatechartMachine | None = None
     context_summary: Annotated[
-        dict[str, str | float | int | bool | None] | None,
+        dict[str, str | float | bool | None] | None,
         Field(description="Redacted scalar context; only the keys allowed for the kind."),
     ] = None
     configuration: Annotated[
@@ -5479,7 +5475,31 @@ class StatechartExport(BaseModel):
     stately: Annotated[
         dict[str, Any],
         Field(
-            description="The chart with the CV policy keys removed, importable into Stately Studio."
+            description="The chart without the six CV policy keys, importable into Stately Studio."
+        ),
+    ]
+
+
+class StatechartKindSummary(BaseModel):
+    machine_kind: str
+    environment: Annotated[
+        Literal["live", "demo", "testnet"],
+        Field(
+            description="Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`."
+        ),
+    ]
+    machines: Annotated[int, Field(ge=1)]
+    by_state: Annotated[
+        dict[str, int],
+        Field(description="Live machines per published `state`; a state with none is left out."),
+    ]
+    chain_trips: Annotated[int, Field(description="Sum over the machines.", ge=0)]
+    degraded: Annotated[int, Field(description="Machines whose latch is set.", ge=0)]
+    dropped_receipts: Annotated[
+        int | None,
+        Field(
+            description="`cv_machine_dropped_receipts_total` for the kind since process start (the library counts per interpreter and never persists it); `null` when the metric cannot be read.\n",
+            ge=0,
         ),
     ]
 
