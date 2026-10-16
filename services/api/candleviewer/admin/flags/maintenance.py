@@ -19,7 +19,10 @@ store or committed by a write, never on a fail-closed reading (an outage or an u
 entering maintenance cancels running emulated algos through `AlgoCanceller` and pauses the
 recorder only when `maintenance.keep_recorder` is false. Resting orders are not cancelled and
 can still fill. Each effect has a timeout, and an entry that fails is retried on the next poll.
-Native exchange stop-losses are never touched: no port here can reach them (C-2.6).
+A transition the poll reads (a boot that finds a stored `True` included, as unknown to `True`
+counts) also sends every session the `notice` and writes the `maintenance.*` audit as
+`system:maintenance`, once, under the same timeout; a write announces its own. Native exchange
+stop-losses are never touched: no port here can reach them (C-2.6).
 """
 
 from __future__ import annotations
@@ -35,7 +38,8 @@ from candleviewer.admin.flags.catalogue import MAINTENANCE_KEEP_RECORDER, MAINTE
 from candleviewer.admin.flags.metrics import maintenance_mode_gauge
 from candleviewer.admin.flags.resolver import StoredFlag
 from candleviewer.admin.flags.service import KILLSWITCH_TTL_S, FlagService
-from candleviewer.admin.flags.writes import ChangeHook, readable
+from candleviewer.admin.flags.writes import AuditEmitter, ChangeHook, readable
+from candleviewer.audit.models import Severity
 from candleviewer.domain.order_entry import GlobalOrderEntryCheck, OrderEntryRefusal
 
 KILL_ORDER_ENTRY: Final = "killswitch.order_entry"
@@ -99,6 +103,8 @@ class MaintenanceController:
         service: FlagService,
         gate: MaintenanceGate,
         *,
+        notify: Callable[[bool], None],
+        audit: AuditEmitter,
         algos: AlgoCanceller | None = None,
         recorder: RecorderControl | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -106,6 +112,7 @@ class MaintenanceController:
     ) -> None:
         self._service, self.gate = service, gate
         self._algos, self._recorder, self._sleep = algos, recorder, sleep
+        self._notify, self._audit = notify, audit
         self._timeout = effect_timeout_s
         self._lock = asyncio.Lock()
         self._generation = 0
@@ -113,6 +120,8 @@ class MaintenanceController:
         self._values: dict[str, bool | None] = dict.fromkeys(GATE_FLAGS)
         self._entered = False
         self._recorder_paused = False
+        #: The stored `maintenance.mode` last announced; `None` until known (D1c).
+        self._announced: bool | None = None
 
     def _apply(self) -> None:
         self.gate.set(any(value is not False for value in self._values.values()))
@@ -122,6 +131,8 @@ class MaintenanceController:
             self._generation += 1
             self._values[key] = after.value is True
             self._apply()
+            if key == MAINTENANCE_MODE:  # the write announces its own transition
+                self._announced = after.value is True
 
     async def effects_hook(self, key: str, before: StoredFlag | None, after: StoredFlag) -> None:
         if key == MAINTENANCE_MODE:
@@ -141,11 +152,36 @@ class MaintenanceController:
             if generation == self._generation:  # a write applied meanwhile is newer: keep it
                 self._values.update(readings)
                 self._apply()
+                await self._announce(readings[MAINTENANCE_MODE])
             maintenance = self._values[MAINTENANCE_MODE]
             if maintenance is None:
                 logger().warning("maintenance_state_unknown")  # an outage or unreadable row
                 return
             await self._effects(maintenance)
+
+    async def _announce(self, now: bool | None) -> None:
+        """D1c: notice and audit a stored transition read here: unknown to `True` counts, unknown
+        to `False` does not, and an outage or an unreadable row (`None`) announces nothing."""
+        was = self._announced
+        if now is None or now == was:
+            return
+        self._announced = now
+        if was is None and not now:
+            return
+        self._notify(now)
+        try:
+            async with asyncio.timeout(self._timeout):  # a stalled emit must not wedge the poll
+                await self._audit.emit(
+                    "maintenance.enabled" if now else "maintenance.disabled",
+                    actor_label="system:maintenance",
+                    object_kind="feature_flag",
+                    object_id=MAINTENANCE_MODE,
+                    severity=Severity.WARNING,
+                    reason="read from the flag store",
+                    after_state={"value": now},
+                )
+        except Exception:  # never stop the poll: the gate and the notice already stand
+            logger().exception("maintenance_audit_failed", key=MAINTENANCE_MODE)
 
     async def _effects(self, on: bool) -> None:
         if on and not self._entered:

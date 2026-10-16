@@ -81,22 +81,24 @@ class _Rig:
     ) -> None:
         self.store, self.clock, self.sessions = FakeFlagStore(), Clock(), _Sessions()
         self.service = FlagService(default_registry(), self.store, clock=self.clock)
-        self.algos, self.recorder = algos or _Algos(), _Recorder()
+        self.algos, self.recorder, self.audit = algos or _Algos(), _Recorder(), FakeAudit()
         self.sleeps: list[float] = []
+        push = FlagPush(self.service, self.sessions)
         self.controller = MaintenanceController(
             self.service,
             MaintenanceGate(),
+            notify=push.notify_maintenance,
+            audit=self.audit,
             algos=self.algos,
             recorder=self.recorder,
             sleep=self._sleep,
             effect_timeout_s=effect_timeout_s,
         )
-        push = FlagPush(self.service, self.sessions)
         hook = chain_hooks(
             self.controller.gate_hook, push.flag_changed, self.controller.effects_hook
         )
         self.writer = FlagWriter(
-            self.service, FakeAudit(), FakeStepUp(), FakeUsers(), on_change=hook
+            self.service, self.audit, FakeStepUp(), FakeUsers(), on_change=hook
         )
         self.stop_after = 1
 
@@ -122,6 +124,12 @@ class _Rig:
 
     def db(self, key: str, value: FlagValue) -> None:
         self.store.rows[key] = replace(self.store.rows[key], value=value)
+
+    def announced(self) -> list[tuple[str, str]]:
+        """Every maintenance notice reason and `maintenance.*` audit actor, in order."""
+        notices = [("notice", f["reason"]) for f in self.sessions.frames if f["kind"] == "notice"]
+        audits = [(a, r["actor_label"]) for a, r in self.audit.records if a.startswith("maint")]
+        return notices + audits
 
 
 def _orders_app(gate: MaintenanceGate, oms_calls: list[str]) -> FastAPI:
@@ -166,10 +174,68 @@ async def test_orders_are_refused_within_200_ms_of_the_write() -> None:
 async def test_entering_maintenance_cancels_algos_and_notifies_once() -> None:
     rig = await _Rig().start()
     await rig.toggle(MAINTENANCE_MODE, True)
+    await rig.controller.refresh()  # the poll never re-announces a written transition
+    assert rig.algos.calls == ["maintenance.enabled"]
+    assert rig.announced() == [("notice", "maintenance.enabled"), ("maintenance.enabled", "owner")]
+
+
+async def test_a_boot_that_finds_maintenance_on_announces_it_once() -> None:
+    rig = _Rig()
+    await rig.store.ensure(rig.service.registry.values())
+    rig.db(MAINTENANCE_MODE, True)
+    await rig.controller.refresh()  # boot: unknown to a stored true is a transition (D1c)
     await rig.controller.refresh()
     assert rig.algos.calls == ["maintenance.enabled"]
-    assert [f["reason"] for f in rig.sessions.frames if f["kind"] == "notice"] == [
-        "maintenance.enabled"
+    enabled = [("notice", "maintenance.enabled"), ("maintenance.enabled", "system:maintenance")]
+    assert rig.announced() == enabled
+
+
+async def test_a_failed_announcement_audit_is_logged_and_the_poll_goes_on() -> None:
+    rig = _Rig()
+    await rig.store.ensure(rig.service.registry.values())
+    rig.db(MAINTENANCE_MODE, True)
+    rig.audit.emit = _raise  # type: ignore[method-assign]  # the audit store is down
+    with capture_logs() as logs:
+        await rig.controller.refresh()
+    assert rig.controller.gate.engaged and rig.algos.calls == ["maintenance.enabled"]
+    assert "maintenance_audit_failed" in [e["event"] for e in logs]
+
+
+async def _raise(*args: Any, **kwargs: Any) -> None:
+    raise RuntimeError("audit unavailable")
+
+
+async def _hang(*args: Any, **kwargs: Any) -> None:
+    await asyncio.Event().wait()
+
+
+async def test_a_stalled_announcement_audit_is_cut_by_the_budget_and_the_poll_goes_on() -> None:
+    rig = _Rig(effect_timeout_s=0.001)
+    await rig.store.ensure(rig.service.registry.values())
+    rig.db(MAINTENANCE_MODE, True)
+    rig.audit.emit = _hang  # type: ignore[method-assign]  # the audit store stalls
+    with capture_logs() as logs:
+        async with asyncio.timeout(5):  # a missing bound fails here instead of hanging the suite
+            await rig.controller.refresh()
+    assert rig.controller.gate.engaged and rig.algos.calls == ["maintenance.enabled"]
+    assert "maintenance_audit_failed" in [e["event"] for e in logs]
+
+
+async def test_a_database_release_is_announced_and_unknown_or_false_readings_are_not() -> None:
+    rig = await _Rig().start()  # boot reads false: nothing to announce
+    rig.store.down = True
+    await rig.controller.refresh()
+    rig.store.down, rig.clock.now = False, rig.clock.now + 1  # the store's 1 s retry
+    rig.db(MAINTENANCE_MODE, "on")  # an unreadable row
+    await rig.controller.refresh()
+    assert rig.announced() == [] and rig.controller.gate.engaged
+    rig.db(MAINTENANCE_MODE, True)
+    await rig.controller.refresh()
+    rig.db(MAINTENANCE_MODE, False)
+    await rig.controller.refresh()
+    assert [a for a in rig.announced() if a[0] != "notice"] == [
+        ("maintenance.enabled", "system:maintenance"),
+        ("maintenance.disabled", "system:maintenance"),
     ]
 
 
@@ -263,7 +329,7 @@ async def test_without_an_algo_port_the_gap_is_logged_once() -> None:
     service = FlagService(default_registry(), store, clock=Clock())
     await store.ensure(service.registry.values())
     store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
-    controller = MaintenanceController(service, MaintenanceGate())
+    controller = MaintenanceController(service, MaintenanceGate(), notify=bool, audit=FakeAudit())
     with capture_logs() as logs:
         await controller.refresh()
         await controller.refresh()
