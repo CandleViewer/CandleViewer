@@ -12448,6 +12448,15 @@ components:
       additionalProperties: false
       properties:
         refresh_token: { type: string, description: "Only for clients that cannot use cookies." }
+    Argon2Params:
+      type: object
+      additionalProperties: false
+      required: [m, t, p]
+      description: "#2097: the Argon2id parameters new password hashes use (SR-011 floor: m ≥ 65536, t ≥ 3, p ≥ 4). Not secret: every stored hash embeds them."
+      properties:
+        m: { type: integer, minimum: 1, description: "Memory cost in KiB (65536 = 64 MiB)." }
+        t: { type: integer, minimum: 1, description: "Time cost (passes over memory)." }
+        p: { type: integer, minimum: 1, description: "Parallelism (lanes)." }
     ChangePasswordRequest:
       type: object
       additionalProperties: false
@@ -12462,15 +12471,6 @@ components:
       description: Password only; unlock never asks for TOTP (US-ONB-004).
       properties:
         password: { type: string, format: password, minLength: 1, maxLength: 512, writeOnly: true }
-    Argon2Params:
-      type: object
-      additionalProperties: false
-      required: [m, t, p]
-      description: "#2097: the Argon2id parameters new password hashes use (SR-011 floor: m ≥ 65536, t ≥ 3, p ≥ 4). Not secret: every stored hash embeds them."
-      properties:
-        m: { type: integer, minimum: 1, description: "Memory cost in KiB (65536 = 64 MiB)." }
-        t: { type: integer, minimum: 1, description: "Time cost (passes over memory)." }
-        p: { type: integer, minimum: 1, description: "Parallelism (lanes)." }
     SessionInfo:
       type: object
       required: [user, permissions, account_scope, server_time, session]

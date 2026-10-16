@@ -620,6 +620,33 @@ class Settings(BaseSettings):
             raise ValueError("CV_TEST_CLOCK_FILE must not be under a symlinked directory")
         return value
 
+    def auth_perf_refusal(self) -> str | None:
+        """#2097: why `CV_AUTH_PERF_ENABLED` may not be on here, or None on a keyless testnet.
+        The app checks this again at build time (`api.auth_perf.auth_perf_enabled`)."""
+        return _keyless_testnet_refusal(
+            "CV_AUTH_PERF_ENABLED", self.environment, self.bybit_api_key, self.bybit_api_secret
+        )
+
+    @field_validator("auth_perf_enabled")
+    @classmethod
+    def _refuse_auth_perf_outside_keyless_testnet(cls, value: bool, info: ValidationInfo) -> bool:
+        """#2097 Q1, the #2086 gate: perf instrumentation never runs in live or demo, or next
+        to an exchange key; startup fails before any module starts. A field validator, not a
+        model one: `hide_input_in_errors` hides input only from the message, and a model
+        validator's `ValidationError.errors()` would still carry the whole input, the raw
+        `CV_BYBIT_API_KEY` included (C-12.6). `info.data` holds the fields declared above."""
+        if not value:
+            return value
+        refusal = _keyless_testnet_refusal(
+            "CV_AUTH_PERF_ENABLED",
+            info.data.get("environment"),
+            info.data.get("bybit_api_key"),
+            info.data.get("bybit_api_secret"),
+        )
+        if refusal is not None:
+            raise ValueError(refusal)
+        return value
+
     def account_fixture_refusal(self) -> str | None:
         """#2893: why the account fixture transport may not run here, or None in dev/test. The
         dev package re-checks it, as `build_test_clock` does; the dir's path rules run at load."""
@@ -815,33 +842,6 @@ class Settings(BaseSettings):
                 "must be set together"
             )
         return self
-
-    def auth_perf_refusal(self) -> str | None:
-        """#2097: why `CV_AUTH_PERF_ENABLED` may not be on here, or None on a keyless testnet.
-        The app checks this again at build time (`api.auth_perf.auth_perf_enabled`)."""
-        return _keyless_testnet_refusal(
-            "CV_AUTH_PERF_ENABLED", self.environment, self.bybit_api_key, self.bybit_api_secret
-        )
-
-    @field_validator("auth_perf_enabled")
-    @classmethod
-    def _refuse_auth_perf_outside_keyless_testnet(cls, value: bool, info: ValidationInfo) -> bool:
-        """#2097 Q1, the #2086 gate: perf instrumentation never runs in live or demo, or next
-        to an exchange key; startup fails before any module starts. A field validator, not a
-        model one: `hide_input_in_errors` hides input only from the message, and a model
-        validator's `ValidationError.errors()` would still carry the whole input, the raw
-        `CV_BYBIT_API_KEY` included (C-12.6). `info.data` holds the fields declared above."""
-        if not value:
-            return value
-        refusal = _keyless_testnet_refusal(
-            "CV_AUTH_PERF_ENABLED",
-            info.data.get("environment"),
-            info.data.get("bybit_api_key"),
-            info.data.get("bybit_api_secret"),
-        )
-        if refusal is not None:
-            raise ValueError(refusal)
-        return value
 
     def model_post_init(self, __context: object) -> None:
         """Fail fast on `CV_FEED=live` without credentials (acceptance criterion 3).
