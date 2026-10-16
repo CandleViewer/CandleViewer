@@ -18,6 +18,7 @@ from candleviewer.auth.scopes import AccountGrant, Allow, Deny, DenyReason, Prin
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
+    VersionedSnapshot,
     auth_ok_payload,
     check_subscribe,
     handle_sub,
@@ -33,6 +34,12 @@ def _snap(role: str, perms: frozenset[Permission]) -> PrincipalSnapshot:
     return PrincipalSnapshot(
         uuid.UUID(int=1), frozenset({role}), perms, (AccountGrant(ACC, True, True, False),)
     )
+
+
+def _apply(conn: ConnectionAuthz, new: PrincipalSnapshot, now_ms: int) -> list[dict[str, Any]]:
+    frames = conn.apply_snapshot(VersionedSnapshot(new, conn.version + 1), now_ms)
+    assert frames is not None  # a newer version is always applied (SR-189)
+    return frames
 
 
 def test_auth_ok_payload_carries_roles_permissions_and_scope() -> None:
@@ -62,7 +69,7 @@ def test_downgrade_pushes_frame_revokes_and_refuses_orders() -> None:
     assert _add(conn, "book.BTCUSDT.50")["ok"]
     assert _add(conn, "orders", ACC)["ok"]
     assert conn.may_submit_order()
-    frames = conn.apply_snapshot(_snap("viewer", frozenset({Permission.MARKETDATA_READ})), 1)
+    frames = _apply(conn, _snap("viewer", frozenset({Permission.MARKETDATA_READ})), 1)
     assert frames[0]["t"] == "permission_change"
     assert frames[0]["p"]["roles"] == ["viewer"]
     assert [(f["t"], f["ch"]) for f in frames[1:]] == [("revoked", "orders")]
@@ -97,7 +104,7 @@ def test_owner_needs_an_account_id_but_any_account_is_allowed() -> None:
 def test_lost_account_grant_revokes_subscription_with_scope_reason() -> None:
     conn = ConnectionAuthz(_mgr((AccountGrant(ACC, True, True, False),)))
     assert _add(conn, "orders", ACC)["ok"]
-    frames = conn.apply_snapshot(_mgr(()), 5)
+    frames = _apply(conn, _mgr(()), 5)
     assert [(f["t"], f.get("ch")) for f in frames] == [
         ("permission_change", None),
         ("revoked", "orders"),
@@ -110,7 +117,7 @@ def test_owner_unaffected_by_grant_snapshot_refresh() -> None:
     o = PrincipalSnapshot(uuid.UUID(int=3), frozenset({"owner"}), ALL)
     conn = ConnectionAuthz(o)
     assert _add(conn, "orders", OTHER)["ok"]
-    assert conn.apply_snapshot(o, 1)[1:] == []
+    assert _apply(conn, o, 1)[1:] == []
     assert conn.topics == {"orders"}
 
 
@@ -198,7 +205,10 @@ def _violations(bundle: Path, schema_id: str, doc: Any) -> list[tuple[str, str, 
 
 def _emitted_permission_change(new: PrincipalSnapshot) -> dict[str, Any]:
     """The frame `ConnectionAuthz.apply_snapshot` really emits when `new` replaces a snapshot."""
-    frame = ConnectionAuthz(_snap("viewer", VIEWER)).apply_snapshot(new, 1)[0]
+    conn = ConnectionAuthz(_snap("viewer", VIEWER))
+    frames = conn.apply_snapshot(VersionedSnapshot(new, conn.version + 1), 1)
+    assert frames is not None
+    frame = frames[0]
     assert frame["t"] == "permission_change", frame
     return frame
 

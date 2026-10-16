@@ -66,6 +66,7 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_subscribe_total",
         "cv_ws_client_topics_depth",
         "cv_ws_revoked_total",
+        "cv_ws_permission_snapshots_refused_total",
         "cv_ws_upstream_consumers_in_use",
         "cv_ws_resync_total",
         "cv_ws_snapshot_bytes",
@@ -91,7 +92,7 @@ ENCODED: Final = {
 
 def export_ws_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
     """Serve every `cv_ws_*` series on `registry` (the scraped one) with `env`."""
-    # The owning modules declare their series at import; import them so all 14 families exist.
+    # The owning modules declare their series at import; import them so all 15 families exist.
     from candleviewer.ws import permissions, revocation, sequencing, upstream  # noqa: F401
 
     return ReexportCollector(registry, names=CV_WS_NAMES, const_labels={"env": env})

@@ -265,25 +265,30 @@ def test_ws_gateway_hooks_auth_ok_sub_check_and_live_permission_change() -> None
     import asyncio
 
     from candleviewer.ws.permissions import (
+        ConnectionAuthz,
         ConnectionRegistry,
+        auth_ok_payload,
         close_connection,
         handle_sub,
-        open_connection,
     )
 
     viewer = PrincipalSnapshot(TARGET, frozenset({"viewer"}), frozenset({Permission.ORDERS_READ}))
     sent: list[dict[str, Any]] = []
+    perms = [viewer.permissions]  # the identity store; the role change below empties it
 
     async def send(frame: dict[str, Any]) -> None:
         sent.append(frame)
 
     async def resolve(uid: uuid.UUID) -> PrincipalSnapshot:
-        return PrincipalSnapshot(uid, frozenset({"viewer"}), frozenset())
+        return PrincipalSnapshot(uid, frozenset({"viewer"}), perms[0])
 
     async def scenario() -> None:
         reg = ConnectionRegistry(resolve, lambda: 1)
-        authz = await open_connection(reg, viewer, send)
-        assert sent[0]["t"] == "auth_ok" and sent[0]["p"]["permissions"] == ["orders:read"]
+        snap = await reg.resolve(TARGET)  # the gateway's SR-189 path: read, register, re-check
+        authz = ConnectionAuthz(snap.principal, reg.services, version=snap.version)
+        reg.register(authz, send)
+        await reg.recheck(authz)
+        assert auth_ok_payload(authz.principal)["permissions"] == ["orders:read"]
         acc = str(uuid.uuid4())
         orders = {"ch": "orders", "opts": {"exchange_account_ids": [acc]}}
         viewer_grants = PrincipalSnapshot(
@@ -302,6 +307,7 @@ def test_ws_gateway_hooks_auth_ok_sub_check_and_live_permission_change() -> None
         app.include_router(
             make_users_router(store, _Emitter(), _Resolver(_admin()), reg, auth=_Auth(True))
         )
+        perms[0] = frozenset()
         await reg.roles_changed(TARGET)
         assert [f["t"] for f in sent] == ["permission_change", "revoked"]
         close_connection(reg, authz)

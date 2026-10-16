@@ -68,6 +68,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "ws.subscription.revoked",
         # E17-S01 (#2486): an authenticated WS connection ended (`ws/gateway.py`).
         "ws.connection.closed",
+        # SR-189 (#2172): an older WS permission snapshot refused in favour of a newer one.
+        "ws.permission_snapshot.refused",
         "users.create",
         "users.invited",
         "users.invite_redeemed",

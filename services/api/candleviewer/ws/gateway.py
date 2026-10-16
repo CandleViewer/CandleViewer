@@ -359,8 +359,9 @@ class _Connection:
         self.outbound.put_nowait(frame)
 
     async def send(self, frame: dict[str, Any]) -> None:
-        """Async adapter for `ConnectionRegistry` / `handle_sub`."""
-        self.push(frame)
+        """Registry / `handle_sub` adapter; silent before the first `auth_ok` (SR-189)."""
+        if self.lifecycle.authenticated:
+            self.push(frame)
 
     def push_system(self, body: dict[str, Any]) -> None:
         self.system_seq += 1
@@ -631,14 +632,32 @@ def make_ws_router(
             if reauth and user_id != conn.user_id:
                 failure = "user_mismatch"
                 raise PermissionError("re-auth must keep the same user")
-            principal = await registry.resolve(user_id)
+            snap = await registry.resolve(user_id)  # versioned: never undoes a newer one
             now, now_ms = conn.clock(), conn.wall_ms()
             if expires_ms <= now_ms:
                 failure = "token_expired"  # never `auth_ok` an identity that is already dead
                 raise PermissionError("access token already expired")
+            if conn.authz is None:  # SR-189: register, then re-check, under the auth deadline
+                conn.authz = ConnectionAuthz(
+                    snap.principal,
+                    registry.services,
+                    connection_id=conn.connection_id,
+                    version=snap.version,
+                )
+                registry.register(conn.authz, conn.send, conn.evict, conn.closer)
+                await registry.recheck(conn.authz)
+                revoked: list[dict[str, Any]] = []
+            else:
+                # Subscriptions + sequences are kept; only ones the refreshed
+                # principal no longer allows are revoked (§9.5, same RBAC source).
+                frames = await registry.apply(conn.authz, snap, now_ms, event="reauth")
+                revoked = [f for f in frames if f["t"] == "revoked"]
         except AuthenticatorContractError:
             raise  # a server fault, not a failed auth: the handler closes 1011
         except Exception:
+            if not reauth and conn.authz is not None:  # the SR-189 re-check failed: undo
+                registry.unregister(conn.authz)
+                conn.authz = None
             # C-2.9: count the failure and audit the 3rd one even when the socket
             # began closing while this auth was in flight.
             cv_ws_auth_failures_total.labels(reason=failure).inc()
@@ -666,11 +685,7 @@ def make_ws_router(
                 revocation_hub.unregister(conn.session_id, conn.closer)
             revocation_hub.register(session_id, conn.closer)
         conn.session_id, conn.user_id = session_id, user_id
-        if conn.authz is None:
-            conn.authz = ConnectionAuthz(
-                principal, registry.services, connection_id=conn.connection_id
-            )
-            registry.register(conn.authz, conn.send, conn.evict, conn.closer)
+        if not reauth:
             svc = registry.services
             conn.emitter = TopicEmitter(
                 conn.push,
@@ -682,15 +697,9 @@ def make_ws_router(
             )
             if svc.sequencing is not None:
                 svc.sequencing.register(conn.authz, conn.emitter)
-            revoked: list[dict[str, Any]] = []
-        else:
-            # Subscriptions + sequences are kept; only ones the refreshed
-            # principal no longer allows are revoked (§9.5, same RBAC source).
-            frames = conn.authz.apply_snapshot(principal, now_ms)
-            revoked = [f for f in frames if f["t"] == "revoked"]
         conn.lifecycle.fire(ConnEvent.AUTH_OK)
         payload = auth_ok_payload(
-            principal,
+            conn.authz.principal,  # the applied snapshot: the newest, never the stale read
             session_id=session_id,
             token_expires_at_ms=expires_ms,
             kill_switch=killed(),
