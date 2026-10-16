@@ -1670,7 +1670,6 @@ A refusal is the `403 trading_disabled` problem with a `reason` extension member
 | `account_disabled_by_policy` | account checks (E27-T04, #837) | a deployment policy has disabled order entry on the target account                                 |
 | `no_active_key`              | account checks (E27-T04, #837) | the target account has no active API key                                                           |
 | `account_unhealthy`          | account checks (E27-T04, #837) | the target account's health check refuses order entry                                              |
-| `balance_stale`              | account checks (E27-T04, #837) | the target account's balance snapshot is stale                                                     |
 
 `detail` is human text for the operator; it never carries an id or a secret.
 

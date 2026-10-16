@@ -6272,11 +6272,7 @@ export interface components {
      * @enum {string}
      */
     OrderEntryRefusalReason:
-      | "maintenance"
-      | "account_disabled_by_policy"
-      | "no_active_key"
-      | "account_unhealthy"
-      | "balance_stale";
+      "maintenance" | "account_disabled_by_policy" | "no_active_key" | "account_unhealthy";
     OrderEvent: {
       /** Format: date-time */
       event_ts?: string;
