@@ -97,8 +97,16 @@ def test_backups_never_has_a_grace_window_while_audit_does() -> None:
     assert not b16_session.grace_window_valid(context, {"action_class": "backups", "now_us": 9})
 
 
+#: Classes the `authStepUp` contract declares before the service accepts them (C-6.1,
+#: contract first). `flags` is E42-T03's (#964, contract in #2592): its service slice adds it
+#: to `ACTION_CLASSES` and removes it from here.
+_CONTRACT_AHEAD = frozenset({"flags"})
+
+
 def test_contract_step_up_classes_match_the_service() -> None:
-    """Contract first (C-6.1): the `authStepUp` enum is the class list the server accepts."""
+    """Contract first (C-6.1): the `authStepUp` enum is the service's classes plus pending ones."""
     op = cast(dict[str, Any], load_openapi_spec())["paths"]["/auth/step-up"]["post"]
     schema = op["requestBody"]["content"]["application/json"]["schema"]
-    assert set(schema["properties"]["action_class"]["enum"]) == step_up_service.ACTION_CLASSES
+    contract = set(schema["properties"]["action_class"]["enum"])
+    assert contract == step_up_service.ACTION_CLASSES | _CONTRACT_AHEAD
+    assert not _CONTRACT_AHEAD & step_up_service.ACTION_CLASSES  # a landed class leaves the list
