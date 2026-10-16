@@ -619,7 +619,16 @@ async def test_a_re_read_keeps_no_held_bar_of_another_generation() -> None:
     tail.tail = BarTail([*rows(0, 1), (7, bar(0, shift=1))])  # a twin at bar 1's open time
     await store.ensure(SYM, SPEC)
     assert (generation(store), view(store)) == (7, ([0], None))
-    assert store.hydrated(SYM, H)  # adopting the rows' generation is not a live swap
+
+
+async def test_a_re_read_that_adopts_the_rows_generation_stays_hydrated() -> None:
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(0), dropped=1)  # degraded: the next ensure reads again
+    store = SeriesStore(tail, retry_after_s=0.0)
+    await store.ensure(SYM, SPEC)
+    tail.tail = BarTail(rows(0, gen=7))  # nothing seen live: adopting 7 is not a live swap
+    await store.ensure(SYM, SPEC)
+    assert store.hydrated(SYM, H)
 
 
 async def test_a_close_sharing_the_newest_rows_open_time_is_kept() -> None:
@@ -751,8 +760,10 @@ async def test_latest_names_the_oldest_build_among_the_bars_it_returns() -> None
     assert (oldest(store, 3), oldest(store, 2), oldest(store, 1)) == (1, 2, None)
     await emit(store, up("close", 0, amended=True, close="101"))
     assert oldest(store, 3) == 2  # bar 0 is the running code's now; bar 1 is not
-    await emit(store, *(up("close", i) for i in range(3, MAX_HISTORY + 2)))
-    assert oldest(store, MAX_HISTORY) is None  # bars 0 and 1 rolled out of the ring
+    await emit(store, *(up("close", i) for i in range(3, MAX_HISTORY + 1)))  # bar 0 rolls out
+    assert oldest(store, MAX_HISTORY) == 2  # bar 1 is still served, with its mark
+    await emit(store, up("close", MAX_HISTORY + 1))  # bar 1 rolls out
+    assert oldest(store, MAX_HISTORY) is None
     kept = store._series[(SYM, H)]
     assert set(kept.stale) <= set(kept.closed)  # white-box: a build mark leaves with its bar
 

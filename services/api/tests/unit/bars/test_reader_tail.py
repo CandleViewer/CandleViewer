@@ -328,6 +328,8 @@ async def test_read_tail_yields_the_loop_after_every_128_rows(rows: int, yields:
 async def test_the_series_store_hydrates_only_the_tape_rows_of_a_mixed_page() -> None:
     conn = _Conn([_row(3), _kline_row(2), _row(1), _kline_row(0)])
     store = SeriesStore(BarReader(conn, _sched, now_us=lambda: NOW).read_tail)
-    await store.ensure(SYM, SPEC)
+    with capture_logs() as logs:
+        await store.ensure(SYM, SPEC)
     got = store.latest(SYM, SPEC.spec_hash, 10)
     assert got is not None and [b.index for b in got.closed] == [1, 3] and got.forming is None
+    assert [e["skipped"] for e in logs if e["event"] == "bars_series_rows_skipped"] == [2]

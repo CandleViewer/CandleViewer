@@ -45,7 +45,8 @@ the last read; the bars it holds newer than the stored rows survive the re-read.
 forming bar is unknown until the next `open` or `update` (builders expose none); a hole inside the
 stored rows (a row the read withheld or skipped, or one the writer never landed) stays a hole and
 is not flagged; a jump is seen on a close only; with no stored row below its ring (an empty read)
-a series cannot see its junction, so a writer lagging past the ring goes unflagged.
+a series cannot see its junction, so a writer lagging past the ring goes unflagged, and a series
+read empty with nothing seen live is read again only after a swap or a gap.
 """
 
 from __future__ import annotations
@@ -90,8 +91,7 @@ Close = tuple[BarUpdate, int]
 class Latest(NamedTuple):
     """`latest`: the series' change counter and generation (None before an emission or a read
     names one), its closed bars in index order, the forming bar, and the lowest `build_version`
-    among those bars when one was built below the running code (None: all current;
-    `23-ws-protocol.md` §6.1 `meta.build_version`, which lands with #2595)."""
+    among those bars when below the running code (None: all current; §6.1 `meta.build_version`)."""
 
     version: int
     generation: int | None
@@ -128,7 +128,7 @@ class _Series:
     generation: int | None = None  # set by the first emission, or by a read
     closed: OrderedDict[int, Bar] = field(default_factory=OrderedDict)  # index -> bar
     forming: Bar | None = None
-    #: Holds its complete stored history: a read that neither failed nor was degraded.
+    #: Holds the stored tail a read took: it neither failed nor was degraded, and no swap followed.
     hydrated: bool = False
     #: Waiters keep the latest read's result: True after a success, a failure or a timeout,
     #: False after a degraded read or a cancellation.
@@ -302,8 +302,8 @@ class SeriesStore:
         return 0 if s is None else s.version
 
     def hydrated(self, symbol: str, spec_hash: str) -> bool:
-        """True once the series holds its complete stored history (False: live bars only, or a
-        degraded read's)."""
+        """True once a read took the series' stored tail (False: live bars only, or a degraded
+        read's, or one a live swap followed)."""
         s = self._series.get((symbol, spec_hash))
         return s is not None and s.hydrated
 
