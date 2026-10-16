@@ -158,6 +158,48 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/admin/audit/exports/{jobId}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The `job_id` returned by `exportAuditLog`. */
+        jobId: string;
+      };
+      cookie?: never;
+    };
+    /**
+     * Download a signed audit export file
+     * @description Serves the artefact of a succeeded `audit_export` job: the file at
+     *     `AuditExportResult.download_url`, which is this path. The URL carries no credential, so a
+     *     copied or leaked URL grants nothing; the call is an ordinary authenticated `GET`. The body
+     *     is the NDJSON file described on `exportAuditLog`, gzipped when
+     *     `AuditExportResult.compressed` is true.
+     *
+     *     The access rules, the order of the checks and the audit-before-stream rule are owned by
+     *     **Download** on `exportAuditLog`; this operation declares the capability and the response
+     *     shapes. In short: Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50a),
+     *     only the user who requested the export (any other user, another Owner included, gets the
+     *     same `404 not_found` as for an unknown or evicted job), and only within the grace window of
+     *     an `audit_export` step-up.
+     *
+     *     **Statuses.** `401`: not authenticated. `403`: the caller lacks `audit:export`
+     *     (`code: forbidden`) or has no live `audit_export` step-up (`code: step_up_required`).
+     *     `404 not_found`: not the requester, or an unknown or evicted job. `410 gone`: the file was
+     *     deleted after `expires_at`. `429 rate_limited`: over `audit_download_rate_per_hour`
+     *     (default 20), with `Retry-After`. `503 store_unavailable`: the write-ahead audit record
+     *     could not be written, so nothing is streamed, with `Retry-After`. Refusals fall under the
+     *     audit budget described on `queryAuditLog`.
+     */
+    get: operations["downloadAuditExport"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/admin/audit/verify": {
     parameters: {
       query?: never;
@@ -8369,6 +8411,52 @@ export interface operations {
       503: components["responses"]["ServiceUnavailable"];
     };
   };
+  downloadAuditExport: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The `job_id` returned by `exportAuditLog`. */
+        jobId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The artefact. `Content-Type` is `application/gzip` when `AuditExportResult.compressed` is true and `application/x-ndjson` otherwise. The bytes are the ones whose digest is `AuditExportResult.sha256`. */
+      200: {
+        headers: {
+          /** @description `no-store`: the file is never cached by the client or a proxy. */
+          "Cache-Control"?: "no-store";
+          /** @description `attachment`: the file is saved, never rendered inline. */
+          "Content-Disposition"?: string;
+          /** @description RFC 9530 digest of the bytes as sent, `sha-256=:<base64>:`. It is the same SHA-256 as `AuditExportResult.sha256`, which is hex. */
+          "Repr-Digest"?: string;
+          /** @description `nosniff`. */
+          "X-Content-Type-Options"?: "nosniff";
+          [name: string]: unknown;
+        };
+        content: {
+          "application/gzip": string;
+          "application/x-ndjson": string;
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
+      /** @description The file has expired and been deleted (`expires_at` has passed). */
+      410: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      429: components["responses"]["RateLimited"];
+      503: components["responses"]["ServiceUnavailable"];
+    };
+  };
   verifyAuditChain: {
     parameters: {
       query?: never;
@@ -9831,7 +9919,8 @@ export interface operations {
            * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required.
            * @enum {string}
            */
-          action_class?: "keys" | "users" | "live_enablement" | "killswitch" | "risk_caps";
+          action_class?:
+            "keys" | "users" | "live_enablement" | "killswitch" | "risk_caps" | "audit_export";
           code: string;
           /** Format: password */
           password: string;
