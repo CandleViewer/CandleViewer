@@ -111,6 +111,8 @@ cv_ws_permission_snapshots_refused_total = Counter(
     labelnames=("event",),
 )
 SnapshotEvent = Literal["reauth", "grant_change", "handshake"]  # the step that was refused
+#: `ws audit rows abandoned` names at most this many users; its `users` counts them all (#2824).
+_ABANDONED_USERS_LOGGED: Final = 10
 
 
 def _log() -> Any:
@@ -583,9 +585,12 @@ class ConnectionAuthz:
             try:
                 self._drop(sub)
             except Exception:
-                _log().error(
-                    "ws subscription release failed", consumer=self._consumer(sub), exc_info=True
-                )
+                with contextlib.suppress(Exception):  # a failing logger must not stop the rest
+                    _log().error(
+                        "ws subscription release failed",
+                        consumer=self._consumer(sub),
+                        exc_info=True,
+                    )
 
     def ctl(self, ch: Any, body: Any) -> tuple[dict[str, Any], bool]:
         """§5.4: retune a live subscription. Returns (`effective`, resnapshot) or raises
@@ -723,21 +728,24 @@ class _AuditRow:
 
 
 def _log_abandoned(
-    rows: list[_AuditRow],
-    tried: int,
+    lost: list[_AuditRow],
     cause: Literal["cancelled", "writer_down"],
     in_flight: _AuditRow | None = None,
 ) -> None:
-    """`ws audit rows abandoned`: `rows` counts the rows after the first `tried` that never reach
-    the writer; `in_flight` names the row a cancellation interrupted, which still lands if it
-    already held the writer's lock. Nothing may replace the cancellation, so a failing logger
-    is ignored."""
+    """`ws audit rows abandoned`: `rows` counts the `lost` rows, never handed to the writer, and
+    `in_flight` names the row a cancellation interrupted, which still lands if it already held
+    the writer's lock. `actor_user_ids` names the users of both, the first
+    `_ABANDONED_USERS_LOGGED` (`users` counts them): ids, never a row's content (C-12.6).
+    Nothing may replace the cancellation, so a failing logger is ignored."""
     with contextlib.suppress(Exception):
+        users = list(dict.fromkeys(r.fields.get("actor_user_id") for r in [in_flight, *lost] if r))
         _log().warning(
             "ws audit rows abandoned",
-            rows=len(rows) - tried,
+            rows=len(lost),
             cause=cause,
             in_flight=None if in_flight is None else in_flight.fields.get("object_id"),
+            actor_user_ids=users[:_ABANDONED_USERS_LOGGED],
+            users=len(users),
         )
 
 
@@ -852,9 +860,11 @@ class ConnectionRegistry:
         snap = VersionedSnapshot(await self._resolve(user_id), version)
         # Every socket's subscriptions are dropped/narrowed synchronously here, before any I/O.
         swapped = [self._swap_or_evict(e[0], snap, rows) for e in entries]
-        for (authz, send, close), frames in zip(entries, swapped, strict=True):
+        for (_authz, _send, close), frames in zip(entries, swapped, strict=True):
             if frames is None:  # its swap raised and it is already out of the registry
-                await self._close_evicted(close)
+                await self._close_evicted(close)  # before any send, so it is closed on every exit
+        for (authz, send, close), frames in zip(entries, swapped, strict=True):
+            if frames is None:
                 continue
             try:
                 async with asyncio.timeout(self.send_timeout_s):
@@ -873,7 +883,7 @@ class ConnectionRegistry:
         A swap that raises (`_drop` -> `BarsError` for a bar lease that another connection's
         failed build dropped, the case `release_all` guards) leaves the socket half
         re-evaluated, possibly still holding a withdrawn subscription. So it is evicted the way
-        a stalled socket is: unregistered and released here, then closed with the sends, and
+        a stalled socket is: unregistered and released here, then closed before any send, and
         its client re-authenticates against the new snapshot. The other sockets still get
         their frames and rows. Returns the frames, or `None` for an evicted socket."""
         try:
@@ -905,8 +915,9 @@ class ConnectionRegistry:
         a time on purpose: `AuditWriter` appends each row under one lock with an fsync, so
         concurrent rows would only queue on that lock, where a row's own bound runs out while it
         waits and a cancelled wait appends nothing. Bounded as a whole too: once
-        `audit_max_failures` rows in a row have failed, the writer is taken as down and the rest
-        are abandoned, so a stalled WAL costs that many bounds and log lines, not one per row.
+        `audit_max_failures` rows in a row have raised or timed out, the rest are abandoned, so
+        a stalled WAL costs that many bounds and log lines, not one per row, and a writer only
+        slow for that long loses them as well (threat model WS-R04 as built, WS-D15).
 
         The fan-out calls this in a `finally`: a change that raised or was cancelled still writes
         the rows of the revocations it already made before that propagates, as the old per-socket
@@ -920,7 +931,7 @@ class ConnectionRegistry:
                 async with asyncio.timeout(self.audit_timeout_s):
                     await row.sink.emit(row.action, **row.fields)
             except asyncio.CancelledError:
-                _log_abandoned(rows, tried, "cancelled", in_flight=row)
+                _log_abandoned(rows[tried:], "cancelled", in_flight=row)
                 raise
             except Exception:
                 failed += 1
@@ -930,10 +941,11 @@ class ConnectionRegistry:
                         "ws audit not confirmed",
                         action=row.action,
                         object_id=row.fields.get("object_id"),
+                        actor_user_id=row.fields.get("actor_user_id"),
                         exc_info=True,
                     )
                 if failed >= self.audit_max_failures:
-                    _log_abandoned(rows, tried, "writer_down")
+                    _log_abandoned(rows[tried:], "writer_down")
                     return
             else:
                 failed = 0
