@@ -87,7 +87,7 @@ def test_oversized_page_is_response_too_large_not_truncated(
 
 
 def test_limits_are_the_threat_model_numbers() -> None:
-    """SR-E12-01/02/03: a change here is a reviewed threat-model amendment."""
+    """SR-E12-01/02/03/07: a change here is a reviewed threat-model amendment."""
     assert (limits.MAX_LIMIT, limits.DEFAULT_LIMIT) == (5_000, 1_000)
     assert limits.RESPONSE_MAX_BYTES == 2 * 1024 * 1024 and limits.QUERY_TIMEOUT_S == 2.0
     assert limits.MAX_TIME_WINDOW_US == 400 * 86_400_000_000
@@ -97,6 +97,7 @@ def test_limits_are_the_threat_model_numbers() -> None:
     assert limits.RANGE_TICKS_RANGE == (2, 100_000) and limits.QTY_PARAM_MAX == 10**12
     assert limits.RENKO_TICKS_RANGE == (2, 100_000) and limits.MAX_REVERSAL_BRICKS == 10
     assert limits.MAX_BRICKS_PER_TRADE == 1_000
+    assert limits.MAX_TAIL == 1_000  # SR-E12-07: the WS `bars` `history` maximum
 
 
 def test_decode_cursor_rejects_position_before_from() -> None:

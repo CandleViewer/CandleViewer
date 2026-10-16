@@ -1,4 +1,5 @@
-"""Single home of the E12 REST read caps (E12 STRIDE SR-E12-01/02/03, #398 scope addition).
+"""Single home of the E12 read caps, REST and WS (E12 STRIDE SR-E12-01/02/03/07, #398 scope
+addition).
 
 `docs/security/threat-models/E12-bars.md` proposes these numbers; an assert test pins them so a
 change is a reviewed diff, never a drive-by. Routes import from here, never restate a number.
@@ -19,6 +20,12 @@ QUERY_TIMEOUT_S: Final = 2.0
 MAX_TIME_WINDOW_US: Final = 400 * 86_400 * 1_000_000
 MAX_NON_TIME_WINDOW_US: Final = 31 * 86_400 * 1_000_000
 MAX_WINDOW_BARS: Final = 250_000
+#: The most bars one WS `bars` snapshot read takes (`BarReader.read_tail`): the topic's `history`
+#: maximum. The wire range is 0..1000 (`23-ws-protocol.md` §6.1, §13; the caller skips a 0), and
+#: SR-E12-07 caps it at 1000. The window caps above bound a series further, so `history` is only
+#: an upper bound: about 800 bars for 12h, 400 for 1d, 57 for 1w, the last 31 d of a non-time kind
+#: (`21-database-schema.md` §9.5).
+MAX_TAIL: Final = 1_000
 #: SR-E12-03: param floors/ceilings per non-time bar type.
 TICK_PARAM_RANGE: Final = (100, 1_000_000)
 RANGE_TICKS_RANGE: Final = (2, 100_000)
@@ -35,6 +42,7 @@ __all__ = [
     "MAX_LIMIT",
     "MAX_NON_TIME_WINDOW_US",
     "MAX_REVERSAL_BRICKS",
+    "MAX_TAIL",
     "MAX_TIME_WINDOW_US",
     "MAX_WINDOW_BARS",
     "QTY_PARAM_MAX",

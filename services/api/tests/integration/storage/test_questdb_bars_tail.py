@@ -31,11 +31,12 @@ pytestmark = pytest.mark.integration
 async def test_read_tail_returns_the_newest_bars_inside_its_window_on_real_questdb(
     questdb_container: tuple[str, int, int],
 ) -> None:
-    """Five tape rows across generations 0 and 1 at minutes 100..102 (two each at 101 and 102),
-    an old tape row at minute 0, a tampered row at minute 103 and a NULL-index kline row at
-    minute 104, newest of all. The read is newest-N by `(ts, generation, index)`, oldest
-    first, without the kline row; the tampered row is dropped and counted; a row older than
-    the window is not returned even when the LIMIT would admit it."""
+    """Tape rows across generations 0 and 1 at minutes 100..102, the same-ts ones committed one
+    by one against the key order (QuestDB sorts a commit's ties by key, not ties across
+    commits), an old row at minute 0, one exactly at the limit-10 window start (minute 85), a
+    tampered row at 103 and a NULL-index kline row at 104. The read is newest-N by `(ts,
+    generation, index)`, oldest first, without the kline row; the tampered row is dropped and
+    counted; the window is `ts >= since_us`."""
     from candleviewer.bars.kline_rows import KLINE_SOURCE, ORDERFLOW_NULL_COLUMNS
     from candleviewer.bars.models import Bar, BarSpec
     from candleviewer.bars.reader import BarReader, BarTail
@@ -67,18 +68,21 @@ async def test_read_tail_returns_the_newest_bars_inside_its_window_on_real_quest
     tampered["close"] = 9.0  # edited after its checksum: an integrity event on read
     flowless = dict.fromkeys(ORDERFLOW_NULL_COLUMNS)
     kline = row(5, 104, change={"source": KLINE_SOURCE, "index": None, **flowless})
-    rows = [
-        row(0, 0), row(1, 100), row(2, 101), row(3, 102), row(0, 101, gen=1),
-        row(1, 102, gen=1), tampered, kline,
+    commits = [
+        [row(0, 0), row(9, 85), row(1, 100), tampered, kline],
+        [row(5, 101, gen=1), row(1, 102, gen=1)], [row(0, 101, gen=1), row(3, 102)], [row(2, 101)],
     ]  # fmt: skip
     host, pg_port, ilp_port = questdb_container
     conn = await _connect(host, pg_port)
-    sink = QuestDbRowSink(f"{host}:{ilp_port}", f"{host}:{pg_port}", _PGWIRE_USER, _PGWIRE_PASSWORD)
     try:
         await run_migrations(_AsyncpgExecutor(conn), DDL_DIR)
-        await sink.write_rows("bars_time", rows, "ts")
-        await sink.stop()
-        await wait_for_row_count(conn, "bars_time", len(rows))
+        for rows in commits:  # a sink per commit: its rows land as one transaction
+            sink = QuestDbRowSink(
+                f"{host}:{ilp_port}", f"{host}:{pg_port}", _PGWIRE_USER, _PGWIRE_PASSWORD
+            )
+            await sink.write_rows("bars_time", rows, "ts")
+            await sink.stop()
+        await wait_for_row_count(conn, "bars_time", sum(map(len, commits)))
 
         class _Conn:
             async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
@@ -94,14 +98,20 @@ async def test_read_tail_returns_the_newest_bars_inside_its_window_on_real_quest
             return [((b.open_time - t0) // minute, gen, b.index) for gen, b in got.bars]
 
         # limit 4 at minute 105 (window from minute 97): the newest four are the tampered row,
-        # (102, 1, 1), (102, 0, 3) and (101, 1, 0); the kline row never takes a LIMIT slot.
+        # (102, 1, 1), (102, 0, 3) and (101, 1, 5), so (101, 1, 0) is the first left out; the
+        # kline row never takes a LIMIT slot.
         got = await tail(105, 4)
-        assert keys(got) == [(101, 1, 0), (102, 0, 3), (102, 1, 1)]
+        assert keys(got) == [(101, 1, 5), (102, 0, 3), (102, 1, 1)]
         assert (got.dropped, got.skipped, got.integrity_degraded) == (1, 0, True)
-        # limit 10 (window from minute 85): five bars; the minute-0 row would rank but is older.
+        assert (got.since_us, got.fetched) == (t0 + 97 * minute, 4)
+        # limit 10 (window from minute 85, its first row included): the minute-0 row would rank
+        # but is older.
         got = await tail(105, 10)
-        assert keys(got) == [(100, 0, 1), (101, 0, 2), (101, 1, 0), (102, 0, 3), (102, 1, 1)]
+        assert keys(got) == [
+            (85, 0, 9), (100, 0, 1), (101, 0, 2), (101, 1, 0), (101, 1, 5), (102, 0, 3),
+            (102, 1, 1),
+        ]  # fmt: skip
         # Control: from minute 19 the window starts at minute -1, and the same read has it.
-        assert keys(await tail(19, 10))[:2] == [(0, 0, 0), (100, 0, 1)]
+        assert keys(await tail(19, 10))[:2] == [(0, 0, 0), (85, 0, 9)]
     finally:
         await conn.close()

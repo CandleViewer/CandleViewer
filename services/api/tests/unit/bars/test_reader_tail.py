@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import time
 from collections.abc import Mapping
 from decimal import Decimal
@@ -11,17 +12,12 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.bars.kline_rows import KLINE_SOURCE, ORDERFLOW_NULL_COLUMNS
-from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TIME_WINDOW_US
+from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TAIL, MAX_TIME_WINDOW_US
 from candleviewer.bars.models import Bar, BarSpec
-from candleviewer.bars.reader import (
-    MAX_TAIL,
-    BarReader,
-    BarTail,
-    build_tail_query,
-    tail_window_us,
-)
+from candleviewer.bars.reader import BarReader, BarTail, build_tail_query, tail_window_us
 from candleviewer.bars.rows import BUILD_VERSIONS, bar_row, row_checksum
 from candleviewer.domain.sql_names import ts_param
+from candleviewer.ws.topics import FAMILIES
 
 SPEC = BarSpec(kind="time", interval_ms=60_000)
 SYM, T0, MIN = "BTCUSDT", 1_700_000_040_000_000, 60_000_000
@@ -87,7 +83,7 @@ def _indexes(tail: BarTail) -> list[int]:
 
 
 def test_tail_query_is_newest_first_by_the_full_bar_key_inside_a_ts_window() -> None:
-    sql, params = build_tail_query("time", SYM, "1m", MAX_TAIL, T0)
+    sql, params = build_tail_query("time", SYM, "1m", MAX_TAIL, T0, now_us=T0)
     assert sql.startswith("SELECT * FROM bars_time WHERE symbol = $1 AND bar_param = $2 ")
     assert 'AND ts >= $3 AND "index" IS NOT NULL ' in sql  # the window; kline rows have no key
     assert sql.endswith('ORDER BY ts DESC, generation DESC, "index" DESC LIMIT 1000')
@@ -96,7 +92,14 @@ def test_tail_query_is_newest_first_by_the_full_bar_key_inside_a_ts_window() -> 
 
 @pytest.mark.parametrize("limit", [1, MAX_TAIL])
 def test_tail_query_takes_a_limit_from_one_to_max_tail(limit: int) -> None:
-    assert build_tail_query("tick", SYM, "tick:500", limit, T0)[0].endswith(f" LIMIT {limit}")
+    sql, _ = build_tail_query("tick", SYM, "tick:500", limit, T0, now_us=T0)
+    assert sql.endswith(f" LIMIT {limit}")
+
+
+def test_the_tail_cap_is_the_ws_history_maximum() -> None:
+    """The wire range is 0..1000 (`23-ws-protocol.md` §6.1, §13; the caller skips a 0), and
+    SR-E12-07 caps it at 1000: the one read never exceeds what a snapshot may ask for."""
+    assert FAMILIES["bars"].options["history"].hi == MAX_TAIL == 1_000
 
 
 @pytest.mark.parametrize(
@@ -107,7 +110,17 @@ def test_tail_query_refuses_an_unbounded_limit_or_an_unknown_kind(
     kind: str, limit: int, match: str
 ) -> None:
     with pytest.raises(ValueError, match=match):
-        build_tail_query(kind, SYM, "tick:500", limit, T0)
+        build_tail_query(kind, SYM, "tick:500", limit, T0, now_us=T0)
+
+
+@pytest.mark.parametrize(
+    ("kind", "cap"), [("time", MAX_TIME_WINDOW_US), ("tick", MAX_NON_TIME_WINDOW_US)]
+)
+def test_tail_query_refuses_a_window_beyond_the_sr_e12_02_cap(kind: str, cap: int) -> None:
+    """The cap holds where the SQL is built, not only where `tail_window_us` sizes the window."""
+    build_tail_query(kind, SYM, "x", 1, NOW - cap, now_us=NOW)  # exactly the cap: accepted
+    with pytest.raises(ValueError, match="SR-E12-02"):
+        build_tail_query(kind, SYM, "x", 1, NOW - cap - 1, now_us=NOW)
 
 
 @pytest.mark.parametrize(
@@ -130,7 +143,25 @@ async def test_read_tail_binds_its_window_back_from_the_injected_clock() -> None
     tail = await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, SPEC, 4)
     (sql, params), *_ = conn.calls
     assert sql.endswith(" LIMIT 4") and params == (SYM, "1m", ts_param(NOW - 8 * MIN))
-    assert tail == BarTail([])  # a series with no tape yet
+    assert tail == BarTail([], since_us=NOW - 8 * MIN)  # a series with no tape yet: fetched 0
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [BarSpec(kind="tick", tick_count=500), BarSpec(kind="time", interval_ms=86_400_000)],
+    ids=["tick", "1d"],
+)
+async def test_read_tail_reads_the_clock_once_so_a_window_at_its_cap_is_never_refused(
+    spec: BarSpec,
+) -> None:
+    """These windows equal the SR-E12-02 cap, which `build_tail_query` checks against the
+    caller's `now_us`: that holds only while the window and the check share one reading. A clock
+    that moves 1 us a read would otherwise turn every such read into a refusal."""
+    clock = itertools.count(NOW)
+    reader = BarReader(_Conn([]), _sched, now_us=lambda: next(clock))
+    tail = await reader.read_tail(SYM, spec, MAX_TAIL)
+    assert tail.since_us == NOW - tail_window_us(spec, MAX_TAIL)  # the first reading
+    assert next(clock) == NOW + 1  # and the only one
 
 
 async def test_read_tail_measures_back_from_the_wall_clock_by_default(
@@ -160,7 +191,7 @@ async def test_read_tail_drops_untrusted_rows_and_marks_the_tail_degraded() -> N
     rows[1]["close"] = 99.0  # bar 2 tampered after write: its checksum no longer matches
     tail = await _read(rows)
     assert _indexes(tail) == [0, 1]
-    assert (tail.dropped, tail.skipped, tail.integrity_degraded) == (1, 1, True)
+    assert (tail.dropped, tail.skipped, tail.integrity_degraded, tail.fetched) == (1, 1, True, 4)
 
 
 async def test_a_mixed_tape_and_kline_page_hydrates_only_the_tape_rows() -> None:
@@ -190,6 +221,12 @@ async def test_read_tail_keeps_the_builds_of_two_runs_that_reused_a_bar_key(
     new0 = _row(0, {"build_version": v + 1}, shift=5)
     tail = await _read([new0, _row(1, {"build_version": v}), _row(0, {"build_version": v})])
     assert tail.builds == {(0, 0, T0): v, (0, 1, T0 + MIN): v, (0, 0, T0 + 5 * MIN): v + 1}
+
+
+async def test_read_tail_keeps_restored_tape_rows() -> None:
+    """`parquet` rows are tape restored from the cold tier (`SOURCE_RANK`): kept like `tape`."""
+    tail = await _read([_row(1, {"source": "parquet"}), _row(0)])
+    assert (_indexes(tail), tail.skipped) == ([0, 1], 0)
 
 
 @pytest.mark.parametrize(
