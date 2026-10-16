@@ -99,8 +99,8 @@ class SettingsTierReader:
 #: least two passes were missed. A live sampler replaces its report every interval plus a pass,
 #: and a pass is bounded by its own timeouts (about a minute at worst): two slow passes in a row
 #: still keep the age under three default intervals, so a healthy budget is shown. That holds
-#: from an interval of about 15 s up; below it a slow but healthy pass can outlast the bound, and
-#: the slice then fails closed (`unavailable`), the safe side. The same bound applies to the
+#: while a healthy pass takes no longer than one interval; a slower one can outlast the bound,
+#: and the slice then fails closed (`unavailable`), the safe side. The same bound applies to the
 #: breakdown's age, since `report()` keeps the last sizes while the breakdown fails.
 MAX_SAMPLE_AGE_INTERVALS: Final = 3
 
@@ -144,9 +144,10 @@ class DiskBudgetAdapter:
         if not any(t.tier in RECORDED_TIERS for t in report.tiers):
             raise SourceUnavailable("storage: no disk breakdown yet")  # never `0` used
         bound_s = MAX_SAMPLE_AGE_INTERVALS * config.sample_interval_s
-        for at in (report.generated_at, budget.breakdown_fresh_at):  # the pass and its sizes
-            if not 0 <= (now - at).total_seconds() <= bound_s:
-                raise SourceUnavailable("storage: disk sample is stale")
+        if not 0 <= (now - report.generated_at).total_seconds() <= bound_s:
+            raise SourceUnavailable("storage: disk sample is stale")
+        if not 0 <= (now - budget.breakdown_fresh_at).total_seconds() <= bound_s:
+            raise SourceUnavailable("storage: disk breakdown is stale")  # QuestDB or Parquet walk
         total, rates = budget.measured_growth()  # one synchronous step with `report()` above
         snapshot = StorageSnapshot(
             used_bytes=sum(t.used_bytes for t in report.tiers if t.tier in RECORDED_TIERS),

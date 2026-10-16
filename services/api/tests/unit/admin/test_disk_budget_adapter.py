@@ -34,6 +34,7 @@ from tests.unit.recorder._budget_fakes import CAP, GB, NOW, TOTAL, FakeMeter, ma
 
 _STALE = "storage: disk sample is stale"
 _NO_BREAKDOWN = "storage: no disk breakdown yet"
+_OLD_SIZES = "storage: disk breakdown is stale"
 
 
 async def _snapshot(budget: DiskBudget, age_s: float = 0.0) -> StorageSnapshot:
@@ -120,6 +121,17 @@ async def test_a_breakdown_failing_after_a_success_ages_out_like_the_sample() ->
     assert (await _snapshot(budget, 180.0)).used_bytes == 450 * GB
     with pytest.raises(SourceUnavailable) as refused:  # past them, the old bytes are not shown
         await _snapshot(budget, 180.5)
+    assert refused.value.detail == _OLD_SIZES  # the sample is fresh: its sizes are not
+
+
+async def test_a_sample_stamped_after_the_admin_clock_fails_closed_over_older_sizes() -> None:
+    at, meter = [NOW], FakeMeter(used=450 * GB, symbols={BTC: 450 * GB})
+    budget, _, _ = make_budget(meter, clock=lambda: at[0])
+    await budget.sample_once()
+    meter.breakdown_fail, at[0] = True, NOW + 100 * US_PER_S
+    await budget.sample_once()  # stamped 100 s on, over the sizes from NOW
+    with pytest.raises(SourceUnavailable) as refused:  # the admin clock is behind the sample
+        await _snapshot(budget, 50.0)
     assert refused.value.detail == _STALE
 
 
@@ -231,8 +243,9 @@ async def test_the_estimate_belongs_to_capacity_so_an_unmeasured_symbol_has_no_d
     assert snap.days_until_full is None  # the overview tile only ever shows measured growth
 
 
-async def test_nothing_on_disk_is_nothing_recorded_with_zero_growth_not_a_null() -> None:
-    snap = await _snapshot(await sampled(used=GB, symbols={}))
+@pytest.mark.parametrize("used", [GB, 0], ids=["no-symbols", "zero-bytes-measured"])
+async def test_nothing_on_disk_is_nothing_recorded_with_zero_growth_not_a_null(used: int) -> None:
+    snap = await _snapshot(await sampled(used=used, symbols={}))  # 0 measured is not "never"
     projection = project(snap)
     assert snap.symbols == () and snap.days_until_full is None  # growth 0 by fact: no exhaustion
     assert (projection.basis, projection.daily_growth_bytes) == ("nothing_recorded", 0)
@@ -260,12 +273,11 @@ async def _read_models(
 async def test_a_sampled_disk_budget_serves_both_storage_slices_and_nothing_else() -> None:
     overview, capacity = await _read_models(await sampled(measured=True, pinned=frozenset({BTC})))
     assert (overview.storage.status, capacity.storage.status) == ("ok", "ok")
-    assert (overview.storage.value.used_bytes, overview.storage.value.free_bytes) == (
-        SIZE,
-        TOTAL // 2,
-    )
-    assert overview.storage.value.days_until_full == capacity.storage.value.days_until_full
-    assert capacity.storage.value.basis == "measured" and not capacity.storage.value.estimated
+    tile, section = overview.storage.value, capacity.storage.value
+    assert tile is not None and section is not None
+    assert (tile.used_bytes, tile.free_bytes) == (SIZE, TOTAL // 2)
+    assert tile.days_until_full == section.days_until_full
+    assert section.basis == "measured" and not section.estimated
     unwired = {
         "recorder": overview.recorder,  # the scaffold knows no symbols: `0` would be a guess
         "trading": overview.trading,
