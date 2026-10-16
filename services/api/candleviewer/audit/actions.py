@@ -120,6 +120,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "recorder.compact",
         # E16-T10: public trade-archive import (write-ahead accept + outcome).
         "recorder.import",
+        # E26-T01: replay session lifecycle (#624 decision: destroyed carries
+        # reason idle_reclaim|client; error is the chart entering `error`).
+        "replay.session.created",
+        "replay.session.destroyed",
+        "replay.session.error",
         "retention.change",
         "retention.purge",
         "retention.downsample",

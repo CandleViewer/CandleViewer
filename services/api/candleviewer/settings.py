@@ -266,6 +266,14 @@ class Settings(BaseSettings):
     disk_sample_interval_s: float = Field(default=60.0, gt=0)
     # SR-096 escape hatch (recording volume shared with the backend): testnet only (E16-FR-11).
     allow_shared_volume: bool = False
+    # E26-T01 replay sessions (24-internal-schemas §13.7): idle reclaim DESTROYs a session after
+    # `CV_REPLAY_IDLE_TTL_S` with no control call (ticket: 2 h), checked every
+    # `CV_REPLAY_RECLAIM_INTERVAL_S`; per-user open-session quota and window cap use the
+    # ticket's keys `CV_REPLAY_MAX_SESSIONS_PER_USER` (2) and `CV_REPLAY_MAX_WINDOW_HOURS` (24).
+    replay_idle_ttl_s: float = Field(default=7200.0, ge=60.0, le=86400.0)
+    replay_reclaim_interval_s: float = Field(default=60.0, ge=1.0, le=3600.0)
+    replay_max_sessions_per_user: int = Field(default=2, ge=1, le=16)
+    replay_max_window_hours: int = Field(default=24, ge=1, le=24 * 31)
     # E08-T04: public WS ingestion skeleton flag (C-4.13: off by default;
     # removal tracked by E08-T05). Public data only — no credentials.
     ingestion_ws_enabled: bool = False
