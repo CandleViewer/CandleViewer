@@ -12,13 +12,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   ACCOUNTS_DIR,
   MIXED_CASE_MIN,
+  PLAN_FILE,
   PLAN_SCENARIOS,
   applyMergePatch,
   assertSupportedSchema,
+  casesInCell,
   checkPack,
   findCredentialFields,
   findKeyShapedTokens,
   readPack,
+  readPlanTable,
   validateSchema,
 } from "../scripts/accounts-pack.mjs";
 import { KEY_SHAPE_DIRS, SCAN_DIRS, runVerify, verifyDirectories } from "../scripts/verify.mjs";
@@ -27,8 +30,8 @@ const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const verifyScript = join(packageRoot, "scripts", "verify.mjs");
 
 /**
- * Test plan section 9.3 (#833 PR 1, final at 71435bb4), in table order: an independent pin of
- * `PLAN_SCENARIOS`.
+ * Test plan section 9.3 (qa/plans/e27-accounts-test-plan.md §9.3 on main (#2941, c37e9aab)), in
+ * table order: an independent pin of `PLAN_SCENARIOS`, which the plan's own table must match.
  */
 const EXPECTED_SCENARIOS = [
   "compliant",
@@ -90,9 +93,92 @@ const lettersLike = (length) => Array.from({ length }, (_, i) => "aB"[i % 2]).jo
 const capitalsThenSmall = (capitals, length) =>
   "Q".repeat(capitals) + "q".repeat(length - capitals);
 
+/** The plan on main; the planted-failure cases below edit copies of it. */
+const PLAN = readFileSync(PLAN_FILE, "utf8");
+/** The plan's section 9.3 table line for `name`. */
+const planLine = (name) => PLAN.split("\n").find((line) => line.startsWith(`| \`${name}\` |`));
+
 it("pins the section 9.3 list twice: in the checks and in this file", () => {
   expect([...PLAN_SCENARIOS]).toEqual(EXPECTED_SCENARIOS);
   expect(Object.isFrozen(PLAN_SCENARIOS)).toBe(true);
+});
+
+describe("the test plan's section 9.3 table", () => {
+  it("reads 49 rows, in the order both pins hold", () => {
+    const { rows, problems } = readPlanTable(PLAN);
+    expect(problems).toEqual([]);
+    expect(rows.map((row) => row.name)).toEqual(EXPECTED_SCENARIOS);
+  });
+
+  it("reads a Via cell as the named row's cases", () => {
+    const { rows } = readPlanTable(PLAN);
+    const cases = (name) => rows.find((row) => row.name === name).cases;
+    expect(cases("compliant_alt")).toEqual(cases("rotation_ok"));
+    expect(cases("rotation_ok")).toEqual(["E27-TC-201", "E27-TC-202", "E27-TC-203", "E27-TC-205"]);
+  });
+
+  it.each([
+    [
+      "numbers, letters and prose",
+      "Default; named in 012, 132a; setup",
+      ["E27-TC-012", "E27-TC-132a"],
+    ],
+    ["an en-dash range", "302–304, 310", ["E27-TC-302", "E27-TC-303", "E27-TC-304", "E27-TC-310"]],
+    ["no number at all", "Default of Groups B to E", []],
+    ["a hyphen range", "302-305", undefined],
+    ["a falling range", "305–302", undefined],
+    ["a lettered range", "103a–103c", undefined],
+    ["a prefixed id", "TC-114", undefined],
+    ["a four-digit number", "4105", undefined],
+  ])("reads a Cases cell with %s, or fails closed", (_label, cell, expected) => {
+    expect(casesInCell(cell)).toEqual(expected);
+  });
+
+  it.each([
+    ["no section 9.3", (plan) => plan.replace("### 9.3 ", "### 9.9 "), "no section 9.3 table"],
+    [
+      "another header",
+      (plan) => plan.replace("| The stub must return | Cases |", "| The stub must return | Ids |"),
+      "no section 9.3 table",
+    ],
+    [
+      "a row of another width",
+      (plan) => plan.replace(planLine("ip_missing"), "| `ip_missing` | ticket | 104 |"),
+      'row "`ip_missing`" is not a `name` and three cells',
+    ],
+    [
+      "a repeated row",
+      (plan) =>
+        plan.replace(
+          planLine("ip_missing"),
+          `${planLine("ip_missing")}\n${planLine("ip_missing")}`,
+        ),
+      "plan: ip_missing has two rows",
+    ],
+    [
+      "a table without rows",
+      (plan) => plan.replace(/^\| `.*\n/gmu, ""),
+      "section 9.3's table has no scenario rows",
+    ],
+    [
+      "a Via naming no row",
+      (plan) => plan.replace("Via `rotation_ok`", "Via `rotation_nowhere`"),
+      "compliant_alt is via rotation_nowhere, not a row",
+    ],
+    [
+      "an unreadable Cases cell",
+      (plan) =>
+        plan.replace(
+          planLine("uid_mismatch"),
+          planLine("uid_mismatch").replace("| 107 |", "| TC-107 |"),
+        ),
+      "uid_mismatch's Cases cell holds a number that is not a case",
+    ],
+  ])("fails closed on %s", (_label, change, message) => {
+    const changed = change(PLAN);
+    expect(changed).not.toBe(PLAN);
+    expect(readPlanTable(changed).problems.join("\n")).toContain(message);
+  });
 });
 
 describe("findKeyShapedTokens", () => {
@@ -279,8 +365,9 @@ describe("validateSchema (the subset the manifest schema uses)", () => {
 });
 
 describe("the accounts pack", () => {
-  it("holds every section 9.3 scenario and passes every pack check", () => {
-    expect(checkPack(ACCOUNTS_DIR, { expectedScenarios: EXPECTED_SCENARIOS })).toEqual([]);
+  it("holds every section 9.3 scenario and passes every pack check, the plan's included", () => {
+    const options = { expectedScenarios: EXPECTED_SCENARIOS, plan: PLAN };
+    expect(checkPack(ACCOUNTS_DIR, options)).toEqual([]);
   });
 
   it("passes the gate the package lint script runs (redaction, key shapes, pack checks)", () => {
@@ -295,9 +382,18 @@ describe("the accounts pack", () => {
       "eslint . --max-warnings=0 && node ./scripts/verify.mjs && vitest run",
     );
     const turbo = JSON.parse(readFileSync(join(packageRoot, "turbo.json"), "utf8"));
-    // The data and these test files are lint inputs, so no cached lint run can skip a change.
+    // The data, these test files and the plan are lint inputs, so no cached lint run can skip a
+    // change to any of them.
     expect(turbo.tasks.lint.inputs).toEqual(
-      expect.arrayContaining(["**/*.{ts,tsx,js,mjs,cjs,json}", "accounts/**", "bybit/**"]),
+      expect.arrayContaining([
+        "**/*.{ts,tsx,js,mjs,cjs,json}",
+        "accounts/**",
+        "bybit/**",
+        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md",
+      ]),
+    );
+    expect(PLAN_FILE).toBe(
+      join(packageRoot, "..", "..", "qa", "plans", "e27-accounts-test-plan.md"),
     );
   });
 
@@ -327,10 +423,13 @@ describe("planted failures on a copy of the pack", () => {
     write(manifest, name, "manifest.json");
   };
   const problems = () => checkPack(pack(), { expectedScenarios: EXPECTED_SCENARIOS }).join("\n");
+  /** The pack checks with the plan's rows, as the lint gate runs them. */
+  const planProblems = (plan = PLAN) =>
+    checkPack(pack(), { expectedScenarios: EXPECTED_SCENARIOS, plan }).join("\n");
   /** Runs the CLI over the sandbox as the lint script would: `{ status, stderr }`. */
-  const cli = () => {
+  const cli = (...planFile) => {
     try {
-      execFileSync("node", [verifyScript, sandbox], { stdio: "pipe" });
+      execFileSync("node", [verifyScript, sandbox, ...planFile], { stdio: "pipe" });
       return { status: 0, stderr: "" };
     } catch (error) {
       return { status: error.status, stderr: error.stderr.toString() };
@@ -369,6 +468,71 @@ describe("planted failures on a copy of the pack", () => {
     expect(status).toBe(1);
     expect(stderr).toContain("accounts/compliant/manifest.json: matched");
     expect(stderr).not.toContain(token);
+  });
+
+  it("makes the lint gate exit 1 on a case list that drifts from the plan (the #833 plant)", () => {
+    copyPack();
+    edit("compliant", (m) => {
+      m.expected.cases = [...m.expected.cases.filter((c) => c !== "E27-TC-419"), "E27-TC-114"];
+    });
+    const { status, stderr } = cli();
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "accounts/compliant: expected.cases differ from the plan's section 9.3 row " +
+        "(lacks E27-TC-419; adds E27-TC-114)",
+    );
+  });
+
+  it.each([
+    [
+      "an origin",
+      ["ip_wildcard", (m) => (m.origin = "plan")],
+      `ip_wildcard: origin "plan" is not the plan's "plan (E27 threat model AC-15)"`,
+    ],
+    [
+      "a reordered case list",
+      ["ws_quiet", (m) => m.expected.cases.reverse()],
+      "ws_quiet: expected.cases differ from the plan's section 9.3 row (the same cases in another",
+    ],
+    [
+      "a repeated case",
+      ["bybit_5xx", (m) => m.expected.cases.push("E27-TC-129")],
+      "bybit_5xx: expected.cases differ from the plan's section 9.3 row (the same cases in another",
+    ],
+    [
+      "a Via row's case list",
+      ["compliant_alt", (m) => m.expected.cases.pop()],
+      "compliant_alt: expected.cases differ from the plan's section 9.3 row (lacks E27-TC-205)",
+    ],
+  ])("fails on %s that differs from the plan's row", (_label, [name, change], message) => {
+    copyPack();
+    expect(planProblems()).toBe("");
+    edit(name, change);
+    expect(planProblems()).toContain(message);
+  });
+
+  it("makes the lint gate exit 1 when the plan's row changes instead of the manifest", () => {
+    copyPack();
+    const line = planLine("ip_mismatch");
+    const planFile = join(sandbox, "plan.md");
+    writeFileSync(planFile, PLAN.replace(line, line.replace("| 105, 127 |", "| 105, 127, 131 |")));
+    const { status, stderr } = cli(planFile);
+    expect(status).toBe(1);
+    expect(stderr).toContain(
+      "accounts/ip_mismatch: expected.cases differ from the plan's section 9.3 row " +
+        "(lacks E27-TC-131)",
+    );
+  });
+
+  it("fails on a scenario without a plan row, a row without a scenario, or no plan at all", () => {
+    copyPack();
+    const extraRow = "| `ip_v6` | plan | `ips` = `2001:db8::1` | 106c |";
+    const plan = PLAN.replace(planLine("ws_quiet"), extraRow);
+    expect(planProblems(plan)).toContain("ws_quiet: no section 9.3 row names it");
+    expect(planProblems(plan)).toContain("plan: section 9.3 row ip_v6 has no scenario directory");
+    expect(runVerify(sandbox, join(sandbox, "no-plan.md")).packProblems).toEqual([
+      "plan: the test plan cannot be read (ENOENT)",
+    ]);
   });
 
   it("makes the lint gate fail closed when the pack is missing", () => {

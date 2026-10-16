@@ -1,10 +1,11 @@
 // E27-Q01 (#833) fault-injection fixture pack checks: the manifest schema subset, RFC 7396
-// merge patches, the bare-key shape scan and the pack's structural rules. Pure Node, no
-// network, no dependency beyond the standard library (a new dependency needs CODEOWNER
-// review). In CI they run through the package `lint` script (`scripts/verify.mjs` calls
-// `checkPack`): the js lane's lint job schedules this package whenever it changes, while its
-// unit-test jobs never do (no package depends on it). `scripts/check_secrets_hygiene.py` carries
-// the same key-shape rule into the security lane. See accounts/README.md, "Checks".
+// merge patches, the bare-key shape scan, the pack's structural rules and the comparison with
+// the test plan's section 9.3 table. Pure Node, no network, no dependency beyond the standard
+// library (a new dependency needs CODEOWNER review). In CI they run through the package `lint`
+// script (`scripts/verify.mjs` calls `checkPack`): the js lane's lint job schedules this package
+// whenever it changes, while its unit-test jobs never do (no package depends on it).
+// `scripts/check_secrets_hygiene.py` carries the same key-shape rule into the security lane. See
+// accounts/README.md, "Checks".
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -265,9 +266,10 @@ function validateNode(schema, value, root, path) {
 // The pack.
 
 /**
- * The rows of the test plan's section 9.3 (`qa/plans/e27-accounts-test-plan.md`, #833 PR 1, final
- * text at 71435bb4), in table order: 46 scenarios, then the 3 overlays. The pack holds exactly
- * these. `test/accounts-pack.test.mjs` and the Python suite each pin their own copy.
+ * The rows of the test plan's section 9.3 (qa/plans/e27-accounts-test-plan.md §9.3 on main
+ * (#2941, c37e9aab)), in table order: 46 scenarios, then the 3 overlays. The pack holds exactly
+ * these. `test/accounts-pack.test.mjs` and the Python suite each pin their own copy, and
+ * `checkPack` compares every manifest with the plan's table itself (`PLAN_FILE`).
  */
 export const PLAN_SCENARIOS = Object.freeze([
   "compliant",
@@ -320,6 +322,117 @@ export const PLAN_SCENARIOS = Object.freeze([
   "working_orders_2",
   "history_round_trip",
 ]);
+
+// ---------------------------------------------------------------------------------------------
+// The plan's table. Section 9.3 of the E27 test plan is the source of truth for the scenario set:
+// `| Scenario | Origin | The stub must return | Cases |`, one row per scenario. Every manifest's
+// name, `origin` and `expected.cases` must equal its row, so a case list cannot drift from the
+// plan unnoticed again (#833 review). A Cases cell holds three-digit case numbers, with a letter
+// (`132a`) or as an en-dash range (`302–305`), and prose without digits; "Via `x`" means `x`'s
+// cases. Anything else fails closed rather than being skipped.
+
+/** The plan, two levels above this package: CI's lint job checks out the whole repository. */
+export const PLAN_FILE = join(packageRoot, "..", "..", "qa", "plans", "e27-accounts-test-plan.md");
+const PLAN_SECTION = "### 9.3 ";
+const PLAN_HEADER = ["Scenario", "Origin", "The stub must return", "Cases"];
+const NAME_CELL = /^`([a-z0-9_]+)`$/u;
+const VIA_CELL = /^Via `([a-z0-9_]+)`$/u;
+const CASE_TOKEN = /(?<![\w–-])(\d{3})(?:([a-z])|–(\d{3}))?(?![\w–-])/gu;
+
+/** A table row's cells, trimmed; a pipe escaped as `\|` stays in its cell. */
+function cellsOf(line) {
+  const inner = line
+    .trim()
+    .replace(/^\|/u, "")
+    .replace(/(?<!\\)\|$/u, "");
+  return inner.split(/(?<!\\)\|/u).map((cell) => cell.trim());
+}
+
+/** The case ids a Cases cell names, ranges expanded; `undefined` when a digit is left over. */
+export function casesInCell(cell) {
+  const ids = [];
+  for (const [, from, letter, to] of cell.matchAll(CASE_TOKEN)) {
+    if (to !== undefined && Number(to) <= Number(from)) return undefined;
+    for (let n = Number(from); n <= Number(to ?? from); n += 1) {
+      ids.push(`E27-TC-${String(n).padStart(3, "0")}${letter ?? ""}`);
+    }
+  }
+  return /\d/u.test(cell.replace(CASE_TOKEN, "")) ? undefined : ids;
+}
+
+function planRow(cells) {
+  const name = NAME_CELL.exec(cells[0])?.[1];
+  if (cells.length !== PLAN_HEADER.length || name === undefined) {
+    return { problem: `plan: section 9.3 row "${cells[0]}" is not a \`name\` and three cells` };
+  }
+  const via = VIA_CELL.exec(cells[3])?.[1];
+  const cases = via === undefined ? casesInCell(cells[3]) : undefined;
+  if (via === undefined && cases === undefined) {
+    return { problem: `plan: ${name}'s Cases cell holds a number that is not a case` };
+  }
+  return { row: { name, origin: cells[1], cases, via } };
+}
+
+/**
+ * Section 9.3's table in the plan's `markdown`: `{ rows, problems }`, rows `{ name, origin,
+ * cases }` in table order with every "Via" resolved. A missing section, another header, a row of
+ * another width, a repeated row or an unreadable Cases cell is a problem.
+ */
+export function readPlanTable(markdown) {
+  const lines = markdown.split(/\r?\n/u);
+  const start = lines.findIndex((line) => line.startsWith(PLAN_SECTION));
+  const end = lines.findIndex((line, i) => i > start && /^#{1,3} /u.test(line));
+  const section = start < 0 ? [] : lines.slice(start + 1, end < 0 ? undefined : end);
+  const [header, rule, ...body] = section.filter((l) => l.startsWith("|")).map(cellsOf);
+  if (!deepEqual(header, PLAN_HEADER) || !rule?.every((cell) => /^:?-{3,}:?$/u.test(cell))) {
+    return { rows: [], problems: [`plan: no section 9.3 table headed ${PLAN_HEADER.join(" | ")}`] };
+  }
+  const problems = [];
+  const rows = [];
+  for (const { row, problem } of body.map(planRow)) {
+    if (problem !== undefined) problems.push(problem);
+    else if (rows.some((r) => r.name === row.name)) problems.push(`plan: ${row.name} has two rows`);
+    else rows.push(row);
+  }
+  if (rows.length === 0) problems.push("plan: section 9.3's table has no scenario rows");
+  for (const row of rows.filter((r) => r.via !== undefined)) {
+    row.cases = rows.find((r) => r.name === row.via && r.via === undefined)?.cases;
+    if (row.cases === undefined) problems.push(`plan: ${row.name} is via ${row.via}, not a row`);
+  }
+  return { rows: rows.map(({ name, origin, cases }) => ({ name, origin, cases })), problems };
+}
+
+function caseProblems(name, listed, planned) {
+  if (planned === undefined || deepEqual(listed, planned)) return [];
+  const cases = Array.isArray(listed) ? listed : [];
+  const lacks = planned.filter((c) => !cases.includes(c));
+  const adds = cases.filter((c) => !planned.includes(c));
+  const diff = [
+    lacks.length > 0 && `lacks ${lacks.join(", ")}`,
+    adds.length > 0 && `adds ${adds.join(", ")}`,
+  ];
+  const what = diff.filter(Boolean).join("; ") || "the same cases in another order or repeated";
+  return [`${name}: expected.cases differ from the plan's section 9.3 row (${what})`];
+}
+
+/** Every manifest against its plan row (name both ways, origin, cases); `[]` when they agree. */
+export function checkPlan(manifests, rows) {
+  const problems = rows
+    .filter((row) => !manifests.has(row.name))
+    .map((row) => `plan: section 9.3 row ${row.name} has no scenario directory`);
+  for (const [name, manifest] of manifests) {
+    const row = rows.find((r) => r.name === name);
+    if (row === undefined) {
+      problems.push(`${name}: no section 9.3 row names it`);
+    } else if (isObject(manifest)) {
+      if (manifest.origin !== row.origin) {
+        problems.push(`${name}: origin "${manifest.origin}" is not the plan's "${row.origin}"`);
+      }
+      problems.push(...caseProblems(name, manifest.expected?.cases, row.cases));
+    }
+  }
+  return problems;
+}
 
 const BASE_DIR = "_base";
 const PACK_DOCS = new Set(["README.md", "manifest.schema.json", "accounts.json"]);
@@ -559,9 +672,10 @@ function scanFiles(dir, referenced) {
 
 /**
  * Every problem in the pack at `dir`, as `<where>: <what>`; `[]` means the pack is sound.
- * `expectedScenarios`, when given, must equal the set of scenario directories.
+ * `expectedScenarios`, when given, must equal the set of scenario directories. `plan`, when
+ * given, is the test plan's markdown: every manifest must then match its section 9.3 row.
  */
-export function checkPack(dir = ACCOUNTS_DIR, { expectedScenarios } = {}) {
+export function checkPack(dir = ACCOUNTS_DIR, { expectedScenarios, plan } = {}) {
   const root = resolve(dir);
   const { schema, manifests } = readPack(root);
   try {
@@ -597,6 +711,10 @@ export function checkPack(dir = ACCOUNTS_DIR, { expectedScenarios } = {}) {
     const extra = [...manifests.keys()].filter((n) => !expectedScenarios.includes(n));
     if (missing.length > 0) problems.push(`pack: missing scenarios ${missing.join(", ")}`);
     if (extra.length > 0) problems.push(`pack: unexpected scenarios ${extra.join(", ")}`);
+  }
+  if (plan !== undefined) {
+    const { rows, problems: planProblems } = readPlanTable(plan);
+    problems.push(...planProblems, ...(rows.length > 0 ? checkPlan(manifests, rows) : []));
   }
   return [...problems, ...scanFiles(root, referenced)];
 }

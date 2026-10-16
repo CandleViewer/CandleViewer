@@ -1,15 +1,16 @@
 // Redaction gate for packages/fixtures (E02-T03 placeholder; real fixtures
 // land in E08). Fails if any file under raw/, golden/, bybit/ or accounts/
 // looks like it contains a credential (API key, signature, PEM block, bearer
-// token); accounts/ also gets the bare key-shape check and the pack checks
-// (E27-Q01). This is the control named in the ticket's Security notes for the
+// token); accounts/ also gets the bare key-shape check and the pack checks,
+// the comparison with the E27 test plan's section 9.3 table included (E27-Q01).
+// This is the control named in the ticket's Security notes for the
 // "recorded fixture leaks credentials" threat (E02-X01).
 // CI runs it through the package `lint` script (ESLint, this script, then the Vitest suite):
 // the js lane's lint job schedules this package whenever a file in it changes.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
-import { PLAN_SCENARIOS, checkPack, findKeyShapedTokens } from "./accounts-pack.mjs";
+import { PLAN_FILE, PLAN_SCENARIOS, checkPack, findKeyShapedTokens } from "./accounts-pack.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(__dirname, "..");
@@ -96,9 +97,15 @@ export function verifyDirectories(dirs, keyShapeDirs = []) {
   return { files, findings };
 }
 
-function packProblems(dir) {
+function packProblems(dir, planFile) {
+  let plan;
   try {
-    return checkPack(dir, { expectedScenarios: PLAN_SCENARIOS });
+    plan = readFileSync(planFile, "utf8");
+  } catch (error) {
+    return [`plan: the test plan cannot be read (${error.code ?? error.name})`];
+  }
+  try {
+    return checkPack(dir, { expectedScenarios: PLAN_SCENARIOS, plan });
   } catch (error) {
     return [`the pack cannot be read (${error.code ?? error.name})`];
   }
@@ -106,19 +113,20 @@ function packProblems(dir) {
 
 /**
  * Every finding for the package at `root`: the redaction gate over the data directories, the
- * bare key-shape rule and the pack checks over accounts/. Returns instead of exiting (tests).
+ * bare key-shape rule and the pack checks over accounts/, against the test plan at `planFile`.
+ * Returns instead of exiting (tests).
  */
-export function runVerify(root = packageRoot) {
+export function runVerify(root = packageRoot, planFile = PLAN_FILE) {
   const pack = join(root, PACK_DIR);
   const { files, findings } = verifyDirectories(
     DATA_DIRS.map((d) => join(root, d)),
     [pack],
   );
-  return { files, findings, packProblems: packProblems(pack) };
+  return { files, findings, packProblems: packProblems(pack, planFile) };
 }
 
-function main(root) {
-  const { files, findings, packProblems: problems } = runVerify(root);
+function main(root, planFile) {
+  const { files, findings, packProblems: problems } = runVerify(root, planFile);
   const lines = [
     ...findings.map((f) => `  - ${relative(root, f.file)}: matched "${f.pattern}"`),
     ...problems.map((p) => `  - ${PACK_DIR}/${p}`),
@@ -132,15 +140,17 @@ function main(root) {
   }
   console.log(
     `[fixtures-verify] OK (${files.length} file(s) scanned, no matches; ` +
-      `accounts pack sound, ${PLAN_SCENARIOS.length} scenarios).`,
+      `accounts pack sound, ${PLAN_SCENARIOS.length} scenarios matching the test plan).`,
   );
 }
 
 // Only run when executed directly (not when imported by tests importing
 // `scanForSecrets`), so the test suite can exercise the pure function
-// without triggering `process.exit`. An optional argument names another
-// package root (the tests' planted copies); the default is this package.
+// without triggering `process.exit`. Optional arguments name another package
+// root and another test plan (the tests' planted copies); the defaults are this
+// package and qa/plans/e27-accounts-test-plan.md.
 const isMain = process.argv[1] && import.meta.url === new URL(process.argv[1], "file://").href;
 if (isMain) {
-  main(process.argv[2] ? resolve(process.argv[2]) : packageRoot);
+  const [root, planFile] = process.argv.slice(2);
+  main(root ? resolve(root) : packageRoot, planFile ? resolve(planFile) : PLAN_FILE);
 }

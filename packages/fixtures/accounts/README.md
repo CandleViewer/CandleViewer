@@ -253,7 +253,9 @@ it:
   resolved"). So both codes are outside the table, where §8.6's last row reads them as a plain
   reject (`EXCHANGE_UNKNOWN`, not retried). The shipped `mapping.py` raises its catch-all
   `UnknownStateError` for them (marked retryable, where §8.6 says no), and the client sends the
-  call once; the Python suite pins both, so a change to `mapping.py` fails it. From recollection
+  call once. The Python suite pins both, with the client at its default retry budget (as
+  `service.py` builds it), so a change to `mapping.py`, or a `rest.py` that retried the catch-all,
+  shows as a second send and fails it. From recollection
   only, they are the exchange's refusals of a position-mode switch for an open position and for
   open orders; the margin-mode calls' own codes are unknown. Each overlay's one message names its
   condition, not the exchange's wording. TC-420 and TC-421 rest on the code only where the server
@@ -283,9 +285,10 @@ Shapes not re-verified:
 
 ### How the pack follows the plan's rows
 
-The pack follows `qa/plans/e27-accounts-test-plan.md` §9.3 (#833 PR 1, final text at 71435bb4)
-row for row: the same 49 names, the origins verbatim, the stub behaviour and the case lists. Where
-a row leaves the format open:
+The pack follows `qa/plans/e27-accounts-test-plan.md` §9.3 on main (#2941, c37e9aab) row for
+row: the same 49 names, the origins verbatim, the stub behaviour and the case lists. The lint
+gate reads that table and fails on any name, origin or case list that differs (see Checks); the
+stub behaviour is checked by review and the Python suite. Where a row leaves the format open:
 
 - `compliant_alt`'s "Via `rotation_ok`" is recorded as `rotation_ok`'s cases (a manifest lists at
   least one case).
@@ -341,6 +344,10 @@ scenario of its own once the plan adds it.
 - every manifest is checked against the schema by a small validator. It first walks the whole
   schema: an unknown keyword anywhere, or a `$ref` with a sibling keyword, fails;
 - the directory name equals `scenario`, and exactly the §9.3 rows are present;
+- each manifest's name, `origin` and `expected.cases` equal its row in the plan's §9.3 table,
+  which `scripts/verify.mjs` reads from `qa/plans/e27-accounts-test-plan.md` on every run (rows
+  checked both ways, en-dash ranges expanded, "Via `x`" read as `x`'s cases, case order
+  included). A section, header, row or Cases cell the reader cannot parse fails closed;
 - payload files exist and parse, and merge patches apply;
 - `extends` chains resolve without cycles, and never through a rotation pair or an overlay;
 - every key scenario has `tester_inputs`, answers key info and the probe at 0 ms, and resolves a
@@ -359,10 +366,13 @@ rule is a tripwire for accidental pastes, not a complete control: a key split by
 
 | Where                                                                                                                | Runs                                                                                                                                                                                                                                                                                              | In CI                                                                                                                                                                                                                             |
 | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm --filter @candleviewer/fixtures lint` (`eslint . --max-warnings=0 && node ./scripts/verify.mjs && vitest run`) | The redaction gate over `raw/`, `golden/`, `bybit/` and `accounts/`, the key-shape rule over `accounts/`, and the pack checks, then the package's vitest suite (the `test` row below); exit 1 on any finding or failing test                                                                      | **js lane, `lint` job** (`pnpm turbo run lint --filter='...[origin/main]'`). It schedules this package whenever a file in it changes; `../turbo.json` makes every data file a lint input, so no cached run can hide a data change |
+| `pnpm --filter @candleviewer/fixtures lint` (`eslint . --max-warnings=0 && node ./scripts/verify.mjs && vitest run`) | The redaction gate over `raw/`, `golden/`, `bybit/` and `accounts/`, the key-shape rule over `accounts/`, and the pack checks, then the package's vitest suite (the `test` row below); exit 1 on any finding or failing test                                                                      | **js lane, `lint` job** (`pnpm turbo run lint --filter='...[origin/main]'`). It schedules this package whenever a file in it changes; `../turbo.json` makes the data and the plan lint inputs, so no cached run can hide a change |
 | `python scripts/check_secrets_hygiene.py fixtures` (repo root)                                                       | The same key-shape rule over `packages/fixtures/accounts/` (every file), plus the field-name rules over every fixture directory                                                                                                                                                                   | **security lane, `gitleaks` job**, step "Credential hygiene gate" (`... all`), on every PR that touches the js, py or infra paths. Its tests and the real-repo scan also run in `governance` on every PR                          |
 | `pnpm --filter @candleviewer/fixtures test` (`test/accounts-pack.test.mjs`, `test/verify*.test.mjs`)                 | Unit cases for every rule, the real pack, and planted failures on a temporary copy (CLI exit codes included)                                                                                                                                                                                      | **js lane, `lint` job**: the package's `lint` script ends with `vitest run`, so every planted-failure case runs there (the js unit-test jobs filter to other packages)                                                            |
 | `services/api/tests/unit/exchange/bybit/test_account_fixture_pack.py`                                                | Every manifest against the schema with `jsonschema`; every scenario's and overlay's replies through the adapter's REST client, `key_info.py`, `mapping.py` and the permission gates; every key scenario's verdict through the shipped pipeline, against the recorded one, and the AC-15 rule pins | **py lane**, only when the PR also changes `services/api/**` or another `py` path                                                                                                                                                 |
+
+A PR that changes only the plan schedules neither lane, so a §9.3 change and the pack change it
+needs go in one PR: the lint gate then compares them.
 
 The adapter-level tests assert that each request is signed with the scenario's key id. The host
 they send to is the one the test chose, so that check is a smoke check only; proof of demo/live

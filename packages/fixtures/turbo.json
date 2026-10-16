@@ -3,7 +3,14 @@
   "extends": ["//"],
   "tasks": {
     "lint": {
-      "inputs": ["**/*.{ts,tsx,js,mjs,cjs,json}", "raw/**", "golden/**", "bybit/**", "accounts/**"]
+      "inputs": [
+        "**/*.{ts,tsx,js,mjs,cjs,json}",
+        "raw/**",
+        "golden/**",
+        "bybit/**",
+        "accounts/**",
+        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
+      ]
     },
     "test": {
       "inputs": [
@@ -13,7 +20,8 @@
         "raw/**",
         "golden/**",
         "bybit/**",
-        "accounts/**"
+        "accounts/**",
+        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
       ]
     },
     "test:cov": {
@@ -24,7 +32,8 @@
         "raw/**",
         "golden/**",
         "bybit/**",
-        "accounts/**"
+        "accounts/**",
+        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
       ],
       "outputs": ["coverage/**"]
     }

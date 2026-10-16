@@ -331,7 +331,11 @@ async def call(
     at_ms: int = 0,
     log: list[httpx.Request] | None = None,
 ) -> dict[str, Any]:
-    """One signed call through the adapter's REST client, answered by the scenario."""
+    """One signed call through the adapter's REST client, answered by the scenario.
+
+    The client keeps its default retry budget, as `service.py` builds it, so `log` shows every
+    send a retried reply would cause: a "sent once" pin fails if a code is ever retried.
+    """
     seen = log if log is not None else []
 
     def answer(request: httpx.Request) -> httpx.Response:
@@ -340,7 +344,7 @@ async def call(
         return httpx.Response(reply.status, json=reply.body, headers=dict(reply.headers))
 
     client = BybitRestClient(
-        RestClientConfig(base_url=f"https://{DEMO_HOST}", max_retries=0),
+        RestClientConfig(base_url=f"https://{DEMO_HOST}"),
         signer=BybitSigner(fake_capability(scenario.key_id), CREDENTIAL_ID),
         governor=_governor(),
         transport=httpx.MockTransport(answer),
@@ -663,7 +667,9 @@ async def test_overlay_mode_switch_refusals_are_plain_rejections(
     """A code outside section 8.6's table, so its last row (a plain reject, not retried) applies,
     never 110025's hard error: mapping.py's catch-all, sent once, never a verdict about the key.
     The catch-all marks it retryable where section 8.6 says no (README, an E08 gap): pinned, so
-    the day mapping.py follows the table this fails and the README line changes with it."""
+    the day mapping.py follows the table this fails and the README line changes with it. The
+    client runs with its default retry budget, so "sent once" fails if rest.py ever retries it."""
+    assert RestClientConfig(base_url=f"https://{DEMO_HOST}").max_retries > 0
     loaded = _with(overlay)
     sent = loaded.reply(method, path).body["retCode"]
     log: list[httpx.Request] = []
