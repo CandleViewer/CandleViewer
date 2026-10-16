@@ -26,8 +26,10 @@ from candleviewer.admin.flags.service import FlagList, FlagService, Resolution, 
 from candleviewer.admin.flags.store import (
     FlagStore,
     FlagWrite,
+    Prepare,
     StaleWriteError,
     StoreUnavailableError,
+    UserDirectory,
 )
 
 __all__ = [
@@ -45,12 +47,14 @@ __all__ = [
     "FlagStore",
     "FlagValue",
     "FlagWrite",
+    "Prepare",
     "Resolution",
     "ResolvedFlag",
     "StaleWriteError",
     "StoreUnavailableError",
     "StoredFlag",
     "UnsafeFlagDefinitionError",
+    "UserDirectory",
     "Visibility",
     "default_registry",
     "resolve",

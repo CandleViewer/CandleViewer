@@ -24,7 +24,7 @@ unreadable_overrides_total = Counter(
 )
 flag_changes_total = Counter(
     "cv_feature_flag_changes_total",
-    "Feature-flag write attempts past validation: ok, conflict or gate_evidence_required.",
+    "Feature-flag writes past RBAC, by result: ok, conflict, store_unavailable or a 422 rule.",
     ["flag", "result"],
 )
 

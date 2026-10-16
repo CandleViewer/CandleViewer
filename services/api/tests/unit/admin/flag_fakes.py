@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 from candleviewer.admin.flags import FlagSpec, StoredFlag
 from candleviewer.admin.flags.store import (
@@ -33,6 +34,7 @@ class FakeFlagStore:
         self.on_load: Callable[[], None] | None = None
         self.on_lock: Callable[[], None] | None = None
         self.fail_write = False
+        self._locks: dict[str, asyncio.Lock] = {}
 
     async def ensure(self, specs: Iterable[FlagSpec]) -> None:
         if self.down:
@@ -58,23 +60,41 @@ class FakeFlagStore:
             self.on_lock()  # a commit that lands before this write takes the row lock
         if self.down:
             raise StoreUnavailableError("down")
-        current = self.rows[key]
-        change = await prepare(current)  # under the (simulated) row lock
-        if self.fail_write:
-            raise StoreUnavailableError("down mid-write")
-        if current.updated_at != change.expected_updated_at:
-            raise StaleWriteError(current)
-        assert current.updated_at is not None
-        row = replace(
-            current,
-            value=change.value,
-            user_overrides=dict(change.user_overrides),
-            updated_at=current.updated_at + timedelta(seconds=1),
-            updated_by=change.actor,
-        )
-        self.rows[change.key] = row
-        self.writes.append(change)
-        return row
+        async with self._locks.setdefault(key, asyncio.Lock()):  # the row lock (`FOR UPDATE`)
+            current = self.rows.get(key)
+            if current is None:  # its start-up `ensure` failed, as the port says
+                raise StoreUnavailableError("no row")
+            change = await prepare(current)
+            if self.fail_write:
+                raise StoreUnavailableError("down mid-write")
+            if current.updated_at != change.expected_updated_at:
+                raise StaleWriteError(current)
+            assert current.updated_at is not None and change.key == key
+            row = replace(
+                current,
+                value=change.value,
+                user_overrides=dict(change.user_overrides),
+                updated_at=current.updated_at + timedelta(seconds=1),
+                updated_by=change.actor,
+            )
+            self.rows[key] = row
+            self.writes.append(change)
+            return row
+
+
+class FakeUsers:
+    """A `UserDirectory` that knows the `known` users; `hold` blocks a lookup until it is set."""
+
+    def __init__(self, known: Iterable[UUID] = ()) -> None:
+        self.known = frozenset(known)
+        self.lookups: list[frozenset[UUID]] = []
+        self.hold: asyncio.Event | None = None
+
+    async def unknown(self, user_ids: frozenset[UUID]) -> frozenset[UUID]:
+        self.lookups.append(user_ids)
+        if self.hold is not None:
+            await self.hold.wait()
+        return user_ids - self.known
 
 
 class FakeAudit:

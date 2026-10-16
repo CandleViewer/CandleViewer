@@ -1816,7 +1816,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "changes",
         ("flag", "result"),
-        "Feature-flag write attempts past validation, by result.",
+        "Feature-flag writes past RBAC, by result: ok, conflict, store_unavailable or a 422 rule.",
         "flag churn; conflict or refusal spikes",
         _L,
         "E42",
