@@ -2239,7 +2239,7 @@ Resolution order: user override → role override → percentage rollout (hash o
 
 `trading.live_enabled` and every kill-switch-class flag (`is_killswitch`, `maintenance.mode` included) resolve from the deployment value only: user and role overrides for them are ignored at resolution, not merely refused on write, so an override row that reaches this table another way (a seed, a migration, a direct change) changes nothing (E42-T03).
 
-> **Writes-slice follow-up (E42-T03).** `feature_flags` has no `updated_by` and no current-value column distinct from `default_value`, yet `PUT /admin/feature-flags/{flagKey}` writes a value and `FeatureFlag` returns `updated_by`. The E42-T03 writes slice adds both, in its own migration.
+> **Stored value and writer (E42-T03).** `default_value` is the deployment-wide stored value: `PUT /admin/feature-flags/{flagKey}` writes it and resolution falls back to it. `FeatureFlag.value` is the per-caller resolved value, so there is no separate current-value column. `updated_by` (`FeatureFlag.updated_by`) is added to `feature_flags` by `0027_feature_flags`.
 
 ### 3.10 Audit log (hash chain), system events, backups
 

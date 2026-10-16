@@ -215,15 +215,21 @@ export interface paths {
      *     cache. Override values on a `percentage` flag are booleans that pin a user in (`true`)
      *     or out (`false`) of the rollout.
      *
-     *     The flag store is unreachable when its read fails, exceeds its read budget or returns an
-     *     unreadable value (malformed, or a kind mismatch). Every flag then resolves to its
-     *     fail-closed value: the restrictive one for the safety-relevant flags (`maintenance.mode`
-     *     and `killswitch.order_entry` engaged, so an unknown state refuses new orders through the
-     *     shared order-entry gate; `trading.live_enabled` off) and the registry default for every
-     *     other flag. `killswitch.ingestion` is outside that restrictive set: it fails closed to
-     *     its default, so an unreachable store never stops ingestion. The answer is still `200`,
-     *     with `resolution: fail_closed`, and every flag omits `updated_at` and `updated_by`, so
-     *     the console can say these are fail-closed values, not the current ones.
+     *     The flag store is unreachable when its read fails or exceeds its read budget. Every flag
+     *     then resolves to its fail-closed value: the restrictive one for the safety-relevant flags
+     *     (`maintenance.mode` and `killswitch.order_entry` engaged, so an unknown state refuses new
+     *     orders through the shared order-entry gate; `trading.live_enabled` off) and the registry
+     *     default for every other flag. `killswitch.ingestion` is outside that restrictive set: it
+     *     fails closed to its default, so an unreachable store never stops ingestion. The answer is
+     *     still `200`, with `resolution: fail_closed`, and every flag omits `updated_at` and
+     *     `updated_by`, so the console can say these are fail-closed values, not the current ones.
+     *
+     *     A single unreadable stored row (malformed, or a kind mismatch) is not an outage. That
+     *     flag alone resolves to its fail-closed value and is marked `unreadable: true`; it omits
+     *     `default_value` (the stored value it cannot read) and `updated_by`, while every other flag
+     *     resolves normally and `resolution` stays `stored`. The flag stays writable: its
+     *     `updated_at` is still served, so a `PUT` with a valid value and that `expected_updated_at`
+     *     repairs it.
      */
     get: operations["listFeatureFlags"];
     put?: never;
@@ -282,7 +288,8 @@ export interface paths {
      *       (rule `https_required`); the server records it and never dereferences it. This service
      *       only enforces the precondition; the evidence binding belongs to the live gate (E44-T04).
      *     - If the flag store is unreachable (as `GET /admin/feature-flags` defines it), the write
-     *       is `503 store_unavailable` and nothing is written.
+     *       is `503 store_unavailable` and nothing is written. An unreadable stored row is not an
+     *       outage: a write with a valid value repairs it.
      *     - Every attempt that passes RBAC and step-up is audited as `flags.change` with the key,
      *       before, after, `reason` and `evidence_url`, including refused and conflicting ones.
      *       Toggling `maintenance.mode` is also audited as `maintenance.enabled` or
@@ -298,8 +305,8 @@ export interface paths {
      *     Turning it on cancels running emulated algos and sends every session a `notice`; the
      *     recorder keeps running unless `maintenance.keep_recorder` is `false`. The algo cancels,
      *     the notice and the `maintenance.*` audit happen only on a stored value actually read as
-     *     `true`, at the transition of the stored value, never on a transient store failure: a
-     *     fail-closed engagement only refuses new orders.
+     *     `true`, at the transition of the stored value, never on a transient store failure or an
+     *     unreadable row: a fail-closed engagement only refuses new orders.
      */
     put: operations["setFeatureFlag"];
     post?: never;
@@ -5226,7 +5233,7 @@ export interface components {
       ts?: string;
     };
     FeatureFlag: {
-      /** @description Deployment default. */
+      /** @description Deployment default: the deployment-wide stored value that `PUT` writes and that resolution falls back to (`feature_flags.default_value`, E42-T03). Omitted when the flag is `unreadable`. */
       default_value?: unknown;
       description?: string;
       key?: string;
@@ -5236,14 +5243,16 @@ export interface components {
         user_id?: string;
         value?: unknown;
       }[];
+      /** @description `true` when this flag's stored row is unreadable (malformed, or a kind mismatch): the flag alone resolves to its fail-closed value, and a `PUT` with a valid value repairs it (E42-T03). Sent only as `true`. */
+      unreadable?: boolean;
       /**
        * Format: date-time
-       * @description Omitted when the list's `resolution` is `fail_closed` (E42-T03).
+       * @description Omitted when the list's `resolution` is `fail_closed` (E42-T03). An `unreadable` flag keeps it: it is the `expected_updated_at` of the write that repairs the flag.
        */
       updated_at?: string;
       /**
        * Format: uuid
-       * @description Omitted when the list's `resolution` is `fail_closed` (E42-T03).
+       * @description Omitted when the list's `resolution` is `fail_closed` or the flag is `unreadable` (E42-T03).
        */
       updated_by?: string | null;
       /** @description Resolved value for the caller. */
@@ -5254,7 +5263,7 @@ export interface components {
       current: components["schemas"]["FeatureFlag"];
     };
     /**
-     * @description How `GET /admin/feature-flags` resolved its list (E42-T03), a closed set. `stored`: from the flag store. `fail_closed`: the store was unreachable (its read failed, exceeded its read budget or returned an unreadable value), so every flag shows its fail-closed value and omits `updated_at` and `updated_by`.
+     * @description How `GET /admin/feature-flags` resolved its list (E42-T03), a closed set. `stored`: from the flag store. `fail_closed`: the store was unreachable (its read failed or exceeded its read budget), so every flag shows its fail-closed value and omits `updated_at` and `updated_by`. A single unreadable row is not an outage: the list stays `stored` and that flag is marked `unreadable`.
      * @enum {string}
      */
     FeatureFlagResolution: "stored" | "fail_closed";

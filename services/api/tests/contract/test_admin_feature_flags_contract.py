@@ -117,6 +117,7 @@ def test_generated_models_mirror_the_new_shapes() -> None:
     problem_fields = set(api.Problem.model_fields)
     assert set(api.FeatureFlagConflict.model_fields) == problem_fields | {"current"}
     assert set(api.SetFeatureFlagRequest.model_fields) == set(_REQUEST["properties"])
+    assert "unreadable" in api.FeatureFlag.model_fields
 
 
 def test_request_example_round_trips_without_field_loss() -> None:
@@ -169,11 +170,31 @@ def test_d1_resolution_order_and_percentage_override_semantics() -> None:
     ) in _GET_TEXT
 
 
-def test_d1_unreachable_means_failed_over_budget_or_unreadable() -> None:
+def test_d1_an_outage_is_a_failed_or_over_budget_read() -> None:
+    assert "The flag store is unreachable when its read fails or exceeds its read budget." in (
+        _GET_TEXT
+    )
+    assert "returns an unreadable value" not in _GET_TEXT  # D1b revised: a bad row is no outage
+
+
+def test_d1_an_unreadable_row_fails_closed_alone_and_stays_writable() -> None:
     assert (
-        "The flag store is unreachable when its read fails, exceeds its read budget or returns an "
-        "unreadable value (malformed, or a kind mismatch)."
+        "A single unreadable stored row (malformed, or a kind mismatch) is not an outage. That "
+        "flag alone resolves to its fail-closed value and is marked `unreadable: true`; it omits "
+        "`default_value` (the stored value it cannot read) and `updated_by`, while every other "
+        "flag resolves normally and `resolution` stays `stored`. The flag stays writable: its "
+        "`updated_at` is still served, so a `PUT` with a valid value and that "
+        "`expected_updated_at` repairs it."
     ) in _GET_TEXT
+    assert "An unreadable stored row is not an outage: a write with a valid value repairs it." in (
+        _PUT_TEXT
+    )
+    assert _SCHEMAS["FeatureFlag"]["properties"]["unreadable"]["type"] == "boolean"
+    example = _list_example("flags")
+    assert example["resolution"] == "stored"
+    [bad] = [flag for flag in example["items"] if flag.get("unreadable")]
+    assert (bad["key"], bad["value"], bad["unreadable"]) == ("killswitch.order_entry", True, True)
+    assert "updated_at" in bad and not {"default_value", "updated_by"} & set(bad)
 
 
 def test_d1_unreachable_store_resolves_every_flag_to_its_fail_closed_value() -> None:
@@ -226,7 +247,7 @@ def test_d1_side_effects_follow_a_stored_true_never_a_store_failure() -> None:
     assert (
         "The algo cancels, the notice and the `maintenance.*` audit happen only on a stored value "
         "actually read as `true`, at the transition of the stored value, never on a transient "
-        "store failure: a fail-closed engagement only refuses new orders."
+        "store failure or an unreadable row: a fail-closed engagement only refuses new orders."
     ) in _PUT_TEXT
 
 
