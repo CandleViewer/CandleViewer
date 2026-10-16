@@ -293,7 +293,11 @@ def test_s6_orders_overflow_is_bounded_by_the_spec_budget_then_slow_consumer_442
         assert c.closed() == 4429
 
 
-@pytest.mark.xfail(strict=True, reason="#2409: gateway lacks the §8 overflow ladder")
+@pytest.mark.xfail(
+    strict=True,
+    reason="#2409: the §8.4 ladder (ws/outbound.py, #2503) is not wired into the gateway: "
+    "_Connection.push still closes slow_consumer at OUTBOUND_QUEUE_MAX, with no drop and no snap",
+)
 def test_s6_xfail_coalescable_overflow_gets_backpressure_snap_and_no_close() -> None:
     """§8.4 steps 1-2: a coalescable topic over budget is dropped and re-snapshotted with
     `reason: "backpressure"`; the socket is NOT closed (only orders/executions close it)."""
@@ -313,7 +317,9 @@ def test_s6_xfail_coalescable_overflow_gets_backpressure_snap_and_no_close() -> 
 
 
 @pytest.mark.xfail(
-    strict=True, reason="#2410: gateway queue bound (1 024) is below the spec's 2 000"
+    strict=True,
+    reason="#2410: gateway OUTBOUND_QUEUE_MAX (1 024) is below the spec's 2 000; the budget in "
+    "ws/outbound.py (#2503, 2 000 frames / 8 MiB) is not wired into the gateway",
 )
 def test_s6_xfail_coalescable_topic_is_not_cut_below_the_spec_budget() -> None:
     """§16.2: up to 2 000 queued frames are legitimate; a burst of exactly that must all arrive."""
