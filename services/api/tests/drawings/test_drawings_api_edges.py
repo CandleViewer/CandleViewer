@@ -180,9 +180,12 @@ def test_list_query_errors_are_422_field_errors(
 def test_store_unavailable_is_503(method: str, path: str, body: Any, fault: Any) -> None:
     env = Env()
     env.repo_up, env.repo.fail = fault is not None, fault
-    r = env.c.request(method, path, json=body)
+    with capture_logs() as logs:
+        r = env.c.request(method, path, json=body)
     assert r.status_code == 503 and r.json()["code"] == "store_unavailable"
     assert "refused" not in r.text and "down" not in r.text
+    expected = [] if fault is None else ["drawings_store_unavailable"]  # never the audit event
+    assert [e["event"] for e in logs if e["event"].endswith("_unavailable")] == expected
 
 
 def test_router_requires_an_audit_emitter() -> None:
