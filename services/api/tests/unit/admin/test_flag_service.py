@@ -153,14 +153,6 @@ async def test_a_read_overtaken_twice_fails_closed_instead_of_looping() -> None:
     assert store.loads == loads + 2
 
 
-async def test_a_fresh_read_bypasses_a_valid_cache() -> None:
-    service, store, _ = await _service()
-    assert await service.value(MAINTENANCE_MODE) is False
-    store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
-    assert await service.value(MAINTENANCE_MODE) is False
-    assert await service.value(MAINTENANCE_MODE, fresh=True) is True
-
-
 @pytest.mark.parametrize(
     ("roles", "owner_only_seen"), [(frozenset({"owner"}), True), (frozenset({"manager"}), False)]
 )

@@ -26,13 +26,7 @@ from uuid import UUID
 import structlog
 
 from candleviewer.admin.flags.metrics import flag_evaluations_total, unreadable_overrides_total
-from candleviewer.admin.flags.registry import (
-    FlagRegistry,
-    FlagSpec,
-    FlagValue,
-    Visibility,
-    value_matches,
-)
+from candleviewer.admin.flags.registry import FlagRegistry, FlagSpec, FlagValue, value_matches
 from candleviewer.admin.flags.resolver import StoredFlag, override_matches, resolve
 from candleviewer.admin.flags.store import FlagStore
 from candleviewer.observability import spawn
@@ -127,15 +121,12 @@ class FlagService:
         self._snapshot = None
         self._loaded_at = float("-inf")
 
-    async def stored(self, spec: FlagSpec, *, fresh: bool = False) -> StoredFlag | None:
-        """The stored row for `spec`, or `None` while the store cannot be read (fail closed).
-        `fresh` forces a reload (the maintenance poll), still single-flight."""
-        rows = await self._rows(KILLSWITCH_TTL_S if spec.is_killswitch else TTL_S, fresh)
+    async def stored(self, spec: FlagSpec) -> StoredFlag | None:
+        """The stored row for `spec`, or `None` while the store cannot be read (fail closed)."""
+        rows = await self._rows(KILLSWITCH_TTL_S if spec.is_killswitch else TTL_S)
         return None if rows is None else rows.get(spec.key) or StoredFlag(spec.default)
 
-    async def _rows(self, ttl: float, fresh: bool = False) -> Mapping[str, StoredFlag] | None:
-        if fresh:
-            self.invalidate()
+    async def _rows(self, ttl: float) -> Mapping[str, StoredFlag] | None:
         for _ in range(2):  # a load overtaken by invalidate() is dropped, then retried once
             snapshot = self._snapshot
             if snapshot is not None and self._clock() - self._loaded_at < ttl:
@@ -165,26 +156,21 @@ class FlagService:
             self._snapshot, self._loaded_at = snapshot, started
 
     async def value(
-        self,
-        key: str,
-        *,
-        user_id: UUID | None = None,
-        roles: frozenset[str] = frozenset(),
-        fresh: bool = False,
+        self, key: str, *, user_id: UUID | None = None, roles: frozenset[str] = frozenset()
     ) -> FlagValue:
         """One flag resolved server-side; `user_id=None` is a system read (order gate, push).
         Visibility-unfiltered: only `visible()` applies it, so a caller that serves a user must
-        use `visible()` (or check `FlagSpec.visibility`) before revealing a value."""
+        use `visible()` (or check `FlagSpec.visible_to`) before revealing a value."""
         spec = self.registry[key]
-        return self.resolved(spec, await self.stored(spec, fresh=fresh), user_id, roles).value
+        return self.resolved(spec, await self.stored(spec), user_id, roles).value
 
     async def visible(self, user_id: UUID, roles: frozenset[str]) -> FlagList:
-        """Every flag the caller may see (its `visibility` admits the caller's roles), resolved
-        for the caller from one snapshot no older than the kill-switch bound."""
+        """Every flag the caller may see (`FlagSpec.visible_to` its roles), resolved for the
+        caller from one snapshot no older than the kill-switch bound."""
         rows = await self._rows(KILLSWITCH_TTL_S)
         items: list[ResolvedFlag] = []
         for key, spec in self.registry.items():
-            if spec.visibility is Visibility.OWNER_ONLY and "owner" not in roles:
+            if not spec.visible_to(roles):
                 continue
             row = None if rows is None else rows.get(key) or StoredFlag(spec.default)
             items.append(self.resolved(spec, row, user_id, roles))
@@ -193,7 +179,10 @@ class FlagService:
     def resolved(
         self, spec: FlagSpec, row: StoredFlag | None, user_id: UUID | None, roles: frozenset[str]
     ) -> ResolvedFlag:
-        """`row` resolved for one caller: the list item, a `PUT` answer or a 409's `current`."""
+        """`row` resolved for one caller: the list item, a `PUT` answer or a 409's `current`.
+        A spec this registry does not hold raises `KeyError` before any series is touched."""
+        if self.registry.get(spec.key) is not spec:
+            raise KeyError(spec.key)
         flag_evaluations_total.labels(spec.key).inc()
         if row is not None and spec.overridable and value_matches(spec, row.value):
             applied = [v for user, v in row.user_overrides.items() if user == user_id]

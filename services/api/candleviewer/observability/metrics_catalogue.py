@@ -1636,18 +1636,6 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=32,
         exported=True,
     ),
-    _s(
-        "cv_feature_flag_changes_total",
-        "counter",
-        "changes",
-        ("flag", "result"),
-        "Feature-flag write attempts past validation, by result.",
-        "flag churn; conflict or refusal spikes",
-        _L,
-        "E42",
-        max_series=256,
-        exported=True,
-    ),
     # --- SR-125 security metrics (planned) ----------------------------------
     _s(
         "auth_login_failures_total",
