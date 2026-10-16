@@ -20,9 +20,12 @@ from types import MappingProxyType
 from typing import Any, Final, Literal
 
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.scopes import Allow, Deny, PrincipalSnapshot, decide
 
 #: §13 `common.schema.json#/$defs/symbol`: a USDT linear perpetual (the only product, C-1.3).
 SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{2,20}USDT$")
+#: §6.4 `uuid` ids: the lowercase canonical form only, so each machine has one topic name.
+_UUID_RE: Final = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _DECIMAL_RE: Final = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
 #: Accepted characters of a bars/footprint `param`; dots are illegal (§6.1, use a colon).
 _PARAM_RE: Final = re.compile(r"^[A-Za-z0-9:]{1,24}$")
@@ -45,7 +48,8 @@ CTL_KEYS: Final = frozenset({"throttle_ms", "coalesce", "paused", "min_size"} | 
 #: widening by retune). Disjoint from `CTL_KEYS` by construction (asserted in tests).
 SCOPE_OPTIONS: Final = frozenset({"exchange_account_ids", "symbols", "rule_ids"})
 
-Segment = Literal["symbol", "depth", "bar_type", "param", "profile_kind"]
+#: `state` is the literal suffix of `machines.{entity}.state`; every other segment is a variable.
+Segment = Literal["symbol", "depth", "bar_type", "param", "profile_kind", "entity", "state"]
 OptKind = Literal["int", "number", "bool", "enum", "decimal", "uuids", "symbols", "strings", "str"]
 
 
@@ -158,7 +162,10 @@ class TopicFamily:
     @property
     def patterns(self) -> tuple[str, ...]:
         """Human-readable name patterns, e.g. `book.{symbol}.{depth}`."""
-        return tuple(".".join((self.family, *(f"{{{s}}}" for s in shape))) for shape in self.shapes)
+        return tuple(
+            ".".join((self.family, *(s if s == "state" else f"{{{s}}}" for s in shape)))
+            for shape in self.shapes
+        )
 
     @property
     def account_scoped(self) -> bool:
@@ -213,6 +220,10 @@ def _pv(
 
 _ACC_SYM: Final = {"exchange_account_ids": _ACCOUNTS, "symbols": _SYMBOLS}
 _G = Scope.GRANTED_ACCOUNTS
+
+#: §6.4: permission and scope are per entity kind (`MACHINE_KINDS`), not per family.
+_MACHINES: Final = TopicFamily("machines", (("entity", "state"),), None, None, 100, False,
+                               "MachineStateUpdate", private=True)  # fmt: skip
 
 #: The §6.1/§6.2 catalogue. `system` is implicit (no permission; auto-subscribed at `auth_ok`).
 FAMILIES: Final[Mapping[str, TopicFamily]] = {
@@ -373,14 +384,99 @@ FAMILIES: Final[Mapping[str, TopicFamily]] = {
             {"symbols": _SYMBOLS},
         ),
         TopicFamily("system", ((),), None, None, 1000, False, "SystemUpdate", private=True),
+        _MACHINES,
     )
 }
 
-#: (topic pattern, permission string) - the surface the E09-Q03 RBAC matrix discovers.
+
+@dataclass(frozen=True)
+class MachineKind:
+    """One §6.4 entity kind: its id format and the read rule `machine_refusal` applies."""
+
+    id_format: Literal["uuid", "symbol", "singleton"]
+    permission: Permission | None
+    scope: Scope
+    #: `deny_pending_decision` (§16.6 W6-W8): `forbidden` for every non-Owner, every entity.
+    pending: bool = False
+
+
+_U: Final = "uuid"
+_ACC: Final = Scope.GRANTED_ACCOUNTS
+_SELF: Final = Scope.SELF
+#: The closed §6.4 kind set (B8, B9, B13 and B15 have no public id yet, §16.6 W9).
+MACHINE_KINDS: Final[Mapping[str, MachineKind]] = {
+    "order": MachineKind(_U, Permission.ORDERS_READ, _ACC),
+    "trade_group": MachineKind(_U, Permission.ORDERS_READ, _ACC, pending=True),
+    "leg": MachineKind(_U, Permission.ORDERS_READ, _ACC),
+    "algo": MachineKind(_U, Permission.ORDERS_READ, _ACC),
+    "alert": MachineKind(_U, Permission.ALERTS_READ, _SELF),
+    "recording": MachineKind("symbol", Permission.RECORDING_READ, Scope.NONE),
+    "replay": MachineKind(_U, Permission.REPLAY_READ, _SELF),
+    "book": MachineKind("symbol", Permission.MARKETDATA_READ, Scope.NONE),
+    "session": MachineKind(_U, None, _SELF),
+    "live_gate": MachineKind("singleton", None, Scope.NONE, pending=True),
+    "kill_switch": MachineKind("singleton", Permission.ORDERS_READ, Scope.NONE),
+    "reconciliation": MachineKind(_U, None, _ACC, pending=True),
+    "risk_lockout": MachineKind(_U, Permission.POSITIONS_READ, _ACC),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class EntityScope:
+    """The immutable scope a registry entry carries (§6.4 scope binding): the entity's accounts
+    (B2: every leg's), or its user. Empty for an unscoped kind, and for a missing binding."""
+
+    accounts: frozenset[uuid.UUID] = frozenset()
+    user: uuid.UUID | None = None
+
+
+#: Checked for an entity that has no entry, so it costs what a foreign one does (no oracle).
+_NO_ACCOUNT: Final = frozenset({uuid.UUID(int=0)})
+
+
+def _granted(principal: PrincipalSnapshot, permission: Permission | None, acc: uuid.UUID) -> bool:
+    if permission is None:  # B19 has no read rule yet: only the Owner reaches this step (W8)
+        return principal.is_owner
+    decision = decide(principal, permission, scope=_ACC, exchange_account_id=acc)
+    return isinstance(decision, Allow)
+
+
+def machine_refusal(
+    principal: PrincipalSnapshot, kind: str, scope: EntityScope | None
+) -> tuple[str, str] | None:
+    """§6.4 check order: permission, role, then registry and scope (`scope`: the entry's, `None`
+    without one). Returns (§10.2 code, internal audit reason), or `None` when allowed. The code
+    depends only on the kind and the caller: unknown, unscoped and foreign get the same one."""
+    rule = MACHINE_KINDS[kind]
+    if rule.permission is not None and isinstance(decide(principal, rule.permission), Deny):
+        return "forbidden", "role"
+    if rule.pending and not principal.is_owner:
+        return "forbidden", "role"
+    if rule.scope == Scope.NONE:
+        return None
+    accounts = scope.accounts if scope is not None else frozenset()
+    user = scope.user if scope is not None else None
+    if rule.scope == _ACC:
+        granted = all(_granted(principal, rule.permission, a) for a in accounts or _NO_ACCOUNT)
+        code, held = "account_scope_denied", bool(accounts) and granted
+    else:  # user-scoped: the caller's own entity only, Owner included (D2)
+        code, held = "forbidden", user is not None and user == principal.user_id
+    if held:
+        return None
+    return code, "unknown" if scope is None else "foreign" if accounts or user else "unscoped"
+
+
+_ID_PATTERNS: Final = {"uuid": ":{uuid}", "symbol": ":{symbol}", "singleton": ""}
+#: (topic pattern, permission string) - the surface the E09-Q03 RBAC matrix discovers;
+#: `machines` contributes one pattern per §6.4 kind, with that kind's read permission.
 TOPIC_REGISTRY: Final[tuple[tuple[str, str | None], ...]] = tuple(
     (pattern, f.permission.value if f.permission else None)
     for f in FAMILIES.values()
+    if f.family != "machines"
     for pattern in f.patterns
+) + tuple(
+    (f"machines.{k}{_ID_PATTERNS[m.id_format]}.state", m.permission and m.permission.value)
+    for k, m in MACHINE_KINDS.items()
 )
 
 
@@ -395,6 +491,8 @@ class ParsedTopic:
     bar_type: str | None = None
     param: str | None = None
     kind: str | None = None
+    #: §6.4 `machines`: the `MACHINE_KINDS` key of the entity (its symbol, if any, is `symbol`).
+    entity_kind: str | None = None
 
     @property
     def params(self) -> tuple[str, ...]:
@@ -413,11 +511,16 @@ def parse_topic(ch: Any, *, instrument_known: Callable[[str], bool] | None = Non
     if family is None:
         raise TopicError("unknown_topic", "Topic is not in the catalogue.")
     shape = next((s for s in family.shapes if len(s) == len(rest)), None)
-    if shape is None or not all(_SEGMENT_RE.match(seg) for seg in rest):
+    if shape is None or not all(
+        kind == "entity" or _SEGMENT_RE.match(seg) for kind, seg in zip(shape, rest, strict=True)
+    ):  # an entity may hold `-` (uuid); `_entity` checks it against its own grammar
         raise TopicError("invalid_topic_format", f"Expected {' or '.join(family.patterns)}.")
     values: dict[str, Any] = {}
     for kind, seg in zip(shape, rest, strict=True):
-        values[kind] = _segment(kind, seg, instrument_known)
+        if kind == "entity":
+            values["entity_kind"], values["symbol"] = _entity(seg, instrument_known)
+        else:
+            values[kind] = _segment(kind, seg, instrument_known)
     return ParsedTopic(
         ch,
         family,
@@ -426,7 +529,30 @@ def parse_topic(ch: Any, *, instrument_known: Callable[[str], bool] | None = Non
         bar_type=values.get("bar_type"),
         param=values.get("param"),
         kind=values.get("profile_kind"),
+        entity_kind=values.get("entity_kind"),
     )
+
+
+def _entity(seg: str, instrument_known: Callable[[str], bool] | None) -> tuple[str, str | None]:
+    """§6.4 `{entity}`: `{kind}` for a singleton, otherwise `{kind}:{id}`. Returns the kind and,
+    for a symbol-keyed kind, the symbol. An unknown kind or an id that does not fit its kind is
+    `invalid_topic_format`; a well-formed symbol of no known instrument, `unsupported_symbol`."""
+    name, sep, ident = seg.partition(":")
+    rule = MACHINE_KINDS.get(name)
+    if rule is None or (rule.id_format == "singleton") == bool(sep):
+        raise TopicError("invalid_topic_format", _BAD_ENTITY)
+    if rule.id_format == "singleton":
+        return name, None
+    if not (_UUID_RE if rule.id_format == "uuid" else SYMBOL_RE).fullmatch(ident):
+        raise TopicError("invalid_topic_format", _BAD_ENTITY)
+    if rule.id_format == "uuid":
+        return name, None
+    if instrument_known is not None and not instrument_known(ident):
+        raise TopicError("unsupported_symbol", "Not a supported USDT linear perpetual.")
+    return name, ident
+
+
+_BAD_ENTITY: Final = "Unknown machine kind, or an id that does not fit it."
 
 
 def _segment(kind: Segment, seg: str, instrument_known: Callable[[str], bool] | None) -> Any:
@@ -445,6 +571,10 @@ def _segment(kind: Segment, seg: str, instrument_known: Callable[[str], bool] | 
     if kind == "param":
         if not _PARAM_RE.match(seg):
             raise TopicError("invalid_topic_format", "Bar param is malformed.")
+        return seg
+    if kind == "state":
+        if seg != "state":
+            raise TopicError("invalid_topic_format", "Expected machines.{entity}.state.")
         return seg
     if seg not in PROFILE_KINDS:
         raise TopicError("invalid_topic_format", "Profile kind must be volume, delta or tpo.")

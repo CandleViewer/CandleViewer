@@ -46,6 +46,7 @@ from candleviewer.ws.limits import (
     MAX_SYMBOLS_PER_CONNECTION,
     MAX_TOPICS_PER_SUB,
 )
+from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.revocation import (
     Closer,
     RevokedReason,
@@ -64,12 +65,15 @@ from candleviewer.ws.topics import (
     CTL_KEYS,
     FAMILIES,
     IDENTITY_OPTIONS,
+    MACHINE_KINDS,
     SCOPE_OPTIONS,
     UNIVERSAL,
+    EntityScope,
     ParsedTopic,
     TopicError,
     effective_options,
     is_topic_name,
+    machine_refusal,
     parse_topic,
     validate_options,
 )
@@ -144,6 +148,9 @@ class SubscriptionServices:
     #: §6.1: the deployment runs with `bars_enabled` off, so `bars.*` is refused `unknown_topic`.
     #: Set by the app from settings (a bare `bars=None` only means "no lease to take").
     bars_off: bool = False
+    #: E17-T08: the `machines.{entity}.state` entries `sub` is authorised against (§6.4); `None`
+    #: means no entity has an entry.
+    machines: MachineStateRegistry | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +214,9 @@ class Subscription:
     bar_lease: tuple[str, str] | None = None  # (spec_hash, symbol)
     #: §7.4 reason the pending `snap` will carry (E17-S03).
     pending_reason: SnapReason = "initial"
+    #: §6.4 `machines`: the entity's scope, read from its entry at `sub`, so every RBAC change
+    #: re-checks it without a lookup.
+    entity: EntityScope | None = None
     #: §7.5 client-resync times (monotonic s); bounded to the 5-per-minute window.
     resyncs: collections.deque[float] = field(
         default_factory=lambda: collections.deque(maxlen=RESYNC_MAX_PER_WINDOW)
@@ -236,6 +246,13 @@ def _bar_spec(sub: Subscription) -> tuple[BarSpec | None, dict[str, Any] | None]
     except BarsError:
         return None, _fail(sub.ch, "invalid_topic_format", "This bar series is not available.")
     return spec, None
+
+
+#: One message per refusal code, whatever the cause: `account_scope_denied` carries §6.2's.
+_REFUSED: Final = {
+    "forbidden": "Missing permission for this topic.",
+    "account_scope_denied": "None of the requested accounts are in scope.",
+}
 
 
 def _fail(ch: Any, code: str, message: str, fld: str | None = None) -> dict[str, Any]:
@@ -355,7 +372,9 @@ class ConnectionAuthz:
             raise TopicError("invalid_options", "snapshot must be a boolean.", "snapshot")
         if not snapshot and "from_seq" not in opts:
             raise TopicError("invalid_options", "snapshot false needs from_seq.", "from_seq")
-        accounts = self._authorise(topic, opts)
+        kind = topic.entity_kind
+        entity = self._authorise_entity(topic.ch, kind) if kind is not None else None
+        accounts = self._authorise(topic, opts) if entity is None else frozenset()
         forced = False
         effective = effective_options(topic, opts)
         if accounts:
@@ -372,6 +391,7 @@ class ConnectionAuthz:
             accounts,
             rs,
             snapshot_pending=snapshot,
+            entity=entity,
         )
         if not snapshot and not self._continuity(sub):
             sub.snapshot_pending = forced = True  # §7.6: continuity unproven -> snap anyway
@@ -422,6 +442,16 @@ class ConnectionAuthz:
             # One message for "absent", "not yours" and "does not exist": no account probing.
             raise TopicError("account_scope_denied", "None of the requested accounts are in scope.")
         return allowed
+
+    def _authorise_entity(self, ch: str, kind: str) -> EntityScope:
+        """§6.4 per-entity authorisation, read synchronously from the in-memory entry (SR-189).
+        The code and its fixed message depend only on the kind and the caller (no oracle)."""
+        registry = self.services.machines
+        scope = registry.scope(ch) if registry is not None else None
+        refusal = machine_refusal(self.principal, kind, scope)
+        if refusal is not None:
+            raise TopicError(refusal[0], _REFUSED[refusal[0]])
+        return scope or EntityScope()
 
     def _may_view(self, permission: Permission, account: uuid.UUID) -> bool:
         decision = decide(
@@ -608,6 +638,8 @@ class ConnectionAuthz:
         return frames
 
     def _reevaluate(self, sub: Subscription, now_ms: int) -> dict[str, Any] | None:
+        if sub.topic.entity_kind is not None:
+            return self._reevaluate_entity(sub, sub.topic.entity_kind, now_ms)
         permission = sub.topic.family.permission
         if permission is None:  # pragma: no cover - `system` is never a Subscription
             return None
@@ -626,6 +658,21 @@ class ConnectionAuthz:
         sub.accounts = kept
         sub.effective["exchange_account_ids"] = sorted(str(a) for a in kept)
         return self._revoked(sub, "account_scope_changed", now_ms, removed, resubscribe=True)
+
+    def _reevaluate_entity(
+        self, sub: Subscription, kind: str, now_ms: int
+    ) -> dict[str, Any] | None:
+        """§6.4 on a change: the kind's whole row, on the scope stored at `sub` (no lookup)."""
+        entity = sub.entity or EntityScope()
+        refusal = machine_refusal(self.principal, kind, entity)
+        if refusal is None:
+            return None
+        self._drop(sub)
+        if refusal[1] == "role":  # permission or role lost
+            return self._revoked(sub, "permission_revoked", now_ms)
+        perm = MACHINE_KINDS[kind].permission
+        lost = frozenset(a for a in entity.accounts if perm is None or not self._may_view(perm, a))
+        return self._revoked(sub, "account_scope_changed", now_ms, lost)
 
     def _revoked(
         self,

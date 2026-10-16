@@ -36,6 +36,9 @@ MAX_SYMBOLS_PER_CONNECTION = 40
 #: SR-E12-07 (§6.1): `bars.*` subscriptions per connection, live and replay; the next one gets
 #: `subscription_limit`. With `history` <= 1 000 this bounds one socket's snapshot amplification.
 MAX_BARS_SUBSCRIPTIONS = 16
+#: §16.2: `machines.{entity}.state` registry entries, live and terminal. Past it a payload for a
+#: new entity is refused and logged; no entry is evicted, so no live machine's state is lost.
+MACHINE_ENTRIES_MAX = 20_000
 AUTH_TIMEOUT_S = 10.0
 FANOUT_SEND_TIMEOUT_S = 2.0
 

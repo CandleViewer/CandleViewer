@@ -29,6 +29,8 @@ _SAMPLE_SEG = {
     "bar_type": "time",
     "param": "5",
     "profile_kind": "volume",
+    "entity": "kill_switch",
+    "state": "state",
 }
 
 
@@ -189,7 +191,10 @@ def test_registry_exposes_pattern_and_permission_pairs() -> None:
     assert pairs["ticker"] == "marketdata:read"
     assert pairs["wallet"] == "accounts:read"
     assert pairs["system"] is None
-    assert len(TOPIC_REGISTRY) == sum(len(f.shapes) for f in FAMILIES.values())
+    # `machines` contributes one pattern per §6.4 kind instead of its family pattern
+    assert len(TOPIC_REGISTRY) == sum(len(f.shapes) for f in FAMILIES.values()) - 1 + 13
+    assert pairs["machines.order:{uuid}.state"] == "orders:read"
+    assert pairs["machines.session:{uuid}.state"] is None
 
 
 def test_every_error_code_the_registry_can_raise_is_in_the_catalogue() -> None:

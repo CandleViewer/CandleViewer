@@ -1574,6 +1574,8 @@ operations:
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
 # WS topic families (23-ws-protocol.md §6.3). sub_ok = subscription accepted; 401 = frame before
 # `auth`; account_scope_denied / 403 as in §5.2. `system` is implicit (no check).
+# `machines.{kind}`: one row per §6.4 kind (E17-T08). Before each cell the runner publishes the
+# sample entity on account A (granted_accounts) or as the caller's own (self); none: unscoped.
 topics:
   alerts:
     permission: alerts:read
@@ -1617,6 +1619,84 @@ topics:
     sample: liquidations.BTCUSDT
     outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: sub_ok, viewer: sub_ok,
       unauthenticated: not_authenticated}
+  machines.alert:
+    permission: alerts:read
+    scope: self
+    sample: machines.alert:0a000000-0000-4000-8000-000000000010.state
+    outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: sub_ok, viewer: sub_ok,
+      unauthenticated: not_authenticated}
+  machines.algo:
+    permission: orders:read
+    scope: granted_accounts
+    sample: machines.algo:0a000000-0000-4000-8000-000000000004.state
+    outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: account_scope_denied,
+      viewer: account_scope_denied, unauthenticated: not_authenticated}
+  machines.book:
+    permission: marketdata:read
+    scope: none
+    sample: machines.book:BTCUSDT.state
+    outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: sub_ok, viewer: sub_ok,
+      unauthenticated: not_authenticated}
+  machines.kill_switch:
+    permission: orders:read
+    scope: none
+    sample: machines.kill_switch.state
+    outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: sub_ok, viewer: sub_ok,
+      unauthenticated: not_authenticated}
+  machines.leg:
+    permission: orders:read
+    scope: granted_accounts
+    sample: machines.leg:0a000000-0000-4000-8000-000000000003.state
+    outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: account_scope_denied,
+      viewer: account_scope_denied, unauthenticated: not_authenticated}
+  machines.live_gate:
+    permission: null
+    scope: none
+    sample: machines.live_gate.state
+    outcomes: {owner: sub_ok, manager_with_grant: forbidden, manager_without_grant: forbidden,
+      viewer: forbidden, unauthenticated: not_authenticated}
+  machines.order:
+    permission: orders:read
+    scope: granted_accounts
+    sample: machines.order:0a000000-0000-4000-8000-000000000001.state
+    outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: account_scope_denied,
+      viewer: account_scope_denied, unauthenticated: not_authenticated}
+  machines.recording:
+    permission: recording:read
+    scope: none
+    sample: machines.recording:BTCUSDT.state
+    outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: sub_ok, viewer: sub_ok,
+      unauthenticated: not_authenticated}
+  machines.reconciliation:
+    permission: null
+    scope: granted_accounts
+    sample: machines.reconciliation:00000000-0000-4000-8000-00000000000a.state
+    outcomes: {owner: sub_ok, manager_with_grant: forbidden, manager_without_grant: forbidden,
+      viewer: forbidden, unauthenticated: not_authenticated}
+  machines.replay:
+    permission: replay:read
+    scope: self
+    sample: machines.replay:0a000000-0000-4000-8000-000000000012.state
+    outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: sub_ok, viewer: sub_ok,
+      unauthenticated: not_authenticated}
+  machines.risk_lockout:
+    permission: positions:read
+    scope: granted_accounts
+    sample: machines.risk_lockout:00000000-0000-4000-8000-00000000000a.state
+    outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: account_scope_denied,
+      viewer: account_scope_denied, unauthenticated: not_authenticated}
+  machines.session:
+    permission: null
+    scope: self
+    sample: machines.session:0a000000-0000-4000-8000-000000000016.state
+    outcomes: {owner: sub_ok, manager_with_grant: sub_ok, manager_without_grant: sub_ok, viewer: sub_ok,
+      unauthenticated: not_authenticated}
+  machines.trade_group:
+    permission: orders:read
+    scope: granted_accounts
+    sample: machines.trade_group:0a000000-0000-4000-8000-000000000002.state
+    outcomes: {owner: sub_ok, manager_with_grant: forbidden, manager_without_grant: forbidden,
+      viewer: forbidden, unauthenticated: not_authenticated}
   metrics:
     permission: marketdata:read
     scope: none

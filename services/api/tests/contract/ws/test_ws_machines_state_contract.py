@@ -232,6 +232,22 @@ def test_rbac_cells_follow_the_check_order_and_the_role_grants() -> None:
         assert cells == _expected(kind_row, row), row
 
 
+def test_the_ws_registry_kinds_are_the_6_4_tables() -> None:
+    """The publisher's kind table (E17-T08): id format, read permission, scope and pending rule."""
+    from candleviewer.ws.topics import MACHINE_KINDS
+
+    scopes = {"account": "granted_accounts", "user": "self", "none": "none"}
+    expected = {}
+    for kind_row, row in zip(KINDS, RBAC, strict=True):
+        perms = [c for c in _codes(row[2]) if re.fullmatch(r"[a-z_]+:[a-z_]+", c)] or [None]
+        pending = row[7].startswith(_PENDING)
+        expected[_kind(kind_row)] = (kind_row[3], perms[0], scopes[_scope(kind_row)], pending)
+    assert {
+        k: (m.id_format, m.permission and m.permission.value, m.scope.value, m.pending)
+        for k, m in MACHINE_KINDS.items()
+    } == expected
+
+
 def test_deny_pending_decision_rows_cite_their_open_item() -> None:
     open_items = _section("### 16.6 ")
     for row in RBAC:

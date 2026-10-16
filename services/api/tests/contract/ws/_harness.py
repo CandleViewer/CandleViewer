@@ -472,7 +472,8 @@ def connect(
 
 # -- catalogue helpers -------------------------------------------------------------------------
 
-_SEG = {"symbol": SYM, "depth": "50", "bar_type": "time", "param": "1", "profile_kind": "volume"}
+_SEG = {"symbol": SYM, "depth": "50", "bar_type": "time", "param": "1", "profile_kind": "volume",
+        "entity": "kill_switch", "state": "state"}  # fmt: skip
 
 
 def entry(

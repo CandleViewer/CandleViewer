@@ -25,6 +25,7 @@ from tests.contract.rbac.rbac_harness import (
     bearer,
     fill_path,
     record_cell,
+    seed_machine,
     user_id_of,
 )
 
@@ -505,7 +506,10 @@ def test_every_topic_family_x_actor_matches_the_matrix(
 
     row = _TOPICS[family]
     expected = row["outcomes"][actor]
-    account = GRANTED if row["scope"] == "granted_accounts" else None
+    machine = family.startswith("machines.")  # §6.4: scoped by its entity, not by options
+    account = GRANTED if row["scope"] == "granted_accounts" and not machine else None
+    if machine:
+        seed_machine(world.app, row, actor)
     started = time.perf_counter()
     msg = f"topic {family} as {actor}: expected {expected}"
     try:

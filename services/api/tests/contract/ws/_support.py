@@ -76,6 +76,10 @@ _BAR = {"generation": 0, "index": 1, "t_ms": 1, "o": "1", "h": "2", "l": "1", "c
 _FP_BAR = {"generation": 0, "index": 1, "t_ms": 1, "cells": []}
 _TRADE = {"ts_ms": 1, "price": "100.0", "size": "1", "side": "buy"}
 _ORD = {"id": _U, "exchange_account_id": _A, "symbol": _S, "state": "new", "updated_at_ms": 1}
+#: A B18 `kill_switch` state (§15.10): an unscoped kind, so no registry entry is needed to `sub`.
+_KS = {"machine_kind": "kill_switch", "degraded": False, "machine_hash": "0" * 64,
+       "environment": "demo", "updated_at_ms": 1,
+       "context_summary": {"scope": "global"}}  # fmt: skip
 #: family -> (snapshot body, delta body)
 SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "book": (
@@ -163,4 +167,8 @@ SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     ),
     "recorder": ({"overall": "healthy", "symbols": []}, {"overall": "healthy", "symbols": []}),
     "system": ({"kind": "health"}, {"kind": "notice"}),
+    "machines": (
+        {**_KS, "state": "clear", "tags": ["trading_allowed"]},
+        {**_KS, "state": "engaged", "tags": ["trading_blocked"]},
+    ),
 }
