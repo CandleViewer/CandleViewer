@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 from uuid import UUID
 
+import structlog
 from pydantic import ValidationError
 
 from candleviewer.rules.arming import ArmingFacts, check_arming
@@ -49,6 +50,11 @@ _ORDER_ACTIONS = frozenset(
 SYSTEM_RULE_PREFIX = "sys."
 #: Always-on built-ins (24-internal-schemas §11.8 "cannot disable"); E35-X02 (i).
 PROTECTED_SYSTEM_RULES = frozenset({"sys.native_sl_watchdog", "sys.clock_drift_block"})
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
 
 
 def is_reserved_name(name: str) -> bool:
@@ -134,8 +140,9 @@ class Actor:
     granted_accounts: frozenset[str] = frozenset()
     is_owner: bool = False
     step_up_fresh: bool = False
-    #: Consumes a fresh one-shot step-up grant; True on success (live arming only). It may
-    #: raise `RuleError` to refuse with its own problem (#2304: the challenge it issued).
+    #: Consumes a fresh one-shot step-up grant; True on success (live arming only). It refuses
+    #: by raising the `RuleError` it built (#2304: the `step_up_required` challenge it issued);
+    #: False carries no challenge, so it is a defect and fails closed (`_consume_step_up`).
     consume_step_up: Callable[[], Awaitable[bool]] | None = None
 
 
@@ -793,11 +800,12 @@ class RulesManager:
         return self._view(row)
 
     async def _consume_step_up(self, actor: Actor) -> None:
-        # One-shot: a fresh code arms exactly one live / re-arm transition (no-grace class).
+        # One-shot: a fresh code arms exactly one live / re-arm transition (no-grace class). An
+        # actor refuses by raising its own `RuleError` (#2304: the challenge it issued); a bare
+        # False has none for a client to answer, so it fails closed as a logged server defect.
         if actor.consume_step_up is not None and not await actor.consume_step_up():
-            raise RuleError(
-                403, "step_up_required", "Re-enter your authenticator code to arm a live rule."
-            )
+            _log().error("live arming step-up refused with no challenge", user_id=actor.user_id)
+            raise RuleError(500, "internal_error", "The live-arming step-up could not be checked.")
 
     async def _check_arming(
         self,

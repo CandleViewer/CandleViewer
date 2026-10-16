@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -9,10 +10,13 @@ from datetime import UTC, datetime
 import pytest
 
 from candleviewer.api.deny_by_default import served_operations
+from candleviewer.api.rules_crud import _from_error
 from candleviewer.api.step_up import (
     HANDLER_GATED_ROUTES,
+    SESSION_READ_ONLY_TITLE,
     STEP_UP_REQUIRED_DETAIL,
     STEP_UP_REQUIRED_TITLE,
+    readonly_problem,
 )
 from candleviewer.api.step_up_challenge import request_fingerprint
 from candleviewer.app import create_app
@@ -60,6 +64,7 @@ _UID = "00000000-0000-4000-8000-000000000001"
 
 
 _UNTIL = datetime(2026, 9, 30, 12, 5, tzinfo=UTC)
+_READ_ONLY_EXTRA = {"title": SESSION_READ_ONLY_TITLE, "readonly_until": _UNTIL.isoformat()}
 #: `PUT /rules/r1/mode` as the client sent it, and the fingerprint of the object it parses to.
 _BODY = b'{"reason": null, "mode": "armed"}'
 _HELD = request_fingerprint("PUT", b"/rules/r1/mode", {"mode": "armed", "reason": None})
@@ -179,7 +184,7 @@ async def test_actor_consume_of_a_body_that_cannot_be_bound_is_400_never_a_chall
 @pytest.mark.parametrize(
     ("raised", "status", "code", "extra"),
     [
-        (SessionReadOnly(_UNTIL), 403, "session_read_only", {"readonly_until": _UNTIL.isoformat()}),
+        (SessionReadOnly(_UNTIL), 403, "session_read_only", _READ_ONLY_EXTRA),
         (SessionRevoked("logout"), 401, "unauthorized", {}),
     ],
     ids=["read-only", "revoked"],
@@ -195,6 +200,22 @@ async def test_actor_consume_on_a_session_that_cannot_answer_is_never_a_challeng
     with pytest.raises(RuleError) as refused:
         await consume()
     assert (refused.value.status, refused.value.code, refused.value.extra) == (status, code, extra)
+
+
+async def test_actor_consume_on_a_read_only_session_states_the_write_guards_wording() -> None:
+    """One wording for `403 session_read_only`: the rules route states what the write guard
+    (`make_read_only_guard`) states, title and detail, not a text of its own."""
+
+    class _StepUp:
+        async def consume_single_use(self, sid: str, cls: str, **bound: object) -> None:
+            raise SessionReadOnly(_UNTIL)
+
+    consume = await _arm_consume(_StepUp())
+    with pytest.raises(RuleError) as refused:
+        await consume()
+    assert json.loads(_from_error(refused.value).body) == json.loads(
+        readonly_problem(SessionReadOnly(_UNTIL)).body
+    )
 
 
 async def test_service_sink_records_simulation_for_simulating_rule() -> None:

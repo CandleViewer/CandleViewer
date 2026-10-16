@@ -277,17 +277,26 @@ def _elevate(action_class: str, grant_key: str, until: datetime, now: datetime) 
     return change
 
 
-def _strike(now: datetime) -> StepUpChange:
+class _Strike:
     """One more invalid step-up, counted on the row: the third downgrades the session to
-    read-only for 5 minutes and ends every elevation."""
+    read-only for 5 minutes and ends every elevation. A downgrade that landed during the factor
+    check stands as it was set: the row is left alone, so it is neither renewed nor counted
+    twice. `downgraded` tells whether this write started the downgrade; the repository calls the
+    change once, under the row lock, and each call sets it afresh."""
 
-    def change(state: StepUpState) -> StepUpState:
-        elevations, failures, _readonly_until = state
+    def __init__(self, now: datetime) -> None:
+        self._now = now
+        self.downgraded = False
+
+    def __call__(self, state: StepUpState) -> StepUpState:
+        elevations, failures, readonly_until = state
+        self.downgraded = False
+        if readonly_until is not None and self._now < readonly_until:
+            return state
         if failures + 1 >= FAILURE_CAP:
-            return {}, FAILURE_CAP, now + READONLY_WINDOW
-        return _unexpired(elevations, now), failures + 1, None
-
-    return change
+            self.downgraded = True
+            return {}, FAILURE_CAP, self._now + READONLY_WINDOW
+        return _unexpired(elevations, self._now), failures + 1, None
 
 
 def _lift(now: datetime) -> StepUpChange:
@@ -437,12 +446,14 @@ class StepUpService:
         if not await self._verify_both(user_id, code, password, now):
             auth_step_up_failures_total.labels(action_class=action_class).inc()
             auth_stepup_failures_total.inc()  # SR-125 catalogue series (scraped, no label)
-            struck = await self._update(session_id, _strike(now))
+            strike = _Strike(now)
+            struck = await self._update(session_id, strike)
             await self._record(
                 record, now, "STEP_UP_FAILED", action_class=action_class, now_us=to_us(now)
             )
             if struck.readonly_until is not None:
-                auth_readonly_downgrades_total.inc()
+                if strike.downgraded:  # one that landed meanwhile was counted when it began
+                    auth_readonly_downgrades_total.inc()
                 raise SessionReadOnly(struck.readonly_until)
             raise StepUpCodeInvalid(FAILURE_CAP - struck.step_up_failures)
         single_use = action_class in NO_GRACE_ACTION_CLASSES

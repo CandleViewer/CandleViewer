@@ -22,7 +22,7 @@ from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.step_up import READONLY_WINDOW, StepUpChallenge, StepUpService
 
 from .session_fakes import FakeSessionRepository
-from .test_step_up import PASSWORD, _Clock, _code, _setup
+from .test_step_up import PASSWORD, _Clock, _code, _sample, _setup
 
 #: The request a no-grace grant is bound to, and the grant a no-grace step-up left on the row.
 _BOUND = "a" * 64
@@ -185,6 +185,29 @@ async def test_step_up_of_a_session_downgraded_during_its_check_opens_nothing(
     row = sessions.sessions["s1"]
     assert refused.value.until == clock.now + READONLY_WINDOW == row.readonly_until
     assert (row.step_up_elevations, row.step_up_failures) == ({}, 3)
+
+
+async def test_failed_step_up_of_a_session_downgraded_during_its_check_keeps_that_downgrade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three wrong step-ups land 30 s after a fourth began, while it is in its password check:
+    the downgrade they started stands as set, and is counted once, not again by the fourth."""
+    svc, clock, _seed, user, sessions = await _setup()
+    downgrades = _sample("auth_readonly_downgrades_total")
+
+    async def downgraded_later() -> None:
+        clock.now += timedelta(seconds=30)
+        await _three_strikes(svc, user)
+
+    _in_password_check(monkeypatch, svc, downgraded_later)
+
+    with pytest.raises(SessionReadOnly) as refused:
+        await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
+
+    row = sessions.sessions["s1"]
+    assert refused.value.until == clock.now + READONLY_WINDOW == row.readonly_until
+    assert (row.step_up_elevations, row.step_up_failures) == ({}, 3)
+    assert _sample("auth_readonly_downgrades_total") == downgrades + 1
 
 
 async def test_lifting_a_lapsed_downgrade_keeps_a_challenge_issued_since_its_read(

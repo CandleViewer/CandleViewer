@@ -368,7 +368,7 @@ async def test_unregistered_class_fails_closed_without_a_challenge() -> None:
 )
 async def test_challenge_not_issued_to_a_refused_caller() -> None:
     """Contract: a challenge goes only to a caller the operation would otherwise admit, so a
-    Manager without `users:write` gets `403 forbidden`, never a challenge (threat model U33)."""
+    Manager without `users:write` gets `403 forbidden`, never a challenge (threat model U34)."""
     w = await _world()
     manager = PrincipalSnapshot(
         user_id=w.sessions["tok"].user_id, roles=frozenset({"manager"}), permissions=frozenset()

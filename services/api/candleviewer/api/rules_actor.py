@@ -19,6 +19,8 @@ from typing import Any
 from fastapi import Request
 
 from candleviewer.api.step_up import (
+    SESSION_READ_ONLY_DETAIL,
+    SESSION_READ_ONLY_TITLE,
     STEP_UP_REQUIRED_DETAIL,
     STEP_UP_REQUIRED_TITLE,
     consume_bound_grant,
@@ -88,7 +90,8 @@ def _unanswerable(exc: SessionReadOnly | SessionRevoked) -> RuleError:
         return RuleError(
             403,
             "session_read_only",
-            "This session is read-only for 5 minutes after repeated step-up failures.",
+            SESSION_READ_ONLY_DETAIL,
+            title=SESSION_READ_ONLY_TITLE,
             readonly_until=until,
         )
     return RuleError(401, "unauthorized", "no verified session")
