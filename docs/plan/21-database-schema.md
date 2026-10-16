@@ -1196,7 +1196,7 @@ Every order we ever intend to place gets a row **before** the network call, with
 | `exchange_account_id` | uuid           | no   | —          | FK RESTRICT; denormalised for account-scoped queries              |
 | `parent_order_id`     | uuid           | yes  | NULL       | FK self — algo children (TWAP slices, scaled rungs, OCO siblings) |
 | `oco_group_ref`       | text           | yes  | NULL       | Emulated OCO pairing key (Bybit has no API OCO)                   |
-| `order_link_id`       | text           | no   | —          | **UNIQUE**; `cv-<env>-<leg8>-<intent>-<seq>` ≤ 36 chars           |
+| `order_link_id`       | text           | no   | —          | **UNIQUE**; `24-internal-schemas.md` §8.3 (adopted: `ext-` key)   |
 | `exchange_order_id`   | text           | yes  | NULL       | Bybit `orderId`; UNIQUE per account when present                  |
 | `symbol`              | symbol_code    | no   | —          |                                                                   |
 | `side`                | text           | no   | —          | Buy / Sell                                                        |
@@ -1277,7 +1277,9 @@ CREATE TABLE orders (
   CONSTRAINT ord_trigby    CHECK (trigger_by IS NULL OR trigger_by IN ('LastPrice','MarkPrice','IndexPrice')),
   CONSTRAINT ord_attempts  CHECK (submit_attempts BETWEEN 0 AND 10),
   CONSTRAINT ord_idem      CHECK (idempotency_state IN ('unsent','in_flight','acked','failed')),
-  CONSTRAINT ord_link_fmt  CHECK (order_link_id ~ '^cv-[a-z0-9_-]{1,33}$'),
+  CONSTRAINT ord_link_fmt  CHECK (
+    order_link_id ~ '^cv[ldtp]-[0-7][0-9A-Za-z]{21}-[0-9A-Za-z]{4}-[0-9A-Za-z]{2}(en|sl|tp|sc|fl|ac)$'
+    OR order_link_id ~ '^ext-[0-9a-f]{32}$'),
   CONSTRAINT ord_no_self   CHECK (parent_order_id IS DISTINCT FROM id)
 );
 CREATE UNIQUE INDEX ux_orders_link     ON orders (order_link_id);
@@ -1292,8 +1294,9 @@ CREATE INDEX ix_orders_inflight  ON orders (created_ts) WHERE idempotency_state 
 CREATE INDEX ix_orders_untracked ON orders (exchange_account_id) WHERE state = 'untracked';
 ```
 
-`order_link_id` construction (deterministic, ≤ 36 chars, Bybit-safe charset):
-`cv-<env1><leg8>-<intent3>-<nn>` — e.g. `cv-l7f3a91c2-ent-00`, `cv-l7f3a91c2-stp-00`. Regenerating the same leg+intent+sequence yields the same id, so a retry after an ambiguous timeout is a no-op at the exchange.
+`order_link_id` construction is owned by `24-internal-schemas.md` §8.3. The id is generated once, stored here before the first send and reused unchanged on every retry, so a retry after an ambiguous timeout is a no-op at the exchange. `ord_link_fmt` admits exactly the two shapes that section defines, both 36 chars: our own id and the `ext-` key an adopted order gets in place of a foreign or empty `orderLinkId`. It has no `state` term, because `state` changes and the id never does.
+
+**Adopted rows.** Reconciliation inserts an exchange order that no row holds (`24-internal-schemas.md` §8.5 step 3c) with `state = 'untracked'` and the id the adapter normalised (`24-internal-schemas.md` §14.2 rule 11) as `order_link_id`: our own id when Bybit reports one (an order of ours whose row was lost, for example by a restore, this document's §8.3), otherwise the `ext-` key of its Bybit `orderId`. So the column stays NOT NULL and unique over all rows, and a foreign or empty `orderLinkId` is never stored in it; it stays only in the `payload` (the raw exchange message) of the adoption's `order_events` row. An `ext-` key marks such a row for its whole life: the id never changes (`24-internal-schemas.md` §8.3 rules 1 and 4), so the row keeps it, and still passes `ord_link_fmt`, through `untracked → accepted | cancelled` (§3.3.1) and through adoption under management (E45-S01), even when that binds it to a trade group. Adoption never inserts a second row for a Bybit order that `ux_orders_exch_id` already holds.
 
 #### 3.3.5 `order_events` — append-only audit of the order lifecycle
 
@@ -1335,7 +1338,7 @@ CREATE TABLE executions (
   exchange_account_id uuid NOT NULL REFERENCES exchange_accounts(id) ON DELETE RESTRICT,
   trade_group_leg_id  uuid REFERENCES trade_group_legs(id) ON DELETE SET NULL,
   exec_id             text NOT NULL,               -- Bybit execId
-  order_link_id       text,
+  order_link_id       text,                        -- = its order's order_link_id, normalised per 24-internal-schemas.md §14.2 rule 11
   symbol              symbol_code NOT NULL,
   side                text NOT NULL,
   exec_qty            numeric(38,18) NOT NULL,
