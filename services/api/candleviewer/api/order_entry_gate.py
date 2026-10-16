@@ -7,20 +7,26 @@ the problem it gives back. Obligations for every submit route (the E29 wiring):
 
 1. **Order of operations.** Authenticate, then resolve the target account within the caller's
    scope (`404 not_found` when it is out of scope, so account health never leaks across scopes,
-   C-12.4), then call the gate, then the OMS. The maintenance check is global and may also run
-   before the account is resolved.
+   C-12.4), then call the gate, then the OMS. Maintenance is global, but `refusal(account_id)`
+   takes the resolved account, so the route resolves scope first. A trade-group submit consults
+   the gate once per leg's account.
 2. **Audit.** The refused submit attempt is audited write-ahead at the submit route, like an
    accepted one (C-2.9, #837 Q6); the gate itself writes no audit.
 3. **Second check.** The OMS intake re-checks the same composed gate synchronously, immediately
    before signing, so a state that changes between the route's check and the exchange call still
    refuses the order (C-2.21).
 
+**Scope.** The gate runs at the OMS submission choke point for every submission that opens or
+increases exposure, including emulated-algo children and rule and paper legs. Risk-increasing
+amends (quantity up, stop loosened, trigger re-armed) are gated the same way. Cancels, closes,
+quantity-reducing amends and stop-tightening amends never are (C-2.6), so they keep working while
+order entry is paused. The gate never inspects the order: the caller classifies the operation.
+
 A refusal is the existing `403 trading_disabled` problem plus a `reason` extension member from
 the closed `REFUSAL_REASONS` set. Each refusal is logged (`order_entry_refused`, with `reason`
-and `account_id`, never `detail`) and counted in `cv_order_entry_refusals_total{reason}`. The
-gate is synchronous and never flag-gated (C-2.21, C-4.14), and it belongs on submit routes only:
-never on cancel, flatten or a stop-loss amend, which keep working while order entry is paused
-(C-2.6). A check that raises propagates and the route answers a redacted 500; it never admits.
+and `account_id`, never `detail`) and counted in `cv_order_entry_refusals_total{reason}`; an
+admitted order is neither. The gate is synchronous and never flag-gated (C-2.21, C-4.14). A check
+that raises propagates and the route answers a redacted 500; it never admits.
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ from uuid import UUID
 import structlog
 from fastapi.responses import JSONResponse
 
-from candleviewer.admin.flags.metrics import order_entry_refusals_total
+from candleviewer.admin.flags import order_entry_refusals_total
 from candleviewer.domain.order_entry import (
     REFUSAL_REASONS,
     OrderEntryCheck,

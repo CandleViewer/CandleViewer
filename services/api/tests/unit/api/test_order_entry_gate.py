@@ -1,7 +1,8 @@
 """#837 Q5: the shared synchronous order-entry gate. A frozen composed gate puts the maintenance
 check first and never runs dry; every call names the account; the first refusal wins; a refusal
-uses the closed reason set and renders as the 403 `trading_disabled` problem with its `reason`;
-nothing fails open (no maintenance check, a non-check, a missing account id, a raising check)."""
+uses the closed reason set and renders as the 403 `trading_disabled` problem with its `reason`,
+logged and counted only when it refuses; nothing fails open (no maintenance check, a non-check,
+a missing or mistyped account id, a raising check)."""
 
 from __future__ import annotations
 
@@ -12,8 +13,7 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.admin.flags import MaintenanceGate
-from candleviewer.admin.flags.metrics import order_entry_refusals_total
+from candleviewer.admin.flags import MaintenanceGate, order_entry_refusals_total
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.order_entry_gate import (
     REFUSAL_REASONS,
@@ -55,6 +55,16 @@ def _body(gate: OrderEntryGate) -> dict[str, object]:
     assert response.media_type == "application/problem+json"
     body: dict[str, object] = json.loads(bytes(response.body))
     return body
+
+
+def _refusal_counts() -> dict[str, float]:
+    """Every series of the refusal counter now, by reason, whichever reason created it."""
+    return {
+        sample.labels["reason"]: sample.value
+        for family in order_entry_refusals_total.collect()
+        for sample in family.samples
+        if sample.name.endswith("_total")
+    }
 
 
 def test_the_reason_set_is_closed() -> None:
@@ -106,7 +116,12 @@ def test_a_gate_is_frozen() -> None:
 
 def test_a_gate_cannot_be_built_without_its_maintenance_check() -> None:
     with pytest.raises(ValueError, match="maintenance check"):
-        OrderEntryGate()
+        OrderEntryGate(None)  # type: ignore[arg-type]  # the runtime guard for an untyped caller
+
+
+def test_the_maintenance_check_is_a_required_argument() -> None:
+    with pytest.raises(TypeError, match="maintenance"):
+        OrderEntryGate()  # type: ignore[call-arg]  # mypy rejects the call too, so this is pinned
 
 
 @pytest.mark.parametrize("bad", [{1, 2}, (c for c in [_Check()]), None])
@@ -146,9 +161,10 @@ def test_every_check_gets_the_account_id_through_both_entry_points() -> None:
     assert first.seen == second.seen == [_ACCOUNT, _ACCOUNT]
 
 
-def test_the_account_id_is_required() -> None:
+@pytest.mark.parametrize("bad", [None, str(_ACCOUNT), _ACCOUNT.int])
+def test_the_account_id_is_required(bad: object) -> None:
     with pytest.raises(TypeError, match="target account id"):
-        OrderEntryGate(_maintenance(False)).refusal(None)  # type: ignore[arg-type]  # the guard
+        OrderEntryGate(_maintenance(False)).refusal(bad)  # type: ignore[arg-type]  # the guard
 
 
 def test_a_raising_check_propagates_and_never_admits() -> None:
@@ -189,6 +205,15 @@ def test_a_refusal_is_logged_and_counted_without_its_detail() -> None:
         "info",
     )
     assert "detail" not in event
+
+
+def test_an_admitted_order_is_neither_logged_nor_counted() -> None:
+    gate = OrderEntryGate(_maintenance(False), _Check())
+    before = _refusal_counts()
+    with capture_logs() as logs:
+        assert order_entry_refusal(gate, _ACCOUNT) is None
+    assert "order_entry_refused" not in [event["event"] for event in logs]
+    assert _refusal_counts() == before
 
 
 @pytest.mark.parametrize("engaged", [True, False])

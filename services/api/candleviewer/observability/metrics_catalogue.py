@@ -2064,6 +2064,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=256,
         exported=True,
     ),
+    # The order-entry gate (#837 Q5, E42-T03) is never flag-gated (C-4.14), so it has its own row in
+    # 20-architecture.md section 12.1; it is served by the same exporter.
     _s(
         "cv_order_entry_refusals_total",
         "counter",
