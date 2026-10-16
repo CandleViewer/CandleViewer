@@ -5,7 +5,8 @@ scenarios need: §9.2 reconnect with full jitter from a seeded RNG (never after 
 §9.3 resubscription in priority order (private topics first), §4.3/§9.2 refresh over REST before
 reconnecting once the token is within 60 s of expiry or after a `4401`, §9.1 `pong`. It records
 every frame, close code and §7.1 sequence gap (a `d` whose `s` is not the last `s` + 1 on that
-channel and connection, with no `snap` in between). Each test-side wait is bounded.
+channel and connection, with no `snap` in between). Each test-side wait is bounded. It models
+§16.1 C12: order entry is off after a `shutdown_notice` or an engaged kill switch (`auth_ok` too).
 """
 
 from __future__ import annotations
@@ -63,6 +64,8 @@ class Client:
         self.must_refresh = False  # set by a `4401`, cleared by a successful refresh (§9.2)
         self.sessions = 0
         self.frames: list[dict[str, Any]] = []
+        self.rx_at: list[float] = []  # loop time each frame arrived, aligned with `frames`
+        self.order_entry = True  # the C12 state a UI would show; every change is in `log`
         self.gaps: list[str] = []
         self.closes: list[int] = []
         self.denied: dict[str, str] = {}
@@ -138,6 +141,7 @@ class Client:
         while True:
             frame: dict[str, Any] = json.loads(await ws.recv(decode=True))  # text, <= max_size
             self.frames.append(frame)
+            self.rx_at.append(asyncio.get_running_loop().time())
             reply = self._on(frame)
             if reply is not None:
                 await ws.send(json.dumps(reply))
@@ -152,6 +156,7 @@ class Client:
             self.sessions += 1
             self.expires_ms = p["token_expires_at_ms"]
             self._note("auth_ok", self.sessions)
+            self._orders(not p["kill_switch"]["engaged"])
             return {"t": "sub", "id": "s", "p": {"topics": self.topics}}
         if t == "ping":
             return {"t": "pong", "id": f.get("id"), "p": {}}
@@ -165,7 +170,27 @@ class Client:
             elif ch not in self.seq or f["s"] != self.seq[ch] + 1:
                 self.gaps.append(f"{ch}: s={f['s']} after {self.seq.get(ch)}")
             self.seq[ch] = f["s"]
+            if t == "d" and ch == "system":  # C12: order entry follows these two kinds
+                if p["kind"] == "shutdown_notice":
+                    self._orders(False)
+                elif p["kind"] == "kill_switch":
+                    self._orders(not p["kill_switch"]["engaged"])
         return None
+
+    def _orders(self, enabled: bool) -> None:
+        if enabled != self.order_entry:
+            self.order_entry = enabled
+            self._note("order_entry", enabled)
+
+    @property
+    def synced(self) -> bool:
+        """Every topic held is snapshotted on the current connection."""
+        return self.snapped == {e["ch"] for e in self.topics}
+
+    def system(self, kind: str) -> list[int]:
+        """Indices in `frames` of the `system` frames of this `kind` (§15.9)."""
+        sys = ((i, f) for i, f in enumerate(self.frames) if f["t"] == "d" and f["ch"] == "system")
+        return [i for i, f in sys if f["p"]["kind"] == kind]
 
     async def until(self, pred: Callable[[], bool], what: str) -> None:
         with contextlib.suppress(TimeoutError):
@@ -188,3 +213,9 @@ class Client:
         if self.task is not None:
             self.task.cancel()
             await asyncio.gather(self.task, return_exceptions=True)
+
+
+async def each(clients: list[Client], pred: Callable[[Client], bool], what: str) -> None:
+    """Wait (bounded, per client) until `pred` holds for every client."""
+    for c in clients:
+        await c.until(functools.partial(pred, c), what)

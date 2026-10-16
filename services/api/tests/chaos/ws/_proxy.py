@@ -8,7 +8,6 @@ step and connection, so a scenario can prove its fault really fired.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import itertools
 from enum import StrEnum
 
@@ -26,6 +25,7 @@ class Fault(StrEnum):
 class Proxy:
     def __init__(self, upstream_port: int) -> None:
         self.upstream_port = upstream_port
+        self.port = 0  # the port clients dial, once started
         self.trace: list[tuple[str, int]] = []
         self.refusing = False
         self.flowing = asyncio.Event()
@@ -37,8 +37,8 @@ class Proxy:
 
     async def start(self) -> int:
         self._server = await asyncio.start_server(self._accept, HOST, 0)
-        port: int = self._server.sockets[0].getsockname()[1]
-        return port
+        self.port = int(self._server.sockets[0].getsockname()[1])
+        return self.port
 
     async def stop(self) -> None:
         self.inject(Fault.DROP)
@@ -74,7 +74,12 @@ class Proxy:
             self.trace.append(("refused", n))
             writer.transport.abort()
             return
-        up_reader, up_writer = await asyncio.open_connection(HOST, self.upstream_port)
+        try:
+            up_reader, up_writer = await asyncio.open_connection(HOST, self.upstream_port)
+        except OSError:  # no server behind the proxy (a restart): reset the client at once
+            self.trace.append(("down", n))
+            writer.transport.abort()
+            return
         self.trace.append(("open", n))
         self._links[n] = (writer, up_writer)
         try:  # each leg ends at its source's EOF and forwards it (half-close), so closes are clean
@@ -87,11 +92,13 @@ class Proxy:
     async def _pipe(
         self, src: asyncio.StreamReader, dst: asyncio.StreamWriter, down: bool = False
     ) -> None:
-        with contextlib.suppress(OSError):
+        try:
             while True:
                 if down:
                     await self.flowing.wait()  # PAUSE: stop reading the server's bytes
                 data = await src.read(65536)
+                if down:
+                    await self.flowing.wait()  # a PAUSE that began during the read holds it too
                 if down and self.held is not None:
                     self.held.append((dst, data))
                 elif data:
@@ -101,3 +108,5 @@ class Proxy:
                     dst.write_eof()
                 if not data:
                     return
+        except OSError:  # a reset on one leg is a reset on the other, as across a real hop
+            dst.transport.abort()
