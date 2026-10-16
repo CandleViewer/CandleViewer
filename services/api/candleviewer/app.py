@@ -68,6 +68,7 @@ from candleviewer.api.deny_by_default import (
     declared_operations,
     make_deny_undeclared_dependency,
 )
+from candleviewer.api.drawings import make_drawings_router
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.invites import make_invites_router
@@ -203,6 +204,7 @@ from candleviewer.storage.repositories.alert_firing_sqlalchemy import SqlAlchemy
 from candleviewer.storage.repositories.alerts_sqlalchemy import SqlAlchemyAlertRepository
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
+from candleviewer.storage.repositories.drawings_sqlalchemy import SqlAlchemyDrawingRepository
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.instruments_sqlalchemy import (
     SqlAlchemyInstrumentsRepository,
@@ -1368,6 +1370,21 @@ def create_app(
             _alert_evaluator_factory(ctx, _alert_pg, metrics_facade),
             _alert_dispatcher(_alert_pg, metrics_facade, resolved.alerts_webhook_enabled),
         )
+    # E14-T01: owner-scoped /drawings; callers from the session (`audit_resolver`, as for
+    # /admin/audit; None without an identity store -> 401), RBAC via `auth.scopes.enforce`.
+    # Postgres on the real backend only: the fake backend answers 503 without any I/O.
+    app.state.drawings_repository = (
+        SqlAlchemyDrawingRepository(
+            SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "drawings")
+        )
+        if resolved.storage_backend == "real"
+        else None
+    )
+    app.include_router(
+        make_drawings_router(
+            lambda: app.state.drawings_repository, audit_resolver, _LazyAuditEmitter(ctx.audit)
+        )
+    )
     # E08-S05: maintained L2 book snapshot (503 while resyncing, never a patched book).
     app.include_router(
         make_orderbook_router(lambda: ctx.ingestion.books, principal_resolver=audit_resolver)
