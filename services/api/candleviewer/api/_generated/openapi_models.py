@@ -372,6 +372,35 @@ class AccountAccessGrant(AccountAccessGrantInput):
     granted_by: UUID | None = None
 
 
+class AccountHealth(BaseModel):
+    state: Literal["healthy", "degraded", "down"]
+    reason: Annotated[
+        Literal["ws_heartbeat", "rest_only", "ws_silent", "no_success", "never_connected"],
+        Field(
+            description="Closed set of machine codes the client renders as text, never exchange-supplied text: `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (no REST success yet either), `no_success` (nothing for the 30 s down window), `never_connected`.\n"
+        ),
+    ]
+    heartbeat_age_ms: Annotated[
+        int | None,
+        Field(
+            description="Milliseconds since the last authenticated private-WS heartbeat; `null` before the first.",
+            ge=0,
+        ),
+    ]
+    rest_only: Annotated[
+        bool,
+        Field(
+            description="True while `degraded`; rule actions that need sub-second reaction are flagged."
+        ),
+    ]
+    changed_at: Annotated[
+        AwareDatetime,
+        Field(
+            description="When `state` last changed; a new value marks a discrete transition to announce."
+        ),
+    ]
+
+
 class WalletBalance(BaseModel):
     is_paper: Annotated[
         bool | None,
@@ -474,6 +503,18 @@ class ApiKey(BaseModel):
     expires_at: AwareDatetime | None = None
     created_at: AwareDatetime | None = None
     last_verified_at: AwareDatetime | None = None
+    rotation_due_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="`created_at` plus the deployment's key-rotation policy (default 90 days), never the exchange-reported `expires_at`; `null` unless the key is `active`.\n"
+        ),
+    ] = None
+    rotation_state: Annotated[
+        Literal["ok", "warn", "overdue"] | None,
+        Field(
+            description="`warn` inside the warning window (default 14 days), `overdue` past `rotation_due_at`. Age alone never disables a key. `null` unless the key is `active`.\n"
+        ),
+    ] = None
 
 
 class CreateApiKeyRequest(BaseModel):
@@ -5498,6 +5539,15 @@ class ExchangeAccount(BaseModel):
     active_profile_id: UUID | None = None
     balance: WalletBalance | None = None
     balance_stale: bool | None = None
+    balance_stale_since: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="Last refresh plus the 10 s threshold while `balance_stale` is true, else `null`."
+        ),
+    ] = None
+    health: Annotated[
+        AccountHealth | None, Field(description="`null` until the account is monitored.")
+    ] = None
     enabled: bool | None = True
     created_at: AwareDatetime | None = None
     updated_at: AwareDatetime | None = None
