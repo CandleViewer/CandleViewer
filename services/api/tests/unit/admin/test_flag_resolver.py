@@ -15,6 +15,7 @@ from candleviewer.admin.flags import (
     FlagSpec,
     FlagValue,
     StoredFlag,
+    Visibility,
     default_registry,
     resolve,
     rollout_bucket,
@@ -22,11 +23,10 @@ from candleviewer.admin.flags import (
 
 _U1 = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001")
 _U2 = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002")
-_BOOL = FlagSpec("ui.panel", FlagKind.BOOLEAN, "d", Category.UI_SURFACE, False)
-_PCT = FlagSpec("ui.rollout", FlagKind.PERCENTAGE, "d", Category.FEATURE_ROLLOUT, 0)
-_VAR = FlagSpec(
-    "ui.renderer", FlagKind.VARIANT, "d", Category.FEATURE_ROLLOUT, "a", variants=("a", "b", "c")
-)
+_ALL, _ROLL = Visibility.ALL_ROLES, Category.FEATURE_ROLLOUT
+_BOOL = FlagSpec("ui.panel", FlagKind.BOOLEAN, "d", Category.UI_SURFACE, False, _ALL)
+_PCT = FlagSpec("ui.rollout", FlagKind.PERCENTAGE, "d", _ROLL, 0, _ALL)
+_VAR = FlagSpec("ui.renderer", FlagKind.VARIANT, "d", _ROLL, "a", _ALL, variants=("a", "b", "c"))
 _OWNER, _MANAGER = frozenset({"owner"}), frozenset({"manager"})
 
 

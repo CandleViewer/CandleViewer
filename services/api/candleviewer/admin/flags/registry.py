@@ -9,7 +9,8 @@ reserve and demo/live isolation) are in `DENIED`, and no spec may declare one:
 `FlagSpec` refuses such a definition when constructed (so its module fails at import), and
 `FlagRegistry` re-checks every spec at startup, so the process refuses to boot; the error names
 the flag and the denied category. `restrictive` is the value while the store cannot be read
-(fail closed): engaged for the order-entry kill switches, off for live trading.
+(fail closed): engaged for the order-entry kill switches, off for live trading. Every definition
+declares its `visibility`, which has no default (`21-database-schema.md` 10.7 lists each flag's).
 """
 
 from __future__ import annotations
@@ -67,12 +68,12 @@ class FlagKind(enum.StrEnum):
     VARIANT = "variant"
 
 
-class Audience(enum.StrEnum):
-    """Who may learn a flag's key and value (`GET`, `system` push): `owner` keys never reach a
-    manager or viewer session."""
+class Visibility(enum.StrEnum):
+    """Who may learn a flag's key and value (`GET`, `system` push): an `owner_only` key never
+    reaches a manager or viewer session."""
 
-    OWNER = "owner"
-    ALL = "all"
+    ALL_ROLES = "all_roles"
+    OWNER_ONLY = "owner_only"
 
 
 class UnsafeFlagDefinitionError(Exception):
@@ -86,7 +87,7 @@ class FlagSpec:
     description: str
     gates: Category
     default: FlagValue
-    audience: Audience = Audience.ALL
+    visibility: Visibility
     is_killswitch: bool = False
     #: Enabling it needs `reason` and `evidence_url` (`trading.live_enabled`, E44-T04 binds it).
     requires_evidence: bool = False
@@ -124,6 +125,8 @@ def check_spec(spec: FlagSpec) -> None:
         raise UnsafeFlagDefinitionError(f"feature flag key {spec.key!r} is malformed")
     if not spec.gates:
         raise UnsafeFlagDefinitionError(f"feature flag {spec.key!r} declares no gate category")
+    if not isinstance(spec.visibility, Visibility):
+        raise UnsafeFlagDefinitionError(f"feature flag {spec.key!r} declares no visibility")
     for value in (spec.default, spec.fail_closed_value):
         if not value_matches(spec, value):
             raise UnsafeFlagDefinitionError(
@@ -172,7 +175,7 @@ class FlagRegistry(Mapping[str, FlagSpec]):
                     "key": s.key,
                     "kind": s.kind.value,
                     "gates": _members(s.gates),
-                    "audience": s.audience.value,
+                    "visibility": s.visibility.value,
                     "is_killswitch": s.is_killswitch,
                 }
                 for s in self._specs.values()

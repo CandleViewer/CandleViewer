@@ -12,13 +12,13 @@ from candleviewer.admin.flags.catalogue import (
 )
 from candleviewer.admin.flags.registry import (
     DENIED,
-    Audience,
     Category,
     FlagKind,
     FlagRegistry,
     FlagSpec,
     FlagValue,
     UnsafeFlagDefinitionError,
+    Visibility,
     value_matches,
 )
 from candleviewer.admin.flags.resolver import StoredFlag, resolve, rollout_bucket
@@ -29,7 +29,6 @@ __all__ = [
     "LIVE_ENABLED",
     "MAINTENANCE_KEEP_RECORDER",
     "MAINTENANCE_MODE",
-    "Audience",
     "Category",
     "FlagKind",
     "FlagRegistry",
@@ -37,6 +36,7 @@ __all__ = [
     "FlagValue",
     "StoredFlag",
     "UnsafeFlagDefinitionError",
+    "Visibility",
     "default_registry",
     "resolve",
     "rollout_bucket",
