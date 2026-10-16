@@ -224,3 +224,45 @@ _NEVER_GATED = (
 @pytest.mark.parametrize("module", [order_entry])
 def test_the_scope_never_gates_attaching_a_missing_native_sl(module: ModuleType) -> None:
     assert _NEVER_GATED in " ".join((module.__doc__ or "").split())
+
+
+class _Subclass(OrderEntryRefusal):  # type: ignore[misc]  # @final: mypy refuses it, so does the gate
+    pass
+
+
+class _LookAlikeMaintenance(_Maintenance):
+    def __init__(self, result: object) -> None:
+        super().__init__(True)
+        self._result = result
+
+    def refusal(self, account_id: UUID) -> OrderEntryRefusal | None:
+        return self._result  # type: ignore[return-value]  # a look-alike: the guard's subject
+
+
+def _same_name() -> object:
+    class OrderEntryRefusal:  # the kernel's class name, defined in another module
+        reason, detail = "maintenance", "Order entry is paused."
+
+    return OrderEntryRefusal()
+
+
+_KERNEL, _HERE = "candleviewer.domain.order_entry.OrderEntryRefusal", __name__
+
+
+@pytest.mark.parametrize(
+    ("in_maintenance_slot", "result", "returned"),
+    [
+        (False, _same_name(), f"{_HERE}._same_name.<locals>.OrderEntryRefusal"),
+        (False, _Subclass("maintenance", "Order entry is paused."), f"{_HERE}._Subclass"),
+        (True, SimpleNamespace(reason="maintenance", detail="x"), "types.SimpleNamespace"),
+    ],
+)
+def test_only_the_kernels_exact_refusal_type_is_relayed(
+    in_maintenance_slot: bool, result: object, returned: str
+) -> None:
+    maintenance = _LookAlikeMaintenance(result) if in_maintenance_slot else _maintenance(False)
+    accounts = () if in_maintenance_slot else (_Check(result),)  # type: ignore[arg-type]
+    check = "_LookAlikeMaintenance" if in_maintenance_slot else "_Check"
+    with pytest.raises(TypeError) as exc:
+        OrderEntryGate(maintenance, *accounts).refusal(_ACCOUNT)
+    assert str(exc.value) == f"order-entry check {_HERE}.{check} returned {returned}, not {_KERNEL}"
