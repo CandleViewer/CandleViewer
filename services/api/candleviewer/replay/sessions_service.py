@@ -9,9 +9,13 @@ settled chart does not handle is refused with `can()` before sending (CV-C06) as
 `ReplaySessionIllegalUpdateError` (HTTP 409). A send that still races an invoke completion and is
 held by the chart (`onUnhandled: "defer"`) is refused and counted as well (`_send_replay`).
 
-Row mirror (24 §13.7): `replay_sessions.state` takes every chart state, written from the settled
-chart before a control call returns. The bindings publish plain values through a per-interpreter
-hook; the service audits `error` from it.
+Row mirror (24 §13.7): `replay_sessions.state` takes every chart state. B12 declares entry actions
+only on `playing`, so the row follows the interpreter's state-entry notification (`subscribe`):
+written before a control call returns, and by one tracked mirror task for invoke completions that
+arrive later. The bindings publish plain values through a per-interpreter hook; the service audits
+`error` from it. Idle reclaim and client destroy both send `DESTROY` (#624 decision): `destroyed` is
+the only final state, so the paper account and source handles are released exactly once
+(INV-B12-e) and a second destroy is a no-op.
 
 M12 may not import `recorder`, `audit` or `paper` (CONSTITUTION §3): coverage, audit, the paper
 account grant and the session handles are ports the composition root injects.
@@ -32,13 +36,23 @@ from typing import Any, Final, Protocol, cast
 import structlog
 
 import candleviewer.statechart.bindings.b12_replay as b12
+from candleviewer.observability.context import spawn
 from candleviewer.replay.errors import ReplayError
 from candleviewer.statechart import build
 from candleviewer.statechart.config import Lane
 from candleviewer.statechart.factory import default_clock
+from candleviewer.statechart.factory import restore as restore_chart
 from candleviewer.statechart.gateway import Gateway, receipt_is_conclusive
+from candleviewer.statechart.persistence import (
+    MachineKey,
+    Persister,
+    Restorer,
+    RestoreRefusedError,
+    SealedSnapshot,
+)
 from candleviewer.storage.repositories.replay_sessions import (
     LIVE_STATES,
+    MAX_PAGE_LIMIT,
     ReplaySessionCreate,
     ReplaySessionIllegalUpdateError,
     ReplaySessionNotFoundError,
@@ -57,6 +71,8 @@ _SETTLE_YIELDS: Final = 64
 _IO_TIMEOUT_S: Final = 10.0
 #: Actor of chart-observed rows (`replay.session.error`): the chart, not a user or the reclaimer.
 _CHART_ACTOR: Final = "system:replay-chart"
+#: Actor of `replay.session.destroyed{reason=idle_reclaim}`.
+_RECLAIM_ACTOR: Final = "system:replay-reclaimer"
 _SYMBOL: Final = re.compile(r"[A-Z0-9]{4,20}")
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 #: Events a caller may name and the payload keys each takes. `DESTROY` has its own entry point;
@@ -67,6 +83,7 @@ _EVENTS: Final[dict[str, frozenset[str]]] = {
     "RANGE_END": frozenset(), "CONSUMER_SLOW": frozenset(), "SOURCE_ERROR": frozenset({"error"}),
 }  # fmt: skip
 _SOURCE_EVENTS: Final = frozenset({"RANGE_END", "CONSUMER_SLOW", "SOURCE_ERROR"})
+_REASONS: Final = frozenset({"client", "idle_reclaim"})
 #: States with an invoked service (`seek`, `step`) whose completion arrives later (B12.4).
 _INVOKING: Final = frozenset({"buffering", "stepping"})
 
@@ -135,9 +152,20 @@ class SessionHandles(Protocol):
     async def acquire(self, row: ReplaySessionRow) -> Sequence[Release]: ...
 
 
+class NoHandles:
+    """Until E36: a session holds nothing to release."""
+
+    async def acquire(self, row: ReplaySessionRow) -> Sequence[Release]:
+        return ()
+
+
 #: `(user_id, paper_account_id) -> bool`: a `demo` account the user is granted (C-2.11, C-12.5).
 #: E26-T05/E36 wire it; until then the service refuses every paper account (fail closed).
 PaperAccountGate = Callable[[str, str], Awaitable[bool]]
+
+
+class SnapshotSource(Protocol):
+    async def load(self, key: MachineKey) -> SealedSnapshot | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +175,8 @@ class ReplayLimits:
     idle_ttl: timedelta
     max_sessions_per_user: int
     max_window: timedelta
+    reclaim_interval_s: float = 60.0
+    reclaim_batch: int = 50
 
 
 def to_us(ts: datetime) -> int:
@@ -208,6 +238,8 @@ class _Live:
     touched: datetime
     releases: tuple[Release, ...] = ()
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    unsubscribe: Callable[[], None] | None = None
+    done: bool = False
 
     @property
     def key(self) -> str:
@@ -222,21 +254,31 @@ class ReplaySessionService:
         coverage: CoverageReader,
         audit: SessionAudit,
         limits: ReplayLimits,
-        handles: SessionHandles,
+        handles: SessionHandles | None = None,
         paper_gate: PaperAccountGate | None = None,
         gateway: Gateway | None = None,
+        env: str = "demo",
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        snapshots: SnapshotSource | None = None,
+        restorer: Restorer | None = None,
+        persister: Persister | None = None,
     ) -> None:
         self._repo, self._coverage, self._audit, self._limits = repo, coverage, audit, limits
-        self._handles = handles
-        self._paper_gate, self._clock = paper_gate, clock
+        self._handles: SessionHandles = handles or NoHandles()
+        self._paper_gate, self._env, self._clock, self._sleep = paper_gate, env, clock, sleep
         self._gateway = gateway or Gateway()
+        self._snapshots, self._restorer, self._persister = snapshots, restorer, persister
         self._live: dict[str, _Live] = {}
+        #: Sessions whose chart entered a state since the last mirror (<= one entry per session).
+        self._dirty: dict[str, None] = {}
+        self._wake = asyncio.Event()
         self._revive_lock = asyncio.Lock()
         #: One lock per user serialises that user's quota decisions (create, entering a
         #: buffer-holding state). Lock order: a session lock may be held when one is taken,
         #: never the reverse. Bounded by the user base (the owner and a few managers).
         self._quota_locks: dict[str, asyncio.Lock] = {}
+        self._tasks: list[asyncio.Task[None]] = []
         self.refusals = _Refusals()
 
     def _quota_lock(self, uid: str) -> asyncio.Lock:
@@ -249,6 +291,73 @@ class ReplaySessionService:
                 return await pending
         except TimeoutError as exc:
             raise ReplayUnavailableError(f"{what} timed out") from exc
+
+    # --- lifecycle ---------------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """Revive every live (`ix_rps_live`) row, then start the mirror and the reclaimer.
+
+        US-RPL-009: a sealed snapshot is restored through `statechart.persistence`; without one
+        the chart is rebuilt from the row in `created`. Other rows hold no buffers and are
+        revived on their owner's next call."""
+        horizon = self._clock() + timedelta(days=1)
+        try:  # a database outage must not fail the boot: the sessions revive on next use
+            live_rows = await self._io(
+                "repository", self._repo.list_idle_since(horizon, MAX_PAGE_LIMIT)
+            )
+        except Exception as exc:
+            logger().error("replay_session_revive_failed", error=type(exc).__name__)
+            live_rows = []
+        for idle in live_rows:
+            try:
+                await self._owned(idle.user_id, idle.id)
+            except Exception as exc:
+                logger().error(
+                    "replay_session_revive_failed", session_id=idle.id, error=type(exc).__name__
+                )
+        if not self._tasks:
+            self._tasks = [
+                spawn(self._mirror_loop(), name="replay-session-mirror"),
+                spawn(self._reclaim_loop(), name="replay-session-reclaim"),
+            ]
+
+    async def stop(self) -> None:
+        """Cancel both tasks, then persist each chart (drain -> journal -> sealed snapshot ->
+        stop, CV-C65') when a persister is wired, else stop it. Handles stay with the session:
+        it survives the restart, and only `destroyed` releases them."""
+        tasks, self._tasks = self._tasks, []
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for live in list(self._live.values()):
+            await self._retire(live, persist=True)
+
+    async def _mirror_loop(self) -> None:
+        while True:
+            await self._wake.wait()
+            self._wake.clear()
+            while self._dirty:
+                sid = next(iter(self._dirty))
+                del self._dirty[sid]
+                live = self._live.get(sid)
+                if live is None:
+                    continue
+                try:
+                    async with live.lock:
+                        if self._live.get(sid) is live:
+                            await self._sync(live)
+                except Exception as exc:
+                    logger().error(
+                        "replay_session_mirror_failed", session_id=sid, error=type(exc).__name__
+                    )
+
+    async def _reclaim_loop(self) -> None:
+        while True:
+            await self._sleep(self._limits.reclaim_interval_s)
+            try:
+                await self.reclaim_idle(self._clock())
+            except Exception as exc:
+                logger().error("replay_session_reclaim_failed", error=type(exc).__name__)
 
     # --- create ------------------------------------------------------------------------------
 
@@ -314,6 +423,8 @@ class ReplaySessionService:
         if live is None:
             raise ReplaySessionIllegalUpdateError(_canon(session_id) or "", ReplayState.DESTROYED)
         async with live.lock:
+            if live.done:
+                raise ReplaySessionIllegalUpdateError(live.id, ReplayState.DESTROYED)
             await self._settle(live)  # a queued invoke completion lands before `can()` reads
             facts = b12.facts(live.interp.context)
             if event == "SEEK":
@@ -341,6 +452,58 @@ class ReplaySessionService:
                     await self._sync(live)  # the racing completion moved the chart: mirror it
                     raise
                 return await self._sync(live, control=event not in _SOURCE_EVENTS)
+
+    async def destroy(self, user_id: str, session_id: str, *, reason: str = "client") -> bool:
+        """Send `DESTROY`, audited write-ahead with `reason` (`client` | `idle_reclaim`).
+
+        B12.3 handles `DESTROY` only in created/paused/finished/error, so a `playing` session is
+        paused and a `buffering` one cancelled first (a `stepping` step is let finish; if it has
+        not, this refuses and the next sweep retries). The handles are released exactly once
+        and the interpreter retired. False when already destroyed (INV-B12-e)."""
+        if reason not in _REASONS:
+            raise ValueError("reason must be 'client' or 'idle_reclaim'")
+        live = await self._owned(user_id, session_id)
+        if live is None:
+            return False
+        async with live.lock:
+            if live.done:
+                return False
+            interp = live.interp
+            await self._settle(live)
+            if interp.can("PAUSE"):
+                await self._send_replay(live, "PAUSE")
+            if interp.can("CANCEL"):
+                await self._send_replay(live, "CANCEL")
+            if not interp.can("DESTROY"):
+                raise ReplaySessionIllegalUpdateError(live.id, ReplayState(leaf_of(interp)))
+            after = {"symbol": live.symbol, "state": "destroyed", "reason": reason}
+            actor = None if reason == "client" else _RECLAIM_ACTOR
+            await self._emit("replay.session.destroyed", live.id, live.user_id, after, actor=actor)
+            await self._send_replay(live, "DESTROY", reason=reason)
+            live.done = True
+            await self._release(live)
+            await self._sync(live)
+            await self._retire(live)
+        return True
+
+    async def reclaim_idle(self, now: datetime) -> int:
+        """Destroy (`idle_reclaim`) every session with no control call for `idle_ttl`: live rows
+        from `list_idle_since` (`ix_rps_live`) plus sessions this process holds in
+        created/finished/error, which that index leaves out. One bounded batch per call; a
+        session already destroyed is skipped, so a second pass is a no-op. Returns the count."""
+        cutoff = now - self._limits.idle_ttl
+        batch = self._limits.reclaim_batch
+        due = {r.id: r.user_id for r in await self._repo.list_idle_since(cutoff, batch)}
+        due.update({s.id: s.user_id for s in self._live.values() if s.touched < cutoff})
+        reclaimed = 0
+        for sid, uid in list(due.items())[:batch]:
+            try:
+                reclaimed += await self.destroy(uid, sid, reason="idle_reclaim")
+            except Exception as exc:  # e.g. a step still running: the next sweep retries
+                logger().warning(
+                    "replay_session_reclaim_skipped", session_id=sid, error=type(exc).__name__
+                )
+        return reclaimed
 
     def state_of(self, session_id: str) -> str | None:
         """The chart's current state for a session this process holds (supervision, tests)."""
@@ -371,7 +534,19 @@ class ReplaySessionService:
             return self._live.get(row.id) or await self._revive(row)
 
     async def _revive(self, row: ReplaySessionRow) -> _Live:
-        live = await self._adopt(row, await self._build(row))
+        key = MachineKey(MACHINE, row.id, self._env)
+        sealed = None
+        if self._snapshots is not None and self._restorer is not None:
+            sealed = await self._snapshots.load(key)
+        interp: Any = None
+        if sealed is not None and self._restorer is not None:
+            try:  # a refused envelope is quarantined and paged by the Restorer; rebuild instead
+                interp = (await restore_chart(self._restorer, key, sealed)).interpreter
+            except RestoreRefusedError:
+                interp = None
+        if interp is None:
+            interp = await self._build(row)
+        live = await self._adopt(row, interp)
         async with live.lock:
             await self._sync(live)
         return live
@@ -405,6 +580,7 @@ class ReplaySessionService:
 
         try:
             b12.attach_hook(interp, hook)
+            live.unsubscribe = interp.subscribe(lambda _interp: self._mark(row.id))
             self._gateway.register(
                 live.key, interp, kind="replay", lane=LANE, metrics=self.refusals
             )
@@ -414,6 +590,24 @@ class ReplaySessionService:
             raise
         self._live[row.id] = live
         return live
+
+    async def _retire(self, live: _Live, *, persist: bool = False) -> None:
+        self._live.pop(live.id, None)
+        self._dirty.pop(live.id, None)
+        if live.unsubscribe is not None:
+            live.unsubscribe()
+        self._gateway.unregister(live.key)
+        if persist and self._persister is not None and live.interp.is_running:
+            try:
+                await self._persister.persist(
+                    live.interp, key=MachineKey(MACHINE, live.id, self._env)
+                )
+                return
+            except Exception as exc:  # e.g. a faulted context (MUST-01): stop without a snapshot
+                logger().error(
+                    "replay_session_persist_failed", session_id=live.id, error=type(exc).__name__
+                )
+        await live.interp.stop()  # a `destroyed` chart has completed: this is the idle teardown
 
     async def _send_replay(self, live: _Live, event: str, /, **payload: object) -> None:
         """The one send path (`statechart.gateway`); literal call sites are checked against B12
@@ -437,7 +631,7 @@ class ReplaySessionService:
 
     async def _settle(self, live: _Live) -> None:
         """Bounded cooperative yields while an invoke (`seek`/`step`) hands off; a slower one is
-        mirrored on the session's next control call."""
+        mirrored by the mirror task when its completion enters a state."""
         for _ in range(_SETTLE_YIELDS):
             if not live.interp.pending_events and leaf_of(live.interp) not in _INVOKING:
                 return
@@ -523,6 +717,11 @@ class ReplaySessionService:
         if problems:
             raise ReplaySessionValidationError("; ".join(problems))
 
+    def _mark(self, session_id: str) -> None:
+        """State-entry notification (`subscribe`): on the chart's loop, cheap, never blocks."""
+        self._dirty[session_id] = None
+        self._wake.set()
+
     async def _on_fact(self, live: _Live, name: str, facts: Mapping[str, object]) -> None:
         """B12 hook, inside the step (takes no lock, sends nothing). `error`/`killed` are
         audited; an audit outage is logged, never raised: the chart must still reach `error`."""
@@ -534,6 +733,7 @@ class ReplaySessionService:
                 )
             except ReplayUnavailableError as exc:
                 logger().critical("replay_session_audit_failed", session_id=live.id, error=str(exc))
+        self._mark(live.id)
 
     async def _emit(
         self, action: str, sid: str, uid: str, after: dict[str, Any], *, actor: str | None

@@ -182,7 +182,10 @@ omit = [
   "candleviewer/oms/*",
   "candleviewer/paper/*",
   "candleviewer/recorder/service.py",  # policy/models/errors: E16-T02, counted
-  "candleviewer/replay/*",
+  # replay: service.py/sessions_service.py are E26-T01 (#624) and counted; these are scaffold.
+  "candleviewer/replay/__init__.py",
+  "candleviewer/replay/errors.py",
+  "candleviewer/replay/models.py",
   "candleviewer/risk/*",
   # candleviewer/rules/ir/* is implemented by E35-T01 and counted in the floor.
   "candleviewer/rules/errors.py",
