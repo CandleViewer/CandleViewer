@@ -118,6 +118,8 @@ class ParkingSleep:
         await wake
 
     def release(self) -> None:
+        while self._parked[0].done():  # a wait cut short (#2715: a TTL wait) is skipped
+            self._parked.pop(0)
         self._parked.pop(0).set_result(None)
 
 
@@ -390,6 +392,28 @@ async def test_failed_scheduled_refresh_of_a_loaded_catalogue_retries_soon() -> 
         assert sleep.delays[0] >= 43_200.0 and sleep.delays[1] <= RETRY_BACKOFF_MIN_S
         assert sleep.delays[2] >= 43_200.0  # back on the TTL
         assert sched.snapshot().stale_since_us is None  # type: ignore[union-attr]  # loaded
+    finally:
+        await sched.stop(grace_s=1.0)
+
+
+async def test_failed_on_demand_refresh_ends_the_ttl_wait_and_retries_soon() -> None:
+    """#2715 review: a failed on-demand refresh marks the catalogue stale (`catalogue_stale`)
+    while the schedule waits out the 12 h TTL; the wait ends and the schedule retries on the
+    #2599 backoff, so the degraded window is seconds to minutes, not up to the TTL."""
+    sleep = ParkingSleep()
+    sched, _, _, _ = make([[raw()], RuntimeError("blip"), [raw()]], sleep=sleep, max_retries=1)
+    await sched.start()
+    try:
+        await _settle()
+        assert len(sleep.delays) == 1 and sleep.delays[0] >= 43_200.0  # waiting out the TTL
+        assert await sched.ensure_symbol("NEWUSDT") is None  # the on-demand refresh fails
+        assert sched.snapshot().stale_since_us is not None  # type: ignore[union-attr]  # loaded
+        await _settle()
+        assert sleep.delays[1:] == [RETRY_BACKOFF_MIN_S / 2]  # the backoff, not the TTL
+        sleep.release()  # the retry succeeds
+        await _settle()
+        assert sched.snapshot().stale_since_us is None  # type: ignore[union-attr]  # loaded
+        assert len(sleep.delays) == 3 and sleep.delays[2] >= 43_200.0  # back on the TTL
     finally:
         await sched.stop(grace_s=1.0)
 

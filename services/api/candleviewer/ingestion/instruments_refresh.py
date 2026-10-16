@@ -26,7 +26,9 @@ Design notes tying back to the ticket's Gherkin:
   `instruments_refresh_total{result="error"}`, and logs a warning — the
   previous snapshot keeps serving. #2599: the next attempt follows
   `retry_backoff_s` (seconds, doubling to minutes), not the TTL, so a failed
-  cold start (nothing to serve) recovers without a restart.
+  cold start (nothing to serve) recovers without a restart. #2715: a refresh
+  that fails while the schedule waits out the TTL (an on-demand one) ends
+  that wait too, so `catalogue_stale` lasts minutes, not up to the TTL.
 - "Refresh does not stall readers": the fetch + parse + diff work all
   happens before the single atomic `cache.swap()` call; nothing here ever
   blocks a concurrent `cache.current()` read.
@@ -163,6 +165,8 @@ class InstrumentsRefreshScheduler:
         self._task: asyncio.Task[None] | None = None
         self._stopping = False
         self._refresh_lock = asyncio.Lock()
+        #: #2715: set by a failed refresh (the snapshot is marked stale), cleared by a swap.
+        self._failed = asyncio.Event()
         self._listeners: list[Callable[[], Awaitable[None]]] = []
 
     # -- lifecycle (M6 `ingestion` conventions, 20-architecture.md §3) ------
@@ -291,6 +295,7 @@ class InstrumentsRefreshScheduler:
         prior = snap.stale_since_us if snap is not None else None
         stale_since_us = prior if prior is not None else self._now_us()
         self.cache.mark_stale(stale_since_us=stale_since_us)
+        self._failed.set()
         try:
             await self._repository.mark_stale(stale_since_us=stale_since_us)
         except Exception:
@@ -345,6 +350,7 @@ class InstrumentsRefreshScheduler:
 
         await self._repository.upsert_snapshot([i.model_dump(mode="json") for i in parsed.values()])
         self.cache.swap(CatalogueSnapshot(by_symbol=parsed, fetched_at_us=fetched_at_us))
+        self._failed.clear()
         instruments_cache_age_seconds.set(0.0)
         instruments_catalogue_size.set(len(parsed))
         for listener in self._listeners:
@@ -356,22 +362,42 @@ class InstrumentsRefreshScheduler:
     async def _run_periodic(self, *, startup_ok: bool) -> None:
         """The refresh schedule: the TTL (+ up to 5 % jitter) after a successful refresh, and
         `retry_backoff_s` after a failed or abandoned one (#2599: a failed cold start used to
-        wait the TTL, serving nothing). `stop()` cancels it; the cancellation propagates."""
+        wait the TTL, serving nothing; #2715: so after a failure during the TTL wait, too).
+        `stop()` cancels it; the cancellation propagates."""
         ok, failures = startup_ok, 0
         while not self._stopping:
             if ok:
                 failures = 0
                 delay = self._ttl_seconds + self._ttl_seconds * 0.05 * self._random()
+                if not await self._ttl_wait(delay):
+                    ok = False  # an (on-demand) refresh failed meanwhile: retry soon
+                    continue
             else:
                 failures += 1
-                delay = retry_backoff_s(failures, self._random())
-            await self._sleep(delay)
+                await self._sleep(retry_backoff_s(failures, self._random()))
             if self._stopping:
                 return
             ok = await self._scheduled_refresh()
             current = self.cache.current()
             if current is not None:
                 instruments_cache_age_seconds.set(current.age_seconds(now_us=self._now_us()))
+
+    async def _ttl_wait(self, delay: float) -> bool:
+        """Sleep `delay`; `False` if a refresh fails first (#2715). Both waiters are owned
+        here: cancelled and awaited on the way out, on `stop()` too."""
+
+        async def ttl() -> None:
+            await self._sleep(delay)
+
+        sleeper = spawn(ttl(), name="instruments-refresh-ttl")
+        failure = spawn(self._failed.wait(), name="instruments-refresh-failure")
+        try:
+            done, _ = await asyncio.wait((sleeper, failure), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            sleeper.cancel()
+            failure.cancel()
+            await asyncio.gather(sleeper, failure, return_exceptions=True)
+        return sleeper in done
 
     async def _scheduled_refresh(self) -> bool:
         """One scheduled refresh; `True` if it loaded. A failure is already logged and counted
