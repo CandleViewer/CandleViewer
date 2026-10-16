@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi.openapi.utils import get_openapi
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
@@ -25,7 +26,6 @@ from candleviewer.api.contract_conformance import (
     load_contract_subset,
     under_raw_body_prefix,
 )
-from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.openapi_publish import (
     ContractPublishError,
     install_contract_openapi,
@@ -234,7 +234,9 @@ def test_the_document_is_built_and_published_once(monkeypatch: pytest.MonkeyPatc
 
 
 def test_a_regenerated_document_is_published_again() -> None:
-    """FastAPI owns the cache: once it is cleared, a route included since is published too."""
+    """FastAPI owns the cache: a route added after the first build changes its routes version,
+    so its own `openapi()` regenerates, with no cache cleared, and the new document is
+    published too. A wrapper that served `app.openapi_schema` itself kept the stale one."""
     app = _published()
     first = app.openapi()
 
@@ -242,7 +244,6 @@ def test_a_regenerated_document_is_published_again() -> None:
     async def batch(request: Request) -> Response:
         return Response(status_code=200)
 
-    app.openapi_schema = None
     second = app.openapi()
     assert second is not first
     batch_op = SUBSET["paths"]["/drawings/batch"]["post"]
@@ -250,15 +251,26 @@ def test_a_regenerated_document_is_published_again() -> None:
 
 
 def test_publishing_copies_every_merged_piece() -> None:
-    before = copy.deepcopy(SUBSET)
-    doc = _published().openapi()
+    contract = copy.deepcopy(SUBSET)  # this test's own copy: a failure must not leak to others
+    before = copy.deepcopy(contract)
+    doc = _published(contract).openapi()
     for method, path in PUBLISHED:
         doc["paths"][path][method].clear()
     doc["paths"]["/drawings/{drawingId}"]["parameters"].clear()
     for entries in doc["components"].values():
         for component in entries.values():
             component.clear()
-    assert before == SUBSET
+    assert before == contract
+
+
+def test_a_refused_document_is_left_unchanged() -> None:
+    """`ContractPublishError` comes before anything is replaced or merged."""
+    contract = _contract_with({"type": "object", "properties": {"id": {"type": "integer"}}})
+    doc = _app().openapi()
+    before = copy.deepcopy(doc)
+    with pytest.raises(ContractPublishError, match=r"components\.schemas\.Thing"):
+        publish_raw_body_operations(doc, contract)
+    assert doc == before
 
 
 def test_openapi_json_serves_the_published_operation() -> None:
@@ -267,13 +279,15 @@ def test_openapi_json_serves_the_published_operation() -> None:
     assert response.json()["paths"]["/drawings"]["post"] == SUBSET["paths"]["/drawings"]["post"]
 
 
-def test_the_app_publishes_only_what_it_serves_and_validates() -> None:
-    """The real app: every raw-body path in its document is served and carries the contract's
-    operation (on `main` no raw-body router is mounted yet, so none is published)."""
+def test_the_app_publishes_only_its_schema_routes_and_validates() -> None:
+    """The real app: the raw-body operations in its document are exactly the served routes
+    FastAPI puts in the schema (`include_in_schema=False` ones excluded), each carrying the
+    contract's operation (on `main` no raw-body router is mounted yet, so none is published)."""
     app = create_app(Settings(git_sha="test", version="0.0.0-test"))
     doc = app.openapi()
     assert_spec_is_valid(doc)
-    served = {(m.lower(), p) for m, p in served_operations(app) if under_raw_body_prefix(p)}
+    schema_paths = get_openapi(title=app.title, version=app.version, routes=app.routes)["paths"]
+    served = {(m, p) for p, item in schema_paths.items() if under_raw_body_prefix(p) for m in item}
     published = {
         (m, p)
         for p, item in doc["paths"].items()

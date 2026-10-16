@@ -41,7 +41,9 @@ def publish_raw_body_operations(
     a name with a merged contract component must be identical. Otherwise this raises
     `ContractPublishError` before changing anything: overwriting it would change what other
     operations document, and keeping it would publish the wrong schema. A dangling reference in
-    the contract raises `ValueError` (`component_closure`).
+    the contract raises `ValueError` (`component_closure`). If either document has no `paths`
+    object, `doc` comes back unchanged: fail-open (nothing published), and unreachable through
+    `create_app()`, whose generated document and packaged subset always have one.
     """
     paths, contract_paths = doc.get("paths"), contract.get("paths")
     if not isinstance(paths, dict) or not isinstance(contract_paths, Mapping):
@@ -89,7 +91,8 @@ def install_contract_openapi(app: FastAPI, contract: Mapping[str, object]) -> No
     FastAPI keeps owning the cache (`app.openapi_schema`): every call goes through FastAPI's
     own `openapi()`, a document it returns is published once (recognised by identity), and any
     exception clears the cache, so an unpublished or half-published document is never served
-    from it.
+    from it. One caller at a time is assumed: FastAPI's `/openapi.json` handler runs on the
+    event loop's thread, so the identity check is never raced.
     """
     generate = app.openapi
     published: dict[str, Any] | None = None
