@@ -8,8 +8,10 @@ otherwise the route returns the problem it gives back. Obligations for every sub
 1. **Order of operations.** Authenticate, check RBAC, then resolve the target account within the
    caller's scope (`404 not_found` when it is out of scope, so account health never leaks across
    scopes, C-12.4), then call the gate, then the OMS. Maintenance is global, but
-   `refusal(account_id)` takes the resolved account, so the route resolves scope first. A
-   trade-group submit consults the gate once per leg's account.
+   `refusal(account_id)` takes the resolved account, so the route resolves scope first. The B18
+   kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of
+   the gate, after the same steps. A trade-group submit consults the gate once per leg's account,
+   as each leg is sent: a refused leg is a failed leg under the group's `leg_failure_policy`.
 2. **Audit.** The refused submit attempt is audited write-ahead at the submit route, like an
    accepted one (C-2.9, #837 Q6); the gate itself writes no audit.
 3. **Second check.** The OMS intake re-checks the same composed gate synchronously, immediately
@@ -25,7 +27,10 @@ working while order entry is paused. Attaching a missing native SL, tightening a
 re-arming a protective trigger is never gated; "trigger re-armed" above means an
 exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated. A
 `placeOrder` with `reduce_only` is a submission and is gated; closing goes through the close
-routes. The gate never inspects the order: the caller classifies the operation.
+routes. A take-profit change is never a risk-increasing component, the SL component of a
+`trading-stop` write is never refused, and a protective stop is never sent as a gated
+`placeOrder`. The C-2.6 carve-out binds every synchronous refusal, not just the gate. The gate
+never inspects the order: the caller classifies the operation.
 
 A refusal is the existing `403 trading_disabled` problem plus a `reason` extension member from
 the closed `REFUSAL_REASONS` set. Each refusal is logged (`order_entry_refused`, with `reason`
@@ -63,7 +68,7 @@ __all__ = [
 ]
 
 #: The `x-error-codes` title of `trading_disabled` (`22-api-openapi.yaml`).
-_TITLE = "Kill-switch or maintenance mode engaged, or live trading not enabled for this deployment"
+_TITLE = "Order entry refused"
 
 
 def logger() -> structlog.stdlib.BoundLogger:
