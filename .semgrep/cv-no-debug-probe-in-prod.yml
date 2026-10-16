@@ -9,18 +9,24 @@ rules:
       perf-only routes (`/_perf/*`, the #2097 Argon2 parameters route) and clock-freezing
       seams must live in test-only modules (`tests/**`, `conftest.py`) or be registered
       behind the non-production guard (`if settings.environment is not Environment.LIVE:`).
-      A perf route may instead sit inside the keyless-testnet perf gate: `if auth_perf:`
-      (the flag `auth_perf_enabled(settings)` returned) or `if auth_perf_enabled(settings):`,
-      with no `else:` branch. A probe route in a live build leaks internal state and lets a
-      caller steer bar timing. Fix: move the seam to the test tree, or register it inside
-      one of those guards. Rule doc:
-      docs/plan/security/ci-gates-e12.md#cv-no-debug-probe-in-prod.
+      A perf route may instead sit inside the keyless-testnet perf gate: an `if` on the result
+      of `candleviewer.api.auth_perf.auth_perf_enabled(settings)`, called in the `if` or
+      assigned once to a local in the same function. The rule checks where that call is
+      imported from, not what a flag is named. Neither guard may have an `else:` branch. A
+      probe route in a live build leaks internal state and lets a caller steer bar timing.
+      Fix: move the seam to the test tree, or register it inside one of those guards. Rule
+      doc: docs/plan/security/ci-gates-e12.md#cv-no-debug-probe-in-prod.
     metadata:
       rule-id: cv-no-debug-probe-in-prod
       sr: SR-E12-16
       references:
         - docs/security/threat-models/E12-bars.md BR-26, AC-12
         - docs/plan/security/ci-gates-e12.md
+    options:
+      # #2755: lets `auth_perf = auth_perf_enabled(settings)` ... `if auth_perf:` match the call
+      # form of the perf gate below, and keeps any other assignment (a constant, the raw
+      # settings field) from matching it.
+      symbolic_propagation: true
     patterns:
       - pattern-either:
           # A route whose path is a probe/debug/diagnostics/perf/test seam.
@@ -47,35 +53,45 @@ rules:
           - pattern: breakpoint()
           - pattern: import pdb
           - pattern: pdb.set_trace()
-      - pattern-not-inside: |
-          if $S.environment is not Environment.LIVE:
-              ...
-      - pattern-not-inside: |
-          if $S.environment != Environment.LIVE:
-              ...
-      # #2755: the keyless-testnet perf gate (#2097, the #2086 gate). Only the build-time
-      # gate counts: `if auth_perf:` (the flag `auth_perf_enabled(settings)` returned) or the
-      # call itself. The raw `settings.auth_perf_enabled` field skips that re-check, so it is
-      # not a gate. Semgrep matches `if X: ...` against an if/else as one block, which would
-      # also exempt a route in the `else:` branch (switch OFF); each clause therefore
+      # Guards. Semgrep matches `if X: ...` against an if/else as one block, so a bare
+      # `pattern-not-inside: if X: ...` would also exempt a route in the `else:` branch, which
+      # runs when the guard is false (LIVE, or the perf switch off). Each guard therefore
       # excludes the form that has an `else:`.
+      #
+      # The non-production guard, in its two spellings.
       - pattern-not-inside:
           patterns:
             - pattern: |
-                if auth_perf:
+                if $S.environment is not Environment.LIVE:
                     ...
             - pattern-not: |
-                if auth_perf:
+                if $S.environment is not Environment.LIVE:
                     ...
                 else:
                     ...
       - pattern-not-inside:
           patterns:
             - pattern: |
-                if auth_perf_enabled(...):
+                if $S.environment != Environment.LIVE:
                     ...
             - pattern-not: |
-                if auth_perf_enabled(...):
+                if $S.environment != Environment.LIVE:
+                    ...
+                else:
+                    ...
+      # #2755: the keyless-testnet perf gate (#2097, the #2086 gate). Only an `if` on the result
+      # of the call `candleviewer.api.auth_perf.auth_perf_enabled(...)` counts, in the `if`
+      # itself or through a local assigned from it (symbolic_propagation). Semgrep resolves the
+      # call through the file's imports, so the rule keys on where the function comes from, not
+      # on a name: a same-named helper, the same name imported from another module,
+      # `auth_perf = True` and the raw `settings.auth_perf_enabled` field are not the gate.
+      - pattern-not-inside:
+          patterns:
+            - pattern: |
+                if candleviewer.api.auth_perf.auth_perf_enabled(...):
+                    ...
+            - pattern-not: |
+                if candleviewer.api.auth_perf.auth_perf_enabled(...):
                     ...
                 else:
                     ...

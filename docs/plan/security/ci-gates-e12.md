@@ -36,7 +36,7 @@ the rule. They are listed under "Known findings" and are not counted as false po
 | cv-no-float-prices | 4 / 4 | 0 (2 TP fixed: #2140, #2141) | 0 | 100 % |
 | cv-no-raw-sql-interpolation | 4 / 4 | 0 | 0 | 100 % |
 | cv-unbounded-query-window | 2 / 2 | 0 | 0 | 100 % |
-| cv-no-debug-probe-in-prod | 14 / 8 | 0 | 0 | 100 % |
+| cv-no-debug-probe-in-prod | 25 / 10 | 0 | 0 | 100 % |
 | cv-untrusted-exchange-response | 3 / 2 | 0 (1 TP fixed: #2142) | 0 | 100 % |
 | cv-nosec-needs-reason-owner | 3 / 2 | 0 (1 conformed) | 0 | 100 % |
 
@@ -108,17 +108,26 @@ fix merged (#2140 → #2137, #2141 → #2138, #2142 → #2139). The rules now co
   `debug`, `probe`, `perf`, `diag(nostics)`, `__test*`, `test-clock` or `e2e` (a leading `_` is
   allowed, and the segment must be whole, so `/auth/performance` is an ordinary route);
   `freezegun` / `time_machine` / `tests.*` imports; `breakpoint()` or `pdb`. Allowed only inside
-  `if settings.environment is not Environment.LIVE:` or inside the keyless-testnet perf gate
-  (below).
+  `if settings.environment is not Environment.LIVE:` (or `!=`) with no `else:` branch, or inside
+  the keyless-testnet perf gate (below).
 - **Why:** **SR-E12-16** / BR-26 / AC-12.
+- **No `else:` (#2755):** Semgrep matches an if/else as one block, so a guard written with an
+  `else:` would also exempt the `else:` branch, which runs when the guard is false (LIVE, or the
+  perf switch off). Every guard therefore takes an `if` with no `else:`; an `if`/`else` around a
+  seam is flagged in both branches.
 - **Perf gate (#2755):** perf-only routes such as `GET /auth/_perf/argon2-params` (#2097) exist
   only on a keyless testnet (`CV_ENVIRONMENT=testnet`, no exchange key). The rule accepts a
-  registration inside `if auth_perf:` (the flag `auth_perf_enabled(settings)` returned in
-  `create_app`) or inside `if auth_perf_enabled(...):`. Three shapes are deliberately **not** a
-  gate: the raw `settings.auth_perf_enabled` field (it skips the build-time re-check that
-  `auth_perf_enabled()` repeats), `if not auth_perf:`, and any `if`/`else`. Semgrep matches an
-  if/else as one block, so an `else:` would exempt the branch where the switch is off. The gate is
-  stricter than the environment guard, so it also exempts the other seams inside it.
+  registration inside an `if` on a call that Semgrep resolves to
+  `candleviewer.api.auth_perf.auth_perf_enabled`: `if auth_perf_enabled(settings):`, or a local
+  assigned once from that call in the same function (`auth_perf = auth_perf_enabled(...)`, then
+  `if auth_perf:`, as `create_app` writes it). It checks where the call comes from, not what a
+  name is. These stay flagged: a function of the same name that the file defines or imports from
+  another module; a relative import, which Semgrep does not resolve (import the gate by its
+  absolute path); `auth_perf = True`; a local holding the raw `settings.auth_perf_enabled` field,
+  which skips the build-time re-check that `auth_perf_enabled()` repeats; a reassigned local;
+  `if not auth_perf:`; and any `if`/`else`. The import of the gate in the fixture is therefore
+  load-bearing. The gate is stricter than the environment guard, so it also exempts the other
+  seams inside it.
 - **Limit:** the rule reads the path literal at the registration (`@router.<verb>(...)` and
   `add_api_route(...)`). `include_router(..., prefix=...)`, `mount(...)` and a path held in a
   constant are not read. The #2097 route is declared that way (`ARGON2_PARAMS_PATH` in
@@ -128,12 +137,18 @@ fix merged (#2140 → #2137, #2141 → #2138, #2142 → #2139). The rules now co
   by Semgrep. Semgrep also cannot follow a router factory to its gated mount: the same route with
   a literal path in that factory is flagged. Register it inside the gate, or suppress it as under
   "Requesting an exception" once those two controls cover the mount.
+- **Limit (perf gate):** the local is followed by Semgrep's `symbolic_propagation`, which ends at
+  a reassignment and at a `for`/`while` loop between the assignment and the `if`. Such a site is
+  flagged (fail closed): call `auth_perf_enabled(...)` in the `if` itself. Name resolution is
+  Semgrep's and follows file order: a same-named `def` nested in the calling function, or placed
+  after the real import, does not replace the import and is not seen. The rule catches an
+  accidental ungated route; it is not a defence against a deliberate shadow of the gate.
 - **Note:** at merge no such seam exists in the backend. The E12-Q03 probe and the SCR-046
   feed have not landed, and health checks use `register_*_probe` functions, not routes. The rule
   therefore implements the documented pattern. The web-bundle half of AC-12 (SCR-046 in a
   production JS build) belongs to the frontend build check, not this Python rule.
 - **Fix:** move the seam under `tests/`, or register it inside the environment guard (a perf
-  route: inside the perf gate).
+  route: inside the perf gate) as an `if` with no `else:`.
 
 ## cv-untrusted-exchange-response
 
