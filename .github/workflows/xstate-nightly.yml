@@ -7,8 +7,9 @@ name: xstate-nightly
 #               baseline (result-v0.9.1.json) nor a documented delta in
 #               tools/statechart/nightly_gate.py, or BENCH-6 p99 > 100 ms at 500
 #               busy machines, turns the run red.
-#  * notify   - on a red pinned run, comments on the open E50-C17 tracker issue
-#               (files one only when none is open). The only job that can write.
+#  * notify   - on a red or failed pinned run, comments on the one E50-C17 tracker issue
+#               (repo variable CV_XSTATE_TRACKER_ISSUE, default 2472; named, never searched
+#               for). The only job that can write.
 #  * upstream - the same gate against the latest PyPI release. Informational:
 #               continue-on-error, never gates, only publishes a note.
 # BENCH-6 must be measured on target hardware: set the repo variable
@@ -134,13 +135,14 @@ jobs:
     permissions:
       issues: write
     steps:
-      - name: Comment on the open tracker issue (file one only if none is open)
-        # #579: one tracker instead of a new issue every night. No checkout and no
-        # third-party code runs in this job; it only calls the preinstalled gh CLI.
+      - name: Comment on the E50-C17 tracker issue
+        # #579: one tracker instead of a new issue every night. The issue is named, not
+        # searched for: set the repo variable CV_XSTATE_TRACKER_ISSUE to move it. No checkout
+        # and no third-party code runs in this job; it only calls the preinstalled gh CLI.
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TRACKER_TITLE: "xstate-nightly: pinned 0.9.1 gate regression"
+          TRACKER_ISSUE: ${{ vars.CV_XSTATE_TRACKER_ISSUE || '2472' }}
           VERDICT_RC: ${{ needs.pinned.outputs.verdict-rc }}
           REGRESSIONS: ${{ needs.pinned.outputs.regressions }}
         run: |
@@ -152,15 +154,7 @@ jobs:
             what="the pinned job failed (nightly_gate exit: ${VERDICT_RC:-not reached})"
           fi
           body="E50-C17 (upstream liaison), $day: $what. Run: $run_url (artifact xstate-gate-pinned)."
-          num=$(gh issue list --state open --search "in:title \"$TRACKER_TITLE\"" --limit 50 \
-            --json number,title \
-            --jq '[.[] | select(.title | startswith(env.TRACKER_TITLE))] | max_by(.number) | .number // empty')
-          if [ -n "$num" ]; then
-            gh issue comment "$num" --body "$body"
-          else
-            gh issue create --title "$TRACKER_TITLE $day" --label "area/backend-platform" \
-              --label "priority/p1" --body "$body"
-          fi
+          gh issue comment "$TRACKER_ISSUE" --body "$body"
 
   upstream:
     name: xstate-nightly-upstream (informational)
