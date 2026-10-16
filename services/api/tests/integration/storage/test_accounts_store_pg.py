@@ -34,9 +34,11 @@ from candleviewer.storage.repositories.accounts import (
     NewKeyRotation,
     OwnerScope,
     RotationStep,
+    VerifiedKey,
 )
 from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
+from candleviewer.storage.repositories.key_selfcheck_sqlalchemy import SqlAlchemyKeySelfCheckStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -421,3 +423,48 @@ async def test_row_counts_are_env_scoped_live_accounts_and_every_key_row(
     assert _delta(await store.count_api_keys_by_status("testnet"), test_k) == {}
     with pytest.raises(ValueError):
         await store.count_accounts_by_kind("prod")
+
+
+async def test_key_selfcheck_store_is_env_bound_and_writes_only_its_columns(
+    store: SqlAlchemyAccountsStore,
+    creds: SqlAlchemyCredentialStore,
+    rel: SqlAlchemyRelationalRepository,
+    pg_dsn: str,
+) -> None:
+    """E27-T03 (#836): the self-check's system store on M2's real rows (`cidr[]`, jsonb merge)."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(exch))
+    kid, gone = await _seed_key(creds, acct.id), await _seed_key(creds, acct.id)
+    await store.transition_key_status(owner, acct.id, kid, expected="pending", new="active")
+    await creds.mark_revoked(gone)
+    with _c(pg_dsn) as c:
+        c.execute("UPDATE exchange_accounts SET trading_enabled = true WHERE id = %s", (acct.id,))
+        c.execute(  # a field the import stored and the check never reads
+            "UPDATE api_keys SET permission_snapshot = permission_snapshot || %s::jsonb "
+            "WHERE id = %s",
+            ('{"type": "HMAC"}', kid),
+        )
+    demo, live = (SqlAlchemyKeySelfCheckStore(rel, env=env) for env in ("demo", "live"))
+    assert kid not in {t.key_id for t in await live.targets()}
+    [target] = [t for t in await demo.targets() if t.account.id == acct.id]  # one usable key
+    assert (target.key_id, target.account.trading_enabled) == (kid, True)
+    at, rights = datetime(2026, 10, 16, 9, tzinfo=UTC), {"ContractTrade": ["Order", "Position"]}
+    facts = {"fetched_at": at.isoformat(), "uid": "1", "readOnly": 0, "permissions": rights}
+    verified = VerifiedKey(facts, True, False, ("203.0.113.7",), None, at)
+    assert await live.record_pass(kid, verified) is False
+    assert await demo.record_pass(kid, verified) is True
+    assert await demo.record_error(kid, code="10018", at=at) is True
+    assert [await demo.disable_trading(acct.id) for _ in range(2)] == [True, False]
+    with _c(pg_dsn) as c:
+        key = c.execute(
+            "SELECT permission_snapshot, permission_snapshot_at, can_trade, ip_whitelist::text[], "
+            "ip_whitelist_verified_at, last_error_code, last_error_at, status::text "
+            "FROM api_keys WHERE id = %s",
+            (kid,),
+        ).fetchone()
+        armed = c.execute(
+            "SELECT trading_enabled FROM exchange_accounts WHERE id = %s", (acct.id,)
+        ).fetchone()
+    assert key is not None and key[0] == {**facts, "type": "HMAC"}  # merged, not replaced
+    assert key[1:] == (at, True, ["203.0.113.7/32"], at, "10018", at, "active")
+    assert armed == (False,)
