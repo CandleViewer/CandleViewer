@@ -52,8 +52,10 @@ after the one `auth.logout` intent record that names the targets (#2914). The re
 is the time-boxed exception EX-07 (§16.2).
 
 Idle lock (#2300, contract info "Idle lock"): `GET /auth/session` never re-stamps
-`last_seen_at` and serves a locked session, identified by an access token inside its
-lifetime or else the current `cv_refresh` cookie.
+`last_seen_at`. `GET /auth/session` and `POST /auth/logout` serve a locked session,
+identified by an access token inside its lifetime or else the current `cv_refresh`
+cookie (a cookie-identified logout gets the SR-042 Origin and SR-041 checks here),
+and a locked or cookie-identified logout ends only its own session.
 """
 
 from __future__ import annotations
@@ -70,7 +72,9 @@ from fastapi.responses import JSONResponse, Response
 
 from candleviewer.api import idle_lock
 from candleviewer.api.csrf import (
+    ANON_REFUSAL_WINDOW_S,
     AUDIT_TIMEOUT_S,
+    SESSION_REFUSALS_PER_WINDOW,
     RefusalAuditTracker,
     clear_csrf_cookie,
     csrf_problem,
@@ -78,6 +82,7 @@ from candleviewer.api.csrf import (
     source_ip,
     verify_refresh_csrf,
 )
+from candleviewer.api.csrf import REFRESH_COOKIE as REFRESH_COOKIE  # re-exported (contract name)
 from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -106,7 +111,6 @@ from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.auth.step_up import grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
 
-REFRESH_COOKIE = "cv_refresh"
 REFRESH_COOKIE_PATH = "/api/v1/auth"
 ACCESS_TOKEN_EXPIRES_IN_S = 720  # ADR-0020: 12 min
 REFRESH_EXPIRES_IN_S = 12 * 3600
@@ -406,6 +410,12 @@ def make_session_router(
         window_s=PROBE_AUDIT_WINDOW_S,
         max_tracked_ips=1,
     )
+    #: Route-checked SR-041 refusals audited per session per window, as `CsrfMiddleware`
+    #: budgets its own (contract "CSRF", "Refusal"): a cookie-identified logout has no
+    #: request throttle of its own. Past it: the same 403 with `Retry-After`, no record.
+    by_csrf_session = PerIpLoginThrottle(
+        max_attempts=SESSION_REFUSALS_PER_WINDOW, window_s=ANON_REFUSAL_WINDOW_S
+    )
     tracker = audit_tracker if audit_tracker is not None else RefusalAuditTracker()
 
     def _audit_ready() -> bool:
@@ -699,6 +709,44 @@ def make_session_router(
         except (SessionNotFound, SessionRevoked):
             return None
 
+    async def _csrf_refusal(
+        request: Request, record: SessionRecord, ip: str | None
+    ) -> JSONResponse | None:
+        """SR-041 for the POSTs that check it themselves (`api.csrf`): against *record*,
+        the session the route acts on, before any audit or state change. A refusal is
+        counted and audited up to a per-session budget (past it: the same 403 with
+        `Retry-After` and no record); it is refused regardless (a 403, never a 500,
+        #2238 r3)."""
+        refusal = verify_refresh_csrf(
+            csrf,
+            request.headers.get(CSRF_HEADER),
+            request.cookies.get(CSRF_COOKIE),
+            str(record.id),
+        )
+        if refusal is None:
+            return None
+        auth_csrf_refused_total.labels(reason=refusal.value).inc()
+        budget = str(record.id)
+        if by_csrf_session.is_blocked(budget):
+            auth_csrf_refused_total.labels(reason="audit_throttled").inc()
+            throttled = csrf_problem(refusal)
+            throttled.headers["Retry-After"] = str(by_csrf_session.retry_after_s(budget) or 1)
+            return throttled
+        by_csrf_session.record_failure(budget)
+        try:
+            await _audit(
+                "auth.csrf_refused",
+                record=record,
+                ip=ip,
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason=refusal.value,
+            )
+        except AuditUnavailableError as exc:
+            auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
+            _log().error("auth.csrf_refused.audit_unavailable", error=type(exc).__name__)
+        return csrf_problem(refusal)
+
     async def _session_info(
         provider: IdentityProvider, record: SessionRecord, at: datetime
     ) -> dict[str, Any]:
@@ -763,28 +811,9 @@ def make_session_router(
             # rotated-out token skips this and goes straight to reuse detection: that
             # branch only revokes (never mints), and `cv_refresh` is HttpOnly +
             # SameSite=Strict, so it is not CSRF-reachable.
-            refusal = verify_refresh_csrf(
-                csrf,
-                request.headers.get(CSRF_HEADER),
-                request.cookies.get(CSRF_COOKIE),
-                str(presented_record.id),
-            )
+            refusal = await _csrf_refusal(request, presented_record, ip)
             if refusal is not None:
-                auth_csrf_refused_total.labels(reason=refusal.value).inc()
-                try:
-                    await _audit(
-                        "auth.csrf_refused",
-                        record=presented_record,
-                        ip=ip,
-                        outcome=AuditOutcome.DENIED,
-                        severity=Severity.WARNING,
-                        reason=refusal.value,
-                    )
-                except AuditUnavailableError as exc:
-                    # Refused regardless (fail closed): a 403, never a 500 (#2238 r3).
-                    auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
-                    _log().error("auth.csrf_refused.audit_unavailable", error=type(exc).__name__)
-                return csrf_problem(refusal)
+                return refusal
         # C-2.9 write-ahead: the audit record is written before `refresh()`
         # rotates or revokes anything; if the sink is down we refuse (503)
         # with no state change.
@@ -924,15 +953,31 @@ def make_session_router(
 
     @router.post("/auth/logout")
     async def logout(request: Request) -> Response:
+        """Ends the calling session, or with `all_sessions` every session of the user
+        (contract `authLogout`). The session is identified as in "Idle lock": an access
+        token inside its lifetime (`CsrfMiddleware` binds the SR-041 token to it), else
+        the current `cv_refresh` cookie, checked here (SR-042 Origin, SR-041 against the
+        cookie's session). A locked session, and a cookie-identified one, may end only
+        itself (#2290 ruling, rule 3b): `all_sessions` is then refused before any record."""
         if not _audit_ready():
             return _problem(503, "Service unavailable", "audit sink not active")
         if not auth_service.sessions_is_active:
             return _problem(503, "Service unavailable", "session backend is not wired")
-        record = await _authenticate(request, allow_locked=True)
-        if record is None:
+        caller = await _identify(request)
+        if caller is None:
             return _unauthorized()
+        record, by_cookie = caller
+        at = now()
+        if record.is_revoked or record.is_absolute_expired(now=at):
+            return _unauthorized()  # uniform, as to its access token: no session oracle
+        ip = _source_ip(request)
+        if by_cookie:
+            if not _origin_ok(request, allowed_origins):
+                return _problem(403, "Forbidden", "cross-origin logout refused")  # SR-042
+            if (refusal := await _csrf_refusal(request, record, ip)) is not None:
+                return refusal
         if (refusal := undeclared_query_refusal(request, LOGOUT_QUERY)) is not None:
-            return refusal  # SR-026: before the body is read or anything is audited or revoked
+            return refusal  # SR-026: before the body is read or the logout audited or revoked
         all_sessions = False
         if await request.body():
             try:
@@ -945,7 +990,12 @@ def make_session_router(
             if not isinstance(flag, bool):
                 return _problem(422, "Unprocessable", "all_sessions must be boolean")
             all_sessions = flag
-        ip = _source_ip(request)
+        if all_sessions and record.is_idle_locked(now=at):
+            # Contract "Idle lock": whoever is at a locked terminal has not proved who they
+            # are. Nothing is revoked, audited or cleared, the calling session included.
+            return idle_lock.idle_locked_problem(record.idle_deadline())
+        if all_sessions and by_cookie:
+            return _unauthorized()  # ending every session needs an access token
         # C-2.9 / 04-security-program.md §8.3 rule 1: one intent record, naming the targets, before
         # anything is revoked (audit down => 503, nothing revoked and nothing left to repeat on a
         # retry), then one outcome record per session the service did revoke (#2914).
