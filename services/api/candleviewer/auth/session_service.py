@@ -427,8 +427,11 @@ class SessionService:
         if allow_locked:
             # Logout / revoke must work on an idle-locked session (the lock
             # is cosmetic on the client; the server still lets the owner end it).
+            # A revoked or expired session is refused like any other (#2389 gap J).
             if found.is_revoked:
                 raise SessionRevoked(found.revoked_reason or "revoked")
+            if found.is_absolute_expired(now=self._clock()):
+                raise SessionRevoked("expired")
             return found
         return await self.require_active(str(found.id))
 
@@ -492,10 +495,12 @@ class SessionService:
             failures = self._count_unlock_failure(session_id)
             if failures >= MAX_UNLOCK_ATTEMPTS:
                 await _write_ahead(write_ahead, UnlockOutcome.REVOKED)
-                self._unlock_failures.pop(session_id, None)
                 await self._repository.revoke(
                     session_id, reason="unlock_attempts_exceeded", now=now
                 )
+                # Only once the revoke committed: a failed or cancelled revoke keeps the
+                # count, so the next wrong password revokes (#2389 gap I).
+                self._unlock_failures.pop(session_id, None)
                 raise SessionRevoked("unlock_attempts_exceeded")
             await _write_ahead(write_ahead, UnlockOutcome.FAILED)
             raise UnlockPasswordInvalid("invalid_password")

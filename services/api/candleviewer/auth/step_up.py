@@ -168,6 +168,16 @@ class StepUpService:
         record = await self._sessions.find_by_id(session_id)
         return None if record is None or record.is_revoked else record
 
+    async def _grantable(self, session_id: str) -> SessionRecord | None:
+        """The live row whose step-up grants still count. An idle-locked row's grants
+        are void from the lock itself (#2300; #2290 ruling rule 4d): this synchronous
+        check enforces it from the row (C-2.21), and `SessionService.unlock()` deletes
+        them in the write that lifts the lock."""
+        record = await self._live(session_id)
+        if record is None or record.is_idle_locked(now=self._clock()):
+            return None
+        return record
+
     async def _save(
         self,
         session_id: str,
@@ -281,7 +291,7 @@ class StepUpService:
         )
 
     async def pending_action_class(self, session_id: str) -> str | None:
-        record = await self._live(session_id)
+        record = await self._grantable(session_id)
         if record is None:
             return None
         now = self._clock()
@@ -342,7 +352,7 @@ class StepUpService:
         """Remaining window for the dialog text; None if none / no-grace."""
         if action_class in NO_GRACE_ACTION_CLASSES:
             return None
-        record = await self._live(session_id)
+        record = await self._grantable(session_id)
         until = record.step_up_elevations.get(action_class) if record else None
         now = self._clock()
         if until is None or until <= now:
@@ -353,7 +363,7 @@ class StepUpService:
         """Handler-side check for no-grace classes: succeeds once per fresh
         step-up code, then the one-shot grant is gone."""
         await self.assert_writable(session_id)
-        record = await self._live(session_id)
+        record = await self._grantable(session_id)
         key = f"once:{action_class}"
         now = self._clock()
         until = record.step_up_elevations.get(key) if record else None

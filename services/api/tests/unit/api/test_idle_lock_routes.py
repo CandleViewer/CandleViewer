@@ -808,3 +808,13 @@ async def test_a_refresh_refused_while_locked_works_again_after_the_unlock(w: Wo
     assert (await _unlock(w, _bearer(minted))).status_code == 200
     again = await w.client.post("/api/v1/auth/refresh", json=refresh, headers=_bearer(minted))
     assert again.status_code == 200, again.text
+
+
+async def test_logout_of_a_session_past_its_lifetime_is_the_uniform_401(w: World) -> None:
+    """#2389 gap J at the edge: an expired session is refused like a revoked one by the
+    allow-locked routes, even while its access token lives; nothing is audited."""
+    uid = await w.add_user()
+    minted = await w.sessions.mint(str(uid), expires_at=_T0 + timedelta(minutes=5))
+    w.clock.now = _T0 + timedelta(minutes=5)
+    r = await w.client.post("/api/v1/auth/logout", headers=_bearer(minted))
+    assert r.status_code == 401 and w.audit.writer.records == [] and w.published == []

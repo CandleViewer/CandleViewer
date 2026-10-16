@@ -18,6 +18,7 @@ from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
     SessionIdleLocked,
     SessionRevoked,
+    StepUpRequired,
     UnlockPasswordInvalid,
 )
 from candleviewer.auth.hashing import Hasher
@@ -213,5 +214,73 @@ async def test_verify_password_uses_the_login_lockout_counters() -> None:
         assert users.users[str(user.id)].locked_until is not None
         assert not await svc.verify_password(str(user.id), _PW)  # locked: fails like a wrong one
         assert not await svc.verify_password(str(uuid.uuid4()), _PW)  # unknown account
+    finally:
+        await svc.stop()
+
+
+async def test_a_failed_revoke_at_the_cap_keeps_the_count_so_the_next_failure_revokes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2389 gap I: the counter is cleared only once the revoke committed."""
+    svc, repo, clock = _svc()
+    sid = await _locked(svc, clock)
+    for _ in range(MAX_UNLOCK_ATTEMPTS - 1):
+        with pytest.raises(UnlockPasswordInvalid):
+            await svc.unlock(sid, password=_PW, check=_check(False))
+    real_revoke = repo.revoke
+
+    async def broken(session_id: str, **kw: object) -> object:
+        raise ConnectionError("db down")
+
+    monkeypatch.setattr(repo, "revoke", broken)
+    with pytest.raises(ConnectionError):
+        await svc.unlock(sid, password=_PW, check=_check(False))
+    monkeypatch.setattr(repo, "revoke", real_revoke)
+    with pytest.raises(SessionRevoked):
+        await svc.unlock(sid, password=_PW, check=_check(False))
+    row = await repo.find_by_id(sid)
+    assert row is not None and row.revoked_reason == "unlock_attempts_exceeded"
+
+
+async def test_allow_locked_authentication_refuses_a_session_past_its_lifetime() -> None:
+    """#2389 gap J: logout and the other allow-locked callers answer an expired session as
+    they answer a revoked one, even while its access token still lives."""
+    svc, _repo, clock = _svc()
+    minted = await svc.mint(_USER, expires_at=_T0 + timedelta(minutes=5))
+    clock.now = _T0 + timedelta(minutes=5)  # access token (12 min) still inside its lifetime
+    with pytest.raises(SessionRevoked) as expired:
+        await svc.authenticate_access_token(minted.access_token, allow_locked=True)
+    assert expired.value.reason == "expired"
+
+
+async def test_step_up_grants_of_an_idle_locked_row_authorise_nothing() -> None:
+    """#2300 / #2290 rule 4d: void from the lock itself, enforced from the row (C-2.21)."""
+    repo, clock = FakeSessionRepository(), _Clock()
+    sessions = SessionService(repo, Hasher(), clock=clock)
+    minted = await sessions.mint(_USER, idle_timeout_s=int(_IDLE.total_seconds()))
+    sid = str(minted.session_id)
+    until = _T0 + timedelta(minutes=10)
+    grants = {"keys": until, "once:killswitch": until, "pending:users": until}
+    await repo.save_step_up_state(sid, elevations=grants, failures=0, readonly_until=None)
+    svc = StepUpService(
+        FakeMfaRepository(),
+        repo,
+        TotpEncryptor(os.urandom(32)),
+        FakeUserRepository(),
+        Hasher(),
+        clock=clock,
+    )
+    try:
+        assert await svc.remaining_grace(sid, "keys") is not None  # live: the grant counts
+        assert await svc.pending_action_class(sid) == "users"
+        clock.now = _T0 + _IDLE
+        assert await svc.remaining_grace(sid, "keys") is None
+        assert await svc.pending_action_class(sid) is None
+        with pytest.raises(StepUpRequired):
+            await svc.require_elevation(sid, "keys")
+        with pytest.raises(StepUpRequired):
+            await svc.consume_single_use(sid, "killswitch")
+        row = await repo.find_by_id(sid)
+        assert row is not None and set(row.step_up_elevations) == set(grants)  # read-only
     finally:
         await svc.stop()
