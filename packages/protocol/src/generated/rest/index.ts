@@ -309,10 +309,10 @@ export interface paths {
      *       before, after, `reason` and `evidence_url`, including refused and conflicting ones and
      *       every `422` (such as `gate_evidence_required`, `kind_mismatch`, `unknown_user` and
      *       `overrides_not_allowed`); a `step_up_required` challenge writes only
-     *       `auth.step_up_required`. The `flags.change` record and the flag write commit together
-     *       (write-ahead, C-2.9). The one exception is `503 store_unavailable`, whose audit store is
-     *       down: it is logged with only the key and correlation id, plus a metric (SR-125). For an
-     *       unreadable row, `before` records `unreadable`, never the raw value. Toggling
+     *       `auth.step_up_required`. The `flags.change` record is durable before the flag write
+     *       commits, or the write is refused (write-ahead, C-2.9). A `503 store_unavailable` (no row
+     *       can be read) is logged instead, with only the key and correlation id, plus a metric
+     *       (SR-125). An unreadable row's `before` is `unreadable`, never its raw value. Toggling
      *       `maintenance.mode` is also audited as `maintenance.enabled` or `maintenance.disabled`.
      *     - A successful write pushes a `SystemUpdate` of kind `feature_flags`, carrying only the
      *       changed key, to every session the flag's `visibility` admits (`23-ws-protocol.md` 15.9).
