@@ -523,6 +523,15 @@ def test_client_binary_ws_frame_is_malformed_not_a_crash() -> None:
         assert c.recv_err()["p"]["code"] == "frame_malformed"
 
 
+def test_client_binary_ws_frame_holding_valid_json_is_malformed_on_a_json_connection() -> None:
+    """§2.2: a `cv.v1.json` connection takes text frames only, so a binary frame is refused even
+    when its bytes are a valid JSON frame, as a text frame is on `cv.v1.msgpack`."""
+    w = World()
+    with connect(w) as c:
+        c.ws.send_bytes(b'{"t": "ping", "id": "p"}')
+        assert c.recv_err()["p"]["code"] == "frame_malformed"
+
+
 def test_client_three_strikes_close_with_bye_4400() -> None:
     w = World()
     with connect(w) as c:
