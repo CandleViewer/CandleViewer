@@ -375,6 +375,9 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
     purge_backend = _PurgeBackend()
     mp.setattr(appmod, "build_retention_manager", lambda *_a, **_k: purge_backend)
     mp.setenv("CV_ALLOWED_ORIGINS", WS_ORIGIN)  # create_app() reads get_settings()
+    # `bars.*` answers `unknown_topic` while the feature is off (23 §6.1, #399 slice E); the
+    # matrix asserts its authorization outcome, so the pack runs with the feature on.
+    mp.setenv("CV_BARS_ENABLED", "true")
     app = appmod.create_app(
         principal_resolver=resolver,
         user_role_store=users,
