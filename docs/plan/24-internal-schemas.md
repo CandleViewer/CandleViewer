@@ -1658,6 +1658,20 @@ Binding (owner decision; ADR-0008): **every position opened by CandleViewer carr
 
 **Caveat (documented in code):** one-sided TP/SL modification via `trading-stop` breaks Bybit's OCO pairing. Our UX therefore always writes **both** TP and SL in a single `trading-stop` call, sending the unchanged side's current value explicitly.
 
+### 8.10 Order-entry gate — refusal reasons (closed set)
+
+_Added for E42-T03 and E27-T04 (#837 Q5)._ Before any OMS work, every order-submit path (REST order and trade-group submit, and the rule and paper submit paths) runs one composed synchronous gate: `order_entry_refusal(checks, account_id)` evaluates the checks in a fixed order, the global maintenance gate first and the account checks after it, and the first refusal wins. A check is synchronous and O(1), does no I/O and never queries an interpreter; it reads a plain bool or enum that its monitor publishes on transition (C-2.20). The gate is a safety invariant: no flag gates it (C-4.14), and cancel, flatten and stop-loss amend never pass through it, so they keep working while order entry is paused (C-2.6).
+
+A refusal is the `403 trading_disabled` problem with a `reason` extension member (`TradingDisabledProblem` in `22-api-openapi.yaml`). The set is closed; adding a reason is a contract change to this table and to `OrderEntryRefusalReason`:
+
+| `reason`               | Raised by                      | Meaning                                                                                            |
+| ---------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `maintenance`          | `MaintenanceGate` (E42-T03)    | maintenance mode or the order-entry kill switch is on, or their state cannot be read (fail closed) |
+| `account_unhealthy`    | account health check (E27-T04) | the target account's health check refuses order entry                                              |
+| `key_rotation_overdue` | key-age policy check (E27-T04) | the target account's API key is past its rotation deadline                                         |
+
+`detail` is human text for the operator; it never carries an id or a secret.
+
 ---
 
 ## 9. Trade groups and fan-out
