@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.bars.errors import BarsError, BarServiceStopping, BarSpecError, SpecCapExceeded
 from candleviewer.bars.models import BarSpec
+from candleviewer.ws import limits
 from candleviewer.ws._generated.error_codes import WS_ERROR_CODES
 from candleviewer.ws.limits import MAX_BARS_SUBSCRIPTIONS
 from candleviewer.ws.permissions import (
@@ -393,6 +395,14 @@ def test_unsub_system_is_refused() -> None:
 
 
 _T = ["book.BTCUSDT.50"]
+_CAP = limits.MAX_TOPICS_PER_SUB  # §13.5 `maxItems` of `unsub.topics` (#2875)
+
+
+def _names(n: int) -> list[str]:
+    """`n` distinct, well-formed topic names, none of them subscribed."""
+    return [f"trades.S{i}" for i in range(n)]
+
+
 _BAD_UNSUB_SHAPES = [
     pytest.param("x", "p", id="p-not-an-object"),
     pytest.param(None, "p", id="p-null"),
@@ -404,14 +414,20 @@ _BAD_UNSUB_SHAPES = [
     pytest.param({"topics": [{"ch": _T[0]}]}, "topics[0]", id="entry-object"),  # names, not entries
     pytest.param({"topics": ["Bad Topic"]}, "topics[0]", id="bad-name"),
     pytest.param({"topics": ["t" * 10_000]}, "topics[0]", id="10000-chars"),
+    # #2875: §13.5 `maxItems`. 51 well-formed names, the first one subscribed; and 51 entries that
+    # are not names, which the length check refuses before reading any: `topics`, not `topics[0]`
+    pytest.param({"topics": [*_T, *_names(_CAP)]}, "topics", id="over-the-cap"),
+    pytest.param({"topics": [7] * (_CAP + 1)}, "topics", id="over-the-cap-bad-names"),
 ]
 
 
 @pytest.mark.parametrize(("p", "field"), _BAD_UNSUB_SHAPES)
 def test_unsub_with_a_malformed_shape_is_refused_whole(p: Any, field: str) -> None:
     """#2572: one `err invalid_options` naming the field and never the client's text; no
-    `unsub_ok`, and the subscription the frame also named stays in place."""
-    conn = ConnectionAuthz(_mgr(A), _services())
+    `unsub_ok`, and the subscription the frame also named stays in place. A refusal writes no
+    audit row, whatever the frame held (#2875)."""
+    audit = _Audit()
+    conn = ConnectionAuthz(_mgr(A), _services(audit=audit))
     _sub(conn, "book.BTCUSDT.50")
     reply = _unsub(conn, p)
     assert (reply["t"], reply["id"], reply["p"]["code"], reply["p"]["field"]) == (
@@ -419,6 +435,38 @@ def test_unsub_with_a_malformed_shape_is_refused_whole(p: Any, field: str) -> No
     )
     assert "ch" not in reply and len(json.dumps(reply)) < 400  # nothing is reflected
     assert conn.topics == {"book.BTCUSDT.50"}
+    assert audit.records == []
+
+
+def test_unsub_at_the_cap_is_answered_entry_by_entry() -> None:
+    """#2875: §13.5 allows 50 entries, so a frame of exactly 50 is processed, in request order."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    _sub(conn, "book.BTCUSDT.50")
+    names = [*_T, *_names(_CAP - 1)]  # `maxItems` entries, the first one live
+    assert len(names) == _CAP
+    results = _unsub_results(conn, *names)
+    assert [r["ch"] for r in results] == names
+    assert results[0] == {"ch": _T[0], "ok": True}  # the live subscription is released
+    assert all(r == {"ch": r["ch"], "ok": True, "noop": True} for r in results[1:])  # none held
+    assert conn.topics == set()
+
+
+class _NoEntryRead(list[str]):
+    """A `topics` array that fails the test as soon as one of its entries is read."""
+
+    def __iter__(self) -> Iterator[str]:
+        raise AssertionError("an entry was read")
+
+
+def test_unsub_over_the_cap_is_refused_before_any_entry_is_read() -> None:
+    """#2875: the length is checked first, so a frame over the cap costs O(1) however long it is.
+    This one holds 65 536 entries (the 256 KiB frame cap lets through 65 526 one-character names):
+    any per-entry work, such as the shape check, reads one and fails the test. No timing."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    reply = _unsub(conn, {"topics": _NoEntryRead(["a"] * 65_536)})
+    assert (reply["t"], reply["p"]["code"], reply["p"]["field"]) == (
+        ("err", "invalid_options", "topics")
+    )
 
 
 # -- ctl -----------------------------------------------------------------------------------------

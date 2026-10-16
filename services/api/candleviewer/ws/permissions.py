@@ -805,9 +805,11 @@ def sub_shape_error(body: Any) -> TopicError | None:
 
 
 def unsub_shape_error(body: Any) -> TopicError | None:
-    """#2572: what breaks an `unsub` frame's §13.5 shape, refused whole like a `sub`: a payload
-    that is not an object or has an unknown key, `topics` that is not a non-empty array, or an
-    entry that is not a topic name. `field` is built here and never echoes client input."""
+    """#2572, #2875: what breaks an `unsub` frame's §13.5 shape, refused whole like a `sub`: a
+    payload that is not an object or has an unknown key, `topics` that is not a non-empty array of
+    at most `MAX_TOPICS_PER_SUB` entries, or an entry that is not a topic name. The length is
+    checked before any entry is read, so a frame over the cap costs O(1) however long it is.
+    `field` is built here and never echoes client input."""
     if not isinstance(body, dict):
         return TopicError("invalid_options", "unsub needs an object payload.", "p")
     if not set(body) <= UNSUB_KEYS:
@@ -815,6 +817,9 @@ def unsub_shape_error(body: Any) -> TopicError | None:
     topics = body.get("topics")
     if not isinstance(topics, list) or not topics:
         return TopicError("invalid_options", "topics must be a non-empty array.", "topics")
+    if len(topics) > MAX_TOPICS_PER_SUB:
+        message = f"At most {MAX_TOPICS_PER_SUB} topics in one unsub."
+        return TopicError("invalid_options", message, "topics")
     for i, ch in enumerate(topics):
         if not is_topic_name(ch):
             return TopicError("invalid_options", "Not a topic name.", f"topics[{i}]")
@@ -866,7 +871,8 @@ async def handle_sub(
 def handle_unsub(authz: ConnectionAuthz, frame: dict[str, Any], now_ms: int) -> dict[str, Any]:
     """§5.3 `unsub` -> `unsub_ok`: idempotent. Unknown/already-removed -> `ok: true, noop: true`;
     `system` is permanent -> `ok: false` and stays attached. A frame whose shape breaks §13.5 is
-    refused whole instead: one `err`, nothing unsubscribed and no strike (#2572)."""
+    refused whole instead: one `err`, nothing unsubscribed and no strike (#2572), a `topics` array
+    over `MAX_TOPICS_PER_SUB` included (#2875)."""
     fid = _frame_id(frame)
     body: Any = frame.get("p")  # a dict once `unsub_shape_error` passes it
     shape = unsub_shape_error(body)

@@ -590,13 +590,14 @@ A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what
 
 Unsubscribing from an unknown or already-removed topic is **not** an error (`ok: true`, `noop: true`) — this keeps teardown idempotent during pane close races.
 
-**A malformed `unsub` is refused whole (#2572).** As for `sub` (§5.2), an `unsub` whose shape breaks §13.5 in one of the following ways gets one `err` `invalid_options` instead of an `unsub_ok`: nothing is unsubscribed, and it is not a protocol strike (§4.3). The ways are:
+**A malformed `unsub` is refused whole (#2572, #2875).** As for `sub` (§5.2), an `unsub` whose shape breaks §13.5 in one of the following ways gets one `err` `invalid_options` instead of an `unsub_ok`: nothing is unsubscribed, and it is not a protocol strike (§4.3). The ways are:
 
 - the payload is not an object, or has a key other than `topics` (`field`: `p`);
 - `topics` is missing or not a non-empty array (`field`: `topics`);
+- `topics` has more than 50 entries, the `maxItems` of §13.5 and `welcome`'s `max_topics_per_request` (`field`: `topics`). The length is checked before any entry is read, so the check costs the same however long the array is, and the reply carries no result per entry. `sub` differs: it answers the entries beyond 50 one by one with `too_many_topics` (§5.2);
 - an entry is not a string, or is a string that is not a topic name (`field`: `topics[i]`).
 
-A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what the client sent. So every `unsub_ok.results[].ch` is a valid topic name. A well-formed name that holds no subscription is still `ok: true, noop: true`, as above. **As built (#2875):** the `maxItems: 50` of §13.5 is not enforced yet, so a longer `topics` array is still processed and answered entry by entry.
+A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what the client sent. So every `unsub_ok.results[].ch` is a valid topic name, and an `unsub_ok` holds at most 50 results. A well-formed name that holds no subscription is still `ok: true, noop: true`, as above.
 
 **As built (E17-S02, #2159):** `unsub` of `system` returns `ok: false` and the topic stays attached (§6.2).
 
@@ -3807,6 +3808,7 @@ here and checked against the charts by the contract test, never restated (C-2.19
 | ------------------------------ | -------------------------------------------------- |
 | Max subscriptions / connection | 200                                                |
 | Max topics / `sub` frame       | 50                                                 |
+| Max topics / `unsub` frame     | 50 (a longer frame is refused whole, §5.3)         |
 | Max symbols / connection       | 40                                                 |
 | Max `bars.*` / connection      | 16 (SR-E12-07, §6.1)                               |
 | Max connections / user         | 8                                                  |
