@@ -211,6 +211,7 @@ from candleviewer.storage.repositories.alert_dispatch_sqlalchemy import (
 from candleviewer.storage.repositories.alert_firing_sqlalchemy import SqlAlchemyAlertFiringStore
 from candleviewer.storage.repositories.alerts_sqlalchemy import SqlAlchemyAlertRepository
 from candleviewer.storage.repositories.audit_sqlalchemy import SqlAlchemyAuditRepository
+from candleviewer.storage.repositories.break_glass_sqlalchemy import SqlAlchemyBreakGlassEvents
 from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.drawings_sqlalchemy import SqlAlchemyDrawingRepository
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
@@ -449,6 +450,8 @@ def build_auth_service(
         invite_repository=SqlAlchemyInviteRepository(relational, _record_factory(InviteRecord)),
         # #2146: a TOTP clock-skew event is a `system_events` row (the health board's table).
         system_events=PgSystemEventWriter(relational),
+        # E09-S11 (O4): whether a break-glass reset is unresolved, for the WS `system` notice.
+        break_glass_events=SqlAlchemyBreakGlassEvents(relational),
     )
 
 
@@ -1136,7 +1139,8 @@ def create_app(
             server_version=resolved.version,
             git_sha=resolved.git_sha,
             kill_switch=kill_switch.snapshot,
-            system_notices=lambda: _gate_notices(ctx),
+            # After a first `auth_ok`: the read-only gate, then an unresolved break-glass (O4).
+            system_notices=lambda: _gate_notices(ctx) + ctx.auth.break_glass_notice.notices(),
         )
     )
     # E27-T02: gate transitions (KEK latch, mesh trip) reach connected clients directly.

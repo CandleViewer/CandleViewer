@@ -4,7 +4,8 @@ The plan's named tests drive `SqlAlchemyBreakGlassRepository` through its
 `BreakGlassResetStore` port: S1 one transaction, S10 a failed reset changes zero rows,
 S5 refusals for non-Owners (forbidden role) and the cross-Owner (IDOR) case. S6: under
 the live recovery-code rule of `BreakGlassResetService`, concurrent runs consume one
-code once. Not run locally (no docker); exercised by CI `integration`.
+code once. Slice 6 (S9): the notice port sees only unresolved break-glass events.
+Not run locally (no docker); exercised by CI `integration`.
 """
 
 from __future__ import annotations
@@ -34,10 +35,12 @@ from candleviewer.auth.break_glass import (
     BreakGlassResetService,
     BreakGlassResetStore,
 )
+from candleviewer.auth.break_glass_notice import BreakGlassEvents
 from candleviewer.auth.errors import BreakGlassRefused
 from candleviewer.auth.recovery_codes import generate_recovery_code, hash_recovery_code
 from candleviewer.settings import Environment
 from candleviewer.storage.repositories.break_glass_sqlalchemy import (
+    SqlAlchemyBreakGlassEvents,
     SqlAlchemyBreakGlassRepository,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -87,6 +90,14 @@ _XMINS = sa.text(
     "SELECT CAST(xmin AS text) FROM sessions WHERE user_id = CAST(:u AS uuid) UNION "
     "SELECT CAST(xmin AS text) FROM recovery_codes WHERE user_id = CAST(:u AS uuid) UNION "
     "SELECT CAST(xmin AS text) FROM system_events WHERE id = :e"
+)
+_RESOLVE_ALL = sa.text(
+    "UPDATE system_events SET resolved_at = now() "
+    "WHERE kind = 'break_glass_used' AND resolved_at IS NULL"
+)
+_OTHER_AUTH_EVENT = sa.text(  # open, but not a break-glass event
+    "INSERT INTO system_events (component, kind, severity, message) "
+    "VALUES ('auth', 'totp_clock_skew', 'warning', 'not break-glass')"
 )
 _EVENT = sa.text(
     "SELECT component, kind, CAST(severity AS text), resolved_at, CAST(details AS text), "
@@ -245,3 +256,24 @@ async def test_code_consumed_once_concurrently(pg_dsn: str) -> None:
         refused = [r.reason for r in runs if isinstance(r, BreakGlassRefused)]
         assert refused == [BreakGlassRefusal.RECOVERY_CODE_INVALID] * 5  # the row lock serialises
         assert await _state(engine, uid) == _RESET
+
+
+async def test_notice_port_sees_only_unresolved_break_glass(pg_dsn: str) -> None:
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "breakglass-notice")
+    store = SqlAlchemyBreakGlassRepository(rel)
+    events: BreakGlassEvents = SqlAlchemyBreakGlassEvents(rel)  # mypy checks the port
+    engine = create_async_engine(pg_dsn)
+    try:
+        async with engine.begin() as conn:  # other tests' resets: start with none open
+            await conn.execute(_RESOLVE_ALL)
+            await conn.execute(_OTHER_AUTH_EVENT)
+        assert await events.has_unresolved_break_glass() is False
+        uid, code = await _user(engine)
+        assert not isinstance(await _reset(store, uid, code), str)
+        assert await events.has_unresolved_break_glass() is True
+        async with engine.begin() as conn:  # the Owner resolves it
+            await conn.execute(_RESOLVE_ALL)
+        assert await events.has_unresolved_break_glass() is False
+    finally:
+        await rel.dispose()
+        await engine.dispose()

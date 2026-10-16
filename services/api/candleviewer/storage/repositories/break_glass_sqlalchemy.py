@@ -1,5 +1,8 @@
 """`SqlAlchemyBreakGlassRepository`: Postgres side of the
 `candleviewer.auth.break_glass.BreakGlassResetStore` port (E09-S11 #2119, decision R4).
+`SqlAlchemyBreakGlassEvents` is the read-only side of
+`candleviewer.auth.break_glass_notice.BreakGlassEvents` (slice 6, decision O4): cv-api
+constructs only that one, so the running server holds no object that can reset.
 
 Every other repository call commits its own unit of work, so chaining
 `revoke_method`, `revoke_all_for_user` and an event write could leave a half
@@ -49,6 +52,10 @@ _INSERT_EVENT = sa.text(
 _MESSAGE = (
     "Break-glass used: the Owner's MFA methods and sessions were revoked offline (SR-023); "
     "the Owner must enrol TOTP again"
+)
+_UNRESOLVED = sa.text(
+    "SELECT EXISTS (SELECT 1 FROM system_events WHERE component = 'auth' "
+    "AND kind = 'break_glass_used' AND resolved_at IS NULL)"
 )
 
 #: The port's refusal channel (`auth.break_glass.BreakGlassStoreRefusal`), typed here
@@ -109,3 +116,13 @@ class SqlAlchemyBreakGlassRepository:
             row = BreakGlassResetRow(methods, sessions, int(event.scalar_one()))
             await uow.commit()
         return row
+
+
+class SqlAlchemyBreakGlassEvents:
+    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
+        self._relational = relational
+
+    async def has_unresolved_break_glass(self) -> bool:
+        """Whether any `auth`/`break_glass_used` event is still unresolved: one EXISTS."""
+        async with self._relational.unit_of_work() as uow:
+            return bool((await uow.session.execute(_UNRESOLVED)).scalar_one())
