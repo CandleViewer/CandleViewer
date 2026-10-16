@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from candleviewer.recorder.budget import US_PER_S, Point
-from tests.unit.recorder._budget_fakes import GB, NOW, FakeMeter, FakeStore, make_budget
+from tests.unit.recorder._budget_fakes import GB, NOW, FakeMeter, FakeSeriesStore, make_budget
 
 STEP = 600 * US_PER_S
 PER_STEP = 10 * GB * 600 // 86_400  # a steady 10 GB/day
@@ -27,7 +27,7 @@ async def test_a_fitted_series_reports_its_growth_and_the_fitted_symbols() -> No
     ]
     size = 12 * PER_STEP
     budget, _, _ = make_budget(
-        FakeMeter(used=size, symbols={"BTCUSDT": size}), store=FakeStore(points)
+        FakeMeter(used=size, symbols={"BTCUSDT": size}), store=FakeSeriesStore(points)
     )
     await budget.load_series()
     await budget.sample_once()
