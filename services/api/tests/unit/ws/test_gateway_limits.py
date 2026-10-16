@@ -124,7 +124,8 @@ async def _collect_sub(authz: ConnectionAuthz, topics: list[Any]) -> list[dict[s
 
 def _many(start: int, n: int) -> list[str]:
     """`n` distinct public topics on ONE symbol (the 40-symbol cap is a separate limit)."""
-    return [f"bars.BTCUSDT.tick.{i}" for i in range(start + 1, start + n + 1)]
+    # footprint, not bars: bars.* has its own 16-per-connection cap (SR-E12-07, §6.1)
+    return [f"footprint.BTCUSDT.tick.{i}" for i in range(start + 1, start + n + 1)]
 
 
 def test_sub_over_subscription_cap_is_rejected_and_set_does_not_grow() -> None:
@@ -134,7 +135,7 @@ def test_sub_over_subscription_cap_is_rejected_and_set_does_not_grow() -> None:
         assert all(r["ok"] for r in asyncio.run(_collect_sub(authz, topics)))
     assert len(authz.by_id) == limits.MAX_SUBSCRIPTIONS
     before = dict(authz.by_id)
-    res = asyncio.run(_collect_sub(authz, ["book.BTCUSDT.50", "bars.BTCUSDT.tick.1"]))
+    res = asyncio.run(_collect_sub(authz, ["book.BTCUSDT.50", "footprint.BTCUSDT.tick.1"]))
     assert res[0]["error"]["code"] == "subscription_limit"
     assert res[1]["error"]["code"] == "duplicate_subscription"  # existing subs untouched
     assert authz.by_id == before

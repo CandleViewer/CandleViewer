@@ -15,6 +15,15 @@ class BarSpecError(BarsError, ValueError):
     """
 
 
+class BarParamOutOfRange(BarSpecError):
+    """SR-E12-03: a well-formed `param` outside the floor and ceiling of its bar type. The message
+    names the bound (never the client's text), so REST and WS show the same sentence."""
+
+
+class BarServiceStopping(BarsError):
+    """The bar service is shutting down: a transient refusal, retried after a reconnect."""
+
+
 class SyntheticBarPersistError(BarsError):
     """A synthetic (densified) bar reached the persistence boundary (§3.3a: never persisted)."""
 

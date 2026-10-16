@@ -27,6 +27,9 @@ MAX_TOPICS_PER_SUB = 50
 MAX_SUBSCRIPTIONS = 200
 #: §16.2 / welcome `limits.max_symbols_per_connection`; excess -> `subscription_limit`.
 MAX_SYMBOLS_PER_CONNECTION = 40
+#: SR-E12-07 (§6.1): `bars.*` subscriptions per connection, live and replay; the next one gets
+#: `subscription_limit`. With `history` <= 1 000 this bounds one socket's snapshot amplification.
+MAX_BARS_SUBSCRIPTIONS = 16
 AUTH_TIMEOUT_S = 10.0
 FANOUT_SEND_TIMEOUT_S = 2.0
 

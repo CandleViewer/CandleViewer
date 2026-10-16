@@ -103,6 +103,12 @@ def test_create_app_composes_gateway_services(world: tuple[TestClient, _Kill]) -
     assert isinstance(st.ws_hub, GatewayHub)
     assert isinstance(st.ws_events, WsEvents) and st.ws_events.registry is st.ws_registry
     assert isinstance(st.ws_runtime, WsRuntime) and st.ws_runtime.hub is st.ws_hub
+    assert svc.bars_off is True  # `bars_enabled` defaults off: bars.* is `unknown_topic` (§6.1)
+
+
+def test_bars_feature_on_lets_bars_topics_through() -> None:
+    app = create_app(_settings().model_copy(update={"bars_enabled": True}))
+    assert app.state.ws_registry.services.bars_off is False
 
 
 def test_welcome_carries_settings_build_info(world: tuple[TestClient, _Kill]) -> None:

@@ -52,17 +52,14 @@ from candleviewer.api.market_response import (
     serialize_bar,
     with_recording_started_at,
 )
-from candleviewer.bars.errors import BarSpecError
+from candleviewer.bars.errors import BarParamOutOfRange, BarSpecError
 from candleviewer.bars.limits import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
     MAX_NON_TIME_WINDOW_US,
     MAX_TIME_WINDOW_US,
     MAX_WINDOW_BARS,
-    QTY_PARAM_MAX,
     QUERY_TIMEOUT_S,
-    RANGE_TICKS_RANGE,
-    TICK_PARAM_RANGE,
 )
 from candleviewer.bars.metrics import (
     bars_endpoint_422_no_data_recorded_total,
@@ -71,7 +68,7 @@ from candleviewer.bars.metrics import (
 )
 from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarKey, BarPage, row_key, stored_bar
-from candleviewer.bars.spec import PARAM_MAX_LEN, from_wire
+from candleviewer.bars.spec import PARAM_MAX_LEN, check_param_bounds, from_wire
 
 _REQUIRED_PERMISSION: Final = "marketdata:read"
 _BAR_TYPES: Final = frozenset(
@@ -139,15 +136,10 @@ def parse_bar_request(bar_type: str, param: str) -> BarSpec:
         raise _bad_param(
             "invalid", 400, f"param is not valid for bar_type {bar_type}; see the param table."
         ) from None
-    value = int(spec.param_value)
-    lo, hi = {
-        "tick": TICK_PARAM_RANGE, "range": RANGE_TICKS_RANGE, "renko": RANGE_TICKS_RANGE,
-        "volume": (1, QTY_PARAM_MAX), "delta": (1, QTY_PARAM_MAX),
-    }.get(spec.kind, (1, 2**63))  # fmt: skip
-    if not lo <= value <= hi:
-        raise _bad_param(
-            "out_of_range", 400, f"param for bar_type {bar_type} must be between {lo} and {hi}."
-        )
+    try:
+        check_param_bounds(spec, bar_type)
+    except BarParamOutOfRange as exc:
+        raise _bad_param("out_of_range", 400, str(exc)) from None
     return spec
 
 

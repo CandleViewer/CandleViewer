@@ -351,9 +351,31 @@ def audit_adapter(sink: _AuditSink) -> Any:
     return _audit
 
 
-def build_world(mp: pytest.MonkeyPatch) -> World:
-    """Build the app. Patches are applied through `mp` and live as long as the caller's context
-    (the alert repository is resolved per request, so the patch must outlive `create_app`)."""
+def world_env(bars_state_root: Path | None) -> dict[str, str]:
+    """The environment `build_world` sets through its `MonkeyPatch` (`create_app()` reads
+    `get_settings()`). `WORLD_ENV` holds its names: the leak guard checks each one is restored.
+    Without a `bars_state_root` the world keeps bars off, as it was before #399 slice E."""
+    env = {"CV_ALLOWED_ORIGINS": WS_ORIGIN}
+    if bars_state_root is not None:
+        # `bars.*` answers `unknown_topic` while the feature is off (23 §6.1, #399 slice E), but
+        # the matrix asserts its authorization outcome, so the pack runs with the feature on.
+        # Remove this entry with the flag (#399).
+        env["CV_BARS_ENABLED"] = "true"
+        # `register()` loads (and, on a bad blob, deletes) builder state under this root, whose
+        # default is the production `/data/bars/state`, so bars on always comes with a tmp root.
+        env["CV_BARS_STATE_ROOT"] = str(bars_state_root)
+    return env
+
+
+WORLD_ENV = tuple(world_env(Path()))  # the names only
+
+
+def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) -> World:
+    """Build the app. With a `bars_state_root` the world runs with bars on and keeps their builder
+    state there; without one bars stay off. The attribute patches and `world_env` are applied
+    through `mp` and live as long as the caller's context (the alert repository is resolved per
+    request, so the patch must outlive `create_app`). The caller undoes `mp` in a `finally`: a
+    failure in here, after the first patch, must not leave the process patched."""
     spec = load_contract()
     resolver = _Resolver(spec)
     users = UserStore()
@@ -374,7 +396,8 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
     # route is mounted either way, so give it the call-recording stand-in (never plans/deletes).
     purge_backend = _PurgeBackend()
     mp.setattr(appmod, "build_retention_manager", lambda *_a, **_k: purge_backend)
-    mp.setenv("CV_ALLOWED_ORIGINS", WS_ORIGIN)  # create_app() reads get_settings()
+    for name, value in world_env(bars_state_root).items():
+        mp.setenv(name, value)
     app = appmod.create_app(
         principal_resolver=resolver,
         user_role_store=users,

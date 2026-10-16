@@ -1150,6 +1150,7 @@ def create_app(
         instrument_known=lambda sym: _ws_symbol_known(ctx, sym),
         snapshots=default_snapshot_router(),
         sequencing=SequencingHub(),
+        bars_off=not resolved.bars_enabled,
     )
     ws_registry = ConnectionRegistry(
         snapshot_loader or build_ws_principal_loader(resolved, identity),

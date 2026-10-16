@@ -21,7 +21,8 @@ from typing import Any, Final, Literal
 
 import structlog
 
-from candleviewer.bars.errors import BarSpecError
+from candleviewer.bars.errors import BarParamOutOfRange, BarSpecError
+from candleviewer.bars.limits import QTY_PARAM_MAX, RANGE_TICKS_RANGE, TICK_PARAM_RANGE
 from candleviewer.bars.models import BarSpec, check_renko_bounds
 from candleviewer.observability.metrics import Counter
 
@@ -146,6 +147,28 @@ def is_wire_representable(spec: BarSpec) -> bool:
     except BarSpecError:
         return False
     return True
+
+
+#: SR-E12-03: each non-time kind's `param` floor and ceiling (`bars/limits.py`); time bars take
+#: only catalogue intervals. REST `/market/bars` and the WS `bars.*`/`footprint.*` subscribe path
+#: both refuse outside these, never clamp.
+_PARAM_BOUNDS: Final[dict[str, tuple[int, int]]] = {
+    "tick": TICK_PARAM_RANGE,
+    "range": RANGE_TICKS_RANGE,  # renko's bricks are bounded by the model (`check_renko_bounds`)
+    "volume": (1, QTY_PARAM_MAX),
+    "delta": (1, QTY_PARAM_MAX),
+}
+
+
+def check_param_bounds(spec: BarSpec, bar_type: str) -> None:
+    """Raise `BarParamOutOfRange`, naming the bound, when `spec`'s param is outside SR-E12-03's
+    floor and ceiling for its kind (a one-print tick bar is a builder-amplification vector,
+    BR-29). `bar_type` is the wire name, for the message."""
+    bounds = _PARAM_BOUNDS.get(spec.kind)
+    if bounds is not None and not bounds[0] <= int(spec.param_value) <= bounds[1]:
+        raise BarParamOutOfRange(
+            f"param for bar_type {bar_type} must be between {bounds[0]} and {bounds[1]}."
+        )
 
 
 def to_wire(spec: BarSpec) -> tuple[WireBarType, str]:
