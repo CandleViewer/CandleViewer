@@ -37,6 +37,7 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.recorder.retention import PrunePlan, RunReport
 from candleviewer.rules.manager import InMemoryRuleStore
 from candleviewer.storage.repositories.alerts import Page
 from tests.csrf_helpers import csrf_headers
@@ -285,6 +286,31 @@ class _AuditSink:
         self.records.append({"action": action, **kw})
 
 
+class _PurgeBackend:
+    """`PurgeBackend` stand-in for `POST /admin/recorder/purge` (E16-T06, #2575).
+
+    `create_app` builds the real `RetentionManager` only on the `real` storage backend, so without
+    this seam the CI app answers 503 "purge backend is not wired" before the step-up gate and the
+    pack could not observe the handler's gate order. It never plans, runs or deletes anything:
+    every call is recorded, `plan_purge` / `run` fail the request (an unhandled 5xx, so a red
+    cell), and the owner-only / step-up tests assert `calls` stayed empty."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def is_pinned(self, symbol: str) -> bool:
+        self.calls.append("is_pinned")
+        return True  # fail closed: nothing may be purged through this stand-in
+
+    async def plan_purge(self, symbol: str, before_us: int, *, include_pinned: bool) -> PrunePlan:
+        self.calls.append("plan_purge")
+        raise AssertionError("the RBAC pack must never plan a purge")
+
+    async def run(self, plan: PrunePlan, dry_run: bool) -> RunReport:
+        self.calls.append("run")
+        raise AssertionError("the RBAC pack must never run a purge")
+
+
 class _ScopeSource:
     """`ScopeSource` over the seeded actors: grants and permissions come from the contract."""
 
@@ -314,6 +340,7 @@ class World:
     step_up: _StepUp = field(default_factory=_StepUp)
     users: UserStore = field(default_factory=UserStore)
     rule_store: InMemoryRuleStore = field(default_factory=InMemoryRuleStore)
+    purge_backend: _PurgeBackend = field(default_factory=_PurgeBackend)
     grants: dict[uuid.UUID, tuple[uuid.UUID, ...]] = field(default_factory=dict)
 
 
@@ -343,6 +370,10 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
 
     mp.setattr(appmod, "build_identity_provider", lambda _settings: _Identity(spec))
     mp.setattr(appmod, "SqlAlchemyAlertRepository", lambda _pg: _AlertRepo())
+    # E16-T06: the real retention manager exists only on the `real` storage backend; the purge
+    # route is mounted either way, so give it the call-recording stand-in (never plans/deletes).
+    purge_backend = _PurgeBackend()
+    mp.setattr(appmod, "build_retention_manager", lambda *_a, **_k: purge_backend)
     mp.setenv("CV_ALLOWED_ORIGINS", WS_ORIGIN)  # create_app() reads get_settings()
     app = appmod.create_app(
         principal_resolver=resolver,
@@ -378,6 +409,7 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
     return World(
         app, client, audit, spec, resolver,
         scope_events=scope_events, step_up=step_up, users=users, rule_store=store,
+        purge_backend=purge_backend,
     )  # fmt: skip
 
 

@@ -70,11 +70,13 @@ class _Gated:
         self.m, self.gate = m, asyncio.Event()
         self.gate.set()
         self.runs = 0
+        self.plans = 0
 
     async def is_pinned(self, symbol: str) -> bool:
         return await self.m.is_pinned(symbol)
 
     async def plan_purge(self, symbol: str, before_us: int, *, include_pinned: bool) -> PrunePlan:
+        self.plans += 1
         return await self.m.plan_purge(symbol, before_us, include_pinned=include_pinned)
 
     async def run(self, plan: PrunePlan, dry_run: bool) -> RunReport:
@@ -95,7 +97,7 @@ class _Env:
         self.elevated = elevated
         self.elevation_checks = 0
         app = FastAPI()
-        jobs = AdminJobStore()
+        self.jobs = jobs = AdminJobStore()
 
         async def elevation(request: Request, action_class: str) -> JSONResponse | None:
             self.elevation_checks += 1
@@ -319,6 +321,29 @@ async def test_purge_manager_with_recording_write_is_403_owner_only_and_audited(
     action, kw = env.audit.calls[0]
     assert action == "retention.purge" and kw["reason"] == "purge_owner_only"
     assert kw["outcome"].value == "denied"
+
+
+async def test_purge_elevated_manager_is_403_before_body_read_and_starts_nothing() -> None:
+    """#2575 / 04 §7.2.2 row 9a: Managers hold `recording:write`, so the handler's owner check is
+    all that stands between them and an irreversible delete. It runs before the body and the
+    Idempotency-Key are looked at (an unparseable body and no key still read as the owner-only
+    403, not 400/422) and before step-up (a completed elevation never widens who may purge).
+    No job is created, nothing is planned or deleted, and the only audit record is the denied
+    `retention.purge` naming `purge_owner_only` (not a purge intent)."""
+    env = _Env()  # elevated
+    env.res.as_(OWNER, owner=False)
+    r = await env.c.post("/admin/recorder/purge", content=b"{not json")
+    assert r.status_code == 403 and r.json()["code"] == "forbidden"
+    assert env.elevation_checks == 0
+    assert env.backend.plans == 0 and env.backend.runs == 0 and env.w.deletes == []
+    assert env.jobs._jobs == {}
+    ((action, kw),) = env.audit.calls
+    assert (action, kw["outcome"].value, kw["reason"]) == (
+        "retention.purge",
+        "denied",
+        "purge_owner_only",
+    )
+    assert "before_state" not in kw
 
 
 async def test_purge_concurrent_loser_writes_no_intent_record() -> None:

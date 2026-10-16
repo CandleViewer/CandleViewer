@@ -325,13 +325,33 @@ def test_self_service_routes_reject_a_target_user_query_parameter(
     assert world.audit.records == [], "a refused call is not audited and revokes nothing"
 
 
+#: A valid `POST /admin/recorder/purge` body (22-api-openapi.yaml `purgeRecordedData`), so the
+#: call can only be refused for who sends it or for the missing step-up, never as malformed.
+_PURGE_BODY = {"symbol": "BTCUSDT", "confirm_symbol": "BTCUSDT", "reason": "free disk"}
+#: Purge also requires an `Idempotency-Key`; the other administrative mutations take none.
+_IDEMPOTENCY_KEY = "00000000-0000-4000-8000-0000000000e1"
+_KEYED_MUTATIONS = {("POST", "/admin/recorder/purge")}
+
 _ADMIN_MUTATIONS = [
     ("PUT", "/users/{uid}/roles", {"roles": ["viewer"]}),
     ("POST", "/users", {}),
     ("POST", "/users/{uid}/invite", None),
     ("DELETE", "/users/{uid}/invite", None),
     ("POST", "/users/{uid}/mfa/reset", None),
+    ("POST", "/admin/recorder/purge", _PURGE_BODY),  # 04 §7.2.2 row 9a; mounted by E16-T06 (#490)
 ]  # fmt: skip
+
+
+def _admin_headers(actor: str, method: str, path: str) -> dict[str, str]:
+    """`bearer(actor)` plus the `Idempotency-Key` the contract requires on purge."""
+    if (method, path) in _KEYED_MUTATIONS:
+        return {**bearer(actor), "Idempotency-Key": _IDEMPOTENCY_KEY}
+    return bearer(actor)
+
+
+def _job_ids(world: World) -> set[str]:
+    jobs: dict[str, Any] = world.app.state.admin_jobs._jobs
+    return set(jobs)
 
 
 @pytest.mark.parametrize(("method", "path", "body"), _ADMIN_MUTATIONS)
@@ -340,10 +360,13 @@ def test_administrative_mutations_are_owner_only(
     world: World, method: str, path: str, body: Any, actor: str
 ) -> None:
     world.step_up.elevated = True  # even a fully elevated non-owner session is refused
+    jobs_before = _job_ids(world)
     url = path.format(uid=user_id_of("viewer"))
-    resp = world.client.request(method, url, json=body, headers=bearer(actor))
+    resp = world.client.request(method, url, json=body, headers=_admin_headers(actor, method, path))
     assert resp.status_code == 403
     assert world.users.roles == world.users.initial_roles, "a refused call must not mutate roles"
+    assert world.purge_backend.calls == [], "a refused call must not plan or run a purge"
+    assert _job_ids(world) == jobs_before, "a refused call must not start a job"
 
 
 @pytest.mark.parametrize(("method", "path", "body"), _ADMIN_MUTATIONS)
@@ -351,19 +374,22 @@ def test_administrative_mutations_require_step_up_even_for_the_owner(
     world: World, method: str, path: str, body: Any
 ) -> None:
     world.step_up.elevated = False
+    jobs_before = _job_ids(world)
     url = path.format(uid=user_id_of("viewer"))
-    resp = world.client.request(method, url, json=body, headers=bearer("owner"))
+    resp = world.client.request(
+        method, url, json=body, headers=_admin_headers("owner", method, path)
+    )
     assert resp.status_code == 403
     assert resp.json().get("code") == "step_up_required"
     assert world.users.roles == world.users.initial_roles
+    assert world.purge_backend.calls == [] and _job_ids(world) == jobs_before
 
 
 #: Owner-only, step-up-gated mutations the app does not serve yet. Mounting one fails
 #: `test_unmounted_administrative_mutations_are_not_served_yet` until it moves into
-#: `_ADMIN_MUTATIONS` with a request body, so the two tests above cover it (#2575).
-_ADMIN_MUTATIONS_UNMOUNTED = [
-    ("POST", "/admin/recorder/purge"),  # 04 §7.2.2 row 9a; mounted by E16-T08 (#492)
-]
+#: `_ADMIN_MUTATIONS` with a request body, so the two tests above cover it (#2575). Empty since
+#: E16-T06 (#490) mounted `POST /admin/recorder/purge` and moved it into `_ADMIN_MUTATIONS`.
+_ADMIN_MUTATIONS_UNMOUNTED: list[tuple[str, str]] = []
 #: The matrix row of an Owner-only operation (the `POST /admin/audit/verify` shape).
 _OWNER_ONLY_OUTCOMES = {
     "owner": "allow",
