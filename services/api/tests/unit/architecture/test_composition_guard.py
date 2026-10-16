@@ -6,7 +6,7 @@ discovered by scanning the package, so a NEW unwired module fails and names
 itself. Intentional exceptions live in `composition_allowlist.json` (reason +
 ticket per entry); stale entries fail too, so the list can only shrink.
 
-`openapi_pending` is a FROZEN baseline (158 ops; was 163 before main served drawings), ticket
+`openapi_pending` is a FROZEN baseline (154 ops; was 158 before E15-T01 served /workspaces), ticket
 ``E49-K01-F4-baseline``. It may only shrink: new entries must carry a real
 ticket (``#123`` or ``E12-S03``) and the total may never exceed the baseline,
 so to add an operation either serve it or file a ticket and fix the count.
@@ -37,7 +37,7 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 158
+PENDING_BASELINE = 154
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")
 ALLOW: dict[str, dict[str, dict[str, str]]] = json.loads(
