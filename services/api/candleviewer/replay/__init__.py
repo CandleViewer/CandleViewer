@@ -13,6 +13,7 @@ replay clock (E26-T03) and seek engine (E26-T04) consume is built on them.
 from __future__ import annotations
 
 from candleviewer.replay.errors import (
+    ReplayConfigInvalid,
     ReplayError,
     ReplayMemoryCeilingExceeded,
     ReplayRequestInvalid,
@@ -22,6 +23,7 @@ from candleviewer.replay.errors import (
 from candleviewer.replay.models import ReplayGap, ReplayItem, ReplayRequest, ReplayTiers, SourceTier
 
 __all__ = [
+    "ReplayConfigInvalid",
     "ReplayError",
     "ReplayGap",
     "ReplayItem",

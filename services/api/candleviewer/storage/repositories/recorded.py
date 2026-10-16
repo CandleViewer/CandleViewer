@@ -264,9 +264,10 @@ class RecordedStreamReader(Protocol):
         truncation). Book streams are filtered to `depth`; other streams ignore it. A `limit`
         below 1 (or a bool) raises `RecordedQueryRejected` before storage is read.
 
-        Rows come in storage order, which does not order equal timestamps, and the cold tier
-        may repeat a row a re-export appended (21 Sec.5.3 "dedup on read"): callers sort by
-        `order_key` (one read is one `(symbol, stream)`) and keep the last of any duplicate."""
+        Rows come in storage order, which does not order equal timestamps. The cold tier may
+        repeat a row a re-export appended (21 Sec.5.3 "dedup on read"); re-exported duplicates
+        arrive oldest first, so a caller that sorts by `order_key` (one read is one `(symbol,
+        stream)`) and keeps the last copy, as the replay merge does, keeps the newest."""
         ...
 
     async def snapshot_at(

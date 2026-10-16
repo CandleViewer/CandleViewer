@@ -171,6 +171,7 @@ _ALLOWED_EXTRA_EXPORTS: dict[str, set[str]] = {
     # E26-T02: the replay read path's request, in-stream gap marker, storage ports and typed
     # errors (docs/plan/24-internal-schemas.md Sec.13.7).
     "M12": {
+        "ReplayConfigInvalid",
         "ReplayGap",
         "ReplayItem",
         "ReplayMemoryCeilingExceeded",

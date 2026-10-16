@@ -27,6 +27,14 @@ class ReplayRequestInvalid(ReplayError):
     code = "REPLAY_REQUEST_INVALID"
 
 
+class ReplayConfigInvalid(ReplayError, ValueError):
+    """A replay read was configured outside its bounds (read windows, storage timeout, memory
+    budget): a composition bug, refused before any storage read rather than looping or
+    waiting without a bound."""
+
+    code = "REPLAY_CONFIG_INVALID"
+
+
 class ReplayMemoryCeilingExceeded(ReplayError):
     """The per-session memory budget cannot hold even the smallest read of one stream: the
     replay stops with this error instead of growing memory (ticket E26-T02)."""
