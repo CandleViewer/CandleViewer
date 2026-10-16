@@ -516,7 +516,7 @@ x-error-codes-ws:
   - code: subscription_limit
     scope: topic
     retryable: true
-    title: Subscription ceiling reached (200 per connection, 16 bars.* per connection) or a bar spec cap
+    title: Subscription ceiling reached (200 subscriptions, 40 symbols or 16 bars.* per connection) or a bar spec cap
     rest_analogue: rate_limited
   - code: too_many_topics
     scope: request

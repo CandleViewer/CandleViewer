@@ -570,6 +570,7 @@
               "$ref": "#/$defs/seq"
             },
             "reason": {
+              "description": "Closed for the server; a client treats an unknown value as a routine re-snapshot (§7.4).",
               "enum": [
                 "initial",
                 "client_resync",

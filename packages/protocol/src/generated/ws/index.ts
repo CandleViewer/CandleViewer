@@ -315,6 +315,9 @@ export interface Error {
  * via the `definition` "snapMeta".
  */
 export interface SnapMeta {
+  /**
+   * Closed for the server; a client treats an unknown value as a routine re-snapshot (§7.4).
+   */
   reason?:
     | "initial"
     | "client_resync"
@@ -421,6 +424,9 @@ export type CandleViewerWSEnvelope = {
 };
 
 export interface SnapMeta {
+  /**
+   * Closed for the server; a client treats an unknown value as a routine re-snapshot (§7.4).
+   */
   reason?:
     | "initial"
     | "client_resync"

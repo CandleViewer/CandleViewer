@@ -208,7 +208,8 @@
                 "instrument_revision",
                 "replay_seek",
                 "generation_swap"
-              ]
+              ],
+              "description": "Closed for the server; a client treats an unknown value as a routine re-snapshot (§7.4)."
             },
             "previous_seq": {
               "$ref": "#/$defs/seq"
