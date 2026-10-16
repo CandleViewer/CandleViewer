@@ -543,8 +543,8 @@ trading with no fund right; the self-check, where a stale or inconclusive result
 system read-only (C-12.2); and how much exchange budget verification may spend without starving stops and
 cancels. Controls SR-E27-01..SR-E27-21 (model §9) are requested on the open E27 tickets and existing follow-ups;
 abuse cases AC-01..AC-38 go to E27-X02 (hand-off comment on #901; see RSK-065 to RSK-068). Status Approved
-(2026-10-16; independent reviews: opus security, sonnet code; Fable security pass REQUEST CHANGES at de649e42, APPROVE
-pending re-check); owner acceptance of the model's §11.2
+(2026-10-16; independent reviews: opus security, sonnet code; Fable security pass APPROVE at 878d5c4e on re-check,
+REQUEST CHANGES at de649e42 resolved); owner acceptance of the model's §11.2
 residuals (RR-14) and of the open High F-27 (RR-13) is pending, queued on #2701.
 
 | T    | STRIDE                 | Threat                                                                                                                                                                                                                                | L   | I   | Risk         | Mitigations                                                                                                                                                                                                                                         | Residual                                               |
