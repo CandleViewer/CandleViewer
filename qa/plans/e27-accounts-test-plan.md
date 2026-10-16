@@ -86,7 +86,9 @@ path or private field, so it survives refactors of E27-T03, E27-T04 and E27-S01.
   cases run in sequence, are at least 60 s apart (in automation a separate key per case or a
   test-clock advance, §9.5; in manual runs a wait). The E27 threat model plans a throttle of one
   test per minute per key (KV-D01) that `testApiKey` does not document yet (it lists `200`, `403`
-  and `404` only), so a faster call could be refused for a reason no case asserts.
+  and `404` only), so a faster call could be refused for a reason no case asserts. The same row
+  plans a deployment-wide cap of 10 private-WS opens per 5 minutes from `test` (SR-E27-05), so
+  send `include_ws: false` where a case does not assert the WS probe.
 - **Idempotency-Key:** every call to an operation the contract marks `x-idempotency: required`
   (`createApiKey`, `rotateApiKey`, `placeOrder`, `cancelOrder`, `closeAllPositions`,
   `setPositionLeverage`) sends a fresh `Idempotency-Key` unless the case says otherwise (TC-121),
@@ -104,8 +106,8 @@ path or private field, so it survives refactors of E27-T03, E27-T04 and E27-S01.
   `—` = API-only or no separate keyboard pass needed. The full audit is E27-Q04.
 - **Auto:** `Q02` = automated by E27-Q02 · `Q02·clk` = automated, needs the test clock (§9.5) ·
   `+manual` = plus a manual part (such as timing, copy review or the alert channel's page) ·
-  `manual` = human only. A restart is not a manual part: E27-Q02 restarts the #2893 stack (TC-115,
-  TC-212, §9.5).
+  `manual` = human only. A restart is not a manual part: automation restarts the stack under test,
+  and #2893's stub state and test clock must survive the restart (TC-115, TC-212, §9.5).
 - **Out of scope:** writing the specs (E27-Q02), the accessibility audit (E27-Q04), load and chaos
   (E27-Q03), adversarial depth (E27-X02), the full route × role matrix (E27-X03), restore and
   compromise drills (E27-X04), profiles and trade groups (E28), the OMS (E29), the dead-man's switch
@@ -412,8 +414,8 @@ events differently (§10 DC-08). Until one registered vocabulary is published (S
 audit step passes when each event the case lists appears once per action that causes it (one
 entry per denied call or subscription, §0) for its subject, with the actor the case gives (§0)
 and under any name in its row below; record which name appeared. Where a source writes one action
-under two names of the same row (04 §8.2 `key.created` and `key.verified`; a failed check's
-`account.tested` and `security.key_policy_violation`), the pair counts as one entry. A missing or
+under two or more names of the same row (04 §8.2 `key.created` and `key.verified`; a failed check's
+`account.tested` and `security.key_policy_violation`), they count as one entry. A missing or
 malformed entry is filed against the acting case (§0.1).
 
 Other events the E27 threat model requires may appear beside a case's events; they are recorded,
@@ -589,8 +591,8 @@ are this plan's additions. Rules for every scenario:
 
 On `403 step_up_required`, call `POST /auth/step-up` with the password, a code from `totp_gen`
 (E09 plan §6.2) and the `challenge_id`, then re-send the held request unchanged (same body and
-`Idempotency-Key`). Key actions use the `keys` class, which has a 5-minute grace (the contract's
-no-grace classes are `live_enablement`, `killswitch` and `backups`, `authStepUp`), and the class
+`Idempotency-Key`). Key actions use the `keys` class, which has a 5-minute grace (`authStepUp`
+names `live_enablement`, `killswitch` and `backups` as its no-grace classes), and the class
 of the account routes is not stated (§10 DC-19): a second action within 5 minutes may not be
 challenged again. Cases that assert the challenge (001, 206, 307, 315) therefore start from a
 session without a live grant: sign in fresh or let the grace expire. Driven through an `/admin/*`
