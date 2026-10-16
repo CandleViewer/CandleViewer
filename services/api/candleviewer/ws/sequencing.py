@@ -30,8 +30,9 @@ import json
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, Literal, Protocol
 
 import structlog
@@ -76,6 +77,11 @@ SNAP_REASONS: Final[tuple[str, ...]] = (
 )
 #: §7.4: counted as incidents (alert thresholds in `06-performance-and-load-standard.md`).
 INCIDENT_REASONS: Final = frozenset({"upstream_desync", "backpressure"})
+#: The `meta` keys `TopicEmitter.snapshot` sets. An owning module's `SnapshotBody.meta` may not
+#: name one: that is a programming error, refused when the body is built.
+SERVER_META_KEYS: Final = frozenset({"reason", "previous_seq", "source"})
+#: An owner's `meta` is at most this much JSON, so it can never carry a chunk past its limit.
+OWNER_META_MAX_BYTES: Final = 1024
 #: §13.6 `resync.reason` (client side).
 CLIENT_RESYNC_REASONS: Final = frozenset(
     {"sequence_gap", "decode_error", "state_corrupt", "client_restart", "manual"}
@@ -140,7 +146,9 @@ def _dumps(frame: Mapping[str, Any]) -> str:
 class SnapshotBody:
     """State of one topic as built by its owning module. `parts` is the CVWB form (empty when the
     topic has no binary form): one frame for book/trades/bars/footprint, one per column for the
-    heatmap (kind 6 is single-column)."""
+    heatmap (kind 6 is single-column). `meta` holds the module's own `snapMeta` keys (bars:
+    `spec_hash`, `build_version`, `include_delta`; §6.1 as amended by #2595), merged into every
+    chunk's `meta`. It is kept as a shallow read-only copy, so its values must be immutable."""
 
     structured: Mapping[str, Any]
     parts: tuple[Frame, ...] = ()
@@ -148,6 +156,16 @@ class SnapshotBody:
     qty_scale: int = 0
     stale: bool = False
     estimated: bool = False
+    meta: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        meta = MappingProxyType(dict(self.meta))  # a read-only copy: the guard holds for good
+        clash = SERVER_META_KEYS.intersection(meta)
+        if clash:
+            raise ValueError(f"snapshot meta keys {sorted(clash)} are set by the server")
+        if len(_dumps(dict(meta))) > OWNER_META_MAX_BYTES:
+            raise ValueError(f"snapshot meta is over {OWNER_META_MAX_BYTES} bytes")
+        object.__setattr__(self, "meta", meta)
 
 
 class SnapshotSource(Protocol):
@@ -166,11 +184,13 @@ class SnapshotSource(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class Rendered:
-    """A finished snapshot, ready for any subscriber: structured payload or b64 parts."""
+    """A finished snapshot, ready for any subscriber: structured payload or b64 parts, and the
+    owner's `meta` that every chunk carries."""
 
     payload: Mapping[str, Any] | None
     parts: tuple[str, ...]
     stale: bool
+    meta: Mapping[str, Any] = field(default_factory=dict)
 
 
 def cap_heatmap(body: SnapshotBody) -> SnapshotBody:
@@ -204,7 +224,9 @@ def render(sub: Subscription, body: SnapshotBody, max_part_bytes: int) -> Render
         body = cap_heatmap(body)
     binary = sub.effective.get("encoding") == "binary" and bool(body.parts)
     if not binary:
-        return Rendered(structured_payload(fam, body), (), body.stale)
+        return Rendered(structured_payload(fam, body), (), body.stale, body.meta)
+    if body.meta:  # `snapshot` sized the budget without the owner's keys, which every chunk carries
+        max_part_bytes -= len(_dumps(dict(body.meta)))
     flags = _flags(body, sub.replay_session_id is not None)
     frames: list[Frame] = []
     for part in body.parts:
@@ -217,7 +239,7 @@ def render(sub: Subscription, body: SnapshotBody, max_part_bytes: int) -> Render
         encode_b64(f if i == last else replace(f, flags=f.flags | FLAG_PARTIAL))
         for i, f in enumerate(frames)
     )
-    return Rendered(None, out, body.stale)
+    return Rendered(None, out, body.stale, body.meta)
 
 
 # -- chunking ------------------------------------------------------------------------------------
@@ -449,6 +471,10 @@ class TopicEmitter:
         rendered = self.cache.get(sub, self.source, b64_budget(self.max_frame_bytes, overhead))
         if rendered is None:
             return False
+        if rendered.meta:  # the owner's keys join the server's, which win (`SERVER_META_KEYS`)
+            owner = {k: v for k, v in rendered.meta.items() if k not in SERVER_META_KEYS}
+            base["meta"] = {**owner, **meta}
+            overhead = len(_dumps({**base, "e": "b64", "p": ""})) + 8
         frames = self._frames(base, rendered, overhead)
         sub.seq, sub.snapshot_pending = seq, False
         total = 0
@@ -499,9 +525,14 @@ class TopicEmitter:
         part: Frame | None = None,
         coalesced_count: int = 1,
         ts_ms: int | None = None,
+        meta: Mapping[str, Any] | None = None,
     ) -> bool:
         """Emit one `d` consuming exactly one sequence number. Suppressed (False) while the
-        subscription awaits its `snap` or is paused, so no delta crosses a gap (§7.1)."""
+        subscription awaits its `snap` or is paused, so no delta crosses a gap (§7.1). `meta`
+        rides on the envelope (bars: the §6.1 `include_delta` echo) and may not name a key
+        the server owns."""
+        if meta and SERVER_META_KEYS.intersection(meta):  # a programming error, as for a snap
+            raise ValueError("delta meta may not name a server-owned key")
         if sub.snapshot_pending or sub.effective.get("paused") is True:
             return False
         sub.seq += 1
@@ -510,6 +541,8 @@ class TopicEmitter:
         frame["ts"] = ts_ms if ts_ms is not None and sub.replay_session_id is not None else now
         if sub.replay_session_id is not None:
             frame |= {"rs": sub.replay_session_id, "wt": now}
+        if meta:
+            frame["meta"] = dict(meta)
         fam = sub.topic.family.family
         if part is not None and sub.effective.get("encoding") == "binary":
             flags = part.flags | (FLAG_REPLAY if sub.replay_session_id is not None else 0)
@@ -618,6 +651,12 @@ class SequencingHub:
     def unregister(self, authz: ConnectionAuthz) -> None:
         self._conns.pop(id(authz), None)
 
+    def subscriptions(self, ch: str, replay_session_id: str | None = None) -> list[Subscription]:
+        """The live (or one replay session's) subscriptions of `ch`, before `publish`'s scope and
+        state filters: a publisher encodes only the variants they need."""
+        subs = (authz.find(ch, replay_session_id) for authz, _ in self._conns.values())
+        return [sub for sub in subs if sub is not None]
+
     def publish(
         self,
         ch: str,
@@ -629,15 +668,24 @@ class SequencingHub:
         user: uuid.UUID | None = None,
         replay_session_id: str | None = None,
         ts_ms: int | None = None,
+        meta: Mapping[str, Any] | None = None,
+        select: Callable[[Subscription], bool] | None = None,
     ) -> int:
         """One delta for `ch` (live, or one replay session) to every subscription in its scope:
-        `account` for account-scoped private families, `user` (the owner) for SELF ones."""
+        `account` for account-scoped private families, `user` (the owner) for SELF ones. With
+        `select`, only the subscriptions it accepts, asked after the scope check: a publisher
+        sends one variant per group. `select` must be pure and total: a raise stops the fan-out
+        part-way."""
         sent = 0
         for authz, emitter in list(self._conns.values()):
             sub = authz.find(ch, replay_session_id)
             if sub is None or not in_scope(authz, sub, account, user):
                 continue
-            if emitter.delta(sub, body, part=part, coalesced_count=coalesced_count, ts_ms=ts_ms):
+            if select is not None and not select(sub):
+                continue
+            if emitter.delta(
+                sub, body, part=part, coalesced_count=coalesced_count, ts_ms=ts_ms, meta=meta
+            ):
                 sent += 1
         return sent
 
@@ -663,9 +711,14 @@ class SequencingHub:
             emitter.cache.invalidate(sub.ch)
         return sum(1 for emitter, sub in hits if emitter.snapshot(sub, reason))
 
-    def flush_pending(self) -> int:
-        """Retry every pending snapshot (e.g. once the book engine finished its rebuild)."""
-        return sum(e.flush_pending(list(a.by_id.values())) for a, e in list(self._conns.values()))
+    def flush_pending(self, match: Callable[[Subscription], bool] | None = None) -> int:
+        """Retry every pending snapshot (e.g. once the book engine finished its rebuild), or
+        only those of the subscriptions `match` accepts. `match` is asked for every subscription
+        of every connection, so it must be pure and total."""
+        return sum(
+            e.flush_pending([s for s in a.by_id.values() if match is None or match(s)])
+            for a, e in list(self._conns.values())
+        )
 
     # -- the six triggers --
 

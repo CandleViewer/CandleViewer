@@ -12,9 +12,10 @@ is refused with `FrameEncodeError`, never rounded, so the binary and structured 
 same value (§16.4). `turnover` (price x qty) has more places than qty and is rounded half-even.
 `covering_scales` gives scales that hold a whole history exactly, including bars recorded before a
 tick or qty-step coarsening. A value outside its field's range, a value that is not finite (in
-either form), a negative key, a `densify()` filler (never sent on the wire,
-`24-internal-schemas.md` §3.1) and an amended forming bar are refused the same way. The checks run
-in a private decimal context, so the caller's precision never rounds a value into passing.
+either form), a negative key, an integer above its field's width (named but never echoed), a
+`densify()` filler (never sent on the wire, `24-internal-schemas.md` §3.1) and an amended forming
+bar are refused the same way. The checks run in a private decimal context, so the caller's
+precision never rounds a value into passing.
 Heikin-ashi values are averages, not traded prices: an HA producer must quantise them to the
 instrument tick before they reach this module, or the contract must give HA its own rounding rule.
 """
@@ -43,6 +44,14 @@ _BOUNDS: Final = tuple(
 )
 #: `ts_offset_ms` is a u32 (§3.4): a frame holds bars opening at most this long after its base.
 MAX_TS_SPAN_MS: Final = dict(_BOUNDS)["ts_offset_ms"][1]
+_FIELD_MAX: Final = {name: high for name, (_, high) in _BOUNDS}
+#: The header's `price_scale` and `qty_scale` are u8 (§3.4).
+_SCALE_MAX: Final = _RANGES["B"][1]
+#: The integers both forms carry and their bounds: the kind-4 field ranges, and i64 for the
+#: microsecond times. Checked before anything formats one, since `str` of a huge int raises.
+_INTS: Final = (("generation", _FIELD_MAX["generation"]), ("index", _FIELD_MAX["index"]),
+                ("trade_count", _FIELD_MAX["trades"]), ("open_time", 2**63 - 1),
+                ("close_time", 2**63 - 1))  # fmt: skip
 #: Bar kinds that open on a clock boundary; every other kind also sends `close_t_ms` (§14.3).
 #: `heikin_ashi` is a wire name only (§6.1): no builder produces it yet.
 TIME_KINDS: Final[frozenset[WireBarType]] = frozenset({"time", "heikin_ashi"})
@@ -63,6 +72,9 @@ _MAX_DEC_ADJUSTED: Final = 38
 _MAX_DEC_PLACES: Final = 38
 #: A refusal names at most this much of the value, so a hostile coefficient cannot bloat a log.
 _MAX_VALUE_TEXT: Final = 64
+#: An upper bound on one `bar_item`'s JSON: a decimal is at most 79 characters (the two bounds
+#: above) and an integer at most 20 digits (`_INTS`). A test pins it against the widest item.
+ITEM_MAX_BYTES: Final = 2048
 
 
 def _key(bar: Bar, generation: int) -> str:
@@ -70,13 +82,14 @@ def _key(bar: Bar, generation: int) -> str:
 
 
 def _sendable(bar: Bar, generation: int) -> None:
+    ints = (generation, bar.index, bar.trade_count, bar.open_time, bar.close_time)
+    for (name, high), value in zip(_INTS, ints, strict=True):
+        if abs(value) > high:  # never echoed: the key and the value may be too long to format
+            raise FrameEncodeError(f"bars: {name} is {'too large' if value > 0 else 'negative'}")
     if bar.synthetic:
         raise FrameEncodeError(f"{_key(bar, generation)} is a densify() filler: never on the wire")
-    if min(generation, bar.index, bar.trade_count, bar.open_time, bar.close_time) < 0:
-        fields = (("generation", generation), ("index", bar.index),
-                  ("trade_count", bar.trade_count), ("open_time", bar.open_time),
-                  ("close_time", bar.close_time))  # fmt: skip
-        name, value = next((n, v) for n, v in fields if v < 0)
+    if min(ints) < 0:
+        name, value = next((n, v) for (n, _), v in zip(_INTS, ints, strict=True) if v < 0)
         raise _refuse(bar, generation, name, value, "is negative")
 
 
@@ -128,13 +141,17 @@ def _scaled(
     return int(whole)
 
 
-def covering_scales(bars: Iterable[Bar], *, price_scale: int, qty_scale: int) -> tuple[int, int]:
+def covering_scales(
+    bars: Iterable[Bar], *, price_scale: int, qty_scale: int, include_delta: bool = True
+) -> tuple[int, int]:
     """The scales, no coarser than the instrument's, that hold every price and size of `bars`
-    exactly. Pass the same pair to `bars_frames` and to the `SnapshotBody`."""
+    exactly; `delta` counts only when it is sent. Pass the same pair to `bars_frames` and to the
+    `SnapshotBody`."""
     for bar in bars:
         prices = (bar.open, bar.high, bar.low, bar.close)
         price_scale = max(price_scale, *map(_places, prices))
-        qty_scale = max(qty_scale, _places(bar.volume), _places(bar.delta))
+        delta = _places(bar.delta) if include_delta else 0
+        qty_scale = max(qty_scale, _places(bar.volume), delta)
     return price_scale, qty_scale
 
 
@@ -218,7 +235,10 @@ def bars_frames(
     bar's open time does not fit the u32 offset after the current frame's base, which 1 000 daily
     bars exceed. A snapshot sends each frame as its own `partial` chunk; a delta batch can need
     more than one frame too. `split_frame` still splits each frame by size. `SnapshotBody` scales
-    must equal these: `render` stamps the body's scales on every part."""
+    must equal these: `render` stamps the body's scales on every part. Scales must fit the u8
+    header fields, or no frame is built."""
+    if not (0 <= price_scale <= _SCALE_MAX and 0 <= qty_scale <= _SCALE_MAX):
+        raise FrameEncodeError(f"bars: scales ({price_scale}, {qty_scale}) do not fit the header")
     frames: list[Frame] = []
     run: list[Record] = []
     base = 0
