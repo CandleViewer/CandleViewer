@@ -126,6 +126,11 @@
       "path": "services/api/candleviewer/migrations/versions/0026_kek_versions_env.py",
       "sha256": "7e2297e70c77b2ab2ee90e451ef0c6ef5105d4a25db586ff864459d9ac368f18",
       "down_revision": "0025_settings"
+    },
+    "0027_feature_flags": {
+      "path": "services/api/candleviewer/migrations/versions/0027_feature_flags.py",
+      "sha256": "219d65339dc5b19e87e1a60074b2c285b2b85cf451d38a475bf511167efa3d02",
+      "down_revision": "0026_kek_versions_env"
     }
   }
 }
