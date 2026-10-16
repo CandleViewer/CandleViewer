@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
+import os
 import re
+from pathlib import Path
 
 import structlog
 from prometheus_client import generate_latest
@@ -40,20 +41,28 @@ _SUFFIX_EXCEPTIONS = frozenset(
     }
 )
 
-#: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
-#: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "12448e2470c1de7ab54ac63c63e961ed31ec8eb8497ea80f898839702662035f"
+#: Golden: one JSON row per catalogue metric, `[name, kind, labels, status, owner]`, sorted and
+#: compared as a set, so two PRs that add different metrics merge cleanly (#2743).
+#: `CV_REGEN_GOLDEN=1` rewrites it. Changing a row means updating 20-architecture.md §12.1
+#: (checked below) and the dashboards/alerts that use the metric.
+GOLDEN_CATALOGUE = Path(__file__).with_name("golden") / "metrics_catalogue.jsonl"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
 
-def _catalogue_digest() -> str:
-    rows = sorted((s.name, s.kind, list(s.labels), s.status, s.owner_epic) for s in CATALOGUE)
-    return hashlib.sha256(json.dumps(rows).encode()).hexdigest()
+def _catalogue_rows() -> set[str]:
+    return {json.dumps([s.name, s.kind, list(s.labels), s.status, s.owner_epic]) for s in CATALOGUE}
 
 
-def test_catalogue_golden_snapshot_unchanged() -> None:
-    assert _catalogue_digest() == GOLDEN_CATALOGUE_SHA256
+def test_catalogue_matches_golden_rows() -> None:
+    rows = _catalogue_rows()
+    if os.environ.get("CV_REGEN_GOLDEN") == "1":
+        text = "".join(f"{row}\n" for row in sorted(rows))
+        GOLDEN_CATALOGUE.write_text(text, encoding="utf-8", newline="\n")
+    golden = GOLDEN_CATALOGUE.read_text(encoding="utf-8").splitlines()
+    unreviewed, stale = sorted(rows - set(golden)), sorted(set(golden) - rows)
+    assert (unreviewed, stale) == ([], []), "review, then rerun with CV_REGEN_GOLDEN=1"
+    assert golden == sorted(set(golden)), "one sorted row per metric: rerun with CV_REGEN_GOLDEN=1"
 
 
 def test_catalogue_names_are_unique_and_documented() -> None:
@@ -79,16 +88,29 @@ def test_catalogue_no_disallowed_label_names() -> None:
         assert not {lbl.lower() for lbl in s.labels} & DISALLOWED_LABEL_NAMES, s.name
 
 
-def test_catalogue_architecture_doc_lists_every_metric() -> None:
-    from pathlib import Path
-
+def _architecture_metric_types() -> dict[str, str]:
+    """Metric name -> the Type cell of its row in the 20-architecture.md §12.1 table."""
     doc = next(
         p / "docs/plan/20-architecture.md"
         for p in Path(__file__).resolve().parents
         if (p / "docs/plan/20-architecture.md").exists()
     ).read_text(encoding="utf-8")
-    missing = [s.name for s in CATALOGUE if f"`{s.name}" not in doc]
-    assert missing == []
+    types: dict[str, str] = {}
+    for line in doc[doc.index("### 12.1") : doc.index("### 12.2")].splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if line.startswith("|") and len(cells) == 4:  # Domain | Metric | Type | Purpose / alert
+            for name in re.findall(r"`([a-z][a-z0-9_:]+)(?:\{[^`]*\})?`", cells[1]):
+                types[name] = cells[2]
+    return types
+
+
+def test_catalogue_rows_are_documented_in_architecture_12_1() -> None:
+    """A golden row change is a §12.1 change: every metric is in the table's Metric column and its
+    kind in that row's Type column (labels: test_architecture_doc_sync.py)."""
+    documented = _architecture_metric_types()
+    missing = [s.name for s in CATALOGUE if s.name not in documented]
+    wrong_kind = [s.name for s in CATALOGUE if s.kind not in documented.get(s.name, s.kind)]
+    assert (missing, wrong_kind) == ([], [])
 
 
 def test_histogram_buckets_bracket_documented_budgets() -> None:
