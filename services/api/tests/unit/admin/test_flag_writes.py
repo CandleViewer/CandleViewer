@@ -127,11 +127,21 @@ async def test_a_committed_write_is_audited_write_ahead_then_with_its_outcome() 
     assert store.rows["rules.form_editor"].user_overrides == {_B: True}
 
 
-async def test_an_unrecordable_intent_writes_nothing() -> None:
+@pytest.mark.parametrize("key", ["rules.form_editor", MAINTENANCE_MODE])
+async def test_an_unrecordable_intent_writes_nothing(key: str) -> None:
     writer, store, _ = await _writer(_Hook(), _BrokenAudit())
+    store.rows[key] = replace(store.rows[key], value=True)  # a kill-switch release too (L4)
     with pytest.raises(RuntimeError, match="audit unavailable"):
-        await _set(writer, "rules.form_editor", False)
-    assert store.writes == []
+        await _set(writer, key, False)
+    assert store.writes == [] and store.rows[key].value is True
+
+
+@pytest.mark.parametrize("key", ["ui.nonexistent", LIVE_ENABLED])  # a 404 and a 422 probe
+async def test_rbac_precedes_every_lookup_and_every_422(key: str) -> None:
+    writer, store, audit = await _writer(_Hook())
+    with pytest.raises(PermissionError):
+        await _set(writer, key, True, AuditPrincipal(_B, "viewer", frozenset({"flags:read"})))
+    assert (store.writes, audit.records) == ([], [])
 
 
 async def test_every_record_names_the_principal_object_and_severity() -> None:
@@ -143,20 +153,6 @@ async def test_every_record_names_the_principal_object_and_severity() -> None:
         assert record["actor_ip"] == "127.0.0.1"
         assert (record["object_kind"], record["object_id"]) == ("feature_flag", "rules.form_editor")
         assert record["severity"] is Severity.WARNING
-
-
-async def test_live_enablement_without_evidence_is_refused_unwritten_and_audited() -> None:
-    writer, store, audit = await _writer(_Hook())
-    with pytest.raises(FlagValidationError) as exc:
-        await _set(writer, LIVE_ENABLED, True)
-    assert (exc.value.rule, exc.value.field) == ("gate_evidence_required", "evidence_url")
-    assert store.writes == []
-    ((action, record),) = audit.records
-    assert (action, record["outcome"], record["reason"]) == (
-        "flags.change",
-        AuditOutcome.FAILURE,
-        "gate_evidence_required",
-    )
 
 
 @pytest.mark.parametrize("key", [LIVE_ENABLED, MAINTENANCE_MODE])
@@ -205,6 +201,7 @@ async def test_concurrent_writes_one_succeeds_the_other_conflicts_both_audited()
         ("rules.graph_editor", 1, {}, "kind_mismatch", "value"),
         ("rules.graph_editor", "true", {}, "kind_mismatch", "value"),
         ("rules.graph_editor", True, {"user_overrides": {_B: "yes"}}, "kind_mismatch", "overrides"),
+        (LIVE_ENABLED, True, {}, "gate_evidence_required", "evidence_url"),
     ],
 )
 async def test_invalid_writes_are_refused_before_the_store_and_audited(
@@ -232,11 +229,9 @@ async def test_an_unknown_flag_is_audited_but_never_reaches_a_series() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("mid_write", "reasons", "phase"), [(False, [], "lock"), (True, ["rollout"], "write")]
-)
+@pytest.mark.parametrize(("mid_write", "reasons"), [(False, []), (True, ["rollout"])])
 async def test_a_store_outage_is_logged_and_counted_never_audited(
-    mid_write: bool, reasons: list[str], phase: str
+    mid_write: bool, reasons: list[str]
 ) -> None:
     writer, store, audit = await _writer(_Hook())
     store.down, store.fail_write = not mid_write, mid_write
@@ -245,9 +240,8 @@ async def test_a_store_outage_is_logged_and_counted_never_audited(
         await _set(writer, "rules.form_editor", False)
     assert store.writes == [] and [r["reason"] for _, r in audit.records] == reasons  # intent only
     assert _changes("rules.form_editor", "store_unavailable") == before + 1
-    assert [(e["event"], e["phase"]) for e in logs] == [
-        ("feature_flag_write_store_unavailable", phase)
-    ]
+    assert [sorted(e) for e in logs] == [["event", "key", "log_level", "request_id"]]  # only (L3)
+    assert (logs[0]["key"], logs[0]["request_id"]) == ("rules.form_editor", str(_REQUEST))
 
 
 async def test_maintenance_toggles_add_their_own_audit_actions() -> None:
@@ -316,7 +310,7 @@ async def test_a_failed_maintenance_record_never_blocks_the_gate_hook() -> None:
         (MAINTENANCE_MODE, True, True, "flags"),
         (LIVE_ENABLED, False, True, "live_enablement"),
         (LIVE_ENABLED, "yes", True, "live_enablement"),  # unreadable: not enabled
-        (LIVE_ENABLED, True, True, "flags"),
+        (LIVE_ENABLED, True, True, "live_enablement"),  # whatever is stored (L1)
         ("rules.graph_editor", True, False, "flags"),
     ],
 )
@@ -371,6 +365,7 @@ async def test_a_release_is_judged_on_the_locked_row_not_a_cached_or_earlier_rea
         ("https://bucket.s3.amazonaws.com/pt.pdf?X-Amz-Signature=secret", "credential_in_url"),
         ("https://acct.blob.core.windows.net/c/pt.pdf?sv=1&sig=secret", "credential_in_url"),
         ("https://github.com/x#token=secret", "credential_in_url"),
+        ("https://idp.example/cb?Code=secret", "credential_in_url"),
         ("https://github.com/" + "a" * 2030, "string_too_long"),
     ],
 )

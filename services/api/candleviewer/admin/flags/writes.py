@@ -45,6 +45,8 @@ StepUpClass = Literal["killswitch", "live_enablement", "flags"]
 #: route answers `403 step_up_required` and the auth module audits `auth.step_up_required`).
 StepUp = Callable[[AuditPrincipal, StepUpClass], Awaitable[None]]
 EVIDENCE_URL_MAX: Final = 2048
+#: Query or fragment parameter names that carry a credential, besides the audit redactor's (L3).
+_TOKEN_PARAMS: Final = frozenset({"sig", "code", "auth", "pass", "pwd"})
 
 
 class AuditEmitter(Protocol):
@@ -103,13 +105,11 @@ def readable(spec: FlagSpec, row: StoredFlag | None) -> FlagValue | None:
 
 def step_up_class(spec: FlagSpec, row: StoredFlag, value: object) -> StepUpClass:
     """D3a/D3b: the one elevation a write needs, from the key and the row as stored under the
-    write's lock; an unreadable row counts as engaged (and as not enabled)."""
-    stored = readable(spec, row)
-    if spec.is_killswitch and value is False and stored is not False:
+    write's lock. An unreadable row counts as its fail-closed value: engaged for a kill switch.
+    Writing `true` to the live gate needs `live_enablement` whatever is stored (L1)."""
+    if spec.is_killswitch and value is False and readable(spec, row) is not False:
         return "killswitch"
-    if spec.requires_evidence and value is True and stored is not True:
-        return "live_enablement"
-    return "flags"
+    return "live_enablement" if spec.requires_evidence and value is True else "flags"
 
 
 def stored_transition(spec: FlagSpec, before: StoredFlag | None, after: StoredFlag) -> bool:
@@ -148,6 +148,8 @@ class FlagWriter:
             "reason": reason,
             "evidence_url": _audited_url(evidence_url),
         }
+        if not principal.has("flags:write"):  # RBAC precedes every lookup and every 422 (L2)
+            raise PermissionError("flags:write")
         spec = self._service.registry.get(key)
         audit = _Audit(self._audit, key, principal, request, spec)
         if spec is None:
@@ -181,8 +183,8 @@ class FlagWriter:
             raise FlagConflictError(exc.current) from None
         except StoreUnavailableError:  # the audit lives in this store: logged and counted instead
             flag_changes_total.labels(key, "store_unavailable").inc()
-            phase = "write" if locked else "lock"  # after the lock an intent record may exist
-            logger().warning("feature_flag_write_store_unavailable", key=key, phase=phase)
+            rid = str(principal.request_id)  # the key and the correlation id only (L3)
+            logger().warning("feature_flag_write_store_unavailable", key=key, request_id=rid)
             raise
         before = locked[-1]
         self._service.invalidate()
@@ -233,7 +235,9 @@ def _evidence_rule(url: str) -> str | None:
     params = dict.fromkeys(
         [n for q in (parts.query, parts.fragment) for n, _ in parse_qsl(q.replace(";", "&"))], ""
     )
-    secret = REDACTION_MARKER in (redact(params) or {}).values() or "sig" in params  # SAS `sig`
+    secret = REDACTION_MARKER in (redact(params) or {}).values() or not _TOKEN_PARAMS.isdisjoint(
+        name.lower() for name in params
+    )
     if "@" in parts.netloc or secret:
         return "credential_in_url"
     if parts.scheme.lower() != "https" or not host or not url.isprintable() or " " in url:
