@@ -351,30 +351,31 @@ def audit_adapter(sink: _AuditSink) -> Any:
     return _audit
 
 
-def world_env(bars_state_root: Path) -> dict[str, str]:
+def world_env(bars_state_root: Path | None) -> dict[str, str]:
     """The environment `build_world` sets through its `MonkeyPatch` (`create_app()` reads
-    `get_settings()`). `WORLD_ENV` holds its names: the leak guard checks each one is restored."""
-    return {
-        "CV_ALLOWED_ORIGINS": WS_ORIGIN,
+    `get_settings()`). `WORLD_ENV` holds its names: the leak guard checks each one is restored.
+    Without a `bars_state_root` the world keeps bars off, as it was before #399 slice E."""
+    env = {"CV_ALLOWED_ORIGINS": WS_ORIGIN}
+    if bars_state_root is not None:
         # `bars.*` answers `unknown_topic` while the feature is off (23 §6.1, #399 slice E), but
         # the matrix asserts its authorization outcome, so the pack runs with the feature on.
         # Remove this entry with the flag (#399).
-        "CV_BARS_ENABLED": "true",
+        env["CV_BARS_ENABLED"] = "true"
         # `register()` loads (and, on a bad blob, deletes) builder state under this root, whose
-        # default is the production `/data/bars/state`. It outlives the flag: bars is wired by
-        # default once the flag is gone, so keep this entry and `build_world`'s argument.
-        "CV_BARS_STATE_ROOT": str(bars_state_root),
-    }
+        # default is the production `/data/bars/state`, so bars on always comes with a tmp root.
+        env["CV_BARS_STATE_ROOT"] = str(bars_state_root)
+    return env
 
 
 WORLD_ENV = tuple(world_env(Path()))  # the names only
 
 
-def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path) -> World:
-    """Build the app. The attribute patches and `world_env` are applied through `mp` and live as
-    long as the caller's context (the alert repository is resolved per request, so the patch must
-    outlive `create_app`). The caller undoes `mp` in a `finally`: a failure in here, after the
-    first patch, must not leave the process patched."""
+def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) -> World:
+    """Build the app. With a `bars_state_root` the world runs with bars on and keeps their builder
+    state there; without one bars stay off. The attribute patches and `world_env` are applied
+    through `mp` and live as long as the caller's context (the alert repository is resolved per
+    request, so the patch must outlive `create_app`). The caller undoes `mp` in a `finally`: a
+    failure in here, after the first patch, must not leave the process patched."""
     spec = load_contract()
     resolver = _Resolver(spec)
     users = UserStore()
