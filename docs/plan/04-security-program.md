@@ -738,6 +738,12 @@ See §8 for the full specification.
 | SR-125 | Security-relevant metrics MUST be exported and alerted on: failed logins, lockouts, step-up failures, permission-check failures, credential verification failures, rate-limit rejections, rule circuit-breaker trips, audit chain verification failures, egress IP changes, clock drift, disk high-watermark, WS desync rate. | integration, manual-review |
 | SR-126 | Alert routing MUST reach the Owner out-of-band (a channel that does not depend on the app being healthy), with P1 alerts distinguishable from informational ones.                                                                                                                                                             | drill                      |
 
+Admin-area denials (E42-T01), scoped to routes mounted on the E42 admin-area guard (`admin_router` in
+`candleviewer/admin/http.py`): a request the guard refuses for a missing permission increments `authz_denied_total`
+(SR-125) and is audited once, as `admin.area_entered{outcome=denied}` (SR-062), not as a second `rbac.denied`. Any
+audit-side alert on denials MUST include that action (`admin.area_entered`), filtered by `outcome=denied`: the guard
+writes the same action with `outcome=success` for every allowed entry.
+
 ### 6.10 Backups and data protection (SR-090…SR-099)
 
 | ID     | Requirement                                                                                                                                                                                                                                                             | Verify                  |
