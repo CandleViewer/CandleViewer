@@ -17,6 +17,11 @@ flag_evaluations_total = Counter(
     "Server-side feature-flag resolutions, per flag.",
     ["flag"],
 )
+unreadable_overrides_total = Counter(
+    "cv_feature_flag_unreadable_overrides_total",
+    "Override rows ignored at resolution because their value does not fit the flag's kind.",
+    ["flag"],
+)
 flag_changes_total = Counter(
     "cv_feature_flag_changes_total",
     "Feature-flag write attempts past validation: ok, conflict or gate_evidence_required.",
@@ -24,7 +29,11 @@ flag_changes_total = Counter(
 )
 
 EXPORTED_NAMES: Final = frozenset(
-    {"cv_feature_flag_evaluations_total", "cv_feature_flag_changes_total"}
+    {
+        "cv_feature_flag_evaluations_total",
+        "cv_feature_flag_unreadable_overrides_total",
+        "cv_feature_flag_changes_total",
+    }
 )
 
 
