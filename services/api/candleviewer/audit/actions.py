@@ -94,6 +94,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "api_key.rotate",
         "api_key.revoke",
         "api_key.reveal_attempt",
+        # E27-T03 (#836): a persisted stored-key verdict, and the force-disable of an account whose
+        # key failed it (threat model E27-accounts §8.1, SR-E27-09; system actor, write-ahead).
+        "account.tested",
+        "account.disabled_by_policy",
         "profiles.update",
         "orders.submit",
         "orders.cancel",

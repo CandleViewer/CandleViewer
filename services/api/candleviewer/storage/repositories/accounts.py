@@ -9,8 +9,9 @@ first checks the live owner role, so a non-owner holding one gets
 `AccountsStoreScopeDeniedError` (a uniform 403 that depends only on the caller). A `GrantScope`
 narrows silently in SQL. Not-found, not-yours, soft-deleted and path-mismatched all return
 `None`, so there is no existence oracle. No method names or returns an envelope column
-(C-3.2): key writes (insert, revoke, touch) belong to M2's credential store. The one unscoped
-surface is `AccountsRowCounts`: aggregate counts for the M13 gauges, never a row (#2314).
+(C-3.2): key writes (insert, revoke, touch) belong to M2's credential store. Two surfaces take no
+scope, and no route reaches either: `AccountsRowCounts`, aggregate counts for the M13 gauges, never
+a row (#2314), and `KeySelfCheckStore`, the stored-key self-check's system port (E27-T03, #836).
 """
 
 from __future__ import annotations
@@ -249,3 +250,49 @@ class AccountsStore(AccountsRowCounts, Protocol):
         *,
         failure_reason: str | None,
     ) -> ApiKeyRotationRow | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SelfCheckTargetRow:
+    """One usable stored key for the self-check, with its account: no ciphertext, no whitelist."""
+
+    key_id: UUID
+    read_only: bool
+    #: `api_keys.permission_snapshot_at`: the last passing verification (only a pass writes it).
+    verified_at: datetime
+    account: ExchangeAccountRow
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedKey:
+    """What a passing self-check writes to `api_keys` (21-database-schema.md §3.2.2). `snapshot`
+    holds the verified key-info fields; it is merged into `permission_snapshot`."""
+
+    snapshot: dict[str, object]
+    can_trade: bool
+    read_only: bool
+    ip_whitelist: tuple[str, ...]
+    expires_at: datetime | None
+    at: datetime
+
+
+class KeySelfCheckStore(Protocol):
+    """The stored-key self-check's system port (E27-T03), bound to one environment (C-2.11).
+
+    The job has no principal, so it takes no scope: `accounts.selfcheck` is its one caller. It
+    writes the verification columns of `api_keys` and `exchange_accounts.trading_enabled`, never
+    a ciphertext, identity or status column. Each write returns whether it changed a row."""
+
+    async def targets(self) -> tuple[SelfCheckTargetRow, ...]:
+        """Every `active` or `rotating`, unrevoked key of a non-deleted account."""
+        ...
+
+    async def record_pass(self, key_id: UUID, verified: VerifiedKey) -> bool: ...
+
+    async def record_error(self, key_id: UUID, *, code: str, at: datetime) -> bool:
+        """`last_error_code` and `last_error_at` only: the verified columns keep their time."""
+        ...
+
+    async def disable_trading(self, account_id: UUID) -> bool:
+        """`trading_enabled` to false; `False` when the account was not armed."""
+        ...
