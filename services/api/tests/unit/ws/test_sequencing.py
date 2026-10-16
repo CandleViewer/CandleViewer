@@ -8,7 +8,8 @@ import json
 import uuid
 from dataclasses import replace
 from decimal import Decimal
-from typing import Any
+from pathlib import Path
+from typing import Any, get_args
 
 import pytest
 from hypothesis import given, settings
@@ -35,6 +36,7 @@ from candleviewer.ws.sequencing import (
     RESYNC_MAX_PER_WINDOW,
     SNAP_REASONS,
     SequencingHub,
+    SnapReason,
     SnapshotBody,
     SnapshotCache,
     UpstreamBookGuard,
@@ -52,6 +54,7 @@ from tests._corpus import frames as corpus_frames
 from tests.unit.ws._seq_support import ACC_A, ACC_B, PERMS, USER, Book, Conn, Source
 
 RS = "bb000000-0000-4000-8000-000000000001"
+_BUNDLE = Path(__file__).resolve().parents[5] / "docs" / "plan" / "ws-schema.json"
 
 
 def _book_source(symbol: str = "BTCUSDT", levels: int = 60) -> Source:
@@ -591,6 +594,16 @@ def test_hub_has_no_backpressure_trigger() -> None:
     re-snapshot another connection's equal one. It is retired, not fixed: the overflow ladder's
     `drain` (`ws/outbound.py`) is the only sender of `backpressure` snapshots."""
     assert not hasattr(SequencingHub, "backpressure")
+
+
+def test_snap_reasons_are_the_schema_enum_in_order() -> None:
+    """`SNAP_REASONS` and the `SnapReason` literal are hand-written copies of the §13
+    `snapMeta.reason` enum (§7.4). A reason added to the contract and missed here fails in this
+    test, not in `resnapshot()` at runtime."""
+    common = json.loads(_BUNDLE.read_text(encoding="utf-8"))["schemas"]
+    enum = common["cv://ws/v1/common.schema.json"]["$defs"]["snapMeta"]["properties"]["reason"]
+    assert list(SNAP_REASONS) == enum["enum"]
+    assert list(get_args(SnapReason)) == enum["enum"]
 
 
 # -- Scenario: large snapshots are chunked, not truncated --------------------------------------
