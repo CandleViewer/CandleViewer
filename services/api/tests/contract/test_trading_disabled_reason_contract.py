@@ -6,17 +6,16 @@ only (C-6.3): two new schemas, one new example, and `Problem` itself is unchange
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from candleviewer.api._generated import openapi_models as api
-from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.contract_conformance import REPO_ROOT, load_openapi_spec
 
 _SPEC = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
 _FORBIDDEN = _SPEC["components"]["responses"]["Forbidden"]
 _REASONS = ["maintenance", "account_unhealthy", "key_rotation_overdue"]
-_DOC = Path(__file__).resolve().parents[4] / "docs/plan/24-internal-schemas.md"
+_DOC = REPO_ROOT / "docs/plan/24-internal-schemas.md"
 
 
 def _example() -> dict[str, Any]:

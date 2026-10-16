@@ -238,15 +238,29 @@ export interface paths {
      *     Resolution (E42-T03) is server-side only, per caller: user override, then role override,
      *     then percentage rollout (`hash(user_id || flag_key)`), then the deployment default
      *     (`21-database-schema.md` 3.9). Flag definitions are code (a reviewed registry), never
-     *     configuration: a flag may gate a UI surface or an incomplete feature, never a security
-     *     control (C-4.14), and the service refuses to start with a definition that declares one.
-     *     Kill-switch-class flags (`maintenance.mode`, `killswitch.*`) are re-read at least every
-     *     5 s and never served from the 30 s cache. If the flag store is unreachable, every flag
-     *     resolves to its fail-closed value: the restrictive one for the safety-relevant flags
-     *     (`maintenance.mode` and `killswitch.order_entry` engaged, so an unknown state refuses new
-     *     orders; `trading.live_enabled` off) and the registry default for every other flag.
-     *     Override values on a `percentage` flag are booleans that pin a user in (`true`) or out
-     *     (`false`) of the rollout.
+     *     configuration: a flag may gate a UI surface or an incomplete feature, never
+     *     authentication, RBAC enforcement, audit writing, the native-SL invariant, withdrawal
+     *     permission or rate limiting (C-4.14), and the service refuses to start with a definition
+     *     that declares one of them. Each definition also declares its `visibility`: `all_roles`,
+     *     or `owner_only` for a flag no manager or viewer session ever learns
+     *     (`23-ws-protocol.md` 15.9).
+     *     `trading.live_enabled` and the kill-switch-class flags (`maintenance.mode`,
+     *     `killswitch.*`) resolve from the deployment value only: user and role overrides for them
+     *     are ignored at resolution, not merely refused on write, so an override row that reached
+     *     the store another way (a seed, a migration, a direct database change) changes nothing.
+     *     Kill-switch-class flags are re-read at least every 5 s and never served from the 30 s
+     *     cache. Override values on a `percentage` flag are booleans that pin a user in (`true`)
+     *     or out (`false`) of the rollout.
+     *
+     *     The flag store is unreachable when its read fails, exceeds its read budget or returns an
+     *     unreadable value (malformed, or a kind mismatch). Every flag then resolves to its
+     *     fail-closed value: the restrictive one for the safety-relevant flags (`maintenance.mode`
+     *     and `killswitch.order_entry` engaged, so an unknown state refuses new orders through the
+     *     shared order-entry gate; `trading.live_enabled` off) and the registry default for every
+     *     other flag. `killswitch.ingestion` is outside that restrictive set: it fails closed to
+     *     its default, so an unreachable store never stops ingestion. The answer is still `200`,
+     *     with `resolution: fail_closed`, and every flag omits `updated_at` and `updated_by`, so
+     *     the console can say these are fail-closed values, not the current ones.
      */
     get: operations["listFeatureFlags"];
     put?: never;
@@ -271,42 +285,58 @@ export interface paths {
      * Set a feature flag's value and overrides
      * @description `trading.live_enabled` is special-cased: enabling it requires `reason` and a recorded
      *     pen-test reference (`evidence_url`), per the R4 release gate in `07-release-and-prr.md`.
-     *     Without them the call fails with `validation_failed` / `gate_evidence_required`.
+     *     Without `reason` the call fails `422 validation_failed` with rule `required`; without
+     *     `evidence_url`, with rule `gate_evidence_required`.
      *
      *     Write rules (E42-T03), all enforced server-side:
      *     - Every write carries `reason` and `expected_updated_at` (the `updated_at` the caller last
      *       read). Without either the call fails `422 validation_failed` (rule `required`).
-     *     - `value` and every override value must match the flag's kind (`boolean`; `percentage`
-     *       0-100; `variant` one of the flag's variants), else `422 validation_failed` (rule
-     *       `kind_mismatch`). An unknown `flagKey` is `404 not_found`.
-     *     - `flags:write` is a dangerous permission, and the step-up class depends on the flag:
-     *       `trading.live_enabled: true` needs a fresh `live_enablement` elevation, a
-     *       kill-switch-class flag a fresh `killswitch` elevation (both no-grace, single use), and
-     *       every other flag `flags` (5-minute grace). Without it the call is
-     *       `403 step_up_required` (audited as `auth.step_up_required`). The route slice registers
-     *       `flags` in `ACTION_CLASSES`, `DANGEROUS_ROUTES` and `DANGEROUS_PATH_PATTERN`
-     *       (`^/admin/feature-flags/[^/]+$`).
+     *     - `value` must match the flag's kind: a boolean on a `boolean` flag, an integer 0-100 on
+     *       a `percentage` flag (its rollout), one of the flag's variants on a `variant` flag. An
+     *       override value is a boolean on `boolean` and `percentage` flags (on a `percentage` flag
+     *       it pins the user in or out of the rollout) and one of the flag's variants on a
+     *       `variant` flag. Anything else is `422 validation_failed` (rule `kind_mismatch`). An
+     *       unknown `flagKey` is `404 not_found`.
+     *     - An omitted `overrides` keeps the flag's existing overrides; `overrides: []` clears
+     *       them. An `overrides[].user_id` that names no user is `422 validation_failed` (rule
+     *       `unknown_user`).
+     *     - `flags:write` is a dangerous permission. Every write needs exactly one fresh step-up
+     *       elevation, chosen by key and direction: releasing a kill-switch-class flag (`true` to
+     *       `false`) needs `killswitch`, enabling `trading.live_enabled` needs `live_enablement`
+     *       (both no-grace, single use), and every other write needs `flags` (5-minute grace).
+     *       Without it the call is `403 step_up_required` (audited as `auth.step_up_required`).
+     *       This console is not the emergency control: engaging a kill switch here needs only
+     *       `flags`, and the code-free emergency engage stays `POST /trading/kill-switch`.
      *     - `trading.live_enabled` and the kill-switch-class flags take no overrides: any override
-     *       on them is `422 validation_failed` (rule `overrides_not_allowed`), so neither the live
-     *       gate nor maintenance mode can differ per user. On a `percentage` flag an override is a
-     *       boolean that pins the user in or out of the rollout.
+     *       on them is `422 validation_failed` (rule `overrides_not_allowed`), and resolution
+     *       ignores any override row they hold (`GET /admin/feature-flags`).
      *     - The write locks the flag row and compares `expected_updated_at` with the stored
      *       `updated_at`. A mismatch is `409 conflict` carrying the current flag in `current`; it is
-     *       never last-write-wins.
+     *       never last-write-wins. No `Idempotency-Key` is accepted: the precondition already makes
+     *       a retry safe, so a `409` here is always `conflict` with `current`.
      *     - `trading.live_enabled: true` without `evidence_url` is `422` (rule
-     *       `gate_evidence_required`) and nothing is written. This service only enforces the
-     *       precondition; the evidence binding belongs to the live gate (E44-T04).
+     *       `gate_evidence_required`) and nothing is written. `evidence_url` must be an `https` URL
+     *       (rule `https_required`); the server records it and never dereferences it. This service
+     *       only enforces the precondition; the evidence binding belongs to the live gate (E44-T04).
+     *     - If the flag store is unreachable (as `GET /admin/feature-flags` defines it), the write
+     *       is `503 store_unavailable` and nothing is written.
      *     - Every attempt that passes RBAC and step-up is audited as `flags.change` with the key,
      *       before, after, `reason` and `evidence_url`, including refused and conflicting ones.
      *       Toggling `maintenance.mode` is also audited as `maintenance.enabled` or
      *       `maintenance.disabled`.
      *     - A successful write pushes a `SystemUpdate` of kind `feature_flags`, carrying only the
-     *       changed key, to every session whose role may see that flag (`23-ws-protocol.md` 15.9).
+     *       changed key, to every session the flag's `visibility` admits (`23-ws-protocol.md` 15.9).
      *
-     *     `maintenance.mode` is a kill-switch-class flag. While it is on, order acceptance is
-     *     refused before any OMS work with `403 trading_disabled`, running emulated algos are
-     *     cancelled, native exchange stop-losses are never touched, and every session gets a
-     *     `notice`. The recorder keeps running unless `maintenance.keep_recorder` is `false`.
+     *     `maintenance.mode` is a kill-switch-class flag. While it is on, the shared order-entry
+     *     gate refuses new orders on submit routes only, before any OMS work, with
+     *     `403 trading_disabled` and `reason: maintenance`. Cancel, reduce-only close,
+     *     `closePosition` and `closeAllPositions` (flatten) and stop-loss tightening stay available,
+     *     and so does the kill switch's own flatten; native exchange stop-losses are never touched.
+     *     Turning it on cancels running emulated algos and sends every session a `notice`; the
+     *     recorder keeps running unless `maintenance.keep_recorder` is `false`. The algo cancels,
+     *     the notice and the `maintenance.*` audit happen only on a stored value actually read as
+     *     `true`, at the transition of the stored value, never on a transient store failure: a
+     *     fail-closed engagement only refuses new orders.
      */
     put: operations["setFeatureFlag"];
     post?: never;
@@ -3702,6 +3732,12 @@ export interface paths {
      *     reduce-only market orders, and (d) disarms every `armed` rule. Scope is `global`
      *     (whole deployment) or a specific account set.
      *
+     *     Maintenance mode (`maintenance.mode`, set with `PUT /admin/feature-flags/{flagKey}`) is
+     *     narrower: it refuses new orders on submit routes only, through the shared order-entry
+     *     gate (`trading_disabled` with `reason: maintenance`), and cancels only running emulated
+     *     algos. Cancel, reduce-only close, flatten and stop-loss tightening stay available under
+     *     it, and so do this switch's own cancel and flatten.
+     *
      *     Managers may engage the switch for accounts in their own scope; only the owner may
      *     engage it globally or **release** it. Bybit's dead-man's-switch
      *     (`POST /v5/order/disconnected-cancel-all`) is armed separately by the OMS for `inverse`
@@ -5239,9 +5275,15 @@ export interface components {
         user_id?: string;
         value?: unknown;
       }[];
-      /** Format: date-time */
+      /**
+       * Format: date-time
+       * @description Omitted when the list's `resolution` is `fail_closed` (E42-T03).
+       */
       updated_at?: string;
-      /** Format: uuid */
+      /**
+       * Format: uuid
+       * @description Omitted when the list's `resolution` is `fail_closed` (E42-T03).
+       */
       updated_by?: string | null;
       /** @description Resolved value for the caller. */
       value?: unknown;
@@ -5250,6 +5292,11 @@ export interface components {
     FeatureFlagConflict: components["schemas"]["Problem"] & {
       current: components["schemas"]["FeatureFlag"];
     };
+    /**
+     * @description How `GET /admin/feature-flags` resolved its list (E42-T03), a closed set. `stored`: from the flag store. `fail_closed`: the store was unreachable (its read failed, exceeded its read budget or returned an unreadable value), so every flag shows its fail-closed value and omits `updated_at` and `updated_by`.
+     * @enum {string}
+     */
+    FeatureFlagResolution: "stored" | "fail_closed";
     /** @enum {string} */
     FlagKind: "boolean" | "percentage" | "variant";
     FootprintBar: components["schemas"]["Bar"] & {
@@ -7370,7 +7417,7 @@ export interface components {
     SetFeatureFlagRequest: {
       /**
        * Format: uri
-       * @description Required for gated flags such as `trading.live_enabled`.
+       * @description Required for gated flags such as `trading.live_enabled`. An `https` URL; recorded, never dereferenced.
        */
       evidence_url?: string;
       /**
@@ -7378,6 +7425,7 @@ export interface components {
        * @description The flag's `updated_at` as the caller last read it (E42-T03). The write is applied only if the stored value still matches, else `409 conflict`. The server refuses a write without it (`422 validation_failed`); schema-optional for the same reason as `reason`.
        */
       expected_updated_at?: string;
+      /** @description Omitted, the existing overrides stay; `[]` clears them (E42-T03). */
       overrides?: {
         /** Format: uuid */
         user_id: string;
@@ -7385,7 +7433,7 @@ export interface components {
       }[];
       /** @description Why the flag changed; recorded in the `flags.change` audit entry (E42-T03). The server refuses a write without it (`422 validation_failed`). It stays optional in the schema because C-6.3 classes a newly required field as breaking. */
       reason?: string;
-      /** @description Boolean, number (percentage) or string (variant), matching the flag kind. */
+      /** @description Boolean, integer 0-100 (percentage) or string (variant), matching the flag kind. */
       value: unknown;
     };
     SetKillSwitchRequest: {
@@ -8650,6 +8698,7 @@ export interface operations {
         content: {
           "application/json": {
             items?: components["schemas"]["FeatureFlag"][];
+            resolution?: components["schemas"]["FeatureFlagResolution"];
           };
         };
       };
@@ -8703,6 +8752,7 @@ export interface operations {
         };
       };
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getHealth: {

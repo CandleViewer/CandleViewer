@@ -4373,8 +4373,23 @@ class FeatureFlag(BaseModel):
     value: Annotated[Any | None, Field(description="Resolved value for the caller.")] = None
     default_value: Annotated[Any | None, Field(description="Deployment default.")] = None
     overrides: list[Override] | None = None
-    updated_by: UUID | None = None
-    updated_at: AwareDatetime | None = None
+    updated_by: Annotated[
+        UUID | None,
+        Field(description="Omitted when the list's `resolution` is `fail_closed` (E42-T03)."),
+    ] = None
+    updated_at: Annotated[
+        AwareDatetime | None,
+        Field(description="Omitted when the list's `resolution` is `fail_closed` (E42-T03)."),
+    ] = None
+
+
+class FeatureFlagResolution(RootModel[Literal["stored", "fail_closed"]]):
+    root: Annotated[
+        Literal["stored", "fail_closed"],
+        Field(
+            description="How `GET /admin/feature-flags` resolved its list (E42-T03), a closed set. `stored`: from the flag store. `fail_closed`: the store was unreachable (its read failed, exceeded its read budget or returned an unreadable value), so every flag shows its fail-closed value and omits `updated_at` and `updated_by`.\n"
+        ),
+    ]
 
 
 class Override1(BaseModel):
@@ -4392,10 +4407,13 @@ class SetFeatureFlagRequest(BaseModel):
     value: Annotated[
         Any,
         Field(
-            description="Boolean, number (percentage) or string (variant), matching the flag kind."
+            description="Boolean, integer 0-100 (percentage) or string (variant), matching the flag kind."
         ),
     ]
-    overrides: list[Override1] | None = None
+    overrides: Annotated[
+        list[Override1] | None,
+        Field(description="Omitted, the existing overrides stay; `[]` clears them (E42-T03)."),
+    ] = None
     reason: Annotated[
         str | None,
         Field(
@@ -4404,7 +4422,10 @@ class SetFeatureFlagRequest(BaseModel):
         ),
     ] = None
     evidence_url: Annotated[
-        AnyUrl | None, Field(description="Required for gated flags such as `trading.live_enabled`.")
+        AnyUrl | None,
+        Field(
+            description="Required for gated flags such as `trading.live_enabled`. An `https` URL; recorded, never dereferenced."
+        ),
     ] = None
     expected_updated_at: Annotated[
         AwareDatetime | None,
