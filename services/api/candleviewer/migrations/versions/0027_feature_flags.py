@@ -23,8 +23,8 @@ unique indexes are `docs/plan/21-database-schema.md` Sec.3.9 verbatim (the regis
   `roles` on the way in and the drops an ACCESS EXCLUSIVE one on the way out, so each wait is
   bounded instead of queueing logins. `env.py` runs all pending revisions in one transaction, so
   the setting is reset at the end of each direction.
-* Downgrade locks both tables, refuses (clear error) while either holds rows, then drops the
-  overrides, the flags and the type.
+* Downgrade locks both tables, refuses while either holds rows (the error names the operator step:
+  export the overrides to keep, DELETE FROM feature_flags, retry), then drops both and the type.
 """
 
 from __future__ import annotations
@@ -100,7 +100,7 @@ LOCK TABLE feature_flags, feature_flag_overrides IN SHARE MODE;
 DO $BODY$
 BEGIN
   IF EXISTS (SELECT 1 FROM feature_flags) OR EXISTS (SELECT 1 FROM feature_flag_overrides) THEN
-    RAISE EXCEPTION '0027_feature_flags downgrade refused: the feature flag tables hold data';
+    RAISE EXCEPTION '0027_feature_flags downgrade refused: feature_flags and/or feature_flag_overrides hold rows. Export the overrides you want to keep (operator-set, never re-seeded), then run DELETE FROM feature_flags (it cascades to the overrides) and retry. The flag store re-seeds every registered flag on its next start';
   END IF;
 END $BODY$;
 DROP TABLE feature_flag_overrides;

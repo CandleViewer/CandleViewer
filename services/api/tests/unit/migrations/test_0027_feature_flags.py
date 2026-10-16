@@ -29,7 +29,7 @@ _KINDS = ("boolean", "percentage", "variant")
 
 
 def _alembic(*args: str) -> str:
-    r = subprocess.run(  # noqa: S603 -- fixed argv, literal alembic subcommands, no shell
+    r = subprocess.run(  # noqa: S603 -- fixed argv, literal alembic subcommands, no shell (#964)
         [sys.executable, "-m", "alembic", *args],
         cwd=_ROOT, env={**os.environ}, capture_output=True, text=True, timeout=60,
     )  # fmt: skip
@@ -59,40 +59,41 @@ def _doc_ddl() -> str:
 
 
 def test_revision_chains_onto_0026() -> None:
-    assert f"{_PREV} -> {_REV}" in _alembic("history", "-r", _UP)
+    history = _alembic("history", "-r", _UP)
+    assert f"{_PREV} -> {_REV}" in history, f"0027 must revise 0026, got: {history}"
 
 
 def test_upgrade_creates_flag_kind_as_the_plan_doc_declares_it() -> None:
     enum = f"CREATE TYPE flag_kind AS ENUM ({','.join(repr(k) for k in _KINDS)});"
-    assert enum in _norm(_DOC.read_text(encoding="utf-8"))
+    assert enum in _norm(_DOC.read_text(encoding="utf-8")), "Sec.1.2 must declare flag_kind"
     sql = _up()
-    assert enum in sql
-    assert sql.index(enum) < sql.index("CREATE TABLE feature_flags (")
+    assert enum in sql, "the upgrade must create flag_kind with Sec.1.2's values, in order"
+    assert sql.index(enum) < sql.index("CREATE TABLE feature_flags ("), "the type precedes its use"
 
 
 def test_upgrade_ddl_is_the_plan_doc_ddl_verbatim() -> None:
     doc = _norm(_doc_ddl())
-    assert doc.startswith("CREATE TABLE feature_flags (")
-    assert doc.endswith("(feature_flag_id, role_id) WHERE role_id IS NOT NULL;")
-    assert doc in _up()
+    assert doc.startswith("CREATE TABLE feature_flags ("), "Sec.3.9's flag DDL block moved"
+    assert doc.endswith("(feature_flag_id, role_id) WHERE role_id IS NOT NULL;"), "block cut short"
+    assert doc in _up(), "the upgrade DDL has drifted from Sec.3.9 (comments and layout aside)"
 
 
 def test_upgrade_ships_only_the_flag_tables() -> None:
     """Nothing beyond Sec.3.9's flag DDL: no seed, trigger, grant or classification comment."""
     sql = _up()
-    assert sql.count("CREATE TABLE ") == 2 and sql.count("CREATE TYPE ") == 1
-    assert sql.count("CREATE UNIQUE INDEX ") == 2 and sql.count("CREATE INDEX ") == 0
+    assert sql.count("CREATE TABLE ") == 2 and sql.count("CREATE TYPE ") == 1, "tables or types"
+    assert sql.count("CREATE UNIQUE INDEX ") == 2 and sql.count("CREATE INDEX ") == 0, "indexes"
     for absent in ("settings", "INSERT INTO", "CREATE TRIGGER", "GRANT ", "REVOKE ", "COMMENT ON"):
-        assert absent not in sql
+        assert absent not in sql, f"{absent!r} is outside this revision's scope"
 
 
 def test_upgrade_bounds_every_lock_with_lock_timeout() -> None:
     """C-5.6: the FKs lock `users` and `roles`; every statement sits inside a 5 s bound."""
     sql = _up()
-    assert sql.index("SET LOCAL lock_timeout = '5s';") < sql.index("CREATE TYPE flag_kind")
+    assert sql.index("SET LOCAL lock_timeout = '5s';") < sql.index("CREATE TYPE flag_kind"), "opens"
     assert sql.rindex("CREATE UNIQUE INDEX ux_ffo_role") < sql.index(
         "SET LOCAL lock_timeout = DEFAULT;"
-    )
+    ), "the bound must stay open until the last index is built"
 
 
 def test_downgrade_locks_refuses_while_populated_then_drops_children_first() -> None:
@@ -102,13 +103,16 @@ def test_downgrade_locks_refuses_while_populated_then_drops_children_first() -> 
         "LOCK TABLE feature_flags, feature_flag_overrides IN SHARE MODE;",
         "IF EXISTS (SELECT 1 FROM feature_flags) OR EXISTS (SELECT 1 FROM feature_flag_overrides)",
         "RAISE EXCEPTION '0027_feature_flags downgrade refused",
+        "Export the overrides you want to keep",
+        "run DELETE FROM feature_flags (it cascades to the overrides) and retry",
         "DROP TABLE feature_flag_overrides;",
         "DROP TABLE feature_flags;",
         "DROP TYPE flag_kind;",
         "SET LOCAL lock_timeout = DEFAULT;",
     ]
     positions = [sql.index(step) for step in steps]
-    assert positions == sorted(positions)
+    order = dict(zip(steps, positions, strict=True))
+    assert positions == sorted(positions), f"steps out of order: {order}"
 
 
 def _default(column: Column[Any]) -> str | None:

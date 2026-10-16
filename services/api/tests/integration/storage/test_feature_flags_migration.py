@@ -38,7 +38,7 @@ Conn = psycopg.Connection[tuple[Any, ...]]
 
 def _alembic(dsn: str, *args: str) -> subprocess.CompletedProcess[str]:
     """Bounded, so a lost `lock_timeout` fails the test instead of hanging it."""
-    return subprocess.run(  # noqa: S603 -- fixed argv, literal alembic subcommands, no shell
+    return subprocess.run(  # noqa: S603 -- fixed argv, literal alembic subcommands, no shell (#964)
         [sys.executable, "-m", "alembic", *args],
         cwd=_ROOT,
         env={**os.environ, "CV_PG_DSN": dsn.replace("postgresql+asyncpg", "postgresql+psycopg")},
@@ -53,7 +53,7 @@ def _alembic(dsn: str, *args: str) -> subprocess.CompletedProcess[str]:
 def pg_dsn() -> Iterator[str]:
     with PostgresContainer("postgres:16-alpine") as container:
         dsn = container.get_connection_url().replace("postgresql+psycopg2", "postgresql+asyncpg")
-        assert _alembic(dsn, "upgrade", "head").returncode == 0
+        _ok(dsn, "upgrade", "head")
         yield dsn
 
 
@@ -61,10 +61,15 @@ def _conn(dsn: str) -> Conn:
     return psycopg.connect(dsn.replace("postgresql+asyncpg", "postgresql"), autocommit=True)
 
 
+def _ok(dsn: str, *args: str) -> None:
+    """Run alembic and fail with its stderr (the Postgres error), not a bare `assert 1 == 0`."""
+    done = _alembic(dsn, *args)
+    assert done.returncode == 0, done.stderr
+
+
 def _heal(dsn: str) -> None:
     """Back to head whatever a test did, so one failure cannot cascade into the others."""
-    done = _alembic(dsn, "upgrade", "head")
-    assert done.returncode == 0, done.stderr
+    _ok(dsn, "upgrade", "head")
 
 
 def _insert(c: Conn, table: str, row: dict[str, object]) -> str:
@@ -194,12 +199,15 @@ def test_schema_matches_the_plan_doc_exactly(pg_dsn: str) -> None:
 
 def test_round_trip_leaves_no_residue_and_restores_the_exact_schema(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
-        c.execute("DELETE FROM feature_flags")
+        _override(c, _flag(c), role_id=_role(c, "viewer"))  # so the step below must clear both
+        c.execute("DELETE FROM feature_flags")  # the step the refusal names; it cascades
         try:
-            assert _alembic(pg_dsn, "downgrade", _PREV).returncode == 0
+            _ok(pg_dsn, "downgrade", _PREV)
             for obj in (*_TABLES, "ux_ffo_user", "ux_ffo_role", "feature_flags_key_key"):
-                assert c.execute("SELECT to_regclass(%s)", (obj,)).fetchone() == (None,)
-            assert c.execute("SELECT to_regtype('flag_kind')").fetchone() == (None,)
+                found = c.execute("SELECT to_regclass(%s)", (obj,)).fetchone()
+                assert found == (None,), f"{obj} must be gone after the downgrade"
+            kind = c.execute("SELECT to_regtype('flag_kind')").fetchone()
+            assert kind == (None,), "flag_kind must be dropped with the tables"
         finally:
             _heal(pg_dsn)  # the upgrade half of the round trip, even when a check above failed
         _assert_matches_plan_doc(c)
@@ -210,9 +218,11 @@ def test_downgrade_refuses_while_flags_exist(pg_dsn: str) -> None:
         fid = _flag(c)
         try:
             refused = _alembic(pg_dsn, "downgrade", _PREV)
-            assert refused.returncode != 0
-            assert "0027_feature_flags downgrade refused" in refused.stderr
-            assert c.execute("SELECT to_regclass('feature_flags')").fetchone() == ("feature_flags",)
+            assert refused.returncode != 0, "a downgrade over flag rows must be refused"
+            assert "0027_feature_flags downgrade refused" in refused.stderr, refused.stderr
+            assert "DELETE FROM feature_flags" in refused.stderr, "the refusal must say what to do"
+            still = c.execute("SELECT to_regclass('feature_flags')").fetchone()
+            assert still == ("feature_flags",), "a refused downgrade must leave the table in place"
         finally:
             _heal(pg_dsn)  # a regressed guard would have dropped the tables; keep that local
             c.execute("DELETE FROM feature_flags WHERE id = %s", (fid,))
@@ -224,14 +234,15 @@ def test_upgrade_gives_up_on_a_held_lock_instead_of_queueing(pg_dsn: str) -> Non
     with _conn(pg_dsn) as c:
         c.execute("DELETE FROM feature_flags")
         try:
-            assert _alembic(pg_dsn, "downgrade", _PREV).returncode == 0
+            _ok(pg_dsn, "downgrade", _PREV)
             with _conn(pg_dsn) as holder, holder.transaction():
                 holder.execute("LOCK TABLE roles IN ROW EXCLUSIVE MODE")
                 refused = _alembic(pg_dsn, "upgrade", _REV)
-            assert refused.returncode != 0
-            assert "lock timeout" in refused.stderr
-            assert c.execute("SELECT version_num FROM alembic_version").fetchone() == (_PREV,)
-            assert c.execute("SELECT to_regtype('flag_kind')").fetchone() == (None,)
+            assert refused.returncode != 0, "a held roles lock must stop the upgrade"
+            assert "lock timeout" in refused.stderr, refused.stderr
+            version = c.execute("SELECT version_num FROM alembic_version").fetchone()
+            assert version == (_PREV,), "the failed upgrade must leave the database at 0026"
+            assert c.execute("SELECT to_regtype('flag_kind')").fetchone() == (None,), "type leaked"
         finally:
             _heal(pg_dsn)
 
@@ -243,13 +254,14 @@ def test_downgrade_gives_up_on_a_reader_lock_instead_of_queueing(pg_dsn: str) ->
         c.execute("DELETE FROM feature_flags")
         try:
             # Start at this revision, so a later head never takes the lock first.
-            assert _alembic(pg_dsn, "downgrade", _REV).returncode == 0
+            _ok(pg_dsn, "downgrade", _REV)
             with _conn(pg_dsn) as holder, holder.transaction():
                 holder.execute("LOCK TABLE users IN ACCESS SHARE MODE")
                 refused = _alembic(pg_dsn, "downgrade", _PREV)
-            assert refused.returncode != 0
-            assert "lock timeout" in refused.stderr
-            assert c.execute("SELECT version_num FROM alembic_version").fetchone() == (_REV,)
+            assert refused.returncode != 0, "a held users lock must stop the downgrade"
+            assert "lock timeout" in refused.stderr, refused.stderr
+            version = c.execute("SELECT version_num FROM alembic_version").fetchone()
+            assert version == (_REV,), "the failed downgrade must leave the database at 0027"
         finally:
             _heal(pg_dsn)
 
@@ -350,19 +362,31 @@ def _has_override(c: Conn, oid: str) -> bool:
     return found is not None
 
 
-def test_delete_rules_cascade_to_overrides_and_detach_the_setter(pg_dsn: str) -> None:
+def test_deleting_a_user_cascades_their_overrides(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
         _active_owner(c)
-        gone, setter = _user(c), _user(c)
+        gone = _user(c)
+        mine = _override(c, _flag(c), user_id=gone)
+        c.execute("DELETE FROM users WHERE id = %s", (gone,))
+        assert not _has_override(c, mine), "an override must go with the user it targets"
+
+
+def test_deleting_a_user_detaches_set_by_and_updated_by(pg_dsn: str) -> None:
+    with _conn(pg_dsn) as c:
+        _active_owner(c)
+        setter = _user(c)
         fid = _flag(c, updated_by=setter)
-        mine, theirs = _override(c, fid, user_id=gone), _override(c, fid, user_id=setter)
-        by_setter = _override(c, _flag(c), user_id=_user(c), set_by=setter)
-        c.execute("DELETE FROM users WHERE id = ANY(%s)", ([gone, setter],))
-        assert not _has_override(c, mine) and not _has_override(c, theirs)
+        by_setter = _override(c, fid, user_id=_user(c), set_by=setter)
+        c.execute("DELETE FROM users WHERE id = %s", (setter,))
         row = c.execute("SELECT set_by FROM feature_flag_overrides WHERE id = %s", (by_setter,))
-        assert row.fetchone() == (None,)  # the setter's other overrides survive, detached
+        assert row.fetchone() == (None,), "the setter's override must survive, detached"
         writer = c.execute("SELECT updated_by FROM feature_flags WHERE id = %s", (fid,))
-        assert writer.fetchone() == (None,)  # the flag survives its last writer, detached
+        assert writer.fetchone() == (None,), "the flag must survive its last writer, detached"
+
+
+def test_deleting_a_flag_cascades_its_overrides(pg_dsn: str) -> None:
+    with _conn(pg_dsn) as c:
+        fid = _flag(c)
         by_role = _override(c, fid, role_id=_role(c, "owner"))
         c.execute("DELETE FROM feature_flags WHERE id = %s", (fid,))
-        assert not _has_override(c, by_role)
+        assert not _has_override(c, by_role), "overrides must be deleted with their flag"
