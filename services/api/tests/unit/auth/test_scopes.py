@@ -11,6 +11,8 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import (
@@ -19,8 +21,10 @@ from candleviewer.auth.scopes import (
     Deny,
     DenyReason,
     PrincipalSnapshot,
+    account_scope,
     decide,
 )
+from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 
 ACCOUNT_A = uuid.UUID("a1000000-0000-4000-8000-000000000001")
 ACCOUNT_B = uuid.UUID("a1000000-0000-4000-8000-000000000002")
@@ -248,3 +252,71 @@ def test_wildcard_grant_is_owner_only_in_seed_and_contract() -> None:
         codes = re.search(role + r":\n((?:    - .*\n)+)", block.group(1))
         assert codes is not None
         assert "*" not in {c.strip("- ").strip() for c in codes.group(1).splitlines()}
+
+
+# --- account_scope (E27-T01, SR-051) -------------------------------------------------------
+
+
+def _acct_principal(roles: frozenset[str], grants: tuple[AccountGrant, ...]) -> PrincipalSnapshot:
+    return PrincipalSnapshot(
+        user_id=uuid.uuid4(),
+        roles=roles,
+        permissions=frozenset({Permission.ACCOUNTS_READ}),
+        account_grants=grants,
+    )
+
+
+def test_account_scope_owner_is_owner_scope() -> None:
+    p = _owner()
+    assert account_scope(p) == OwnerScope(p.user_id)
+
+
+def test_account_scope_keeps_only_viewable_unfrozen_grants() -> None:
+    c, d = uuid.uuid4(), uuid.uuid4()
+    p = _acct_principal(
+        frozenset({"manager"}),
+        (
+            AccountGrant(ACCOUNT_A, True, True, False),
+            AccountGrant(ACCOUNT_B, True, True, True),
+            AccountGrant(c, False, False, False),
+            AccountGrant(d, True, False, False),
+        ),
+    )
+    assert account_scope(p) == GrantScope(p.user_id, frozenset({ACCOUNT_A, d}))
+
+
+def test_account_scope_zero_grants_is_empty_never_all() -> None:
+    p = _acct_principal(frozenset({"viewer"}), ())
+    assert account_scope(p) == GrantScope(p.user_id, frozenset())
+
+
+@given(
+    st.lists(
+        st.tuples(st.integers(0, 3), st.booleans(), st.booleans(), st.booleans()),
+        max_size=8,
+    ),
+    st.sampled_from(["owner", "manager", "viewer"]),
+    st.integers(0, 4),
+)
+def test_account_scope_membership_matches_decide(
+    raw: list[tuple[int, bool, bool, bool]], role: str, probe: int
+) -> None:
+    ids = [uuid.UUID(int=i + 1) for i in range(5)]
+    seen: dict[int, AccountGrant] = {}
+    for i, v, t, f in raw:
+        seen[i] = AccountGrant(ids[i], v, t, f)
+    p = _acct_principal(frozenset({role}), tuple(seen.values()))
+    scope = account_scope(p)
+    in_scope = isinstance(scope, OwnerScope) or (
+        isinstance(scope, GrantScope) and ids[probe] in scope.account_ids
+    )
+    allowed = isinstance(
+        decide(
+            p,
+            Permission.ACCOUNTS_READ,
+            scope=Scope.GRANTED_ACCOUNTS,
+            exchange_account_id=ids[probe],
+        ),
+        Allow,
+    )
+    assert in_scope == allowed
