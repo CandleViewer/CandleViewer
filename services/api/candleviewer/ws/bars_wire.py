@@ -11,14 +11,18 @@ Every scaled field but `turnover` must be exact at its scale: a price or size fi
 is refused with `FrameEncodeError`, never rounded, so the binary and structured twins carry the
 same value (§16.4). `turnover` (price x qty) has more places than qty and is rounded half-even.
 `covering_scales` gives scales that hold a whole history exactly, including bars recorded before a
-tick or qty-step coarsening. A value outside its field's range, a `densify()` filler (never sent
-on the wire, `24-internal-schemas.md` §3.1) and an amended forming bar are refused the same way.
+tick or qty-step coarsening. A value outside its field's range, a value that is not finite (in
+either form), a negative key, a `densify()` filler (never sent on the wire,
+`24-internal-schemas.md` §3.1) and an amended forming bar are refused the same way. The checks run
+in a private decimal context, so the caller's precision never rounds a value into passing.
+Heikin-ashi values are averages, not traded prices: an HA producer must quantise them to the
+instrument tick before they reach this module, or the contract must give HA its own rounding rule.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from decimal import ROUND_HALF_EVEN, Decimal
+from decimal import MAX_EMAX, MAX_PREC, MIN_EMIN, ROUND_HALF_EVEN, Context, Decimal
 from typing import Any, Final
 
 from candleviewer.bars.models import Bar
@@ -43,6 +47,22 @@ MAX_TS_SPAN_MS: Final = dict(_BOUNDS)["ts_offset_ms"][1]
 #: `heikin_ashi` is a wire name only (§6.1): no builder produces it yet.
 TIME_KINDS: Final[frozenset[WireBarType]] = frozenset({"time", "heikin_ashi"})
 _CONFIRM: Final = 0b1
+#: Exact arithmetic whatever the caller's context: every field explicit, no rounding below the
+#: maximum precision, no traps. Its flags accumulate and are never read. Only for
+#: `scaleb`/`normalize`/`to_integral_value`: never for division or powers, where `MAX_PREC` would
+#: allocate.
+_EXACT: Final = Context(
+    prec=MAX_PREC, rounding=ROUND_HALF_EVEN, Emin=MIN_EMIN, Emax=MAX_EMAX, capitals=1, clamp=0,
+    flags=[], traps=[],
+)  # fmt: skip
+#: A scaled value at or above 10**20 fits no 64-bit field; refused before `int()` would build it.
+_MAX_ADJUSTED: Final = 19
+#: The structured twin's bounds: no bar value reaches 10**39 or needs more than 38 decimal places,
+#: and `format(.., "f")` grows with the exponent either way.
+_MAX_DEC_ADJUSTED: Final = 38
+_MAX_DEC_PLACES: Final = 38
+#: A refusal names at most this much of the value, so a hostile coefficient cannot bloat a log.
+_MAX_VALUE_TEXT: Final = 64
 
 
 def _key(bar: Bar, generation: int) -> str:
@@ -52,6 +72,12 @@ def _key(bar: Bar, generation: int) -> str:
 def _sendable(bar: Bar, generation: int) -> None:
     if bar.synthetic:
         raise FrameEncodeError(f"{_key(bar, generation)} is a densify() filler: never on the wire")
+    if min(generation, bar.index, bar.trade_count, bar.open_time, bar.close_time) < 0:
+        fields = (("generation", generation), ("index", bar.index),
+                  ("trade_count", bar.trade_count), ("open_time", bar.open_time),
+                  ("close_time", bar.close_time))  # fmt: skip
+        name, value = next((n, v) for n, v in fields if v < 0)
+        raise _refuse(bar, generation, name, value, "is negative")
 
 
 def _open_ms(bar: Bar) -> int:
@@ -59,23 +85,47 @@ def _open_ms(bar: Bar) -> int:
     return bar.open_time // 1000
 
 
-def _dec(value: Decimal) -> str:
+def _refuse(bar: Bar, generation: int, field: str, value: object, why: str) -> FrameEncodeError:
+    """The error, formatted only on failure: the per-record path builds no strings."""
+    text = str(value)
+    if len(text) > _MAX_VALUE_TEXT:
+        text = f"{text[: _MAX_VALUE_TEXT - 3]}..."
+    return FrameEncodeError(f"{_key(bar, generation)}: {field} {text} {why}")
+
+
+def _dec(value: Decimal, bar: Bar, generation: int, field: str) -> str:
     """The `common#/$defs/decimal` form: plain digits, never an exponent and never `-0`."""
+    if not value.is_finite():
+        raise _refuse(bar, generation, field, value, "is not finite")
+    if value and value.adjusted() > _MAX_DEC_ADJUSTED:
+        raise _refuse(bar, generation, field, value, "is too large to send")
+    exponent = value.as_tuple().exponent  # an int: the value is finite
+    if isinstance(exponent, int) and -exponent > _MAX_DEC_PLACES:
+        raise _refuse(bar, generation, field, value, "has too many decimal places to send")
     return format(value if value else value.copy_abs(), "f")
 
 
 def _places(value: Decimal) -> int:
     """The decimal places `value` needs: `100.10` needs 1 and `1E+2` needs none."""
-    exponent = value.normalize().as_tuple().exponent
+    if not value.is_finite():
+        return 0  # `_scaled` refuses it
+    exponent = value.normalize(_EXACT).as_tuple().exponent
     return max(0, -exponent) if isinstance(exponent, int) else 0
 
 
-def _scaled(value: Decimal, scale: int, where: str, *, exact: bool = True) -> int:
+def _scaled(
+    value: Decimal, scale: int, bar: Bar, generation: int, field: str, *, exact: bool = True
+) -> int:
     """`value` as an integer of `scale` places: exact, or half-even when `exact` is off."""
-    scaled = value.scaleb(scale)
-    if not scaled.is_finite() or (exact and scaled != scaled.to_integral_value()):
-        raise FrameEncodeError(f"{where} {value} is not exact at scale {scale}")
-    return int(scaled.to_integral_value(rounding=ROUND_HALF_EVEN))
+    if not value.is_finite():
+        raise _refuse(bar, generation, field, value, "is not finite")
+    scaled = value.scaleb(scale, _EXACT)
+    if not scaled.is_finite() or (scaled and scaled.adjusted() > _MAX_ADJUSTED):
+        raise _refuse(bar, generation, field, value, f"overflows every field at scale {scale}")
+    whole = scaled.to_integral_value(ROUND_HALF_EVEN, _EXACT)
+    if exact and whole != scaled:
+        raise _refuse(bar, generation, field, value, f"is not exact at scale {scale}")
+    return int(whole)
 
 
 def covering_scales(bars: Iterable[Bar], *, price_scale: int, qty_scale: int) -> tuple[int, int]:
@@ -104,12 +154,12 @@ def bar_item(
         "generation": generation,
         "index": bar.index,
         "t_ms": _open_ms(bar),
-        "o": _dec(bar.open),
-        "h": _dec(bar.high),
-        "l": _dec(bar.low),
-        "c": _dec(bar.close),
-        "v": _dec(bar.volume),
-        "turnover": _dec(bar.turnover),
+        "o": _dec(bar.open, bar, generation, "open"),
+        "h": _dec(bar.high, bar, generation, "high"),
+        "l": _dec(bar.low, bar, generation, "low"),
+        "c": _dec(bar.close, bar, generation, "close"),
+        "v": _dec(bar.volume, bar, generation, "volume"),
+        "turnover": _dec(bar.turnover, bar, generation, "turnover"),
         "trades": bar.trade_count,
         "confirm": bar.closed,
     }
@@ -118,9 +168,9 @@ def bar_item(
     if amended:
         item["amended"] = True
     if include_delta:
-        item["delta"] = _dec(bar.delta)
-        item["min_delta"] = _dec(bar.min_delta)
-        item["max_delta"] = _dec(bar.max_delta)
+        item["delta"] = _dec(bar.delta, bar, generation, "delta")
+        item["min_delta"] = _dec(bar.min_delta, bar, generation, "min_delta")
+        item["max_delta"] = _dec(bar.max_delta, bar, generation, "max_delta")
     return item
 
 
@@ -135,24 +185,24 @@ def bar_record(
 ) -> Record:
     """The kind-4 record for `bar`, in the layout's field order (`cvwb_layout.KINDS[4]`)."""
     _sendable(bar, generation)
-    key = _key(bar, generation)
+    g = generation
     record = (
         generation,
         bar.index,
         _open_ms(bar) - ts_base_ms,
-        _scaled(bar.open, price_scale, f"{key}: open"),
-        _scaled(bar.high, price_scale, f"{key}: high"),
-        _scaled(bar.low, price_scale, f"{key}: low"),
-        _scaled(bar.close, price_scale, f"{key}: close"),
-        _scaled(bar.volume, qty_scale, f"{key}: volume"),
-        _scaled(bar.turnover, qty_scale, f"{key}: turnover", exact=False),
+        _scaled(bar.open, price_scale, bar, g, "open"),
+        _scaled(bar.high, price_scale, bar, g, "high"),
+        _scaled(bar.low, price_scale, bar, g, "low"),
+        _scaled(bar.close, price_scale, bar, g, "close"),
+        _scaled(bar.volume, qty_scale, bar, g, "volume"),
+        _scaled(bar.turnover, qty_scale, bar, g, "turnover", exact=False),
         bar.trade_count,
-        _scaled(bar.delta, qty_scale, f"{key}: delta") if include_delta else 0,
+        _scaled(bar.delta, qty_scale, bar, g, "delta") if include_delta else 0,
         _CONFIRM if bar.closed else 0,
     )
     for (name, (low, high)), value in zip(_BOUNDS, record, strict=True):
         if not low <= value <= high:
-            raise FrameEncodeError(f"{key}: {name} {value} is outside [{low}, {high}]")
+            raise _refuse(bar, g, name, value, f"is outside [{low}, {high}]")
     return record
 
 
