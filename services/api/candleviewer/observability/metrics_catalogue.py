@@ -1625,6 +1625,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_feature_flag_unreadable_overrides_total",
+        "counter",
+        "overrides",
+        ("flag",),
+        "Override rows ignored at resolution because their value does not fit the flag's kind.",
+        "> 0 (an unreadable override row on a non-safety flag, D1b)",
+        _L,
+        "E42",
+        max_series=32,
+        exported=True,
+    ),
+    _s(
         "cv_feature_flag_changes_total",
         "counter",
         "changes",

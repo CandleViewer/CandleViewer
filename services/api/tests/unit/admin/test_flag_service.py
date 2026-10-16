@@ -1,5 +1,6 @@
-"""E42-T03: the flag service's read path: kill-switch freshness, the 30 s cache, fail closed on
-an unreachable store, and role-filtered resolution."""
+"""E42-T03: the flag service's read path: kill-switch freshness, the 30 s cache, the read budget,
+fail closed on an outage (D1a) or one unreadable row (D1b), overrides ignored on every safety flag
+(D2a), and resolution filtered by each flag's visibility, which matches 21-database-schema 10.7."""
 
 from __future__ import annotations
 
@@ -10,13 +11,22 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.admin.flags import MAINTENANCE_MODE, default_registry
-from candleviewer.admin.flags.metrics import export_flag_metrics, flag_evaluations_total
-from candleviewer.admin.flags.service import FlagService
+from candleviewer.admin.flags import LIVE_ENABLED, MAINTENANCE_MODE, Resolution, default_registry
+from candleviewer.admin.flags.metrics import (
+    export_flag_metrics,
+    flag_evaluations_total,
+    unreadable_overrides_total,
+)
+from candleviewer.admin.flags.service import (
+    DEFAULT_READ_BUDGET_MS,
+    READ_BUDGET_SETTING,
+    FlagService,
+)
 from candleviewer.observability.metrics import CollectorRegistry
-from tests.unit.admin.flag_fakes import Clock, FakeFlagStore
+from tests.unit.admin.flag_fakes import T0, Clock, FakeFlagStore
 
 _OWNER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001")
+_STORED = {"key", "kind", "description", "value"}
 
 
 async def _service() -> tuple[FlagService, FakeFlagStore, Clock]:
@@ -86,7 +96,7 @@ async def test_a_flag_without_a_row_resolves_to_its_default_not_its_fail_closed_
 
 async def test_a_hung_store_times_out_and_fails_closed() -> None:
     store, clock = FakeFlagStore(), Clock()
-    service = FlagService(default_registry(), store, clock=clock, store_timeout_s=0.001)
+    service = FlagService(default_registry(), store, clock=clock, read_budget_ms=50)
     await store.ensure(service.registry.values())
     store.hold = asyncio.Event()
     with capture_logs() as logs:
@@ -162,7 +172,7 @@ async def test_visible_flags_are_filtered_by_role(
         store.rows["rules.graph_editor"], user_overrides={_OWNER: False}
     )
     service.invalidate()
-    flags = {f.spec.key: f for f in await service.visible(_OWNER, roles)}
+    flags = {f.spec.key: f for f in (await service.visible(_OWNER, roles)).items}
     assert ("maintenance.keep_recorder" in flags) is owner_only_seen
     assert ("storage.cold_tier" in flags) is owner_only_seen
     assert MAINTENANCE_MODE in flags
@@ -203,3 +213,90 @@ async def test_cached_resolution_is_under_1_ms_p99() -> None:
         samples.append(time.perf_counter() - start)
     samples.sort()
     assert samples[int(len(samples) * 0.99)] < 0.001
+
+
+def test_the_read_budget_is_the_contract_setting() -> None:
+    assert (READ_BUDGET_SETTING, DEFAULT_READ_BUDGET_MS) == ("flags.read_budget_ms", 500)
+
+
+@pytest.mark.parametrize(
+    ("budget_ms", "ok"), [(49, False), (50, True), (2000, True), (2001, False)]
+)
+def test_a_read_budget_outside_50_to_2000_ms_refuses_to_start(budget_ms: int, ok: bool) -> None:
+    if ok:
+        assert FlagService(default_registry(), FakeFlagStore(), read_budget_ms=budget_ms)
+        return
+    with pytest.raises(ValueError, match=r"flags\.read_budget_ms must be 50-2000 ms"):
+        FlagService(default_registry(), FakeFlagStore(), read_budget_ms=budget_ms)
+
+
+async def test_live_enabled_is_cached_for_30_s_unlike_the_kill_switches() -> None:
+    service, store, clock = await _service()
+    assert await service.value(LIVE_ENABLED) is False
+    store.rows[LIVE_ENABLED] = replace(store.rows[LIVE_ENABLED], value=True)
+    clock.now += 29.9
+    assert await service.value(LIVE_ENABLED) is False
+    clock.now += 0.1
+    assert await service.value(LIVE_ENABLED) is True
+
+
+async def test_a_store_outage_fails_the_whole_list_closed_without_stored_members() -> None:
+    service, store, clock = await _service()
+    store.down, clock.now = True, clock.now + 30
+    listed = await service.visible(_OWNER, frozenset({"owner"}))
+    assert listed.resolution is Resolution.FAIL_CLOSED
+    assert all(set(f.members()) == _STORED for f in listed.items)
+    values = {f.spec.key: f.value for f in listed.items}
+    assert (values[MAINTENANCE_MODE], values["killswitch.order_entry"]) == (True, True)
+    assert (values[LIVE_ENABLED], values["killswitch.ingestion"]) == (False, False)
+
+
+async def test_one_unreadable_row_fails_that_flag_alone_and_stays_writable() -> None:
+    service, store, _ = await _service()
+    key = "killswitch.order_entry"
+    store.rows[key] = replace(store.rows[key], value="engaged?")
+    listed = await service.visible(_OWNER, frozenset({"owner"}))
+    assert listed.resolution is Resolution.STORED
+    flags = {f.spec.key: f for f in listed.items}
+    assert flags[key].value is True and flags[key].members() == {
+        "key": key,
+        "kind": "boolean",
+        "description": "Refuses order acceptance.",
+        "value": True,
+        "overrides": [],
+        "updated_at": T0,
+        "unreadable": True,
+    }
+    other = flags[MAINTENANCE_MODE].members()
+    assert {"default_value", "updated_by", "updated_at"} <= set(other) and "unreadable" not in other
+
+
+async def test_an_unreadable_override_on_a_non_safety_flag_is_ignored_and_counted() -> None:
+    service, store, _ = await _service()
+    key, roles = "rules.graph_editor", frozenset({"owner"})
+    store.rows[key] = replace(
+        store.rows[key], value=False, user_overrides={_OWNER: "yes"}, role_overrides={"owner": 1}
+    )
+    store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], user_overrides={_OWNER: 2})
+    service.invalidate()
+    before = {k: unreadable_overrides_total.labels(k)._value.get() for k in (key, MAINTENANCE_MODE)}
+    assert await service.value(key, user_id=_OWNER, roles=roles) is False
+    assert await service.value(MAINTENANCE_MODE, user_id=_OWNER, roles=roles) is False
+    assert unreadable_overrides_total.labels(key)._value.get() == before[key] + 2
+    assert (
+        unreadable_overrides_total.labels(MAINTENANCE_MODE)._value.get() == before[MAINTENANCE_MODE]
+    )
+
+
+_SAFETY = {MAINTENANCE_MODE, "killswitch.order_entry", "killswitch.ingestion", LIVE_ENABLED}
+
+
+@pytest.mark.parametrize("key", sorted(_SAFETY))
+async def test_every_safety_flag_ignores_override_rows_at_resolution(key: str) -> None:
+    assert {k for k, s in default_registry().items() if not s.overridable} == _SAFETY
+    service, store, _ = await _service()
+    store.rows[key] = replace(
+        store.rows[key], value=False, user_overrides={_OWNER: True}, role_overrides={"owner": True}
+    )
+    service.invalidate()
+    assert await service.value(key, user_id=_OWNER, roles=frozenset({"owner"})) is False
