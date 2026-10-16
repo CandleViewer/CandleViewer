@@ -45,9 +45,11 @@ class ErrorCode(StrEnum):
     RATE_LIMITED = "rate_limited"
     EXCHANGE_RATE_LIMITED = "exchange_rate_limited"
     INTERNAL_ERROR = "internal_error"
+    NOT_IMPLEMENTED = "not_implemented"
     EXCHANGE_ERROR = "exchange_error"
     EXCHANGE_UNAVAILABLE = "exchange_unavailable"
     STORE_UNAVAILABLE = "store_unavailable"
+    AUDIT_UNAVAILABLE = "audit_unavailable"
     DEGRADED_DATA = "degraded_data"
     TIMEOUT = "timeout"
     PROTOCOL_VIOLATION = "protocol_violation"
@@ -118,9 +120,11 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.RATE_LIMITED: ErrorMeta(("rest",), None, True, None, None, "Per-user API rate limit exceeded"),
     ErrorCode.EXCHANGE_RATE_LIMITED: ErrorMeta(("rest",), None, True, None, None, "Bybit per-UID rate budget exhausted (10006/10018) \u2014 request shed locally"),
     ErrorCode.INTERNAL_ERROR: ErrorMeta(("rest", "ws",), "any", True, None, None, "Unhandled server error (correlation id in `instance`)"),
+    ErrorCode.NOT_IMPLEMENTED: ErrorMeta(("rest",), None, False, None, None, "Operation declared but its backing provider is not wired yet; nothing was done"),
     ErrorCode.EXCHANGE_ERROR: ErrorMeta(("rest",), None, True, None, None, "Bybit returned a non-zero retCode"),
     ErrorCode.EXCHANGE_UNAVAILABLE: ErrorMeta(("rest", "ws",), "any", True, None, None, "Exchange connectivity lost (WS down and REST failing)"),
     ErrorCode.STORE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "QuestDB / Postgres / Parquet tier unavailable"),
+    ErrorCode.AUDIT_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)"),
     ErrorCode.DEGRADED_DATA: ErrorMeta(("rest", "ws",), "any", True, None, None, "Local store is behind the exchange beyond the freshness SLO"),
     ErrorCode.TIMEOUT: ErrorMeta(("rest",), None, True, None, None, "Upstream exchange call exceeded the deadline"),
     ErrorCode.PROTOCOL_VIOLATION: ErrorMeta(("ws",), "connection", False, None, 1002, "Frame out of order or malformed envelope"),
