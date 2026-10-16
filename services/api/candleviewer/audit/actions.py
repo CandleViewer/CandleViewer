@@ -153,6 +153,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "admin.audit_verify",
         "admin.audit_export",
         "admin.audit_denied",
+        # E42-T01: entering any /admin/* route (allowed or denied), {route, reauth_age_s}.
+        "admin.area_entered",
         "rbac.denied",
         "health.diagnostics_exported",
         # E27-T02: credential broker / KEK lifecycle (e27-kek.md §5-§6).
