@@ -335,6 +335,21 @@ def test_no_candleviewer_sql_updates_a_protected_api_keys_column() -> None:
     assert risks == {}
 
 
+#: Where SQL may set `api_keys.last_used_at`: the adapter's `_TOUCH`, behind the broker's 60 s
+#: debounce (21 §3.2.2). One debouncer owns the write-amplification guard (#2580).
+_LAST_USED_WRITERS = frozenset({"storage/repositories/credentials_sqlalchemy.py"})
+
+
+def test_only_the_credential_adapter_sets_api_keys_last_used_at() -> None:
+    writers = {
+        where.rpartition(":")[0]
+        for where, sql in _api_keys_sql()
+        for write in _writes(sql)
+        if "last_used_at" in write.targets
+    }
+    assert writers == _LAST_USED_WRITERS
+
+
 def _api_keys_line(node: ast.AST) -> int | None:
     """The line where `node` names the `api_keys` Table: the identifier (a name, an attribute, an
     import) or the exact string that `Table(...)`, `table(...)` or `__tablename__` take."""
