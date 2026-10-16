@@ -458,7 +458,12 @@ def connect(
     conform: bool = True,
     **hello: Any,
 ) -> Iterator[Client]:
-    with world.client, world.client.websocket_connect("/ws", subprotocols=offer or JSON) as ws:
+    offered = offer or JSON
+    with world.client, world.client.websocket_connect("/ws", subprotocols=offered) as ws:
+        # §2.2: the server picks by its own order, msgpack first. Without this check a server that
+        # stopped preferring msgpack would run every `msgpack-preferred` row as JSON, unnoticed.
+        expected = "cv.v1.msgpack" if "cv.v1.msgpack" in offered else "cv.v1.json"
+        assert ws.accepted_subprotocol == expected, (ws.accepted_subprotocol, offered)
         c = Client(ws, conform=conform)
         if handshake:
             c.open(auth=authed, **hello)

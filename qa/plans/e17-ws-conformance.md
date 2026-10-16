@@ -165,6 +165,7 @@ test directory). Result is the first failing tests.
 | S11 `bye` not queued before close          | 6+ tests                                                                     |
 | S12 unknown option ignored                 | `test_s1_*`, `test_s12_*` (generated rows)                                   |
 | S13 origin check skipped                   | `test_s13_a_bad_origin_is_refused_…` (2)                                     |
+| §2.2 server prefers JSON over msgpack      | `connect()`'s echoed-subprotocol assert: 4 `msgpack-preferred` rows          |
 
 ## 10. Review, dry run and cross-links
 
