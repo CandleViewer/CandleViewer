@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from types import ModuleType
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -69,7 +70,7 @@ def _refusal_counts() -> dict[str, float]:
 
 
 def test_the_reason_set_is_the_contract_enum() -> None:
-    schemas = load_openapi_spec()["components"]["schemas"]
+    schemas = cast(dict[str, Any], load_openapi_spec())["components"]["schemas"]
     assert set(schemas["OrderEntryRefusalReason"]["enum"]) == REFUSAL_REASONS
 
 
@@ -121,7 +122,8 @@ def test_a_maintenance_refusal_is_the_contract_example() -> None:
 
 
 def test_the_problem_title_is_the_registry_title() -> None:
-    entry = next(e for e in load_openapi_spec()["x-error-codes"] if e["code"] == "trading_disabled")
+    codes = cast(list[dict[str, Any]], load_openapi_spec()["x-error-codes"])
+    entry = next(e for e in codes if e["code"] == "trading_disabled")
     body = json.loads(bytes(refusal_problem(_NO_KEY).body))
     assert body["title"] == entry["title"] and entry["status"] == 403
 

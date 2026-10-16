@@ -329,7 +329,9 @@ async def test_without_an_algo_port_the_gap_is_logged_once() -> None:
     service = FlagService(default_registry(), store, clock=Clock())
     await store.ensure(service.registry.values())
     store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
-    controller = MaintenanceController(service, MaintenanceGate(), notify=bool, audit=FakeAudit())
+    controller = MaintenanceController(
+        service, MaintenanceGate(), notify=lambda on: None, audit=FakeAudit()
+    )
     with capture_logs() as logs:
         await controller.refresh()
         await controller.refresh()
