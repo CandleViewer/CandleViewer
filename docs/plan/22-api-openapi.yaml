@@ -7113,51 +7113,108 @@ paths:
       operationId: queryAuditLog
       summary: Query the append-only audit log
       description: |
-        The audit log is hash-chained (`entry_hash = SHA256(prev_hash || canonical_entry)`), so
-        tampering is detectable. Entries are never updated or deleted; retention is 2 years.
-        Access follows `04-security-program.md` §7.2.2 row 49 and SR-067: the Owner sees every
-        entry with raw payloads; a Manager (`audit:read`) sees only entries where it is the actor,
-        with `detail`, `ip` and `user_agent` removed — the `actor_user_id` filter is forced
-        server-side to the caller; a Viewer holds no `audit:read` and gets `403`.
+        The audit log is append-only and hash-chained. Each entry's `entry_hash` is SHA-256 over
+        the hashed fields listed in `21-database-schema.md` §3.10.1 and the previous entry's hash.
+        Entries are never updated or deleted and are kept indefinitely (C-12.8). `id`,
+        `subject_label` and `user_agent` are informational: `entry_hash` does not cover them. The
+        hash is unkeyed, so a writer with database access could rebuild a consistent chain; only
+        external anchors detect that: the SR-068 off-box mirror, retained signed exports and
+        signed checkpoints (export and checkpoint signatures are not produced yet).
+
+        **Access** (`04-security-program.md` §7.2.2 row 49, SR-067). The Owner sees every entry
+        with raw payloads. A Manager (`audit:read`) sees only entries it is the actor of, in the
+        projection described on `AuditEntry`. The narrowing is applied in the data layer on every
+        page: an `actor_user_id` naming another user is replaced by the caller's own id, so only
+        the caller's entries come back, and the attempt is recorded as `admin.audit_denied`. A
+        Manager may not filter on fields its projection hides (`q`, `ip`); that is
+        `403 forbidden`. A Viewer holds no `audit:read` and gets `403` (owner decision recorded on
+        #2083).
+
+        **Filters** are combined with AND; repeating `action` matches any of the given codes.
+        `from` is inclusive and `to` exclusive. `q` matches the recorded, already-redacted
+        `detail` and the subject label; every term must match, case-insensitively. Matches on the
+        subject label are not integrity-checked. Redaction applied when an entry was written is
+        never reversed on read.
+
+        **Ordering and paging.** Newest first: by `ts` descending, then `id` descending. `limit` is
+        1 to 500, default 100. Paging is keyset-based, never offset. Each page resumes strictly
+        after the last entry returned, so every entry that existed when paging started is
+        returned exactly once; entries written while paging may or may not appear. No match is
+        `200` with `items: []`, `chain_verified: true` and a null `meta.next_cursor`.
+
+        **Integrity.** `chain_verified` is true when, for every returned entry, the hashed fields
+        recompute to its `entry_hash` and its `prev_hash` equals the `entry_hash` of the entry
+        before it in the chain, whether or not that entry is on this page. It is computed on the
+        full entries before any projection. It says nothing about the informational fields or the
+        rest of the chain (`verifyAuditChain` checks ranges).
+
+        **Limits.** Per user, at most `audit_query_rate_per_minute` calls a minute (default 60) and
+        `audit_query_max_concurrent` calls in flight (default 2); beyond either the call is
+        `429 rate_limited` with `Retry-After`. Each call has a time budget
+        (`audit_query_timeout_ms`, default 4000); a call that overruns it fails with
+        `503 store_unavailable` and `Retry-After` and returns no data.
+
+        **Audit budget.** Reads are audited without letting them flood the audit log, which also
+        carries order intents. Counters and budgets are kept per user, across all of the user's
+        sessions, so a token refresh or a new session does not reset them. The first read of a
+        distinct filter set writes `admin.audit_read` (the filters, with `q` kept only as a
+        digest, and the returned count, never the entries). Continuation pages are counted and
+        flushed into an `admin.audit_read` at least every `audit_read_flush_pages` pages (default
+        50) or `audit_read_flush_seconds` (default 300), whichever comes first. Records written
+        for a user (`admin.audit_read`, and `admin.audit_denied` for a cross-actor filter or any
+        other refusal on the `/admin/audit*` operations) are capped per hour by
+        `audit_record_budget_per_hour` (default 120), or for the Owner, who must be able to keep
+        investigating during an incident, by `audit_record_budget_owner_per_hour` (default 600).
+        Over the cap a read is `429 rate_limited` with no data, and a refusal is returned
+        unchanged with `Retry-After`, as for `auth.csrf_refused`. A `429`, and a refusal over the
+        cap, write no record; they are counted, and the next record written for the user carries
+        the count (`suppressed`). Totals not yet carried are also flushed on the
+        `audit_read_flush_seconds` cadence, in at most one summary record per user and window
+        (`admin.audit_denied`, reason `suppressed_summary`). That record is reserved outside the
+        cap, so the totals reach the log even after a burst exhausts it. If a due record cannot
+        be written the call fails with `503 store_unavailable` and returns nothing.
+
+        Counters live in LRU-bounded maps (`audit_budget_tracked_users`, default 1024) with a
+        global cap on audit writes in flight (`audit_inflight_writes`, default 64), as for
+        `auth.csrf_refused` (C-2.18). Eviction errs toward more records: an evicted user's pending
+        counts are written first, and that user's next read counts as a new filter set. A due
+        record held back by the in-flight cap counts as unwritable (`503`).
 
         Every state-changing API call, every order sent, every key operation, every kill-switch
         transition, every login (success and failure) and every rule arm/disarm produces an entry.
       parameters:
-        - $ref: "#/components/parameters/Cursor"
+        - name: cursor
+          in: query
+          description: >-
+            Opaque cursor from `meta.next_cursor`. It carries only the position of the last entry
+            returned: it is not signed, does not expire and is not bound to the caller or the
+            filters, and it grants nothing, because scope and filters are applied again on every
+            page. A malformed cursor is `400 invalid_cursor`.
+          schema: { type: string, maxLength: 512 }
         - $ref: "#/components/parameters/Limit"
         - name: actor_user_id
           in: query
+          description: Entries whose actor is this user. Replaced by the caller's id for a Manager.
           schema: { type: string, format: uuid }
         - name: action
           in: query
           explode: true
-          description: "Action codes, e.g. `order.place`, `key.rotate`, `killswitch.engage`."
-          schema: { type: array, items: { type: string, maxLength: 64 } }
+          description: >-
+            Registered action codes, e.g. `orders.submit`, `api_key.rotate`,
+            `risk.freeze_manager`. Repeat the parameter to match any of several codes.
+          schema:
+            type: array
+            maxItems: 50
+            items: { type: string, maxLength: 64, pattern: "^[a-z0-9_]+([.][a-z0-9_]+){1,3}$" }
         - name: subject_type
           in: query
-          schema:
-            {
-              type: string,
-              enum:
-                [
-                  user,
-                  exchange_account,
-                  api_key,
-                  order,
-                  trade_group,
-                  position,
-                  rule,
-                  alert,
-                  recording,
-                  replay,
-                  feature_flag,
-                  backup,
-                  setting,
-                  session,
-                ],
-            }
+          description: >-
+            Recorded subject kind (`object_kind`), e.g. `user`, `api_key`, `order`, `rule`,
+            `alert`, `session`. Open-ended: every kind the audit writer records can be filtered.
+          schema: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
         - name: subject_id
           in: query
+          description: Exact recorded subject id, usually combined with `subject_type`.
           schema: { type: string, maxLength: 64 }
         - name: outcome
           in: query
@@ -7167,12 +7224,20 @@ paths:
           schema: { $ref: "#/components/schemas/Severity" }
         - name: ip
           in: query
-          schema: { type: string }
+          description: >-
+            Exact actor IP address, parsed as one IPv4 or IPv6 address; a CIDR range or any other
+            value is `422 validation_failed`. Owner only; `403` for a Manager.
+          schema:
+            anyOf:
+              - { type: string, format: ipv4, maxLength: 15 }
+              - { type: string, format: ipv6, maxLength: 45 }
         - $ref: "#/components/parameters/From"
         - $ref: "#/components/parameters/To"
         - name: q
           in: query
-          description: Full-text search across the detail payload.
+          description: >-
+            Full-text search over the recorded (redacted) `detail` and the subject label, which is
+            not integrity-checked; every term must match. Owner only; `403` for a Manager.
           schema: { type: string, maxLength: 200 }
       x-rbac: { permissions: [audit:read], scope: self }
       responses:
@@ -7184,12 +7249,13 @@ paths:
                 allOf:
                   - $ref: "#/components/schemas/Page"
                   - type: object
+                    required: [chain_verified]
                     properties:
                       items: { type: array, items: { $ref: "#/components/schemas/AuditEntry" } }
                       chain_verified:
                         {
                           type: boolean,
-                          description: "Whether the returned slice's hash chain verifies.",
+                          description: "For every returned entry the hashed fields recompute to `entry_hash` and `prev_hash` links to its chain predecessor (see the operation description).",
                         }
               examples:
                 orderPlaced:
@@ -7199,37 +7265,74 @@ paths:
                         ts: "2026-09-14T10:33:00.114Z"
                         actor_user_id: "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001"
                         actor_username: basiltt
-                        action: "trade_group.create"
+                        action: "trade_group.submit"
                         subject_type: trade_group
                         subject_id: "0c000000-0000-4000-8000-000000000001"
+                        subject_label: null
                         outcome: success
                         severity: info
+                        reason: null
+                        environment: live
+                        session_id: "5e000000-0000-4000-8000-000000000001"
                         ip: "100.84.12.9"
-                        user_agent: "CandleViewer-Electron/1.0.0"
-                        request_id: "urn:cv:req:0193f2bb-9c11-7a3d-88f1-0d2e3f4a5b6c"
+                        user_agent: null
+                        request_id: "0193f2bb-9c11-7a3d-88f1-0d2e3f4a5b6c"
                         detail:
                           {
-                            symbol: BTCUSDT,
-                            side: buy,
-                            legs: 3,
-                            atomicity: best_effort,
-                            environment: live,
+                            before: null,
+                            after: { symbol: BTCUSDT, side: buy, legs: 3, atomicity: best_effort },
                           }
                         entry_hash: "3c9a5e2f1b..."
                         prev_hash: "7d1e0b44aa..."
                     chain_verified: true
                     meta: { next_cursor: "eyJpZCI6ODgxMjA0NDB9", has_more: true, count: 1 }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/audit/verify:
     post:
       tags: [admin]
       operationId: verifyAuditChain
       summary: Verify the audit hash chain over a range
-      description: >
-        Recomputes the chain and reports the first divergence, if any. Run nightly by a scheduled
-        job and on demand from the Admin screen. Owner only (`04-security-program.md` §7.2.2
-        row 49a): a Manager holding `audit:read` is refused with `403`.
+      description: |
+        Recomputes every entry with `from_id <= id <= to_id`, in chain (id) order and in bounded
+        batches, from the hashed fields listed in `21-database-schema.md` §3.10.1, and checks that
+        each entry's `prev_hash` equals the `entry_hash` of the entry before it. The first entry
+        is checked against its stored predecessor (`anchor_hash`; genesis is 64 zeros). Every
+        checkpoint with `head_id <= to_id` must name an existing entry whose `entry_hash` equals
+        the checkpoint's `head_hash`. When the range ends at the current head, a checkpoint whose
+        `head_id` is above the head is also a break: the tail was truncated, and `first_bad_id` is
+        that `head_id`. Checking stops at the **first** divergence in id order (a hash, link or
+        checkpoint mismatch, or a missing checkpointed entry), reported as `first_bad_id`. A break
+        is a `200` with `verified: false`, never an error status. An empty range
+        (`entries_checked: 0`) proves nothing. The hash is unkeyed SHA-256, so a writer with
+        database access could rebuild a consistent chain; only external anchors detect that: the
+        SR-068 off-box mirror, retained signed exports and signed checkpoints (export and
+        checkpoint signatures are not produced yet).
+
+        **Range.** Ids increase but are not contiguous, so a bound may name an id that does not
+        exist. The span `to_id - from_id + 1` is capped by `audit_verify_max_span` (default
+        1000000). With neither bound, the range is the newest span of that size, ending at the
+        newest entry when the run starts. With one bound, the other is filled in to make a
+        maximum-sized span, clipped to the first and the newest entry. When both are given, a
+        longer span is `422 validation_failed`; the problem `detail` and `errors[].rule`
+        (`max_verify_span`) name the limit. The response echoes the effective range.
+
+        **Who and how often.** Owner only (`04-security-program.md` §7.2.2 row 49a): a Manager
+        holding `audit:read` is refused with `403`. Synchronous. The checks run in this order:
+        authentication (`401`), authorisation (`403`), body validation and range defaulting
+        (`422`), the per-user rate limit (`audit_verify_rate_per_hour`, default 30;
+        `429 rate_limited`), single-flight (`409 conflict`: one verification at a time, the
+        nightly job included), then a write-ahead `started` `admin.audit_verify` record
+        (`503 store_unavailable` if it cannot be written; nothing runs). A caller who is not
+        authorised therefore never learns whether a verification is running. The result is
+        recorded too (severity `critical` when `verified` is false), and a failed verification is
+        also raised as a critical security event. Refusals fall under the audit budget described
+        on `queryAuditLog`.
       x-rbac: { permissions: [audit:read], scope: none }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
@@ -7239,9 +7342,18 @@ paths:
             schema:
               type: object
               additionalProperties: false
+              description: "`from_id` greater than `to_id` is `422`."
               properties:
-                from_id: { type: integer, format: int64 }
-                to_id: { type: integer, format: int64 }
+                from_id:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: "First id to check (inclusive). Default: see the description."
+                to_id:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: "Last id to check (inclusive). Default: see the description."
       responses:
         "200":
           description: Verification result.
@@ -7249,35 +7361,133 @@ paths:
             application/json:
               schema:
                 type: object
+                required:
+                  - verified
+                  - entries_checked
+                  - first_bad_id
+                  - checked_at
+                  - from_id
+                  - to_id
+                  - anchor_hash
+                  - last_hash
                 properties:
-                  verified: { type: boolean }
-                  entries_checked: { type: integer }
-                  first_bad_id: { type: ["integer", "null"], format: int64 }
+                  verified:
+                    { type: boolean, description: "No divergence was found in the checked range." }
+                  entries_checked:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    description: "Entries examined, including the first bad one. 0 proves nothing."
+                  first_bad_id:
+                    type: ["integer", "null"]
+                    format: int64
+                    description: "First id that diverges (see the description); null when verified."
                   checked_at: { type: string, format: date-time }
+                  from_id:
+                    type: ["integer", "null"]
+                    format: int64
+                    description: "Effective first id of the range; null when the log is empty."
+                  to_id:
+                    type: ["integer", "null"]
+                    format: int64
+                    description: "Effective last id of the range; null when the log is empty."
+                  anchor_hash:
+                    type: string
+                    pattern: "^[0-9a-f]{64}$"
+                    description: "Stored `entry_hash` of the entry before `from_id`, or 64 zeros."
+                  last_hash:
+                    type: ["string", "null"]
+                    pattern: "^[0-9a-f]{64}$"
+                    description: "`entry_hash` of the last entry that passed; null when none did."
               examples:
                 ok:
                   {
                     value:
                       {
                         verified: true,
-                        entries_checked: 88120441,
+                        entries_checked: 1000000,
                         first_bad_id: null,
                         checked_at: "2026-09-14T10:37:00Z",
+                        from_id: 87120442,
+                        to_id: 88120441,
+                        anchor_hash: "e0bfe1d77d31ee2a6bdffee0a7881bc7216e995d36b6cdfefbf08656dedcb3a3",
+                        last_hash: "8bef5f3897bf1b3fdd20156206a7daef8256d7c637c3054cb7161bce5ddb5f90",
+                      },
+                  }
+                broken:
+                  {
+                    value:
+                      {
+                        verified: false,
+                        entries_checked: 41207,
+                        first_bad_id: 41207,
+                        checked_at: "2026-09-14T10:37:05Z",
+                        from_id: 1,
+                        to_id: 1000000,
+                        anchor_hash: "0000000000000000000000000000000000000000000000000000000000000000",
+                        last_hash: "483897c122ae60354b229aa289db890833003eafb61870ec636565dd38351c09",
                       },
                   }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
-        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/audit/export:
     post:
       tags: [admin]
       operationId: exportAuditLog
       summary: Export an audit slice as signed NDJSON (owner, step-up `audit`)
-      description: Produces a downloadable NDJSON bundle with a detached signature over the file digest, for offline retention. Export itself is audited. Requires an `audit` step-up (SR-025, 5-minute grace); until the session holds one the route answers `403 step_up_required` with `action_class` set to `audit`.
+      description: |
+        Schedules an asynchronous export, as NDJSON (gzip when `compress`), of the chain span that
+        covers the window `[from, to)`, for offline retention. Poll `GET /admin/jobs/{jobId}`; once
+        the job succeeds its `result` is an `AuditExportResult`.
+
+        **Who.** Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50), with a
+        step-up of the `audit` action class (SR-025, 5-minute grace; SR-067). Until the session
+        holds one the route answers `403 step_up_required` with `action_class` set to `audit`.
+
+        **Limits.** These are configured server-side, so that export cannot be used for
+        exfiltration or denial of service. A window longer than the configured maximum is
+        `422 validation_failed`: the problem `detail` and `errors[].rule` (`max_export_range`)
+        name the limit, and no job is created. The configured row cap bounds the whole span; a
+        larger span fails the job with `error: export_too_large` before anything is written. Only
+        one export may be queued or running (`409 conflict`). Exports are rate-limited per user
+        (`audit_export_rate_per_hour`, default 5; `429 rate_limited` with `Retry-After`).
+
+        **Content.** The file holds the contiguous chain span from the first to the last entry
+        whose `ts` falls in the window, as of the chain head when the job starts. Entries inside
+        the span whose `ts` lies outside the window are included and flagged, so every link can be
+        verified offline. The first line is a header with the window, the head id and hash, the
+        anchor (the first entry's `prev_hash`) and `key_id`. The detached Ed25519 signature covers
+        the SHA-256 digest of the whole file, header included. Entries are exported exactly as
+        stored: redaction applied when an entry was written is preserved and nothing is
+        re-hydrated.
+
+        **Download.** The file at `download_url` is fetched with an authenticated `GET` whose URL
+        carries no credential. Its checks run in this order: authentication (`401`),
+        authorisation (`403`), requester (`404 not_found` for anyone but the user who requested
+        the export, and for an unknown or evicted job), step-up of the `audit` class
+        within its grace window (`403 step_up_required`, checked by the operation itself, after
+        the requester check), the per-user rate limit (`audit_download_rate_per_hour`, default 20;
+        `429`), expiry (`410 gone` after `expires_at`, when the file is deleted), then a
+        write-ahead audit record (`503 store_unavailable` if it cannot be written) before any byte
+        is streamed. Its refusals fall under the audit budget described on `queryAuditLog`. The
+        response sets `Cache-Control: no-store`, `Content-Disposition: attachment`,
+        `X-Content-Type-Options: nosniff` and `Repr-Digest: sha-256=:…:`. Polling the job follows
+        the same requester rule.
+
+        **Audit.** The request is audited before the job exists (`admin.audit_export`); if that
+        record cannot be written the call fails with `503 store_unavailable` and no job is
+        created. Completion is audited with the window, the span, the row count, the file digest
+        and the actor.
       x-rbac: { permissions: [audit:export], scope: none }
       x-idempotency: optional
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
@@ -7286,10 +7496,11 @@ paths:
               type: object
               additionalProperties: false
               required: [from, to]
+              description: "`from` must be earlier than `to` (`422`)."
               properties:
-                from: { type: string, format: date-time }
-                to: { type: string, format: date-time }
-                compress: { type: boolean, default: true }
+                from: { type: string, format: date-time, description: "Inclusive start (UTC)." }
+                to: { type: string, format: date-time, description: "Exclusive end (UTC)." }
+                compress: { type: boolean, default: true, description: "Gzip the NDJSON file." }
       responses:
         "202":
           description: Export scheduled.
@@ -7297,11 +7508,104 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [job_id]
                 properties:
                   job_id: { type: string, format: uuid }
                   download_url:
-                    { type: ["string", "null"], description: "Populated once the job completes." }
+                    type: ["string", "null"]
+                    description: "Always null here; the job's `result` carries the artefact."
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /admin/audit/exports/{jobId}:
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        description: "The `job_id` returned by `exportAuditLog`."
+        schema: { type: string, format: uuid }
+    get:
+      tags: [admin]
+      operationId: downloadAuditExport
+      summary: Download a signed audit export file
+      description: |
+        Serves the artefact of a succeeded `audit_export` job: the file at
+        `AuditExportResult.download_url`, which is this path. The URL carries no credential, so a
+        copied or leaked URL grants nothing; the call is an ordinary authenticated `GET`. The body
+        is the NDJSON file described on `exportAuditLog`, gzipped when
+        `AuditExportResult.compressed` is true.
+
+        The access rules, the order of the checks and the audit-before-stream rule are owned by
+        **Download** on `exportAuditLog`; this operation declares the capability and the response
+        shapes. In short: Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50a),
+        only the user who requested the export (any other user, another Owner included, gets the
+        same `404 not_found` as for an unknown or evicted job), and only within the grace window of
+        an `audit` step-up.
+
+        **Statuses.** `401`: not authenticated. `403`: the caller lacks `audit:export`
+        (`code: forbidden`) or has no live `audit` step-up (`code: step_up_required`).
+        `404 not_found`: not the requester, or an unknown or evicted job. `410 gone`: the file was
+        deleted after `expires_at`. `429 rate_limited`: over `audit_download_rate_per_hour`
+        (default 20), with `Retry-After`. `503 store_unavailable`: the write-ahead audit record
+        could not be written, so nothing is streamed, with `Retry-After`. Refusals fall under the
+        audit budget described on `queryAuditLog`.
+      x-rbac: { permissions: [audit:export], scope: none }
+      responses:
+        "200":
+          description: >-
+            The artefact. `Content-Type` is `application/gzip` when `AuditExportResult.compressed`
+            is true and `application/x-ndjson` otherwise. The bytes are the ones whose digest is
+            `AuditExportResult.sha256`.
+          headers:
+            Cache-Control:
+              description: "`no-store`: the file is never cached by the client or a proxy."
+              schema: { type: string, const: no-store }
+            Content-Disposition:
+              description: "`attachment`: the file is saved, never rendered inline."
+              schema: { type: string }
+            X-Content-Type-Options:
+              description: "`nosniff`."
+              schema: { type: string, const: nosniff }
+            Repr-Digest:
+              description: >-
+                RFC 9530 digest of the bytes as sent, `sha-256=:<base64>:`. It is the same SHA-256
+                as `AuditExportResult.sha256`, which is hex.
+              schema: { type: string, pattern: "^sha-256=:[A-Za-z0-9+/]{43}=:$" }
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                description: "One JSON object per line: the header line (window, head, anchor and `key_id`), then the chain span in id order."
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+                description: "The gzip of that NDJSON text, sent as the file itself and never as a `Content-Encoding`."
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: The file has expired and been deleted (`expires_at` has passed).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                expired:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/gone",
+                      title: "Resource existed but was purged by retention policy",
+                      status: 410,
+                      detail: "The export expired at 2026-09-15T10:39:10Z and its file was deleted.",
+                      instance: "urn:cv:req:0193f2bb-1010",
+                      code: gone,
+                    }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /admin/health:
     get:
@@ -7971,7 +8275,11 @@ paths:
       tags: [admin]
       operationId: getJob
       summary: Poll an asynchronous job (refresh, export, backup, verification, simulation)
-      description: "Uniform polling surface for every `202`-returning endpoint in this API."
+      description: >-
+        Uniform polling surface for every `202`-returning endpoint in this API. An unknown or
+        evicted job id is `404 not_found`. `error` carries a stable code, never a message. An
+        `audit_export` job is visible only to the user who requested it (anyone else gets
+        `404 not_found`); its `result` is an `AuditExportResult` once `status` is `succeeded`.
       x-rbac: { permissions: [admin:read], scope: none }
       responses:
         "200":
@@ -7991,7 +8299,7 @@ paths:
                         started_at: "2026-09-14T10:38:00Z",
                         finished_at: null,
                         result: null,
-                        error: "null",
+                        error: null,
                       },
                   }
                 done:
@@ -8006,12 +8314,25 @@ paths:
                         finished_at: "2026-09-14T10:39:10Z",
                         result:
                           {
-                            download_url: "/api/v1/admin/downloads/19000000.ndjson.gz",
+                            download_url: "/api/v1/admin/audit/exports/19000000-0000-4000-8000-000000000001",
+                            sha256: "d9b95bc8566005b5a0504b3c58e3a0793b6e1f696291f9e2278c303e8257d117",
+                            signature: "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+Pw==",
+                            signature_alg: ed25519,
+                            key_id: "cv-audit-export-v1:551e65e8fac8aa23",
+                            compressed: true,
                             size_bytes: 44120000,
+                            row_count: 851204,
+                            from: "2026-08-14T00:00:00Z",
+                            to: "2026-09-14T00:00:00Z",
+                            first_id: 87268001,
+                            last_id: 88119204,
+                            expires_at: "2026-09-15T10:39:10Z",
                           },
-                        error: "null",
+                        error: null,
                       },
                   }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
   # ---------------------------------------------------------------------------
@@ -8281,8 +8602,9 @@ paths:
                     Optional cross-check. The server elevates the class its last
                     `403 step_up_required` challenged on this session; a different
                     value is `400`. Without a pending challenge it is required.
-                    `audit` gates the audit-log export (`exportAuditLog`); `backups` gates a
-                    backup restore (`restoreBackup`), one fresh code per restore.
+                    `audit` gates the audit-log export (`exportAuditLog`) and the download of
+                    its file (`downloadAuditExport`); `backups` gates a backup restore
+                    (`restoreBackup`), one fresh code per restore.
                   type: string
                   enum:
                     [
@@ -13942,22 +14264,77 @@ components:
     # === Admin ==============================================================
     AuditEntry:
       type: object
+      description: >-
+        One audit-log entry. `entry_hash` covers the hashed fields listed in
+        `21-database-schema.md` §3.10.1; `id`, `subject_label` and `user_agent` are informational
+        and not covered by it. In a Manager's projection (SR-067) only `id`, `ts`,
+        `actor_user_id`, `actor_username`, `action`, `subject_type`, `subject_id`, `outcome`,
+        `severity` and `request_id` keep their values. Every other field, both hashes included, is
+        null, and `detail` is `{}`. The hashes are withheld because, with the hashed fields
+        known, they would let a caller confirm guesses about the fields its projection hides.
+      required:
+        - id
+        - ts
+        - actor_user_id
+        - action
+        - subject_type
+        - subject_id
+        - outcome
+        - severity
+        - detail
+        - entry_hash
+        - prev_hash
       properties:
-        id: { type: integer, format: int64 }
-        ts: { type: string, format: date-time }
-        actor_user_id: { type: ["string", "null"], format: uuid }
-        actor_username: { type: ["string", "null"] }
+        id:
+          type: integer
+          format: int64
+          description: "Chain position (`audit_log.id`); increasing, not contiguous. Informational."
+        ts:
+          type: string
+          format: date-time
+          description: "Event time recorded by the audit writer (UTC, microseconds)."
+        actor_user_id:
+          type: ["string", "null"]
+          format: uuid
+          description: "Null for system and rule actors."
+        actor_username:
+          type: ["string", "null"]
+          description: "Actor label recorded at write time; survives user deletion."
         action: { type: string }
-        subject_type: { type: string }
+        subject_type:
+          { type: ["string", "null"], description: "Recorded subject kind (`object_kind`)." }
         subject_id: { type: ["string", "null"] }
+        subject_label:
+          type: ["string", "null"]
+          description: "Human name of the subject at the time. Informational."
         outcome: { $ref: "#/components/schemas/AuditOutcome" }
         severity: { $ref: "#/components/schemas/Severity" }
-        ip: { type: ["string", "null"] }
-        user_agent: { type: ["string", "null"] }
-        request_id: { type: ["string", "null"] }
-        detail: { type: object, additionalProperties: true }
-        entry_hash: { type: string }
-        prev_hash: { type: ["string", "null"] }
+        reason:
+          type: ["string", "null"]
+          description: >-
+            Stable machine-readable code for a denial or failure, for example `owner_only` or
+            `missing_permission:audit:read`; never prose.
+        environment: { oneOf: [{ $ref: "#/components/schemas/Environment" }, { type: "null" }] }
+        session_id: { type: ["string", "null"], format: uuid }
+        ip: { type: ["string", "null"], description: "Actor IP address (PII)." }
+        user_agent: { type: ["string", "null"], description: "Informational." }
+        request_id:
+          { type: ["string", "null"], description: "Id of the request that produced the entry." }
+        detail:
+          type: object
+          additionalProperties: true
+          description: >-
+            The recorded, already-redacted state change: `before` and `after`, each an object or
+            null. `{}` in a Manager's projection.
+          properties:
+            before: { type: ["object", "null"], additionalProperties: true }
+            after: { type: ["object", "null"], additionalProperties: true }
+        entry_hash:
+          type: ["string", "null"]
+          description: "SHA-256 (hex) over the hashed fields and `prev_hash`; null for a Manager."
+        prev_hash:
+          type: ["string", "null"]
+          description: "`entry_hash` of the previous entry (64 zeros for the first); null for a Manager."
     HealthReport:
       type: object
       properties:
@@ -14122,8 +14499,80 @@ components:
         progress_pct: { type: number, minimum: 0, maximum: 100 }
         started_at: { type: ["string", "null"], format: date-time }
         finished_at: { type: ["string", "null"], format: date-time }
-        result: { type: ["object", "null"], additionalProperties: true }
+        result:
+          description: >-
+            Kind-specific outcome once `status` is `succeeded`, otherwise null. For
+            `kind: audit_export` it is an `AuditExportResult` or null (enforced by the `if`/`then`
+            below); other kinds carry their own object.
+          anyOf:
+            - $ref: "#/components/schemas/AuditExportResult"
+            - { type: object, additionalProperties: true }
+            - { type: "null" }
         error: { type: ["string", "null"] }
+      if:
+        required: [kind]
+        properties: { kind: { const: audit_export } }
+      then:
+        properties:
+          result: { oneOf: [{ $ref: "#/components/schemas/AuditExportResult" }, { type: "null" }] }
+    AuditExportResult:
+      type: object
+      description: >-
+        `Job.result` of a succeeded `audit_export` job. The artefact is NDJSON (gzip when
+        `compressed`): a signed header line, then the chain span in id order. `signature` is a
+        detached Ed25519 signature over the ASCII bytes `cv.audit.export.v1:` followed by the
+        lowercase hex `sha256`. Verify it with the public key the Owner pinned for `key_id`, which
+        is published out of band; never trust a key served next to the artefact.
+      required:
+        - download_url
+        - sha256
+        - signature
+        - signature_alg
+        - key_id
+        - compressed
+        - size_bytes
+        - row_count
+        - from
+        - to
+        - expires_at
+      properties:
+        download_url:
+          type: string
+          description: >-
+            Relative API URL of the artefact. It carries no credential: fetching it is an
+            authenticated `GET`, allowed only to the requesting user within the `audit`
+            step-up grace window, and audited before any byte is sent (see `exportAuditLog`).
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: "SHA-256 (hex) of the artefact bytes exactly as downloaded."
+        signature:
+          type: string
+          contentEncoding: base64
+          pattern: "^[A-Za-z0-9+/]{86}==$"
+          description: "Base64 of the 64-byte Ed25519 signature."
+        signature_alg: { type: string, enum: [ed25519] }
+        key_id:
+          type: string
+          pattern: "^cv-audit-export-v[0-9]+:[0-9a-f]{16}$"
+          description: "Signing key: key version and the first 16 hex of the public key's SHA-256."
+        compressed: { type: boolean }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        row_count:
+          type: integer
+          format: int64
+          minimum: 0
+          description: >-
+            Entry lines in the file: the whole span, including entries flagged as outside the
+            window. The header line is not counted.
+        from: { type: string, format: date-time, description: "Requested inclusive start." }
+        to: { type: string, format: date-time, description: "Requested exclusive end." }
+        first_id: { type: ["integer", "null"], format: int64 }
+        last_id: { type: ["integer", "null"], format: int64 }
+        expires_at:
+          type: string
+          format: date-time
+          description: "The artefact is deleted after this instant."
 
     # -------------------------------------------------------------------------
     # Schemas added by the cross-doc contract reconciliation pass, backing the

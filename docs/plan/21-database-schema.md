@@ -2251,7 +2251,7 @@ Resolution order: user override → role override → percentage rollout (hash o
 
 #### 3.10.1 `audit_log`
 
-Append-only, tamper-evident. Each row's `entry_hash` = SHA-256 over the canonical serialisation of the row plus the previous row's hash, forming a chain. A daily job writes the head hash to `audit_checkpoints` and to an off-box file, so truncation of the tail is detectable.
+Append-only, tamper-evident. Each row's `entry_hash` = SHA-256 over the canonical serialisation of the hashed fields (§3.10.1) plus the previous row's hash, forming a chain. A daily job writes the head hash to `audit_checkpoints` and to an off-box file, so truncation of the tail is detectable.
 
 | Column          | Type          | Null | Default     | Notes                                                                                        |
 | --------------- | ------------- | ---- | ----------- | -------------------------------------------------------------------------------------------- |
