@@ -18,6 +18,7 @@ from prometheus_client.parser import text_string_to_metric_families
 from candleviewer.app import create_app
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
 from candleviewer.ws.gateway import GatewayHub
@@ -109,6 +110,24 @@ def test_welcome_carries_settings_build_info(world: tuple[TestClient, _Kill]) ->
     with client.websocket_connect("/ws", subprotocols=JSON) as ws:
         p = _open(ws)["p"]
     assert (p["server_version"], p["git_sha"]) == ("4.5.6", "cafe123")
+
+
+def test_revocation_hub_remembers_revoked_ids_for_one_access_token_lifetime(
+    world: tuple[TestClient, _Kill],
+) -> None:
+    """#2739: the composition root sizes the revoked-id memory to `ACCESS_TOKEN_TTL`."""
+    client, _ = world
+    hub = client.app.state.revocation_hub  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
+    assert hub.remember_s == ACCESS_TOKEN_TTL.total_seconds()
+
+
+def test_revocation_hub_keeps_the_default_cap_of_4096_revoked_ids(
+    world: tuple[TestClient, _Kill],
+) -> None:
+    """#2739: `create_app` passes the hub no cap, so the default is the cap production runs with."""
+    client, _ = world
+    hub = client.app.state.revocation_hub  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
+    assert hub.max_remembered == 4096
 
 
 def test_pending_snapshot_adapter_reports_pending_not_crash(
