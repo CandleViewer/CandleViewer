@@ -21,6 +21,7 @@ from typing import Annotated, Any, Final, Literal, get_args
 from uuid import UUID
 
 from pydantic import (
+    AfterValidator,
     AwareDatetime,
     BaseModel,
     ConfigDict,
@@ -229,6 +230,25 @@ def anchors(points: Iterable[DrawingPointIn]) -> tuple[datetime, datetime]:
     return min(times), max(times)
 
 
+_MIN_MAGNITUDE: Final = 1e-6
+
+
+def _floor(v: float) -> float:
+    """Refuse a non-zero number below 1e-6 in magnitude; a float zero (incl. -0.0) becomes 0.0.
+
+    WHY: range is bounded but precision is not; jsonb prints a tiny value such as 5e-324 as a
+    ~326-character decimal, so a drawing could read back far larger than it was written.
+    An int is returned unchanged (``0`` stays ``0``).
+    """
+    if isinstance(v, float) and v == 0.0:
+        return 0.0
+    if v != 0 and abs(v) < _MIN_MAGNITUDE:
+        raise PydanticCustomError(
+            "number_out_of_range", "Non-zero number must be at least 1e-6 in magnitude"
+        )
+    return v
+
+
 # --- geometry / style -----------------------------------------------------------------------
 def _bounded(v: tuple[Any, ...], hi: int) -> None:
     """Length bounds as an after-validator: Field(min_length) on a tuple also fires a spurious
@@ -255,7 +275,11 @@ class DrawingGeometryIn(BaseModel):
     levels: (
         Annotated[
             tuple[
-                Annotated[StrictFloat | StrictInt, Field(ge=-1000, le=1000, allow_inf_nan=False)],
+                Annotated[
+                    StrictFloat | StrictInt,
+                    Field(ge=-1000, le=1000, allow_inf_nan=False),
+                    AfterValidator(_floor),
+                ],
                 ...,
             ],
             FailFast(),
@@ -305,7 +329,12 @@ class DrawingStyleIn(BaseModel):
     colour: Annotated[StrictStr, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     fill_colour: Annotated[StrictStr, Field(pattern=r"^#[0-9a-fA-F]{6}$")] | None = None
     fill_opacity: (
-        Annotated[StrictFloat | StrictInt, Field(ge=0, le=1, allow_inf_nan=False)] | None
+        Annotated[
+            StrictFloat | StrictInt,
+            Field(ge=0, le=1, allow_inf_nan=False),
+            AfterValidator(_floor),
+        ]
+        | None
     ) = None
     width: Annotated[StrictInt, Field(ge=1, le=8)] | None = None
     dash: Literal["solid", "dashed", "dotted"] | None = None
