@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal, localcontext
+from fractions import Fraction
 from itertools import accumulate
 from pathlib import Path
 from typing import Any
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
@@ -17,7 +18,10 @@ from referencing import Registry, Resource
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.spec import WireBarType
 from candleviewer.ws.bars_wire import (
+    ITEM_MAX_BYTES,
     MAX_TS_SPAN_MS,
+    _places,
+    _scaled,
     bar_item,
     bar_record,
     bars_frames,
@@ -243,13 +247,93 @@ def test_bar_item_sends_a_zero_with_a_positive_exponent_and_38_places() -> None:
     assert (item["v"], len(item["turnover"])) == ("0", 40)
 
 
-def test_a_refusal_names_the_field_and_caps_the_value_it_echoes() -> None:
-    with pytest.raises(FrameEncodeError, match=r"bars \(0, 3\): open_time -1 is negative"):
+def test_a_negative_refusal_names_the_field_and_its_value() -> None:
+    with pytest.raises(FrameEncodeError, match=r"^bars \(0, 3\): open_time -1 is negative$"):
         _record(_bar().model_copy(update={"open_time": -1}))
-    long = Decimal("1." + "1" * 500)
+
+
+def test_a_refusal_echoes_at_most_64_characters_of_the_value() -> None:
     with pytest.raises(FrameEncodeError) as err:
-        _record(_bar().model_copy(update={"open": long}))
-    assert len(str(err.value)) < 160 and "..." in str(err.value)
+        _record(_bar().model_copy(update={"open": Decimal("1." + "1" * 500)}))
+    echo = "1." + "1" * 59 + "..."
+    assert (str(err.value), len(echo)) == (f"bars (0, 3): open {echo} is not exact at scale 1", 64)
+
+
+@pytest.mark.parametrize(
+    ("generation", "update", "refusal"),
+    [(2**64, {}, "generation is too large"), (0, {"index": 2**64}, "index is too large"),
+     (0, {"trade_count": 2**32}, "trade_count is too large"),
+     (0, {"open_time": 2**63}, "open_time is too large"),
+     (0, {"close_time": 2**63}, "close_time is too large"),
+     pytest.param(0, {"index": 10**5000}, "index is too large", id="index-5000-digits"),
+     pytest.param(-(10**5000), {}, "generation is negative", id="generation-5000-digits")],
+)  # fmt: skip
+def test_both_forms_refuse_an_integer_past_its_width_without_echoing_it(
+    generation: int, update: dict[str, Any], refusal: str
+) -> None:
+    """#2694: checked first, so neither the key nor a 5 000-digit value is ever formatted."""
+    bar = _bar().model_copy(update=update)
+    with pytest.raises(FrameEncodeError, match=f"^bars: {refusal}$"):
+        bar_item(bar, generation=generation, bar_kind="time", include_delta=False)
+    with pytest.raises(FrameEncodeError, match=f"^bars: {refusal}$"):
+        bar_record(bar, generation=generation, include_delta=False, price_scale=1, qty_scale=3,
+                   ts_base_ms=T0_MS)  # fmt: skip
+
+
+def test_both_forms_accept_every_integer_at_its_width() -> None:
+    edge = {"index": 2**64 - 1, "trade_count": 2**32 - 1, "close_time": 2**63 - 1}
+    bar = _bar().model_copy(update={**edge, "open_time": 2**63 - 1})
+    item = bar_item(bar, generation=2**64 - 1, bar_kind="tick", include_delta=False)
+    assert (item["generation"], item["index"], item["trades"]) == (2**64 - 1, 2**64 - 1, 2**32 - 1)
+    (frame,) = bars_frames([bar], generation=2**64 - 1, include_delta=False, price_scale=1,
+                           qty_scale=3)  # fmt: skip
+    record = decode(encode(frame)).records[0]
+    assert (record[0], record[1], record[9]) == (2**64 - 1, 2**64 - 1, 2**32 - 1)
+
+
+def test_item_max_bytes_bounds_the_widest_item() -> None:
+    nines = Decimal("-" + "9" * 39 + "." + "9" * 38)  # the widest decimal `bar_item` sends
+    fields = (
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "turnover",
+        "delta",
+        "min_delta",
+        "max_delta",
+    )
+    wide = {**dict.fromkeys(fields, nines), "index": 2**64 - 1, "trade_count": 2**32 - 1,
+            "open_time": 2**63 - 1, "close_time": 2**63 - 1}  # fmt: skip
+    item = bar_item(_bar().model_copy(update=wide), generation=2**64 - 1, bar_kind="tick",
+                    include_delta=True, amended=True)  # fmt: skip
+    assert 900 < len(json.dumps(item, separators=(",", ":"))) <= ITEM_MAX_BYTES  # 969 B today
+
+
+@settings(max_examples=400, deadline=None, derandomize=True)
+@given(
+    coefficient=st.one_of(st.integers(-(10**25), 10**25), st.integers(10**20 - 9, 10**20 + 9)),
+    exponent=st.integers(-30, 6), scale=st.integers(0, 24), exact=st.booleans(),
+)  # fmt: skip
+@example(coefficient=10**20 - 1, exponent=-3, scale=3, exact=True)  # just below 10**20: kept
+@example(coefficient=10**20, exponent=-3, scale=3, exact=True)  # 10**20: refused
+@example(coefficient=10**21 - 5, exponent=-4, scale=3, exact=False)  # .5 below: rounds to 10**20
+@example(coefficient=25, exponent=-1, scale=0, exact=False)  # 2.5: half-even keeps 2
+def test_scaled_and_places_agree_with_fraction_arithmetic(
+    coefficient: int, exponent: int, scale: int, exact: bool
+) -> None:
+    """#2694: `_scaled` refuses from 10**20; `_places` is the fewest places making it whole."""
+    value = Decimal(f"{coefficient}E{exponent}")
+    scaled = Fraction(value) * 10**scale
+    want = None if abs(scaled) >= 10**20 or (exact and scaled.denominator != 1) else round(scaled)
+    try:
+        got: int | None = _scaled(value, scale, _bar(), 0, "open", exact=exact)
+    except FrameEncodeError:
+        got = None
+    assert got == want
+    places = next(p for p in range(64) if (Fraction(value) * 10**p).denominator == 1)
+    assert _places(value) == places
 
 
 def test_kind_4_refuses_a_huge_exponent_before_building_the_integer() -> None:
@@ -304,8 +388,7 @@ def test_kind_4_ignores_the_delta_scale_without_include_delta() -> None:
 @pytest.mark.parametrize(
     ("update", "field"),
     [({"turnover": Decimal("-1")}, "turnover"), ({"volume": Decimal("2E+16")}, "volume"),
-     ({"open": Decimal("1E+18")}, "open"), ({"trade_count": 2**32}, "trades"),
-     ({"index": 2**64}, "index")],
+     ({"open": Decimal("1E+18")}, "open")],
 )  # fmt: skip
 def test_kind_4_refuses_a_value_outside_its_field_range(update: dict[str, Any], field: str) -> None:
     bar = _bar().model_copy(update=update)
@@ -357,6 +440,21 @@ def test_covering_scales_take_no_places_from_a_positive_exponent_or_a_nan() -> N
 def test_covering_scales_count_every_digit_of_a_29_digit_price() -> None:
     bar = _bar().model_copy(update={"open": Decimal("1.0000000000000000000000000001")})
     assert covering_scales([bar], price_scale=1, qty_scale=3) == (28, 3)
+
+
+def test_covering_scales_count_delta_only_when_it_is_sent() -> None:
+    bar = _bar(delta=Decimal("2.00001"))
+    assert covering_scales([bar], price_scale=1, qty_scale=3, include_delta=False) == (1, 3)
+    assert covering_scales([bar], price_scale=1, qty_scale=3) == (1, 5)
+
+
+@pytest.mark.parametrize(("price_scale", "qty_scale"), [(256, 3), (1, 256), (-1, 3), (1, -1)])
+def test_bars_frames_refuse_scales_the_u8_header_cannot_hold(
+    price_scale: int, qty_scale: int
+) -> None:
+    assert _frames([], price_scale=255, qty_scale=255) == ()  # the widest the header holds
+    with pytest.raises(FrameEncodeError, match=r"^bars: scales \(-?\d+, -?\d+\) do not fit"):
+        _frames([], price_scale=price_scale, qty_scale=qty_scale)
 
 
 def test_covering_scales_never_go_below_the_instrument() -> None:
