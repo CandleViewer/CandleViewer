@@ -160,6 +160,23 @@ async def _accept(methods: int, sessions: int, /) -> None:
     """The owner reset's write-ahead audit hook, accepting."""
 
 
+def _codes(stack: Stack, uid: uuid.UUID) -> tuple[str, ...]:
+    """A new set of 10 recovery codes for *uid*, in plaintext (the earlier set stops working)."""
+    return tuple(stack.call(stack.auth.mfa.regenerate_recovery_codes, str(uid)).recovery_codes)
+
+
+def _challenge(stack: Stack, username: str) -> str:
+    """The password step of a user with a confirmed TOTP: the `mfa_token` of its challenge."""
+    resp = _sign_in(stack, username)
+    assert resp.json()["status"] == "mfa_required", resp.text
+    return str(resp.json()["mfa_token"])
+
+
+def _recover(stack: Stack, mfa_token: str, code: str, **kwargs: Any) -> Any:
+    body = {"mfa_token": mfa_token, "recovery_code": code}
+    return stack.client.post("/auth/mfa/recovery", json=body, **kwargs)
+
+
 # -- POST /auth/login (Q6, Q7, Q9) ---------------------------------------------------------------
 
 
@@ -519,16 +536,16 @@ def test_a_completed_enrolment_is_counted_and_its_revocations_keep_their_reason(
 def test_after_a_recovery_sign_in_the_old_method_can_never_be_confirmed_again(
     stack: Stack,
 ) -> None:
-    """The #2295 DoR finding: a recovery sign-in only un-confirms the old method, so its seed
-    (the lost device) must not satisfy forced re-enrolment."""
+    """The #2295 DoR finding: the recovery sign-in revokes the old method for good (#2344), so
+    its seed (the lost device) never satisfies the forced re-enrolment."""
     uid, old_seed = stack.add_user("alice")
-    stack.call(_store(stack).set_mfa_required_reenroll, str(uid))  # a recovery sign-in
     (old_id,) = [k for k, m in _store(stack).methods.items() if m.user_id == uid]
+    assert _recover(stack, _challenge(stack, "alice"), _codes(stack, uid)[0]).status_code == 200
 
     resp = _confirm(stack, _enrolment_only(stack, "alice"), old_id, stack.code(old_seed))
 
     assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
-    assert _store(stack).methods[old_id].confirmed_at is None
+    assert _store(stack).methods[old_id].revoked_at is not None
 
 
 # -- the enrolment-only session's own operations -------------------------------------------------
