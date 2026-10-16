@@ -168,6 +168,7 @@ def test_a_drain_below_the_floor_is_refused_from_the_environment_too(
         ("uvicorn_drain_timeout_s", 0),
         ("uvicorn_drain_timeout_s", 31),
         ("uvicorn_drain_timeout_s", "abc"),  # not a number: the field's own check refuses it
+        ("uvicorn_drain_timeout_s", ""),  # an empty environment value is refused the same way
         ("uvicorn_drain_timeout_s", float("inf")),  # `int(inf)` is an OverflowError, not a refusal
         ("ws_shutdown_grace_ms", 60_001),  # the budget check skips a term whose own check failed
     ],
