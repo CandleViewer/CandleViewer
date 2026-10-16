@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 from typing import Any
 
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.invite_service import hash_token
 from tests.csrf_helpers import csrf_headers
@@ -87,11 +88,21 @@ def test_ac_inv_07_signed_in_other_identity_never_receives_the_invite(stack: Sta
         "Authorization": f"Bearer {minted.access_token}",
         **csrf_headers(stack.state.csrf_codec, minted.session_id),
     }
-    for claim in ({"username": "bob"}, {"user_id": str(bob)}, {"email": "bob@example.test"}):
+    claims = ({"username": "bob"}, {"user_id": str(bob)}, {"email": "bob@example.test"})
+    counted = stack.scraped("users_invites_rejected_total", reason="identity_tamper")
+    for claim in claims:
         r = stack.client.post(
             f"/invites/{token}", headers=as_bob, json={"password": INVITE_PW, **claim}
         )
         assert r.status_code == 400, r.text  # the invited identity cannot be swapped
+    tamper = stack.audit.of("users.invite_rejected")  # #2319: each claim leaves one row and a count
+    assert [(x["reason"], x["outcome"], x["severity"]) for x in tamper] == [
+        ("identity_tamper", AuditOutcome.DENIED, Severity.WARNING)
+    ] * len(claims)
+    after = stack.scraped("users_invites_rejected_total", reason="identity_tamper")
+    assert after - counted == len(claims)
+    claimed = [str(value) for claim in claims for value in claim.values()]
+    assert not any(value in repr(tamper) for value in claimed)  # the claimed identity is not kept
     assert stack.client.get(f"/invites/{token}").status_code == 200  # nothing was consumed
     done = _redeem(stack, token, headers=as_bob)
     assert (done.status_code, done.json()["role"]) == (200, "viewer")

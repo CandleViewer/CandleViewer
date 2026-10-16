@@ -86,6 +86,7 @@ from candleviewer.auth.errors import (
     UserDisabled,
 )
 from candleviewer.auth.metrics import (
+    auth_login_failures_total,
     auth_recovery_codes_used_total,
     auth_session_fixation_attempts_total,
 )
@@ -322,6 +323,7 @@ def make_auth_router(
             # trusted proxy has its own bucket instead of sharing the proxy's (#2275).
             result = await auth_service.login.login(body, source_ip=audit_ip or "unknown")
         except InvalidCredentials as exc:
+            auth_login_failures_total.labels(method="password").inc()  # SR-125
             await _audit(
                 audit_service,
                 "auth.login_failed",
@@ -331,6 +333,7 @@ def make_auth_router(
             )
             return _problem(401, "Invalid credentials", str(exc))
         except AccountDisabled as exc:
+            auth_login_failures_total.labels(method="password").inc()
             await _audit(
                 audit_service,
                 "auth.login_failed",
@@ -384,6 +387,7 @@ def make_auth_router(
         try:
             result = await auth_service.mfa.verify(body)
         except (MfaChallengeInvalid, MfaChallengeLocked, MfaCodeInvalid, MfaCodeReused):
+            auth_login_failures_total.labels(method=body.method.value).inc()
             await _audit(
                 audit_service,
                 "auth.mfa_failed",
@@ -461,6 +465,7 @@ def make_auth_router(
         try:
             result = await auth_service.mfa.recover(body.mfa_token, body.recovery_code)
         except RecoveryCodesExhausted as exc:
+            auth_login_failures_total.labels(method=MfaMethodKind.RECOVERY_CODE.value).inc()
             await _audit(
                 audit_service,
                 "auth.recovery_codes_exhausted",
@@ -471,6 +476,7 @@ def make_auth_router(
             )
             return _problem(401, "Recovery codes exhausted", str(exc))
         except (MfaChallengeInvalid, MfaChallengeLocked, RecoveryCodeInvalid):
+            auth_login_failures_total.labels(method=MfaMethodKind.RECOVERY_CODE.value).inc()
             await _audit(
                 audit_service,
                 "auth.mfa_failed",

@@ -28,7 +28,7 @@ import secrets
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol
 
 from candleviewer.auth.errors import (
     InviteConflict,
@@ -84,6 +84,8 @@ _COMMON_PASSWORDS = frozenset(
 Clock = Callable[[], datetime]
 #: Write-ahead audit hook for a legacy-role downgrade: `(invite, stored_role)`.
 DowngradeAudit = Callable[[InviteRecord, str], Awaitable[None]]
+#: The refusals of a body that never reached a token lookup. Closed: the reason is a metric label.
+InviteTamperReason = Literal["role_tamper", "identity_tamper"]
 
 
 def _is_viewer_role(role: str) -> bool:
@@ -227,6 +229,11 @@ class InviteService:
 
     def is_blocked(self, source_ip: str) -> bool:
         return self._throttle.is_blocked(source_ip)
+
+    def refuse(self, reason: InviteTamperReason, *, source_ip: str) -> None:
+        """Count and charge a refusal that never reached a token lookup (a body that claims a role
+        or an identity): the same metric and per-source budget as every other refusal."""
+        self._reject(reason, source_ip)
 
     async def inspect(self, token: str, *, source_ip: str) -> InviteView:
         """`GET /invites/{token}`: validates without consuming."""
