@@ -30,6 +30,17 @@ def test_server_limits_are_not_library_defaults() -> None:
     assert cfg.ws_max_size != 16 * 1024 * 1024
     assert cfg.ws_max_queue != 32
     assert cfg.limit_concurrency is not None
+    assert cfg.timeout_graceful_shutdown is not None  # uvicorn's own default is no bound (#2565)
+
+
+def test_server_bounds_uvicorns_drain_by_the_settings_timeout() -> None:
+    """#2565: an unbounded drain (`_wait_tasks_to_complete`) keeps `lifespan.shutdown()`, and with
+    it the module teardown, from ever running while one connection or task stays open."""
+    kwargs = uvicorn_kwargs()
+    assert kwargs["timeout_graceful_shutdown"] == Settings().uvicorn_drain_timeout_s == 5
+    assert uvicorn.Config(APP, **kwargs).timeout_graceful_shutdown == 5
+    custom = Settings(uvicorn_drain_timeout_s=9, api_stop_budget_s=60)
+    assert uvicorn_kwargs(custom)["timeout_graceful_shutdown"] == 9
 
 
 def test_server_host_and_port_come_from_settings() -> None:

@@ -18,7 +18,9 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   `grants_changed`, `user_disabled`, `kill_switch_changed`.
 * **Shutdown** (§9.4): `candleviewer.server.PlannedShutdownServer` runs `WsRuntime.stop()` before
   uvicorn's own shutdown (#2546): the gateway sends `shutdown_notice` on `system`, waits the grace
-  period, then `bye` + `1001`. The lifespan teardown's later call only stops the sweeper.
+  period, then `bye` + `1001`. The lifespan teardown's later call only stops the sweeper. The grace
+  and the `CLOSE_FLUSH_TIMEOUT_S` flush are two terms of the container stop budget that `Settings`
+  checks (`api_stop_budget_s`, #2565).
 """
 
 from __future__ import annotations
@@ -36,7 +38,8 @@ import structlog
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.observability.context import spawn
-from candleviewer.ws.gateway import CLOSE_FLUSH_TIMEOUT_S, GatewayHub
+from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
+from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.permissions import ConnectionRegistry, Subscription
 from candleviewer.ws.sequencing import SnapshotBody, SnapshotSource
 from candleviewer.ws.upstream import UpstreamKey, UpstreamRefs

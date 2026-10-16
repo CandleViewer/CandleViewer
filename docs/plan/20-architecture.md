@@ -810,6 +810,7 @@ Start order: storage → auth → admin/key vault → bus → ingestion → book
 
 Layered, highest priority last: packaged defaults → `infra/compose/.env` → environment variables (`CV_*`) → Postgres-stored runtime settings (admin-editable) → per-user preferences. Secrets never appear in layers 1–2 in plaintext.
 
+<!-- prettier-ignore -->
 | Key                              | Type   | Default                   | Scope   | Notes                                                                                                               |
 | -------------------------------- | ------ | ------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------- |
 | `CV_ENV`                         | enum   | `demo`                    | process | Bybit environment                                                                                                   |
@@ -857,6 +858,8 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_IMPORT_MAX_MBPS`             | float  | `50`                      | process | archive import bandwidth cap, megabits/s                                                                            |
 | `CV_IMPORT_MAX_UNCOMPRESSED_MB`  | int    | `2048`                    | process | per-file decompressed cap (zip-bomb guard)                                                                          |
 | `CV_BYBIT_ARCHIVE_BASE`          | str    | adapter default           | process | https origin, host allow-listed in adapter                                                                          |
+| `CV_API_STOP_BUDGET_S`           | int    | `30`                      | process | api SIGTERM-to-SIGKILL budget, 23-120 s; equals compose `stop_grace_period`; the WS grace must fit it (#2565)       |
+| `CV_UVICORN_DRAIN_TIMEOUT_S`     | int    | `5`                       | process | bound on uvicorn's drain of open connections, 4-30 s; 4 s is one close's flush plus its audit write (#2565)         |
 | `CV_TEST_CLOCK`                  | bool   | `false`                   | process | auth server test clock (#2086), no HTTP route; refused unless testnet with no exchange key (E16-FR-11)              |
 | `CV_TEST_CLOCK_FILE`             | path   | unset                     | process | offset in signed decimal seconds, read per auth decision; absolute, no `..`, no symlink in it; own DB (see below)   |
 

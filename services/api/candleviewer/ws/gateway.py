@@ -57,6 +57,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.net import RESOLVED_SOURCE_KEY
 from candleviewer.observability.context import current_request_id, spawn
+from candleviewer.settings import CLOSE_AUDIT_TIMEOUT_S, CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.lifecycle import (
     CLOSE_REASONS,
@@ -109,11 +110,6 @@ WS_PATH = "/ws"
 SYSTEM_TOPIC: Final = "system"
 OUTBOUND_QUEUE_MAX: Final = 1024
 WATCHDOG_TICK_S: Final = 0.05
-#: Upper bound for the writer to flush `bye` + close once the reader stopped.
-CLOSE_FLUSH_TIMEOUT_S: Final = 2.0
-#: Upper bound on writing a connection's `ws.connection.closed` row; the teardown never waits
-#: longer on the audit sink.
-CLOSE_AUDIT_TIMEOUT_S: Final = 2.0
 #: Close reasons audited at `warning` rather than `info` (E17-S01 Security notes; a fault too).
 WARNING_CLOSES: Final = frozenset({"auth_failed", "slow_consumer", "internal_error"})
 #: The close code uvicorn's own shutdown sends every socket it closes (no `bye`). A client may send
