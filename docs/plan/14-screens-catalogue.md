@@ -2288,7 +2288,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 
 - **Data:** `GET/PATCH /api/v1/users/{id}`, `PUT /api/v1/users/{userId}/account-access`.
 - **Validation:** granting live on an account whose key is still inside Bybit's 48 h restriction shows a warning with the exact unlock time; caps cannot exceed the account profile's caps ("Can't exceed the account's 3 % daily cap.").
-- **Audit:** `user.assignment_changed` (step-up). **Stories:** US-ADMIN-006, US-PROF-007.
+- **Audit:** `users.access_change` (step-up). **Stories:** US-ADMIN-006, US-PROF-007.
 - **A11y:** A form with clearly separated sections (identity, role, account assignments, risk caps, session controls); the account-assignment control is a labelled multi-select with a reviewable summary list; every destructive action is a named button with a confirmation dialog.
 - **Performance:** Permission changes take effect server-side immediately and are pushed to the affected user's session within 2 s; the UI confirms only after the server acknowledges.
 - **Components:** CMP-004 Toggle, CMP-009 Select, CMP-040 FormField, CMP-065 FormSection, CMP-087 AdminLayout, CMP-093 AuditActionTrigger, CMP-105 AccountMultiSelect, CMP-138 RiskCapMeter.
