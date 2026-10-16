@@ -5,21 +5,22 @@
 
 - **Groups.** Each `include_delta` group (§6.1) with a subscriber a frame reaches (live,
   snapshotted, unpaused) is encoded and sent alone (`publish(select=...)`, `meta.include_delta`):
-  one group's refusal never drops the other's. A subscription the channel's own swap left pending
-  (the store had no snapshot then) is flushed after a later emission; an `initial` one is left to
-  the subscribe flow and a held one to E17's backpressure, so a `snap` never precedes `sub_ok`.
+  one group's refusal never drops the other's.
 - **Chunks.** A `d` carries its bars' structured items and, for a group with a binary subscriber,
   their kind-4 frame at `covering_scales`, so both encodings share boundaries. A chunk ends at the
   u32 time span, or before the `d` would pass `max_frame_bytes` (§3.6) in an encoding it is sent in.
 - **Structured instead of binary:** an amended close (no amended bit in kind 4; A2), no instrument
   scales, or a `FrameEncodeError`.
 - **Generations** (§8.2, ADR-0033, #2704). Any change, up or down, is a swap: the series' live,
-  snapshotted, unpaused subscriptions are re-snapshotted (`swap_reason`), with no delta. Swaps are
-  counted; over `SWAP_STORM` per `SWAP_WINDOW_S` on a channel warns once per window with the real
-  count, as one live builder per series (E12-S12) never swaps that often. Residual: a series with
-  no baseline (not seen or seeded since start, or evicted) adopts the first generation, missing an
-  earlier swap; a refused emission is not repaired before the series' next snapshot. While a
-  swap-pending subscription waits, every emission retries its snapshot: `build` must be cheap.
+  snapshotted, unpaused subscriptions are re-snapshotted (`swap_reason`), with no delta; a pending
+  one keeps its reason, as under ctl. One the swap leaves pending (no snapshot yet) is retried on
+  each later emission, one `build` per such subscription, so `build` must be cheap; no other
+  flow's pending one is (`_left_pending`). So no `snap` precedes an `initial` subscription's
+  `sub_ok`, but a §7.6 continuity attach is settled at admit and a swap can reach it first (#2831).
+  Swaps are counted; over `SWAP_STORM` per `SWAP_WINDOW_S` on a channel warns once per window with
+  the real count, as one live builder per series (E12-S12) never swaps that often. Residual: a
+  series with no baseline (not seen or seeded since start, or evicted) adopts the first
+  generation, missing an earlier swap; a refused emission waits for the series' next snapshot.
 
 Drops and fallbacks are counted in `bar_emit_sink_errors_total{reason}` and logged once per
 (series, cause) until it clears. Bounds (C-2.18): at most `max_series` series, least recently
@@ -253,7 +254,9 @@ class BarsPublisher:
             self._hub.flush_pending(lambda s: s.ch == ch and self._left_pending(s))
 
     def _left_pending(self, sub: Subscription) -> bool:
-        """Live, unpaused and pending with this publisher's swap reason, not another flow's."""
+        """The retry's match: live, unpaused and pending with this publisher's swap reason. A
+        hub-level match must never accept `initial` (a `sub` in flight, whose `snap` would precede
+        `sub_ok`) or `backpressure` (E17's hold), so `__init__` refuses both as `swap_reason`."""
         pending = sub.snapshot_pending and sub.pending_reason == self._swap
         return pending and _live(sub) and not _paused(sub)
 

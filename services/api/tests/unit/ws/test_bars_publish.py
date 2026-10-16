@@ -303,21 +303,23 @@ async def test_a_swap_skips_paused_and_still_pending_subscriptions() -> None:
 
 async def test_a_swap_the_store_cannot_snapshot_yet_is_flushed_on_a_later_emission() -> None:
     src = Source()
-    _, pub, [(conn, sub), (held, paused)] = _world({"encoding": "structured"}, {}, src=src)
+    _, pub, [(conn, sub), (held, paused), (gone, _)] = _world({}, {}, {}, src=src)
     paused.effective["paused"], paused.snapshot_pending, paused.pending_reason = True, True, SWAP
     await pub.emit(_em(_up(), generation=0))
+    gone.take()
     src.unavailable.add("BTCUSDT")  # the store has nothing to snapshot yet
-    for _ in range(2):  # the swap, then a flush that still finds nothing
-        await pub.emit(_em(_up(), generation=5))
+    for generation in (5, 7, 7):  # two swaps, then a retry that still finds nothing
+        await pub.emit(_em(_up(), generation=generation))
     assert sub.snapshot_pending
     src.unavailable.clear()
-    for _ in range(2):  # the flush succeeds, then deltas resume
-        await pub.emit(_em(_up(), generation=5))
+    gone.authz.unsubscribe(CH)  # unsubscribed while swap-pending: never flushed again
+    for _ in range(2):  # the retry succeeds, then deltas resume
+        await pub.emit(_em(_up(), generation=7))
     out = conn.take()
     assert [(f["t"], f["s"], f.get("meta", {}).get("reason")) for f in out] == [
         ("d", 2, None), ("snap", 3, SWAP), ("d", 4, None)
     ]  # fmt: skip
-    assert (held.take(), paused.seq) == ([], 1)
+    assert (held.take(), gone.take(), paused.seq) == ([], [], 1)
 
 
 async def test_an_emission_during_a_sub_never_sends_its_snap_before_sub_ok() -> None:
@@ -345,17 +347,21 @@ async def test_an_emission_during_a_sub_never_sends_its_snap_before_sub_ok() -> 
     assert [f["t"] for f in conn.take()] == ["snap"]
 
 
-async def test_a_backpressure_hold_and_a_replay_subscription_are_never_flushed() -> None:
+@pytest.mark.parametrize("reason", ["initial", "backpressure"])  # a `sub` in flight, E17's hold
+async def test_a_swap_and_its_retry_keep_another_flows_hold_and_skip_a_replay(reason: str) -> None:
     src = Source()
-    _, pub, [(held, hs), (conn, live)] = _world({}, {}, src=src)
+    _, pub, [(held, hs), (conn, _)] = _world({}, {}, src=src)
     _, replay = conn.sub({"ch": CH, "opts": {}}, replay_session_id=RS)
-    conn.take()
-    hs.snapshot_pending, hs.pending_reason = True, "backpressure"  # E17's hold
-    for sub in (live, replay):
-        sub.snapshot_pending, sub.pending_reason = True, SWAP
-    await pub.emit(_em(_up()))
+    await pub.emit(_em(_up(), generation=0))
+    held.take(), conn.take()
+    hs.snapshot_pending, hs.pending_reason = True, reason
+    replay.snapshot_pending, replay.pending_reason = True, SWAP
+    src.unavailable.add("BTCUSDT")
+    await pub.emit(_em(_up(), generation=5))  # the swap leaves the live subscription pending
+    src.unavailable.clear()
+    await pub.emit(_em(_up(), generation=5))  # its retry
     assert [("rs" in f, f["meta"]["reason"]) for f in conn.take()] == [(False, SWAP)]
-    assert (held.take(), hs.snapshot_pending, replay.snapshot_pending) == ([], True, True)
+    assert (held.take(), hs.pending_reason, replay.snapshot_pending) == ([], reason, True)
 
 
 async def test_groups_count_only_the_subscriptions_a_frame_reaches(
@@ -380,8 +386,7 @@ async def test_note_generation_seeds_a_missing_baseline_and_keeps_an_existing_on
 
 
 async def test_note_generation_seeds_aside_and_never_ages_out_an_emitting_series() -> None:
-    hub, _, _ = _world({"encoding": "structured"})
-    pub = BarsPublisher(hub, lambda _: (1, 3), swap_reason=SWAP, max_series=2)
+    _, pub, _ = _world({"encoding": "structured"}, max_series=2)
     tick, minute = BarSpec(kind="tick", tick_count=100), BarSpec(kind="time", interval_ms=60_000)
     hour = BarSpec(kind="time", interval_ms=3_600_000)
     await pub.emit(_em(_up(), generation=3))
@@ -395,8 +400,7 @@ async def test_note_generation_seeds_aside_and_never_ages_out_an_emitting_series
 
 
 async def test_note_generation_leaves_an_emitting_series_baseline_alone() -> None:
-    hub, _, [(conn, _)] = _world({"encoding": "structured"})
-    pub = BarsPublisher(hub, lambda _: (1, 3), swap_reason=SWAP, max_series=2)
+    _, pub, [(conn, _)] = _world({"encoding": "structured"}, max_series=2)
     await pub.emit(_em(_up(), generation=3))
     pub.note_generation("BTCUSDT", SPEC, 1)  # the series is live: no seed is taken
     for spec in (BarSpec(kind="tick", tick_count=100), BarSpec(kind="time", interval_ms=60_000)):
@@ -408,8 +412,7 @@ async def test_note_generation_leaves_an_emitting_series_baseline_alone() -> Non
 
 async def test_the_series_map_is_bounded_and_forgets_the_least_recent_first() -> None:
     assert MAX_SERIES == 2 * CAP_GLOBAL == 1024
-    hub, _, [(conn, _)] = _world({"encoding": "structured"})
-    pub = BarsPublisher(hub, lambda _: (1, 3), swap_reason=SWAP, max_series=2)
+    _, pub, [(conn, _)] = _world({"encoding": "structured"}, max_series=2)
     tick, minute = BarSpec(kind="tick", tick_count=100), BarSpec(kind="time", interval_ms=60_000)
     for spec in (SPEC, tick, SPEC, minute):  # `tick` emitted least recently: dropped
         await pub.emit(_em(_up(), spec=spec))
@@ -423,15 +426,10 @@ async def test_the_series_map_is_bounded_and_forgets_the_least_recent_first() ->
 
 
 async def test_pending_and_paused_subscriptions_get_nothing() -> None:
-    src = Source()
-    hub, pub, [(paused, ps)] = _world({}, src=src)
-    ps.effective["paused"] = True
-    src.unavailable.add("BTCUSDT")
-    pending = OwnerMetaConn(src)
-    hub.register(pending.authz, pending.emitter)
-    _, pend = pending.sub(CH)
+    _, pub, [(paused, ps), (pending, pend)] = _world({}, {})
+    ps.effective["paused"], pend.snapshot_pending = True, True
     await pub.emit(_em(_up()))
-    assert (paused.take(), pending.take(), ps.seq, pend.seq) == ([], [], 1, 0)
+    assert (paused.take(), pending.take(), ps.seq, pend.seq) == ([], [], 1, 1)
 
 
 async def test_each_symbol_goes_to_its_own_channel_and_an_unnamed_spec_nowhere() -> None:
