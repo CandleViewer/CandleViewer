@@ -238,6 +238,10 @@ x-error-codes:
     status: 403
     title: CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session (SR-041)
     retryable: false
+  - code: current_password_invalid
+    status: 403
+    title: Current password rejected on a self-service password change; the session stays signed in
+    retryable: false
   - code: account_scope_denied
     status: 403
     title: Caller has no granted access to the targeted exchange account
@@ -304,6 +308,14 @@ x-error-codes:
   - code: response_too_large
     status: 422
     title: Bar page would exceed the response size ceiling; request a smaller `limit`
+    retryable: false
+  - code: password_breached
+    status: 422
+    title: New password is on the SR-028 breached-password list or fails a simple-pattern rule
+    retryable: false
+  - code: password_reused
+    status: 422
+    title: New password matches one of the user's last 5 passwords
     retryable: false
   # --- 429 / 5xx ---------------------------------------------------------
   - code: rate_limited
@@ -982,7 +994,27 @@ paths:
       tags: [auth]
       operationId: authChangePassword
       summary: Change the current user's password
-      description: Revokes all other sessions on success. Argon2id, minimum 12 characters, checked against a local breached-password list.
+      description: >
+        Revokes all other sessions on success. Argon2id (SR-011). Policy: SR-028
+        (`04-security-program.md` section 6.3); the strings that SCR-004 and its SCR-112 variant
+        list before typing, and the code behind each rejection, are in section 6.3.1.
+
+        Checks run in this order and the first failure answers: the session (`401
+        unauthenticated`), CSRF (`403 csrf_token_invalid`), the body schema (`422
+        validation_failed`: a missing field, or `new_password` outside 12..512 characters), the
+        current password (`403 current_password_invalid`), the breached-password list and its
+        simple-pattern rules (`422 password_breached`), then the user's last 5 passwords, the
+        current one included (`422 password_reused`). The current password is verified before any
+        rule on the new password runs, so a session that does not know it learns nothing about
+        the password history.
+
+        A wrong current password is a 403, not a 401: nothing changes and the session stays
+        signed in, so a client never mistakes it for an expired session. The route takes no user
+        identifier (SR-026), so the answer says nothing about any other account. The current
+        password is verified on the same Argon2id path and per-account failure and lockout
+        counters as login and `/auth/step-up` (SR-015, SR-016), so a hijacked session cannot use
+        the route to guess it without limit. `detail` is fixed text per code that never echoes a
+        password; clients key on `code`.
       x-rbac: { permissions: [], scope: self }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -994,8 +1026,82 @@ paths:
       responses:
         "204": { description: "Password changed." }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
-        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "403":
+          description: >
+            `current_password_invalid` (the current password did not verify; nothing changed and
+            the session stays signed in) or `csrf_token_invalid` (SR-041, with `Retry-After` beyond
+            its audit budget, as in `CsrfTokenInvalid`).
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                wrongCurrentPassword:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/current_password_invalid",
+                      title: "Current password rejected on a self-service password change; the session stays signed in",
+                      status: 403,
+                      detail: "The current password is incorrect.",
+                      instance: "urn:cv:req:0193f2bb-2a01",
+                      code: current_password_invalid,
+                    }
+                csrfTokenInvalid:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/csrf_token_invalid",
+                      title: "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session",
+                      status: 403,
+                      detail: "X-CSRF-Token header is missing.",
+                      instance: "urn:cv:req:0193f2bb-2a02",
+                      code: csrf_token_invalid,
+                    }
+        "422":
+          description: >
+            The new password breaks a rule in `04-security-program.md` section 6.3.1
+            (`password_breached`, `password_reused`), or the body fails the schema
+            (`validation_failed`). No rejection says where or how often a password was breached.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                breached:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/password_breached",
+                      title: "New password is on the SR-028 breached-password list or fails a simple-pattern rule",
+                      status: 422,
+                      detail: "This password appears in a known breach list.",
+                      instance: "urn:cv:req:0193f2bb-7a01",
+                      code: password_breached,
+                    }
+                reused:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/password_reused",
+                      title: "New password matches one of the user's last 5 passwords",
+                      status: 422,
+                      detail: "You cannot reuse any of your last 5 passwords.",
+                      instance: "urn:cv:req:0193f2bb-7a02",
+                      code: password_reused,
+                    }
+                tooShort:
+                  value:
+                    type: "https://candleviewer.local/errors/validation_failed"
+                    title: "Request body or parameters failed schema validation"
+                    status: 422
+                    detail: "1 field failed validation."
+                    instance: "urn:cv:req:0193f2bb-7a03"
+                    code: validation_failed
+                    errors:
+                      [
+                        {
+                          field: new_password,
+                          rule: min_length,
+                          message: "Use at least 12 characters.",
+                        },
+                      ]
 
   # ===========================================================================
   # USERS & ROLES  (owner-gated admin screens inside the web app)

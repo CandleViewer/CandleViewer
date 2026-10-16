@@ -733,7 +733,9 @@ export interface paths {
     get?: never;
     /**
      * Change the current user's password
-     * @description Revokes all other sessions on success. Argon2id, minimum 12 characters, checked against a local breached-password list.
+     * @description Revokes all other sessions on success. Argon2id (SR-011). Policy: SR-028 (`04-security-program.md` section 6.3); the strings that SCR-004 and its SCR-112 variant list before typing, and the code behind each rejection, are in section 6.3.1.
+     *     Checks run in this order and the first failure answers: the session (`401 unauthenticated`), CSRF (`403 csrf_token_invalid`), the body schema (`422 validation_failed`: a missing field, or `new_password` outside 12..512 characters), the current password (`403 current_password_invalid`), the breached-password list and its simple-pattern rules (`422 password_breached`), then the user's last 5 passwords, the current one included (`422 password_reused`). The current password is verified before any rule on the new password runs, so a session that does not know it learns nothing about the password history.
+     *     A wrong current password is a 403, not a 401: nothing changes and the session stays signed in, so a client never mistakes it for an expired session. The route takes no user identifier (SR-026), so the answer says nothing about any other account. The current password is verified on the same Argon2id path and per-account failure and lockout counters as login and `/auth/step-up` (SR-015, SR-016), so a hijacked session cannot use the route to guess it without limit. `detail` is fixed text per code that never echoes a password; clients key on `code`.
      */
     put: operations["authChangePassword"];
     post?: never;
@@ -9458,8 +9460,25 @@ export interface operations {
         content?: never;
       };
       401: components["responses"]["Unauthorized"];
-      403: components["responses"]["CsrfTokenInvalid"];
-      422: components["responses"]["UnprocessableEntity"];
+      /** @description `current_password_invalid` (the current password did not verify; nothing changed and the session stays signed in) or `csrf_token_invalid` (SR-041, with `Retry-After` beyond its audit budget, as in `CsrfTokenInvalid`). */
+      403: {
+        headers: {
+          "Retry-After": components["headers"]["RetryAfter"];
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
+      /** @description The new password breaks a rule in `04-security-program.md` section 6.3.1 (`password_breached`, `password_reused`), or the body fails the schema (`validation_failed`). No rejection says where or how often a password was breached. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
     };
   };
   authRefresh: {

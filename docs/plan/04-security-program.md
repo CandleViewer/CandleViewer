@@ -614,8 +614,30 @@ Notation: **MUST** = mandatory, verified before the owning release ships. **SHOU
 | SR-025 | **Step-up re-authentication** (password + TOTP, valid for 5 minutes) MUST be required for: enabling live trading, adding/rotating/revoking credentials, creating/deleting users, changing roles or account grants, changing risk caps or per-account profiles, disabling the kill switch, changing retention or deleting recorded data, and exporting audit logs.                                                                          | e2e                  |
 | SR-026 | Self-service routes (own profile, own password, own TOTP) MUST NOT accept a target-user parameter; administrative mutation uses separate, owner-only routes.                                                                                                                                                                                                                                                                               | contract, unit       |
 | SR-027 | New users MUST be created with role `Viewer`, no account grants and TOTP unenrolled; elevation is an explicit, separate, audited action.                                                                                                                                                                                                                                                                                                   | e2e                  |
-| SR-028 | Password policy: minimum 12 characters, checked against a local breached-password list and simple-pattern rules; no forced periodic rotation; change requires the current password and invalidates all other sessions.                                                                                                                                                                                                                     | unit                 |
+| SR-028 | Password policy: minimum 12 characters, checked against a local breached-password list and simple-pattern rules, and not equal to any of the user's last 5 passwords (SCR-004); no forced periodic rotation; change requires the current password and invalidates all other sessions. User-facing strings and rejection codes: §6.3.1.                                                                                                     | unit                 |
 | SR-029 | Disabling a user MUST immediately terminate their sessions, cancel their pending rule-engine actions, and (optionally, per owner setting) flatten or leave their positions with a recorded decision.                                                                                                                                                                                                                                       | e2e, drill           |
+
+#### 6.3.1 Password policy strings (SR-028)
+
+SCR-004 and its SCR-112 variant list these four requirements before the first keystroke, in these
+words. The E09-D05 design and the web client quote this table, so a wording change starts here.
+`PUT /auth/password` (`22-api-openapi.yaml`) answers each server-side rejection with the code in the
+last column; clients key on that `code`, never on `detail`.
+
+| Requirement (listed before typing)              | Checked by          | Rejection message                              | Answer                  |
+| ----------------------------------------------- | ------------------- | ---------------------------------------------- | ----------------------- |
+| At least 12 characters                          | client, then server | Use at least 12 characters.                    | `422 validation_failed` |
+| Not a known breached or easily guessed password | server              | This password appears in a known breach list.  | `422 password_breached` |
+| Not one of your last 5 passwords                | server              | You cannot reuse any of your last 5 passwords. | `422 password_reused`   |
+| Passwords match                                 | client only         | Passwords don't match.                         | none, never sent        |
+
+The second row covers the local breached-password list and its simple-pattern rules; the third
+counts the current password among the last 5. A change that asks for the current password verifies
+it before any rule above runs, so a session that does not know it learns nothing about the password
+history. A wrong current password is `403 current_password_invalid`, shown on the current-password
+field as "The current password is incorrect."; the session stays signed in, and the answer never
+reads as an expired session (`401 unauthenticated`). No rejection says where or how often a
+password was breached, and none echoes the password.
 
 ### 6.4 Authorisation, order path and fan-out (SR-050…SR-059, SR-070…SR-074)
 

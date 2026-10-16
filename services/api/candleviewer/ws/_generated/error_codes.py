@@ -26,6 +26,7 @@ class ErrorCode(StrEnum):
     POSITIONS_UNKNOWN = "positions_unknown"
     FORBIDDEN = "forbidden"
     CSRF_TOKEN_INVALID = "csrf_token_invalid"
+    CURRENT_PASSWORD_INVALID = "current_password_invalid"
     ACCOUNT_SCOPE_DENIED = "account_scope_denied"
     TRADING_DISABLED = "trading_disabled"
     RISK_LIMIT_BREACHED = "risk_limit_breached"
@@ -42,6 +43,8 @@ class ErrorCode(StrEnum):
     NO_DATA_RECORDED = "no_data_recorded"
     BAR_WINDOW_TOO_LARGE = "bar_window_too_large"
     RESPONSE_TOO_LARGE = "response_too_large"
+    PASSWORD_BREACHED = "password_breached"
+    PASSWORD_REUSED = "password_reused"
     RATE_LIMITED = "rate_limited"
     EXCHANGE_RATE_LIMITED = "exchange_rate_limited"
     INTERNAL_ERROR = "internal_error"
@@ -99,6 +102,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.POSITIONS_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "Open-position state is unavailable; resend with acknowledge_unknown_positions=true"),
     ErrorCode.FORBIDDEN: ErrorMeta(("rest", "ws",), "any", False, None, None, "Authenticated but lacking the required permission"),
     ErrorCode.CSRF_TOKEN_INVALID: ErrorMeta(("rest",), None, False, None, None, "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session (SR-041)"),
+    ErrorCode.CURRENT_PASSWORD_INVALID: ErrorMeta(("rest",), None, False, None, None, "Current password rejected on a self-service password change; the session stays signed in"),
     ErrorCode.ACCOUNT_SCOPE_DENIED: ErrorMeta(("rest", "ws",), "any", False, None, None, "Caller has no granted access to the targeted exchange account"),
     ErrorCode.TRADING_DISABLED: ErrorMeta(("rest",), None, False, None, None, "Kill-switch engaged or live trading not enabled for this deployment"),
     ErrorCode.RISK_LIMIT_BREACHED: ErrorMeta(("rest",), None, False, None, None, "Per-account profile risk cap (daily loss, max position, allowed symbols) would be exceeded"),
@@ -115,6 +119,8 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.NO_DATA_RECORDED: ErrorMeta(("rest", "ws",), "any", False, None, None, "Requested window predates the start of recording for this symbol"),
     ErrorCode.BAR_WINDOW_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Bar window exceeds the hard cap (400 d time / 31 d or 250 000 bars non-time)"),
     ErrorCode.RESPONSE_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Bar page would exceed the response size ceiling; request a smaller `limit`"),
+    ErrorCode.PASSWORD_BREACHED: ErrorMeta(("rest",), None, False, None, None, "New password is on the SR-028 breached-password list or fails a simple-pattern rule"),
+    ErrorCode.PASSWORD_REUSED: ErrorMeta(("rest",), None, False, None, None, "New password matches one of the user's last 5 passwords"),
     ErrorCode.RATE_LIMITED: ErrorMeta(("rest",), None, True, None, None, "Per-user API rate limit exceeded"),
     ErrorCode.EXCHANGE_RATE_LIMITED: ErrorMeta(("rest",), None, True, None, None, "Bybit per-UID rate budget exhausted (10006/10018) \u2014 request shed locally"),
     ErrorCode.INTERNAL_ERROR: ErrorMeta(("rest", "ws",), "any", True, None, None, "Unhandled server error (correlation id in `instance`)"),
