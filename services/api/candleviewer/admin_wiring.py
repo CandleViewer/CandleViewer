@@ -1,18 +1,18 @@
 """Composition-root wiring of the admin read models (E42-T01): `GET /admin/overview` and
 `GET /admin/capacity`.
 
-Real source on `main`: the Postgres counts repository (users, accounts and keys, open
-incidents, sub-accounts in use), bound to the serving environment (`settings.environment`,
-`CV_ENVIRONMENT`; C-2.11), when the real storage backend is configured.
+Real sources on the real storage backend: the Postgres counts repository (users, accounts and
+keys, open incidents, sub-accounts in use), bound to the serving environment
+(`settings.environment`, `CV_ENVIRONMENT`; C-2.11), and the recorded sub-account tier, read from
+the `settings` row `accounts.subaccount_tier` (migration `0025`): no row is "unrecorded".
 
 Every other port stays unwired (`None`), so its slice is honestly `unavailable` ("no provider
 wired yet" in the contract), never a made-up figure: the recorder (its service is still a
 scaffold whose `recorded_symbols()` is always empty, so `0` would be a guess), the storage
 snapshot (`app.state.disk_budget` exists on the real backend, #2370, but no adapter maps it to a
 `StorageSnapshot` yet: growth from `measured_growth()`, `cap_bytes` from `BudgetConfig`),
-ingestion stats, the per-UID rate-budget peak (the governor keeps no per-minute peak), the OMS
-kill switch / live flag / positions, and the sub-account tier store (the `settings` table exists,
-migration `0025`, #2680, but nothing reads `accounts.subaccount_tier` yet).
+ingestion stats, the per-UID rate-budget peak (the governor keeps no per-minute peak), and the OMS
+kill switch / live flag / positions. On the fake backend the tier is unwired too.
 """
 
 from __future__ import annotations
@@ -22,13 +22,20 @@ from datetime import datetime
 
 from candleviewer.admin.overview.capacity import AdminCapacityService
 from candleviewer.admin.overview.fanout import SliceFanOut, utc_now
-from candleviewer.admin.overview.ports import AccountCounts, UserCounts
+from candleviewer.admin.overview.ports import (
+    SUBACCOUNT_TIER_KEY,
+    AccountCounts,
+    RecordedTier,
+    UserCounts,
+)
 from candleviewer.admin.overview.service import AdminOverviewService
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import SqlAlchemyAdminCounts
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from candleviewer.storage.repositories.system_settings import SystemSettings
+from candleviewer.storage.repositories.system_settings_sqlalchemy import SqlAlchemySystemSettings
 
 
 class AdminCountsAdapter:
@@ -52,8 +59,32 @@ class AdminCountsAdapter:
         return await self._repo.subaccounts_in_use()
 
 
+class SettingsTierReader:
+    """The capacity `TierPort` over the `settings` store: the recorded tier word and when it was
+    recorded, `None` only when there is no row. A read that fails raises, so the slice reports an
+    error instead of "unrecorded"; the word is validated by the capacity service, not here."""
+
+    def __init__(self, settings: SystemSettings) -> None:
+        self._settings = settings
+
+    async def recorded_tier(self) -> RecordedTier | None:
+        row = await self._settings.get_string(SUBACCOUNT_TIER_KEY)
+        return None if row is None else RecordedTier(row.value, row.updated_at)
+
+
+def build_system_settings(settings: Settings) -> SystemSettings | None:
+    """The `settings` store on the real backend; `None` on the fake one (nothing to read)."""
+    if settings.storage_backend != "real":
+        return None
+    relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "admin")
+    return SqlAlchemySystemSettings(relational)
+
+
 def build_admin_read_models(
-    settings: Settings, *, now: Callable[[], datetime] = utc_now
+    settings: Settings,
+    *,
+    now: Callable[[], datetime] = utc_now,
+    system_settings: SystemSettings | None = None,
 ) -> tuple[AdminOverviewService, AdminCapacityService]:
     counts = None
     if settings.storage_backend == "real":
@@ -63,5 +94,6 @@ def build_admin_read_models(
         )
     fan = SliceFanOut(now=now)
     overview = AdminOverviewService(fan, counts=counts, now=now)
-    capacity = AdminCapacityService(fan, subaccounts=counts, now=now)
+    tier = None if system_settings is None else SettingsTierReader(system_settings)
+    capacity = AdminCapacityService(fan, subaccounts=counts, tier=tier, now=now)
     return overview, capacity
