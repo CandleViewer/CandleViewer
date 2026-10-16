@@ -843,6 +843,8 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_KILLSWITCH_ON_DISCONNECT_S`  | int    | `30`                      | runtime | watchdog flatten policy (opt-in per account)                                                                        |
 | `CV_ACCOUNT_HEARTBEAT_S`         | float  | `10`                      | runtime | private-WS heartbeat age past which an account is not healthy; max 10 (E27-T04)                                     |
 | `CV_ACCOUNT_DOWN_S`              | float  | `30`                      | runtime | no WS or REST success for this long = account down, order entry refused; max 30                                     |
+| `CV_KEY_ROTATION_POLICY_DAYS`    | int    | `90`                      | runtime | key age from registration past which `rotation_state` is `overdue`; 2 to 365, never disables a key (E27-T04)        |
+| `CV_KEY_ROTATION_WARN_DAYS`      | int    | `14`                      | runtime | `warn` window before `rotation_due_at`; at least 1 day and shorter than the policy                                  |
 | `CV_FEATURE_FLAGS`               | json   | `{}`                      | runtime | admin-editable                                                                                                      |
 | `CV_IMPORT_MAX_CONCURRENCY`      | int    | `2`                       | process | archive import downloads in flight (E16-T10)                                                                        |
 | `CV_IMPORT_MAX_MBPS`             | float  | `50`                      | process | archive import bandwidth cap, megabits/s                                                                            |

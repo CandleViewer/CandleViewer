@@ -10,6 +10,7 @@ import re
 from typing import Any, get_args
 
 import pytest
+from pydantic import TypeAdapter
 
 from candleviewer.accounts.health import (
     CONNECTION_STATE,
@@ -17,11 +18,13 @@ from candleviewer.accounts.health import (
     HealthReason,
     HealthState,
 )
+from candleviewer.accounts.key_age import KeyRotation, KeyRotationPolicy, RotationState
+from candleviewer.accounts.models import KeyStatus
 from candleviewer.accounts.order_gate import OrderEntryReason
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from tests.contract.ws._harness import REPO, SCHEMAS, check_schema
-from tests.unit.accounts._fakes import ACC, Dms, FakeClock
+from tests.unit.accounts._fakes import ACC, DAY, T0, Dms, FakeClock
 
 _SPEC = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
@@ -135,3 +138,17 @@ def test_the_order_entry_reasons_are_the_documented_closed_set() -> None:
     section = text[text.index("**8.4.1 Order-entry gate") : text.index("### 8.5 ")]
     documented = re.findall(r"^\| `([a-z_]+)` +\| E\d\d-", section, flags=re.MULTILINE)
     assert documented == list(get_args(OrderEntryReason))
+
+
+@pytest.mark.parametrize("status", [KeyStatus.ACTIVE, KeyStatus.REVOKED])
+def test_the_key_age_evaluator_serves_exactly_the_api_key_fields(status: KeyStatus) -> None:
+    schema = _SCHEMAS["ApiKey"]["properties"]
+    assert [*(s.value for s in RotationState), None] == schema["rotation_state"]["enum"]
+    rotation = KeyRotationPolicy().evaluate(T0, status, now=T0 + 80 * DAY)
+    wire = TypeAdapter(KeyRotation).dump_python(rotation, mode="json")
+    assert set(wire) == {"rotation_due_at", "rotation_state"} <= set(schema)
+    base = dict(id=_ACC, exchange_account_id=_ACC, key_id_masked="...AbC1", status=status.value)
+    key = api.ApiKey.model_validate(base | wire)
+    assert (key.rotation_due_at, key.rotation_state) == (
+        (T0 + 90 * DAY, "warn") if status is KeyStatus.ACTIVE else (None, None)
+    )

@@ -10,8 +10,9 @@ runtime/per-user layers are owned by M21 `admin`.
 Security: `__repr__`/`__str__` never print secret values (redacting `__str__`
 below) — an early instance of M24's redaction-filter requirement. Any field
 whose name matches `(key|secret|token|password|dsn)` (case-insensitive) is a
-`SecretStr` so it can never leak into logs, tracebacks or `repr()` by
-accident.
+`SecretStr`, except the `key_rotation_*` day counts, which hold no secret;
+`repr()` masks all of them, so none can leak into logs, tracebacks or
+`repr()` by accident.
 """
 
 from __future__ import annotations
@@ -313,6 +314,12 @@ class Settings(BaseSettings):
     # US-ACCT-010's NFRs: heartbeat at most 10 s, down within 30 s.
     account_heartbeat_s: float = Field(default=10.0, gt=0.0, le=10.0)
     account_down_s: float = Field(default=30.0, gt=0.0, le=30.0)
+    # E27-T04: key-age policy (US-ACCT-005), deployment config for v1 (decision Q4 on #837).
+    # Bounded so that no value switches the reminder off (C-4.14): overdue within a year, and a
+    # warning window of at least a day that ends before the due date (the policy checks that).
+    # Age never disables a key.
+    key_rotation_policy_days: int = Field(default=90, ge=2, le=365)
+    key_rotation_warn_days: int = Field(default=14, ge=1, le=364)
 
     git_sha: str = "unknown"
     version: str = "0.1.0"

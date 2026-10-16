@@ -8,6 +8,7 @@ from uuid import UUID
 from candleviewer.accounts.order_gate import KeyStanding
 
 T0 = datetime(2026, 10, 15, 12, tzinfo=UTC)
+DAY = timedelta(days=1)
 
 
 class FakeClock:
