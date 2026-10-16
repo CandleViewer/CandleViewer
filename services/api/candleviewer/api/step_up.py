@@ -151,10 +151,10 @@ async def require_elevation_for(
 #: `is_dangerous` routes (permissions seeded `is_dangerous=true`) -> the
 #: step-up action class that must be elevated. Method + path regex. Paths are
 #: the `22-api-openapi.yaml` contract; entries for routes that later epics
-#: implement (E27 keys, E44/E39 risk) are pre-registered so they are gated the
-#: moment they are mounted. `tests/unit/api/test_dangerous_route_registry.py`
-#: fails if any mounted route matching `DANGEROUS_PATH_PATTERN` is missing here
-#: or in `HANDLER_GATED_ROUTES`.
+#: implement (E27 keys, E44/E39 risk, E16-T08 retention) are pre-registered so
+#: they are gated the moment they are mounted.
+#: `tests/unit/api/test_dangerous_route_registry.py` fails if any mounted route
+#: matching `DANGEROUS_PATH_PATTERN` is missing here or in `HANDLER_GATED_ROUTES`.
 DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/users$"), "users"),  # invite
     ("POST", re.compile(r"^/users/[^/]+/invite$"), "users"),  # reissue mints a new token
@@ -176,18 +176,21 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     # restoreBackup (no-grace): this guard spends the one-shot grant before RBAC and before the
     # handler validates, so a refused restore costs the code and a retry waits for the next TOTP
     # step. The handler must not gate again (a second check always fails); its ticket may instead
-    # move this row to HANDLER_GATED_ROUTES and spend the grant after validation. Before it is
-    # mounted, `consume_single_use` must become atomic (a read-modify-write today, so concurrent
-    # restores can share one code: #2798), and the restore's write-ahead audit record must name
-    # the step-up (B16 records no spend: #2799).
+    # move this row to HANDLER_GATED_ROUTES and spend the grant after validation.
+    # `consume_single_use` spends the grant with one conditional UPDATE (#2895), so concurrent
+    # restores cannot share one code. Before it is mounted, the restore's write-ahead audit
+    # record must name the step-up (B16 records no spend: #2799).
     ("POST", re.compile(r"^/admin/backups/[^/]+/restore$"), "backups"),
+    # #2738 (SR-025, 04 §7.2.2 row 9, Owner and Manager): every request changes retention.
+    ("PUT", re.compile(r"^/recording/retention-policies$"), "recorder"),  # setRetentionPolicies
+    ("PUT", re.compile(r"^/recording/symbols/[^/]+/pin$"), "recorder"),  # pinRecordedSymbol
 )
 
 #: These routes cannot be gated by path alone: kill-switch *engage* must
 #: never wait for a code (emergency stop) and switching *to demo* is not
-#: dangerous, so only the handler (body-aware) knows. Each entry is a
-#: declaration that the handler demands a fresh code for its dangerous
-#: branch; the owning epic must add a test proving it.
+#: dangerous, so only the handler (body- or query-aware) knows. Each entry is a
+#: declaration that the handler demands elevation of that class for its
+#: dangerous branch; the owning epic must add a test proving it.
 HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/trading/kill-switch", "killswitch"),  # E39: release only
     ("POST", "/session/environment", "live_enablement"),  # E44: to live only
@@ -195,13 +198,31 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     # E16-T06: irreversible purge. The handler checks RBAC, then owner-only (capability 9a),
     # THEN step-up, so a non-owner gets the audited `purge_owner_only`, not a step-up prompt.
     ("POST", "/admin/recorder/purge", "recorder"),
+    # #2738 (SR-025, 04 §7.2.2 rows 8, 9 and 9a). Not mounted yet: the E16-T08 (#492) PR that
+    # mounts them must drop them from the registry test's `_PENDING_HANDLER_GATES` (it fails
+    # while a listed route is mounted), add the handler test, and demand `recorder` elevation
+    # on every branch that changes retention or deletes recorded data; the rest is row 8.
+    # - addRecordedSymbol: `pinned: true` or a non-default `retention_days`; a re-add must not
+    #   change the retention of data kept from an earlier recording either. A plain add (the
+    #   rules vocabulary's `{symbol}` hint) passes.
+    # - updateRecordedSymbol: `pinned` or `retention_days` in the body (streams, depth: row 8).
+    # - removeRecordedSymbol: `purge_data=true`, after the owner-only check, as the purge route
+    #   orders them. Open for E16-T08 and security: stopping a pinned symbol drops its pin for
+    #   the reaper (pins are read only from rows not removed), so either refuse that until it
+    #   is unpinned through the gated pin route, or gate that branch as well.
+    ("POST", "/recording/symbols", "recorder"),
+    ("PATCH", "/recording/symbols/{recordedSymbolId}", "recorder"),
+    ("DELETE", "/recording/symbols/{recordedSymbolId}", "recorder"),
 )
 
 #: Mounted write routes whose path matches this must be in one of the two
-#: registries above (deny-by-default for future tickets).
+#: registries above (deny-by-default for future tickets). The recording and
+#: recorder prefixes are swept whole (SR-025: recorded data can be deleted from
+#: under any of them, #2738); their writes without step-up are allow-listed,
+#: each with its 04 §7.2.2 row, in the registry test.
 DANGEROUS_PATH_PATTERN = re.compile(
     r"^/(admin/)?(users|exchange-accounts/[^/]+/keys|keys|live|kill|trading/kill-switch"
-    r"|session/environment|risk/lockouts|recorder/purge|audit|backups)(/|$)"
+    r"|session/environment|risk/lockouts|recording[^/]*|recorder[^/]*|audit|backups)(/|$)"
 )
 
 
