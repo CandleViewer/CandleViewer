@@ -116,13 +116,13 @@ def test_the_guard_checks_the_permission_it_was_given(role: str, status: int) ->
 
 
 @pytest.mark.parametrize(
-    ("resolver", "audit", "role", "status", "code"),
+    ("resolver", "audit", "role", "status", "code", "counted"),
     [
-        (None, AuditSpy(), "owner", 501, "not_implemented"),
-        (Resolver(), None, "owner", 503, "audit_unavailable"),
-        (Resolver(), None, "viewer", 503, "audit_unavailable"),  # before the permission check
-        (Resolver(), FailingAudit(), "owner", 503, "audit_unavailable"),
-        (Resolver(), FailingAudit(), "viewer", 403, "forbidden"),  # a denial stays a 403
+        (None, AuditSpy(), "owner", 501, "not_implemented", 0),
+        (Resolver(), None, "owner", 503, "audit_unavailable", 0),
+        (Resolver(), None, "viewer", 503, "audit_unavailable", 0),  # before the permission check
+        (Resolver(), FailingAudit(), "owner", 503, "audit_unavailable", 0),  # allowed: no denial
+        (Resolver(), FailingAudit(), "viewer", 403, "forbidden", 1),  # a denial stays a 403
     ],
     ids=["no-resolver", "no-audit-owner", "no-audit-viewer", "failed-owner", "failed-viewer"],
 )
@@ -132,10 +132,13 @@ def test_the_guard_fails_closed_before_any_route_runs(
     role: str,
     status: int,
     code: str,
+    counted: int,
 ) -> None:
     client, served = _guarded(resolver, audit)
+    denied = _denied(READ)
     response = client.get("/admin/probe", headers={"x-role": role})
     assert (response.status_code, served) == (status, [])
+    assert _denied(READ) - denied == counted  # SR-125: only a decided denial moves the counter
     assert response.headers["content-type"] == "application/problem+json"
     body = response.json()
     assert (body["status"], body["code"], body["type"]) == (status, code, _ERRORS + code)
