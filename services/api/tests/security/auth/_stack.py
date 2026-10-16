@@ -1,9 +1,9 @@
-"""In-process `create_app()` harness for the E09-X02 HTTP abuse cases (#2144).
+"""In-process `create_app()` harness for the E09-X02 HTTP/WS abuse cases (#2144).
 
 Real `AuthService` (login, MFA, sessions, step-up, invites) over the in-memory fakes, a fixed
-clock, a fake identity provider, and an audit writer that refuses an unregistered action exactly
-like `AuditWriter.emit` (`validate_action`), so every asserted audit row is one production would
-write. Loopback client (mesh allow-list), no network, no sleeps.
+clock shared with the WS gateway, a fake identity provider, and an audit writer that refuses an
+unregistered action exactly like `AuditWriter.emit` (`validate_action`), so every asserted audit
+row is one production would write. Loopback client (mesh allow-list), no network, no sleeps.
 """
 
 from __future__ import annotations
@@ -19,15 +19,17 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 import candleviewer.app as appmod
 from candleviewer.audit.actions import validate_action
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
-from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.totp import generate_code, time_step_for
+from candleviewer.ws.gateway import make_ws_router
 from tests.csrf_helpers import csrf_headers
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
@@ -39,6 +41,8 @@ PW = "pw-canary-x02-abuse"  # test-only literal, never a credential
 INVITE_PW = "correct horse battery"  # an invitee's new password (SR-028 policy)
 _PEPPER = "x02-test-pepper"
 T0 = datetime(2026, 10, 9, 12, 0, 0, tzinfo=UTC)
+#: The exchange account a WS test's manager holds until the test revokes the grant.
+GRANTED_ACCOUNT = uuid.UUID("00000000-0000-4000-8000-00000000acc1")
 
 
 class Clock:
@@ -70,6 +74,20 @@ class Identity:
 
     async def session_info(self, user_id: str) -> dict[str, Any]:
         return {"permissions": [], "account_scope": []}
+
+
+class Grants:
+    """WS principal source standing in for the identity store: a manager with `orders:read`
+    on `GRANTED_ACCOUNT` until `granted` is cleared."""
+
+    def __init__(self) -> None:
+        self.granted = True
+
+    async def load(self, uid: uuid.UUID) -> PrincipalSnapshot:
+        grant = AccountGrant(GRANTED_ACCOUNT, can_view=True, can_trade=True, frozen=False)
+        grants = (grant,) if self.granted else ()
+        perms = frozenset({Permission.MARKETDATA_READ, Permission.ORDERS_READ})
+        return PrincipalSnapshot(uid, frozenset({"manager"}), perms, grants)
 
 
 class Resolver:
@@ -164,6 +182,13 @@ class Stack:
                     total += sample.value
         return total
 
+    @staticmethod
+    def in_process(name: str, **labels: str) -> float:
+        """A sample on the process-default registry, where module-level series the app does not
+        export land unscraped (`scraped` reads the registry Prometheus scrapes). 0.0 when the
+        series has no such sample."""
+        return float(REGISTRY.get_sample_value(name, labels) or 0.0)
+
 
 @contextlib.contextmanager
 def open_stack(monkeypatch: pytest.MonkeyPatch, **create_app_kwargs: Any) -> Iterator[Stack]:
@@ -182,6 +207,9 @@ def open_stack(monkeypatch: pytest.MonkeyPatch, **create_app_kwargs: Any) -> Ite
     )
     monkeypatch.setattr(appmod, "build_auth_service", lambda *_a, **_k: auth)
     monkeypatch.setattr(appmod, "build_identity_provider", lambda _s: Identity())
+    # The gateway checks token expiry on its wall clock (#2259): share the injected clock.
+    wall = functools.partial(make_ws_router, wall_ms=lambda: int(clock.now.timestamp() * 1000))
+    monkeypatch.setattr(appmod, "make_ws_router", wall)
     resolver = Resolver()
     create_app_kwargs.setdefault("principal_resolver", resolver)
     app = appmod.create_app(auth_clock=clock, **create_app_kwargs)

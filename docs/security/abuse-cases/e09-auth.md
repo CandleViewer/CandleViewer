@@ -3,8 +3,10 @@
 - Ticket: E09-X02 (#298). Threat source: `docs/security/threat-models/e09-auth-rbac.md` (E09-X01).
 - Method: white-box, in-process, fixed clock, in-memory fakes, no network. Automated cases live in
   `services/api/tests/security/auth/` and are permanent regressions.
-- **Scope of this PR:** the durable service-level subset only. Rows marked **NOT RUN** have no observed
-  result yet and are NOT claimed as defended; they remain open on #298 (so this PR uses `Refs`).
+- **Scope:** the durable in-process subset: the service-level cases, plus the HTTP, WS and
+  observability cases of #2144 driven through the real `create_app()` stack. Rows marked **NOT RUN**
+  have no observed result and are NOT claimed as defended; the remaining ones need real Postgres
+  roles or a DB-wired stack and are tracked in #2105.
 - Rule ids (verified present in `CONSTITUTION.md`): C-2.9 (audit), C-2.12 and C-12.4 (server-side RBAC),
   C-2.18 (bounded/off-loop work), C-12.6 (redaction), C-13.7 (deterministic tests, no sleeps/network).
 - Verdict key: DEFENDED (attack failed as designed) · DESIGN-DECISION (accepted behaviour, confirm) ·
@@ -15,16 +17,26 @@
 
 Each control was disabled on the scratch worktree and the named case failed, then reverted:
 
-| Control disabled                                     | Failing case |
-| ---------------------------------------------------- | ------------ |
-| `consume_recovery_code` result ignored               | AC-MFA-03    |
-| refresh-reuse branch (`revoked_reason == "rotated"`) | AC-SES-03    |
-| TOTP `record_time_step` replay guard                 | AC-MFA-01    |
-| `_origin_ok` allow-list check                        | AC-CSRF-01   |
-| `grant is None or not can_view` account check        | AC-AUTHZ-02  |
-| `mint` per-user deterministic id (QA mutant M2)      | AC-SES-01b   |
-| never-issued token audit removed (#2316)             | AC-SES-01    |
-| `users.invite_*` actions unregistered (#2316)        | AC-INV-05/06 |
+| Control disabled                                                       | Failing case                                                                           |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `consume_recovery_code` result ignored                                 | AC-MFA-03                                                                              |
+| refresh-reuse branch (`revoked_reason == "rotated"`)                   | AC-SES-03                                                                              |
+| TOTP `record_time_step` replay guard                                   | AC-MFA-01                                                                              |
+| `_origin_ok` allow-list check                                          | AC-CSRF-01                                                                             |
+| `grant is None or not can_view` account check                          | AC-AUTHZ-02                                                                            |
+| `mint` per-user deterministic id (QA mutant M2)                        | AC-SES-01b                                                                             |
+| never-issued token audit removed (#2316)                               | AC-SES-01                                                                              |
+| `users.invite_*` actions unregistered (#2316)                          | AC-INV-05/06                                                                           |
+| gateway pre-auth frame cap (`MAX_UNAUTHENTICATED_FRAMES`) off          | AC-WS-01                                                                               |
+| `audit_auth_failure` emit off (the 3rd failed WS `auth`)               | AC-WS-02                                                                               |
+| `ConnectionRegistry.grants_changed` made a no-op                       | AC-WS-03                                                                               |
+| `sub_shape_error` gate off (a malformed `sub` no longer refused whole) | AC-WS-04                                                                               |
+| a malformed name counted under another `cv_ws_subscribe_total` result  | AC-WS-04 (`test_ac_ws_04_malformed_name_leaves_no_scraped_sample_audit_row_or_strike`) |
+| `auth_lockouts_total` increment in the login service removed (#2612)   | `test_obs_credential_*`                                                                |
+| `authz_denied_total` increment removed (#2612)                         | `test_obs_rbac_*`                                                                      |
+| `auth.mfa_failed` row not written (verify and recovery routes)         | `test_obs_mfa_*`                                                                       |
+| refresh-reuse row severity lowered from `critical`                     | `test_obs_refresh_*`                                                                   |
+| `CsrfRefusalsHigh` edited to read another series                       | `test_obs_alert_rules_read_exactly_the_recorded_signals`                               |
 
 ## Cases
 
@@ -34,10 +46,10 @@ Each control was disabled on the scratch worktree and the named case failed, the
 | AC-CRED-02    | U1 pepper         | Captured hash only                                  | Verify with empty pepper                                                                              | Fails                                                                                                                                                                        | Fails                                                                                                          | DEFENDED                                                                  |
 | AC-CRED-03    | U28 SR-015 C-2.18 | One IP, 40 usernames                                | Stuff login                                                                                           | Rejected before Argon2id after cap                                                                                                                                           | 5 verifies, 35 cheap rejects                                                                                   | DEFENDED                                                                  |
 | AC-CRED-04    | U1 SR-016         | Many IPs, one account                               | 8 bad logins from distinct IPs                                                                        | Account locks; right password refused                                                                                                                                        | Locked at 5                                                                                                    | DEFENDED                                                                  |
-| AC-CRED-05    | U27               | Lockout DoS                                         | Lock, advance clock 16 min                                                                            | Lock is time-bounded                                                                                                                                                         | Login succeeds                                                                                                 | DEFENDED (owner alert NOT RUN)                                            |
+| AC-CRED-05    | U27               | Lockout DoS                                         | Lock, advance clock 16 min                                                                            | Lock is time-bounded                                                                                                                                                         | Login succeeds                                                                                                 | DEFENDED (alert series: #2628; Alertmanager delivery NOT RUN)             |
 | AC-ENUM-01    | U8 SR-014         | Unauthenticated                                     | Unknown vs wrong password                                                                             | Same type and message                                                                                                                                                        | Identical                                                                                                      | DEFENDED                                                                  |
 | AC-ENUM-02    | U8                | Disabled user                                       | Wrong then right password                                                                             | Disabled only revealed after correct password                                                                                                                                | As designed                                                                                                    | DESIGN-DECISION (documented trade-off)                                    |
-| AC-ENUM-03    | U8 SR-014         | Same host                                           | 500 samples/arm, 10 warm-up dropped, interleaved, gc off; ratio-of-medians + Mann-Whitney             | Indistinguishable                                                                                                                                                            | Passed (`@pytest.mark.perf`, opt-in via `CV_RUN_PERF=1`, ~55 s; prints n, ratio, z). Raw samples not persisted | DEFENDED                                                                  |
+| AC-ENUM-03    | U8 SR-014         | Same host                                           | 500 samples/arm, 10 warm-up dropped, interleaved, gc off; ratio-of-medians + Mann-Whitney             | Indistinguishable                                                                                                                                                            | Passed 2026-10-15 (opt-in `CV_RUN_PERF=1`): ratio 1.0020, z=-0.213. Raw samples: SECRET, not committed (#2498) | DEFENDED                                                                  |
 | AC-SES-01     | U6 SR-013         | Id planted before login, never issued here          | Password step; present id as bearer and `cv_refresh`; MFA step carrying it; present again             | 401 every time, never adopted, attempt audited                                                                                                                               | 401 x4; new id differs from planted id and challenge; 5 `auth.session_fixation_attempt` rows                   | DEFENDED (audit row: #2316)                                               |
 | AC-SES-01b    | SR-013            | Same user signs in again holding a live session     | Second password + MFA carrying its own cookie and bearer                                              | New id, no false alarm                                                                                                                                                       | New session id; no fixation row                                                                                | DEFENDED                                                                  |
 | AC-SES-01c    | U6 donation       | Attacker's own session planted in victim's browser  | Victim signs in carrying it                                                                           | Never adopted; audited                                                                                                                                                       | New session; one row, `foreign_session`, naming the presented session id                                       | DEFENDED                                                                  |
@@ -46,7 +58,7 @@ Each control was disabled on the scratch worktree and the named case failed, the
 | AC-SES-04     | SR-013            | Valid session                                       | Refresh                                                                                               | Absolute expiry not extended                                                                                                                                                 | Unchanged                                                                                                      | DEFENDED                                                                  |
 | AC-SES-05     | U5                | Expired access token                                | Use after TTL                                                                                         | Rejected                                                                                                                                                                     | Rejected                                                                                                       | DEFENDED                                                                  |
 | AC-SES-06     | U5                | Stolen access token, other IP/UA                    | Present token                                                                                         | Sessions are not bound to IP/UA                                                                                                                                              | Accepted; detection only via refresh reuse                                                                     | **ACCEPTED DESIGN DECISION** (see F-2; Owner record 2026-10-09 on #1778)  |
-| AC-SES-07     | forged token      | Garbage/oversize tokens                             | Present                                                                                               | Rejected                                                                                                                                                                     | Rejected                                                                                                       | DEFENDED                                                                  |
+| AC-SES-07     | forged token      | Garbage/oversize tokens                             | Present                                                                                               | Rejected                                                                                                                                                                     | Rejected (`SessionNotFound`); over HTTP the uniform 401 plus an `auth.session_fixation_attempt` row            | DEFENDED                                                                  |
 | AC-CSRF-01    | TB-4              | Cross-site page                                     | Cookie refresh with no / foreign / `null` Origin                                                      | 403, token not burned                                                                                                                                                        | 403, session intact                                                                                            | DEFENDED                                                                  |
 | AC-CSRF-02    | TB-4              | Empty allow-list                                    | Any origin                                                                                            | 403 (fail closed)                                                                                                                                                            | 403                                                                                                            | DEFENDED                                                                  |
 | AC-CSRF-03    | SR-012            | Header spoof                                        | `X-Forwarded-Proto: http`                                                                             | Cookie stays HttpOnly+Secure+SameSite=Strict                                                                                                                                 | Flags present                                                                                                  | DEFENDED                                                                  |
@@ -80,16 +92,76 @@ Each control was disabled on the scratch worktree and the named case failed, the
 | AC-INV-06     | SR-027 (#2109)    | Legacy invite row stored as `manager`               | Redeem over HTTP                                                                                      | Viewer only; downgrade audited                                                                                                                                               | Viewer; `users.invite_role_downgraded`, `users.invite_redeemed`. Before #2316: 500 (F-3)                       | DEFENDED                                                                  |
 | AC-INV-07     | U12               | Signed-in user Bob holds Alice's invite link        | Redeem with Bob's bearer; also send `username` / `user_id` / `email` claims                           | The invite never attaches to the caller                                                                                                                                      | Claims: 400, not consumed, not audited; Alice's record activated as viewer; Bob untouched                      | DESIGN-DECISION (bearer link, U12 custody)                                |
 | AC-INV-08     | U12               | Another invitee's pending TOTP method               | Confirm Alice's invite with Mallory's method and a valid code                                         | Refused; Alice unaffected                                                                                                                                                    | 422 `invalid_code`; `users.invite_rejected` (`enrollment_invalid`); Alice completes                            | DEFENDED                                                                  |
+| AC-WS-01      | §4.3              | Socket before `auth_ok`                             | `sub` to private `orders` three times before `auth`                                                   | Nothing served; socket closed                                                                                                                                                | `err not_authenticated` x2, then `bye not_authenticated` (4401); nothing subscribed                            | DEFENDED                                                                  |
+| AC-WS-02      | U13               | Captured `auth` frame (bearer access token)         | Replay it on a second socket while the session is live; again after logout                            | Rejected without a live session (U13 text)                                                                                                                                   | Live: `auth_ok` for the victim's session; logout closes both (4401); later replays fail                        | **FINDING F-4** (Architect/Owner: extend F-2 or fix)                      |
+| AC-WS-03      | U32 §9.5          | Manager socket on `orders` for a granted account    | Revoke the grant; re-auth with the same token; subscribe again                                        | Dropped live; not regained                                                                                                                                                   | `permission_change` + `revoked` (`account_scope_changed`); re-sub `account_scope_denied`                       | DEFENDED (re-auth snapshot race: fixed by #2318)                          |
+| AC-WS-04      | §5.2 §6 registry  | Authenticated socket                                | `sub` per name: `../admin`, `orders.*`, `/../`, control chars, case, 300 chars; mixed; unknown names  | Refused, nothing attached, socket stays open: a name that is not a topic name refuses its whole `sub` (§5.2, #2567); an unknown but well-formed name is refused per topic    | Malformed: `err invalid_options`, `topics[i]`; granted topic beside one not attached. Unknown: per topic       | DEFENDED                                                                  |
 
-## NOT RUN (no observed result; open on #298)
+## NOT RUN (no observed result; env-only, tracked in #2105)
 
 | Area            | Cases                                                                                                                                          | Why                                                                    |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| WS attacks      | pre-`auth_ok` subscribe; `auth` frame replay; socket across revocation; topic injection (U13)                                                  | Needs gateway harness; not attempted here                              |
 | Audit attacks   | UPDATE/DELETE as app role, trigger drop, crafted migration, chain verifier, silent-action (U14, U17, U19, U20)                                 | Needs real Postgres roles; integration stack not available to this run |
-| Real DB checks  | Argon2id params from DB row; atomic MFA/recovery consume; lockout owner alert (SR-016)                                                         | Fakes only here                                                        |
+| Real DB checks  | Argon2id params from DB row; atomic MFA/recovery consume; Alertmanager delivery of the lockout alert (SR-016; its series: #2628)               | Fakes only here                                                        |
 | HTTP RBAC sweep | Every admin/owner route as Manager/Viewer; body/query/path account_id; list probes; self-service `user_id` (D5); role change with live session | Needs full app wiring                                                  |
-| Observability   | Which metric/audit row/alert each attack triggers                                                                                              | Not recorded                                                           |
+
+## X01 threat cross-check (#298 AC1)
+
+These ids from `docs/security/threat-models/e09-auth-rbac.md` have no "Cases" row of their own; every
+other id is in that table's threat column or, for U14, U17 and U20, in "NOT RUN" above. "Not
+executable" means this harness has no way to attempt the attack; the reason says where the check
+lives instead.
+
+| Threat | Case, or why it is not executable here                                                                                                                                                                                                                                                                                |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| U7     | Not executable: SR-019 (one identity per human) is a policy and review control. Session half: own listing and revoke (`tests/unit/api/test_sessions_router.py`), foreign revoke refused (AC-CSRF-05), forced-logout primitives (`test_disable_user_drill.py`); the `DELETE /users/{userId}` cascade is E42-T04 (#965) |
+| U10    | Not executable: the SR-023 break-glass CLI is not runnable yet (E09-S11, #2119: its flow is on main, the slice that composes it is not; E09-X04 R-6, Owner item AB on #1778) and by design needs host filesystem and KEK access; the drill is #300                                                                    |
+| U15    | AC-AUTHZ-02 (foreign `account_id`: `ACCOUNT_NOT_GRANTED`) and AC-WS-03 (grant revoked under a live socket); the every-route body, query and path sweep is env-only (#2105)                                                                                                                                            |
+| U16    | Not an attack: vocabulary drift fails `tests/contract/test_rbac_conformance.py::test_rbac_vocabulary_single_source`                                                                                                                                                                                                   |
+| U21    | Not executable: the chain is the Postgres `audit_chain()` BEFORE INSERT trigger (ordered by `id`, not by time), so the skew property needs a real database and clock control; with the chain-verifier cases in #2105                                                                                                  |
+| U22    | Logs: `test_no_token_in_logs.py` (login, MFA, refresh and step-up through `create_app()`, every sink scanned). Audit: fixation rows hold the vector and route, never the token (AC-SES-01, `test_session_fixation_audit.py`)                                                                                          |
+| U23    | Not executable here: DOM, URL and browser-storage persistence (SR-054) is a browser property, owned by the E09-Q02 Playwright suite (#293, `enrolment.spec.ts`; SCR-003 is not built yet). Server side: AC-MFA-03/04                                                                                                  |
+| U24    | `POST /admin/audit/export` is Owner-only (Manager and Viewer get 403, executed in `tests/contract/rbac/matrix.yaml`). The PII projection on rows a Manager may query needs the DB-wired audit stack (#2105)                                                                                                           |
+| U25    | AC-CSRF-05 (a foreign session id gets the same 404 as a missing one) and `test_never_issued_expired_and_revoked_tokens_get_a_byte_identical_401`; the full 403-body sweep is #2105                                                                                                                                    |
+| U26    | **FINDING F-8**: `/healthz` (`security: []`) and the pre-auth WS `welcome` (`23-ws-protocol.md` §4.2) serve `git_sha` and the version to any client (`tests/unit/test_app.py::test_healthz_returns_200_with_build_info`, `tests/unit/ws/test_app_wiring.py::test_welcome_carries_settings_build_info`)                |
+| U29    | Not executable: no expired-session reap job exists in `candleviewer/` yet, and the `GET /auth/session` p95 budget needs Postgres and k6 (E09-Q05 in #2105)                                                                                                                                                            |
+| U33    | Not executable: a startup refusal, not a request path; this harness injects `auth_clock`, which wins. Tests: `tests/unit/test_settings_test_clock.py`, `tests/unit/auth/test_testnet_clock.py`, `tests/unit/test_main_lifespan.py`. Time-moving cases: e2e stack only (`qa/plans/e09-auth-rbac-test-plan.md` §6.3)    |
+
+## Observability per case (#2144)
+
+What each defended attack leaves behind, asserted in-process through `create_app()` (audit rows
+are checked against the audit action registry, as the real writer does). "Scraped" means served on
+the registry Prometheus scrapes; "in-process" series are invisible to Prometheus, so no alert can
+read them. The alert column is mirrored by `ALERTING` in `test_observability.py`, which
+`test_obs_alert_rules_read_exactly_the_recorded_signals` asserts against `infra/prometheus/alerts`:
+change the column and `ALERTING` together.
+
+| Cases                                  | Audit row                                                                                                                                    | Metric                                                                          | Alert                                                                                | Asserted by                                                                               |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| AC-CRED-03/04/05, AC-ENUM-01/02        | `auth.login_failed` (failure) per refused login, identical for unknown and wrong; `auth.account_locked` (denied, warning) per locked attempt | `auth_lockouts_total` scraped (#2612); `auth_login_failures_total` not emitted  | `AuthLockouts` can fire on a lock (#2628); `AuthLoginFailureSpike`: no emitter (O-1) | `test_observability.py::test_obs_credential_*`                                            |
+| AC-MFA-01..07                          | `auth.mfa_failed` (failure) per refused verify or recovery; the challenge lock has no row of its own                                         | none                                                                            | none                                                                                 | `test_obs_mfa_*`                                                                          |
+| AC-SES-01, 01c, 07                     | `auth.session_fixation_attempt` (denied, warning), per-IP and global budgets                                                                 | `auth_session_fixation_attempts_total{reason}`, scraped                         | none                                                                                 | `test_session_abuse.py::test_ac_ses_01*`, `tests/unit/api/test_session_fixation_audit.py` |
+| AC-SES-03                              | `auth.refresh_reuse_detected` (denied, critical)                                                                                             | `auth_refresh_reuse_total`, in-process only                                     | none possible (O-2)                                                                  | `test_obs_refresh_*`                                                                      |
+| AC-SES-05, AC-SES-06                   | none: expiry is the normal refresh trigger; F-2                                                                                              | none                                                                            | none                                                                                 | by design                                                                                 |
+| AC-CSRF-01/02/04, 06..10               | `auth.csrf_refused` (denied, warning), capped                                                                                                | `auth_csrf_refused_total{reason}`, scraped                                      | `CsrfRefusalsHigh`, `CsrfRefusalAuditUnavailable`, `CsrfRefusalAuditDegraded`        | `test_obs_csrf_*`, `test_csrf_double_submit.py`                                           |
+| AC-CSRF-05 (IDOR probe)                | none                                                                                                                                         | none                                                                            | none (O-3)                                                                           | `test_obs_csrf_*`                                                                         |
+| AC-AUTHZ-01..07                        | `rbac.denied` (denied, warning; names permission and scope)                                                                                  | `authz_denied_total{permission}` scraped (#2612); only `rbac.denied` routes     | `AuthzDeniedSpike` (> 20 in 10 min)                                                  | `test_obs_rbac_*`, AC-AUTHZ-07                                                            |
+| AC-STEP-01..04                         | `auth.step_up_failed` (failure, error; action class)                                                                                         | `auth_stepup_failures_total` scraped (#2612); the per-class twin in-process     | none: no rule reads either (O-2; SR-125 asks for one)                                | `test_obs_step_up_*`                                                                      |
+| AC-INV-01..04                          | `users.invite_rejected` (denied; warning for `redeemed` and `role_tamper`)                                                                   | `users_invites_rejected_total{reason}`, in-process only, not for `role_tamper`  | none possible (O-2)                                                                  | `test_obs_invite_*`                                                                       |
+| AC-INV-05/06                           | `users.invite_refused` / `users.invite_role_downgraded` (warning)                                                                            | none                                                                            | none                                                                                 | `test_invite_http_abuse.py`                                                               |
+| AC-INV-07 (identity claims), AC-INV-08 | claims: none (O-4); foreign TOTP method: `users.invite_rejected` (`enrollment_invalid`)                                                      | none                                                                            | none                                                                                 | `test_ac_inv_07_*`, `test_ac_inv_08_*`                                                    |
+| AC-WS-01                               | none: no topic reached authorisation, and an unauthenticated close writes no row (#2528)                                                     | `cv_ws_closes_total{reason="not_authenticated"}`, scraped                       | none for this case; `WsOriginRefusalsHigh` reads only `reason="origin_forbidden"`    | `test_ws_abuse.py::test_ac_ws_01_*`                                                       |
+| AC-WS-02                               | live replay: none (F-4); then `ws.connection.closed` per socket (#2528); 3rd failed `auth`: `auth.login_failed` (`ws_auth_failed`, warning)  | `cv_ws_auth_failures_total{reason}`, scraped                                    | none                                                                                 | `test_ac_ws_02_*`                                                                         |
+| AC-WS-03                               | `ws.subscription.revoked`, then `ws.subscribe.denied` (`account_scope_denied`)                                                               | `cv_ws_revoked_total{reason}`, scraped                                          | none                                                                                 | `test_ac_ws_03_*`                                                                         |
+| AC-WS-04                               | none for a malformed name (refused before any topic is read); `ws.subscribe.denied` for a well-formed private one (`orders.admin`)           | well-formed: `cv_ws_subscribe_total`; malformed: unscraped `cv_ws_errors_total` | none; none possible for the malformed ones (O-2)                                     | `test_ac_ws_04_*`                                                                         |
+
+Every authenticated WS connection also writes one `ws.connection.closed` row when it ends (#2528;
+`reason` is the `bye` reason, else `internal_error`, `shutdown` or `client_closed`); an
+unauthenticated close writes none. No runtime signal by nature: AC-CRED-01/02 (offline hash),
+AC-ENUM-03 (timing), AC-CSRF-03 (cookie flags) and AC-SES-01b, 02 and 04 (a normal sign-in or
+refresh: nothing is attacked, so nothing is signalled). AC-MFA-05 shares the `auth.mfa_failed`
+path. "None" in the alert column is the recorded state, not a target: alerting on these signals is
+a detection-rule decision.
 
 ## Findings
 
@@ -98,7 +170,10 @@ Each control was disabled on the scratch worktree and the named case failed, the
   (`__Host-cv_csrf` cookie echoed in `X-CSRF-Token`, HMAC-bound to the server-resolved session id,
   rotated on refresh) and the SR-042 `Origin` / `Sec-Fetch-Site` allow-list on every unsafe method.
   SameSite=Strict remains an additional control. Regression cases: AC-CSRF-06..10. Maps to TB-4 / O2.
-  Not covered here: the SR-042 check on WS handshakes (#2239).
+  The SR-042 check on WS handshakes is covered by #2263 (`tests/unit/ws/test_origin_check.py`),
+  not by these cases.
+  Repro (before #2238): an unsafe call carrying the victim's bearer and no `X-CSRF-Token` was
+  accepted, since no token existed. Now it gets 403 `csrf_token_invalid` (AC-CSRF-06).
 - **F-2 (accepted design decision, Low-Medium):** AC-SES-06 above.
   - STRIDE: Spoofing. Severity: Low-Medium. Owner: Architect + Owner. Tracking: #2145.
   - Repro: present a valid access token from a different IP/user-agent; it is accepted until its
@@ -112,4 +187,57 @@ Each control was disabled on the scratch worktree and the named case failed, the
   accept any string, which hid it. Repro: AC-INV-05 / AC-INV-06 against the registry-validating
   writer in `tests/security/auth/_stack.py`. Regression: those cases and
   `tests/unit/audit/test_router_actions_registered.py`. Owner: backend (auth-rbac). Maps to U19.
-- No P0/P1 finding. `docs/plan/32-risk-register.md` and sign-off comment are not done in this PR.
+- **F-4 (design gap, STRIDE: Spoofing, severity Low-Medium; decision pending).** AC-WS-02, U13: a
+  WS `auth` frame replayed on a second socket is accepted while the session is live. The cause is
+  that of F-2: the frame carries the bearer access token, which is not bound to a connection,
+  address or user agent. U13's mitigation text only promises rejection for a frame _without_ a
+  live session, so the behaviour matches its letter but not the threat it names.
+  - Decision needed from the Architect and the Owner: accept it as an extension of F-2, or bind
+    the WS identity to a single-use, short-lived WS ticket minted over REST. Owner: Architect +
+    Owner. Tracking: #298 (QA record); no separate public issue until decided (C-12.13).
+  - Reproduction steps are withheld from this public repository (`SECURITY.md` §1; #298 Security
+    notes): they belong in a private advisory or the private security folder (Security engineer),
+    not here. AC-WS-02 is the automated case.
+- **F-5 (gap, STRIDE: Spoofing, severity Medium; E09-X04 R-1; tracked as #2101).** SR-013 rotates
+  the session id on login and MFA completion, but not on a role change (which only refreshes the
+  permissions) or on step-up completion. Maps to U6 and U32. Owner: E09 epic owner (auth-rbac).
+  - Repro: with the victim signed in, change their role with `PUT /users/{userId}/roles`
+    (`api/users.py`), then refresh with the pre-change cookie. It should be refused, but no code path
+    rotates or revokes it. Found by code review; not run here, because a role change under a live
+    session is part of the env-only HTTP sweep (#2105).
+- **F-6 (gap, STRIDE: Repudiation, severity Medium, P1; E09-X04 R-5; tracked as #2111).** No
+  scheduled job runs the audit hash-chain verifier: `verify()` runs only on demand
+  (`POST /admin/audit/verify`), so an out-of-band edit is found only when someone asks. Maps to U14
+  and U20; #298 AC5 depends on it. Owner: Security; E43-T10 (#1238) verifies the fix.
+  - Repro: in `candleviewer/` only `POST /admin/audit/verify` (`api/audit.py`) calls the verifier;
+    `audit/checkpoint.py` records the head hash without verifying the chain.
+- **F-7 (gap, STRIDE: Elevation of privilege, severity Low; E09-X04 R-3; tracked as #2109) — FIXED
+  by #2124.** SR-027 grants `Viewer` first and elevates separately, but an invite could carry
+  `manager`. Since #2124 (Owner decision AC on #1778) an invite grants `viewer` only: `POST /users`
+  refuses `manager` and `owner` (AC-INV-05) and a legacy `manager` row redeems as Viewer
+  (AC-INV-06), both audited. #2109 was closed after QA passed (2026-10-16). Owner: Architect + Owner.
+  - Repro (before #2124): an Owner invited with `"roles": ["manager"]`; redeeming it activated a
+    Manager.
+- **F-8 (design gap, STRIDE: Information disclosure, severity Low; decision pending).** U26:
+  `/healthz` and the pre-auth WS `welcome` carry build metadata (`git_sha`, the version) to any
+  client. That is contract behaviour (`security: []` on the health probes; `23-ws-protocol.md`
+  §4.2), while U26's mitigation says only the Owner sees build metadata.
+  - Decision needed from the Architect and the Owner: amend U26 (mesh-only exposure accepted) or
+    drop the metadata from unauthenticated responses. Tracking: #298 (QA record), as for F-4.
+  - Reproduction steps are withheld from this public repository, as for F-4.
+- **O-1..O-4 (observability gaps, STRIDE: Repudiation, severity Low).** Each attack is defended,
+  but the defence is partly invisible (see "Observability per case"):
+  - O-1: `auth_login_failures_total` is planned and alerted (`AuthLoginFailureSpike`) but never
+    emitted, so that alert cannot fire; only its absent() guard can. #2612 (#2117) emitted and
+    scraped `auth_lockouts_total` and `authz_denied_total`, which were in this gap;
+    `authz_denied_total` counts only the routes that write `rbac.denied`. Tracking: #2319.
+  - O-2: session, per-class step-up and invite counters, and `cv_ws_errors_total` (the only count
+    of a malformed WS `sub` refused whole), stay on the unscraped process-default registry, so
+    refresh-token reuse (a critical row) has no scrapeable signal. `auth_stepup_failures_total` is
+    scraped since #2612, but no rule reads it although SR-125 asks for one. Tracking: #2319.
+  - O-3: an IDOR probe on `DELETE /me/sessions/{id}` leaves no row and no metric. Tracking: #2319.
+  - O-4: identity claims in an invite redemption body are refused (400) with no row; role claims
+    are audited. Tracking: #2319.
+- No P0 finding; F-6 (#2111) is P1. No executed case escalated privilege. Risk register: the
+  "E09-X02 abuse cases" notes under RSK-020 and RSK-021 in `docs/plan/32-risk-register.md`. The
+  Security-engineer sign-off comment is not done here.
