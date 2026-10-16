@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import http.client
+import io
+import json
 import shutil
 import subprocess
 import sys
@@ -680,3 +683,313 @@ def test_eot_magic_is_checked_at_offset_34():
     assert not m.bad_magic("f.eot", ok)
     assert m.bad_magic("f.eot", b"\0" * 40)
     assert m.bad_magic("f.eot", b"not an eot")
+
+
+# --- PR-BODY-003 (#2920): a `Partial:` slice must close nothing ---------------------------------
+
+KEYWORDS = ("close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved")
+REF_FORMS = ("#7", "octo-org/octo.repo#7", "https://github.com/octo-org/octo-repo/issues/7", "GH-7")
+SLICE = "Refs #7\nPartial: stack slice 1 of 3; the publisher lands next\n\n"
+# The three incident bodies of #2920 (PRs #2779, #2440, #2843), cut down to the lines that matter.
+INCIDENTS = {
+    "2779-closed-624": (
+        "Refs #624\nPartial: stack slice 3a/3c of E26-T01 slice 3 (bindings, settings, audit "
+        "actions); 3c (#2790) closes #624\n\n- [x] One issue → one branch → one PR; `Refs #624` "
+        "+ `Partial:` as a stack slice, 3c carries `Closes #624` (C-4.6, C-4.7)\n",
+        "closes #624",
+    ),
+    "2440-closed-414": (
+        "Refs #414\nPartial: contract tests for the E17-T08 contract slice (#2438); the publisher "
+        "lands next\n\n- [~] One issue → one branch → one PR: a stacked slice of #414 (`Refs` + "
+        "`Partial`), split at the coordinator's request; the publisher closes #414 "
+        "(C-4.6, C-4.7)\n",
+        "closes #414",
+    ),
+    "2843-closed-2648": (
+        "Refs #2648\n\nPartial: S8 (the Postgres integration tests of the store merged in #2829). "
+        'S9 (the account-access route) carries the closing line.\n\n- [~] "Done means": partial '
+        "(the S8 tests); S9 closes #2648\n- [~] One issue → one branch → one PR: partial "
+        "(`Refs #2648`); S9 closes it (C-4.6, C-4.7)\n",
+        "closes #2648",
+    ),
+}
+
+
+@pytest.mark.parametrize(("body", "hit"), list(INCIDENTS.values()), ids=list(INCIDENTS))
+def test_partial_incident_bodies_fail_body_003(body, hit):
+    errs, warns = run(pr(body=body))
+    assert codes(errs) == ["PR-BODY-003"]
+    assert hit in errs[0] and "the closing line is on slice N" in errs[0]
+    assert not any("Partial" in w for w in warns)  # never "accepted as partial" next to the error
+
+
+@pytest.mark.parametrize("ref", REF_FORMS)
+@pytest.mark.parametrize("kw", KEYWORDS)
+def test_partial_flags_every_keyword_and_reference_form(kw, ref):
+    errs, _ = run(pr(body=f"{SLICE}Background: slice 3 {kw} {ref} later.\n"))
+    assert codes(errs) == ["PR-BODY-003"] and f"{kw} {ref}" in errs[0]
+
+
+@pytest.mark.parametrize("text", [
+    "Closes: #7", "closes :#7", "fixes:\t#7", "Resolves  #7", "fixed\n#7", "closes#7",
+    "resolves\u00a0#7", "CLOSES #7", "Fixes #7", "rEsOlVeD #7", "(closes #7)", "- [x] fixes #7",
+    "> resolved #7", "fixes http://github.com/o/r/issues/7", "Closes www.github.com/o/r/pull/7",
+])
+def test_partial_flags_colon_whitespace_and_case_variants(text):
+    assert codes(run(pr(body=f"{SLICE}{text}\n"))[0]) == ["PR-BODY-003"], text
+
+
+@pytest.mark.parametrize("text", [
+    "`closes #7`", "```\nCloses #7\n```", "~~~\nfixes #7\n~~~", "    resolves #7",
+    "<!-- closed #7 -->", "- [x] slice 2 done\n\n    closes #7",
+])
+def test_partial_flags_closing_refs_in_code_and_comments_conservatively(text):
+    """GitHub skips code and comments, but strip_markup only approximates its parser: the last case
+    is a list-item paragraph GitHub DOES read, which strip_markup drops as an indented code block.
+    So PR-BODY-003 scans the raw body: a false hit costs a rephrase, a miss closes the ticket."""
+    body = f"{SLICE}{text}\n"
+    assert codes(run(pr(body=body))[0]) == ["PR-BODY-003"], text
+    assert m.closing_refs(m.strip_markup(body)) == []  # what a stripped scan would have missed
+
+
+def test_clean_partial_body_with_only_refs_passes_with_warning():
+    body = (
+        f"{SLICE}The closing line is on slice 3 (#2790). Near misses: closest #3, unresolved "
+        "#4, fixture #5, closed-loop #6, prefixes #8, the fix (#9), fixes the flake, "
+        "Closes #, longer words: fixtures/foo#12, resolver/bar#3, closet/x#1\n"
+    )  # the last three need the word boundary after the keyword (else `fix` + `tures/foo#12`)
+    assert m.closing_refs(body) == []
+    errs, warns = run(pr(body=body))
+    assert errs == [] and any("accepted as a partial" in w for w in warns)
+
+
+def test_partial_with_a_closes_line_fails_instead_of_passing():
+    assert codes(run(pr(body="Closes #5\nPartial: slice 1 of 2\n"))[0]) == ["PR-BODY-003"]
+    assert codes(run(pr(body="Partial: slice 1 of 2\nresolves #5\n"))[0]) == ["PR-BODY-003"]
+
+
+def test_non_partial_pr_keeps_the_closes_or_fixes_rule():
+    assert run(pr(body="Closes #5\nThe next slice also closes #9.\n"))[0] == []
+    assert codes(run(pr(body="Resolves #5\n"))[0]) == ["PR-BODY-001"]  # LINK_RE is unchanged
+    assert codes(run(pr(body="Refs #5\n"))[0]) == ["PR-BODY-002"]
+    assert run(pr(body="Closes #5\n`Partial: x` is only quoted; closes #9\n"))[0] == []
+
+
+@pytest.mark.parametrize("quoted", [
+    "```\nPartial: example\n```", "~~~\nPartial: example\n~~~", "<!--\nPartial: example\n-->",
+    "    Partial: example",
+])
+def test_partial_line_in_code_or_comment_does_not_make_a_pr_partial(quoted):
+    """is_partial reads the STRIPPED body: a quoted example must not turn a normal PR's own
+    `Closes #5` into a PR-BODY-003 failure (a raw-body PARTIAL_RE search would)."""
+    body = f"Closes #5\n\n{quoted}\n"
+    assert not m.is_partial(body)
+    assert run(pr(body=body)) == ([], [])
+
+
+def test_check_never_scans_a_normal_pr_body_for_closing_refs(monkeypatch):
+    def scanned(body):
+        raise AssertionError("a non-Partial body was scanned")
+
+    monkeypatch.setattr(m, "closing_refs", scanned)
+    assert run(pr(body="Closes #5\nThe next slice also closes #9.\n")) == ([], [])
+
+
+def test_closing_re_keeps_the_linear_whitespace_form():
+    r"""`\s*:?\s*` matches the same text as `\s*(?::\s*)?`, but its two adjacent `\s*` try every
+    split of a long whitespace run after a keyword: quadratic, about 7.7 s on 16 KiB of spaces
+    against about 1 ms. Behaviour cannot tell the forms apart and a timing test is not
+    deterministic (C-13.7), so the pattern is pinned: one `\s*(?::\s*)?` and no other `\s`."""
+    pattern = m.CLOSING_RE.pattern
+    assert r"\s*(?::\s*)?" in pattern and pattern.count(r"\s") == 2
+
+
+def test_closing_refs_reports_a_match_with_its_whitespace_normalised():
+    assert m.closing_refs("fixed\n  #7, Resolves:\t#8") == ["fixed #7", "Resolves: #8"]
+
+
+def test_closing_refs_ignores_names_longer_than_github_allows():
+    """The {1,100} bound also keeps a long `fix-fix-...` run linear (an unbounded name rescans it
+    from every keyword inside it, see CLOSING_RE): pinned by behaviour, not by timing."""
+    owner, repo = "o" * 39, "r" * 100  # GitHub's limits; longer names cannot be references
+    assert m.closing_refs(f"fixes {owner}/{repo}#7") == [f"fixes {owner}/{repo}#7"]
+    assert m.closing_refs(f"fixes https://github.com/{owner}/{repo}/issues/7") != []
+    assert m.closing_refs(f"fixes {'o' * 101}/r#7") == []
+    assert m.closing_refs(f"fixes o/{'r' * 101}#7") == []
+    assert m.closing_refs(f"fixes https://github.com/{'o' * 101}/r/issues/7") == []
+    assert m.closing_refs(f"fixes https://github.com/o/{'r' * 101}/issues/7") == []
+
+
+def test_template_comments_do_not_trip_body_003():
+    tpl = (ROOT / ".github/PULL_REQUEST_TEMPLATE.md").read_text(encoding="utf-8")
+    body = tpl.replace("Closes #\n", "Refs #7\nPartial: stack slice 1 of 2\n", 1)
+    assert m.is_partial(body) and m.closing_refs(body) == []
+
+
+def _gql(numbers=(), total=None, calls=None):
+    """Fake GraphQL transport answering CLOSING_QUERY (records the variables it was sent)."""
+
+    def graphql(query, variables):
+        if calls is not None:
+            calls.append(variables)
+        nodes = [{"number": n, "repository": {"nameWithOwner": "o/r"}} for n in numbers]
+        refs = {"totalCount": len(nodes) if total is None else total, "nodes": nodes}
+        return {"repository": {"pullRequest": {"closingIssuesReferences": refs}}}
+
+    return graphql
+
+
+def _pr_env(monkeypatch, online):
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("PR_NUMBER", "7")
+    if online:
+        monkeypatch.setenv("GH_TOKEN", "fake")  # only ever reaches the injected fake transport
+    else:
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+
+
+def test_main_partial_pr_fails_when_github_lists_a_closing_issue(repo, monkeypatch, capsys):
+    root, base = repo
+    _pr_env(monkeypatch, online=True)
+    head = _commit_head(root, {"src/a.py": 5})
+    calls = []
+    fetch = _fake(base, head, pr(body=SLICE))  # clean body: e.g. a Development-sidebar link
+    assert m.main(["--repo-root", str(root)], fetch=fetch, graphql=_gql([414], calls=calls)) == 1
+    assert calls == [{"owner": "o", "name": "r", "number": 7}]
+    err = capsys.readouterr().err
+    assert "PR-BODY-003" in err and "o/r#414 (closingIssuesReferences)" in err
+    assert m.main(["--repo-root", str(root)], fetch=fetch, graphql=_gql()) == 0
+
+
+def test_main_online_check_skipped_without_token(repo, monkeypatch, capsys):
+    root, base = repo
+    _pr_env(monkeypatch, online=False)
+
+    def no_network(*a, **k):
+        raise AssertionError("network used")
+
+    monkeypatch.setattr(m.urllib.request, "urlopen", no_network)
+    head = _commit_head(root, {"src/a.py": 5})
+    calls = []
+    clean = _fake(base, head, pr(body=SLICE))
+    assert m.main(["--repo-root", str(root)], fetch=clean, graphql=_gql([414], calls=calls)) == 0
+    assert calls == []  # offline: only the body scan runs, and it still catches prose
+    dirty = _fake(base, head, pr(body=SLICE + "slice 3 closes #7\n"))
+    assert m.main(["--repo-root", str(root)], fetch=dirty) == 1
+    assert "PR-BODY-003" in capsys.readouterr().err
+
+
+def test_main_injected_fetch_never_goes_online_even_with_a_token(repo, monkeypatch, capsys):
+    root, base = repo
+    _pr_env(monkeypatch, online=True)  # a token is set, but fetch is injected and graphql is not
+
+    def no_network(*a, **k):
+        raise AssertionError("network used")
+
+    monkeypatch.setattr(m.urllib.request, "urlopen", no_network)
+    head = _commit_head(root, {"src/a.py": 5})
+    assert m.main(["--repo-root", str(root)], fetch=_fake(base, head, pr(body=SLICE))) == 0
+    assert "accepted as a partial" in capsys.readouterr().out
+
+
+def test_main_online_check_only_for_partial_prs_and_fails_closed(repo, monkeypatch, capsys):
+    root, base = repo
+    _pr_env(monkeypatch, online=True)
+    head = _commit_head(root, {"src/a.py": 5})
+    calls = []
+    normal = _fake(base, head, pr())  # a `Closes #N` PR is meant to close its issue
+    assert m.main(["--repo-root", str(root)], fetch=normal, graphql=_gql([2249], calls=calls)) == 0
+    assert calls == []
+    partial = _fake(base, head, pr(body=SLICE))
+
+    def unreadable(query, variables):
+        return {"repository": None}
+
+    assert m.main(["--repo-root", str(root)], fetch=partial, graphql=unreadable) == 2
+    assert "failing closed" in capsys.readouterr().err
+
+
+class _Resp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _Truncated(_Resp):
+    def read(self, *a):  # the connection dropped mid-answer
+        raise http.client.IncompleteRead(b'{"data": {', 512)
+
+
+def _urlopen(payload, seen):
+    def fake(req, timeout):
+        seen.append((req, timeout))
+        if isinstance(payload, Exception):
+            raise payload
+        if isinstance(payload, _Resp):
+            return payload
+        return _Resp(payload if isinstance(payload, bytes) else json.dumps(payload).encode())
+
+    return fake
+
+
+def _refs(**refs):
+    """The `data` of a CLOSING_QUERY answer whose closingIssuesReferences is `refs`."""
+    return {"repository": {"pullRequest": {"closingIssuesReferences": refs}}}
+
+
+def test_graphql_transport_posts_the_query_to_the_fixed_api_host(monkeypatch):
+    seen = []
+    nodes = [{"number": 5, "repository": {"nameWithOwner": "o/r"}}]
+    payload = {"data": _refs(totalCount=1, nodes=nodes)}
+    monkeypatch.setattr(m.urllib.request, "urlopen", _urlopen(payload, seen))
+    assert m.online_closing_refs(m.make_graphql("fake"), "o/r", "7") == ["o/r#5"]
+    req, timeout = seen[0]
+    assert (req.full_url, req.get_method()) == ("https://api.github.com/graphql", "POST")
+    assert timeout == 30
+    assert req.get_header("Authorization") == "Bearer fake"
+    assert req.get_header("Content-type") == "application/json"  # urllib capitalises the name
+    sent = json.loads(req.data)
+    assert sent["variables"] == {"owner": "o", "name": "r", "number": 7}
+    assert sent["query"] == m.CLOSING_QUERY
+
+
+@pytest.mark.parametrize("payload", [
+    {"errors": [{"message": "Resource not accessible by integration"}]},
+    {"data": _refs(totalCount=0, nodes=[]), "errors": [{"message": "partial answer"}]},
+    {"data": None}, ["not", "an", "object"], b"<html>502</html>", OSError("connection reset"),
+    http.client.BadStatusLine("garbage"), _Truncated(),  # http.client errors are not OSError
+])
+def test_graphql_errors_fail_closed(monkeypatch, payload):
+    monkeypatch.setattr(m.urllib.request, "urlopen", _urlopen(payload, []))
+    with pytest.raises(m.ConfigError, match="failing closed"):
+        m.online_closing_refs(m.make_graphql("fake"), "o/r", "7")
+
+
+def test_main_truncated_graphql_answer_fails_closed_with_rc_2(repo, monkeypatch, capsys):
+    root, base = repo
+    _pr_env(monkeypatch, online=True)
+    monkeypatch.setattr(m.urllib.request, "urlopen", _urlopen(_Truncated(), []))
+    fetch = _fake(base, _commit_head(root, {"src/a.py": 5}), pr(body=SLICE))
+    assert m.main(["--repo-root", str(root)], fetch=fetch, graphql=m.make_graphql("fake")) == 2
+    err = capsys.readouterr().err  # the tidy ::error line, not a traceback
+    assert "::error title=pr-metadata::GraphQL request failed (IncompleteRead(" in err
+
+
+@pytest.mark.parametrize("answer", [
+    {}, {"repository": {}}, {"repository": {"pullRequest": None}}, _refs(nodes=[]),
+    _refs(totalCount="many", nodes=[]), _refs(totalCount=1, nodes=[{"number": 5}]),
+])
+def test_unexpected_closing_refs_shape_fails_closed(answer):
+    with pytest.raises(m.ConfigError, match="failing closed"):
+        m.online_closing_refs(lambda query, variables: answer, "o/r", "7")
+
+
+def test_closing_refs_count_nodes_the_token_cannot_read():
+    assert m.online_closing_refs(_gql([5], total=3), "o/r", "7") == ["o/r#5", "+2 more"]
+    assert m.online_closing_refs(_gql(total=1), "o/r", "7") == ["+1 more"]
+    assert m.online_closing_refs(_gql(), "o/r", "7") == []
+    node = {"number": 5, "repository": {"nameWithOwner": "o/r"}}
+    hidden = _refs(totalCount=2, nodes=[None, node])  # null: a node the token may not read
+    assert m.online_closing_refs(lambda q, v: hidden, "o/r", "7") == ["o/r#5", "+1 more"]
