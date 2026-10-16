@@ -2,9 +2,11 @@
 
 `healthy` while an authenticated private-WS heartbeat is fresh, `degraded` while a WS or REST
 success is inside the down window, `down` after it. Only positive evidence counts and it decays
-on silence. Plain synchronous code, not a statechart: the order-entry gate reads the enum
-published on each transition (C-2.20, C-2.21). Ages run on a clock that counts through suspend
-(`CLOCK_BOOTTIME`), so a laptop that slept past the window resumes `down`.
+on silence. Plain synchronous code, not a statechart: the order-entry gate needs an answer, not a
+recorded fact (C-2.21). A read derives the state from the evidence in a few float comparisons, so
+the gate never depends on `tick()` having run; `tick()` commits transitions, logs them and calls
+the dead-man's switch. Ages run on a clock that counts through suspend (`CLOCK_BOOTTIME`), so a
+laptop that slept past the window resumes `down`.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Final, Protocol
+from typing import Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
@@ -30,6 +32,9 @@ class HealthState(StrEnum):
     DEGRADED = "degraded"
     DOWN = "down"
 
+
+#: `AccountHealth.reason`: a closed set of codes, never exchange-supplied text.
+HealthReason = Literal["ws_heartbeat", "rest_only", "ws_silent", "no_success", "never_connected"]
 
 #: REST `ExchangeAccount.connection_state` per state (decision Q2 on #837).
 CONNECTION_STATE: Final[Mapping[HealthState, str]] = {
@@ -78,19 +83,20 @@ class HealthThresholds:
 
 
 class AccountHealth(BaseModel):
-    """`AccountHealth` (22-api-openapi.yaml); `ws_fields()` is a `wallet` item's `health`."""
+    """`AccountHealth` (22-api-openapi.yaml); `ws_entry()` is one `wallet` frame `health` entry."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     state: HealthState
-    reason: str
+    reason: HealthReason
     heartbeat_age_ms: int | None
     rest_only: bool
     changed_at: UtcDatetime
 
-    def ws_fields(self) -> dict[str, object]:
+    def ws_entry(self, account_id: UUID) -> dict[str, object]:
         fields = self.model_dump(mode="json", exclude={"changed_at"})
-        return fields | {"changed_at_ms": epoch_ms(self.changed_at)}
+        changed = {"changed_at_ms": epoch_ms(self.changed_at)}
+        return {"exchange_account_id": str(account_id)} | fields | changed
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,29 +104,38 @@ class HealthTransition:
     account_id: UUID
     from_state: HealthState
     to_state: HealthState
-    reason: str
+    reason: HealthReason
     at: datetime
 
 
 class DeadMansSwitch(Protocol):
     """The dead-man's-switch policy hook, called once per transition into `down` (E39 owns it)."""
 
-    def account_down(self, account_id: UUID, reason: str) -> None: ...
+    def account_down(self, account_id: UUID, reason: HealthReason) -> None: ...
 
 
 @dataclass(slots=True)
 class _Account:
     changed_at: datetime
+    since: float  # `changed_at` on the monotonic clock
     state: HealthState = HealthState.DOWN
-    reason: str = "never_connected"
+    reason: HealthReason = "never_connected"
     ws_at: float | None = None
     ws_live: bool = False
     rest_at: float | None = None
 
+    def last_success(self) -> float | None:
+        return max((t for t in (self.ws_at, self.rest_at) if t is not None), default=None)
+
 
 class AccountHealthMonitor:
     """Health for every tracked account. Feed it evidence as it arrives and call `tick()` at
-    least once a second; `state()` is the published enum the order-entry gate reads."""
+    least once a second to commit transitions; `current()` and `view()` derive on every read.
+
+    An evidence call first commits any lapse the old evidence reached, so a down window that
+    passed between two ticks is still a transition and a dead-man's-switch call, and returns the
+    latest transition. Evidence for an untracked account is ignored: it can race `untrack()`.
+    """
 
     def __init__(
         self, clock: Clock, dms: DeadMansSwitch, thresholds: HealthThresholds | None = None
@@ -132,53 +147,62 @@ class AccountHealthMonitor:
 
     def track(self, account_id: UUID) -> None:
         """Start monitoring an account; it is `down` until the first success."""
-        self._accounts.setdefault(account_id, _Account(self._clock.now()))
+        if account_id not in self._accounts:
+            self._accounts[account_id] = _Account(self._clock.now(), self._clock.monotonic())
 
     def untrack(self, account_id: UUID) -> None:
         self._accounts.pop(account_id, None)
 
     def ws_heartbeat(self, account_id: UUID) -> HealthTransition | None:
         """An authenticated private-WS heartbeat: auth success, or a pong on an authed socket."""
-        acc = self._accounts[account_id]
+        if (acc := self._accounts.get(account_id)) is None:
+            return None
+        lapse = self._evaluate(account_id, acc)
         acc.ws_at, acc.ws_live = self._clock.monotonic(), True
-        return self._evaluate(account_id, acc)
+        return self._evaluate(account_id, acc) or lapse
 
     def ws_dropped(self, account_id: UUID) -> HealthTransition | None:
-        acc = self._accounts[account_id]
+        if (acc := self._accounts.get(account_id)) is None:
+            return None
+        lapse = self._evaluate(account_id, acc)
         acc.ws_live = False
-        return self._evaluate(account_id, acc)
+        return self._evaluate(account_id, acc) or lapse
 
     def rest_ok(self, account_id: UUID) -> HealthTransition | None:
-        acc = self._accounts[account_id]
+        if (acc := self._accounts.get(account_id)) is None:
+            return None
+        lapse = self._evaluate(account_id, acc)
         acc.rest_at = self._clock.monotonic()
-        return self._evaluate(account_id, acc)
+        return self._evaluate(account_id, acc) or lapse
 
     def tick(self) -> list[HealthTransition]:
         moved = (self._evaluate(aid, acc) for aid, acc in list(self._accounts.items()))
         return [t for t in moved if t is not None]
 
-    def state(self, account_id: UUID) -> HealthState | None:
+    def current(self, account_id: UUID) -> HealthState | None:
+        """The state the evidence supports now, without side effects; `None` if untracked."""
         acc = self._accounts.get(account_id)
-        return None if acc is None else acc.state
+        return None if acc is None else self._derive(acc, self._clock.monotonic())[0]
 
     def view(self, account_id: UUID) -> AccountHealth | None:
         acc = self._accounts.get(account_id)
         if acc is None:
             return None
         now = self._clock.monotonic()
+        state, reason, _, changed_at = self._project(acc, now)
         age = None if acc.ws_at is None else max(0, round((now - acc.ws_at) * 1000))
         return AccountHealth(
-            state=acc.state,
-            reason=acc.reason,
+            state=state,
+            reason=reason,
             heartbeat_age_ms=age,
-            rest_only=acc.state is HealthState.DEGRADED,
-            changed_at=acc.changed_at,
+            rest_only=state is HealthState.DEGRADED,
+            changed_at=changed_at,
         )
 
-    def _derive(self, acc: _Account, now: float) -> tuple[HealthState, str]:
+    def _derive(self, acc: _Account, now: float) -> tuple[HealthState, HealthReason]:
         if acc.ws_live and acc.ws_at is not None and now - acc.ws_at <= self._th.heartbeat_s:
             return HealthState.HEALTHY, "ws_heartbeat"
-        last = max((t for t in (acc.ws_at, acc.rest_at) if t is not None), default=None)
+        last = acc.last_success()
         if last is None:
             return HealthState.DOWN, "never_connected"
         if now - last >= self._th.down_s:
@@ -186,14 +210,38 @@ class AccountHealthMonitor:
         rest_recent = acc.rest_at is not None and now - acc.rest_at < self._th.down_s
         return HealthState.DEGRADED, "rest_only" if rest_recent else "ws_silent"
 
+    def _project(
+        self, acc: _Account, now: float
+    ) -> tuple[HealthState, HealthReason, float, datetime]:
+        """The derived state and reason, and when that state began (monotonic, wall). A state
+        other than the committed one began now, or when the old evidence lapsed if it did: the
+        heartbeat window into `degraded`, the down window into `down`. A lapse is dated from the
+        committed transition, so a read before `tick()` and the commit after it agree."""
+        state, reason = self._derive(acc, now)
+        if state is acc.state:
+            return state, reason, acc.since, acc.changed_at
+        began, last = now, acc.last_success()
+        if state is HealthState.DOWN and last is not None:
+            began = min(now, last + self._th.down_s)
+        elif acc.state is HealthState.HEALTHY and acc.ws_at is not None:
+            began = min(now, acc.ws_at + self._th.heartbeat_s)
+        if began >= now:
+            return state, reason, now, self._clock.now()
+        return state, reason, began, acc.changed_at + timedelta(seconds=began - acc.since)
+
     def _evaluate(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
-        state, acc.reason = self._derive(acc, self._clock.monotonic())
+        state, acc.reason, began, at = self._project(acc, self._clock.monotonic())
         if state is acc.state:
             return None
-        moved = HealthTransition(account_id, acc.state, state, acc.reason, self._clock.now())
-        acc.state, acc.changed_at = state, moved.at
+        moved = HealthTransition(account_id, acc.state, state, acc.reason, at)
+        acc.state, acc.since, acc.changed_at = state, began, at
         log = structlog.get_logger(__name__).bind(account_id=str(account_id), reason=acc.reason)
         log.info("account.health_changed", from_state=moved.from_state.value, to_state=state.value)
         if state is HealthState.DOWN:
-            self._dms.account_down(account_id, acc.reason)
+            try:
+                self._dms.account_down(account_id, acc.reason)
+            except Exception as exc:
+                # E39's hook must not stop the other accounts' evaluation. Log the type only: a
+                # message may echo an exchange response (C-12.6).
+                log.error("account.dms_hook_failed", error=type(exc).__name__)
         return moved

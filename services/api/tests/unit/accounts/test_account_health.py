@@ -1,10 +1,12 @@
 """E27-T04 per-account health FSM (US-ACCT-010): AC Healthy, Degraded, Down within 30 s; suspend
-and resume; wall-clock steps; positive evidence only (ticket Security notes)."""
+and resume; wall-clock steps; positive evidence only, derived on every read (ticket Security
+notes: health is never asserted optimistically)."""
 
 from __future__ import annotations
 
 import sys
 from datetime import timedelta
+from uuid import UUID
 
 import pytest
 from hypothesis import given, settings
@@ -18,8 +20,9 @@ from candleviewer.accounts.health import (
     HealthThresholds,
     SystemClock,
 )
+from candleviewer.accounts.order_gate import AccountHealthCheck, KeyStanding
 from candleviewer.settings import Settings
-from tests.unit.accounts._fakes import ACC, Dms, FakeClock
+from tests.unit.accounts._fakes import ACC, ACC_B, T0, Dms, FakeClock, Sizing, Standings
 
 
 def _monitor() -> tuple[AccountHealthMonitor, FakeClock, Dms]:
@@ -35,7 +38,7 @@ def test_tracked_account_starts_down_without_invoking_the_dead_mans_switch() -> 
     assert view is not None and (view.state, view.reason) == (HealthState.DOWN, "never_connected")
     assert view.heartbeat_age_ms is None and dms.calls == [] and monitor.tick() == []
     monitor.untrack(ACC)
-    assert monitor.state(ACC) is None and monitor.view(ACC) is None
+    assert monitor.current(ACC) is None and monitor.view(ACC) is None
 
 
 def test_authenticated_heartbeat_is_healthy_and_reports_its_age() -> None:
@@ -75,7 +78,7 @@ def test_down_exactly_at_the_down_window_invokes_the_dead_mans_switch_once() -> 
     monitor.rest_ok(ACC)
     clock.advance(29.999)
     monitor.tick()
-    assert monitor.state(ACC) is HealthState.DEGRADED and dms.calls == []
+    assert monitor.current(ACC) is HealthState.DEGRADED and dms.calls == []
     clock.advance(0.001)
     with capture_logs() as logs:
         (transition,) = monitor.tick()
@@ -99,7 +102,7 @@ def test_a_wall_clock_step_changes_no_state(step: timedelta) -> None:
     monitor, clock, _ = _monitor()
     monitor.ws_heartbeat(ACC)
     clock.wall += step
-    assert monitor.tick() == [] and monitor.state(ACC) is HealthState.HEALTHY
+    assert monitor.tick() == [] and monitor.current(ACC) is HealthState.HEALTHY
 
 
 def test_thresholds_come_from_settings_and_must_be_ordered() -> None:
@@ -118,23 +121,110 @@ def test_system_clock_is_tz_aware_and_monotonic_off_linux_too(
     assert clock.monotonic() > 0
 
 
-_EVENTS = st.lists(st.tuples(st.floats(0, 40), st.sampled_from(["hb", "drop", "rest", "tick"])))
+def test_a_read_before_tick_and_the_commit_after_it_agree() -> None:
+    monitor, clock, _ = _monitor()
+    monitor.ws_heartbeat(ACC)
+    clock.advance(12)
+    view = monitor.view(ACC)
+    (transition,) = monitor.tick()
+    assert view is not None and (view.state, view.reason) == (HealthState.DEGRADED, "ws_silent")
+    assert view.changed_at == transition.at == T0 + timedelta(seconds=10)
+
+
+def test_evidence_after_an_unticked_lapse_still_records_the_down_episode() -> None:
+    monitor, clock, dms = _monitor()
+    monitor.ws_heartbeat(ACC)
+    clock.advance(600)  # resumed from suspend; the socket re-authenticates before any tick
+    with capture_logs() as logs:
+        transition = monitor.ws_heartbeat(ACC)
+    assert transition is not None and transition.to_state is HealthState.HEALTHY
+    assert [e["to_state"] for e in logs] == ["down", "healthy"]
+    assert dms.calls == [(ACC, "no_success")]
+
+
+class _FailsFor(Dms):
+    def __init__(self, failing: UUID) -> None:
+        super().__init__()
+        self.failing = failing
+
+    def account_down(self, account_id: UUID, reason: str) -> None:
+        super().account_down(account_id, reason)
+        if account_id == self.failing:
+            raise RuntimeError("policy store said: retMsg=invalid api_key")
+
+
+def test_a_failing_dead_mans_switch_hook_does_not_stop_the_other_accounts() -> None:
+    clock, dms = FakeClock(), _FailsFor(ACC)
+    monitor = AccountHealthMonitor(clock, dms)
+    for account in (ACC, ACC_B):
+        monitor.track(account)
+        monitor.ws_heartbeat(account)
+    clock.advance(31)
+    with capture_logs() as logs:
+        moved = monitor.tick()
+    assert [(t.account_id, t.to_state) for t in moved] == [
+        (ACC, HealthState.DOWN),
+        (ACC_B, HealthState.DOWN),
+    ]
+    assert dms.calls == [(ACC, "no_success"), (ACC_B, "no_success")]
+    failed = [e for e in logs if e["event"] == "account.dms_hook_failed"]
+    assert failed == [
+        {
+            "event": "account.dms_hook_failed",
+            "log_level": "error",
+            "account_id": str(ACC),
+            "reason": "no_success",
+            "error": "RuntimeError",
+        }
+    ]
+    assert "retMsg" not in repr(logs)
+
+
+@pytest.mark.parametrize("evidence", ["ws_heartbeat", "ws_dropped", "rest_ok"])
+def test_evidence_for_an_untracked_account_is_ignored(evidence: str) -> None:
+    monitor, _, dms = _monitor()
+    monitor.untrack(ACC)
+    assert getattr(monitor, evidence)(ACC) is None
+    assert monitor.current(ACC) is None and monitor.view(ACC) is None and dms.calls == []
+
+
+def test_tracking_an_account_again_keeps_its_evidence() -> None:
+    monitor, _, _ = _monitor()
+    monitor.ws_heartbeat(ACC)
+    monitor.track(ACC)
+    assert monitor.current(ACC) is HealthState.HEALTHY
+
+
+#: Steps in whole milliseconds, so the fake's wall clock (timedelta, microseconds) and monotonic
+#: clock (float seconds) agree exactly and `changed_at` can be compared with the wall clock.
+_STEP = st.integers(0, 40_000).map(lambda ms: ms / 1000)
+_EVENTS = st.lists(st.tuples(_STEP, st.sampled_from(["hb", "drop", "rest", "tick", "read"])))
 
 
 @settings(max_examples=200, deadline=None, derandomize=True)
 @given(_EVENTS)
 def test_health_never_outlives_its_evidence(events: list[tuple[float, str]]) -> None:
     monitor, clock, dms = _monitor()
+    gate = AccountHealthCheck(monitor, Standings({ACC: KeyStanding(True)}), Sizing({ACC: True}))
     act = {"hb": monitor.ws_heartbeat, "drop": monitor.ws_dropped, "rest": monitor.rest_ok}
     seen: dict[str, float] = {}
-    live, downs = False, 0
-    for dt, kind in events:
-        clock.advance(dt)
-        seen[kind], live = clock.mono, (live or kind == "hb") and kind != "drop"
-        got = act[kind](ACC) if kind in act else next(iter(monitor.tick()), None)
-        downs += got is not None and got.to_state is HealthState.DOWN
-        state, last = monitor.state(ACC), max(seen.get(k, -1e9) for k in ("hb", "rest"))
-        if state is HealthState.HEALTHY:
-            assert live and clock.mono - seen["hb"] <= 10
-        assert (state is HealthState.DOWN) == (clock.mono - last >= 30)
-    assert len(dms.calls) == downs
+    live, changed = False, T0
+    with capture_logs() as logs:
+        for dt, kind in events:
+            clock.advance(dt)
+            if kind in act:
+                seen[kind], live = clock.mono, (live or kind == "hb") and kind != "drop"
+                act[kind](ACC)
+            elif kind == "tick":
+                monitor.tick()
+            state, view, refusal = monitor.current(ACC), monitor.view(ACC), gate.refusal(ACC)
+            last = max(seen.get(k, -1e9) for k in ("hb", "rest"))
+            if state is HealthState.HEALTHY:
+                assert live and clock.mono - seen["hb"] <= 10
+            assert (state is HealthState.DOWN) == (clock.mono - last >= 30)
+            assert (refusal is not None) == (state is HealthState.DOWN)
+            assert view is not None and view.state is state
+            assert changed <= view.changed_at <= clock.wall
+            changed = view.changed_at
+    downs = [e for e in logs if e.get("to_state") == "down"]
+    assert dms.calls == [(ACC, "no_success")] * len(downs)

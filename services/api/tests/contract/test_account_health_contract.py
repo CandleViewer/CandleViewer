@@ -1,28 +1,39 @@
 """Contract (E27-T04): per-account health, wallet staleness and key-rotation fields. Additive only
 (C-6.3): nothing pre-existing changes and nothing new is required; `connection_state` keeps its
-enum (decision Q2 on #837); the documented example round-trips; `wallet` items validate.
+enum (decision Q2 on #837); the documented example round-trips; `wallet` frames validate, with
+health reported per account apart from balances; every reason set is closed and agrees with code.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import re
+from typing import Any, get_args
 
 import pytest
 
-from candleviewer.accounts.health import CONNECTION_STATE, AccountHealthMonitor, HealthState
+from candleviewer.accounts.health import (
+    CONNECTION_STATE,
+    AccountHealthMonitor,
+    HealthReason,
+    HealthState,
+)
+from candleviewer.accounts.order_gate import OrderEntryReason
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
-from tests.contract.ws._harness import check_schema
+from tests.contract.ws._harness import REPO, SCHEMAS, check_schema
 from tests.unit.accounts._fakes import ACC, Dms, FakeClock
 
 _SPEC = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
 _LIST = _SPEC["paths"]["/exchange-accounts"]["get"]["responses"]["200"]["content"]
 _WALLET = "cv://ws/v1/wallet.schema.json"
+_WS_ENTRY: dict[str, Any] = SCHEMAS[_WALLET]["properties"]["health"]["items"]
 _ACC = "a1000000-0000-4000-8000-000000000001"
 _ITEM = {"exchange_account_id": _ACC, "coin": "USDT", "equity": "1", "updated_at_ms": 1}
-_WS_HEALTH = dict(state="degraded", reason="rest_only", heartbeat_age_ms=None, rest_only=True)
-_FULL = _ITEM | {"stale": True, "stale_since_ms": 1, "health": _WS_HEALTH | {"changed_at_ms": 1}}
+_FULL = _ITEM | {"stale": True, "stale_since_ms": 1}
+_HEALTH = dict(exchange_account_id=_ACC, state="degraded", reason="rest_only", rest_only=True)
+_ENTRY = _HEALTH | {"heartbeat_age_ms": None, "changed_at_ms": 1}
+_GATE_DOC = REPO / "docs" / "plan" / "24-internal-schemas.md"
 #: name -> (fields this change adds, the `required` list as it stood before it)
 _ADDED = {
     "ExchangeAccount": (
@@ -41,6 +52,10 @@ def test_account_health_requires_exactly_its_five_fields() -> None:
     fields = {"state", "reason", "heartbeat_age_ms", "rest_only", "changed_at"}
     assert set(schema["required"]) == fields == set(schema["properties"])
     assert schema["properties"]["state"]["enum"] == ["healthy", "degraded", "down"]
+    assert set(_WS_ENTRY["required"]) == fields - {"changed_at"} | {
+        "exchange_account_id",
+        "changed_at_ms",
+    }
 
 
 @pytest.mark.parametrize("name", sorted(_ADDED))
@@ -69,19 +84,35 @@ def test_documented_example_round_trips() -> None:
     assert api.ExchangeAccount.model_validate(dumped) == account
 
 
-@pytest.mark.parametrize("item", [_ITEM, _FULL])
-def test_wallet_items_validate_with_and_without_the_new_fields(
-    item: dict[str, Any],
-) -> None:
-    check_schema(_WALLET, {"balances": [item]}, "wallet")
+@pytest.mark.parametrize(
+    "frame",
+    [{"balances": [_ITEM]}, {"balances": [_FULL], "health": [_ENTRY]}],
+    ids=["pre_existing", "with_health"],
+)
+def test_wallet_frames_validate_with_and_without_the_new_fields(frame: dict[str, Any]) -> None:
+    check_schema(_WALLET, frame, "wallet")
 
 
-@pytest.mark.parametrize("health", [_WS_HEALTH, _WS_HEALTH | {"changed_at_ms": 1, "state": "up"}])
-def test_wallet_health_refuses_a_partial_or_unknown_state(
-    health: dict[str, Any],
+def test_a_health_only_wallet_frame_covers_an_account_with_no_snapshot() -> None:
+    down = _ENTRY | {"state": "down", "reason": "never_connected", "rest_only": False}
+    check_schema(_WALLET, {"balances": [], "health": [down]}, "wallet")
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        {"balances": [], "health": [_HEALTH | {"changed_at_ms": 1}]},
+        {"balances": [], "health": [_ENTRY | {"state": "up"}]},
+        {"balances": [], "health": [_ENTRY | {"reason": "retCode 10003: API key is invalid"}]},
+        {"balances": [_ITEM | {"health": _ENTRY}]},
+    ],
+    ids=["partial", "unknown_state", "open_reason", "on_a_balance_item"],
+)
+def test_wallet_health_refuses_a_partial_entry_an_open_code_or_a_balance_item(
+    frame: dict[str, Any],
 ) -> None:
     with pytest.raises(AssertionError, match="violates"):
-        check_schema(_WALLET, {"balances": [_ITEM | {"health": health}]}, "wallet")
+        check_schema(_WALLET, frame, "wallet")
 
 
 def test_the_monitor_serves_exactly_the_contract_shapes() -> None:
@@ -92,6 +123,15 @@ def test_the_monitor_serves_exactly_the_contract_shapes() -> None:
     assert view is not None
     rest, schema = view.model_dump(mode="json"), _SCHEMAS["AccountHealth"]["properties"]
     assert set(rest) == set(schema) and [s.value for s in HealthState] == schema["state"]["enum"]
+    reasons = list(get_args(HealthReason))
+    assert reasons == schema["reason"]["enum"] == _WS_ENTRY["properties"]["reason"]["enum"]
     assert api.AccountHealth.model_validate(rest).state == "degraded"
     assert CONNECTION_STATE[view.state] == "degraded"
-    check_schema(_WALLET, {"balances": [_ITEM | {"health": view.ws_fields()}]}, "wallet")
+    check_schema(_WALLET, {"balances": [], "health": [view.ws_entry(ACC)]}, "wallet")
+
+
+def test_the_order_entry_reasons_are_the_documented_closed_set() -> None:
+    text = _GATE_DOC.read_text(encoding="utf-8")
+    section = text[text.index("**8.4.1 Order-entry gate") : text.index("### 8.5 ")]
+    documented = re.findall(r"^\| `([a-z_]+)` +\| E\d\d-", section, flags=re.MULTILINE)
+    assert documented == list(get_args(OrderEntryReason))
