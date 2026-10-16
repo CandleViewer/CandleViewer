@@ -676,20 +676,39 @@ async def test_a_reposition_closes_the_old_source_even_if_its_caller_is_cancelle
     old = SlowClose(every_second(3))
     r = rig([], end_s=5, speed=STEP, stream=old)
     async with r.clock as clock:
-        moving = asyncio.ensure_future(clock.reposition(ListStream([]), at_us=T0 + SECOND))
+        moving = asyncio.ensure_future(clock.reposition(new := ListStream([]), at_us=T0 + SECOND))
         await settle()
         moving.cancel()
         await settle()
         destroying = asyncio.ensure_future(clock.aclose())  # the session is destroyed meanwhile
         await settle()
-        assert not destroying.done()  # fix round 2: a destroy waits for that close too
+        waiting, live_closed = not destroying.done(), new.closes  # while that close wedges
         gate.set()
         await destroying
+        assert (waiting, live_closed) == (True, 1)  # round 2 waits; round 3 closes the live first
         assert moving.cancelled() and old.closes == 1
 
 
 def _sample(name: str) -> float:
     return REGISTRY.get_sample_value(name) or 0.0
+
+
+class GatedStream(ListStream):
+    """Parks the read of item `at` until `gate` is set; closing it wakes that read at the end."""
+
+    def __init__(self, items: Sequence[ReplayItem], *, at: int) -> None:
+        super().__init__(items)
+        self.at, self.gate = at, asyncio.Event()
+
+    async def __anext__(self) -> ReplayItem:
+        if self._next == self.at:
+            await self.gate.wait()
+        return await super().__anext__()
+
+    async def aclose(self) -> None:
+        await super().aclose()
+        self.gate.set()
+        await asyncio.sleep(0)  # a real close awaits: the woken read runs meanwhile
 
 
 class SpeedSink(RecordingSink):
@@ -769,17 +788,21 @@ async def test_switching_from_unbounded_back_to_paced_paces_from_the_event_in_fl
 async def test_a_speed_change_while_behind_carries_the_lag_and_never_rescales_it(
     to: float, lag_s: float, booked: float, edges: list[bool]
 ) -> None:
-    """Fix round 2 (#2723 F1): 10x to 1x while 0.25 s behind re-scaled the lag to the new speed
-    and booked 2.40 s (5.90 s for 0.6 s). A paced change now takes effect from the pending
-    event's due time, so the lag carries over as it is."""
+    """Fix round 2 (#2723 F1): 10x to 1x 0.25 s behind re-scaled the lag (2.40 s booked; 5.90 s
+    at 0.6 s); it now carries over from the pending event's due time. Round 3: the next rate
+    window counts only new lag, about 1.0 at 0.6 s, where 0.5 counted the carried lag again."""
     time = FakeTime()
     sink = SpeedSink(time, nth=5, speed=to, lag_s=lag_s)
-    items = [trade(i * 100_000, trade_id=f"t{i}") for i in range(10)]
-    r = rig(items, end_s=1, speed=10.0, time=time, sink=sink)
-    sink.clock = r.clock
+    items = [trade(i * 100_000, trade_id=f"t{i}") for i in range(30)]
+    r = rig(items, end_s=3, speed=10.0, time=time, sink=sink)
+    sink.clock, ratios = r.clock, []
     async with r.clock as clock:
-        await clock.play()
+        task = clock.play()
+        while not task.done():
+            await asyncio.sleep(0)
+            ratios.append(clock.stats().achieved_ratio)
     assert (r.clock.stats().backpressure_s, r.obs.edges) == (pytest.approx(booked, abs=1e-5), edges)
+    assert next((x for x in ratios if x is not None), 1.0) == pytest.approx(1.0)
 
 
 @pytest.mark.parametrize(("speed", "to"), [(1.0, 10.0), (UNBOUNDED, 10.0), (1.0, STEP)])
@@ -837,3 +860,61 @@ async def test_a_step_the_sink_failed_on_leaves_its_event_for_the_next_step() ->
             await clock.step_events(5)
         assert await clock.step_events(5) == "range_end"
     assert r.sink.events == every_second(5)
+
+
+async def test_a_speed_change_during_a_parked_read_carries_the_lag() -> None:
+    """Fix round 3: 10x to 1x 0.25 s behind, during a parked read, booked 2.40 s; now nothing."""
+    stream = GatedStream([trade(i * 100_000, trade_id=f"t{i}") for i in range(10)], at=5)
+    r = rig([], end_s=1, speed=10.0, stream=stream)
+    async with r.clock as clock:
+        task = clock.play()
+        await settle()
+        r.time.advance(0.25)
+        clock.set_speed(1.0)
+        stream.gate.set()
+        assert await task == "range_end"
+    assert r.clock.stats().backpressure_s == pytest.approx(0.0, abs=1e-5)
+
+
+@pytest.mark.parametrize(("nth", "to"), [(90, 1.0), (60, 0.1)])
+async def test_a_speed_change_at_the_time_slice_yield_carries_the_lag(nth: int, to: float) -> None:
+    """Fix round 3: with nothing pending (the 2 ms yield), 100x to 1x booked about 9 s for 0.09 s
+    of lag, and to 0.1x 59 s. Once drained, a change applies at once (`now_us()` reads it)."""
+    time, script = FakeTime(), [(nth, to), (200, 100.0)]
+    items = [trade(i * 1_000, trade_id=f"t{i:03}") for i in range(200)]
+    r = rig(items, end_s=1, speed=100.0, time=time, sink=BusySink(time))
+    async with r.clock as clock:
+        task = clock.play()
+        while not task.done():  # it runs at the clock's yields, with nothing pending
+            await asyncio.sleep(0)
+            if script and len(r.sink.events) >= script[0][0]:
+                clock.set_speed(script.pop(0)[1])
+    assert (task.result(), script) == ("range_end", [])
+    assert r.clock.stats().backpressure_s == pytest.approx(0.0, abs=1e-5)
+
+
+async def test_a_destroy_during_a_parked_read_reports_no_false_range_end() -> None:
+    """Pin: playback is cancelled before the source closes, else B12 hears a false RANGE_END."""
+    stream = GatedStream(every_second(5), at=1)
+    r = rig([], end_s=5, speed=UNBOUNDED, stream=stream)
+    async with r.clock as clock:
+        clock.play()
+        await settle()
+    assert (r.obs.stops, stream.closes) == ([], 1)
+
+
+async def test_a_pause_drops_a_speed_change_still_waiting_for_an_item() -> None:
+    """A change left pending by a pause is dropped: applied later, it booked the pause as lag."""
+    stream = GatedStream(every_second(5), at=2)
+    r = rig([], end_s=5, speed=10.0, stream=stream)
+    async with r.clock as clock:
+        clock.play()
+        await settle()
+        pausing = asyncio.ensure_future(clock.pause())
+        await settle()
+        clock.set_speed(1.0)
+        stream.gate.set()
+        await pausing
+        r.time.advance(100.0)
+        assert await clock.play() == "range_end"
+    assert r.clock.stats().backpressure_s == 0.0

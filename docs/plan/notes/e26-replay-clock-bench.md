@@ -42,7 +42,8 @@ E26-T02's producer (#2368). On this in-memory tier it blocks the loop for about 
 start, which breaks C-2.17's 50 ms cap; that is bug #2731. The real hot and cold tiers await I/O
 between batches, so their stall may be shorter; #2731 asks for both to be measured.
 
-Caveat: ~100 ms mid-run stalls seen in review runs are cyclic GC over the bench's heap (#2731).
+Caveat: the concurrency review reported ~100 ms mid-run stalls (7 of 10 runs) as cyclic GC over
+the bench heap (#2731); the code review saw at most 8.2 ms, at a different load.
 
 An earlier run on the same laptop, before this round's fixes, recorded 0.999 at 100x and 512 k/s
 unbounded. Its load was not recorded, so it is not comparable, and it is not claimed as an
