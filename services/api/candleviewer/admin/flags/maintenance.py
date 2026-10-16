@@ -1,9 +1,10 @@
 """Maintenance mode control plane (E42-T03, module M21).
 
 Enforcement is synchronous code, never a statechart (C-2.21): `MaintenanceGate` is a
-process-wide boolean that the order-entry check (`api.order_entry_gate`) consults before any OMS
-work, so refusing is structural, not best effort. It is engaged while `maintenance.mode` **or**
-`killswitch.order_entry` is on, and while either is unknown: it starts engaged and stays engaged
+process-wide boolean, and its `refusal()` adapter is the first check of the composed order-entry
+gate (`domain.order_entry.OrderEntryGate`, #837 Q5), consulted before any OMS work, so refusing
+is structural, not best effort. While `maintenance.mode` **or** `killswitch.order_entry` is on,
+or either is unknown, it refuses with `reason="maintenance"`: it starts engaged and stays engaged
 when the store or a row cannot be read (fail closed, D1).
 
 `MaintenanceController` keeps the gate in step: `gate_hook` runs first on `FlagWriter`'s change
@@ -41,19 +42,14 @@ KILL_ORDER_ENTRY: Final = "killswitch.order_entry"
 GATE_FLAGS: Final = (MAINTENANCE_MODE, KILL_ORDER_ENTRY)
 REFRESH_S: Final = KILLSWITCH_TTL_S
 EFFECT_TIMEOUT_S: Final = 1.0  # each; two fit the hook bound if the store and lock are prompt
-#: The refusal the gate hands the shared order-entry gate while it is engaged (#837 Q5).
-MAINTENANCE_REFUSAL: Final = OrderEntryRefusal(
-    "maintenance", "Maintenance mode is on; order entry is paused."
-)
+#: The refusal the gate hands the shared order-entry gate while it is engaged (#837 Q5). The
+#: detail is neutral: the order kill switch and an unreadable store engage the gate too.
+MAINTENANCE_REFUSAL: Final = OrderEntryRefusal("maintenance", "Order entry is paused.")
 
 
 def logger() -> structlog.stdlib.BoundLogger:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)  # type: ignore[no-any-return]  # structlog returns Any
-
-
-class OrderEntryPausedError(Exception):
-    """Order acceptance is refused while the gate is engaged (`403 trading_disabled`)."""
 
 
 class MaintenanceGate:
@@ -70,10 +66,6 @@ class MaintenanceGate:
     def set(self, engaged: bool) -> None:
         self._engaged = engaged
         maintenance_mode_gauge.set(1 if engaged else 0)
-
-    def check(self) -> None:
-        if self._engaged:
-            raise OrderEntryPausedError("order entry is paused")
 
     def refusal(self, account_id: UUID | None = None) -> OrderEntryRefusal | None:
         """The `OrderEntryCheck` adapter: `reason="maintenance"` while engaged, whichever flag

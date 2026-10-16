@@ -2,8 +2,9 @@
 
 The `flag` label (not `key`, which SR-125's `DISALLOWED_LABEL_NAMES` refuses) only ever holds a
 registry key, a closed set of about 16 reviewed values (unknown keys are refused before any
-series is touched); `result` is one of the fixed write outcomes. Both are bounded and carry no
-personal data; the series are declared in `observability/metrics_catalogue.py`.
+series is touched); `result` is one of the fixed write outcomes; `reason` is the closed
+order-entry refusal set. All are bounded and carry no personal data; the series are declared in
+`observability/metrics_catalogue.py`.
 """
 
 from __future__ import annotations
@@ -44,6 +45,14 @@ maintenance_mode_gauge = Gauge(
     "cv_maintenance_mode", "1 while the order gate is engaged (maintenance or order kill switch)."
 )
 
+#: Refusals by the composed order-entry gate (#837 Q5), counted at the API edge
+#: (`api.order_entry_gate`). `reason` is the closed `RefusalReason` set (4 values).
+order_entry_refusals_total = Counter(
+    "cv_order_entry_refusals_total",
+    "Orders refused by the order-entry gate before any OMS work, per refusal reason.",
+    ["reason"],
+)
+
 EXPORTED_NAMES: Final = frozenset(
     {
         "cv_feature_flag_evaluations_total",
@@ -51,6 +60,7 @@ EXPORTED_NAMES: Final = frozenset(
         "cv_feature_flag_changes_total",
         "cv_flag_push_latency_seconds",
         "cv_maintenance_mode",
+        "cv_order_entry_refusals_total",
     }
 )
 

@@ -15,7 +15,6 @@ from candleviewer.admin.flags.maintenance import (
     AlgoCanceller,
     MaintenanceController,
     MaintenanceGate,
-    OrderEntryPausedError,
     RecorderControl,
     chain_hooks,
 )
@@ -70,7 +69,6 @@ __all__ = [
     "FlagsWriteDenied",
     "MaintenanceController",
     "MaintenanceGate",
-    "OrderEntryPausedError",
     "Prepare",
     "RecorderControl",
     "Resolution",

@@ -26,7 +26,6 @@ from candleviewer.admin.flags import (
     FlagWriter,
     MaintenanceController,
     MaintenanceGate,
-    OrderEntryPausedError,
     chain_hooks,
     default_registry,
 )
@@ -34,11 +33,12 @@ from candleviewer.admin.flags.maintenance import EFFECT_TIMEOUT_S, REFRESH_S
 from candleviewer.admin.flags.metrics import EXPORTED_NAMES, maintenance_mode_gauge
 from candleviewer.admin.flags.push import FlagPush, Session
 from candleviewer.admin.flags.writes import WRITE_AWAIT_TIMEOUT_S
-from candleviewer.api.order_entry_gate import order_entry_refusal
+from candleviewer.api.order_entry_gate import OrderEntryGate, order_entry_refusal
 from candleviewer.audit.access import AuditPrincipal
 from tests.unit.admin.flag_fakes import Clock, FakeAudit, FakeFlagStore, FakeStepUp, FakeUsers
 
 _OWNER = AuditPrincipal(user_id=UUID(int=1), username="owner", permissions=frozenset({"*"}))
+_ACCOUNT = UUID(int=2)
 
 
 class _Algos:
@@ -125,11 +125,11 @@ class _Rig:
 
 
 def _orders_app(gate: MaintenanceGate, oms_calls: list[str]) -> FastAPI:
-    app = FastAPI()
+    app, entry_gate = FastAPI(), OrderEntryGate(gate)
 
     @app.post("/orders")
     async def accept() -> JSONResponse:
-        refused = order_entry_refusal((gate,), None)
+        refused = order_entry_refusal(entry_gate, _ACCOUNT)
         if refused is not None:
             return refused
         oms_calls.append("submit")
@@ -174,11 +174,9 @@ async def test_entering_maintenance_cancels_algos_and_notifies_once() -> None:
 
 
 async def test_the_gate_starts_engaged_and_opens_once_both_flags_are_read() -> None:
-    gate = MaintenanceGate()
-    with pytest.raises(OrderEntryPausedError):
-        gate.check()
+    assert MaintenanceGate().refusal(_ACCOUNT) is not None
     rig = await _Rig().start()
-    rig.controller.gate.check()
+    assert rig.controller.gate.refusal(_ACCOUNT) is None
     assert not rig.controller.gate.engaged
 
 

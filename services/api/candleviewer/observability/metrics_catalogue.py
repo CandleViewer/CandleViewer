@@ -2064,6 +2064,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=256,
         exported=True,
     ),
+    _s(
+        "cv_order_entry_refusals_total",
+        "counter",
+        "refusals",
+        ("reason",),
+        "Orders refused by the order-entry gate before any OMS work, per refusal reason.",
+        "dashboard only (a maintenance window shows here)",
+        _L,
+        "E42",
+        max_series=4,
+        exported=True,
+    ),
     # --- Audit verify job (#2111, E09-X04 R-5) ------------------------------
     _s(
         "cv_audit_verify_last_ok_timestamp_seconds",
