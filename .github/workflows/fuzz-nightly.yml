@@ -63,7 +63,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: ".nvmrc"
-      - run: corepack enable && corepack prepare pnpm@12.5.1 --activate
+      # The corepack bundled with Node 20.19.5 cannot unpack pnpm 12 (#2952), so upgrade it
+      # first, as _job-js.yml does.
+      - run: npm install -g corepack@latest && corepack enable && corepack prepare pnpm@12.5.1 --activate
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: CVWB mutation fuzz (vitest fuzz project)
         run: pnpm --filter @candleviewer/protocol test:fuzz
