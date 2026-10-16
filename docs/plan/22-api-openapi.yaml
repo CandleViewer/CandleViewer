@@ -1113,16 +1113,27 @@ paths:
       operationId: updateUser
       summary: Update a user (status, roles, MFA requirement, display name)
       description: >
-        Requires step-up `users`. The owner cannot demote or disable their own account, and the
-        last active `owner` is protected (`409 conflict`). `status` moves only between `active`
-        and `disabled`; enabling never restores grants or sessions and cancels a pending purge.
-        `mfa_required: false` is refused (`400 validation_failed`, C-12.2). A stale `If-Match`
-        is `412 version_conflict`. Audited write-ahead; when the audit record cannot be written
-        nothing changes (`503 audit_unavailable`).
+        Requires step-up `users`. A change to the caller's own roles or status is refused
+        (`403 forbidden`), and the last active `owner` is protected (`409 conflict`). `status`
+        moves only between `active` and `disabled`. Setting `disabled` runs the same cascade as
+        `DELETE /users/{userId}`: within 5 seconds every session of the user is invalid (REST
+        answers `401 unauthenticated`; sockets get `bye` with `user_disabled` and close `4403`,
+        23-ws-protocol.md section 9.5), every account grant is soft-revoked, the user's rules
+        are disarmed and an open invite is revoked. Positions and orders are never flattened or
+        cancelled, and the change is audited as `users.disable` with `positions_decision: leave`;
+        while the user's open-position state is unavailable a disable must carry
+        `acknowledge_unknown_positions=true`, otherwise `409 positions_unknown`. Enabling never
+        restores grants or sessions and cancels a pending purge. `mfa_required: false` is
+        refused (`400 validation_failed`, C-12.2). A stale `If-Match` is
+        `412 version_conflict`. Audited write-ahead; when the audit record cannot be written
+        nothing changes (`503 audit_unavailable`). A call refused for a forbidden role or a
+        self-target is audited too.
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters:
-        [{ $ref: "#/components/parameters/IfMatch" }, { $ref: "#/components/parameters/CsrfToken" }]
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/AcknowledgeUnknownPositions"
       requestBody:
         required: true
         content:
@@ -1160,8 +1171,8 @@ paths:
         the last active owner (`409 conflict`). Audited write-ahead as `users.disable` with one
         `auth.session_revoked` per session; when the audit record cannot be written nothing
         changes (`503 audit_unavailable`). Disabling a disabled user is a no-op `204` with no
-        new audit record. Passing `?purge=true` additionally anonymises PII after the 90-day
-        retention window.
+        new audit record. A call refused for a forbidden role or a self-target is audited too.
+        Passing `?purge=true` additionally anonymises PII after the 90-day retention window.
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters:
@@ -1186,10 +1197,12 @@ paths:
       operationId: setUserRoles
       summary: Replace a user's role set
       description: >
-        Requires step-up `users`. The last active `owner` cannot be demoted (`409 conflict`,
-        re-checked under a lock on the owner rows). Audited as `roles.grant` / `roles.revoke`;
-        when the audit record cannot be written nothing changes (`503 audit_unavailable`). Live
-        sockets of the user are re-evaluated (23-ws-protocol.md section 9.5).
+        Requires step-up `users`. The caller's own roles cannot be changed (`403 forbidden`),
+        and the last active `owner` cannot be demoted (`409 conflict`, re-checked under a lock
+        on the owner rows). Audited as `roles.grant` / `roles.revoke`; when the audit record
+        cannot be written nothing changes (`503 audit_unavailable`). A call refused for a
+        forbidden role or a self-target is audited too. Live sockets of the user are
+        re-evaluated (23-ws-protocol.md section 9.5).
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -1257,7 +1270,8 @@ paths:
         own grants cannot be changed (`403 forbidden`), and a user that is not `active` answers
         `409 conflict`. An `exchange_account_id` that does not exist is `404 not_found`.
         Audited write-ahead as `users.access_change`; when the audit record cannot be written
-        nothing changes (`503 audit_unavailable`).
+        nothing changes (`503 audit_unavailable`). A call refused for a forbidden role or a
+        self-target is audited too.
       x-rbac: { permissions: [users:write], scope: none }
       x-idempotency: optional
       parameters:
@@ -1334,8 +1348,9 @@ paths:
         Requires step-up `users`. Only an active session of `userId` is addressable; an unknown
         or ended session, or another user's session, is `404 not_found`. Audited write-ahead as
         `auth.session_revoked`; when the audit record cannot be written nothing changes
-        (`503 audit_unavailable`). Within 5 seconds a REST call on the session answers
-        `401 unauthenticated` and its sockets close `4401` (23-ws-protocol.md section 9.5).
+        (`503 audit_unavailable`). A call refused for a forbidden role is audited too. Within
+        5 seconds a REST call on the session answers `401 unauthenticated` and its sockets
+        close `4401` (23-ws-protocol.md section 9.5).
       x-rbac: { permissions: [users:write], scope: none }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
@@ -9933,7 +9948,12 @@ components:
       name: acknowledge_unknown_positions
       in: query
       required: false
-      description: "Must be `true` while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`."
+      description: >
+        Must be `true` when the request disables the user or removes one of their account
+        grants while the user's open-position state is unavailable: the owner accepts that
+        positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is
+        a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries
+        no body, and the disable and unbind routes share one parameter (decision O2 on #965).
       schema: { type: boolean, default: false }
     MethodId:
       name: methodId

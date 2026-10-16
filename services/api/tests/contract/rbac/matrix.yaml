@@ -1482,14 +1482,14 @@ operations:
     scope: none
     public: false
     state: not_mounted
-    reason: declared in 22-api-openapi.yaml (E42-T04 S1); the admin-sessions slice mounts it
+    reason: declared in 22-api-openapi.yaml (E42-T04 S1); E42-T09 S12 (admin sessions) mounts it
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   DELETE /users/{userId}/sessions/{sessionId}:
     permissions: ['users:write']
     scope: none
     public: false
     state: not_mounted
-    reason: declared in 22-api-openapi.yaml (E42-T04 S1); the admin-sessions slice mounts it
+    reason: declared in 22-api-openapi.yaml (E42-T04 S1); E42-T09 S12 (admin sessions) mounts it
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /watchlists:
     permissions: ['workspaces:read']

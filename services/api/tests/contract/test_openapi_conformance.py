@@ -118,7 +118,22 @@ _LIFECYCLE_MUTATIONS = [
     ("/users/{userId}/account-access", "put"),
     ("/users/{userId}/sessions/{sessionId}", "delete"),
 ]
+# SR-055 and AC6: role, status and grant changes never target the acting user.
+_SELF_TARGET_REFUSED = [
+    ("/users/{userId}", "patch"),
+    ("/users/{userId}", "delete"),
+    ("/users/{userId}/roles", "put"),
+    ("/users/{userId}/account-access", "put"),
+]
+# O2 and AC7: every disable or unbind path takes the acknowledgement.
+_POSITION_ACK_OPS = [
+    ("/users/{userId}", "patch"),
+    ("/users/{userId}", "delete"),
+    ("/users/{userId}/account-access", "put"),
+]
 _CITED_CODE = re.compile(r"`(\d{3}) ([a-z_]+)`")
+_SELF_TARGET_403 = re.compile(r"caller's own [^.]*\(`403 forbidden`\)")
+_REFUSAL_AUDITED = re.compile(r"refused for a forbidden role[^.]* is audited too")
 
 
 def _registered(spec: dict[str, Any]) -> dict[str, int]:
@@ -160,17 +175,71 @@ def test_lifecycle_mutation_cites_only_registered_codes_with_their_status(
     assert all(registered.get(code) == int(status) for status, code in cited), cited
 
 
-def test_admin_user_sessions_mirror_me_sessions_without_token_material(
-    spec: dict[str, Any],
+@pytest.mark.parametrize(("path", "method"), _LIFECYCLE_MUTATIONS)
+def test_lifecycle_mutation_declares_every_status_it_cites(
+    spec: dict[str, Any], path: str, method: str
 ) -> None:
+    op = spec["paths"][path][method]
+    cited = {status for status, _ in _CITED_CODE.findall(op["description"])}
+    assert cited <= set(op["responses"]), cited - set(op["responses"])
+
+
+@pytest.mark.parametrize(
+    ("path", "method", "statuses"),
+    [
+        ("/users/{userId}", "patch", {"200", "400", "401", "403", "404", "409", "412", "503"}),
+        ("/users/{userId}", "delete", {"204", "400", "401", "403", "404", "409", "503"}),
+        ("/users/{userId}/roles", "put", {"200", "400", "401", "403", "404", "409", "503"}),
+        (
+            "/users/{userId}/account-access",
+            "put",
+            {"200", "400", "401", "403", "404", "409", "503"},
+        ),
+        ("/users/{userId}/sessions/{sessionId}", "delete", {"204", "401", "403", "404", "503"}),
+    ],
+)
+def test_lifecycle_mutation_declares_exactly_the_planned_statuses(
+    spec: dict[str, Any], path: str, method: str, statuses: set[str]
+) -> None:
+    assert set(spec["paths"][path][method]["responses"]) == statuses
+
+
+@pytest.mark.parametrize(("path", "method"), _SELF_TARGET_REFUSED)
+def test_role_status_and_grant_change_refuses_a_self_target_with_403(
+    spec: dict[str, Any], path: str, method: str
+) -> None:
+    assert _SELF_TARGET_403.search(spec["paths"][path][method]["description"])
+
+
+@pytest.mark.parametrize(("path", "method"), _LIFECYCLE_MUTATIONS)
+def test_lifecycle_mutation_audits_a_refusal_for_a_forbidden_role(
+    spec: dict[str, Any], path: str, method: str
+) -> None:
+    assert _REFUSAL_AUDITED.search(spec["paths"][path][method]["description"])
+
+
+@pytest.mark.parametrize("method", ["delete", "patch"])
+def test_disable_through_delete_or_patch_states_the_sr029_cascade(
+    spec: dict[str, Any], method: str
+) -> None:
+    named = set(re.findall(r"`[^`]+`", spec["paths"]["/users/{userId}"][method]["description"]))
+    assert {"`user_disabled`", "`4403`", "`users.disable`"} <= named
+
+
+def test_admin_user_session_listing_is_owner_read_only(spec: dict[str, Any]) -> None:
     listing = spec["paths"]["/users/{userId}/sessions"]["get"]
     assert listing["x-rbac"] == {"permissions": ["users:read"], "scope": "none"}
-    items = listing["responses"]["200"]["content"]["application/json"]["schema"]
-    assert items["properties"]["items"]["items"] == {"$ref": "#/components/schemas/UserSession"}
+
+
+def test_admin_user_session_listing_reuses_the_me_sessions_item(spec: dict[str, Any]) -> None:
+    ok = spec["paths"]["/users/{userId}/sessions"]["get"]["responses"]["200"]
+    items = ok["content"]["application/json"]["schema"]["properties"]["items"]
+    assert items["items"] == {"$ref": "#/components/schemas/UserSession"}
+
+
+def test_user_session_item_carries_no_token_material(spec: dict[str, Any]) -> None:
     session_fields = spec["components"]["schemas"]["UserSession"]["properties"]
     assert not {f for f in session_fields if "token" in f or "hash" in f}
-    revoke = spec["paths"]["/users/{userId}/sessions/{sessionId}"]["delete"]
-    assert {"204", "404"} <= set(revoke["responses"])
 
 
 def test_get_user_returns_an_etag_for_if_match(spec: dict[str, Any]) -> None:
@@ -178,9 +247,7 @@ def test_get_user_returns_an_etag_for_if_match(spec: dict[str, Any]) -> None:
     assert ok["headers"]["ETag"] == {"$ref": "#/components/headers/ETag"}
 
 
-@pytest.mark.parametrize(
-    ("path", "method"), [("/users/{userId}", "delete"), ("/users/{userId}/account-access", "put")]
-)
+@pytest.mark.parametrize(("path", "method"), _POSITION_ACK_OPS)
 def test_disable_and_unbind_take_the_unknown_positions_acknowledgement(
     spec: dict[str, Any], path: str, method: str
 ) -> None:
