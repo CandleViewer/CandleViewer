@@ -7271,8 +7271,8 @@ paths:
     post:
       tags: [admin]
       operationId: exportAuditLog
-      summary: Export an audit slice as signed NDJSON
-      description: Produces a downloadable NDJSON bundle with a detached signature over the file digest, for offline retention. Export itself is audited.
+      summary: Export an audit slice as signed NDJSON (owner, step-up `audit`)
+      description: Produces a downloadable NDJSON bundle with a detached signature over the file digest, for offline retention. Export itself is audited. Requires an `audit` step-up (SR-025, 5-minute grace); until the session holds one the route answers `403 step_up_required` with `action_class` set to `audit`.
       x-rbac: { permissions: [audit:export], scope: none }
       x-idempotency: optional
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -8186,7 +8186,7 @@ paths:
         fingerprints. No audit record carries `action_summary`, `target`, a request body, the
         password or the code.
 
-        **Binding (no-grace classes).** For `live_enablement` and `killswitch` the one-shot grant
+        **Binding (no-grace classes).** For each no-grace class the one-shot grant
         is bound to the challenged request: its method, its path including any query string, and
         its canonical JSON body. The fingerprint is the hex SHA-256 of the method, a line feed,
         the raw request target (path and query string exactly as received, with no
@@ -8219,7 +8219,7 @@ paths:
 
         Grants a **5-minute** server-side grace for `action_class` on the current session
         (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the
-        earlier 15). `live_enablement` and `killswitch` are no-grace classes: the response is
+        earlier 15). `live_enablement`, `killswitch` and `backups` are no-grace: the response is
         `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the
         session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints
         that require elevation return `403` with `code: step_up_required` until this
@@ -8242,8 +8242,8 @@ paths:
                 challenge_id:
                   description: >
                     The `challenge_id` of the `403 step_up_required` being answered (#2304).
-                    Required for a no-grace class (`live_enablement` or `killswitch`, named by
-                    the live challenge or by `action_class`): omitting it is
+                    Required for a no-grace class (`live_enablement`, `killswitch` or `backups`,
+                    named by the live challenge or by `action_class`): omitting it is
                     `400 validation_failed` with
                     `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a
                     grace class: without it the server uses the session's live challenge. This
@@ -8263,8 +8263,21 @@ paths:
                     Optional cross-check. The server elevates the class its last
                     `403 step_up_required` challenged on this session; a different
                     value is `400`. Without a pending challenge it is required.
+                    `audit` gates the audit-log export (`exportAuditLog`); `backups` gates a
+                    backup restore (`restoreBackup`), one fresh code per restore.
                   type: string
-                  enum: [keys, users, live_enablement, killswitch, risk_caps, recorder, flags]
+                  enum:
+                    [
+                      keys,
+                      users,
+                      live_enablement,
+                      killswitch,
+                      risk_caps,
+                      recorder,
+                      flags,
+                      audit,
+                      backups,
+                    ]
       responses:
         "200":
           description: Elevated.
@@ -9632,12 +9645,14 @@ paths:
     post:
       tags: [admin]
       operationId: restoreBackup
-      summary: Restore from a backup (owner, step-up)
+      summary: Restore from a backup (owner, step-up `backups`)
       description: >
         Restores into the running deployment. Trading is force-disabled for the duration and
         must be re-enabled explicitly afterwards, so a restore can never silently resume
         order flow against stale OMS state (21-database-schema.md section 8.2).
-        Asynchronous.
+        Asynchronous. `backups` is a no-grace step-up class: each restore spends a fresh code,
+        and without one the route answers `403 step_up_required` with `action_class` set to
+        `backups`.
       x-rbac: { permissions: [backups:write], scope: none }
       parameters:
         - $ref: "#/components/parameters/CsrfToken"

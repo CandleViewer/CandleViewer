@@ -39,7 +39,12 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
-from candleviewer.auth.step_up import ACTION_CLASSES, PositionStateProvider, StepUpService
+from candleviewer.auth.step_up import (
+    ACTION_CLASSES,
+    NO_GRACE_ACTION_CLASSES,
+    PositionStateProvider,
+    StepUpService,
+)
 
 _PROBLEM = "application/problem+json"
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -126,9 +131,14 @@ async def require_elevation_for(
     auth: _AuthLike, session_id: str, action_class: str
 ) -> JSONResponse | None:
     """The `is_dangerous` decision-point hook (E09-T03 routes call this):
-    None when elevated, else the 403 problem to return."""
+    None when elevated, else the 403 problem to return. A no-grace class has
+    no window to check: the request spends the one-shot grant of a fresh code,
+    so each gated request needs its own (#2751)."""
     try:
-        await auth.step_up.require_elevation(session_id, action_class)
+        if action_class in NO_GRACE_ACTION_CLASSES:
+            await auth.step_up.consume_single_use(session_id, action_class)
+        else:
+            await auth.step_up.require_elevation(session_id, action_class)
     except SessionReadOnly as exc:
         return readonly_problem(exc)
     except StepUpRequired as exc:
@@ -158,9 +168,22 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("GET", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("POST", re.compile(r"^/risk/lockouts/[^/]+/override$"), "risk_caps"),
+    # #2751 (SR-025, 04 §7.2.2 rows 38, 40, 50, 52). Only the export is mounted today.
+    ("PATCH", re.compile(r"^/users/[^/]+$"), "users"),  # updateUser
+    ("DELETE", re.compile(r"^/users/[^/]+$"), "users"),  # deleteUser
+    ("PUT", re.compile(r"^/users/[^/]+/account-access$"), "users"),  # setUserAccountAccess
+    ("POST", re.compile(r"^/admin/audit/export$"), "audit"),  # exportAuditLog
+    # restoreBackup (no-grace): this guard spends the one-shot grant before RBAC and before the
+    # handler validates, so a refused restore costs the code and a retry waits for the next TOTP
+    # step. The handler must not gate again (a second check always fails); its ticket may instead
+    # move this row to HANDLER_GATED_ROUTES and spend the grant after validation. Before it is
+    # mounted, `consume_single_use` must become atomic (a read-modify-write today, so concurrent
+    # restores can share one code: #2798), and the restore's write-ahead audit record must name
+    # the step-up (B16 records no spend: #2799).
+    ("POST", re.compile(r"^/admin/backups/[^/]+/restore$"), "backups"),
 )
 
-#: No-grace classes cannot be gated by path alone: kill-switch *engage* must
+#: These routes cannot be gated by path alone: kill-switch *engage* must
 #: never wait for a code (emergency stop) and switching *to demo* is not
 #: dangerous, so only the handler (body-aware) knows. Each entry is a
 #: declaration that the handler demands a fresh code for its dangerous
@@ -178,7 +201,7 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
 #: registries above (deny-by-default for future tickets).
 DANGEROUS_PATH_PATTERN = re.compile(
     r"^/(admin/)?(users|exchange-accounts/[^/]+/keys|keys|live|kill|trading/kill-switch"
-    r"|session/environment|risk/lockouts|recorder/purge)(/|$)"
+    r"|session/environment|risk/lockouts|recorder/purge|audit|backups)(/|$)"
 )
 
 
