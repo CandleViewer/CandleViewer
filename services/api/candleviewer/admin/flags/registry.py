@@ -28,8 +28,9 @@ import structlog
 FlagValue = bool | int | str
 
 #: `ff_key` of `feature_flags` (21-database-schema.md 3.9) narrowed to at least two segments,
-#: matching the `flagKey` path pattern of `PUT /admin/feature-flags/{flagKey}`.
+#: matching the `flagKey` path pattern of `PUT /admin/feature-flags/{flagKey}` and its maxLength.
 _KEY_RE: Final = re.compile(r"^[a-z0-9]+(\.[a-z0-9_]+){1,3}$")
+KEY_MAX: Final = 80
 
 
 class Category(enum.Flag):
@@ -77,7 +78,8 @@ class Visibility(enum.StrEnum):
 
 
 class UnsafeFlagDefinitionError(Exception):
-    """A flag definition is refused; the process must not start with it."""
+    """A flag definition is refused; the process must not start with it. Not an `AdminError`: it
+    is raised while the registry is built at startup, so no request handler ever maps it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +91,7 @@ class FlagSpec:
     default: FlagValue
     visibility: Visibility
     is_killswitch: bool = False
-    #: Enabling it needs `reason` and `evidence_url` (`trading.live_enabled`, E44-T04 binds it).
+    #: Writing `true` needs an `evidence_url` (`trading.live_enabled`; E44-T04 binds it).
     requires_evidence: bool = False
     variants: tuple[str, ...] = ()
     #: The value while the store cannot be read; `None` means `default`.
@@ -121,7 +123,7 @@ def check_spec(spec: FlagSpec) -> None:
             f"feature flag {spec.key!r} declares gate category {', '.join(_members(denied))!r}, "
             "which no flag may gate: flags never weaken a security control (C-4.14)"
         )
-    if not _KEY_RE.fullmatch(spec.key):
+    if len(spec.key) > KEY_MAX or not _KEY_RE.fullmatch(spec.key):
         raise UnsafeFlagDefinitionError(f"feature flag key {spec.key!r} is malformed")
     if not spec.gates:
         raise UnsafeFlagDefinitionError(f"feature flag {spec.key!r} declares no gate category")
@@ -134,6 +136,13 @@ def check_spec(spec: FlagSpec) -> None:
             )
     if (spec.is_killswitch or spec.requires_evidence) and spec.kind is not FlagKind.BOOLEAN:
         raise UnsafeFlagDefinitionError(f"feature flag {spec.key!r} must be boolean")
+    # Without its class, a kill switch or the live gate would take overrides (D2a, C-4.14).
+    if (
+        (Category.KILL_SWITCH in spec.gates) != spec.is_killswitch
+        or (Category.LIVE_GATE in spec.gates) != spec.requires_evidence
+        or (spec.key.startswith("killswitch.") and not spec.is_killswitch)
+    ):
+        raise UnsafeFlagDefinitionError(f"feature flag {spec.key!r}: its class and gates disagree")
 
 
 def value_matches(spec: FlagSpec, value: object) -> bool:
