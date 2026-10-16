@@ -1,18 +1,19 @@
 """Feature-flag service, write path (E42-T03, module M21).
 
-A write is refused before the store is touched unless it names a known flag, carries `reason`
-and `expected_updated_at`, every value fits the flag's kind, and the store could be read.
-`trading.live_enabled: true` also needs `evidence_url` (E44-T04 binds the evidence; this only
-enforces the precondition). D2: the live gate and kill-switch-class flags take no overrides at
-all, so the gate can never be bypassed per user. The store locks the row and compares
-`updated_at`, so a stale write is a conflict carrying the current flag, never last-write-wins.
+A write locks the flag's row and decides from the row as stored under that lock, never from a
+cached or resolved value (D3b). It demands exactly one step-up elevation, `step_up_class` (an
+unreadable row counts as engaged; this console is never the emergency control), then validates:
+`reason` and `expected_updated_at` are required, values fit the kind, safety flags take no
+overrides (D2a), and an `evidence_url` is an `https` URL without userinfo of at most 2048
+characters, never dereferenced, that enabling `trading.live_enabled` requires. The store then
+compares `updated_at`: a stale write is a conflict carrying the row as it stands now.
 
-Audit (C-2.9): a refusal is one `flags.change` failure record. A write is audited write-ahead:
-the intent record is emitted before `store.write`, and if it cannot be recorded nothing is
-written; the outcome (`ok`, `conflict`, `unavailable`) follows as a second record. States carry
-the value and the user overrides. `maintenance.mode` toggles add `maintenance.enabled|disabled`.
-A committed write drops the cache and runs the change hook with the committed before and after
-rows (the `system` push); a hook failure is logged and never undoes the write.
+Audit (C-2.9): every attempt past RBAC and step-up is one `flags.change` failure record, or a
+write-ahead intent record (if it cannot be recorded, nothing is written) and its outcome. A store
+outage (`503 store_unavailable`) is logged and counted instead, as the audit shares the store
+(SR-125). A real transition of the stored `maintenance.mode` adds `maintenance.enabled|disabled`
+(D1c). A committed write drops the cache and runs the change hook with the locked and committed
+rows; a hook failure is logged and never undoes the write.
 """
 
 from __future__ import annotations
@@ -20,7 +21,8 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
-from typing import Any, Protocol, cast
+from typing import Any, Final, Literal, Protocol, cast
+from urllib.parse import urlsplit
 
 import structlog
 
@@ -34,8 +36,13 @@ from candleviewer.admin.flags.store import FlagWrite, StaleWriteError, StoreUnav
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, ExchangeEnv, Severity
 
-#: Change hook: `(key, before, after)` with the committed rows (the `system` push).
+#: Change hook: `(key, before, after)` with the locked and the committed rows (the `system` push).
 ChangeHook = Callable[[str, StoredFlag | None, StoredFlag], Awaitable[None]]
+StepUpClass = Literal["killswitch", "live_enablement", "flags"]
+#: Demands a fresh elevation of the class for the principal's session; raises to refuse (the
+#: route answers `403 step_up_required` and the auth module audits `auth.step_up_required`).
+StepUp = Callable[[AuditPrincipal, StepUpClass], Awaitable[None]]
+EVIDENCE_URL_MAX: Final = 2048
 
 
 class AuditEmitter(Protocol):
@@ -75,7 +82,7 @@ class FlagValidationError(AdminError, ValueError):
 
 
 class FlagConflictError(AdminError):
-    """`409 conflict`; `current` is the flag as stored now."""
+    """`409 conflict`; `current` is the row as it stands now (rendered for the caller)."""
 
     def __init__(self, current: StoredFlag) -> None:
         super().__init__("conflict")
@@ -87,11 +94,40 @@ def logger() -> structlog.stdlib.BoundLogger:
     return structlog.get_logger(__name__)  # type: ignore[no-any-return]  # structlog returns Any
 
 
+def readable(spec: FlagSpec, row: StoredFlag | None) -> FlagValue | None:
+    """The row's stored value, or `None` when the row is missing or unreadable (unknown)."""
+    return row.value if row is not None and value_matches(spec, row.value) else None
+
+
+def step_up_class(spec: FlagSpec, row: StoredFlag, value: object) -> StepUpClass:
+    """D3a/D3b: the one elevation a write needs, from the key and the row as stored under the
+    write's lock; an unreadable row counts as engaged (and as not enabled)."""
+    stored = readable(spec, row)
+    if spec.is_killswitch and value is False and stored is not False:
+        return "killswitch"
+    if spec.requires_evidence and value is True and stored is not True:
+        return "live_enablement"
+    return "flags"
+
+
+def stored_transition(spec: FlagSpec, before: StoredFlag | None, after: StoredFlag) -> bool:
+    """D1c: a real transition of the stored value. An unknown (unreadable or missing) row to
+    `True` counts, as a boot that finds a stored `True` does; unknown to `False` does not."""
+    was = readable(spec, before)
+    return after.value != was and (was is not None or after.value is True)
+
+
 class FlagWriter:
     def __init__(
-        self, service: FlagService, audit: AuditEmitter, *, on_change: ChangeHook | None = None
+        self,
+        service: FlagService,
+        audit: AuditEmitter,
+        step_up: StepUp,
+        *,
+        on_change: ChangeHook | None = None,
     ) -> None:
-        self._service, self._audit, self._on_change = service, audit, on_change
+        self._service, self._audit, self._step_up = service, audit, step_up
+        self._on_change = on_change
 
     async def set(
         self,
@@ -108,45 +144,49 @@ class FlagWriter:
             "value": value,
             "overrides": _overrides(user_overrides),
             "reason": reason,
-            "evidence_url": evidence_url,
+            "evidence_url": _audited_url(evidence_url),
         }
         audit = _Audit(self._audit, key, principal, request)
         spec = self._service.registry.get(key)
         if spec is None:
+            await self._step_up(principal, "flags")
             await audit.refused(None, "not_found", counted=False)
             raise UnknownFlagError(key)
-        self._service.invalidate()
-        before = await self._service.stored(spec)
-        if before is None:
-            await audit.refused(None, "unavailable")
-            raise StoreUnavailableError("flag store unreadable; nothing written")
-        refusal = _refusal(spec, value, user_overrides, reason, expected_updated_at, evidence_url)
-        if refusal is not None or expected_updated_at is None:
-            refusal = refusal or FlagValidationError("required", "expected_updated_at")
-            await audit.refused(before, refusal.rule)
-            raise refusal
-        # Omitted overrides keep the stored ones; a list replaces them (an empty one clears).
-        kept = before.user_overrides if user_overrides is None else user_overrides
-        change = FlagWrite(
-            key,
-            cast(FlagValue, value),
-            {k: cast(FlagValue, v) for k, v in kept.items()},
-            expected_updated_at,
-            principal.user_id,
-        )
-        await audit.intent(before)  # write-ahead: raises, and nothing is written, if unrecorded
+        locked: list[StoredFlag] = []
+
+        async def prepare(row: StoredFlag) -> FlagWrite:
+            locked.append(row)
+            await self._step_up(principal, step_up_class(spec, row, value))
+            refusal = _refusal(
+                spec, value, user_overrides, reason, expected_updated_at, evidence_url
+            )
+            if refusal is not None or expected_updated_at is None:
+                refusal = refusal or FlagValidationError("required", "expected_updated_at")
+                await audit.refused(row, refusal.rule)
+                raise refusal
+            # Omitted overrides keep the stored ones; a list replaces them (an empty one clears).
+            kept = row.user_overrides if user_overrides is None else user_overrides
+            await audit.intent(row)  # write-ahead: raises, and nothing is written, if unrecorded
+            overrides = {k: cast(FlagValue, v) for k, v in kept.items()}
+            return FlagWrite(
+                key, cast(FlagValue, value), overrides, expected_updated_at, principal.user_id
+            )
+
         try:
-            after = await self._service.store.write(change)
+            after = await self._service.store.write(key, prepare)
         except StaleWriteError as exc:
             self._service.invalidate()
             await audit.outcome(exc.current, None, "conflict")
             raise FlagConflictError(exc.current) from None
-        except StoreUnavailableError:
-            await audit.outcome(before, None, "unavailable")
+        except StoreUnavailableError:  # the audit lives in this store: logged and counted instead
+            flag_changes_total.labels(key, "store_unavailable").inc()
+            phase = "write" if locked else "lock"  # after the lock an intent record may exist
+            logger().warning("feature_flag_write_store_unavailable", key=key, phase=phase)
             raise
+        before = locked[-1]
         self._service.invalidate()
         await audit.outcome(before, after, "ok")
-        if spec.key == MAINTENANCE_MODE and before.value != after.value:
+        if spec.key == MAINTENANCE_MODE and stored_transition(spec, before, after):
             await audit.maintenance(after)
         if self._on_change is not None:
             try:
@@ -174,9 +214,38 @@ def _refusal(
         return FlagValidationError("kind_mismatch", "value")
     if not all(override_matches(spec, v) for v in (overrides or {}).values()):
         return FlagValidationError("kind_mismatch", "overrides")
+    if evidence_url and (rule := _evidence_rule(evidence_url)):
+        return FlagValidationError(rule, "evidence_url")
     if spec.requires_evidence and value is True and not evidence_url:
         return FlagValidationError("gate_evidence_required", "evidence_url")
     return None
+
+
+def _evidence_rule(url: str) -> str | None:
+    """An `https` URL with a host, no userinfo and at most 2048 characters (never fetched)."""
+    if len(url) > EVIDENCE_URL_MAX:
+        return "string_too_long"
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname
+    except ValueError:  # e.g. an unbalanced IPv6 bracket
+        return "https_required"
+    if (
+        parts.scheme.lower() != "https"
+        or not host
+        or any(c.isspace() or not c.isprintable() for c in url)
+    ):
+        return "https_required"
+    return "userinfo_not_allowed" if "@" in parts.netloc else None
+
+
+def _audited_url(url: str | None) -> str | None:
+    """`evidence_url` as audited: credentials in its userinfo never reach the record."""
+    try:
+        has_userinfo = url is not None and "@" in urlsplit(url).netloc
+    except ValueError:
+        has_userinfo = url is not None and "@" in url
+    return "<redacted:userinfo>" if has_userinfo else url
 
 
 def _overrides(overrides: Mapping[uuid.UUID, object] | None) -> dict[str, object] | None:
