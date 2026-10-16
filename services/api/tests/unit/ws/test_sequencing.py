@@ -30,6 +30,7 @@ from candleviewer.ws.permissions import VersionedSnapshot
 from candleviewer.ws.sequencing import (
     HEATMAP_SNAPSHOT_MAX_COLUMNS,
     MAX_OUTBOUND_FRAME_BYTES,
+    RESYNC_MAX_PER_WINDOW,
     SNAP_REASONS,
     SequencingHub,
     SnapshotBody,
@@ -344,7 +345,37 @@ def test_client_resync_rejects_malformed_and_unknown(ch: Any, p: Any, code: str)
     conn.take()
     conn.emitter.client_resync(conn.authz, {"t": "resync", "id": "c-1", "ch": ch, "p": p})
     (err,) = conn.take()
-    assert err["p"]["code"] == code
+    assert (err["p"]["code"], err.get("ch")) == (code, ch)  # a topic name is echoed, none is not
+
+
+@pytest.mark.parametrize(
+    "ch",
+    [
+        pytest.param("Bad Topic", id="bad-name"),
+        pytest.param("t" * 10_000, id="10000-chars"),
+        pytest.param("book.BTCUSDT.50\n", id="trailing-newline"),
+        pytest.param(5, id="int"),
+        pytest.param({"a": 1}, id="object"),
+    ],
+)
+def test_client_resync_with_a_non_topic_ch_is_refused_without_echoing_it(ch: Any) -> None:
+    """#2572: the envelope `ch` is a topic name (§13.1), so a `resync` whose `ch` is not one gets
+    `err invalid_options` (`field: ch`) and no `ch`. It takes no snapshot, spends none of the
+    five-per-minute budget, and never revokes the subscription, however often it is repeated."""
+    conn = Conn(_book_source())
+    _, sub = conn.sub("book.BTCUSDT.50")
+    conn.take()
+    for _ in range(RESYNC_MAX_PER_WINDOW + 1):
+        frame = {"t": "resync", "id": "c-1", "ch": ch, "p": {"reason": "manual"}}
+        conn.emitter.client_resync(conn.authz, frame)
+    errs = conn.take()
+    assert [(e["t"], e["id"], e["p"]["code"], e["p"]["field"]) for e in errs] == (
+        [("err", "c-1", "invalid_options", "ch")] * (RESYNC_MAX_PER_WINDOW + 1)
+    )
+    assert all("ch" not in e and len(json.dumps(e)) < 400 for e in errs)  # nothing is reflected
+    assert not sub.resyncs and conn.authz.find(sub.ch) is sub
+    _resync(conn, sub.ch)
+    assert [f["t"] for f in conn.take()] == ["snap"]
 
 
 # -- Scenario: a state-identity change re-snapshots --------------------------------------------

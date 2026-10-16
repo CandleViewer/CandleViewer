@@ -19,6 +19,9 @@ Single home for every bound the gateway enforces. Overflow policy:
 from __future__ import annotations
 
 MAX_INBOUND_FRAME_BYTES = 256 * 1024
+#: §13.1 `envelope.id` `maxLength`, in characters. A request `id` that is not a string within it
+#: is dropped before the frame is handled, so no reply echoes it (#2572).
+ENVELOPE_ID_MAX_LEN = 64
 #: SR-184: max container nesting of an inbound frame. The deepest legitimate
 #: client frame (`sub`/`ctl` envelope -> p -> options -> list -> object) is ~6
 #: levels in ws-schema.json; 32 leaves headroom. Checked BEFORE `json.loads`.

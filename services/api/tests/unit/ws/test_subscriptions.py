@@ -4,6 +4,7 @@ upstream reference counting and the bar-series lease (pure asyncio; fake clock, 
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from typing import Any
 
@@ -201,6 +202,31 @@ def test_sub_with_a_malformed_shape_is_refused_whole(p: Any, field: str) -> None
     assert conn.by_id == {}
 
 
+@pytest.mark.parametrize("fid", [{}, {"id": 5}, {"id": ["x"]}, {"id": "c-1"}])
+def test_replies_echo_a_string_request_id_and_nothing_else(fid: dict[str, Any]) -> None:
+    """#2572: `sub_ok` echoed `frame.get("id")` raw, so a request without a string id got `id:
+    null` (or its value), which §13.1 does not allow. The gateway drops a long id before
+    dispatch; the handlers do not rely on that for its type."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    _sub(conn, "book.BTCUSDT.50")
+    sent: list[dict[str, Any]] = []
+
+    async def send(f: dict[str, Any]) -> None:
+        sent.append(f)
+
+    for p in ({"topics": ["ticker.BTCUSDT"]}, "x"):  # a `sub_ok`, then a refusal
+        asyncio.run(handle_sub(conn, {"t": "sub", "p": p, **fid}, send, now_ms=1))
+    sent += [
+        handle_unsub(conn, {"t": "unsub", "p": {"topics": ["nope.BTCUSDT"]}, **fid}, 7),
+        handle_unsub(conn, {"t": "unsub", "p": "x", **fid}, 7),
+        handle_ctl(conn, {"t": "ctl", "ch": "book.BTCUSDT.50", "p": {"paused": True}, **fid}, 7),
+        handle_ctl(conn, {"t": "ctl", "ch": "Bad Topic", "p": {"paused": True}, **fid}, 7),
+    ]
+    assert [f["t"] for f in sent] == ["sub_ok", "err", "unsub_ok", "err", "ctl_ok", "err"]
+    want = fid["id"] if isinstance(fid.get("id"), str) else None
+    assert [f.get("id", "absent") for f in sent] == [want or "absent"] * 6
+
+
 def test_sub_well_formed_topic_names_still_get_one_result_each() -> None:
     """A name with the topic shape that the server cannot serve keeps its own result (§5.2),
     and the string shorthand stays accepted (§5.1, as built)."""
@@ -337,18 +363,58 @@ def test_malformed_replay_session_id_is_invalid_options(bad: Any) -> None:
 # -- unsub ---------------------------------------------------------------------------------------
 
 
+def _unsub(conn: ConnectionAuthz, p: Any) -> dict[str, Any]:
+    return handle_unsub(conn, {"t": "unsub", "id": "u-1", "p": p}, 7)
+
+
+def _unsub_results(conn: ConnectionAuthz, *topics: str) -> list[dict[str, Any]]:
+    reply = _unsub(conn, {"topics": list(topics)})
+    assert (reply["t"], reply["id"], reply["ts"]) == ("unsub_ok", "u-1", 7)
+    results: list[dict[str, Any]] = reply["p"]["results"]
+    return results
+
+
 def test_unsub_twice_is_idempotent() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
     _sub(conn, "book.BTCUSDT.50")
-    frame = {"t": "unsub", "p": {"topics": ["book.BTCUSDT.50"]}}
-    assert handle_unsub(conn, frame) == [{"ch": "book.BTCUSDT.50", "ok": True}]
-    assert handle_unsub(conn, frame) == [{"ch": "book.BTCUSDT.50", "ok": True, "noop": True}]
+    assert _unsub_results(conn, "book.BTCUSDT.50") == [{"ch": "book.BTCUSDT.50", "ok": True}]
+    assert _unsub_results(conn, "book.BTCUSDT.50") == [
+        {"ch": "book.BTCUSDT.50", "ok": True, "noop": True}
+    ]
 
 
 def test_unsub_system_is_refused() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
-    assert handle_unsub(conn, {"p": {"topics": ["system", 3]}}) == [{"ch": "system", "ok": False}]
-    assert handle_unsub(conn, {"p": "x"}) == []
+    assert _unsub_results(conn, "system") == [{"ch": "system", "ok": False}]
+
+
+_T = ["book.BTCUSDT.50"]
+_BAD_UNSUB_SHAPES = [
+    pytest.param("x", "p", id="p-not-an-object"),
+    pytest.param(None, "p", id="p-null"),
+    pytest.param({"topics": _T, "bogus": 1}, "p", id="unknown-key"),
+    pytest.param({}, "topics", id="topics-missing"),
+    pytest.param({"topics": []}, "topics", id="topics-empty"),
+    pytest.param({"topics": "book.BTCUSDT.50"}, "topics", id="topics-a-string"),
+    pytest.param({"topics": [*_T, 7]}, "topics[1]", id="int-entry"),
+    pytest.param({"topics": [{"ch": _T[0]}]}, "topics[0]", id="entry-object"),  # names, not entries
+    pytest.param({"topics": ["Bad Topic"]}, "topics[0]", id="bad-name"),
+    pytest.param({"topics": ["t" * 10_000]}, "topics[0]", id="10000-chars"),
+]
+
+
+@pytest.mark.parametrize(("p", "field"), _BAD_UNSUB_SHAPES)
+def test_unsub_with_a_malformed_shape_is_refused_whole(p: Any, field: str) -> None:
+    """#2572: one `err invalid_options` naming the field and never the client's text; no
+    `unsub_ok`, and the subscription the frame also named stays in place."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    _sub(conn, "book.BTCUSDT.50")
+    reply = _unsub(conn, p)
+    assert (reply["t"], reply["id"], reply["p"]["code"], reply["p"]["field"]) == (
+        ("err", "u-1", "invalid_options", field)
+    )
+    assert "ch" not in reply and len(json.dumps(reply)) < 400  # nothing is reflected
+    assert conn.topics == {"book.BTCUSDT.50"}
 
 
 # -- ctl -----------------------------------------------------------------------------------------
@@ -455,6 +521,40 @@ def test_ctl_on_unsubscribed_topic_is_not_subscribed() -> None:
         "book.BTCUSDT.50",
         False,
     )
+
+
+_BAD_CH = [
+    pytest.param("Bad Topic", id="bad-name"),
+    pytest.param("t" * 10_000, id="10000-chars"),
+    pytest.param("book.BTCUSDT.50\n", id="trailing-newline"),
+    pytest.param(5, id="int"),
+    pytest.param(["book.BTCUSDT.50"], id="list"),
+]
+
+
+@pytest.mark.parametrize("ch", _BAD_CH)
+def test_ctl_with_a_non_topic_ch_is_refused_without_echoing_it(ch: Any) -> None:
+    """#2572: the envelope `ch` is a topic name (§13.1), so a `ctl` whose `ch` is not one gets
+    `err invalid_options` (`field: ch`) and no `ch`, whatever the body, and changes nothing."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    _sub(conn, "book.BTCUSDT.50")
+    sub = conn.find("book.BTCUSDT.50")
+    assert sub is not None
+    before = dict(sub.opts)
+    err = handle_ctl(conn, {"t": "ctl", "id": "c-9", "ch": ch, "p": {"throttle_ms": 200}}, 7)
+    assert (err["t"], err["id"], err["p"]["code"], err["p"]["field"]) == (
+        ("err", "c-9", "invalid_options", "ch")
+    )
+    assert "ch" not in err and len(json.dumps(err)) < 400  # nothing is reflected
+    assert sub.opts == before
+
+
+@pytest.mark.parametrize("frame_ch", [{}, {"ch": None}])
+def test_ctl_without_a_ch_stays_not_subscribed_and_carries_none(frame_ch: dict[str, Any]) -> None:
+    """A missing `ch` echoes nothing, so its as-built answer is unchanged (#2572)."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    err = handle_ctl(conn, {"t": "ctl", "id": "c-9", "p": {"throttle_ms": 9}, **frame_ch}, 1)
+    assert (err["p"]["code"], "ch" in err) == ("not_subscribed", False)
 
 
 def test_ctl_on_replay_only_subscription_resolves_it() -> None:

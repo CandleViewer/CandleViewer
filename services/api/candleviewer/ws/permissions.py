@@ -70,6 +70,8 @@ from candleviewer.ws.upstream import UpstreamKey, UpstreamRefs
 
 #: §13.5 `sub.p` keys; any other key breaks the frame's shape (#2399).
 SUB_KEYS: Final = frozenset({"topics", "snapshot", "replay_session_id"})
+#: §13.5 `unsub.p` keys; any other key breaks the frame's shape (#2572).
+UNSUB_KEYS: Final = frozenset({"topics"})
 
 SYSTEM_TOPIC: Final = "system"
 
@@ -483,7 +485,10 @@ class ConnectionAuthz:
 
     def ctl(self, ch: Any, body: Any) -> tuple[dict[str, Any], bool]:
         """§5.4: retune a live subscription. Returns (`effective`, resnapshot) or raises
-        `TopicError` (`not_subscribed`, `invalid_options`)."""
+        `TopicError` (`not_subscribed`, `invalid_options`; a present `ch` that is no topic name
+        is the latter, #2572)."""
+        if ch is not None and not is_topic_name(ch):
+            raise TopicError("invalid_options", "ch must be a topic name.", "ch")
         ids = self._by_topic.get(ch) if isinstance(ch, str) else None
         if not ids:
             raise TopicError("not_subscribed", "No subscription for this topic.")
@@ -746,6 +751,29 @@ def sub_shape_error(body: Any) -> TopicError | None:
     return None
 
 
+def unsub_shape_error(body: Any) -> TopicError | None:
+    """#2572: what breaks an `unsub` frame's §13.5 shape, refused whole like a `sub`: a payload
+    that is not an object or has an unknown key, `topics` that is not a non-empty array, or an
+    entry that is not a topic name. `field` is built here and never echoes client input."""
+    if not isinstance(body, dict):
+        return TopicError("invalid_options", "unsub needs an object payload.", "p")
+    if not set(body) <= UNSUB_KEYS:
+        return TopicError("invalid_options", "Unknown unsub field.", "p")
+    topics = body.get("topics")
+    if not isinstance(topics, list) or not topics:
+        return TopicError("invalid_options", "topics must be a non-empty array.", "topics")
+    for i, ch in enumerate(topics):
+        if not is_topic_name(ch):
+            return TopicError("invalid_options", "Not a topic name.", f"topics[{i}]")
+    return None
+
+
+def _frame_id(frame: Mapping[str, Any]) -> str | None:
+    """The request `id` a reply echoes: a string, as the gateway has dropped any other (§13.1)."""
+    raw_id = frame.get("id")
+    return raw_id if isinstance(raw_id, str) else None
+
+
 async def handle_sub(
     authz: ConnectionAuthz, frame: dict[str, Any], send: Send, *, now_ms: int | None = None
 ) -> None:
@@ -753,10 +781,9 @@ async def handle_sub(
     one bad topic never fails the batch (§5.2). A frame whose shape breaks §13.5 is refused
     whole instead: one `err`, no `sub_ok`, nothing subscribed and no strike (#2396, #2399)."""
     body: Any = frame.get("p")  # a dict once `sub_shape_error` passes it
+    fid = _frame_id(frame)
     shape = sub_shape_error(body)
     if shape is not None:
-        raw_id = frame.get("id")
-        fid = raw_id if isinstance(raw_id, str) else None
         await send(build_ws_error(shape.code, id=fid, message=shape.message, field=shape.field))
         return
     results: list[dict[str, Any]] = []
@@ -775,21 +802,25 @@ async def handle_sub(
         if not result["ok"]:
             await _audit_denial(authz, ch, result["error"]["code"])
     cv_ws_client_topics_depth.observe(len(authz.by_id))
-    out: dict[str, Any] = {"t": "sub_ok", "id": frame.get("id"), "p": {"results": results}}
+    out: dict[str, Any] = {"t": "sub_ok", "p": {"results": results}}
+    if fid is not None:
+        out["id"] = fid
     if now_ms is not None:
         out["ts"] = now_ms
     await send(out)
 
 
-def handle_unsub(authz: ConnectionAuthz, frame: dict[str, Any]) -> list[dict[str, Any]]:
-    """§5.3: idempotent. Unknown/already-removed -> `ok: true, noop: true`; `system` is
-    permanent -> `ok: false` and stays attached."""
-    body = frame.get("p")
-    topics = body.get("topics") if isinstance(body, dict) else None
+def handle_unsub(authz: ConnectionAuthz, frame: dict[str, Any], now_ms: int) -> dict[str, Any]:
+    """§5.3 `unsub` -> `unsub_ok`: idempotent. Unknown/already-removed -> `ok: true, noop: true`;
+    `system` is permanent -> `ok: false` and stays attached. A frame whose shape breaks §13.5 is
+    refused whole instead: one `err`, nothing unsubscribed and no strike (#2572)."""
+    fid = _frame_id(frame)
+    body: Any = frame.get("p")  # a dict once `unsub_shape_error` passes it
+    shape = unsub_shape_error(body)
+    if shape is not None:
+        return build_ws_error(shape.code, id=fid, message=shape.message, field=shape.field)
     results: list[dict[str, Any]] = []
-    for ch in topics if isinstance(topics, list) else []:
-        if not isinstance(ch, str):
-            continue
+    for ch in body["topics"]:  # topic names, by the shape
         if ch == SYSTEM_TOPIC:
             results.append({"ch": ch, "ok": False})
         elif authz.unsubscribe(ch):
@@ -797,13 +828,16 @@ def handle_unsub(authz: ConnectionAuthz, frame: dict[str, Any]) -> list[dict[str
         else:
             results.append({"ch": ch, "ok": True, "noop": True})
     cv_ws_client_topics_depth.observe(len(authz.by_id))
-    return results
+    out: dict[str, Any] = {"t": "unsub_ok", "ts": now_ms, "p": {"results": results}}
+    if fid is not None:
+        out["id"] = fid
+    return out
 
 
 def handle_ctl(authz: ConnectionAuthz, frame: dict[str, Any], now_ms: int) -> dict[str, Any]:
-    """§5.4 `ctl` -> `ctl_ok` (or a topic-scoped `err`)."""
-    raw_id = frame.get("id")
-    fid = raw_id if isinstance(raw_id, str) else None
+    """§5.4 `ctl` -> `ctl_ok` (or a topic-scoped `err`, which echoes `ch` only if it is a topic
+    name: the envelope `ch` is one, §13.1)."""
+    fid = _frame_id(frame)
     ch = frame.get("ch")
     try:
         effective, resnapshot = authz.ctl(ch, frame.get("p"))
@@ -811,7 +845,7 @@ def handle_ctl(authz: ConnectionAuthz, frame: dict[str, Any], now_ms: int) -> di
         return build_ws_error(
             exc.code,
             id=fid,
-            ch=ch if isinstance(ch, str) else None,
+            ch=ch if is_topic_name(ch) else None,
             message=exc.message,
             field=exc.field,
         )

@@ -51,6 +51,7 @@ from candleviewer.ws.binary import (
 )
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.metrics import SAMPLE_MASK
+from candleviewer.ws.topics import is_topic_name
 
 if TYPE_CHECKING:
     from candleviewer.ws.permissions import ConnectionAuthz, Subscription
@@ -587,6 +588,13 @@ class TopicEmitter:
         rid = fid if isinstance(fid, str) else None
         ch = frame.get("ch")
         body = frame.get("p")
+        if ch is not None and not is_topic_name(ch):
+            # #2572: never echoed (§13.1: the envelope `ch` is a topic name); no `ch`: §7.7, below
+            err = build_ws_error(
+                "invalid_options", id=rid, message="ch must be a topic name.", field="ch"
+            )
+            self.push(err)
+            return
         if not isinstance(ch, str) or not isinstance(body, dict):
             self.push(build_ws_error("frame_malformed", id=rid))
             return

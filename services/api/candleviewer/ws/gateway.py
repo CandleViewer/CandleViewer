@@ -33,7 +33,9 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   (auth timeout, token expiry on both clocks, unsolicited `ping`, heartbeat
   timeout), so tests drive time instead of sleeping.
 - **Inbound limits**: size checked before decoding (`1009`); 30/s and 300/min
-  excluding `pong` (`client_rate_limited`, then `4429`).
+  excluding `pong` (`client_rate_limited`, then `4429`). An envelope `id` that is not a
+  string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped before the frame is
+  handled, so no reply echoes it (§13.1, #2572).
 - Every server-initiated close goes through `_Connection.close_with`, which
   queues `bye` ahead of the close frame (requirement S11). Token expiry and
   revocation seal the close: anything still queued is dropped, `bye` next.
@@ -95,6 +97,7 @@ from candleviewer.ws.lifecycle import (
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import (
     AUTH_TIMEOUT_S,
+    ENVELOPE_ID_MAX_LEN,
     MAX_INBOUND_FRAME_BYTES,
     MAX_JSON_DEPTH,
     json_depth_exceeds,
@@ -513,6 +516,11 @@ def _str_or_none(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _is_envelope_id(value: Any) -> bool:
+    """§13.1 `envelope.id`: a string of at most `ENVELOPE_ID_MAX_LEN` characters."""
+    return isinstance(value, str) and len(value) <= ENVELOPE_ID_MAX_LEN
+
+
 async def _join_writer(task: asyncio.Task[None]) -> BaseException | None:
     """Await the cancelled writer; return its fault, if any. A cancellation
     aimed at the *handler* (not the writer) is re-raised, never swallowed."""
@@ -795,6 +803,8 @@ def make_ws_router(
             conn.emitter.flush_pending(list(conn.authz.by_id.values()))
 
     async def dispatch(conn: _Connection, frame: Any) -> None:
+        if isinstance(frame, dict) and "id" in frame and not _is_envelope_id(frame["id"]):
+            del frame["id"]  # #2572: never echoed, on any reply; the frame is still handled
         kind = frame.get("t") if isinstance(frame, dict) else None
         fid = frame.get("id") if isinstance(frame, dict) else None
         if kind != "pong" and not conn.rate.allow(conn.clock()):
@@ -848,8 +858,7 @@ def make_ws_router(
             flush(conn)  # §7.1: the `snap` follows `sub_ok`, before any `d`
         elif kind == "unsub" and conn.authz is not None:
             # §5.3 idempotent; §6.2 `system` is permanent (refused, stays attached).
-            results = handle_unsub(conn.authz, frame)
-            conn.push(_reply("unsub_ok", fid, ts=conn.wall_ms(), p={"results": results}))
+            conn.push(handle_unsub(conn.authz, frame, conn.wall_ms()))
         elif kind == "ctl" and conn.authz is not None:
             conn.push(handle_ctl(conn.authz, frame, conn.wall_ms()))
             flush(conn)  # `ctl_ok { resnapshot }` then the `reconfigure` snap

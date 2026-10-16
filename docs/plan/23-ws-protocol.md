@@ -168,6 +168,8 @@ Every frame in both directions is a single map with this shape. Field order is i
 | `ctl_ok`            | control result        | S→C       | Confirmation of `ctl`.                                                           |
 | `bye`               | goodbye               | S→C       | Server is closing the connection; carries the reason before the close frame.     |
 
+**The correlation `id` (#2572).** `id` is a string of at most 64 characters (§13.1). The server echoes a request's `id` on its replies only when it is one. Any other `id` (not a string, or longer than 64 characters) is dropped before the frame is handled, so no reply carries it. The frame is otherwise handled as sent, and its reply has no `id` to correlate it by. This holds for every client frame, `hello` and `auth` included.
+
 ### 3.2 Encoding field `e`
 
 | Value | Meaning                                                                                                                                                                                           |
@@ -587,6 +589,14 @@ A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what
 
 Unsubscribing from an unknown or already-removed topic is **not** an error (`ok: true`, `noop: true`) — this keeps teardown idempotent during pane close races.
 
+**A malformed `unsub` is refused whole (#2572).** As for `sub` (§5.2), an `unsub` whose shape breaks §13.5 in one of the following ways gets one `err` `invalid_options` instead of an `unsub_ok`: nothing is unsubscribed, and it is not a protocol strike (§4.3). The ways are:
+
+- the payload is not an object, or has a key other than `topics` (`field`: `p`);
+- `topics` is missing or not a non-empty array (`field`: `topics`);
+- an entry is not a string, or is a string that is not a topic name (`field`: `topics[i]`).
+
+A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what the client sent. So every `unsub_ok.results[].ch` is a valid topic name. A well-formed name that holds no subscription is still `ok: true, noop: true`, as above.
+
 **As built (E17-S02, #2159):** `unsub` of `system` returns `ok: false` and the topic stays attached (§6.2).
 
 ### 5.4 `ctl` — retuning a live subscription
@@ -603,6 +613,8 @@ Changing `depth`, `price_grouping`, `bar_type`/`param`, or the `metrics` list **
 **Pause and resume (#2517).** While `paused: true`, the server emits no `d` for the subscription and consumes no sequence number. The pause holds until a `ctl` sets `paused: false`: a `ctl` that omits `paused` (a hidden window's throttle change, §8.5) leaves it in place, and its `ctl_ok.effective` echoes `paused: true`. A `ctl` that resumes the subscription (`paused: false` after `paused: true`) also answers `"resnapshot": true`, and a `snap` comes before any further `d`, as for an identity change. Otherwise the updates published during the pause would be lost with no gap to show it. Pausing, or resuming a subscription that is not paused, does not re-snapshot.
 
 **As built (E17-S02, #2159):** a `sub` that would take a connection past 40 distinct symbols is refused per topic with `subscription_limit`. More than 50 topics in one `sub` gives `too_many_topics` for the excess entries.
+
+**The envelope `ch` (#2572).** A `ctl` whose `ch` is present but is not a topic name (`common.schema.json#/$defs/topic`: not a string, or a string of another shape) gets `err` `invalid_options` (`field`: `ch`) and changes nothing. It is not a protocol strike (§4.3). The `err` carries no `ch`, because the envelope `ch` is a topic name (§13.1) and the server never echoes one that is not. A `ctl` with no `ch` gets `not_subscribed` without one, as before. A topic name that holds no subscription gets `not_subscribed` with that name.
 
 **Why `ctl` exists.** The UI changes throttle constantly: a pane that scrolls out of view drops to 1 000 ms, a maximised DOM goes to 20 ms, a backgrounded Electron window goes to 1 000 ms for everything. Doing that with unsub/sub would re-snapshot a 200-level book every time the user switches tabs.
 
@@ -1003,6 +1015,8 @@ The `snap` carries `reason` so the client can distinguish a routine attach from 
 
 The server replies with a `snap` on that topic (correlated by `ch`, not by `id`). Rate limit: **5 resyncs per topic per minute**; exceeding it returns `err` `resync_rate_limited` and the server closes the subscription with `revoked`, because a client resyncing in a tight loop is broken and is consuming snapshot-build cost that harms every other consumer.
 
+The envelope `ch` follows the `ctl` rule (§5.4): a `ch` that is present but is not a topic name gets `err` `invalid_options` (`field`: `ch`) with no `ch` (#2572). That takes no snapshot, spends none of the limit above and does not revoke the subscription.
+
 ### 7.6 Attaching without a snapshot
 
 A client that already bootstrapped over REST may attach to deltas only:
@@ -1027,7 +1041,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 - Each (connection, subscription) has its own sequence domain. A `snap` takes exactly one sequence number. `meta.previous_seq` is present whenever an earlier `snap` or `d` existed.
 - While a subscription is `snapshot_pending`, no `d` is sent on it. Snapshots come from the owning module (book, bars, order-flow). Until a module's adapter has landed (#2195 bars, #2196 book, #2197 order-flow), its families stay `snapshot_pending` and no `snap` is emitted. Such a subscription is never an error.
 - `snapshot: false` without provable continuity is answered with `snapshot_forced: true` (§7.6).
-- A `resync` with no `ch`, or with an unknown `reason`, is answered with `err` `frame_malformed`.
+- A `resync` with no `ch`, or with an unknown `reason`, is answered with `err` `frame_malformed`. A `ch` that is present but is not a topic name is answered with `invalid_options` instead (§7.5, #2572).
 - Every `revoked` frame, including the §7.5 `resync_rate_limited` one, always carries `resubscribe_allowed`. It is `true` only when a scope narrowed and some accounts were kept (E17-S02, #2159).
 - Snapshots over 4 MiB are chunked. Public snapshots are cached per topic and identity. Private snapshots are never cached or shared.
 - Metrics: `cv_ws_resync_total{reason}`, `cv_ws_snapshot_bytes{topic}`, `cv_ws_snapshot_build_seconds{topic}`, `cv_ws_sequence_gaps_detected_total` and `cv_ws_stale_topics_in_use`.
@@ -3795,6 +3809,7 @@ here and checked against the charts by the contract test, never restated (C-2.19
 | Max symbols / connection       | 40                                                 |
 | Max connections / user         | 8                                                  |
 | Max inbound frame              | 256 KiB                                            |
+| Max envelope `id`              | 64 characters (any other `id` is dropped, §3.1)    |
 | Max outbound frame             | 4 MiB (snapshots chunked above this)               |
 | Outbound queue budget          | 8 MiB or 2 000 frames                              |
 | Min throttle                   | 50 ms (0 ms only for `orders`/`executions`)        |
