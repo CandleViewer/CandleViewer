@@ -52,21 +52,21 @@ jobs:
       # aborting before the gate gets a chance to report why.
       - name: Download py-coverage artifact
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: py-coverage
           path: coverage-artifacts/py-coverage
 
       - name: Download coverage-unit-frontend artifact
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-unit-frontend
           path: coverage-artifacts/coverage-unit-frontend
 
       - name: Download coverage-unit-engine artifact
         continue-on-error: true
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: coverage-unit-engine
           path: coverage-artifacts/coverage-unit-engine

@@ -63,7 +63,7 @@ jobs:
       - name: Install gate helper deps (PyYAML for security_gate.py)
         run: pip install -r scripts/requirements-ci.txt
 
-      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           languages: javascript-typescript,python
           config-file: ./.github/codeql/codeql-config.yml
@@ -71,7 +71,7 @@ jobs:
       # analyze writes SARIF then errors on a workflow-run API call the
       # reusable-workflow token cannot make (no actions: read from pr.yml).
       # Not a pass-by-default: the gate step fails CI-SEC-005 if no SARIF.
-      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         continue-on-error: true
         with:
           output: codeql-results
@@ -96,7 +96,7 @@ jobs:
             python tools/ci/security_gate.py --tool codeql --report "$f"
           done
 
-      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         # Gate decided above. The upload feeds GitHub's informational "CodeQL"
         # check run (github-advanced-security app; PR-scoped alerts, not a
         # C-9.1 required check) — it must agree with the gate, never replace
@@ -161,7 +161,7 @@ jobs:
       - name: Evaluate Semgrep findings (security_gate.py, CI-SEC-001/004)
         run: python tools/ci/security_gate.py --tool semgrep --report semgrep.sarif
 
-      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         # Upload only when the scanner wrote a report; the gate step above (not
         # this upload) decides pass/fail. continue-on-error: code scanning is not
         # enabled on this private repo (no GHAS), so the API 403s.
@@ -205,7 +205,7 @@ jobs:
       - name: Evaluate Bandit findings (security_gate.py, CI-SEC-001/004)
         run: python tools/ci/security_gate.py --tool bandit --report bandit.sarif
 
-      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         # Upload only when the scanner wrote a report; the gate step above (not
         # this upload) decides pass/fail. continue-on-error: code scanning is not
         # enabled on this private repo (no GHAS), so the API 403s.
@@ -263,7 +263,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -375,9 +375,9 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -411,7 +411,7 @@ jobs:
       - name: Install gate helper deps (PyYAML for security_gate.py)
         run: pip install -r scripts/requirements-ci.txt
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -446,7 +446,7 @@ jobs:
           failure() && steps.freeze.outcome == 'failure' &&
           (github.actor == 'dependabot[bot]' ||
            contains(github.event.pull_request.labels.*.name, 'dependencies'))
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: freeze-manifest-proposal
           path: freeze-manifest-proposal/
@@ -531,7 +531,7 @@ jobs:
       - name: Evaluate Trivy findings (security_gate.py, CI-SEC-001/004)
         run: python tools/ci/security_gate.py --tool trivy --report trivy.sarif
 
-      - uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      - uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         # Upload only when the scanner wrote a report; the gate step above (not
         # this upload) decides pass/fail. continue-on-error: code scanning is not
         # enabled on this private repo (no GHAS), so the API 403s.

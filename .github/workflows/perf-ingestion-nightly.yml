@@ -26,8 +26,8 @@ jobs:
     env:
       CV_ENV: test
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - id: sync
         run: uv sync --project services/api
       - name: Soak canary (1800 s virtual, 3 symbols; fails with growth curve on >5 % RSS)
@@ -70,7 +70,7 @@ jobs:
             cat bench/reports/gate-diff.md 2>/dev/null || echo "(no gate diff produced)"; } > /tmp/body.md
           gh issue create --title "perf: E08-Q04 ingestion perf pack regression ($(date -u +%F))" \
             --label perf --label area/ingestion --label type/bug --body-file /tmp/body.md
-      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: ingestion-soak-results
@@ -91,8 +91,8 @@ jobs:
       CV_ENV: test
       CV_BENCH_MACHINE_PROFILE: bench-runner
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - uses: grafana/setup-k6-action@43b9fc21641a76002687994433dd586f56e791b1 # v1.2.2
       - id: sync
         run: uv sync --project services/api
@@ -110,7 +110,7 @@ jobs:
             cat bench/reports/gate-diff.md 2>/dev/null; } > /tmp/body.md
           gh issue create --title "perf: E08-Q04 full perf pack failed ($(date -u +%F))" \
             --label perf --label area/ingestion --label type/bug --body-file /tmp/body.md
-      - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: e08-perf-pack-full
