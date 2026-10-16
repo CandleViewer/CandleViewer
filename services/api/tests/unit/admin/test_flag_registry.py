@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import pytest
@@ -10,13 +11,13 @@ from structlog.testing import capture_logs
 
 from candleviewer.admin.flags import (
     DENIED,
-    Audience,
     Category,
     FlagKind,
     FlagRegistry,
     FlagSpec,
     FlagValue,
     UnsafeFlagDefinitionError,
+    Visibility,
     value_matches,
 )
 
@@ -34,6 +35,7 @@ def _spec(
     restrictive: FlagValue | None = None,
     is_killswitch: bool = False,
     requires_evidence: bool = False,
+    visibility: Visibility = Visibility.ALL_ROLES,
 ) -> FlagSpec:
     return FlagSpec(
         key,
@@ -41,6 +43,7 @@ def _spec(
         "d",
         gates,
         default,
+        visibility,
         variants=variants,
         restrictive=restrictive,
         is_killswitch=is_killswitch,
@@ -76,20 +79,10 @@ def test_spec_gating_a_denied_category_is_refused_naming_flag_and_category(
 
 def test_registry_rechecks_every_spec_at_startup() -> None:
     """A spec that escaped its constructor check (here forced past it) still stops startup."""
-    smuggled = object.__new__(FlagSpec)
-    for name, value in {
-        "key": "auth.bypass",
-        "kind": _B,
-        "description": "d",
-        "gates": Category.RBAC,
-        "default": False,
-        "audience": Audience.ALL,
-        "is_killswitch": False,
-        "requires_evidence": False,
-        "variants": (),
-        "restrictive": None,
-    }.items():
-        object.__setattr__(smuggled, name, value)
+    smuggled, valid = object.__new__(FlagSpec), _spec("auth.bypass")
+    for field in dataclasses.fields(FlagSpec):  # every field, so a new one never leaves this stale
+        object.__setattr__(smuggled, field.name, getattr(valid, field.name))
+    object.__setattr__(smuggled, "gates", Category.RBAC)
     with pytest.raises(UnsafeFlagDefinitionError, match=r"'auth\.bypass'.*'rbac'"):
         FlagRegistry([_spec(), smuggled])
 
@@ -107,6 +100,7 @@ def test_registry_rechecks_every_spec_at_startup() -> None:
         ({"kind": FlagKind.PERCENTAGE, "default": 101}, "is not a percentage"),
         ({"kind": FlagKind.VARIANT, "default": "c", "variants": ("a",)}, "is not a variant"),
         ({"default": False, "restrictive": "yes"}, "is not a boolean"),
+        ({"visibility": "all_roles"}, "declares no visibility"),
         ({"kind": FlagKind.PERCENTAGE, "default": 5, "is_killswitch": True}, "must be boolean"),
         (
             {
@@ -170,7 +164,7 @@ def test_startup_log_lists_every_flag_with_its_gates() -> None:
         "key": "ui.panel",
         "kind": "boolean",
         "gates": ["ui_surface"],
-        "audience": "all",
+        "visibility": "all_roles",
         "is_killswitch": False,
     }
     assert registry["ui.panel"].key == "ui.panel" and len(registry) == 2
@@ -191,3 +185,8 @@ def test_keys_of_two_to_four_segments_are_accepted(key: str) -> None:
 )
 def test_only_ordinary_flags_are_overridable(kwargs: dict[str, Any], overridable: bool) -> None:
     assert _spec(**kwargs).overridable is overridable
+
+
+def test_visibility_is_mandatory_with_no_default() -> None:
+    with pytest.raises(TypeError, match="visibility"):
+        FlagSpec("ui.panel", _B, "d", Category.UI_SURFACE, False)  # type: ignore[call-arg]  # pinned

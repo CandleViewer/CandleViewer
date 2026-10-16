@@ -9,9 +9,8 @@ from candleviewer.admin.flags import (
     DENIED,
     FLAGS,
     LIVE_ENABLED,
-    MAINTENANCE_KEEP_RECORDER,
     MAINTENANCE_MODE,
-    Audience,
+    Visibility,
     default_registry,
 )
 
@@ -31,8 +30,7 @@ def test_safety_relevant_flags_fail_closed() -> None:
         spec = registry[key]
         assert (spec.is_killswitch, spec.default, spec.fail_closed_value) == (True, False, True)
     assert registry["killswitch.ingestion"].fail_closed_value is False
-    assert registry[MAINTENANCE_KEEP_RECORDER].audience is Audience.OWNER
-    assert registry[MAINTENANCE_MODE].audience is Audience.ALL
+    assert registry["killswitch.ingestion"].visibility is Visibility.OWNER_ONLY  # D6a
 
 
 def test_startup_log_names_the_gates_of_every_shipped_flag() -> None:
