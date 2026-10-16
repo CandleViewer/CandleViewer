@@ -4402,7 +4402,7 @@ export interface components {
       /** @description Milliseconds since the last authenticated private-WS heartbeat; `null` before the first. */
       heartbeat_age_ms: number | null;
       /**
-       * @description Closed set of machine codes the client renders as text, never exchange-supplied text: `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (no REST success yet either), `no_success` (nothing for the 30 s down window), `never_connected`.
+       * @description Closed set of machine codes the client renders as text, never exchange-supplied text: `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (the WS heartbeat lapsed and there has been no REST success within the down window either), `no_success` (nothing for the 30 s down window), `never_connected`.
        * @enum {string}
        */
       reason: "ws_heartbeat" | "rest_only" | "ws_silent" | "no_success" | "never_connected";

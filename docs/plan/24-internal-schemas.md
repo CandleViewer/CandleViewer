@@ -1460,11 +1460,12 @@ The synchronous REST response is an **accept acknowledgement, not a fill confirm
 
 **8.4.1 Account checks of the order-entry gate (E27-T04, decision Q5 on #837).** Submit routes
 ask one composed synchronous gate before any OMS work (C-2.21). Its kernel is
-`candleviewer.domain.order_entry` (E42-T03, #964); §8.10 (E42-T03, #2592) owns the gate's scope and
-the closed `reason` set of its `403 trading_disabled` problem, and this section owns only the
-account side. `AccountHealthCheck` (`candleviewer.accounts.order_gate`) fills an account slot of
-`OrderEntryGate(maintenance, *account_checks)`, after the global maintenance check. It reads only
-in-memory state, never an interpreter or the network, and refuses with the first of:
+`candleviewer.domain.order_entry` (E42-T03, #964). The E42-T03 gate section, §8.10 once #964 adds
+it, owns the gate's scope and the closed `reason` set of its `403 trading_disabled` problem; this
+section owns only the account side. `AccountHealthCheck` (`candleviewer.accounts.order_gate`)
+fills an account slot of `OrderEntryGate(maintenance, *account_checks)`, after the global
+maintenance check. It reads only in-memory state, never an interpreter or the network, and
+refuses with the first of:
 
 1. `account_disabled_by_policy`: the key verifier (E27-T03) disabled the account, for a closed
    `DisabledReason`;

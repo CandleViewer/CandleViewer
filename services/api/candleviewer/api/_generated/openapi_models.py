@@ -377,7 +377,7 @@ class AccountHealth(BaseModel):
     reason: Annotated[
         Literal["ws_heartbeat", "rest_only", "ws_silent", "no_success", "never_connected"],
         Field(
-            description="Closed set of machine codes the client renders as text, never exchange-supplied text: `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (no REST success yet either), `no_success` (nothing for the 30 s down window), `never_connected`.\n"
+            description="Closed set of machine codes the client renders as text, never exchange-supplied text: `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (the WS heartbeat lapsed and there has been no REST success within the down window either), `no_success` (nothing for the 30 s down window), `never_connected`.\n"
         ),
     ]
     heartbeat_age_ms: Annotated[
