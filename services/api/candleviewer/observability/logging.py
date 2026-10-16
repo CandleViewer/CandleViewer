@@ -5,7 +5,9 @@ in `candleviewer/main.py`, and future ingestion/recorder/replay worker
 entrypoints). Wires:
 
 - A `QueueHandler`/`QueueListener` pair so a slow stdout pipe reader cannot
-  block the asyncio event loop (Performance notes).
+  block the asyncio event loop (Performance notes). The listener thread is a
+  daemon, so an `atexit` hook stops it at exit: the queue is written out
+  first, and the last lines of a failed start are not lost.
 - `structlog`'s processor chain, in the exact order the ticket's Technical
   notes mandate: `merge_contextvars` -> `add_log_level` -> UTC ISO timestamp
   -> `StackInfoRenderer` -> `format_exc_info` -> **redaction** ->
@@ -19,6 +21,8 @@ entrypoints). Wires:
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import logging
 import logging.handlers
 import queue
@@ -46,6 +50,21 @@ _OMIT_IF_NONE: Final[tuple[str, ...]] = (
 )
 
 _listener: logging.handlers.QueueListener | None = None
+
+
+def _stop_listener_at_exit() -> None:
+    """`atexit` hook: let the listener thread write the queue out before the process ends.
+
+    The thread is a daemon, so a record logged just before the interpreter exits (uvicorn's
+    `Application startup failed. Exiting.` before exit code 3) can still be on the queue and be
+    lost. `stop()` returns once the queue is empty. It runs once: the listener is dropped first.
+    Errors are ignored as in `logging.shutdown`: nothing is left to report them to at exit.
+    """
+    global _listener
+    listener, _listener = _listener, None
+    if listener is not None:
+        with contextlib.suppress(Exception):
+            listener.stop()
 
 
 class _RawQueueHandler(logging.handlers.QueueHandler):
@@ -202,6 +221,8 @@ def configure_logging(
     listener = logging.handlers.QueueListener(log_queue, stream_handler, respect_handler_level=True)
     listener.start()
     _listener = listener
+    atexit.unregister(_stop_listener_at_exit)  # one hook, however often this runs
+    atexit.register(_stop_listener_at_exit)
 
     root = logging.getLogger()
     root.handlers = [queue_handler]
