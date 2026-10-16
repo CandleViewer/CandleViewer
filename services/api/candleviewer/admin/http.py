@@ -1,9 +1,9 @@
 """The audited admin-area guard (E42-T01): one router-level dependency for every `/admin/*`
 route of the admin read models, reused by the E42-T03/T05/T07 routes.
 
-`admin_router(permission, resolver=..., audit=...)` returns an `APIRouter` (prefix `/admin`)
-whose dependency runs before every handler, so a route added to it cannot skip the check (RBAC
-server-side, deny-by-default, C-12.4):
+`admin_router(permission, resolver=..., audit=..., clock=...)` returns an `APIRouter` (prefix
+`/admin`) whose dependency runs before every handler, so a route added to it cannot skip the
+check (RBAC server-side, deny-by-default, C-12.4):
 - no principal resolver wired: 501; no verified session: 401; no audit writer: 503 for every
   caller (fail closed);
 - otherwise a caller without `permission` is counted in `authz_denied_total` (SR-125), as
@@ -16,10 +16,14 @@ server-side, deny-by-default, C-12.4):
 - an allowed caller's verified principal is left on `request.state.admin_principal`, so a write
   route can audit its actor without resolving the session again.
 
-`reauth_age_s` is `null` until E09 puts the step-up time on the principal (#2754); the key is
-reserved so the record keeps its shape (a `token` key would be masked by `audit/redact.py`).
-Step-up (SR-025) is not this guard's job: it stays enforced by the `DANGEROUS_ROUTES` middleware
-in `candleviewer/api/step_up.py`, so a route on this router must not assume elevation is checked.
+`reauth_age_s` is the whole seconds from the last step-up the caller's session row records to
+the guard's `clock` (`AuditPrincipal.reauth_age_s`, #2754). It is `null` when the row records
+none: never stepped up, or the grant is gone (a spent one-shot grant, a lapsed window, an idle
+lock or read-only downgrade, a refreshed token's new row). `clock` defaults to the UTC wall
+clock; the app does not pass its auth clock yet (#2924). The key avoids `token` because
+`audit/redact.py` masks such names. It is observability only, never a gate: step-up (SR-025) is
+not this guard's job. It stays enforced by the `DANGEROUS_ROUTES` middleware in
+`candleviewer/api/step_up.py`, so a route on this router must not assume elevation is checked.
 Refusals are RFC 9457 problem documents carrying the contract's `code` (C-6.5), rendered by
 `admin_area_refused_handler` (registered in `create_app`).
 """
@@ -28,6 +32,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
 import structlog
@@ -98,10 +103,18 @@ async def admin_area_refused_handler(_request: Request, exc: Exception) -> JSONR
     return JSONResponse(body, status_code=status, media_type="application/problem+json")
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 def admin_area(
-    permission: Permission, resolver: PrincipalResolver | None, audit: AuditEmitter | None
+    permission: Permission,
+    resolver: PrincipalResolver | None,
+    audit: AuditEmitter | None,
+    clock: Callable[[], datetime] = _utc_now,
 ) -> Callable[[Request], Awaitable[AuditPrincipal]]:
-    """The dependency itself: the verified principal, or an `AdminAreaRefused`."""
+    """The dependency itself: the verified principal, or an `AdminAreaRefused`. `clock` is the
+    injected time source the record's `reauth_age_s` is measured against."""
 
     async def enter(request: Request) -> AuditPrincipal:
         if resolver is None:
@@ -127,7 +140,7 @@ def admin_area(
                 outcome=AuditOutcome.SUCCESS if allowed else AuditOutcome.DENIED,
                 severity=Severity.INFO if allowed else Severity.WARNING,
                 reason=None if allowed else f"missing_permission:{permission}",
-                after_state={"route": route, "reauth_age_s": None},
+                after_state={"route": route, "reauth_age_s": principal.reauth_age_s(clock())},
                 request_id=principal.request_id,
             )
         except Exception as exc:  # any audit failure shuts the area (write-ahead, C-2.9)
@@ -149,8 +162,13 @@ def admin_area(
 
 
 def admin_router(
-    permission: Permission, *, resolver: PrincipalResolver | None, audit: AuditEmitter | None
+    permission: Permission,
+    *,
+    resolver: PrincipalResolver | None,
+    audit: AuditEmitter | None,
+    clock: Callable[[], datetime] = _utc_now,
 ) -> APIRouter:
-    """An `/admin` router whose every route passes the audited admin-area check first."""
-    guard = Depends(admin_area(permission, resolver, audit))
+    """An `/admin` router whose every route passes the audited admin-area check first; `clock`
+    dates the record's `reauth_age_s`."""
+    guard = Depends(admin_area(permission, resolver, audit, clock))
     return APIRouter(prefix="/admin", tags=["admin"], dependencies=[guard])

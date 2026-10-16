@@ -3,6 +3,7 @@ reads `x-role`, an audit spy keyed like `AuditWriter.emit`, and the record the g
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -19,19 +20,33 @@ _PERMISSIONS = {
 }
 
 
-def principal(role: str) -> AuditPrincipal:
-    """Every field distinct and non-null, so a dropped audit field cannot go unseen."""
+def principal(role: str, last_step_up_at: datetime | None = None) -> AuditPrincipal:
+    """Every field distinct and non-null, so a dropped audit field cannot go unseen. The last
+    step-up is the one field left to the caller: `None` is a session that never stepped up."""
     n = list(_PERMISSIONS).index(role) + 1
     ids = UUID(int=n), UUID(int=100 + n), UUID(int=200 + n)  # user, session, request
-    return AuditPrincipal(ids[0], role, _PERMISSIONS[role], ids[1], f"10.0.0.{n}", ids[2], n == 1)
+    return AuditPrincipal(
+        ids[0],
+        role,
+        _PERMISSIONS[role],
+        ids[1],
+        f"10.0.0.{n}",
+        ids[2],
+        n == 1,
+        last_step_up_at=last_step_up_at,
+    )
 
 
 class Resolver:
-    """`x-role` names the RBAC actor; anything else is an unauthenticated caller."""
+    """`x-role` names the RBAC actor; anything else is an unauthenticated caller. Every actor
+    last stepped up at `last_step_up_at`."""
+
+    def __init__(self, last_step_up_at: datetime | None = None) -> None:
+        self._last_step_up_at = last_step_up_at
 
     async def resolve(self, request: Request) -> AuditPrincipal | None:
         role = request.headers.get("x-role", "")
-        return principal(role) if role in _PERMISSIONS else None
+        return principal(role, self._last_step_up_at) if role in _PERMISSIONS else None
 
 
 class AuditSpy:
@@ -62,10 +77,13 @@ class AuditSpy:
 
 
 def expected_record(
-    role: str, route: str, permission: Permission = Permission.ADMIN_READ
+    role: str,
+    route: str,
+    permission: Permission = Permission.ADMIN_READ,
+    reauth_age_s: int | None = None,
 ) -> dict[str, Any]:
     """The whole `admin.area_entered` record the guard must write for `role` on `route`, a router
-    guarded by `permission`."""
+    guarded by `permission`, for a caller whose last step-up was `reauth_age_s` seconds ago."""
     who, allowed = principal(role), permission.value in _PERMISSIONS[role]
     return {
         "action": "admin.area_entered",
@@ -78,6 +96,6 @@ def expected_record(
         "outcome": AuditOutcome.SUCCESS if allowed else AuditOutcome.DENIED,
         "severity": Severity.INFO if allowed else Severity.WARNING,
         "reason": None if allowed else f"missing_permission:{permission.value}",
-        "after_state": {"route": route, "reauth_age_s": None},
+        "after_state": {"route": route, "reauth_age_s": reauth_age_s},
         "request_id": who.request_id,
     }
