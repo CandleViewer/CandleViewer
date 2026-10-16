@@ -17,7 +17,9 @@ name: _job-py
 #     addopts --cov-fail-under floor on the combined data -> uv build -> upload
 #     the `py-coverage` artifact (E03-T04's threshold gate owns the per-package
 #     floors) -> fail unless py-checks and every lane succeeded.
-#   `py-perf` (parallel): pytest -m perf --no-cov, the C-13.9 wall-clock budgets.
+#   `py-perf` (parallel): pytest -m "perf and not flaky" --no-cov, the C-13.9
+#     wall-clock budgets, DB-backed ones included (testcontainers); `flaky`
+#     tests are quarantined per C-9.3.
 #
 # Out of scope (per ticket): coverage threshold enforcement (E03-T04),
 # Bandit/pip-audit (E03-T07), Alembic migration checks (E03-T10), contract
@@ -273,7 +275,7 @@ jobs:
         run: uv sync --frozen --all-groups
 
       - name: pytest perf budgets (C-13.9, no coverage tracing, isolated)
-        run: uv run pytest -m perf --no-cov -p no:cacheprovider -p no:randomly --durations=0
+        run: uv run pytest -m "perf and not flaky" --no-cov -p no:cacheprovider -p no:randomly --durations=0
 
   architecture:
     # Reported as its own required check named `architecture` per the

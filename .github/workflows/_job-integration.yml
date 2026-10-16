@@ -13,6 +13,9 @@ name: _job-integration
 #      these spin their own service container via testcontainers, which
 #      needs Docker; `services=docker` is available on GitHub-hosted
 #      ubuntu runners.
+#      `perf` wall-clock budgets run once, in `py-perf` (_job-py.yml), which
+#      has Docker too. Tests marked `flaky` are quarantined (C-9.3) and run
+#      in neither: each carries its P1 ticket and quarantine date.
 #
 # The OMS fake-exchange suite (per ADR-0012's table) has no product logic
 # to exercise yet — `oms/service.py` is an R0 scaffold with no order
@@ -60,7 +63,7 @@ jobs:
 
       - name: Postgres/QuestDB-backed integration suite (testcontainers, needs Docker)
         working-directory: services/api
-        run: uv run pytest tests/integration -m integration --no-cov -rA
+        run: uv run pytest tests/integration -m "integration and not perf and not flaky" --no-cov -rA
 
       - name: Upload restore-drill report (E07-X02 SR-093)
         if: always()
