@@ -194,6 +194,9 @@ diff` cannot see because they were never tracked. `git add` them in the
 - **CI-COV-003** (missing coverage artifact): a lane that should have
   produced a coverage report for an applicable package left none. Check
   that lane's upload step; a silently-missing report must never pass.
+  In `py` it names a test lane whose raw data (`py-lane-cov-<lane>`, kept
+  5 days) is missing: the lane died before writing it, or a "Re-run failed
+  jobs" came after the green lanes' data expired; then use "Re-run all jobs".
 
 ### CI-MIG-* — Alembic migration gate (`.github/workflows/_job-migrations.yml`,
 

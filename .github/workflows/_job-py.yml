@@ -169,9 +169,11 @@ jobs:
           name: py-lane-cov-${{ matrix.lane }}
           path: services/api/py-lane-${{ matrix.lane }}.coverage
           if-no-files-found: error
-          # A re-run of this lane replaces the data of the attempt it repeats.
+          # A re-run of this lane replaces the data of the attempt it repeats. Kept 5 days: C-4.3
+          # has a branch older than 5 days rebased daily (a new run), so "Re-run failed jobs" finds
+          # the green lanes' data; past that, "Re-run all jobs" (docs/ci-runbook.md CI-COV-003).
           overwrite: true
-          retention-days: 1
+          retention-days: 5
 
   py:
     name: py

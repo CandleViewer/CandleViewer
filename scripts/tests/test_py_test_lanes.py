@@ -9,7 +9,11 @@ combined-coverage wiring (the floor moves from each lane to the combined data, n
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
+import shutil
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -115,6 +119,9 @@ def test_py_job_combines_every_lane_and_keeps_the_floor_and_the_gate_artifact() 
     runs = _runs(py)
     assert "py_test_lanes.py data-files lane-coverage" in runs
     assert "uv run coverage combine" in runs
+    # Relative paths in the lane data: the combine must not depend on each job's checkout path.
+    pyproject = tomllib.loads((API_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert pyproject["tool"]["coverage"]["run"]["relative_files"] is True
     # The lanes switch --cov-fail-under off; only this step may stand in for it.
     assert "py_test_lanes.py fail-under" in runs
     assert 'uv run coverage report --fail-under="$floor"' in runs
@@ -285,7 +292,9 @@ def test_cli_data_files_annotates_and_fails_when_a_lane_is_missing(
     data.mkdir()
     (data / "py-lane-a.coverage").write_bytes(b"x")
     assert main(["--manifest", str(manifest_path), "data-files", str(data)]) == 1
-    assert capsys.readouterr().out == (
+    captured = capsys.readouterr()
+    assert captured.out == ""  # the workflow captures stdout: an annotation there is never shown
+    assert captured.err == (
         "::error title=CI-COV-003 incomplete py lane coverage::"
         "lane 'rest' left no coverage data (py-lane-rest.coverage)\n"
     )
@@ -295,3 +304,40 @@ def test_cli_data_files_annotates_and_fails_when_a_lane_is_missing(
         str(data / "py-lane-a.coverage"),
         str(data / "py-lane-rest.coverage"),
     ]
+
+
+def test_combine_step_shows_the_annotation_when_a_lane_left_no_data(tmp_path: Path) -> None:
+    """The real `py` combine step, run as the runner runs a step with no `shell:` (`bash -e`), on
+    a copy of the CLI and manifest: CI-COV-003 must reach the step log, not the stdout capture."""
+    (run,) = [s["run"] for s in _jobs()["py"]["steps"] if "data-files" in s.get("run", "")]
+    ci = tmp_path / "tools" / "ci"
+    ci.mkdir(parents=True)
+    for name in ("py_test_lanes.py", "py-test-lanes.json"):
+        shutil.copy(ROOT / "tools" / "ci" / name, ci / name)
+    shims = tmp_path / "bin"
+    shims.mkdir()
+    for tool, body in (("python", f'exec {shlex.quote(sys.executable)} "$@"'), ("uv", 'echo "$*"')):
+        (shims / tool).write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        (shims / tool).chmod(0o755)
+    data = tmp_path / "services" / "api" / "lane-coverage"
+    data.mkdir(parents=True)
+    first, *others = load_manifest().names
+    for lane in others:
+        (data / DATA_FILE_TEMPLATE.format(lane=lane)).write_bytes(b"x")
+    env = {**os.environ, "PATH": f"{shims}{os.pathsep}{os.environ.get('PATH', os.defpath)}"}
+
+    def step() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", "-e", "-c", run], cwd=data.parent, env=env, capture_output=True, text=True
+        )
+
+    missing = step()
+    assert (missing.returncode, missing.stdout) == (1, "")
+    assert missing.stderr == (
+        "::error title=CI-COV-003 incomplete py lane coverage::"
+        f"lane '{first}' left no coverage data ({DATA_FILE_TEMPLATE.format(lane=first)})\n"
+    )
+    (data / DATA_FILE_TEMPLATE.format(lane=first)).write_bytes(b"x")
+    combined = step()
+    files = " ".join(f"lane-coverage/{DATA_FILE_TEMPLATE.format(lane=n)}" for n in [first, *others])
+    assert (combined.returncode, combined.stdout) == (0, f"run coverage combine {files}\n")

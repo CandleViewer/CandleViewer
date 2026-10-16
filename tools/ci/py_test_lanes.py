@@ -4,10 +4,10 @@
 `tools/ci/py-test-lanes.json` is the one source of truth. Named lanes list test paths relative to
 services/api; the rest lane runs `tests` minus every listed path, so a new test directory runs in
 the rest lane instead of dropping out. `.github/workflows/_job-py.yml` calls `pytest-args LANE`
-(one lane's path arguments), `data-files DIR` (the lane coverage data to combine; CI-COV-003 and
-exit 1 unless there is exactly one file per lane) and `fail-under` (the addopts floor the lanes
-switch off and the `py` job applies to the combined data). `check`, also run by
-scripts/tests/test_py_test_lanes.py, fails when a listed path is missing, holds no test file or
+(one lane's path arguments), `data-files DIR` (the lane coverage data to combine, on stdout; with
+CI-COV-003 on stderr and exit 1 unless there is exactly one file per lane) and `fail-under` (the
+addopts floor the lanes switch off and the `py` job applies to the combined data). `check`, also run
+by scripts/tests/test_py_test_lanes.py, fails when a listed path is missing, holds no test file or
 overlaps another, or when a test file would run in no lane or in two. Stdlib only; no network.
 """
 
@@ -219,8 +219,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "data-files":
             files, problems = data_files(manifest, args.directory)
+            # On stderr: the workflow step captures stdout (the file list) and would swallow them.
             for problem in problems:
-                print(f"::error title=CI-COV-003 incomplete py lane coverage::{problem}")
+                print(
+                    f"::error title=CI-COV-003 incomplete py lane coverage::{problem}",
+                    file=sys.stderr,
+                )
             if problems:
                 return 1
             print("\n".join(str(f) for f in files))
