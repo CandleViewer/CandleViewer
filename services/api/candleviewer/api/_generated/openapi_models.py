@@ -4371,10 +4371,43 @@ class FeatureFlag(BaseModel):
     kind: Literal["boolean", "percentage", "variant"] | None = None
     description: str | None = None
     value: Annotated[Any | None, Field(description="Resolved value for the caller.")] = None
-    default_value: Annotated[Any | None, Field(description="Deployment default.")] = None
-    overrides: list[Override] | None = None
-    updated_by: UUID | None = None
-    updated_at: AwareDatetime | None = None
+    default_value: Annotated[
+        Any | None,
+        Field(
+            description="Deployment default: the deployment-wide stored value resolution falls back to (`feature_flags.default_value`, E42-T03). A `PUT` writes it on a `boolean` or `variant` flag; on a `percentage` flag it writes `rollout_pct` instead. Omitted when the list's `resolution` is `fail_closed` or the flag is `unreadable`.\n"
+        ),
+    ] = None
+    overrides: Annotated[
+        list[Override] | None,
+        Field(description="Omitted when the list's `resolution` is `fail_closed` (E42-T03)."),
+    ] = None
+    updated_by: Annotated[
+        UUID | None,
+        Field(
+            description="Omitted when the list's `resolution` is `fail_closed` or the flag is `unreadable` (E42-T03).\n"
+        ),
+    ] = None
+    updated_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="Omitted when the list's `resolution` is `fail_closed` (E42-T03). An `unreadable` flag keeps it: it is the `expected_updated_at` of the write that repairs the flag.\n"
+        ),
+    ] = None
+    unreadable: Annotated[
+        bool | None,
+        Field(
+            description="`true` when this flag's stored row is unreadable (malformed, or a kind mismatch): the flag alone resolves to its fail-closed value, and a `PUT` with a valid value repairs it (E42-T03). Sent only as `true`.\n"
+        ),
+    ] = None
+
+
+class FeatureFlagResolution(RootModel[Literal["stored", "fail_closed"]]):
+    root: Annotated[
+        Literal["stored", "fail_closed"],
+        Field(
+            description="How `GET /admin/feature-flags` resolved its list (E42-T03), a closed set; always sent. `stored`: from the flag store. `fail_closed`: the store was unreachable (its read failed or exceeded its read budget), so every flag shows its fail-closed value and omits `default_value`, `overrides`, `updated_at` and `updated_by`. A single unreadable row is not an outage: the list stays `stored` and that flag is marked `unreadable`.\n"
+        ),
+    ]
 
 
 class Override1(BaseModel):
@@ -4392,14 +4425,36 @@ class SetFeatureFlagRequest(BaseModel):
     value: Annotated[
         Any,
         Field(
-            description="Boolean, number (percentage) or string (variant), matching the flag kind."
+            description="Boolean, integer 0-100 (percentage) or string (variant), matching the flag kind."
         ),
     ]
-    overrides: list[Override1] | None = None
-    reason: Annotated[str | None, Field(max_length=280)] = None
-    evidence_url: Annotated[
-        AnyUrl | None, Field(description="Required for gated flags such as `trading.live_enabled`.")
+    overrides: Annotated[
+        list[Override1] | None,
+        Field(description="Omitted, the existing overrides stay; `[]` clears them (E42-T03)."),
     ] = None
+    reason: Annotated[
+        str | None,
+        Field(
+            description="Why the flag changed; recorded in the `flags.change` audit entry (E42-T03). The server refuses a write without it (`422 validation_failed`). It stays optional in the schema because C-6.3 classes a newly required field as breaking.\n",
+            max_length=280,
+        ),
+    ] = None
+    evidence_url: Annotated[
+        AnyUrl | None,
+        Field(
+            description="Required for gated flags such as `trading.live_enabled`. An `https` URL; recorded, never dereferenced."
+        ),
+    ] = None
+    expected_updated_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="The flag's `updated_at` as the caller last read it (E42-T03). The write is applied only if the stored value still matches, else `409 conflict`. The server refuses a write without it (`422 validation_failed`); schema-optional for the same reason as `reason`.\n"
+        ),
+    ] = None
+
+
+class FeatureFlagConflict(Problem):
+    current: FeatureFlag
 
 
 class Backup(BaseModel):
@@ -5275,6 +5330,19 @@ class SecuritySummary(BaseModel):
     auth: Auth | None = None
     audit: Audit | None = None
     findings: list[Finding] | None = None
+
+
+class TradingDisabledProblem(Problem):
+    code: Annotated[
+        Literal["trading_disabled"],
+        Field(description="Stable machine-readable error code from `x-error-codes`."),
+    ]
+    reason: Annotated[
+        Literal["maintenance", "account_disabled_by_policy", "no_active_key", "account_unhealthy"],
+        Field(
+            description="Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).\n"
+        ),
+    ]
 
 
 class AuthenticatedResponse(BaseModel):

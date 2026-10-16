@@ -1034,7 +1034,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 
 | Mechanism      | What it does                                                               | Applied to                                                          | Loss of information?                                    |
 | -------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
-| **Throttling** | Releases a topic's pending updates at most once per `throttle_ms`.         | All topics except `orders`, `executions`.                           | No — state is complete at each emission.                |
+| **Throttling** | Releases a topic's pending updates at most once per `throttle_ms`.         | All topics except `orders`, `executions` and `system` flag frames.  | No — state is complete at each emission.                |
 | **Coalescing** | Merges all pending updates for a topic into one frame.                     | Book, bars, footprint, heatmap, metrics, ticker, positions, wallet. | Intermediate _frames_ are lost; final _state_ is exact. |
 | **Shedding**   | Drops the subscription and forces a re-snapshot, or closes the connection. | Last resort under sustained overflow.                               | Yes — recovered by re-snapshot.                         |
 
@@ -1051,6 +1051,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 | `machines`                      | Whole-object last-write-wins; at most one pending payload per subscription (§6.4).                                                                            | A state topic: only the latest state matters.                  |
 | `trades`, `liquidations`        | **Append, never merge** — throttling batches them into arrays.                                                                                                | Every print matters for the tape and CVD.                      |
 | `orders`, `executions`          | **Never coalesced, never throttled.**                                                                                                                         | State-machine transitions and fills must be seen individually. |
+| `system`                        | `feature_flags`: per flag key, last-write-wins, a key is never dropped. `notice`, `kill_switch`, `shutdown_notice`: **never coalesced**.                      | A flag delta carries only changed keys; notices are events.    |
 
 **Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts when ADR-0033 starts a new generation/epoch. A channel streams one generation at a time; a generation swap arrives as a new snapshot (ADR-0033 client ingestion). Clients key their bar stores the same way. **Footprint bars take the same key (#2529; decided with E12-T06):** §14.4 bar items carry `generation` and `index`, and so does each CVWB kind-5 group prefix (`format_version = 2`, §3.4), so two footprint bars that share an open time are never merged. Footprint items carry no `amended` (§14.4 has no such field, and kind-5 group `flags` bit1 stays reserved), so the carve-out below does not apply to them, and this contract defines no way to republish a late trade into a confirmed footprint bar: clients keep a confirmed footprint bar as received (the coalescer holds that within one window only), the series' `bars` topic carries the `amended` bar, and that bar's footprint cells are corrected only by the next `snap`, which is authoritative (§7.1). Delivering a late trade on `footprint` sooner is decided with the producer (#2197) and would be additive.
 
@@ -3566,6 +3567,21 @@ a client connecting after the transition still disables order entry (CMP-092). I
 on an in-place re-auth. Internal details (listening addresses, remediation text) are never sent
 to clients; they appear in logs and `/readyz` only. This uses the existing schema; no schema
 change.
+
+**Feature-flag and maintenance pushes (E42-T03).** After a flag write commits, every
+authenticated connection that the flag's `visibility` admits receives a `system` frame of
+`kind: "feature_flags"` within 2 s. `visibility` is a mandatory per-flag registry attribute with
+no default: `all_roles`, or `owner_only` for a flag that only owner sessions receive
+(`21-database-schema.md` §10.7 gives each flag's). These frames bypass the 1 s `system`
+throttle (§8.1): flag writes are rare Owner-only actions, so they stay within the 2 s bound.
+`feature_flags` carries **only the changed keys**, each resolved for that connection's user
+exactly as `GET /admin/feature-flags` resolves it, so a client merges the frame into the set it
+holds rather than replacing the set. A key the role may not see is omitted, and a frame left with
+no key is not sent, so a manager or viewer never learns an owner-only key. The topic snapshot
+carries the full set the role may see. Turning `maintenance.mode` on or off also sends
+`kind: "notice"` to every connection within 2 s, with `reason` `maintenance.enabled` (severity
+`warning`) or `maintenance.disabled` (severity `info`) and a role-neutral `message`. This uses
+the existing schema; no schema change.
 
 ### 15.10 `MachineStateUpdate`
 
