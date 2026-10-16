@@ -863,7 +863,7 @@ async def test_a_step_the_sink_failed_on_leaves_its_event_for_the_next_step() ->
 
 
 async def test_a_speed_change_during_a_parked_read_carries_the_lag() -> None:
-    """Fix round 3: 10x to 1x 0.25 s behind, during a parked read, booked 2.40 s; now nothing."""
+    """Rounds 3-4: 10x to 1x 0.25 s behind in a parked read booked 2.40 s; now 0 s, then 1x."""
     stream = GatedStream([trade(i * 100_000, trade_id=f"t{i}") for i in range(10)], at=5)
     r = rig([], end_s=1, speed=10.0, stream=stream)
     async with r.clock as clock:
@@ -872,24 +872,24 @@ async def test_a_speed_change_during_a_parked_read_carries_the_lag() -> None:
         r.time.advance(0.25)
         clock.set_speed(1.0)
         stream.gate.set()
-        assert await task == "range_end"
+        assert (await task, r.sink.at[-1] - r.sink.at[-2]) == ("range_end", pytest.approx(0.1))
     assert r.clock.stats().backpressure_s == pytest.approx(0.0, abs=1e-5)
 
 
 @pytest.mark.parametrize(("nth", "to"), [(90, 1.0), (60, 0.1)])
 async def test_a_speed_change_at_the_time_slice_yield_carries_the_lag(nth: int, to: float) -> None:
-    """Fix round 3: with nothing pending (the 2 ms yield), 100x to 1x booked about 9 s for 0.09 s
-    of lag, and to 0.1x 59 s. Once drained, a change applies at once (`now_us()` reads it)."""
-    time, script = FakeTime(), [(nth, to), (200, 100.0)]
-    items = [trade(i * 1_000, trade_id=f"t{i:03}") for i in range(200)]
-    r = rig(items, end_s=1, speed=100.0, time=time, sink=BusySink(time))
+    """Rounds 3-4: at the yield 100x to 1x booked 9.2 s; the next window reads 1.0, not 0.91."""
+    time, script, rates = FakeTime(), [(nth, to), (1_200, 100.0)], []  # then once drained
+    items = [trade(i * 1_000, trade_id=f"t{i:04}") for i in range(1_200)]
+    r = rig(items, end_s=2, speed=100.0, time=time, sink=BusySink(time))
     async with r.clock as clock:
         task = clock.play()
         while not task.done():  # it runs at the clock's yields, with nothing pending
             await asyncio.sleep(0)
+            rates.append(clock.stats().achieved_ratio)
             if script and len(r.sink.events) >= script[0][0]:
                 clock.set_speed(script.pop(0)[1])
-    assert (task.result(), script) == ("range_end", [])
+    assert (task.result(), script, round(next(filter(None, rates)), 6)) == ("range_end", [], 1.0)
     assert r.clock.stats().backpressure_s == pytest.approx(0.0, abs=1e-5)
 
 

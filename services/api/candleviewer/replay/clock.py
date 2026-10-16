@@ -223,8 +223,10 @@ class ReplayClock:
         """Change speed (B12 `set_speed`); the current speed again is a no-op, and before `play()`
         anchors its schedule the speed is only recorded. While paced, the schedule continues from
         its own position; behind schedule, from the pending (or, if none, next read) event's due
-        time, so lateness carries over as is, never re-scaled or forgiven: a speed-up while behind
-        delivers up to `max_lag_s` times the new speed of replay time at once. Leaving the schedule
+        time, so lateness carries over as is, never re-scaled or forgiven: one speed-up while
+        behind delivers up to `max_lag_s` times the new speed of replay time at once. Changes while
+        nothing is pending collapse into the last speed from the first change (an approximation
+        bounded by that stall), and one still pending at a pause is dropped. Leaving the schedule
         (unbounded or `STEP`, which pauses) books that lateness as lost time, never hiding it."""
         speed = check_speed(speed)
         if speed == self._speed:
