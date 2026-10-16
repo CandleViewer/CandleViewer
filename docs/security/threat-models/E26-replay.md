@@ -649,8 +649,9 @@ not accepted; RR4 has no register entry and is tracked through G6 and G7. All fo
 ### Sign-off
 
 - Independent security review complete (Fable, #2681: round 1 at `4497ed4a`, round 2 at `12d46f85`, both APPROVE; the
-  sonnet code review approved at `12d46f85`). Owner acceptance of RR1-RR4 pending, queued on #2701 (agent-delivery
-  adaptation, as in `E14-drawings.md`). Architect review via PR review.
+  sonnet code review approved at `12d46f85`). Security-engineer sign-off by independent security review (Fable, PR
+  #2681 rounds 1–2) and architect review via PR review, orchestrator-delegated per #1778 2026-10-12; owner acceptance
+  of RR1–RR4 (04 §16.1 RR-09..RR-12) pending — queued on #2701 (agent-delivery adaptation, as in `E14-drawings.md`).
 - **Requirement numbers.** The five proposed requirements in §12 stay unnumbered here. Numbering them, and registering
   them in `04-security-program.md` §6, is deferred to the Security engineer at E26-X03, in the form E27 used
   (`SR-E27-nn`, here `SR-E26-nn`).
