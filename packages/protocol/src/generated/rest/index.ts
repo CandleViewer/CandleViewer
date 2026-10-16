@@ -8916,6 +8916,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   createAlert: {
@@ -8976,6 +8977,7 @@ export interface operations {
         };
       };
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   updateAlert: {
@@ -9261,6 +9263,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   authMfaEnroll: {
@@ -12200,6 +12203,7 @@ export interface operations {
       };
       403: components["responses"]["CsrfTokenInvalid"];
       404: components["responses"]["NotFound"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   listNotifications: {
@@ -12249,6 +12253,7 @@ export interface operations {
           "application/json": components["schemas"]["OnboardingChecklist"];
         };
       };
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   dismissOnboardingChecklist: {

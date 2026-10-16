@@ -23,6 +23,7 @@ from tests.contract.rbac.rbac_harness import (
     GRANTED,
     World,
     bearer,
+    fill_path,
     record_cell,
     user_id_of,
 )
@@ -258,9 +259,8 @@ def test_scope_is_part_of_the_query_not_a_post_filter(world: World) -> None:
         world.client.post("/rules", json=_rule_body(FOREIGN, f"f{i}"), headers=bearer("owner"))
     world.client.post("/rules", json=_rule_body(GRANTED, "m0"), headers=bearer("owner"))
     page = world.client.get("/rules", params={"limit": 1}, headers=bearer("manager_with_grant"))
-    assert [i["name"] for i in page.json()["items"]] == ["m0"], (
-        "pagination must run over the already-scoped set"
-    )
+    names = [i["name"] for i in page.json()["items"]]
+    assert names == ["m0"], "pagination must run over the already-scoped set"
     assert page.json()["meta"]["has_more"] is False
 
 
@@ -282,9 +282,8 @@ def test_self_service_routes_reject_a_target_user_id_in_the_body(
     resp = world.client.request(
         method, path, json={**body, "user_id": target}, headers=bearer("manager_with_grant")
     )
-    assert resp.status_code in (400, 422), (
-        f"{method} {path}: a target-user parameter must be rejected, got {resp.status_code}"
-    )
+    why = f"{method} {path}: a target-user parameter must be rejected, got {resp.status_code}"
+    assert resp.status_code in (400, 422), why
 
 
 def test_self_service_reads_are_always_about_the_caller(world: World) -> None:
@@ -293,27 +292,37 @@ def test_self_service_reads_are_always_about_the_caller(world: World) -> None:
     assert mgr.json()["user"]["id"] == str(user_id_of("manager_with_grant"))
 
 
-#: The executed self-service reads (x-rbac `permissions: []`, `scope: self`). `GET
-#: /onboarding/checklist` is `not_executable` in this pack (501 in the CI app), so it is not listed.
-_SELF_SERVICE_READS = ["/auth/session", "/auth/sessions"]
+#: The executed self-service routes (x-rbac `scope: self`), which take no target-user parameter.
+#: `GET /onboarding/checklist` is `not_executable` in this pack (501 in the CI app), so it is not
+#: listed; its refusal is asserted in tests/unit/api/test_onboarding_checklist.py.
+_SELF_SERVICE_QUERY_ROUTES = [
+    ("GET", "/auth/session"),
+    ("GET", "/auth/sessions"),
+    ("POST", "/auth/logout"),
+    ("DELETE", "/me/sessions/{sessionId}"),
+    ("GET", "/alerts"),
+    ("GET", "/alerts/{alertId}"),
+]
 
 
-@pytest.mark.parametrize("path", _SELF_SERVICE_READS)
+@pytest.mark.parametrize(("method", "path"), _SELF_SERVICE_QUERY_ROUTES)
 @pytest.mark.parametrize("actor", ACTORS[:4])  # every authenticated role
-def test_self_service_reads_reject_a_target_user_query_parameter(
-    world: World, path: str, actor: str
+def test_self_service_routes_reject_a_target_user_query_parameter(
+    world: World, method: str, path: str, actor: str
 ) -> None:
-    """SR-026 (#2573): a target-user parameter is refused (422), never silently ignored, for
-    every role and whichever other user it names; the refusal carries no session data."""
+    """SR-026 (#2573, #2632): a target-user parameter is refused (422), never silently ignored,
+    for every role and whichever other user it names. The refusal carries no data and writes no
+    audit record, so nothing was revoked."""
     target = next(a for a in ACTORS[:4] if a != actor)
-    resp = world.client.get(
-        path, params={"user_id": str(user_id_of(target))}, headers=bearer(actor)
+    resp = world.client.request(
+        method, fill_path(path), params={"user_id": str(user_id_of(target))}, headers=bearer(actor)
     )
-    assert resp.status_code == 422, f"GET {path} as {actor}: got {resp.status_code}"
+    assert resp.status_code == 422, f"{method} {path} as {actor}: got {resp.status_code}"
     body = resp.json()
     assert body["code"] == "validation_failed"
     assert "user_id" in body["detail"]
-    assert not {"user", "session", "items"} & set(body), "a refusal carries no session data"
+    assert not {"user", "session", "items"} & set(body), "a refusal carries no data"
+    assert world.audit.records == [], "a refused call is not audited and revokes nothing"
 
 
 _ADMIN_MUTATIONS = [

@@ -16,8 +16,13 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from candleviewer.api.onboarding_checklist import Probe, assemble
+from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.models import AuditOutcome, Severity
+
+#: SR-026 (#2632): `getOnboardingChecklist` declares no query parameter (22-api-openapi.yaml), so
+#: any query key (a target user or a step state included) is refused, never silently ignored.
+CHECKLIST_QUERY: frozenset[str] = frozenset()
 
 
 class DismissalStore(Protocol):
@@ -60,6 +65,8 @@ def make_onboarding_router(
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
             return _problem(401, "Unauthorized", "no verified session for this request")
+        if (refusal := undeclared_query_refusal(request, CHECKLIST_QUERY)) is not None:
+            return refusal  # before any probe runs or checklist state is read
         started = time.monotonic()
         try:
             dismissed = await store.is_dismissed(principal.user_id)

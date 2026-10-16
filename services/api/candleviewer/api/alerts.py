@@ -7,7 +7,9 @@ payload is a 422 and never reaches storage - and nothing here imports the OMS.
 RBAC (C-12.4) is enforced in dependencies, not per handler: `_need(perm)` resolves the caller
 and checks `alerts:read` / `alerts:write`; `_owned` applies `scope: self` - another user's
 alert is a 404 (existence is not disclosed) and the denial is audited. Every mutation writes
-an append-only audit record (C-2.9) before the response is returned.
+an append-only audit record (C-2.9) before the response is returned. The two reads take only
+their declared query parameters (SR-026): any other key gets the shared 422 after the permission
+check and before the store is read.
 """
 
 # No `from __future__ import annotations`: FastAPI must evaluate `Depends(<closure>)` in the
@@ -27,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from candleviewer.alerts.compiler import AlertCompiler, validate_template
 from candleviewer.alerts.errors import AlertIrInvalid
+from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.rules.manager import Actor
 from candleviewer.rules.vocabulary.registry import MetricRegistry
@@ -38,6 +41,10 @@ from candleviewer.storage.repositories.alerts import (
 )
 
 READ, WRITE = "alerts:read", "alerts:write"
+#: SR-026 (#2632): declared query parameters (22-api-openapi.yaml) of `listAlerts` (`Cursor`,
+#: `Limit`, `enabled`, `SymbolQueryOptional`) and `getAlert` (none); any other key is refused.
+LIST_ALERTS_QUERY = frozenset({"cursor", "limit", "enabled", "symbol"})
+GET_ALERT_QUERY: frozenset[str] = frozenset()
 _SYMBOL = r"^[A-Z0-9]{2,20}USDT$"
 Channel = Literal["in_app", "email", "webhook", "push", "desktop"]
 OnCompile = Callable[[float, str | None], None]
@@ -93,8 +100,17 @@ class _Problem(Exception):
         )
 
 
+class _Refused(Exception):
+    """A ready refusal raised from a dependency: the shared SR-026 query refusal, sent as is."""
+
+    def __init__(self, response: JSONResponse) -> None:
+        super().__init__(response.status_code)
+        self.response = response
+
+
 class _ProblemRoute(APIRoute):
-    """Turns `_Problem` raised in a dependency or handler into an RFC 9457 response."""
+    """Turns `_Problem` (or a ready `_Refused`) raised in a dependency or handler into an RFC 9457
+    response."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         inner = super().get_route_handler()
@@ -104,6 +120,8 @@ class _ProblemRoute(APIRoute):
                 return await inner(request)
             except _Problem as p:
                 return p.response()
+            except _Refused as r:
+                return r.response
 
         return handler
 
@@ -183,7 +201,12 @@ def make_alerts_router(
     d = _Deps(repo_provider, registry_provider, actor_resolver, audit, on_compile, on_change)
     router = APIRouter(tags=["alerts"], route_class=_ProblemRoute)
 
-    def need(perm: str) -> Callable[[Request], Awaitable[Actor]]:
+    def need(
+        perm: str, query: frozenset[str] | None = None
+    ) -> Callable[[Request], Awaitable[Actor]]:
+        """*query*: the operation's declared query parameters; any other key is refused (SR-026)
+        once the caller holds *perm*, before anything is read."""
+
         async def dep(request: Request) -> Actor:
             if d.resolver is None:
                 raise _Problem(501, "not_implemented", "Not implemented", "no principal resolver")
@@ -194,13 +217,19 @@ def make_alerts_router(
             if perm not in actor.perms:
                 raise _Problem(403, "forbidden", "Forbidden", f"requires {perm}",
                                required_permissions=[perm])  # fmt: skip
+            if query is not None:
+                refusal = undeclared_query_refusal(request, query)
+                if refusal is not None:
+                    raise _Refused(refusal)
             return actor
 
         return dep
 
-    def owned(perm: str) -> Callable[..., Awaitable[tuple[Actor, AlertRow]]]:
+    def owned(
+        perm: str, query: frozenset[str] | None = None
+    ) -> Callable[..., Awaitable[tuple[Actor, AlertRow]]]:
         """`scope: self`: someone else's alert is indistinguishable from a missing one."""
-        gate = need(perm)
+        gate = need(perm, query)
 
         async def dep(alertId: UUID, actor: Annotated[Actor, Depends(gate)]) -> Any:
             row = await d.store().get(str(alertId))
@@ -214,8 +243,8 @@ def make_alerts_router(
 
         return dep
 
-    reader, writer = need(READ), need(WRITE)
-    owned_r, owned_w = owned(READ), owned(WRITE)
+    lister, writer = need(READ, LIST_ALERTS_QUERY), need(WRITE)
+    owned_r, owned_w = owned(READ, GET_ALERT_QUERY), owned(WRITE)
 
     async def parse(request: Request, actor: Actor) -> tuple[AlertInput, Any]:
         try:
@@ -270,7 +299,7 @@ def make_alerts_router(
 
     @router.get("/alerts")
     async def list_alerts(
-        actor: Annotated[Actor, Depends(reader)],
+        actor: Annotated[Actor, Depends(lister)],
         cursor: Annotated[str | None, Query(max_length=512)] = None,
         limit: Annotated[int, Query(ge=1, le=500)] = 100,
         enabled: bool | None = None,
