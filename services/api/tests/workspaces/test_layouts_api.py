@@ -112,7 +112,7 @@ def test_delete_layout_and_idempotency_key_format(env: Env, ws: str) -> None:
     made = env.make_layout(ws)
     url = f"/workspaces/{ws}/layouts/{made['id']}"
     assert env.c.delete(url, headers={"Idempotency-Key": "nope"}).status_code == 422
-    key = {"Idempotency-Key": "0b6f1a3e-5c1e-4c1e-9a3e-1b2c3d4e5f60"}
+    key = {"Idempotency-Key": "00000000-0000-4000-8000-000000000001"}
     assert env.c.delete(url, headers=key).status_code == 204
     assert env.c.get(url).status_code == 404 and env.c.delete(url).status_code == 404
     assert env.c.get(f"/workspaces/{ws}").json()["layouts"] == []
