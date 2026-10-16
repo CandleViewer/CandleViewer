@@ -67,9 +67,9 @@ class KnownDelta(NamedTuple):
 # deliberately absent: a shared-runner BENCH-1 is inconclusive, and how to gate it
 # is an open owner decision (item M on #1778).
 # Open follow-ups: rewrite criterion [2] of the two 174 scripts, which retires their
-# entries (#ISSUE-CRITERION2); bench_c_timers_v2.py reports the second-largest of 5 runs
-# as "p99", which bench6() judges (#ISSUE-P99); the upstream job has no upstream checkout,
-# so most env rows skip there (#ISSUE-UPSTREAM).
+# entries (#2937); bench_c_timers_v2.py reports the second-largest of 5 runs
+# as "p99", which bench6() judges (#2938); the upstream job has no upstream checkout,
+# so most env rows skip there (#2939).
 KNOWN_DELTAS: dict[str, KnownDelta] = {
     "bench:BENCH-2": KnownDelta(
         "FAIL",
@@ -87,14 +87,14 @@ KNOWN_DELTAS: dict[str, KnownDelta] = {
         "the Windows ~15.6 ms timer tick produced (20-adoption-gate.md s.3, BENCH-5). "
         "Upstream re-measured #174's busy loop at 0-1 ms (CHANGELOG 0.9.0); Linux reads ~1 ms. "
         "Criteria [1] docs and [3] plain-def service blocks ~500 ms still hold. "
-        "Rewrite of [2] tracked in #ISSUE-CRITERION2.",
+        "Rewrite of [2] tracked in #2937.",
     ),
     "verifyM5:174": KnownDelta(
         "FAIL",
         "(d) stale criterion [2], as verifyM4:174 (Windows timer tick, not the library). "
         "Criteria [1] docs, [3] plain-def service blocks ~500 ms and [4] async def remedy "
         "fires on time still hold (44-r7 and 49-r8 verdicts: #174 DOCUMENTED-ONLY). "
-        "Rewrite of [2] tracked in #ISSUE-CRITERION2.",
+        "Rewrite of [2] tracked in #2937.",
     ),
 }
 

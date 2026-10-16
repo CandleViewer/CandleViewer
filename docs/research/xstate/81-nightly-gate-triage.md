@@ -177,7 +177,7 @@ every threshold, and `result-v0.9.1.json`.
    item M, point 3 (re-record the baseline on Ubuntu) becomes optional: re-recording would freeze one
    night's bench noise into the baseline. If you reject, drop the `KNOWN_DELTAS` entries and revert
    that paragraph.
-3. **Rewrite criterion [2] of both 174 scripts** (amendment 21, #ISSUE-CRITERION2): report the busy-loop lateness but do
+3. **Rewrite criterion [2] of both 174 scripts** (amendment 21, #2937): report the busy-loop lateness but do
    not gate on it. The `KNOWN_DELTAS` entries can then be removed. Until then, a change in [1], [3] or
    [4] on Linux is hidden behind [2]'s FAIL.
 4. **Close the duplicate auto-filed issues** (the 11 listed at the top and #2821, from the 2026-10-16 night)
@@ -188,8 +188,8 @@ every threshold, and `result-v0.9.1.json`.
 - **#1965: pin `_upstream` by commit.** The tag `v0.9.1` is tag object `45bb7f3c…` and points to
   commit `801eacdeef5bda2ba24b75f537ae04cc3527747e`. The checkout now feeds two venvs and the upstream
   test run, so a moved tag matters more than before.
-- **`bench_c_timers_v2.py` "p99" (#ISSUE-P99).** It takes `sorted(vals)[int(0.99·n) − 1]`, which for n = 5 is the
+- **`bench_c_timers_v2.py` "p99" (#2938).** It takes `sorted(vals)[int(0.99·n) − 1]`, which for n = 5 is the
   second-largest of 5, not the maximum. The nightly margin is ≥ 49 ms, so no verdict changes. Fix it,
   with a justification, before P3-G6 relies on the number.
-- **The `upstream` job checks out no upstream tree** (#ISSUE-UPSTREAM), so most env rows SKIP there: 38 SKIP-ENV on the
+- **The `upstream` job checks out no upstream tree** (#2939), so most env rows SKIP there: 38 SKIP-ENV on the
   0.11.0 run of 2026-10-14.
