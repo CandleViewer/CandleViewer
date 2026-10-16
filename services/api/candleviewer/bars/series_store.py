@@ -11,25 +11,28 @@ a WS snapshot source reads `latest` and `version`.
   at or below the newest index (a builder cold start restarts `index`) resets the series, and so
   does an emission in any other generation, lower or higher: there is one live builder per series,
   so its generation is never stale (§8.2 generation swap). Generations are opaque epochs: none is
-  assumed, and a series has none until an emission or a read names one. A swap leaves the series
-  not `hydrated`, so the new generation's rows are read (ADR-0033).
+  assumed, and a series has none until an emission or a read names one. Naming the first is not a
+  swap; a change of generation is, and leaves the series not `hydrated`, so the new generation's
+  rows are read (ADR-0033).
 - **Hydration:** the first `ensure` starts a series from its ring, replayed by the sink rules,
   then reads the newest closed tape-built bars, bounded by `timeout_s`, and folds over them the
   bars it held (those newer than the rows, or replacing a bar they hold, each with its build
   mark), the closes seen just before and during the read that re-close a bar now held, and the
   forming bar. It keeps one generation: the live one, else the newest row's, else none yet. One
   read at a time per series: a concurrent `ensure` waits for it, and takes it over if its reader
-  was cancelled. A failed read, a degraded one (SR-E12-11: served, never final), or a live swap
-  leaves the series not `hydrated`; an `ensure` reads it again, as it does a `gapped` one, but
-  never sooner than `retry_after_s` after the last read; nothing else starts a read. Without a
-  reader, a series keeps only what the store has seen live.
+  was cancelled. A failed read leaves the series as it was; a degraded one (SR-E12-11: served,
+  never final) or a live swap leaves it not `hydrated`. An `ensure` reads a series that is not
+  `hydrated`, or is `gapped`, again, but never sooner than `retry_after_s` after the last read;
+  nothing else starts a read. Without a reader, a series keeps only what the store has seen live.
 - **Holds and bounds (C-2.18):** `ensure` returns a `Hold`, released once. The last release keeps
   the series `release_grace_s` (the builder's grace, US-MKT-005), so a quick resubscribe finds it
-  as the sink kept it and reads nothing (BR-38); the next `ensure` sweeps the expired. At most
-  `MAX_HISTORY` closed bars per series and `MAX_SERIES` series kept, held or in grace (the
-  process-wide spec cap); rings for at most `MAX_SERIES` series, the least recently closed
-  dropped first. The sink keeps an expired series current until that sweep. Memory: about 5 KB
-  a close (measured), so 5 MB a series, 2.5 GB at `MAX_SERIES`, and 41 MB of rings.
+  as the sink kept it and, while it is `hydrated` and not `gapped`, reads nothing (BR-38); the
+  next `ensure` sweeps the expired. At most `MAX_HISTORY` closed bars per series and `MAX_SERIES`
+  series kept, held or in grace (the process-wide spec cap); rings for at most `MAX_SERIES`
+  series, the least recently closed dropped first; at most `MAX_HISTORY` closes kept for a read
+  in flight, the oldest shed first. The sink keeps an expired series current until that sweep.
+  Memory: about 5 KB a close (measured), so 5 MB a series, 2.5 GB at `MAX_SERIES`, and 41 MB of
+  rings.
 - **E12-S12 notes:** the generation rule assumes one live emitter per series (a rebuild must emit
   through its own router), and `CAP_NAME` copies `SpecLeases`' literal until `leases` exports it.
 - **`version`** comes from one store-wide counter and moves on every change: a cache key that
@@ -88,7 +91,7 @@ class Latest(NamedTuple):
     """`latest`: the series' change counter and generation (None before an emission or a read
     names one), its closed bars in index order, the forming bar, and the lowest `build_version`
     among those bars when one was built below the running code (None: all current;
-    `23-ws-protocol.md` §6.1 `meta.build_version`)."""
+    `23-ws-protocol.md` §6.1 `meta.build_version`, which lands with #2595)."""
 
     version: int
     generation: int | None
@@ -136,10 +139,12 @@ class _Series:
     gapped: bool = False
     #: Store-clock time a released series is freed at (None while held).
     expires_at: float | None = None
-    #: index -> `build_version` of the hydrated bars built below the running code: at most one
-    #: read's rows, cleared by a reset; `latest` looks up only the bars it returns.
+    #: index -> `build_version` of the held bars built below the running code: a read sets its
+    #: rows', a re-read carries each held bar's own, and a live re-close, the bar leaving the
+    #: window or a reset drops one. Its indexes are always among `closed`'s.
     stale: dict[int, int] = field(default_factory=dict)
-    #: Closes seen while a read is in flight (bounded), folded over its rows.
+    #: Closes seen while a read is in flight (the oldest shed past `MAX_HISTORY`), folded over
+    #: its rows.
     replay: deque[Close] | None = None
     #: Set when the read in flight ends, however it ends; a fresh one per read.
     ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -182,7 +187,7 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True) -> bool:
         )  # fmt: skip
     s.closed[i] = bar
     if len(s.closed) > MAX_HISTORY:
-        s.closed.popitem(last=False)
+        s.stale.pop(s.closed.popitem(last=False)[0], None)  # a mark leaves with its bar
     if s.forming is not None and s.forming.index <= i:
         s.forming = None
     return True
@@ -192,9 +197,10 @@ def _live(s: _Series, u: BarUpdate, generation: int) -> bool:
     """A sink emission. One live builder per series: any other generation, lower or higher, is
     the series' new one (§8.2 generation swap), and the first emission names it."""
     if generation != s.generation:
+        if s.generation is not None:  # naming the first one is not a swap (23 §8.2)
+            s.hydrated = False  # the new generation's rows are read again (ADR-0033)
         _clear(s)
         s.generation = generation
-        s.hydrated = False  # the new generation's rows are read again (ADR-0033)
         _apply(s, u)
         return True  # the reset changed the series, even if the emission itself is ignored
     return _apply(s, u)
@@ -351,7 +357,7 @@ class SeriesStore:
             s.attempted = True
             _log().warning(
                 "bars_series_hydrate_failed", spec_hash=spec.spec_hash, symbol=symbol,
-                error_type=type(exc).__name__, message=str(exc)[:120],
+                error_type=type(exc).__name__, error=str(exc)[:120],
             )  # fmt: skip
         else:
             swapped = before is not None and s.generation != before  # live, during the read
@@ -374,21 +380,15 @@ class SeriesStore:
         s.retry_at = self._clock() + self._retry_after_s  # a completed read, not a cancelled one
 
     def _fold(self, s: _Series, tail: BarTail) -> None:
-        """Rebuild `s` in one generation: the live one (the forming bar's, else the newest
-        close's), else the newest row's (the highest at the newest `ts`, until ADR-0033's pointer
-        decides), else unchanged: the rows, the bars `s` held that are newer by key or re-close a
-        row, the replayed re-closes of bars now held, then the forming bar."""
+        """Rebuild `s` in one generation: the live one (`s.generation`, when the sink saw a forming
+        bar or a recent close), else the newest row's (the highest at the newest `ts`, until
+        ADR-0033's pointer decides), else unchanged: the rows, the bars `s` held that are newer by
+        key or re-close a row, the replayed re-closes of bars now held, then the forming bar."""
         replay: Sequence[Close] = s.replay or ()
         forming = s.forming
-        gen: int | None
-        if forming is not None:
-            gen = s.generation
-        elif replay:
-            gen = replay[-1][1]
-        elif tail.bars:
-            gen = tail.bars[-1][0]
-        else:
-            gen = s.generation  # nothing seen and nothing stored: unchanged (none for a new series)
+        gen = s.generation  # the live one: whatever the sink saw named it (none: nothing seen)
+        if forming is None and not replay and tail.bars:
+            gen = tail.bars[-1][0]  # nothing seen live: the newest row's
         held, prior = (list(s.closed.values()), dict(s.stale)) if gen == s.generation else ([], {})
         _clear(s)
         s.generation, s.gapped = gen, False

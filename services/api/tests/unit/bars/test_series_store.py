@@ -378,12 +378,13 @@ async def test_a_failed_or_timed_out_read_leaves_the_series_live_and_says_so(
     tail = Tail(error=error, now=error is not None)  # a hung read meets the (zero) timeout
     store = SeriesStore(tail, timeout_s=5.0 if error else 0.0)
     with capture_logs() as logs:
-        await store.ensure(SYM, SPEC)
+        async with asyncio.timeout(1.0):  # a bound: a lost store timeout fails here, not hangs
+            await store.ensure(SYM, SPEC)
     await emit(store, up("close", 4), up("open", 5))
     assert view(store) == ([4], 5) and not store.hydrated(SYM, H)
     assert events(logs, "bars_series_hydrate_failed") == [{
         "event": "bars_series_hydrate_failed", "log_level": "warning", "spec_hash": H,
-        "symbol": SYM, "error_type": error_type, "message": str(error or "")[:120],
+        "symbol": SYM, "error_type": error_type, "error": str(error or "")[:120],
     }]  # fmt: skip
 
 
@@ -546,6 +547,21 @@ async def test_more_closes_during_the_read_than_the_ring_keeps_leave_no_gap() ->
     assert view(store)[0] == list(range(30)) and store.hydrated(SYM, H) and not store.gapped(SYM, H)
 
 
+async def test_the_closes_seen_during_a_read_are_bounded_and_the_oldest_are_shed() -> None:
+    """C-2.18: a burst bigger than `MAX_HISTORY` during a read keeps the newest closes."""
+    tail = Tail(rows(0))
+    store = SeriesStore(tail)
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    await emit(store, *(up("close", i) for i in range(1, MAX_HISTORY + 51)))
+    replay = store._series[(SYM, H)].replay  # white-box: the bound itself
+    assert replay is not None and len(replay) == MAX_HISTORY and replay[0][0].bar.index == 51
+    tail.gate.set()
+    await task
+    closed, _ = view(store)
+    assert len(closed) == MAX_HISTORY and closed[-1] == MAX_HISTORY + 50
+
+
 async def test_a_jump_past_the_recent_closes_flags_a_gap_that_the_next_read_heals() -> None:
     """More closes than the ring keeps went unstored before the hold: the fold flags the jump
     once, and an `ensure` `retry_after_s` later reads the rows the writer has landed by then."""
@@ -579,6 +595,21 @@ async def test_a_re_read_keeps_the_live_bars_storage_still_lacks() -> None:
     assert (tail.calls, view(store)[0]) == (2, [*range(10), *range(14, 50)])
 
 
+async def test_a_re_read_keeps_a_live_amendment_the_ring_has_rolled_out() -> None:
+    """A held bar replaces its stored twin: bar 2's amended close has left the 16-close ring and
+    the writer still holds the original."""
+    clock = Clock()
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(*range(5)), dropped=1)  # degraded: the next ensure reads again
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 2, amended=True, close="102"))
+    await emit(store, *(up("close", i) for i in range(5, 5 + 2 * RECENT_CLOSES)))
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert tail.calls == 2 and closes(store)[2] == (2, "102")
+
+
 async def test_a_re_read_keeps_no_held_bar_of_another_generation() -> None:
     """Nothing seen live and the newest row is another generation's: no old bar stays."""
     tail = Tail(now=True)
@@ -588,6 +619,7 @@ async def test_a_re_read_keeps_no_held_bar_of_another_generation() -> None:
     tail.tail = BarTail([*rows(0, 1), (7, bar(0, shift=1))])  # a twin at bar 1's open time
     await store.ensure(SYM, SPEC)
     assert (generation(store), view(store)) == (7, ([0], None))
+    assert store.hydrated(SYM, H)  # adopting the rows' generation is not a live swap
 
 
 async def test_a_close_sharing_the_newest_rows_open_time_is_kept() -> None:
@@ -596,6 +628,23 @@ async def test_a_close_sharing_the_newest_rows_open_time_is_kept() -> None:
     await emit(store, up("close", 9, shift=-1))  # opens with bar 8, not stored yet
     await store.ensure(SYM, SPEC)
     assert view(store) == ([6, 7, 8, 9], None) and not store.gapped(SYM, H)
+
+
+async def test_a_restarted_run_outranks_the_old_run_still_stored_by_open_time() -> None:
+    """Held bars compare by `(open_time, index)`: the restart opens later with `index` back at 0,
+    so the old run's rows (index 0..9) must not outrank it."""
+    store = SeriesStore(Tail(rows(*range(10)), now=True))
+    await emit(store, up("close", 0, shift=20), up("close", 1, shift=20))
+    await store.ensure(SYM, SPEC)
+    assert view(store) == ([0, 1], None) and store.hydrated(SYM, H) and not store.gapped(SYM, H)
+
+
+async def test_the_first_emission_after_an_empty_read_is_not_a_swap() -> None:
+    """Naming a first generation is not a change of one (23 §8.2): no stored row is left to read."""
+    store = SeriesStore(Tail(now=True))
+    await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 0), generation=3)
+    assert (store.hydrated(SYM, H), generation(store), view(store)) == (True, 3, ([0], None))
 
 
 async def test_a_live_generation_swap_after_the_read_leaves_it_not_hydrated() -> None:
@@ -704,6 +753,8 @@ async def test_latest_names_the_oldest_build_among_the_bars_it_returns() -> None
     assert oldest(store, 3) == 2  # bar 0 is the running code's now; bar 1 is not
     await emit(store, *(up("close", i) for i in range(3, MAX_HISTORY + 2)))
     assert oldest(store, MAX_HISTORY) is None  # bars 0 and 1 rolled out of the ring
+    kept = store._series[(SYM, H)]
+    assert set(kept.stale) <= set(kept.closed)  # white-box: a build mark leaves with its bar
 
 
 async def test_a_restart_forgets_the_old_run_builds() -> None:
