@@ -9,9 +9,11 @@ from typing import Any
 
 import pytest
 
+from candleviewer.accounts.health import CONNECTION_STATE, AccountHealthMonitor, HealthState
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from tests.contract.ws._harness import check_schema
+from tests.unit.accounts._fakes import ACC, Dms, FakeClock
 
 _SPEC = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
@@ -80,3 +82,16 @@ def test_wallet_health_refuses_a_partial_or_unknown_state(
 ) -> None:
     with pytest.raises(AssertionError, match="violates"):
         check_schema(_WALLET, {"balances": [_ITEM | {"health": health}]}, "wallet")
+
+
+def test_the_monitor_serves_exactly_the_contract_shapes() -> None:
+    monitor = AccountHealthMonitor(FakeClock(), Dms())
+    monitor.track(ACC)
+    monitor.rest_ok(ACC)
+    view = monitor.view(ACC)
+    assert view is not None
+    rest, schema = view.model_dump(mode="json"), _SCHEMAS["AccountHealth"]["properties"]
+    assert set(rest) == set(schema) and [s.value for s in HealthState] == schema["state"]["enum"]
+    assert api.AccountHealth.model_validate(rest).state == "degraded"
+    assert CONNECTION_STATE[view.state] == "degraded"
+    check_schema(_WALLET, {"balances": [_ITEM | {"health": view.ws_fields()}]}, "wallet")

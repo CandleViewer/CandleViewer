@@ -309,6 +309,10 @@ class Settings(BaseSettings):
     order_rate_per_uid: int = 8
     native_sl_deadline_ms: int = 3000
     killswitch_on_disconnect_s: int = 30
+    # E27-T04: account health windows (deployment config for v1, decision Q4 on #837), capped at
+    # US-ACCT-010's NFRs: heartbeat at most 10 s, down within 30 s.
+    account_heartbeat_s: float = Field(default=10.0, gt=0.0, le=10.0)
+    account_down_s: float = Field(default=30.0, gt=0.0, le=30.0)
 
     git_sha: str = "unknown"
     version: str = "0.1.0"
