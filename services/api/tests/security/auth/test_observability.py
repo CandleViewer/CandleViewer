@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from prometheus_client import REGISTRY
 
 from candleviewer.api.sessions import REFRESH_COOKIE
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER
@@ -55,11 +54,6 @@ ALERTING: dict[str, set[str]] = {
     "auth_lockouts_total": {"AuthLockouts", "ExpectedMetricMissingAuthLockoutsTotal"},
     "authz_denied_total": {"AuthzDeniedSpike", "ExpectedMetricMissingAuthzDeniedTotal"},
 }
-
-
-def in_process(name: str, **labels: str) -> float:
-    """A sample on the process-default registry, where module-level series land unscraped."""
-    return float(REGISTRY.get_sample_value(name, labels) or 0.0)
 
 
 def _alerts_reading(metric: str) -> set[str]:
@@ -129,11 +123,11 @@ def test_obs_refresh_token_reuse_is_a_critical_row_and_its_metric_is_not_scraped
     signed_in = stack.sign_in("victim", seed)
     stolen = {"refresh_token": signed_in.cookies.get(REFRESH_COOKIE)}
     csrf = {CSRF_HEADER: str(signed_in.cookies.get(CSRF_COOKIE))}  # its cookie is in the jar
-    reuse = in_process("auth_refresh_reuse_total")
+    reuse = stack.in_process("auth_refresh_reuse_total")
     assert stack.client.post("/auth/refresh", headers=csrf, json=stolen).status_code == 200
     assert stack.client.post("/auth/refresh", json=stolen).status_code == 401  # the replay
     assert _rows(stack, "auth.refresh_reuse_detected") == [("rotation_reuse", "denied", "critical")]
-    assert in_process("auth_refresh_reuse_total") - reuse == 1
+    assert stack.in_process("auth_refresh_reuse_total") - reuse == 1
     assert stack.scraped("auth_refresh_reuse_total") == 0.0  # not exported: no alert possible
 
 
@@ -189,13 +183,13 @@ def test_obs_step_up_failure_is_audited_and_counted_under_two_names_but_only_one
     owner, _ = stack.principal("owner", "owner", Permission.USERS_WRITE)
     body = {"email": "x@example.com", "username": "xavier", "roles": ["viewer"]}
     assert stack.client.post("/users", headers=owner, json=body).status_code == 403
-    before = in_process("auth_step_up_failures_total", action_class="users")
+    before = stack.in_process("auth_step_up_failures_total", action_class="users")
     twin = stack.scraped("auth_stepup_failures_total")
     wrong = {"code": "000000", "password": "wrong"}
     assert stack.client.post("/auth/step-up", headers=owner, json=wrong).status_code == 401
     ((reason, outcome, severity),) = _rows(stack, "auth.step_up_failed")
     assert reason.startswith("users:") and (outcome, severity) == ("failure", "error")
-    assert in_process("auth_step_up_failures_total", action_class="users") - before == 1
+    assert stack.in_process("auth_step_up_failures_total", action_class="users") - before == 1
     assert stack.scraped("auth_step_up_failures_total") == 0.0  # the per-class series is unscraped
     assert stack.scraped("auth_stepup_failures_total") - twin == 1  # #2612: no alert reads it
 
@@ -204,7 +198,7 @@ def test_obs_invite_guessing_and_role_tamper_are_audited_metric_in_process_only(
     stack: Stack,
 ) -> None:  # AC-INV-01..04
     guessed = "g" * 43
-    before = in_process("users_invites_rejected_total", reason="unknown")
+    before = stack.in_process("users_invites_rejected_total", reason="unknown")
     assert stack.client.get(f"/invites/{guessed}").status_code == 404
     tamper = {"password": INVITE_PW, "role": "owner"}
     assert stack.client.post(f"/invites/{guessed}", json=tamper).status_code == 403
@@ -212,5 +206,5 @@ def test_obs_invite_guessing_and_role_tamper_are_audited_metric_in_process_only(
         ("unknown", "denied", "info"),
         ("role_tamper", "denied", "warning"),
     ]
-    assert in_process("users_invites_rejected_total", reason="unknown") - before == 1
+    assert stack.in_process("users_invites_rejected_total", reason="unknown") - before == 1
     assert stack.scraped("users_invites_rejected_total") == 0.0

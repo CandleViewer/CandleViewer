@@ -17,16 +17,26 @@
 
 Each control was disabled on the scratch worktree and the named case failed, then reverted:
 
-| Control disabled                                     | Failing case |
-| ---------------------------------------------------- | ------------ |
-| `consume_recovery_code` result ignored               | AC-MFA-03    |
-| refresh-reuse branch (`revoked_reason == "rotated"`) | AC-SES-03    |
-| TOTP `record_time_step` replay guard                 | AC-MFA-01    |
-| `_origin_ok` allow-list check                        | AC-CSRF-01   |
-| `grant is None or not can_view` account check        | AC-AUTHZ-02  |
-| `mint` per-user deterministic id (QA mutant M2)      | AC-SES-01b   |
-| never-issued token audit removed (#2316)             | AC-SES-01    |
-| `users.invite_*` actions unregistered (#2316)        | AC-INV-05/06 |
+| Control disabled                                                       | Failing case                                                                           |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `consume_recovery_code` result ignored                                 | AC-MFA-03                                                                              |
+| refresh-reuse branch (`revoked_reason == "rotated"`)                   | AC-SES-03                                                                              |
+| TOTP `record_time_step` replay guard                                   | AC-MFA-01                                                                              |
+| `_origin_ok` allow-list check                                          | AC-CSRF-01                                                                             |
+| `grant is None or not can_view` account check                          | AC-AUTHZ-02                                                                            |
+| `mint` per-user deterministic id (QA mutant M2)                        | AC-SES-01b                                                                             |
+| never-issued token audit removed (#2316)                               | AC-SES-01                                                                              |
+| `users.invite_*` actions unregistered (#2316)                          | AC-INV-05/06                                                                           |
+| gateway pre-auth frame cap (`MAX_UNAUTHENTICATED_FRAMES`) off          | AC-WS-01                                                                               |
+| `audit_auth_failure` emit off (the 3rd failed WS `auth`)               | AC-WS-02                                                                               |
+| `ConnectionRegistry.grants_changed` made a no-op                       | AC-WS-03                                                                               |
+| `sub_shape_error` gate off (a malformed `sub` no longer refused whole) | AC-WS-04                                                                               |
+| a malformed name counted under another `cv_ws_subscribe_total` result  | AC-WS-04 (`test_ac_ws_04_malformed_name_leaves_no_scraped_sample_audit_row_or_strike`) |
+| `auth_lockouts_total` increment in the login service removed (#2612)   | `test_obs_credential_*`                                                                |
+| `authz_denied_total` increment removed (#2612)                         | `test_obs_rbac_*`                                                                      |
+| `auth.mfa_failed` row not written (verify and recovery routes)         | `test_obs_mfa_*`                                                                       |
+| refresh-reuse row severity lowered from `critical`                     | `test_obs_refresh_*`                                                                   |
+| `CsrfRefusalsHigh` edited to read another series                       | `test_obs_alert_rules_read_exactly_the_recorded_signals`                               |
 
 ## Cases
 
@@ -115,14 +125,16 @@ lives instead.
 | U25    | AC-CSRF-05 (a foreign session id gets the same 404 as a missing one) and `test_never_issued_expired_and_revoked_tokens_get_a_byte_identical_401`; the full 403-body sweep is #2105                                                                                                                                    |
 | U26    | **FINDING F-8**: `/healthz` (`security: []`) and the pre-auth WS `welcome` (`23-ws-protocol.md` §4.2) serve `git_sha` and the version to any client (`tests/unit/test_app.py::test_healthz_returns_200_with_build_info`, `tests/unit/ws/test_app_wiring.py::test_welcome_carries_settings_build_info`)                |
 | U29    | Not executable: no expired-session reap job exists in `candleviewer/` yet, and the `GET /auth/session` p95 budget needs Postgres and k6 (E09-Q05 in #2105)                                                                                                                                                            |
+| U33    | Not executable: a startup refusal, not a request path; this harness injects `auth_clock`, which wins. Tests: `tests/unit/test_settings_test_clock.py`, `tests/unit/auth/test_testnet_clock.py`, `tests/unit/test_main_lifespan.py`. Time-moving cases: e2e stack only (`qa/plans/e09-auth-rbac-test-plan.md` §6.3)    |
 
 ## Observability per case (#2144)
 
 What each defended attack leaves behind, asserted in-process through `create_app()` (audit rows
 are checked against the audit action registry, as the real writer does). "Scraped" means served on
 the registry Prometheus scrapes; "in-process" series are invisible to Prometheus, so no alert can
-read them. The alert column is asserted against `infra/prometheus/alerts` by
-`test_observability.py::test_obs_alert_rules_read_exactly_the_recorded_signals`.
+read them. The alert column is mirrored by `ALERTING` in `test_observability.py`, which
+`test_obs_alert_rules_read_exactly_the_recorded_signals` asserts against `infra/prometheus/alerts`:
+change the column and `ALERTING` together.
 
 | Cases                                  | Audit row                                                                                                                                    | Metric                                                                          | Alert                                                                                | Asserted by                                                                               |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
@@ -146,9 +158,10 @@ read them. The alert column is asserted against `infra/prometheus/alerts` by
 Every authenticated WS connection also writes one `ws.connection.closed` row when it ends (#2528;
 `reason` is the `bye` reason, else `internal_error`, `shutdown` or `client_closed`); an
 unauthenticated close writes none. No runtime signal by nature: AC-CRED-01/02 (offline hash),
-AC-ENUM-03 (timing), AC-CSRF-03 (cookie flags). AC-MFA-05 shares the `auth.mfa_failed` path. "None"
-in the alert column is the recorded state, not a target: alerting on these signals is a
-detection-rule decision.
+AC-ENUM-03 (timing), AC-CSRF-03 (cookie flags) and AC-SES-01b, 02 and 04 (a normal sign-in or
+refresh: nothing is attacked, so nothing is signalled). AC-MFA-05 shares the `auth.mfa_failed`
+path. "None" in the alert column is the recorded state, not a target: alerting on these signals is
+a detection-rule decision.
 
 ## Findings
 
@@ -157,7 +170,8 @@ detection-rule decision.
   (`__Host-cv_csrf` cookie echoed in `X-CSRF-Token`, HMAC-bound to the server-resolved session id,
   rotated on refresh) and the SR-042 `Origin` / `Sec-Fetch-Site` allow-list on every unsafe method.
   SameSite=Strict remains an additional control. Regression cases: AC-CSRF-06..10. Maps to TB-4 / O2.
-  Not covered here: the SR-042 check on WS handshakes (#2239).
+  The SR-042 check on WS handshakes is covered by #2263 (`tests/unit/ws/test_origin_check.py`),
+  not by these cases.
   Repro (before #2238): an unsafe call carrying the victim's bearer and no `X-CSRF-Token` was
   accepted, since no token existed. Now it gets 403 `csrf_token_invalid` (AC-CSRF-06).
 - **F-2 (accepted design decision, Low-Medium):** AC-SES-06 above.
@@ -173,16 +187,17 @@ detection-rule decision.
   accept any string, which hid it. Repro: AC-INV-05 / AC-INV-06 against the registry-validating
   writer in `tests/security/auth/_stack.py`. Regression: those cases and
   `tests/unit/audit/test_router_actions_registered.py`. Owner: backend (auth-rbac). Maps to U19.
-- **F-4 (design gap, STRIDE: Spoofing, severity Low-Medium; decision pending).** AC-WS-02.
-  - Repro: capture the `auth` frame of a live socket and send it on a second socket: the second
-    socket gets `auth_ok` for the victim's session. Logout or revocation closes every socket of
-    the session (4401); after that the replay fails and the third failure is audited.
-  - Cause: same as F-2. The frame carries the bearer access token, which is not bound to a
-    connection, address or user agent. U13's mitigation text only promises rejection for a frame
-    _without_ a live session, so the behaviour matches its letter but not the threat it names.
+- **F-4 (design gap, STRIDE: Spoofing, severity Low-Medium; decision pending).** AC-WS-02, U13: a
+  WS `auth` frame replayed on a second socket is accepted while the session is live. The cause is
+  that of F-2: the frame carries the bearer access token, which is not bound to a connection,
+  address or user agent. U13's mitigation text only promises rejection for a frame _without_ a
+  live session, so the behaviour matches its letter but not the threat it names.
   - Decision needed from the Architect and the Owner: accept it as an extension of F-2, or bind
     the WS identity to a single-use, short-lived WS ticket minted over REST. Owner: Architect +
     Owner. Tracking: #298 (QA record); no separate public issue until decided (C-12.13).
+  - Reproduction steps are withheld from this public repository (`SECURITY.md` §1; #298 Security
+    notes): they belong in a private advisory or the private security folder (Security engineer),
+    not here. AC-WS-02 is the automated case.
 - **F-5 (gap, STRIDE: Spoofing, severity Medium; E09-X04 R-1; tracked as #2101).** SR-013 rotates
   the session id on login and MFA completion, but not on a role change (which only refreshes the
   permissions) or on step-up completion. Maps to U6 and U32. Owner: E09 epic owner (auth-rbac).
@@ -203,13 +218,13 @@ detection-rule decision.
   (AC-INV-06), both audited. #2109 was closed after QA passed (2026-10-16). Owner: Architect + Owner.
   - Repro (before #2124): an Owner invited with `"roles": ["manager"]`; redeeming it activated a
     Manager.
-- **F-8 (design gap, STRIDE: Information disclosure, severity Low; decision pending).** U26.
-  - Repro: `GET /healthz` with no credentials returns `git_sha`, `version` and `environment`; the
-    WS `welcome` sent before `auth` carries `server_version` and `git_sha`.
-  - Cause: both are contract behaviour (`security: []` on the health probes; `23-ws-protocol.md`
-    §4.2), while U26's mitigation says only the Owner sees build metadata.
+- **F-8 (design gap, STRIDE: Information disclosure, severity Low; decision pending).** U26:
+  `/healthz` and the pre-auth WS `welcome` carry build metadata (`git_sha`, the version) to any
+  client. That is contract behaviour (`security: []` on the health probes; `23-ws-protocol.md`
+  §4.2), while U26's mitigation says only the Owner sees build metadata.
   - Decision needed from the Architect and the Owner: amend U26 (mesh-only exposure accepted) or
     drop the metadata from unauthenticated responses. Tracking: #298 (QA record), as for F-4.
+  - Reproduction steps are withheld from this public repository, as for F-4.
 - **O-1..O-4 (observability gaps, STRIDE: Repudiation, severity Low).** Each attack is defended,
   but the defence is partly invisible (see "Observability per case"):
   - O-1: `auth_login_failures_total` is planned and alerted (`AuthLoginFailureSpike`) but never

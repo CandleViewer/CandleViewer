@@ -23,8 +23,9 @@ def stack(monkeypatch: pytest.MonkeyPatch) -> Iterator[Stack]:
 
 
 @pytest.fixture
-def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Stack, Grants]]:
-    """The same stack with a WS principal source whose account grant a test can revoke."""
+def ws_world(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Stack, Grants]]:
+    """The same stack with a WS principal source whose account grant a test can revoke. Not named
+    `world`: `test_role_revoked_mid_step_up.py` defines a different `world` of its own."""
     from ._stack import Grants, open_stack
 
     grants = Grants()

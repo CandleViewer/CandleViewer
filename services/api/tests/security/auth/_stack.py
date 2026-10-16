@@ -19,6 +19,7 @@ from typing import Any, cast
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 import candleviewer.app as appmod
 from candleviewer.audit.actions import validate_action
@@ -83,7 +84,8 @@ class Grants:
         self.granted = True
 
     async def load(self, uid: uuid.UUID) -> PrincipalSnapshot:
-        grants = (AccountGrant(GRANTED_ACCOUNT, True, True, False),) if self.granted else ()
+        grant = AccountGrant(GRANTED_ACCOUNT, can_view=True, can_trade=True, frozen=False)
+        grants = (grant,) if self.granted else ()
         perms = frozenset({Permission.MARKETDATA_READ, Permission.ORDERS_READ})
         return PrincipalSnapshot(uid, frozenset({"manager"}), perms, grants)
 
@@ -179,6 +181,13 @@ class Stack:
                 if sample.name == name and labels.items() <= sample.labels.items():
                     total += sample.value
         return total
+
+    @staticmethod
+    def in_process(name: str, **labels: str) -> float:
+        """A sample on the process-default registry, where module-level series the app does not
+        export land unscraped (`scraped` reads the registry Prometheus scrapes). 0.0 when the
+        series has no such sample."""
+        return float(REGISTRY.get_sample_value(name, labels) or 0.0)
 
 
 @contextlib.contextmanager
