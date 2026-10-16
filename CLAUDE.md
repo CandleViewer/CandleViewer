@@ -242,6 +242,7 @@ These rules keep agents from colliding:
 - **Subagents** (`.claude/agents/`): `backend-implementer`, `frontend-implementer`, `chart-engine-implementer`,
   `statechart-author`, `test-writer`, `security-reviewer`, `code-reviewer`, `ticket-triager`.
 - **Commands**: `/pickup <issue#>`, `/ready-check`, `/statechart-new <B>`, `/pr`.
+- **Skills** (`.claude/skills/`): `/candleviewer-relayroom-check` (manual RelayRoom identity/inbox check; see `docs/ops/relayroom-main-orchestrator-setup.md`).
 - **Hooks** (`.claude/settings.json`): edits to applied migrations (C-5.4) and `xstate_statemachine` imports
   outside `statechart/` are blocked; after an edit you get a reminder of the package lint command.
 

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "candleviewer-relayroom": {
+      "type": "http",
+      "url": "${CANDLEVIEWER_RELAYROOM_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${CANDLEVIEWER_RELAYROOM_API_KEY}",
+        "X-Machine-Label": "${CANDLEVIEWER_RELAYROOM_MACHINE_LABEL}"
+      }
+    }
+  }
+}

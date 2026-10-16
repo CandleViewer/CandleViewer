@@ -61,6 +61,11 @@ CLAUDE.local.md
 # agent scratch + worktrees
 .scratch/
 .claude/worktrees/
+# RelayRoom per-client identity + run records (nonsecret but machine-local) and the secret-bearing local settings
+.claude/relayroom/
+.claude/settings.local.json
+# temp file of scripts/relayroom-enter-credentials.py's atomic write (holds the secrets if a kill leaves it behind)
+.claude/.settings.local.*.tmp
 .coverage
 *.tmp.*
 .spike-tmp/
