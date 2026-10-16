@@ -290,10 +290,9 @@ class MfaService:
             # must not also mint a session.
             raise MfaChallengeInvalid("challenge already satisfied")
 
-        # Ticket "Recovery code use forces re-enrolment" (unconditional —
-        # the OpenAPI note's "<3 remaining" threshold is a *login-response*
-        # UX detail owned by a later ticket's screen work, not a security
-        # gate this service may loosen).
+        # Ticket "Recovery code use forces re-enrolment" (US-ONB-003): every
+        # recovery sign-in forces it, however many codes remain. No
+        # remaining-codes threshold may loosen this security gate (#2296).
         await self._repository.set_mfa_required_reenroll(str(challenge.user_id))
         return MfaVerifiedResult(user_id=challenge.user_id, forced_totp_reenroll=True)
 

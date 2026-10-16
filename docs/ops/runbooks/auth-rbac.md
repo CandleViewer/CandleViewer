@@ -109,8 +109,8 @@ Expected `200` `{"status":"authenticated","forced_totp_reenroll":true}`. **BLOCK
 implemented:** this route mints no session, token or cookie (`api/auth.py`), and
 `/auth/mfa/enroll[/confirm]` are `501` stubs (re-enrolment: #2295; recovery-session gap: #2344). So recovery codes do **not** currently get the Owner back in. A code is single use;
 `auth.recovery_code_used` is written, and `auth.recovery_codes_exhausted` when none remain.
-Re-enrolment is forced unconditionally after a recovery (`auth/mfa_service.py`);
-`LOW_CODE_THRESHOLD` is defined but unused (#2296).
+Re-enrolment is forced after every recovery sign-in, however many codes remain
+(`auth/mfa_service.py`); there is no remaining-codes threshold (#2296).
 
 Not available today:
 
