@@ -19,7 +19,6 @@ _REASONS = [
     "account_disabled_by_policy",
     "no_active_key",
     "account_unhealthy",
-    "balance_stale",
 ]
 _DOC = REPO_ROOT / "docs/plan/24-internal-schemas.md"
 

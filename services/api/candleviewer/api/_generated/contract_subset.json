@@ -2,7 +2,7 @@
   "x-cv-generated": {
     "notice": "GENERATED FILE — DO NOT EDIT BY HAND. Regenerate from services/api with `uv run python scripts/generate_protocol_models.py`.",
     "source": "docs/plan/22-api-openapi.yaml",
-    "source_sha256": "878b64f715f32021450329124402c4ad4a956d7d088f7b57dc6882ef0d8245bd"
+    "source_sha256": "7a8b334be660b6bae7ff1c1d986238ed274992479bd8cc98f06fae684937ad0c"
   },
   "components": {
     "headers": {
