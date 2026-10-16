@@ -18,6 +18,7 @@ of the same session, so the 4403 close survives a repeat (§9.5).
 
 from __future__ import annotations
 
+import contextlib
 import math
 import time
 from collections import OrderedDict, defaultdict
@@ -191,11 +192,13 @@ class RevocationHub:
                 or now - self._evicted_logged_at >= EVICTION_LOG_EVERY_S
             ):
                 self._evicted_logged_at = now
-                _log().warning(
-                    "ws revoked-id memory full; oldest live entry forgotten",
-                    evicted_total=self._evicted,
-                    max_remembered=self._max_remembered,
-                )
+                # A failing log sink must never skip the closes that follow (C-2.12).
+                with contextlib.suppress(Exception):
+                    _log().warning(
+                        "ws revoked-id memory full; oldest live entry forgotten",
+                        evicted_total=self._evicted,
+                        max_remembered=self._max_remembered,
+                    )
 
     def revoked_reason(self, session_id: str) -> str | None:
         """The reason `session_id` was revoked within the last `remember_s`, else `None`."""
@@ -226,6 +229,7 @@ class RevocationHub:
         """Remember `session_id` as revoked, then close every socket of it; returns how many
         were closed. Remembered first, so an `auth` checking during the closes sees it."""
         self._remember(session_id, reason)
+        reason = self._revoked[session_id][1]  # a remembered user_disabled wins (§9.5, 4403)
         closers = self._sockets.pop(session_id, [])
         started = time.monotonic()
         for closer in closers:

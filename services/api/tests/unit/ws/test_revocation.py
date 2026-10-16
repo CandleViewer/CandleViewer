@@ -15,6 +15,7 @@ from candleviewer.ws.revocation import (
     CLOSE_TOKEN_EXPIRED,
     CLOSE_USER_DISABLED,
     EVICTION_LOG_EVERY_S,
+    MAX_REVOKED_IDS,
     REVOKED_MEMORY_S,
     RevocationHub,
     RevokedReason,
@@ -223,13 +224,45 @@ def test_close_for_builds_the_bye_and_code_of_a_remembered_reason() -> None:
 async def test_forgetting_a_live_id_at_the_cap_is_logged_at_most_once_a_minute() -> None:
     clock = _Clock()
     hub = RevocationHub(max_remembered=1, monotonic=clock)
+    ids = ("sess-alpha-1", "sess-bravo-2", "sess-charlie-3", "sess-delta-4")
     with capture_logs() as logs:
-        await hub.revoke("a")
-        await hub.revoke("b")  # forgets the live "a": logged
-        await hub.revoke("c")  # forgets "b" inside the minute: counted, not logged
+        await hub.revoke(ids[0])
+        await hub.revoke(ids[1])  # forgets the live first id: logged
+        await hub.revoke(ids[2])  # forgets the second inside the minute: counted, not logged
         clock.now += EVICTION_LOG_EVERY_S
-        await hub.revoke("d")  # a minute later: logged again, with the running count
+        await hub.revoke(ids[3])  # a minute later: logged again, with the running count
     warnings = [e for e in logs if e["log_level"] == "warning"]
     assert [e["evicted_total"] for e in warnings] == [1, 3]
     assert all(e["max_remembered"] == 1 for e in warnings)
-    assert not any("session" in key for e in warnings for key in e)  # no session id in the log
+    assert not any(i in repr(warnings) for i in ids)  # no session id in any key or value
+
+
+def test_the_production_cap_is_the_threat_model_number() -> None:
+    assert MAX_REVOKED_IDS == 4096
+
+
+async def test_a_failing_log_sink_never_skips_the_closes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-2.12: the eviction warning runs before the closes; a raising sink must not skip them."""
+    import candleviewer.ws.revocation as revocation
+
+    class _Raising:
+        def warning(self, *args: object, **kwargs: object) -> None:
+            raise RuntimeError("log sink down")
+
+    monkeypatch.setattr(revocation, "_log", lambda: _Raising())
+    hub = RevocationHub(max_remembered=1, monotonic=_Clock())
+    socket = _Socket()
+    await hub.revoke("s0")
+    hub.register("s1", socket.close)
+    assert await hub.revoke("s1") == 1  # evicts the live "s0": the warning raises, the close runs
+    assert [code for _, code in socket.closes] == [CLOSE_TOKEN_EXPIRED]
+
+
+async def test_a_repeat_revocation_of_a_disabled_user_still_closes_4403() -> None:
+    """The sticky reason applies to the close a repeat revocation sends, not only to the memory."""
+    hub = RevocationHub(wall_ms=lambda: _NOW_MS, monotonic=_Clock())
+    await hub.revoke("s1", "user_disabled")
+    socket = _Socket()
+    hub.register("s1", socket.close)  # e.g. a socket that authenticated in the window
+    assert await hub.revoke("s1", "session_revoked") == 1
+    assert socket.closes == [(user_disabled_bye(_NOW_MS), CLOSE_USER_DISABLED)]
