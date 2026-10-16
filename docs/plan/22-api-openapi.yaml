@@ -7520,6 +7520,92 @@ paths:
         "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
+  /admin/audit/exports/{jobId}:
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        description: "The `job_id` returned by `exportAuditLog`."
+        schema: { type: string, format: uuid }
+    get:
+      tags: [admin]
+      operationId: downloadAuditExport
+      summary: Download a signed audit export file
+      description: |
+        Serves the artefact of a succeeded `audit_export` job: the file at
+        `AuditExportResult.download_url`, which is this path. The URL carries no credential, so a
+        copied or leaked URL grants nothing; the call is an ordinary authenticated `GET`. The body
+        is the NDJSON file described on `exportAuditLog`, gzipped when
+        `AuditExportResult.compressed` is true.
+
+        The access rules, the order of the checks and the audit-before-stream rule are owned by
+        **Download** on `exportAuditLog`; this operation declares the capability and the response
+        shapes. In short: Owner only (`audit:export`, `04-security-program.md` §7.2.2 row 50a),
+        only the user who requested the export (any other user, another Owner included, gets the
+        same `404 not_found` as for an unknown or evicted job), and only within the grace window of
+        an `audit_export` step-up.
+
+        **Statuses.** `401`: not authenticated. `403`: the caller lacks `audit:export`
+        (`code: forbidden`) or has no live `audit_export` step-up (`code: step_up_required`).
+        `404 not_found`: not the requester, or an unknown or evicted job. `410 gone`: the file was
+        deleted after `expires_at`. `429 rate_limited`: over `audit_download_rate_per_hour`
+        (default 20), with `Retry-After`. `503 store_unavailable`: the write-ahead audit record
+        could not be written, so nothing is streamed, with `Retry-After`. Refusals fall under the
+        audit budget described on `queryAuditLog`.
+      x-rbac: { permissions: [audit:export], scope: none }
+      responses:
+        "200":
+          description: >-
+            The artefact. `Content-Type` is `application/gzip` when `AuditExportResult.compressed`
+            is true and `application/x-ndjson` otherwise. The bytes are the ones whose digest is
+            `AuditExportResult.sha256`.
+          headers:
+            Cache-Control:
+              description: "`no-store`: the file is never cached by the client or a proxy."
+              schema: { type: string, const: no-store }
+            Content-Disposition:
+              description: "`attachment`: the file is saved, never rendered inline."
+              schema: { type: string }
+            X-Content-Type-Options:
+              description: "`nosniff`."
+              schema: { type: string, const: nosniff }
+            Repr-Digest:
+              description: >-
+                RFC 9530 digest of the bytes as sent, `sha-256=:<base64>:`. It is the same SHA-256
+                as `AuditExportResult.sha256`, which is hex.
+              schema: { type: string, pattern: "^sha-256=:[A-Za-z0-9+/]{43}=:$" }
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                description: "One JSON object per line: the header line (window, head, anchor and `key_id`), then the chain span in id order."
+            application/gzip:
+              schema:
+                type: string
+                format: binary
+                description: "The gzip of that NDJSON text, sent as the file itself and never as a `Content-Encoding`."
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: The file has expired and been deleted (`expires_at` has passed).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                expired:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/gone",
+                      title: "Resource existed but was purged by retention policy",
+                      status: 410,
+                      detail: "The export expired at 2026-09-15T10:39:10Z and its file was deleted.",
+                      instance: "urn:cv:req:0193f2bb-1010",
+                      code: gone,
+                    }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /admin/health:
     get:
       tags: [admin]
