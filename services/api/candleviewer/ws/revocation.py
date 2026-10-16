@@ -14,11 +14,18 @@ memory is bounded (C-2.18): entries expire after `remember_s`, and past `max_rem
 oldest is forgotten first, which reopens the in-flight window for that one session only and
 is logged (throttled). A remembered `user_disabled` is never downgraded by a later revocation
 of the same session, so the 4403 close survives a repeat (§9.5).
+
+The closes run as a task the hub owns (C-2.18), started eagerly so closers that never suspend
+finish inside the `revoke` call, and `revoke` awaits it under `asyncio.shield`: a caller
+cancelled mid-loop still sees its `CancelledError`, but every socket of the revoked session is
+still closed (fail closed). Each close is bounded by `close_timeout_s`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import contextvars
 import math
 import time
 from collections import OrderedDict, defaultdict
@@ -28,6 +35,7 @@ from typing import Any, Final, Literal
 import structlog
 
 from candleviewer.observability.metrics import Counter, Histogram
+from candleviewer.ws.limits import FANOUT_SEND_TIMEOUT_S
 
 
 def _log() -> Any:
@@ -141,6 +149,9 @@ REVOKED_MEMORY_S: Final = 720.0
 MAX_REVOKED_IDS: Final = 4096
 #: A forced eviction (cap reached while the oldest is still live) is logged at most this often.
 EVICTION_LOG_EVERY_S: Final = 60.0
+#: At most this many revoke batches close at once (C-2.18). A batch over the cap is closed inline
+#: in its caller, as before the close task: no close is dropped, but that caller is not shielded.
+MAX_CLOSE_TASKS: Final = 256
 
 
 class RevocationHub:
@@ -150,16 +161,28 @@ class RevocationHub:
         wall_ms: Callable[[], int] = _wall_ms,
         remember_s: float = REVOKED_MEMORY_S,
         max_remembered: int = MAX_REVOKED_IDS,
+        close_timeout_s: float = FANOUT_SEND_TIMEOUT_S,
+        max_close_tasks: int = MAX_CLOSE_TASKS,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        if not (math.isfinite(remember_s) and remember_s > 0) or max_remembered < 1:
-            raise ValueError("remember_s must be finite and > 0 and max_remembered >= 1")
+        if (
+            not (math.isfinite(remember_s) and remember_s > 0)
+            or not (math.isfinite(close_timeout_s) and close_timeout_s > 0)
+            or max_remembered < 1
+        ):
+            raise ValueError(
+                "remember_s and close_timeout_s must be finite and > 0, and max_remembered >= 1"
+            )
         self._sockets: dict[str, list[Closer]] = defaultdict(list)
         #: Stamps the `user_disabled` bye's `ts`; injectable so tests read a fixed clock.
         self._wall_ms = wall_ms
         self._remember_s = remember_s
         self._max_remembered = max_remembered
+        self._close_timeout_s = close_timeout_s
+        self._max_close_tasks = max_close_tasks
         self._monotonic = monotonic
+        #: In-flight close tasks, referenced until done so none is collected mid-loop (C-2.18).
+        self._closing: set[asyncio.Task[None]] = set()
         #: session id -> (monotonic expiry, reason), oldest first. Every entry lives the same
         #: `remember_s` from a non-decreasing clock, so insertion order is expiry order.
         self._revoked: OrderedDict[str, tuple[float, str]] = OrderedDict()
@@ -234,15 +257,38 @@ class RevocationHub:
 
     async def revoke(self, session_id: str, reason: str = "session_revoked") -> int:
         """Remember `session_id` as revoked, then close every socket of it; returns how many
-        closes it attempted. Remembered first, so an `auth` checking during the closes sees it."""
+        closes it attempted. Remembered first, so an `auth` checking during the closes sees it.
+        The closes run as a task the hub owns, awaited under `asyncio.shield`: a cancelled
+        caller still sees its `CancelledError`, and the sockets are still closed."""
         self._remember(session_id, reason)
         reason = self._revoked[session_id][1]  # a remembered user_disabled wins (§9.5, 4403)
         closers = self._sockets.pop(session_id, [])
+        if closers and len(self._closing) >= self._max_close_tasks:
+            await self._close_all(session_id, reason, closers)  # past the cap: inline, none dropped
+        elif closers:
+            # Started eagerly (`spawn` cannot): closers that never suspend, like the gateway's,
+            # finish inside this call, so a sealed close is still atomic with the revoke. Only a
+            # close that suspends leaves a task for the hub to own (C-2.18).
+            task = asyncio.Task(
+                self._close_all(session_id, reason, closers),
+                loop=asyncio.get_running_loop(),
+                name="ws-revocation-close",
+                context=contextvars.copy_context(),
+                eager_start=True,
+            )
+            if not task.done():
+                self._closing.add(task)
+                task.add_done_callback(self._close_task_done)
+            await asyncio.shield(task)
+        return len(closers)
+
+    async def _close_all(self, session_id: str, reason: str, closers: list[Closer]) -> None:
         started = time.monotonic()
         for closer in closers:
             try:
                 frame, code = self.close_for(reason)
-                await closer(frame, code)
+                async with asyncio.timeout(self._close_timeout_s):
+                    await closer(frame, code)
             except Exception:
                 ws_revocation_close_failures_total.inc()
                 # A failing log sink must never skip the closes that follow (C-2.12); the
@@ -253,6 +299,15 @@ class RevocationHub:
                         session_id=session_id,
                         exc_info=True,
                     )
-        if closers:
-            auth_revocation_latency_seconds.observe(time.monotonic() - started)
-        return len(closers)
+        auth_revocation_latency_seconds.observe(time.monotonic() - started)
+
+    def _close_task_done(self, task: asyncio.Task[None]) -> None:
+        self._closing.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            # Nobody may be awaiting the task any more, and a log sink must not raise out of a
+            # callback either (C-2.12).
+            with contextlib.suppress(Exception):
+                _log().error(
+                    "ws revocation close task failed; revoked sockets may remain open",
+                    exc_info=exc,
+                )

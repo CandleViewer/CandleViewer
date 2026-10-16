@@ -106,8 +106,10 @@ async def test_a_failing_socket_does_not_block_the_rest() -> None:
 
     hub.register("s", bad)
     hub.register("s", good)
-    await hub.revoke("s")
+    with capture_logs() as logs:
+        await hub.revoke("s")
     assert closed == [4401]
+    assert [(e["log_level"], e["session_id"]) for e in logs] == [("error", "s")]  # and logged
 
 
 async def test_unregistered_session_is_a_noop() -> None:
@@ -187,10 +189,10 @@ def test_the_default_memory_is_one_access_token_lifetime() -> None:
 @pytest.mark.parametrize(
     "kwargs",
     [{"remember_s": 0.0}, {"remember_s": float("nan")}, {"remember_s": float("inf")},
-     {"max_remembered": 0}],
+     {"max_remembered": 0}, {"close_timeout_s": 0.0}, {"close_timeout_s": float("nan")}],
 )  # fmt: skip
 def test_the_memory_bounds_must_be_finite_and_positive(kwargs: dict[str, float]) -> None:
-    with pytest.raises(ValueError, match="remember_s must be finite and > 0"):
+    with pytest.raises(ValueError, match="must be finite and > 0"):
         RevocationHub(**kwargs)  # type: ignore[arg-type]  # float/int kwargs by name
 
 
@@ -338,3 +340,100 @@ async def test_a_repeat_revocation_of_a_disabled_user_still_closes_4403() -> Non
     hub.register("s1", socket.close)  # e.g. a socket that authenticated in the window
     assert await hub.revoke("s1", "session_revoked") == 1
     assert socket.closes == [(user_disabled_bye(_NOW_MS), CLOSE_USER_DISABLED)]
+
+
+async def test_cancelling_revoke_mid_loop_still_closes_every_socket() -> None:
+    """Fail closed (C-2.12): the close loop is a task the hub owns, so a cancelled caller sees
+    its CancelledError while the revoked session's other sockets still get their close."""
+    hub = RevocationHub()
+    blocked, release = asyncio.Event(), asyncio.Event()
+    survivor = _Socket()
+
+    async def stalled(frame: dict[str, Any], code: int) -> None:
+        blocked.set()
+        await release.wait()
+
+    hub.register("s1", stalled)
+    hub.register("s1", survivor.close)
+    caller = asyncio.create_task(hub.revoke("s1"))
+    await blocked.wait()  # the first close is in flight, the second not yet attempted
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    tasks = set(hub._closing)
+    assert (len(tasks), survivor.closes) == (1, [])  # still running, owned by the hub
+    release.set()
+    await asyncio.gather(*tasks)
+    assert survivor.closes == [(bye_frame("session_revoked"), CLOSE_TOKEN_EXPIRED)]
+    assert not hub._closing
+
+
+async def test_a_close_that_never_returns_is_cut_off_and_the_next_one_runs() -> None:
+    hub = RevocationHub(close_timeout_s=0.01)
+    alive = _Socket()
+
+    async def hung(frame: dict[str, Any], code: int) -> None:
+        await asyncio.Event().wait()
+
+    hub.register("s1", hung)
+    hub.register("s1", alive.close)
+    async with asyncio.timeout(5):  # fail fast, not hang, if the per-close bound regresses
+        assert await hub.revoke("s1") == 2
+    assert len(alive.closes) == 1
+    assert not hub._closing
+
+
+async def test_a_failed_close_task_is_logged_and_released() -> None:
+    hub = RevocationHub()
+
+    async def boom() -> None:
+        raise RuntimeError("close task failed")
+
+    task = asyncio.ensure_future(boom())
+    hub._closing.add(task)
+    await asyncio.wait([task])
+    with capture_logs() as logs:
+        hub._close_task_done(task)
+    assert ([e["log_level"] for e in logs], hub._closing) == (["error"], set())
+
+
+async def test_revoke_finishes_without_yielding_when_no_close_suspends() -> None:
+    """A sealed close stays atomic with the revoke: closers that never suspend (the gateway's)
+    have all run when revoke() is first driven, so no writer turn can flush the backlog first."""
+    hub = RevocationHub()
+    sock = _Socket()
+    hub.register("s1", sock.close)
+    with pytest.raises(StopIteration) as done:
+        hub.revoke("s1").send(None)
+    assert (done.value.value, len(sock.closes), len(hub._closing)) == (1, 1, 0)
+
+
+async def test_closes_past_the_task_cap_run_inline_and_none_is_dropped() -> None:
+    hub = RevocationHub(max_close_tasks=1)
+    blocked, release = asyncio.Event(), asyncio.Event()
+    inline = _Socket()
+    tracked: list[int] = []
+
+    async def stalled(frame: dict[str, Any], code: int) -> None:
+        blocked.set()
+        await release.wait()
+
+    async def second(frame: dict[str, Any], code: int) -> None:
+        await asyncio.sleep(0)  # suspends, so a task spawned for this close would be tracked now
+        tracked.append(len(hub._closing))
+        await inline.close(frame, code)
+
+    hub.register("s1", stalled)
+    hub.register("s2", second)
+    first = asyncio.create_task(hub.revoke("s1"))
+    await blocked.wait()
+    assert await hub.revoke("s2") == 1  # the cap is reached: closed inline, in this caller
+    assert (len(inline.closes), tracked) == (1, [1])  # only the first task was ever owned
+    release.set()
+    assert await first == 1
+    assert not hub._closing
+
+
+def test_the_defaults_bound_the_close_tasks_and_each_close() -> None:
+    hub = RevocationHub()
+    assert (hub._max_close_tasks, hub._close_timeout_s) == (256, 2.0)
