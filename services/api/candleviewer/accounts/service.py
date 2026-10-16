@@ -15,8 +15,9 @@ and the two catalogue gauges, and `start()` runs ONE supervised loop that refres
   (AGENTS.md §5.2 async hygiene: no silent task).
 - The fake backend attaches nothing: no loop runs and the gauges stay unset.
 
-On the real backend `create_app()` also attaches the stored-key self-check (E27-T03,
-`accounts.selfcheck`): `start()` awaits its boot assertion, so it ends before the app serves,
+`attach_key_selfcheck()` takes the stored-key self-check (E27-T03, `accounts.selfcheck`). Nothing
+attaches it yet: its Postgres adapter, exchange calls and wiring are #836 slice 2b. Once attached,
+`start()` awaits its boot assertion, so it ends before the app serves, `stop()` stops its loop,
 and `health()` reads DEGRADED while any key fails it.
 """
 
@@ -63,7 +64,8 @@ def _log_loop_exit(task: asyncio.Task[None]) -> None:
 
 
 class AccountsService:
-    """M13 lifecycle; publishes the account and API-key row gauges."""
+    """M13 lifecycle; publishes the account and API-key row gauges and, once one is attached,
+    runs the stored-key self-check."""
 
     def __init__(
         self,
@@ -100,7 +102,7 @@ class AccountsService:
         self._env = env
 
     def attach_key_selfcheck(self, selfcheck: KeySelfCheck) -> None:
-        """Wire the stored-key self-check (`create_app`, real backend only)."""
+        """Wire the stored-key self-check (the wiring of #836 slice 2b; nothing calls it yet)."""
         self._selfcheck = selfcheck
 
     async def start(self, ctx: AppContext) -> None:
@@ -113,7 +115,8 @@ class AccountsService:
             self._task.add_done_callback(_log_loop_exit)
 
     async def stop(self, grace_s: float) -> None:
-        """Cancel the refresh loop and wait for it (it only awaits a read or the sleep)."""
+        """Stop the key self-check's loop, then cancel the refresh loop and wait for it (it only
+        awaits a read or the sleep)."""
         self._started = False
         if self._selfcheck is not None:
             await self._selfcheck.stop()

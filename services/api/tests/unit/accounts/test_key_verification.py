@@ -8,11 +8,8 @@ adapter parsers, and scenarios are fixture edits, so every case runs on the shap
 
 from __future__ import annotations
 
-import copy
 import dataclasses
-import json
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from uuid import UUID
 
@@ -35,18 +32,13 @@ from candleviewer.exchange.bybit.key_info import (
     VERDICT_REASONS,
     ApiKeyFacts,
     ProbeFacts,
-    parse_key_info,
-    parse_probe,
     refusal,
 )
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from tests._corpus import rest
+from tests.unit.accounts._helpers import EGRESS, NOW, WITHDRAW, T, facts, load, probed
 from tests.unit.accounts._permission_cases import BASE, KNOWN_GAPS, REFUSED, non_json_cases
 
-FIXTURES = Path(__file__).parents[2] / "fixtures" / "key_verification"
-NOW = datetime(2026, 10, 15, 9, tzinfo=UTC)
-T = 1792054800000  # the fixtures' exchange clock, NOW in epoch ms
-EGRESS = "203.0.113.7"
 #: Stand-in key id and secret in a reply; the dummy prefix is the gitleaks allow-list's (SR-145).
 MARKER = "DUMMYKEY_NOT_A_KEY_0001"
 POLICY = VerificationPolicy(egress_ip=EGRESS)
@@ -59,21 +51,6 @@ ACCOUNT = ExchangeAccount(
     created_at=NOW,
     updated_at=NOW,
 )
-
-
-def load(name: str) -> dict[str, Any]:
-    body: dict[str, Any] = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
-    return body
-
-
-def facts(**result: Any) -> ApiKeyFacts:
-    body = copy.deepcopy(load("key_info_trade.json"))
-    body["result"].update(result)
-    return parse_key_info(body)
-
-
-def probed(sent: int = T - 50, received: int = T + 50) -> ProbeFacts:
-    return parse_probe(load("wallet_balance.json"), sent_at_ms=sent, received_at_ms=received)
 
 
 def error(body: dict[str, Any]) -> ExchangeError:
@@ -125,7 +102,6 @@ def rules(result: VerificationResult) -> list[Rule]:
     return [f.rule for f in result.failures]
 
 
-WITHDRAW = {**BASE, "Wallet": ["Withdraw"]}
 #: Key-info refusals with a verdict, by exchange code.
 REFUSALS: dict[int, ExchangeError] = {
     10003: error(load("error_10003.json")),
