@@ -105,11 +105,13 @@ info:
     recorded only after the request has passed every admission check: authentication and CSRF,
     the session state (`session_read_only`, and the idle lock of #2300) and authorisation (RBAC,
     account scope and `step_up_required`). A request refused by any of them stores no
-    idempotency record and has no side effect. The identical request re-sent with the same key
-    once the cause is cleared (after an unlock or a successful step-up) is therefore a first
-    submission: it executes once and is not answered from the idempotency store (no
-    `Idempotency-Replayed`). This is what lets a client hold a request refused with
-    `step_up_required` and re-send it unchanged (`POST /auth/step-up`, C-2.10).
+    idempotency record and executes nothing; only the refusal's own effects remain (such as its
+    audit record, where that refusal is audited, and for `step_up_required` the challenge it
+    issues). The identical request re-sent with the same key once the cause is cleared (after an
+    unlock or a successful step-up) is therefore a first submission: it executes once and is not
+    answered from the idempotency store (no `Idempotency-Replayed`). This is what lets a client
+    hold a request refused with `step_up_required` and re-send it unchanged
+    (`POST /auth/step-up`, C-2.10).
 
     ### Rate limiting
     Per-user token bucket (default 600 req/min, 60 req/s burst) plus a per-UID *exchange*
@@ -7972,7 +7974,8 @@ paths:
         its own. A label never identifies an account or a rule on its own: each account named in
         it is followed by its `environment` and `exchange_uid` and each rule by the environments
         its scope includes, rendered bare, and every label is escaped before it is quoted (see
-        `Problem`). A session has at most one live challenge. A newer `403 step_up_required`
+        `Problem`; naming a rule this way is provisional until the route slice of #2304 settles
+        it). A session has at most one live challenge. A newer `403 step_up_required`
         supersedes it, and it also ends when a step-up uses it, at `challenge_expires_at`, when
         the session turns read-only and when it idle-locks (#2301). This operation elevates
         against the live challenge: `challenge_id`, when sent, must name it. A step-up for a
@@ -8000,8 +8003,10 @@ paths:
         bound to the challenged request until that request uses it or a newer step-up for the
         class replaces it. The grant expires 60 seconds after the step-up, which leaves time only
         for the immediate re-send, and it also ends when the session turns read-only, when it
-        idle-locks (#2301) and at logout. A session holds at most one grant per no-grace class.
-        Grace classes keep the unbound 5-minute window described below.
+        idle-locks (#2301) and at logout. For a no-grace class the `200`'s `elevated_until` is
+        that expiry, 60 seconds after the step-up, and its `step_up_expires_at` is null. A
+        session holds at most one grant per no-grace class. Grace classes keep the unbound
+        5-minute window described below.
 
         **Holding the refused request.** The client keeps the refused request unchanged (method,
         path, body and `Idempotency-Key`) and re-sends it as is after a successful step-up. The
@@ -10142,13 +10147,19 @@ components:
             and each rule by the environments its scope includes, rendered bare (for example
             "Release kill switch, accounts 'demo-1' (demo, UID 1001234)" or "Arm rule 'Break-even'
             (live)"); an account's `environment` and `exchange_uid` never change after it is
-            registered. Before a label is quoted, an apostrophe or a backslash in it is preceded
-            by a backslash, and every character outside printable ASCII (U+0020 to U+007E) is
-            written as `\u{`, its code point in upper-case hex and `}` (U+202E becomes
-            `\u{202E}`). That covers line breaks and other control characters, bidi embedding,
-            override and isolate marks and look-alike quotation marks, so the quotes bound the
-            label: the label `demo-1' (demo)` is quoted as `'demo-1\' (demo)'`. The step-up dialog
-            shows it verbatim as its accessible description; a client never composes its own.
+            registered. Naming a rule this way is provisional: two rules can share a label and
+            environments, and `rules:write` can rename a rule and change its scope, bindings and
+            active version without a step-up, so the route slice of #2304 decides, before any rule
+            template ships, whether a rule is also named by its bound accounts and whether the
+            grant that arms it is also bound to its active version. Before a label is quoted, an
+            apostrophe or a backslash in it is preceded by a backslash, and every character
+            outside printable ASCII (U+0020 to U+007E) is written as `\u{`, its code point in
+            upper-case hex zero-padded to four digits, and `}` (U+000A becomes `\u{000A}`, U+202E
+            becomes `\u{202E}` and U+1F600 becomes `\u{1F600}`). That covers line breaks and
+            other control characters, bidi embedding, override and isolate marks and look-alike
+            quotation marks, so the quotes bound the label: the label `demo-1' (demo)` is quoted
+            as `'demo-1\' (demo)'`. The step-up dialog shows it verbatim as its accessible
+            description; a client never composes its own.
         target:
           type: ["string", "null"]
           description: >

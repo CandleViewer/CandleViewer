@@ -9,7 +9,8 @@ Pins the contract:
 * a challenge is issued only after authentication, CSRF, session state, request validation, RBAC
   and account scope admit the caller, so it never names an object the caller may not read;
 * a label never identifies an account or a rule alone: an account is followed by its environment
-  and UID, a rule by its environments, and every label is escaped before it is quoted;
+  and UID, a rule (provisionally, until the route slice) by its environments, and every label is
+  escaped before it is quoted;
 * `POST /auth/step-up` takes `challenge_id`: required for a no-grace class (`400
   validation_failed`, rule `challenge_required`, without it) and optional, for now, for a grace
   class; a stale one is `400 validation_failed` with rule `challenge_expired`; both are decided
@@ -96,9 +97,17 @@ def _problem_text(spec: dict[str, Any], field: str) -> str:
     return _flat(spec["components"]["schemas"]["Problem"]["properties"][field]["description"])
 
 
-#: A label as `Problem.action_summary` quotes it: printable ASCII other than `'` and `\`, an
-#: escaped `\'` or `\\`, or a `\u{XXXX}` code-point escape, between apostrophes.
-_QUOTED_LABEL = r"'(?:[ -&(-\[\]-~]|\\['\\]|\\u\{[0-9A-F]{1,6}\})*'"
+#: A label as `Problem.action_summary` quotes it, between apostrophes: any character but `'` and
+#: `\`, an escaped `\'` or `\\`, or a `\u{XXXX}` code-point escape of four to six digits. The three
+#: alternatives are disjoint on their first two characters, so a match has one parse. The
+#: printable-ASCII bound is applied by `_is_quoted_label`, not by a range in this class: CodeQL
+#: `py/redos` flagged the earlier escaped-bracket range form (alert 2159).
+_QUOTED_LABEL = r"'(?:[^'\\]|\\['\\]|\\u\{[0-9A-F]{4,6}\})*'"
+
+
+def _is_quoted_label(text: str) -> bool:
+    """Whether `text` is one label quoted as the contract's escaping rule writes it."""
+    return text.isascii() and text.isprintable() and re.fullmatch(_QUOTED_LABEL, text) is not None
 
 
 def _account_reference(spec: dict[str, Any]) -> re.Pattern[str]:
@@ -196,9 +205,23 @@ def test_problem_declares_the_step_up_challenge_field(
         ),
         (
             "action_summary",
+            "Naming a rule this way is provisional: two rules can share a label and environments, "
+            "and `rules:write` can rename a rule and change its scope, bindings and active version "
+            "without a step-up",
+        ),
+        (
+            "action_summary",
+            "the route slice of #2304 decides, before any rule template ships, whether a rule is "
+            "also named by its bound accounts and whether the grant that arms it is also bound to "
+            "its active version",
+        ),
+        (
+            "action_summary",
             "Before a label is quoted, an apostrophe or a backslash in it is preceded by a "
             "backslash, and every character outside printable ASCII (U+0020 to U+007E) is written "
-            "as `\\u{`, its code point in upper-case hex and `}` (U+202E becomes `\\u{202E}`)",
+            "as `\\u{`, its code point in upper-case hex zero-padded to four digits, and `}` "
+            "(U+000A becomes `\\u{000A}`, U+202E becomes `\\u{202E}` and U+1F600 becomes "
+            "`\\u{1F600}`)",
         ),
         (
             "action_summary",
@@ -248,6 +271,7 @@ def test_typed_confirmation_challenge_identifies_the_account_beyond_its_label(
     summary = _forbidden_example(spec, "stepUpRequiredTypedConfirmation")["action_summary"]
     account = summary.removeprefix("Rotate API key for account ")
     assert account != summary
+    assert account.isascii() and account.isprintable()
     assert _account_reference(spec).fullmatch(account)
 
 
@@ -257,8 +281,39 @@ def test_escaped_label_example_is_bounded_by_its_quotes(spec: dict[str, Any]) ->
         _problem_text(spec, "action_summary"),
     )
     assert example is not None
-    assert re.fullmatch(_QUOTED_LABEL, example["quoted"])
-    assert not re.fullmatch(_QUOTED_LABEL, f"'{example['label']}'")
+    assert _is_quoted_label(example["quoted"])
+    assert not _is_quoted_label(f"'{example['label']}'")
+
+
+@pytest.mark.parametrize(
+    ("text", "quoted"),
+    [
+        ("'demo-1\\' (demo)'", True),
+        ("'C:\\\\keys'", True),
+        ("'\\u{000A}\\u{202E}\\u{1F600}'", True),
+        ("'demo-1' (demo)'", False),
+        ("'a\\b'", False),
+        ("'\\u{A}'", False),
+        ("'\\u{202e}'", False),
+        ("'line\nbreak'", False),
+        ("'\u202edemo'", False),
+        ("'\u2019demo'", False),
+    ],
+    ids=[
+        "escaped-apostrophe",
+        "escaped-backslash",
+        "code-point-escapes",
+        "bare-apostrophe",
+        "bare-backslash",
+        "unpadded-escape",
+        "lower-case-escape",
+        "raw-line-break",
+        "raw-bidi-override",
+        "raw-look-alike-quote",
+    ],
+)
+def test_quoted_label_oracle_accepts_only_the_escaped_form(text: str, quoted: bool) -> None:
+    assert _is_quoted_label(text) is quoted
 
 
 @pytest.mark.parametrize(
@@ -367,6 +422,7 @@ def test_refused_challenge_answer_is_a_conforming_400(spec: dict[str, Any], rule
         "A label never identifies an account or a rule on its own: each account named in it is "
         "followed by its `environment` and `exchange_uid` and each rule by the environments its "
         "scope includes, rendered bare, and every label is escaped before it is quoted",
+        "naming a rule this way is provisional until the route slice of #2304 settles it",
         "A session has at most one live challenge",
         "when the session turns read-only and when it idle-locks (#2301)",
         "`challenge_id`, when sent, must name it",
@@ -419,6 +475,8 @@ def test_refusal_that_precedes_the_challenge_is_catalogued(
         "The grant expires 60 seconds after the step-up, which leaves time only for the immediate "
         "re-send",
         "it also ends when the session turns read-only, when it idle-locks (#2301) and at logout",
+        "For a no-grace class the `200`'s `elevated_until` is that expiry, 60 seconds after the "
+        "step-up, and its `step_up_expires_at` is null",
         "A session holds at most one grant per no-grace class",
         "Grace classes keep the unbound 5-minute window",
     ],
@@ -484,7 +542,9 @@ async def test_step_up_required_route_body_carries_the_challenge(spec: dict[str,
         "every `x-idempotency: required` operation takes) the key is recorded only after the "
         "request has passed every admission check",
         "authorisation (RBAC, account scope and `step_up_required`)",
-        "A request refused by any of them stores no idempotency record and has no side effect",
+        "A request refused by any of them stores no idempotency record and executes nothing",
+        "only the refusal's own effects remain (such as its audit record, where that refusal is "
+        "audited, and for `step_up_required` the challenge it issues)",
         "is therefore a first submission: it executes once and is not answered from the "
         "idempotency store",
     ],

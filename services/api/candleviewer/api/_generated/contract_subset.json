@@ -2,7 +2,7 @@
   "x-cv-generated": {
     "notice": "GENERATED FILE — DO NOT EDIT BY HAND. Regenerate from services/api with `uv run python scripts/generate_protocol_models.py`.",
     "source": "docs/plan/22-api-openapi.yaml",
-    "source_sha256": "71b117ce148caa799810b9e3c7940563f3ab38126615380ef7738bdaf55a8ada"
+    "source_sha256": "c068fa37690fd345469b1c64ea8cf1992d5d070db57467c72fb9ec7badf7b85b"
   },
   "components": {
     "headers": {
@@ -162,6 +162,38 @@
                   "title": "Authenticated but lacking the required permission",
                   "type": "https://candleviewer.local/errors/forbidden"
                 }
+              },
+              "stepUpRequired": {
+                "summary": "Dangerous action without a live elevation; the body is a step-up challenge (#2304)",
+                "value": {
+                  "action_class": "killswitch",
+                  "action_summary": "Release kill switch, scope global",
+                  "challenge_expires_at": "2026-09-14T10:36:02Z",
+                  "challenge_id": "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b",
+                  "code": "step_up_required",
+                  "detail": "Re-enter your password and authenticator code (POST /auth/step-up) to continue.",
+                  "instance": "urn:cv:req:0193f2bb-2224",
+                  "status": 403,
+                  "target": null,
+                  "title": "A dangerous action needs a live step-up elevation for its action class",
+                  "type": "https://candleviewer.local/errors/step_up_required"
+                }
+              },
+              "stepUpRequiredTypedConfirmation": {
+                "summary": "A step-up challenge whose action asks for a typed confirmation of its target (#2304)",
+                "value": {
+                  "action_class": "keys",
+                  "action_summary": "Rotate API key for account 'sub_002' (live, UID 1001234)",
+                  "challenge_expires_at": "2026-09-14T10:36:02Z",
+                  "challenge_id": "0c9b8a7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d",
+                  "code": "step_up_required",
+                  "detail": "Re-enter your password and authenticator code (POST /auth/step-up) to continue.",
+                  "instance": "urn:cv:req:0193f2bb-2225",
+                  "status": 403,
+                  "target": "sub_002",
+                  "title": "A dangerous action needs a live step-up elevation for its action class",
+                  "type": "https://candleviewer.local/errors/step_up_required"
+                }
               }
             },
             "schema": {
@@ -169,7 +201,7 @@
             }
           }
         },
-        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values."
+        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304)."
       },
       "NotFound": {
         "content": {
@@ -1604,6 +1636,24 @@
       "Problem": {
         "description": "RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue.",
         "properties": {
+          "action_class": {
+            "description": "`step_up_required` only: the step-up class the refused request needs, one of the `action_class` values of `POST /auth/step-up`.\n",
+            "type": "string"
+          },
+          "action_summary": {
+            "description": "`step_up_required` only: server-composed text naming exactly what the refused request would execute, built from the validated request (for example \"Release kill switch, scope global\"). It comes from a fixed per-route template. Request values appear in it only as validated enum values (bare) or as identifiers and server-resolved labels (quoted, each bounded by its own schema's `maxLength` or `format`), never as free text such as a `reason`, and never as key material, a password, a token, a TOTP or recovery code or any field the redaction deny-list names (C-12.6). A label alone never identifies an account or a rule, because labels can be renamed and need not be unique: each account named in it is followed by its `environment` and `exchange_uid` and each rule by the environments its scope includes, rendered bare (for example \"Release kill switch, accounts 'demo-1' (demo, UID 1001234)\" or \"Arm rule 'Break-even' (live)\"); an account's `environment` and `exchange_uid` never change after it is registered. Naming a rule this way is provisional: two rules can share a label and environments, and `rules:write` can rename a rule and change its scope, bindings and active version without a step-up, so the route slice of #2304 decides, before any rule template ships, whether a rule is also named by its bound accounts and whether the grant that arms it is also bound to its active version. Before a label is quoted, an apostrophe or a backslash in it is preceded by a backslash, and every character outside printable ASCII (U+0020 to U+007E) is written as `\\u{`, its code point in upper-case hex zero-padded to four digits, and `}` (U+000A becomes `\\u{000A}`, U+202E becomes `\\u{202E}` and U+1F600 becomes `\\u{1F600}`). That covers line breaks and other control characters, bidi embedding, override and isolate marks and look-alike quotation marks, so the quotes bound the label: the label `demo-1' (demo)` is quoted as `'demo-1\\' (demo)'`. The step-up dialog shows it verbatim as its accessible description; a client never composes its own.\n",
+            "type": "string"
+          },
+          "challenge_expires_at": {
+            "description": "`step_up_required` only: when the challenge expires, 5 minutes after issue (server clock). The client drops the held request then, without sending it.\n",
+            "format": "date-time",
+            "type": "string"
+          },
+          "challenge_id": {
+            "description": "`step_up_required` only: the challenge this refusal issued (#2304), a random UUIDv4 scoped to the issuing session, so a value from another session is unknown. One challenge is live per session; a newer refusal supersedes it. Send it as `challenge_id` to `POST /auth/step-up`; a step-up for a no-grace class must send it.\n",
+            "format": "uuid",
+            "type": "string"
+          },
           "code": {
             "description": "Stable machine-readable error code from `x-error-codes`.",
             "type": "string"
@@ -1664,6 +1714,13 @@
             "maximum": 599,
             "minimum": 400,
             "type": "integer"
+          },
+          "target": {
+            "description": "`step_up_required` only: the exact, case-sensitive text a typed confirmation must equal when the action asks for one (for example the account name), else null. Like `action_summary`, it is an identifier or a server-resolved label of the validated request, never free text or credential material. It is a label only when no other object of its kind that the caller can see has that label, compared case-insensitively, and the label is printable ASCII; otherwise it is the object's identifier.\n",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "title": {
             "type": "string"
