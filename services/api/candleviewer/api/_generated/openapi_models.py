@@ -5110,7 +5110,12 @@ class Incidents(AdminSliceStatus):
 class AdminOverview(BaseModel):
     generated_at: AwareDatetime | None = None
     users: Users | None = None
-    accounts: Accounts | None = None
+    accounts: Annotated[
+        Accounts | None,
+        Field(
+            description="Counts are scoped to the serving environment (C-2.11), never demo and live together."
+        ),
+    ] = None
     recorder: Recorder | None = None
     storage: Annotated[
         Storage | None,

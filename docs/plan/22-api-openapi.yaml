@@ -14358,6 +14358,7 @@ components:
             without_mfa: { type: integer }
         accounts:
           type: object
+          description: Counts are scoped to the serving environment (C-2.11), never demo and live together.
           allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
           properties:
             total: { type: integer }
@@ -14459,6 +14460,8 @@ components:
         Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact (setting
         `accounts.subaccount_tier`, `21-database-schema.md` §3.9), never inferred from counts or
         `max_sub_accounts_hint`; `tier` and `cap` are `null` iff `tier_source` is `unrecorded`.
+        If the tier read itself fails, the slice reports `status: error` and the four tier fields
+        (`tier`, `cap`, `tier_source`, `recorded_at`) are omitted, never defaulted.
       allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
       properties:
         tier:
