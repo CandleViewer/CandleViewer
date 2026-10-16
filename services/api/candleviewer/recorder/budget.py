@@ -371,7 +371,7 @@ class DiskBudget:
         self._report: StorageUsage | None = None
         self._last_pins: frozenset[str] = frozenset()
         self._breakdown = Breakdown({}, {})
-        #: Last fresh breakdown (construction until the first): its age is exported.
+        #: When the sizes behind the published report were measured (construction until the first).
         self._fresh_at = now_us()
         self._rate_labels: set[str] = set()
         self._task: asyncio.Task[None] | None = None
@@ -384,9 +384,10 @@ class DiskBudget:
 
     @property
     def breakdown_fresh_at(self) -> datetime:
-        """When the tier and symbol sizes were last measured (construction until the first
-        breakdown). `report()` keeps the last sizes while the breakdown fails, so a reader that
-        must never show stale bytes checks this as well as the report's `generated_at`."""
+        """When the sizes behind the published `report()` were measured (construction until the
+        first breakdown); it advances with the report, never ahead of it. `report()` keeps the last
+        sizes while the breakdown fails, so a reader that must never show stale bytes checks this
+        as well as the report's `generated_at`."""
         return _utc(self._fresh_at)
 
     @property
