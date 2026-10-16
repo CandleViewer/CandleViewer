@@ -741,7 +741,9 @@ class SequencingHub:
             for a, e in list(self._conns.values())
         )
 
-    # -- the six triggers --
+    # -- the §7.4 triggers --
+    # `reconfigure` comes from `ctl`, and `backpressure` snapshots belong to the overflow
+    # ladder's `drain` (`ws/outbound.py`), so the hub has no trigger for either (#2830).
 
     def upstream_desync(self, symbol: str) -> int:
         return self.resnapshot(_live_symbol(symbol, book_only=True), "upstream_desync")
@@ -754,13 +756,6 @@ class SequencingHub:
 
     def replay_seek(self, replay_session_id: str) -> int:
         return self.resnapshot(lambda s: s.replay_session_id == replay_session_id, "replay_seek")
-
-    def backpressure(self, authz: ConnectionAuthz, ch: str) -> int:
-        """Raised by E17-T03 when it drops a topic's queue on one connection."""
-        entry = self._conns.get(id(authz))
-        if entry is None:
-            return 0
-        return self.resnapshot(lambda s: s in authz.by_id.values() and s.ch == ch, "backpressure")
 
 
 def _live_symbol(symbol: str, *, book_only: bool) -> Callable[[Subscription], bool]:
