@@ -3392,8 +3392,9 @@ change.
 
 **Feature-flag and maintenance pushes (E42-T03).** After a flag write commits, every
 authenticated connection that the flag's `visibility` admits receives a `system` frame of
-`kind: "feature_flags"` within 2 s. `visibility` is a per-flag registry attribute: `all_roles`,
-or `owner_only` for a flag that only owner sessions receive. These frames bypass the 1 s `system`
+`kind: "feature_flags"` within 2 s. `visibility` is a mandatory per-flag registry attribute with
+no default: `all_roles`, or `owner_only` for a flag that only owner sessions receive
+(`21-database-schema.md` §10.7 gives each flag's). These frames bypass the 1 s `system`
 throttle (§8.1): flag writes are rare Owner-only actions, so they stay within the 2 s bound.
 `feature_flags` carries **only the changed keys**, each resolved for that connection's user
 exactly as `GET /admin/feature-flags` resolves it, so a client merges the frame into the set it

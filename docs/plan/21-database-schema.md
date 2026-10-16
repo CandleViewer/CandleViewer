@@ -2194,6 +2194,7 @@ System-scope keys with a fixed meaning (`scope = 'system'`, at most one row per 
 | Key                        | `value_type` | Values                                           | Semantics                                                                                                                                                                                                                                                                       |
 | -------------------------- | ------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `accounts.subaccount_tier` | `string`     | `"regular"` (cap 5) \| `"business_kyc"` (cap 20) | The Bybit sub-account tier as a recorded fact (US-ADMIN-014), read by `GET /admin/capacity` (`SubaccountCapacity`, E42-T01). No row means "unrecorded": the tier is never inferred from the account count or `max_sub_accounts_hint`. Changes are audited as `settings.change`. |
+| `flags.read_budget_ms`     | `number`     | milliseconds; default `500`                      | The flag store's read budget (E42-T03): a read that fails or takes longer is a store outage, so `GET /admin/feature-flags` answers `resolution: fail_closed`. Tunable; the default stays well inside the 2 s push and 5 s kill-switch re-read bounds.                           |
 
 > Shipped as Alembic `0027_feature_flags` (E42-T03 #964, on top of `0026_kek_versions_env`): `feature_flags`, `feature_flag_overrides` and the `flag_kind` type (§1.2), DDL below verbatim. `updated_by` is not in the original §3.9 DDL: it was added before this revision merged (E42-T03 review), because the `PUT` records its writer (`FeatureFlag.updated_by`). No seed: the flag store inserts every registered flag at its default on start-up. `updated_at` is set by the store; no touch trigger (deviation from §1.4, as 0022 and 0025). No column holds a credential, token or PII (§12, P0). Downgrade refuses while either table holds rows, and the refusal names the operator step: export the overrides to keep, run `DELETE FROM feature_flags` (it cascades to the overrides), retry; the flag store re-seeds every registered flag on its next start.
 
@@ -2239,7 +2240,7 @@ Resolution order: user override → role override → percentage rollout (hash o
 
 `trading.live_enabled` and every kill-switch-class flag (`is_killswitch`, `maintenance.mode` included) resolve from the deployment value only: user and role overrides for them are ignored at resolution, not merely refused on write, so an override row that reaches this table another way (a seed, a migration, a direct change) changes nothing (E42-T03).
 
-> **Stored value and writer (E42-T03).** `default_value` is the deployment-wide stored value: `PUT /admin/feature-flags/{flagKey}` writes it and resolution falls back to it. `FeatureFlag.value` is the per-caller resolved value, so there is no separate current-value column. `updated_by` (`FeatureFlag.updated_by`) is added to `feature_flags` by `0027_feature_flags`.
+> **Stored value and writer (E42-T03).** `default_value` is the deployment-wide stored value resolution falls back to: `PUT /admin/feature-flags/{flagKey}` writes it on a `boolean` or `variant` flag and writes `rollout_pct` on a `percentage` flag. `FeatureFlag.value` is the per-caller resolved value, so there is no separate current-value column. `updated_by` (`FeatureFlag.updated_by`) is added to `feature_flags` by `0027_feature_flags`; slot 0027 is confirmed for it.
 
 ### 3.10 Audit log (hash chain), system events, backups
 
@@ -3373,21 +3374,21 @@ Env switching has **no** hotkey by design (digest 23: must be a deliberate click
 
 ### 10.7 Feature flags
 
-| Key                                                                      | Kind    | Default | Purpose                                       |
-| ------------------------------------------------------------------------ | ------- | ------- | --------------------------------------------- |
-| `trading.live_enabled`                                                   | boolean | `false` | Master gate; flipped only after pen-test (R4) |
-| `trading.one_click`                                                      | boolean | `false` | Requires explicit arm                         |
-| `engine.webgl_v2`                                                        | boolean | `false` | Custom engine rollout                         |
-| `engine.fallback_lightweight_charts`                                     | boolean | `false` | Spike-failure fallback path                   |
-| `rules.graph_editor`                                                     | boolean | `true`  | Node-graph editor                             |
-| `rules.form_editor`                                                      | boolean | `true`  | Form editor                                   |
-| `algo.twap` / `algo.chase` / `algo.iceberg` / `algo.scaled` / `algo.oco` | boolean | `false` | Emulated algos, enabled per release           |
-| `recorder.auto_record`                                                   | boolean | `true`  | Chart/position auto-record                    |
-| `storage.cold_tier`                                                      | boolean | `true`  | Parquet/DuckDB routing                        |
-| `killswitch.ingestion`                                                   | boolean | `false` | `is_killswitch=true`                          |
-| `killswitch.order_entry`                                                 | boolean | `false` | `is_killswitch=true`                          |
-| `maintenance.mode`                                                       | boolean | `false` | `is_killswitch=true`; blocks order entry      |
-| `maintenance.keep_recorder`                                              | boolean | `true`  | Recorder keeps running in maintenance         |
+| Key                                                                      | Kind    | Default | Purpose                                       | Visibility   |
+| ------------------------------------------------------------------------ | ------- | ------- | --------------------------------------------- | ------------ |
+| `trading.live_enabled`                                                   | boolean | `false` | Master gate; flipped only after pen-test (R4) | `all_roles`  |
+| `trading.one_click`                                                      | boolean | `false` | Requires explicit arm                         | `all_roles`  |
+| `engine.webgl_v2`                                                        | boolean | `false` | Custom engine rollout                         | `all_roles`  |
+| `engine.fallback_lightweight_charts`                                     | boolean | `false` | Spike-failure fallback path                   | `all_roles`  |
+| `rules.graph_editor`                                                     | boolean | `true`  | Node-graph editor                             | `all_roles`  |
+| `rules.form_editor`                                                      | boolean | `true`  | Form editor                                   | `all_roles`  |
+| `algo.twap` / `algo.chase` / `algo.iceberg` / `algo.scaled` / `algo.oco` | boolean | `false` | Emulated algos, enabled per release           | `all_roles`  |
+| `recorder.auto_record`                                                   | boolean | `true`  | Chart/position auto-record                    | `owner_only` |
+| `storage.cold_tier`                                                      | boolean | `true`  | Parquet/DuckDB routing                        | `owner_only` |
+| `killswitch.ingestion`                                                   | boolean | `false` | `is_killswitch=true`                          | `owner_only` |
+| `killswitch.order_entry`                                                 | boolean | `false` | `is_killswitch=true`                          | `all_roles`  |
+| `maintenance.mode`                                                       | boolean | `false` | `is_killswitch=true`; blocks order entry      | `all_roles`  |
+| `maintenance.keep_recorder`                                              | boolean | `true`  | Recorder keeps running in maintenance         | `owner_only` |
 
 ### 10.8 Demo/dev fixtures (never in production)
 

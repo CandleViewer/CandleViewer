@@ -2,7 +2,7 @@
   "x-cv-generated": {
     "notice": "GENERATED FILE — DO NOT EDIT BY HAND. Regenerate from services/api with `uv run python scripts/generate_protocol_models.py`.",
     "source": "docs/plan/22-api-openapi.yaml",
-    "source_sha256": "b4e92272dd1c21f3a3750abf4f4b06c41c0edf3b189448a6cfd20fffc76f2a0f"
+    "source_sha256": "cacb6dfdc2ac40d2414d6d6d74f04b6b37b5683af419b006f27a61377c194ae7"
   },
   "components": {
     "headers": {
@@ -199,7 +199,7 @@
                 "summary": "The order-entry gate refused an order submit (maintenance mode is on)",
                 "value": {
                   "code": "trading_disabled",
-                  "detail": "Maintenance mode is on; order entry is paused.",
+                  "detail": "Order entry is paused.",
                   "reason": "maintenance",
                   "status": 403,
                   "title": "Kill-switch or maintenance mode engaged, or live trading not enabled for this deployment",
@@ -208,11 +208,18 @@
               }
             },
             "schema": {
-              "$ref": "#/components/schemas/Problem"
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Problem"
+                },
+                {
+                  "$ref": "#/components/schemas/TradingDisabledProblem"
+                }
+              ]
             }
           }
         },
-        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order-submit operation it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5)."
+        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`."
       },
       "NotFound": {
         "content": {
@@ -1481,6 +1488,16 @@
         ],
         "type": "object"
       },
+      "OrderEntryRefusalReason": {
+        "description": "Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).\n",
+        "enum": [
+          "maintenance",
+          "account_disabled_by_policy",
+          "no_active_key",
+          "account_unhealthy"
+        ],
+        "type": "string"
+      },
       "Page": {
         "properties": {
           "items": {
@@ -1759,6 +1776,28 @@
         ],
         "pattern": "^[A-Z0-9]{2,20}USDT$",
         "type": "string"
+      },
+      "TradingDisabledProblem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Problem"
+          },
+          {
+            "properties": {
+              "code": {
+                "const": "trading_disabled"
+              },
+              "reason": {
+                "$ref": "#/components/schemas/OrderEntryRefusalReason"
+              }
+            },
+            "required": [
+              "reason"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "The `403 trading_disabled` problem the order-entry gate returns when it refuses a submission or amend that opens or increases exposure, before any OMS work (C-2.21): the problem body plus the gate's `reason`. `detail` is human text and never carries an id or a secret. The gate runs after authentication, RBAC and account-scope resolution, so an account outside the caller's scope never reaches it and gets a `404`. Cancels, flatten and quantity-reducing or stop-tightening amends never pass through the gate. Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is never gated; \"trigger re-armed\" means an exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated.\n"
       },
       "Workspace": {
         "description": "Response object. Readers must ignore unknown properties (C-6.3).",
