@@ -485,7 +485,7 @@ class ConnectionAuthz:
 
     def ctl(self, ch: Any, body: Any) -> tuple[dict[str, Any], bool]:
         """§5.4: retune a live subscription. Returns (`effective`, resnapshot) or raises
-        `TopicError` (`not_subscribed`, `invalid_options`; a present `ch` that is no topic name
+        `TopicError` (`not_subscribed`, `invalid_options`; a non-null `ch` that is no topic name
         is the latter, #2572)."""
         if ch is not None and not is_topic_name(ch):
             raise TopicError("invalid_options", "ch must be a topic name.", "ch")

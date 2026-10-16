@@ -595,7 +595,7 @@ Unsubscribing from an unknown or already-removed topic is **not** an error (`ok:
 - `topics` is missing or not a non-empty array (`field`: `topics`);
 - an entry is not a string, or is a string that is not a topic name (`field`: `topics[i]`).
 
-A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what the client sent. So every `unsub_ok.results[].ch` is a valid topic name. A well-formed name that holds no subscription is still `ok: true, noop: true`, as above.
+A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what the client sent. So every `unsub_ok.results[].ch` is a valid topic name. A well-formed name that holds no subscription is still `ok: true, noop: true`, as above. **As built (#2875):** the `maxItems: 50` of §13.5 is not enforced yet, so a longer `topics` array is still processed and answered entry by entry.
 
 **As built (E17-S02, #2159):** `unsub` of `system` returns `ok: false` and the topic stays attached (§6.2).
 
@@ -614,7 +614,7 @@ Changing `depth`, `price_grouping`, `bar_type`/`param`, or the `metrics` list **
 
 **As built (E17-S02, #2159):** a `sub` that would take a connection past 40 distinct symbols is refused per topic with `subscription_limit`. More than 50 topics in one `sub` gives `too_many_topics` for the excess entries.
 
-**The envelope `ch` (#2572).** A `ctl` whose `ch` is present but is not a topic name (`common.schema.json#/$defs/topic`: not a string, or a string of another shape) gets `err` `invalid_options` (`field`: `ch`) and changes nothing. It is not a protocol strike (§4.3). The `err` carries no `ch`, because the envelope `ch` is a topic name (§13.1) and the server never echoes one that is not. A `ctl` with no `ch` gets `not_subscribed` without one, as before. A topic name that holds no subscription gets `not_subscribed` with that name.
+**The envelope `ch` (#2572).** A `ctl` whose `ch` is present and not `null`, but is not a topic name (`common.schema.json#/$defs/topic`: not a string, or a string of another shape) gets `err` `invalid_options` (`field`: `ch`) and changes nothing. It is not a protocol strike (§4.3). The `err` carries no `ch`, because the envelope `ch` is a topic name (§13.1) and the server never echoes one that is not. A `ctl` with no `ch` (absent or `null`) gets `not_subscribed` without one, as before. A topic name that holds no subscription gets `not_subscribed` with that name.
 
 **Why `ctl` exists.** The UI changes throttle constantly: a pane that scrolls out of view drops to 1 000 ms, a maximised DOM goes to 20 ms, a backgrounded Electron window goes to 1 000 ms for everything. Doing that with unsub/sub would re-snapshot a 200-level book every time the user switches tabs.
 
@@ -1015,7 +1015,7 @@ The `snap` carries `reason` so the client can distinguish a routine attach from 
 
 The server replies with a `snap` on that topic (correlated by `ch`, not by `id`). Rate limit: **5 resyncs per topic per minute**; exceeding it returns `err` `resync_rate_limited` and the server closes the subscription with `revoked`, because a client resyncing in a tight loop is broken and is consuming snapshot-build cost that harms every other consumer.
 
-The envelope `ch` follows the `ctl` rule (§5.4): a `ch` that is present but is not a topic name gets `err` `invalid_options` (`field`: `ch`) with no `ch` (#2572). That takes no snapshot, spends none of the limit above and does not revoke the subscription.
+The envelope `ch` follows the `ctl` rule (§5.4): a `ch` that is present and not `null`, but is not a topic name, gets `err` `invalid_options` (`field`: `ch`) with no `ch` (#2572). That takes no snapshot, spends none of the limit above and does not revoke the subscription.
 
 ### 7.6 Attaching without a snapshot
 
@@ -1041,7 +1041,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 - Each (connection, subscription) has its own sequence domain. A `snap` takes exactly one sequence number. `meta.previous_seq` is present whenever an earlier `snap` or `d` existed.
 - While a subscription is `snapshot_pending`, no `d` is sent on it. Snapshots come from the owning module (book, bars, order-flow). Until a module's adapter has landed (#2195 bars, #2196 book, #2197 order-flow), its families stay `snapshot_pending` and no `snap` is emitted. Such a subscription is never an error.
 - `snapshot: false` without provable continuity is answered with `snapshot_forced: true` (§7.6).
-- A `resync` with no `ch`, or with an unknown `reason`, is answered with `err` `frame_malformed`. A `ch` that is present but is not a topic name is answered with `invalid_options` instead (§7.5, #2572).
+- A `resync` with no `ch` (absent or `null`), or with an unknown `reason`, is answered with `err` `frame_malformed`. A `ch` that is present and not `null`, but is not a topic name, is answered with `invalid_options` instead (§7.5, #2572).
 - Every `revoked` frame, including the §7.5 `resync_rate_limited` one, always carries `resubscribe_allowed`. It is `true` only when a scope narrowed and some accounts were kept (E17-S02, #2159).
 - Snapshots over 4 MiB are chunked. Public snapshots are cached per topic and identity. Private snapshots are never cached or shared.
 - Metrics: `cv_ws_resync_total{reason}`, `cv_ws_snapshot_bytes{topic}`, `cv_ws_snapshot_build_seconds{topic}`, `cv_ws_sequence_gaps_detected_total` and `cv_ws_stale_topics_in_use`.
