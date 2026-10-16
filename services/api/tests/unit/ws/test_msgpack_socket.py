@@ -19,6 +19,7 @@ from candleviewer.ws.codec import encode_server_frame
 from candleviewer.ws.cvwb_vectors import vector_frames
 from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES
 from tests.unit.ws.test_lifecycle_socket import (
+    JSON,
     MSGPACK,
     _auth,
     _bye_then_close,
@@ -64,10 +65,19 @@ def _send_raw(ws: Any, data: bytes | str) -> None:
         ws.send_bytes(data)
 
 
-@pytest.mark.parametrize("data", MALFORMED.values(), ids=MALFORMED.keys())
-def test_msgpack_malformed_frame_is_a_strike_and_the_socket_survives(data: bytes | str) -> None:
+@pytest.mark.parametrize(
+    ("offer", "data"),
+    [
+        *(pytest.param(MSGPACK, data, id=name) for name, data in MALFORMED.items()),
+        # §2.2: one frame kind per subprotocol, so the JSON envelope as a binary frame is refused
+        pytest.param(JSON, b'{"t":"ping","id":"p"}', id="binary-frame-on-json"),
+    ],
+)
+def test_msgpack_malformed_frame_is_a_strike_and_the_socket_survives(
+    offer: list[str], data: bytes | str
+) -> None:
     w = _World()
-    with w.client, w.client.websocket_connect("/ws", subprotocols=MSGPACK) as ws:
+    with w.client, w.client.websocket_connect("/ws", subprotocols=offer) as ws:
         _hello(ws)
         _send_raw(ws, data)
         err = _recv(ws)

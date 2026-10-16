@@ -83,8 +83,10 @@ async def test_real_socket_unknown_subprotocol_is_refused_with_http_403() -> Non
     [
         (_JSON, "cv.v1.json", ["permessage-deflate"]),
         ([Subprotocol("cv.v1.msgpack"), *_JSON], "cv.v1.msgpack", []),
+        ([*_JSON, Subprotocol("cv.v1.msgpack")], "cv.v1.msgpack", []),  # the server's order wins
+        ([Subprotocol("cv.v1.msgpack")], "cv.v1.msgpack", []),
     ],
-    ids=["json", "msgpack"],
+    ids=["json", "msgpack", "json-first", "msgpack-only"],
 )
 async def test_real_socket_permessage_deflate_is_on_for_json_and_off_for_msgpack(
     offer: list[Subprotocol], chosen: str, extensions: list[str]

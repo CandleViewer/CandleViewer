@@ -67,7 +67,7 @@ Same origin, same Tailscale-only exposure and same TLS termination as REST. Plai
 
 ### 2.2 Subprotocol negotiation
 
-The client offers subprotocols in preference order via `Sec-WebSocket-Protocol`:
+The client lists the subprotocols it can speak in `Sec-WebSocket-Protocol`, and the server picks by its own order (below):
 
 ```
 Sec-WebSocket-Protocol: cv.v1.msgpack, cv.v1.json
@@ -82,7 +82,7 @@ The server echoes exactly one. A client offering no recognised subprotocol is cl
 
 **As built (#2486).** The gateway refuses such an upgrade before `accept`. A real server therefore answers it with HTTP `403` and no WebSocket close code; only an in-process test client reports `1002`.
 
-**As built (#2483).** Both are served, in the server's order: `cv.v1.msgpack` whenever the client offers it, wherever it sits in the offer, else `cv.v1.json`. On `cv.v1.msgpack` every frame, both ways, is one binary WebSocket message holding one MessagePack map, and a text frame from the client is `frame_malformed` (§3.6).
+**As built (#2483).** Both are served, in the server's order: `cv.v1.msgpack` whenever the client offers it, wherever it sits in the offer, else `cv.v1.json`. On `cv.v1.msgpack` every frame, both ways, is one binary WebSocket message holding one MessagePack map; on `cv.v1.json` every frame is one text message. A client frame of the other kind (text on `cv.v1.msgpack`, binary on `cv.v1.json`) is `frame_malformed` (§3.6).
 
 **Decision — why MessagePack and not a bespoke binary envelope.** The envelope must stay human-inspectable in DevTools, must tolerate additive schema evolution, and must decode fast in the browser. MessagePack gives all three with a mature, small (~8 kB) decoder, and lets us carry raw `bin` fields with **zero-copy** access to their `ArrayBuffer` — so the _hot_ payloads (book deltas, bars, footprint cells, heatmap columns) get a hand-rolled fixed-layout binary format (§3.4) _inside_ a self-describing envelope. A fully bespoke envelope was rejected: it would save ~20 bytes per frame while costing every debugging session and every schema change. JSON-only was rejected: measured decode cost of a 200-level book delta is ~4× MessagePack and produces GC garbage on every frame, which the 100 ms heatmap cadence cannot afford.
 
@@ -255,7 +255,7 @@ Snapshot chunking: a `snap` larger than 4 MiB is sent as N frames sharing one `i
 
 Time span of a bars or footprint frame: per-bar times are `u32` offsets from the header's `ts_base_ms` (§3.4), so one frame spans at most 2³²−1 ms (about 49.7 days). Footprint (body_kind 5) follows the bars rule (body_kind 4, §6.1): a new frame starts when a bar's open time is more than 2³²−1 ms after the frame's `ts_base_ms`, and inside a snapshot those frames are `partial` chunks as above, each with its own `ts_base_ms` (200 daily footprint bars span about 1.7 × 10¹⁰ ms). Clients key bars by `(generation, index)` (§8.2), never by frame or chunk.
 
-**MessagePack client frames (as built, SR-185; #2509, #2483).** The 256 KiB cap is checked first, as for JSON. msgpack's C unpacker then decodes the frame under these bounds: nesting 32 (as for JSON), at most 128 entries in an array and 32 in a map, and at most 16 384 values in the frame. A frame past any of them is a `frame_malformed` protocol violation (3 strikes -> `4400`), never `1011`. So are an ext type (a timestamp included), a binary string, a map key that is not a string, NaN or an infinity, invalid UTF-8, truncated input, trailing bytes and a text frame. The bounds cover every list and object the server acts on: the longest list is a `rules` sub's 100 `rule_ids`, the widest object an `opts`. Past them, the JSON path answers per topic or per option, or ignores the part, where this one refuses the frame: a `sub` or `unsub` naming more than 128 topics, an option list longer than 128, an `opts` or envelope wider than 32 keys, and a `hello` or `auth` array longer than 128.
+**MessagePack client frames (as built, SR-185; #2509, #2483).** The 256 KiB cap is checked first, as for JSON. msgpack's C unpacker then decodes the frame under these bounds: nesting 32 (as for JSON), at most 128 entries in an array and 32 in a map, and at most 16 384 values in the frame. A frame past any of them is a `frame_malformed` protocol violation (3 strikes -> `4400`), never `1011`. So are an ext type (a timestamp included), a binary string, a map key that is not a string, NaN or an infinity, invalid UTF-8, truncated input, trailing bytes and a text frame. On `cv.v1.json`, likewise, a binary frame is `frame_malformed` and is never read as JSON. The bounds cover every list and object the server acts on: the longest list is a `rules` sub's 100 `rule_ids`, the widest object an `opts`. Past them, the JSON path answers per topic or per option, or ignores the part, where this one refuses the frame: a `sub` or `unsub` naming more than 128 topics, an option list longer than 128, an `opts` or envelope wider than 32 keys, and a `hello` or `auth` array longer than 128.
 
 ---
 

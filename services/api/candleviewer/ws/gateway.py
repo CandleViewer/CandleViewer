@@ -9,8 +9,9 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   refusal is counted and logged with the source address MeshOnly admitted, with a cap.
 - **Negotiation** (§2.2): the subprotocol is chosen before `accept`; when the
   client offers none we serve -> close `1002` before the handshake completes.
-  `cv.v1.msgpack` whenever offered: then client frames go to the SR-185 decoder (a
-  text frame is malformed) and server frames are MessagePack (`ws/codec.py`).
+  `cv.v1.msgpack` whenever offered: then client frames go to the SR-185 decoder and
+  server frames are MessagePack (`ws/codec.py`). A frame of the other subprotocol's
+  kind (text on msgpack, binary on JSON) is malformed.
 - **hello -> welcome** (§4.2): any other first frame -> `bye` + `1002`.
 - **auth -> auth_ok** (§4.3): the token is read ONLY from the `auth` frame
   body, never the URL. Verified by the injected E09 `authenticate`; the
@@ -480,8 +481,9 @@ class _Connection:
     def decode(self, msg: Mapping[str, Any], max_frame_bytes: int) -> Any:
         """One ASGI receive message -> decoded frame; `None` after an oversize close.
 
-        Size is checked on the raw payload BEFORE any decoding (1009). On `cv.v1.msgpack` the
-        SR-185 decoder (`ws/codec.py`) decodes it, and a text frame there is malformed."""
+        Size is checked on the raw payload BEFORE any decoding (1009). Each subprotocol has one
+        frame kind (§2.2): a text frame on `cv.v1.msgpack` and a binary one on `cv.v1.json` are
+        malformed. The SR-185 decoder (`ws/codec.py`) decodes msgpack."""
         raw: str | bytes = msg.get("text") or msg.get("bytes") or ""
         size = len(raw.encode()) if isinstance(raw, str) else len(raw)
         if size > max_frame_bytes:
@@ -490,11 +492,12 @@ class _Connection:
         try:
             if self.msgpack:
                 return [] if isinstance(raw, str) else decode_client_frame(raw)
-            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-            if json_depth_exceeds(text, MAX_JSON_DEPTH):
+            if isinstance(raw, bytes):
+                return []  # a binary frame on cv.v1.json: a violation, never decoded
+            if json_depth_exceeds(raw, MAX_JSON_DEPTH):
                 return []  # SR-184: too deep -> protocol violation, never decoded
-            return json.loads(text)
-        except (ValueError, RecursionError):  # as are UnicodeDecodeError and MsgpackFrameError
+            return json.loads(raw)
+        except (ValueError, RecursionError):  # MsgpackFrameError is a ValueError
             return []  # malformed: handled as a non-object frame (a violation)
 
     def violation(self, frame_id: Any, code: str = "frame_malformed") -> None:
