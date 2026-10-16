@@ -89,8 +89,10 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
 - **Step-up** (`auth/step_up.py`): action classes `keys`, `users`, `live_enablement`, `killswitch`,
   `risk_caps`, `audit` (audit-log export) and `backups` (backup restore, #2751); a request needs
   password **and** TOTP code (D-2); a wrong password also counts toward login lockout; 5 min grace,
-  none for `live_enablement`, `killswitch` and `backups` (each action spends a fresh code); 3 wrong
-  password/code attempts make the session read-only for 5 min.
+  none for `live_enablement`, `killswitch` and `backups` (each action spends a fresh code; the spend
+  is a read-modify-write of the session row, so concurrent requests can still share one code, a
+  #2751 review finding to fix before the restore route mounts); 3 wrong password/code attempts make
+  the session read-only for 5 min.
 - **Rotation points that exist**: refresh (new session row, old marked `rotated`, reuse revokes the
   whole family), and the session minted on MFA completion. **Not present**: rotation on role change
   and on step-up (#2101), and on password change (route missing, #2110). The decision text says

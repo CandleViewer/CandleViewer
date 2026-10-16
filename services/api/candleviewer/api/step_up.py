@@ -173,8 +173,13 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("DELETE", re.compile(r"^/users/[^/]+$"), "users"),  # deleteUser
     ("PUT", re.compile(r"^/users/[^/]+/account-access$"), "users"),  # setUserAccountAccess
     ("POST", re.compile(r"^/admin/audit/export$"), "audit"),  # exportAuditLog
-    # restoreBackup is no-grace: this guard spends the one-shot grant, so its handler must
-    # not gate again (a second check always fails).
+    # restoreBackup (no-grace): this guard spends the one-shot grant before RBAC and before the
+    # handler validates, so a refused restore costs the code and a retry waits for the next TOTP
+    # step. The handler must not gate again (a second check always fails); its ticket may instead
+    # move this row to HANDLER_GATED_ROUTES and spend the grant after validation. Before it is
+    # mounted, `consume_single_use` must become atomic (a read-modify-write today, so concurrent
+    # restores can share one code), and the restore's write-ahead audit record must name the
+    # step-up (B16 records no spend).
     ("POST", re.compile(r"^/admin/backups/[^/]+/restore$"), "backups"),
 )
 
