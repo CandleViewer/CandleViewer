@@ -354,3 +354,6 @@ def test_a_failing_usage_source_never_un_records_the_tier() -> None:
     }
     assert store is not None and store.rows[SUBACCOUNT_TIER_KEY].value == "business_kyc"
     assert spy.records[-1] == _change_record(None, "business_kyc")
+    store.rows[SUBACCOUNT_TIER_KEY] = StoredSetting("regular", _AT)  # changed behind the route
+    read = client.get("/admin/capacity", headers={"x-role": "owner"}).json()["subaccounts"]
+    assert read["tier"] == "regular"  # the failed-`used` answer was not cached: this read is fresh
