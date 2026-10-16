@@ -219,6 +219,28 @@ def test_parse_bare_json_skips_braces_that_do_not_start_the_document() -> None:
     assert run_gate.parse_bare_json(out) == doc
 
 
+_BENCH6_OUT = json.dumps({"summary_by_busy_level": {"500": {"p99": 28.7}}}, indent=2)
+_BENCH7_OUT = '=== a_single_interpreter_throughput ===\n{"burst_50000": {"events_per_sec": 31000}}'
+
+
+@pytest.mark.parametrize(
+    ("bench_id", "output", "shown"),
+    [("BENCH-6", _BENCH6_OUT, "28.70 ms"), ("BENCH-7", _BENCH7_OUT, "31,000.00 ev/s")],
+)
+def test_run_benches_reads_bare_json_and_block_output(
+    monkeypatch: pytest.MonkeyPatch, bench_id: str, output: str, shown: str
+) -> None:
+    # #579: BENCH-6 prints one bare JSON document, every other bench `=== name ===` blocks.
+    # Without `parse_bench_blocks(out) or parse_bare_json(out)` the BENCH-6 row is an ERROR.
+    spec = next(s for s in run_gate.THRESHOLDS if s["id"] == bench_id)
+    monkeypatch.setattr(run_gate, "BENCH_SCRIPTS", [spec["bench"]])
+    monkeypatch.setattr(run_gate, "THRESHOLDS", [spec])
+    monkeypatch.setattr(run_gate, "run_script", lambda path, cwd, timeout: (0, output))
+    (check,) = run_gate.run_benches(timeout=1)
+    assert (check.id, check.status) == (bench_id, run_gate.PASS), check.detail
+    assert check.detail.startswith(shown)
+
+
 def test_upstream_dev_python_missing_venv_exits_skip_env(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
