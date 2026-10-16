@@ -3,6 +3,8 @@ client `resync` and the 6th-in-a-minute revocation. Every receive is bounded by 
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -24,7 +26,7 @@ _EXPIRES = datetime(2100, 1, 1, tzinfo=UTC)
 
 
 class _World:
-    def __init__(self) -> None:
+    def __init__(self, upstream: UpstreamRefs | None = None) -> None:
         self.source = Source()
         book = Book("BTCUSDT")
         book.apply([["100.0", "1.000"]], [["101.0", "2.000"]])
@@ -44,7 +46,9 @@ class _World:
             return "sess-1", principal().user_id, _EXPIRES
 
         services = SubscriptionServices(
-            upstream=UpstreamRefs(), snapshots=self.source, sequencing=self.hub
+            upstream=UpstreamRefs() if upstream is None else upstream,
+            snapshots=self.source,
+            sequencing=self.hub,
         )
         registry = ConnectionRegistry(resolve, lambda: 1, services)
         app = FastAPI()
@@ -103,6 +107,43 @@ def test_socket_snap_follows_sub_ok_and_resync_loop_is_revoked() -> None:
         err, revoked = _rx(ws), _rx(ws)
         assert err["p"]["code"] == "resync_rate_limited"
         assert revoked["p"]["reason"] == "resync_rate_limited"
+
+
+class _GatedSink:
+    """An exchange upstream whose `open` waits for the test: `sub` stays in `subscribe_upstream`."""
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = asyncio.Event()
+
+    async def open(self, key: Any) -> None:
+        self.entered.set()
+        await self.release.wait()
+
+    async def drop(self, key: Any) -> None:
+        pass
+
+
+def test_hub_flush_during_subscribe_upstream_sends_no_snap_before_sub_ok() -> None:
+    """#2831: a hub-wide flush and a matching resnapshot run while `sub` awaits its upstream; the
+    `snap` still follows `sub_ok`, once, with the reason it was pending for."""
+    sink = _GatedSink()
+    w = _World(UpstreamRefs(sink))
+    with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+        _open(ws)
+        topic = {"ch": "book.BTCUSDT.50", "opts": {"encoding": "structured"}}
+        ws.send_json({"t": "sub", "id": "s1", "p": {"topics": [topic]}})
+        assert sink.entered.wait(5.0)
+        portal = w.client.portal
+        assert portal is not None  # set while the client context is open
+        flushed = portal.call(w.hub.flush_pending)
+        resnapped = portal.call(w.hub.upstream_reconnect, "BTCUSDT")
+        portal.call(sink.release.set)
+        ok, snap = _rx(ws), _rx(ws)
+        assert [(f["t"], f.get("s")) for f in (ok, snap)] == [("sub_ok", None), ("snap", 1)]
+        assert (snap["meta"]["reason"], flushed, resnapped) == ("initial", 0, 0)
+        ws.send_json({"t": "ping", "id": "p1"})
+        assert _rx(ws)["t"] == "pong"  # nothing else was queued
 
 
 def test_socket_ctl_identity_change_emits_reconfigure_snap() -> None:

@@ -469,9 +469,10 @@ class TopicEmitter:
     # -- snapshots --
 
     def snapshot(self, sub: Subscription, reason: SnapReason) -> bool:
-        """Emit a (possibly chunked) `snap`; False when the state cannot be built yet (the
-        subscription stays pending and no `d` is emitted until a later flush succeeds)."""
-        if self.source is None:
+        """Emit a (possibly chunked) `snap`; False when the state cannot be built yet, or before
+        the subscription's `sub_ok` is queued (#2831): it stays pending and no `d` is emitted
+        until a later flush succeeds."""
+        if self.source is None or not sub.announced:
             return False
         previous = sub.seq
         seq = previous + 1
@@ -629,16 +630,25 @@ class TopicEmitter:
             self.push(authz.revoke(sub, "resync_rate_limited", self.wall_ms()))
             return
         window.append(now)
+        if _held(sub):
+            return  # counted in the window above; the ladder's `drain` sends that `snap`
         sub.snapshot_pending, sub.pending_reason = True, "client_resync"
         self.snapshot(sub, "client_resync")
 
     def flush_pending(self, subs: Iterable[Subscription]) -> int:
-        """Snapshot every pending subscription with its recorded reason; returns the count."""
+        """Snapshot every pending subscription with its recorded reason, except one held for its
+        `backpressure` snapshot (`_held`); returns the count."""
         n = 0
         for sub in subs:
-            if sub.snapshot_pending and self.snapshot(sub, sub.pending_reason):
+            if sub.snapshot_pending and not _held(sub) and self.snapshot(sub, sub.pending_reason):
                 n += 1
         return n
+
+
+def _held(sub: Subscription) -> bool:
+    """Pending its `backpressure` snapshot. The overflow ladder pends it and only its `drain`
+    sends it (`ws/outbound.py`, §8.4 step 2), so every other path leaves it pending (#2831)."""
+    return sub.snapshot_pending and sub.pending_reason == "backpressure"
 
 
 def causal_sort(items: Iterable[tuple[str, Any]]) -> list[tuple[str, Any]]:
@@ -739,18 +749,28 @@ class SequencingHub:
 
     def resnapshot(self, match: Callable[[Subscription], bool], reason: SnapReason) -> int:
         """Server-initiated resync (§7.4): mark every matching subscription pending FIRST (so no
-        delta can slip across the gap), then emit the snapshots."""
+        delta can slip across the gap), then emit the snapshots. A reason already pending
+        (`initial`, an incident) says more and stays, as under `ctl`. One held for its
+        `backpressure` snapshot (`_held`) is only invalidated: the ladder sends it (#2831)."""
         if reason not in SNAP_REASONS:
             raise ValueError(f"unknown snap reason {reason!r}")
+        if reason == "backpressure":  # the ladder pends these, so its `drain` knows them all
+            raise ValueError("only the overflow ladder pends a backpressure snapshot")
         hits: list[tuple[TopicEmitter, Subscription]] = []
         for authz, emitter in list(self._conns.values()):
             for sub in list(authz.by_id.values()):
                 if match(sub):
-                    sub.snapshot_pending, sub.pending_reason = True, reason
+                    if not sub.snapshot_pending:
+                        sub.pending_reason = reason
+                    sub.snapshot_pending = True
                     hits.append((emitter, sub))
         for emitter, sub in hits:
             emitter.cache.invalidate(sub.ch)
-        return sum(1 for emitter, sub in hits if emitter.snapshot(sub, reason))
+        return sum(
+            1
+            for emitter, sub in hits
+            if not _held(sub) and emitter.snapshot(sub, sub.pending_reason)
+        )
 
     def flush_pending(self, match: Callable[[Subscription], bool] | None = None) -> int:
         """Retry every pending snapshot (e.g. once the book engine finished its rebuild), or
