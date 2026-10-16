@@ -259,3 +259,16 @@ async def test_reads_by_id_and_refresh_hash_carry_the_users_status_in_one_statem
     assert [_STATUS_READ in sql for sql, _ in rel.session.calls] == [True, True]
     assert by_id["user_status"] == by_hash["user_status"] == "disabled"
     assert rel.units == 2
+
+
+async def test_touch_last_seen_is_conditional_on_the_lock() -> None:
+    """#2300 (B16.7): activity never lifts a lock, not even one that engaged after the
+    caller's own check: the write keeps only a row still unlocked at `:now`."""
+    repo, rel = _repo([_row()])
+    await repo.touch_last_seen("sid", now=_NOW)
+    ((sql, params),) = rel.session.calls
+    assignments, condition = sql.split("WHERE", 1)
+    assert "last_seen_at = :now" in assignments
+    assert "revoked_at IS NULL" in condition and "RETURNING" in condition
+    assert "last_seen_at + make_interval(secs => idle_timeout_s) > :now" in condition
+    assert params == {"id": "sid", "now": _NOW}

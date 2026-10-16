@@ -14,7 +14,12 @@ from typing import Any
 import pytest
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
-from candleviewer.auth.errors import SessionReadOnly, StepUpCodeInvalid, StepUpRequired
+from candleviewer.auth.errors import (
+    SessionNotLocked,
+    SessionReadOnly,
+    StepUpCodeInvalid,
+    StepUpRequired,
+)
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.session_chart import SessionChart, SessionChartError
 from candleviewer.auth.session_service import SessionService
@@ -405,12 +410,14 @@ async def test_unlock_of_an_idle_locked_row_keeps_the_readonly_downgrade() -> No
         await svc.assert_writable("s1")
 
 
-async def test_unlock_of_a_row_that_is_not_locked_only_re_stamps_it() -> None:
-    """B16.7 clears on the unlock of a row idle-locked at that instant only."""
+async def test_unlock_of_a_row_that_is_not_locked_is_refused_and_changes_nothing() -> None:
+    """B16.7 clears on the unlock of a row idle-locked at that instant only; any other row
+    is refused before the password check (#2300), its grant and `last_seen_at` untouched."""
     svc, clock, seed, user, sessions = await _setup()
     await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
     clock.now += timedelta(minutes=1)
+    before = sessions.sessions["s1"]
     service = SessionService(sessions, _HASHER, clock=clock)
-    await service.unlock("s1", password=PASSWORD, password_hash=await _pw_hash())
-    row = sessions.sessions["s1"]
-    assert row.last_seen_at == clock.now and set(row.step_up_elevations) == {"keys"}
+    with pytest.raises(SessionNotLocked):
+        await service.unlock("s1", password=PASSWORD, password_hash=await _pw_hash())
+    assert sessions.sessions["s1"] == before and set(before.step_up_elevations) == {"keys"}
