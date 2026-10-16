@@ -1196,7 +1196,7 @@ Every order we ever intend to place gets a row **before** the network call, with
 | `exchange_account_id` | uuid           | no   | —          | FK RESTRICT; denormalised for account-scoped queries              |
 | `parent_order_id`     | uuid           | yes  | NULL       | FK self — algo children (TWAP slices, scaled rungs, OCO siblings) |
 | `oco_group_ref`       | text           | yes  | NULL       | Emulated OCO pairing key (Bybit has no API OCO)                   |
-| `order_link_id`       | text           | no   | —          | **UNIQUE**; `24-internal-schemas.md` §8.3 (`untracked`: below)    |
+| `order_link_id`       | text           | no   | —          | **UNIQUE**; `24-internal-schemas.md` §8.3 (adopted: `ext-` key)   |
 | `exchange_order_id`   | text           | yes  | NULL       | Bybit `orderId`; UNIQUE per account when present                  |
 | `symbol`              | symbol_code    | no   | —          |                                                                   |
 | `side`                | text           | no   | —          | Buy / Sell                                                        |
@@ -1277,8 +1277,9 @@ CREATE TABLE orders (
   CONSTRAINT ord_trigby    CHECK (trigger_by IS NULL OR trigger_by IN ('LastPrice','MarkPrice','IndexPrice')),
   CONSTRAINT ord_attempts  CHECK (submit_attempts BETWEEN 0 AND 10),
   CONSTRAINT ord_idem      CHECK (idempotency_state IN ('unsent','in_flight','acked','failed')),
-  CONSTRAINT ord_link_fmt  CHECK (state = 'untracked' OR order_link_id ~
-    '^cv[ldtp]-[0-9A-Za-z]{22}-[0-9A-Za-z]{4}-[0-9A-Za-z]{2}(en|sl|tp|sc|fl|ac)$'),
+  CONSTRAINT ord_link_fmt  CHECK (
+    order_link_id ~ '^cv[ldtp]-[0-7][0-9A-Za-z]{21}-[0-9A-Za-z]{4}-[0-9A-Za-z]{2}(en|sl|tp|sc|fl|ac)$'
+    OR order_link_id ~ '^ext-[0-9a-f]{32}$'),
   CONSTRAINT ord_no_self   CHECK (parent_order_id IS DISTINCT FROM id)
 );
 CREATE UNIQUE INDEX ux_orders_link     ON orders (order_link_id);
@@ -1293,9 +1294,9 @@ CREATE INDEX ix_orders_inflight  ON orders (created_ts) WHERE idempotency_state 
 CREATE INDEX ix_orders_untracked ON orders (exchange_account_id) WHERE state = 'untracked';
 ```
 
-`order_link_id` construction is owned by `24-internal-schemas.md` §8.3 (36 chars, Bybit-safe charset); `ord_link_fmt` checks its shape. The id is generated once, stored here before the first send and reused unchanged on every retry, so a retry after an ambiguous timeout is a no-op at the exchange.
+`order_link_id` construction is owned by `24-internal-schemas.md` §8.3. The id is generated once, stored here before the first send and reused unchanged on every retry, so a retry after an ambiguous timeout is a no-op at the exchange. `ord_link_fmt` admits exactly the two shapes that section defines, both 36 chars: our own id and the `ext-` key of an adopted row. It has no `state` term, because `state` changes and the id never does.
 
-**Adopted `untracked` rows.** Reconciliation inserts an order it finds on the exchange without a local row (`24-internal-schemas.md` §8.5 step 3c) with `state = 'untracked'`. `order_link_id` stays NOT NULL and unique over all rows: the row stores Bybit's `orderLinkId` verbatim when it is non-empty, otherwise `ext-<Bybit orderId>`, which stays unique because Bybit order ids are unique. Only `untracked` rows are exempt from the `ord_link_fmt` shape check. An `ext-` id exists only in this table; Bybit knows that order by `exchange_order_id` alone.
+**Adopted rows.** Reconciliation inserts an order it finds on the exchange without a local row (`24-internal-schemas.md` §8.5 step 3c) with `state = 'untracked'` and the `ext-` key of its Bybit `orderId` (`24-internal-schemas.md` §8.3) as `order_link_id`, so the column stays NOT NULL and unique over all rows. Bybit's own `orderLinkId` is never stored in this column; it stays only in the `payload` (the raw exchange message) of the adoption's `order_events` row. The `ext-` prefix marks an adopted row for its whole life: the id never changes (`24-internal-schemas.md` §8.3 rules 1 and 4), so the row keeps it, and still passes `ord_link_fmt`, through `untracked → accepted | cancelled` (§3.3.1) and through adoption under management (E45-S01), even when that binds it to a trade group. Adoption is idempotent on `ux_orders_exch_id`.
 
 #### 3.3.5 `order_events` — append-only audit of the order lifecycle
 

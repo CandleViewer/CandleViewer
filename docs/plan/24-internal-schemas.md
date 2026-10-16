@@ -1396,17 +1396,21 @@ order_link_id = "{prefix}{env}-{group22}-{acct4}-{seq2}{suffix}"
 
 Base62 digits are `0-9A-Za-z` in value order. `crc32` is `zlib.crc32` over the ASCII bytes of `str(account_id).lower()`. A full crc32 needs up to six base62 digits, so `mod 62^4` keeps the low four: `acct4` only labels the account for diagnostics, and uniqueness comes from `group22`, `seq2` and the collision check (rule 5).
 
-`OrderIntent.purpose` (§8.1) maps to `suffix` as follows: `entry` and `reverse` → `en` (a reverse opens the new side, so it carries the native SL, C-2.6); `stop_loss` → `sl`; `take_profit` → `tp`; `scale_in` and `scale_out` → `sc`; `flatten` → `fl`; `algo_child` → `ac`. There is no seventh tag.
+`env` comes from the order, never from a process-wide setting: `ExecutionMode` `exchange` takes the letter of the account's `Environment` and `paper` takes `p`, so a paper order and a demo order for the same group differ. `replay` has no letter, so generation raises a typed `OmsError` (#846 Q4).
 
-Total `2+1+1+22+1+4+1+2+2 = 36` including three `-` separators; `ord_link_fmt` (`21-database-schema.md` §3.3.4) checks the shape. Example: live, trade group `0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f`, account `5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d`, `seq2` 0, entry → `cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en` (the group value has 21 base62 digits, so padding adds one leading `0`).
+`OrderIntent.purpose` (§8.1) maps to `suffix` as follows: `entry` and `reverse` → `en` (a reverse opens the new side, so it carries the native SL, C-2.6); `stop_loss` → `sl`; `take_profit` → `tp`; `scale_in` and `scale_out` → `sc`; `flatten`, including the §9.5.1 unwind close, → `fl`; `algo_child` → `ac`. There is no seventh tag.
+
+Total `2+1+1+22+1+4+1+2+2 = 36` including three `-` separators. A 128-bit value needs 22 base62 digits and its leading digit is at most `7` (62^21 < 2^128 ≤ 8·62^21), so every id matches `^cv[ldtp]-[0-7][0-9A-Za-z]{21}-[0-9A-Za-z]{4}-[0-9A-Za-z]{2}(en|sl|tp|sc|fl|ac)$`, the first arm of `ord_link_fmt` (`21-database-schema.md` §3.3.4). In-process validators apply both arms with `re.fullmatch`, because `re.match` with `$` also accepts a trailing newline and Postgres `~` does not. Example: live, trade group `0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f`, account `5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d`, `seq2` 0, entry → `cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en` (the group value has 21 base62 digits, so padding adds one leading `0`).
+
+**Adopted rows.** An order that reconciliation finds on the exchange without a local row (§8.5 step 3c) never stores Bybit's own `orderLinkId`, which may be empty and is unique only within one account (`04-security-program.md` SR-057). Its `order_link_id` is `ext_key(orderId)`: `ext-` plus 32 lowercase hex digits, which are Bybit's `orderId`, lowercased and without its hyphens, when it is a UUID in canonical `8-4-4-4-12` form, and otherwise the first 32 hex digits of `sha256` over its UTF-8 bytes. That is the second `ord_link_fmt` arm, `^ext-[0-9a-f]{32}$`. The key is 36 chars, so it satisfies `OrderLinkId` (§1.2) and every 36-char REST and WS `order_link_id` field. It depends only on the Bybit `orderId`, so one Bybit order always gets the same key; a clash would fail the adoption on `ux_orders_link` instead of merging two orders. A generated id never starts with `ext-`, and Bybit never sees an `ext-` key: it knows that order by `orderId` alone.
 
 Rules:
 
-1. Generated **once, before the first send**, persisted in Postgres, and reused **unchanged** on every retry of that logical order.
+1. Generated **once, before the first send**, by the server from the segments above (no client-supplied string, such as the HTTP `Idempotency-Key`, which only dedupes the request, goes into it), persisted in Postgres, and reused **unchanged** on every retry of that logical order.
 2. It is the correlation key everywhere: logs, metrics exemplars, audit, journal, reconciliation, UI deep links.
 3. A duplicate-id rejection from the exchange (retCode 10001 with a duplicate message, or 110072) is **not** an error: the OMS immediately queries `GET /v5/order/realtime` + `/v5/order/history` for that id and adopts the true state. This is the "success-after-lookup" rule from `20-architecture.md` §9.
 4. Amends never change the id. Cancel-and-replace algos (chase, §10.4) allocate a **new** id with an incremented `seq2` and record `replaces_order_id`.
-5. A collision check runs at generation: if the id already exists locally in a non-terminal state, `seq2` increments. Practically impossible given the UUID content, but a silent collision would be catastrophic, so it is checked.
+5. A collision check runs at generation: if any local row, in any state, already has the id (`ux_orders_link` is unique over all rows, and Bybit deduplicates whatever our local state is), `seq2` increments and both ids are logged at `warning`. After 16 increments, and never past `seq2` = 3843, a typed `OrderLinkIdExhausted` is raised (#846 Q1, Q6). Practically impossible given the UUID content, but a silent collision would be catastrophic, so it is checked.
 6. **Demo retains orders only 7 days** — the reconciler treats an id older than 6 days as unresolvable-by-history on demo and closes it as `Rejected` with `reject_code=DEMO_RETENTION_EXPIRED`.
 
 ### 8.4 Submission pipeline
@@ -1461,6 +1465,14 @@ The synchronous REST response is an **accept acknowledgement, not a fill confirm
 Runs: **on startup**, **on every private-WS reconnect**, **every 30 s**, and **on demand** from the admin screen.
 
 ```python
+# OUR_ID and EXT_ID: the two ord_link_fmt arms; ext_key: the adopted-row key (both §8.3).
+def link_key(o: Order, local: Mapping[str, Order]) -> str:
+    """The order_link_id a remote order pairs on: one of ours keeps its §8.3 id, any
+    other order (foreign or empty orderLinkId) maps to the key its adopted row stores."""
+    if o.order_link_id in local and OUR_ID.fullmatch(o.order_link_id):
+        return o.order_link_id
+    return ext_key(o.exchange_order_id)
+
 async def reconcile(account: AccountRef, gap_from: TsUs) -> ReconcileReport:
     # 1. Authoritative snapshots
     remote_open = await port.open_orders(account)           # GET /v5/order/realtime
@@ -1471,9 +1483,9 @@ async def reconcile(account: AccountRef, gap_from: TsUs) -> ReconcileReport:
     for e in sorted(remote_exec, key=lambda x: (x.ts_exec, x.seq)):
         oms.apply_execution(e)            # may resolve Unknown orders on its own
 
-    # 3. Index both sides by order_link_id
+    # 3. Index both sides by order_link_id (a remote order by link_key)
     local = {o.order_link_id: o for o in oms.non_terminal_orders(account)}
-    remote = {o.order_link_id: o for o in remote_open}
+    remote = {link_key(o, local): o for o in remote_open}
 
     report = ReconcileReport(account_id=account.id)
     # 3a. Present both sides -> adopt exchange state
@@ -1484,6 +1496,11 @@ async def reconcile(account: AccountRef, gap_from: TsUs) -> ReconcileReport:
     # 3b. Local non-terminal, absent remotely
     for lid in local.keys() - remote.keys():
         o = local[lid]
+        if EXT_ID.fullmatch(lid):         # adopted: Bybit knows it by orderId; never Unknown
+            if hist := await port.order_history(account, exchange_order_id=o.exchange_order_id):
+                oms.apply_remote(o, hist)              # e.g. untracked -> cancelled
+                report.resolved_from_history.append(lid)
+            continue
         hist = await port.order_history(account, order_link_id=lid)
         if hist:
             oms.apply_remote(o, hist)                  # filled/cancelled/rejected while we were away
@@ -1497,9 +1514,9 @@ async def reconcile(account: AccountRef, gap_from: TsUs) -> ReconcileReport:
             oms.transition(o, OrderState.UNKNOWN, reason="missing_remote")
             report.newly_unknown.append(lid)
 
-    # 3c. Remote orders we never created
+    # 3c. Remote orders we never created (lid is always an ext- key here)
     for lid in remote.keys() - local.keys():
-        oms.adopt_untracked(remote[lid])               # state=untracked, never rule-managed
+        oms.adopt_untracked(remote[lid], order_link_id=lid)  # state=untracked, never rule-managed
         report.untracked.append(lid)
 
     # 4. Positions: exchange is truth
@@ -1521,6 +1538,8 @@ async def reconcile(account: AccountRef, gap_from: TsUs) -> ReconcileReport:
 Guarantees and operational rules:
 
 - **Executions are applied before order diffing**, so a fill that arrived while we were disconnected resolves the order without a history lookup in most cases.
+- **Adopted rows (§8.3) pair on the Bybit `orderId`** through `link_key`, so an adopted order that is still open always lands in 3a: it is never adopted twice and never reaches 3b. Once it has left the open orders, 3b looks it up by `exchange_order_id` (a keyword-only `order_history` filter added in the PR that builds the Bybit `TradingPort`, as #846 Q5 does for `open_orders`) and never makes it `Unknown`, because we never sent it. `adopt_untracked` is idempotent on `(exchange_account_id, exchange_order_id)` (`ux_orders_exch_id`): it inserts nothing when a row already holds that Bybit order.
+- The Bybit adapter never returns an empty `order_link_id`: when Bybit's `orderLinkId` is empty it fills in `ext_key(orderId)` on `Order` and `Execution` alike (`OrderLinkId` needs at least one char), and step 2 pairs an execution with its order by the same rule as `link_key`.
 - `gap_from = min(last_private_ws_message_ts, last_successful_reconcile_ts) - 5s` (a 5 s safety overlap; dedupe makes overlap free).
 - **`oms_unknown_orders > 0` for 60 s pages the operator.** An unknown order is an incident, not a background condition.
 - Reconciliation is idempotent; running it twice back to back produces an empty second report.
@@ -1916,7 +1935,7 @@ class UnwindStep(BaseModel):
     account_id: AccountId
     uid: str                          # rate-limit key
     phase: Literal["cancel_children","close_position","verify_flat","verify_sl"]
-    order_link_id: OrderLinkId | None # deterministic: <group>-<leg>-uw<seq>
+    order_link_id: OrderLinkId | None # §8.3 generator, purpose flatten -> fl
     attempt: int = 0
     max_attempts: int = 3
     status: Literal["pending","in_flight","done","failed","skipped"]
@@ -1942,7 +1961,9 @@ cancel_children: cancel-all for (uid, symbol) filtered to this leg's children
                  (TP ladder, algo children, working entries remnant).
                  Prefer POST /v5/order/cancel-all with symbol filter; fall back to
                  per-order cancels if any non-group order exists for that symbol
-                 (never cancel orders we do not own — check order_link_id prefix).
+                 (never cancel orders we do not own: an order is this group's only
+                 when a local row holds its order_link_id and that id is a §8.3 id
+                 with this group's group22; never by prefix, never an ext- row).
                  Treat retCode 110001 "order does not exist" as SUCCESS (already gone).
 close_position:  read authoritative filled_qty (position qty from /v5/position/list,
                  NOT our local fill accumulator), then submit reduce-only MARKET
@@ -1954,7 +1975,7 @@ verify_sl:       only reached on failure paths — assert a native SL still prot
                  any residual size (§8.8); re-attach if missing.
 ```
 
-**Idempotency and restart.** Every `UnwindStep` carries a deterministic `order_link_id` (`<group8>-<leg4>-uw<seq>`), so a retry or a process restart re-sends the identical id; Bybit rejects the duplicate and the step resolves by lookup rather than double-closing. The plan is persisted before the first request and after every step transition, so a crash mid-unwind resumes from the exact step list. On startup, `UnwindResumer` picks up any plan with `status="running"` before the OMS accepts new orders.
+**Idempotency and restart.** Every `UnwindStep` that sends an order carries an `order_link_id` from the §8.3 generator (purpose `flatten` → `fl`), allocated once and stored in the step, so a retry or a process restart re-sends the identical id; Bybit rejects the duplicate and the step resolves by lookup rather than double-closing. The plan is persisted before the first request and after every step transition, so a crash mid-unwind resumes from the exact step list. On startup, `UnwindResumer` picks up any plan with `status="running"` before the OMS accepts new orders.
 
 **Per-step failure handling.**
 

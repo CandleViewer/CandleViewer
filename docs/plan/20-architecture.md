@@ -1098,7 +1098,7 @@ sequenceDiagram
             FO->>FO: apply per-account profile (leverage, sizing rule, SL/TP offsets)
             FO->>SG: ensure native SL attached (sl_cost already reserved)
             SG-->>FO: child with stopLoss set
-            FO->>BY: place_order(orderLinkId={group}-{acct}-{seq}, reduceOnly=false, stopLoss=...)
+            FO->>BY: place_order(orderLinkId per 24-internal-schemas.md §8.3, reduceOnly=false, stopLoss=...)
             BY-->>FO: ack{orderId}
             FO->>PG: child -> Submitted (orderId bound)
         end
