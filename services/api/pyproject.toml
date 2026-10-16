@@ -162,6 +162,9 @@ testpaths = ["tests"]
 [tool.coverage.run]
 branch = true
 source = ["candleviewer"]
+# #2424: the `py` CI job combines the data of parallel test lanes; relative paths keep that
+# combine independent of where each lane's job checked the repository out.
+relative_files = true
 # Empty scaffold modules created by E02-T05 (2026-09-27, docs/plan/backlog/
 # all-tickets.json) — no real logic yet, so they are excluded from the
 # coverage floor. Each entry must be removed by the ticket that implements

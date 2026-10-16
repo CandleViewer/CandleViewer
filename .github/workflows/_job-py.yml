@@ -3,14 +3,20 @@ name: _job-py
 # E03-T03: Python CI lane for services/api (and any Python tooling under
 # scripts/**, tools/ci/**), invoked from pr.yml when the `py` path filter is
 # true. Pipeline shape per ADR-0013 ("[py] lint (ruff) - typecheck (mypy
-# --strict on modules) - unit (pytest) - build"):
+# --strict on modules) - unit (pytest) - build"), split into parallel jobs so
+# the lane stays under ADR-0013's 15-minute PR-feedback p90 (#2424):
 #
-#   checkout -> setup-uv (cache keyed on uv.lock) -> uv sync --frozen
-#   -> ruff check + ruff format --check -> mypy --strict
-#   -> import-linter architecture contract (its own `architecture` check)
-#   -> pytest -m "not exchange_smoke" --cov (network-guarded, ADR-0012/SR-140)
-#   -> uv build -> upload coverage artifact (consumed by E03-T04's threshold
-#   gate; this job does not itself gate on the number).
+#   py-checks: checkout -> setup-uv (cache keyed on uv.lock) -> uv sync --frozen
+#     -> ruff check + ruff format --check -> mypy --strict -> rule IR schema
+#     drift -> alert rules, promtool, amtool -> Grafana dashboard lint
+#     -> import-linter architecture contract (its own `architecture` check)
+#   py-tests: one job per lane of tools/ci/py-test-lanes.json, all at once:
+#     pytest -m "not exchange_smoke ..." --cov on the lane's paths
+#     (network-guarded, ADR-0012/SR-140) -> upload the lane's raw coverage data
+#   py (after both): coverage combine -> coverage.xml + term report -> the
+#     addopts --cov-fail-under floor on the combined data -> uv build -> upload
+#     the `py-coverage` artifact (E03-T04's threshold gate owns the per-package
+#     floors) -> fail unless py-checks and every lane succeeded.
 #   `py-perf` (parallel): pytest -m perf --no-cov, the C-13.9 wall-clock budgets.
 #
 # Out of scope (per ticket): coverage threshold enforcement (E03-T04),
@@ -34,13 +40,11 @@ env:
   CV_CI_ALLOWED_HOSTS: ""
 
 jobs:
-  py:
-    name: py
+  py-checks:
+    name: py-checks
     runs-on: ubuntu-latest
-    # 30 min default (#2185): the unit suite can take 18-19.5 min on a shared runner, so a 20 min
-    # budget cancelled green runs during `uv build`. A py-only variable, so tuning the shared
-    # CV_CI_TIMEOUT_MINUTES for other lanes cannot shrink it. The speed-up is #2424 (ADR-0013 p90).
-    timeout-minutes: ${{ fromJSON(vars.CV_CI_PY_TIMEOUT_MINUTES || 30) }}
+    # Under a minute on a warm uv cache (mypy is the long step); the shared lane budget is ample.
+    timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
     defaults:
       run:
         working-directory: services/api
@@ -110,13 +114,112 @@ jobs:
         id: architecture
         run: uv run lint-imports
 
+  py-tests:
+    name: py-tests (${{ matrix.lane }})
+    runs-on: ubuntu-latest
+    # The py-only variable (#2185, #2426), so tuning the shared CV_CI_TIMEOUT_MINUTES for other
+    # lanes cannot shrink it. Each lane runs about a third of the suite: ~10 min on a slow shared
+    # runner, against 24-30 min when one job ran it all.
+    timeout-minutes: ${{ fromJSON(vars.CV_CI_PY_TIMEOUT_MINUTES || 30) }}
+    strategy:
+      # Every lane runs to the end, so one red lane never hides another lane's failures.
+      fail-fast: false
+      matrix:
+        # The lanes of tools/ci/py-test-lanes.json, rest last. scripts/tests/test_py_test_lanes.py
+        # fails when this list and the manifest differ.
+        lane: [unit-heavy, db-chaos-contract, rest]
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv (cache keyed on uv.lock)
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+
+      - name: uv sync --frozen
+        run: uv sync --frozen --all-groups
+
       - name: pytest (unit + non-exchange_smoke, network-guarded)
         env:
           HYPOTHESIS_PROFILE: ci
-        run: >
-          uv run pytest -p no:cacheprovider -m "not exchange_smoke and not (chaos and integration) and not roundtrip and not fuzz and not harness and not perf"
-          --durations=10
-          --cov --cov-report=xml:coverage.xml --cov-report=term
+          LANE: ${{ matrix.lane }}
+        # The selection and flags of the single job, on this lane's paths only. A lane covers part
+        # of the code, so it turns the addopts --cov-fail-under off and writes no report: `py`
+        # applies the floor to the combined data and writes the reports. A red run keeps its data,
+        # so a failing test does not also turn the coverage gate into a missing-artifact failure.
+        run: |
+          lane_args=$(python ../../tools/ci/py_test_lanes.py pytest-args "$LANE")
+          read -ra lane_paths <<< "$lane_args"
+          status=0
+          uv run pytest -p no:cacheprovider -m "not exchange_smoke and not (chaos and integration) and not roundtrip and not fuzz and not harness and not perf" \
+            --durations=10 --cov --cov-report= --cov-fail-under=0 "${lane_paths[@]}" || status=$?
+          if [ -f .coverage ]; then mv .coverage "py-lane-$LANE.coverage"; fi
+          exit "$status"
+
+      - name: Upload this lane's raw coverage data (the py job combines every lane)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: py-lane-cov-${{ matrix.lane }}
+          path: services/api/py-lane-${{ matrix.lane }}.coverage
+          if-no-files-found: error
+          # A re-run of this lane replaces the data of the attempt it repeats. Kept 5 days: C-4.3
+          # has a branch older than 5 days rebased daily (a new run), so "Re-run failed jobs" finds
+          # the green lanes' data; past that, "Re-run all jobs" (docs/ci-runbook.md CI-COV-003).
+          overwrite: true
+          retention-days: 5
+
+  py:
+    name: py
+    needs: [py-checks, py-tests]
+    # Runs after a red lane too: when every lane left its data the coverage gate still gets the
+    # suite's real number, as it did when one job ran everything. The last step fails `py` unless
+    # py-checks and every lane succeeded, so `architecture` (below) keeps reflecting all of it.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    # Fixed: downloading, combining, reporting and building take about a minute.
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv (cache keyed on uv.lock)
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+
+      - name: uv sync --frozen
+        run: uv sync --frozen --all-groups
+
+      - name: Download every lane's raw coverage data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: py-lane-cov-*
+          path: services/api/lane-coverage
+          merge-multiple: true
+
+      - name: coverage combine (one data file per lane or none, CI-COV-003)
+        run: |
+          listing=$(python ../../tools/ci/py_test_lanes.py data-files lane-coverage)
+          mapfile -t lane_data <<< "$listing"
+          uv run coverage combine "${lane_data[@]}"
+
+      - name: coverage.xml, term report and the addopts --cov-fail-under floor (combined data)
+        run: |
+          floor=$(python ../../tools/ci/py_test_lanes.py fail-under)
+          uv run coverage xml -o coverage.xml
+          uv run coverage report --fail-under="$floor"
 
       - name: uv build
         run: uv build
@@ -128,6 +231,17 @@ jobs:
           name: py-coverage
           path: services/api/coverage.xml
           retention-days: 14
+          # A re-run of `py` replaces the report of the attempt it repeats.
+          overwrite: true
+
+      - name: Fail unless py-checks and every py-tests lane succeeded
+        if: ${{ !cancelled() }}
+        env:
+          CHECKS_RESULT: ${{ needs.py-checks.result }}
+          TESTS_RESULT: ${{ needs.py-tests.result }}
+        run: |
+          echo "py-checks: $CHECKS_RESULT; py-tests (every lane): $TESTS_RESULT"
+          [ "$CHECKS_RESULT" = success ] && [ "$TESTS_RESULT" = success ]
 
   # C-13.9 wall-clock budgets run in their own parallel job (#2185 follow-up): measured inside the
   # covered run they failed on shared runners (test_create_app_under_200ms read 766 ms vs 200 ms on
@@ -165,7 +279,8 @@ jobs:
     # Reported as its own required check named `architecture` per the
     # ticket's Definition of Done — mirrors the `py` job's result so
     # `ci-required` (pr.yml) and any future required-check config can depend
-    # on `architecture` directly without re-running import-linter.
+    # on `architecture` directly without re-running import-linter. The
+    # contract step runs in `py-checks`; `py` fails whenever py-checks does.
     name: architecture
     needs: py
     if: always()
@@ -175,7 +290,7 @@ jobs:
       - name: Reflect the py job's architecture-contract step outcome
         run: |
           if [ "${{ needs.py.result }}" != "success" ]; then
-            echo "py job (which runs the import-linter architecture contract) did not succeed"
+            echo "py job (which fails when py-checks' import-linter architecture contract fails) did not succeed"
             exit 1
           fi
-          echo "architecture contract passed (see the 'py' job's 'Architecture contract' step)"
+          echo "architecture contract passed (see the 'py-checks' job's 'Architecture contract' step)"

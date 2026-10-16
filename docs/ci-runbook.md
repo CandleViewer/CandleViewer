@@ -25,7 +25,8 @@ PR opened/updated (.github/workflows/pr.yml)
 ├─ spike-containment        → tools/ci/check_spike_containment.py      (CI-SPIKE-001/002)
 ├─ commitlint / licence-header / docs-link  → always on
 ├─ _job-js.yml    (js filter)        → node-version, lint, typecheck, unit, build (CI-JS-001)
-├─ _job-py.yml    (py filter)        → ruff, mypy --strict, pytest, architecture contract
+├─ _job-py.yml    (py filter)        → ruff, mypy --strict, architecture contract; pytest in parallel
+│                                      lanes (tools/ci/py-test-lanes.json), coverage combined
 ├─ _job-gen.yml   (always)           → generated-code freshness gate    (CI-GEN-001..004)
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
 ├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002)
@@ -193,6 +194,9 @@ diff` cannot see because they were never tracked. `git add` them in the
 - **CI-COV-003** (missing coverage artifact): a lane that should have
   produced a coverage report for an applicable package left none. Check
   that lane's upload step; a silently-missing report must never pass.
+  In `py` it names a test lane whose raw data (`py-lane-cov-<lane>`, kept
+  5 days) is missing: the lane died before writing it, or a "Re-run failed
+  jobs" came after the green lanes' data expired; then use "Re-run all jobs".
 
 ### CI-MIG-* — Alembic migration gate (`.github/workflows/_job-migrations.yml`,
 

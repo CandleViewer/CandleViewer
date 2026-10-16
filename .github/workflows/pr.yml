@@ -25,9 +25,6 @@ concurrency:
   group: pr-${{ github.head_ref }}
   cancel-in-progress: true
 
-env:
-  CV_CI_TIMEOUT_MINUTES: ${{ vars.CV_CI_TIMEOUT_MINUTES || 20 }}
-
 jobs:
   changed-paths:
     name: changed-paths
