@@ -13,14 +13,18 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
 - **auth -> auth_ok** (§4.3): the token is read ONLY from the `auth` frame
   body, never the URL. Verified by the injected E09 `authenticate`; the
   `PrincipalSnapshot` is resolved by the `ConnectionRegistry` (the same RBAC
-  source REST uses); the socket is registered with the `RevocationHub`.
+  source REST uses). The socket registers with the `RevocationHub` for the
+  presented session as soon as `authenticate` returns, so a session revoked
+  while the `auth` is in flight gets no `auth_ok`: the hub closes the socket,
+  or remembers the revocation and the gateway closes it the same way (#2739).
   The identity ends at the token's expiry as `authenticate` reports it (the
   first refusal on time grounds); an already-expired token is refused like
   any failed `auth`. Revocation is pushed through the `RevocationHub`; the
   idle lock intentionally does not end the socket (E09-S03; #2259).
   Three failures -> `bye auth_failed` + `4401` + a `warning` audit entry.
 - **In-place re-auth** (§4.1): a later `auth` re-validates and swaps the
-  principal without touching subscriptions.
+  principal without touching subscriptions. The old session stays registered
+  with the hub until the new one is accepted.
 - **Heartbeats / deadlines** (§9.1): the writer checks a `Watchdog` before
   every dequeue and every send, not only when idle, on the injected clocks
   (auth timeout, token expiry on both clocks, unsolicited `ping`, heartbeat
@@ -320,6 +324,9 @@ class _Connection:
         self.outbound: asyncio.Queue[Any] = asyncio.Queue()
         self.user_id: uuid.UUID | None = None
         self.session_id: str | None = None
+        #: The session an `auth` in flight registered with the `RevocationHub` (#2739): it becomes
+        #: `session_id` when that auth is accepted and is dropped however else the auth ends.
+        self.pending_session_id: str | None = None
         self.authz: ConnectionAuthz | None = None
         self.emitter: TopicEmitter | None = None
         self.system_seq = 0
@@ -616,6 +623,17 @@ def make_ws_router(
             )
 
     async def do_auth(conn: _Connection, frame: dict[str, Any]) -> None:
+        """One `auth` frame. However it ends short of `auth_ok` (a failure, a refusal, a close,
+        a cancellation), the hub registration `run_auth` made for the presented session is
+        dropped here, so no closer outlives its `auth` (#2739)."""
+        try:
+            await run_auth(conn, frame)
+        finally:
+            if conn.pending_session_id is not None:
+                revocation_hub.unregister(conn.pending_session_id, conn.closer)
+                conn.pending_session_id = None
+
+    async def run_auth(conn: _Connection, frame: dict[str, Any]) -> None:
         body = frame.get("p")
         token = body.get("access_token") if isinstance(body, dict) else None
         reauth = conn.lifecycle.authenticated
@@ -632,6 +650,11 @@ def make_ws_router(
             if reauth and user_id != conn.user_id:
                 failure = "user_mismatch"
                 raise PermissionError("re-auth must keep the same user")
+            if session_id != conn.session_id:
+                # #2739: before the next await, so a revocation published from here on closes
+                # this socket. `do_auth` drops it again unless this auth is accepted.
+                revocation_hub.register(session_id, conn.closer)
+                conn.pending_session_id = session_id
             snap = await registry.resolve(user_id)  # versioned: never undoes a newer one
             now, now_ms = conn.clock(), conn.wall_ms()
             if expires_ms <= now_ms:
@@ -676,14 +699,20 @@ def make_ws_router(
             return
         if conn.closing:
             return  # closed (expiry, revocation) while this auth was in flight: no auth_ok
+        if (ended := revocation_hub.revoked_reason(session_id)) is not None:
+            # #2739: revoked before the registration above (inside `authenticate`), so the hub
+            # closed nothing. Close it as the hub would: its `bye` and code (4403 for a disabled
+            # user), sealed, no auth_ok.
+            await conn.closer(*revocation_hub.close_for(ended))
+            return
         conn.auth_failures = 0
         conn.watchdog.auth_deadline = None
         conn.watchdog.token_expires_at = now + (expires_ms - now_ms) / 1000
         conn.token_expires_at_ms = expires_ms  # the same instant on the wall clock
-        if conn.session_id != session_id:
+        if conn.session_id != session_id:  # the old registration goes only after the check
             if conn.session_id is not None:
                 revocation_hub.unregister(conn.session_id, conn.closer)
-            revocation_hub.register(session_id, conn.closer)
+            conn.pending_session_id = None  # registered above, and now the socket's own
         conn.session_id, conn.user_id = session_id, user_id
         if not reauth:
             svc = registry.services
