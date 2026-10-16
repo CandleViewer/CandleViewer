@@ -2,7 +2,7 @@
   "x-cv-generated": {
     "notice": "GENERATED FILE — DO NOT EDIT BY HAND. Regenerate from services/api with `uv run python scripts/generate_protocol_models.py`.",
     "source": "docs/plan/22-api-openapi.yaml",
-    "source_sha256": "021ed885bb2d8f63b1887f68c74add97bcc03ca0dad7e902335bbce99e06624a"
+    "source_sha256": "a6c7f93bc158d601a1960ba907684c7e39e821c42b93a4c25bfa36a910d870fb"
   },
   "components": {
     "headers": {
@@ -194,6 +194,17 @@
                   "title": "A dangerous action needs a live step-up elevation for its action class",
                   "type": "https://candleviewer.local/errors/step_up_required"
                 }
+              },
+              "tradingDisabled": {
+                "summary": "The order-entry gate refused an order submit (maintenance mode is on)",
+                "value": {
+                  "code": "trading_disabled",
+                  "detail": "Maintenance mode is on; order entry is paused.",
+                  "reason": "maintenance",
+                  "status": 403,
+                  "title": "Kill-switch or maintenance mode engaged, or live trading not enabled for this deployment",
+                  "type": "https://candleviewer.local/errors/trading_disabled"
+                }
               }
             },
             "schema": {
@@ -201,7 +212,7 @@
             }
           }
         },
-        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304)."
+        "description": "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order-submit operation it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5)."
       },
       "NotFound": {
         "content": {

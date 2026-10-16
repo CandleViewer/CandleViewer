@@ -6251,6 +6251,11 @@ export interface components {
         verdict?: "in_sync" | "drifted" | "repaired" | "unresolvable";
       };
     };
+    /**
+     * @description Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).
+     * @enum {string}
+     */
+    OrderEntryRefusalReason: "maintenance" | "account_unhealthy" | "key_rotation_overdue";
     OrderEvent: {
       /** Format: date-time */
       event_ts?: string;
@@ -7810,6 +7815,10 @@ export interface components {
       | "closed"
       | "failed"
       | "cancelled";
+    /** @description The `403 trading_disabled` problem an order-submit operation returns when the order-entry gate refuses the order, before any OMS work (C-2.21): the problem body plus the gate's `reason`. `detail` is human text and never carries an id or a secret. Cancel, flatten and stop-loss amend never pass through the gate. */
+    TradingDisabledProblem: components["schemas"]["Problem"] & {
+      reason: components["schemas"]["OrderEntryRefusalReason"];
+    };
     /** @enum {string} */
     TriggerBy: "LastPrice" | "MarkPrice" | "IndexPrice";
     TriggerSpec: {
@@ -8040,7 +8049,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order-submit operation it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). */
     Forbidden: {
       headers: {
         [name: string]: unknown;

@@ -9904,7 +9904,7 @@ components:
                   code: unauthenticated,
                 }
     Forbidden:
-      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304)."
+      description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order-submit operation it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5)."
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/Problem" }
@@ -9962,6 +9962,17 @@ components:
                   challenge_expires_at: "2026-09-14T10:36:02Z",
                   action_summary: "Rotate API key for account 'sub_002' (live, UID 1001234)",
                   target: sub_002,
+                }
+            tradingDisabled:
+              summary: The order-entry gate refused an order submit (maintenance mode is on)
+              value:
+                {
+                  type: "https://candleviewer.local/errors/trading_disabled",
+                  title: "Kill-switch or maintenance mode engaged, or live trading not enabled for this deployment",
+                  status: 403,
+                  detail: "Maintenance mode is on; order entry is paused.",
+                  code: trading_disabled,
+                  reason: maintenance,
                 }
     CsrfTokenInvalid:
       description: "SR-041: `X-CSRF-Token` missing, not equal to the `__Host-cv_csrf` cookie, or not bound to the current session. Audited (`auth.csrf_refused`) up to a per-session / per-source budget; beyond it the response is identical but carries `Retry-After` and writes no audit record. `detail` never echoes token or cookie values; clients re-read the cookie and retry once."
@@ -10262,6 +10273,26 @@ components:
           description: "Edges ms: 0.1, 0.25, 0.5, 1, 2, 4, 5, 10, +Inf (9 slots)."
         fe_dropped_frames_total: { type: integer, minimum: 0, maximum: 2400 }
         fe_gpu_memory_mb: { type: number, minimum: 0, maximum: 65536 }
+    OrderEntryRefusalReason:
+      type: string
+      enum: [maintenance, account_unhealthy, key_rotation_overdue]
+      description: >
+        Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The
+        server's set is closed and listed in `24-internal-schemas.md` 8.10. **Open-ended for
+        readers:** clients must tolerate values they do not know, so adding a reason is an
+        additive change (C-6.3).
+    TradingDisabledProblem:
+      description: >
+        The `403 trading_disabled` problem an order-submit operation returns when the order-entry
+        gate refuses the order, before any OMS work (C-2.21): the problem body plus the gate's
+        `reason`. `detail` is human text and never carries an id or a secret. Cancel, flatten and
+        stop-loss amend never pass through the gate.
+      allOf:
+        - { $ref: "#/components/schemas/Problem" }
+        - type: object
+          required: [reason]
+          properties:
+            reason: { $ref: "#/components/schemas/OrderEntryRefusalReason" }
     Problem:
       type: object
       description: "RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue."
