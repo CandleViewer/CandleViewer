@@ -28,9 +28,16 @@ const schemaPath = join(
 );
 const outDir = join(__dirname, "..", "src", "generated", "bars");
 const defaultOutPath = join(outDir, "index.ts");
-// An optional path argument writes the same bytes elsewhere, so the drift test never rewrites the
-// tracked file under src/generated while other test files read it (#2965).
-const outPath = process.argv[2] ? resolve(process.argv[2]) : defaultOutPath;
+// Usage: node scripts/generate-bar-types.mjs [--out <path>]
+// `--out` writes the same bytes elsewhere, so the drift test never rewrites the tracked file under
+// src/generated while other test files read it (#2965). Any other argument is refused.
+function outputPath(args) {
+  if (args.length === 0) return defaultOutPath;
+  if (args.length === 2 && args[0] === "--out" && args[1]) return resolve(args[1]);
+  console.error("usage: node scripts/generate-bar-types.mjs [--out <path>]");
+  process.exit(2);
+}
+const outPath = outputPath(process.argv.slice(2));
 
 const HEADER = `// ==========================================================================
 // GENERATED FILE — DO NOT EDIT BY HAND.

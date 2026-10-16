@@ -22,10 +22,14 @@ describe("generated bar types", () => {
     const dir = mkdtempSync(join(tmpdir(), "cv-bar-types-"));
     try {
       const freshPath = join(dir, "index.ts");
-      execFileSync("node", [join(packageRoot, "scripts", "generate-bar-types.mjs"), freshPath], {
-        cwd: packageRoot,
-        stdio: "pipe",
-      });
+      execFileSync(
+        "node",
+        [join(packageRoot, "scripts", "generate-bar-types.mjs"), "--out", freshPath],
+        {
+          cwd: packageRoot,
+          stdio: "pipe",
+        },
+      );
       const fresh = readFileSync(freshPath, "utf8").split("\r\n").join("\n");
       expect(fresh).toBe(committed);
     } finally {
