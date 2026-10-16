@@ -10,6 +10,7 @@ token for its actor against the real app (identity/backend seams faked, no netwo
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -89,6 +90,17 @@ def test_every_served_route_has_a_row_and_every_row_state_matches_the_app(world:
     )
     gone = sorted(k for k, r in _OPS.items() if r["state"] != "not_mounted" and k not in served)
     assert not gone, "rows marked executed/not_executable but not served: " + ", ".join(gone)
+
+
+def test_world_keeps_the_bars_builders_state_root_under_the_session_tmp_dir(
+    world: World, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """A `bars.*` cell runs `register()`, which loads (and, on a bad blob, deletes) files under the
+    bars state root, whose default is the production `/data/bars/state`. Pin the root the app's
+    builders were wired with, as its own settings hold it (not the env var, not a literal)."""
+    assert getattr(world.app.state, "bars_runtime", None) is not None, "bars must be wired"
+    root = Path(world.app.state.app_context.settings.bars_state_root)
+    assert root.is_relative_to(tmp_path_factory.getbasetemp().resolve()), f"bars state in {root}"
 
 
 def test_every_row_defines_all_five_actors_with_known_outcomes_and_a_reason_when_skipped() -> None:

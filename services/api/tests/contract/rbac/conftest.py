@@ -34,7 +34,9 @@ def _world_module(tmp_path_factory: pytest.TempPathFactory) -> Iterator[World]:
     `app.py` has no injection seam for the identity provider or the alert repository, so the two
     module-level names are patched. The patches MUST NOT outlive this package (C-13.7: no shared
     mutable global state), so they are applied through an explicit `MonkeyPatch` that is undone in
-    a `finally` at module teardown, and `test_zz_patches_do_not_leak.py` asserts it afterwards.
+    a `finally` at module teardown, and `test_zz_patches_do_not_leak.py` asserts it afterwards. The
+    same `MonkeyPatch` sets the `WORLD_ENV` variables, among them a per-module tmp root for the bars
+    state blobs, so no cell reads the production default.
     Module scope is deliberate: this directory has no `__init__.py`, so pytest has no Package node
     and `scope="package"` would silently behave like `session` and leak into every later test.
     """
