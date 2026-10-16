@@ -46,9 +46,9 @@ from candleviewer.exchange.base.errors import (
     AuthError,
     ClockDriftError,
     ExchangeError,
+    InstrumentFilterError,
     RateLimitError,
     TransportError,
-    UnknownStateError,
 )
 from candleviewer.exchange.bybit.config import EndpointClass, RestClientConfig
 from candleviewer.exchange.bybit.key_info import (
@@ -664,19 +664,18 @@ async def test_unconfirmed_refusals_are_business_rejections(
 async def test_overlay_mode_switch_refusals_are_plain_rejections(
     overlay: str, method: str, path: str, endpoint: EndpointClass
 ) -> None:
-    """A code outside section 8.6's table, so its last row (a plain reject, not retried) applies,
-    never 110025's hard error: mapping.py's catch-all, sent once, never a verdict about the key.
-    The catch-all marks it retryable where section 8.6 says no (README, an E08 gap): pinned, so
-    the day mapping.py follows the table this fails and the README line changes with it. The
-    client runs with its default retry budget, so "sent once" fails if rest.py ever retries it."""
+    """Each overlay refusal is an explicit section 8.6 rejection (#3005), not retried: never the
+    catch-all, never 110025's no-op and never a verdict about the key. The code is compared with
+    the scenario's own reply. The client runs with its default retry budget, so "sent once"
+    fails if rest.py ever retries it."""
     assert RestClientConfig(base_url=f"https://{DEMO_HOST}").max_retries > 0
     loaded = _with(overlay)
     sent = loaded.reply(method, path).body["retCode"]
     log: list[httpx.Request] = []
-    with pytest.raises(UnknownStateError) as caught:
+    with pytest.raises(InstrumentFilterError) as caught:
         await call(loaded, method, path, endpoint=endpoint, body=ORDER_BODY, log=log)
     assert (caught.value.exchange_ret_code, len(log)) == (sent, 1)
-    assert caught.value.retryable is True
+    assert caught.value.retryable is False
     assert refusal(caught.value) is None
 
 
