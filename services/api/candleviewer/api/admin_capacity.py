@@ -125,7 +125,7 @@ async def _body(request: Request) -> TierRequest:
 
 def make_admin_capacity_router(
     capacity: AdminCapacityService,
-    settings: SystemSettings | None,
+    store: SystemSettings | None,
     *,
     resolver: PrincipalResolver | None,
     audit: _Emitter,
@@ -135,7 +135,7 @@ def make_admin_capacity_router(
     async def record(request: Request) -> JSONResponse:
         principal: AuditPrincipal = request.state.admin_principal  # left there by the guard
         wanted = await _body(request)
-        if settings is None:
+        if store is None:
             raise _Problem(ErrorCode.STORE_UNAVAILABLE, "The settings store is unavailable.")
 
         async def write_ahead(before: StoredSetting | None) -> None:
@@ -159,7 +159,7 @@ def make_admin_capacity_router(
                 raise _AuditRefused from exc
 
         try:
-            stored = await settings.put_string(
+            stored = await store.put_string(
                 SUBACCOUNT_TIER_KEY,
                 wanted.tier,
                 updated_by=principal.user_id,
