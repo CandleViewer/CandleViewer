@@ -4,9 +4,10 @@
 run selects them (`pytest -m e09_regression`). The two must agree, so these tests run real
 `pytest --collect-only` sessions under the repo's own strict config and fail when the pack cites a
 test the marker does not select (unless another lane runs it, see `RUN_BY_OTHER_LANE`), when the
-marker selects an item the default lane deselects or misses one it selects, when the pack's path
-list and the code's differ in either direction, when a pack path disappears, and when the marker
-stops being applied end to end (conftest hook, `--strict-markers`, `-m`).
+marker, run over the whole tree as QA runs it, selects an item the default lane deselects in the
+pack paths (a perf test, or a test tagged by hand outside them) or misses one it selects, when the
+pack's path list and the code's differ in either direction, when a pack path disappears, and when
+the marker stops being applied end to end (conftest hook, `--strict-markers`, `-m`).
 """
 
 from __future__ import annotations
@@ -163,7 +164,8 @@ def _collect(expression: str | None, *targets: str) -> frozenset[str]:
 
 @pytest.fixture(scope="module")
 def selected_by_marker() -> frozenset[str]:
-    return _collect(MARKER, *PACK_PATHS)
+    """What the pack's QA command, `pytest -m e09_regression` with no paths, selects in the tree."""
+    return _collect(MARKER)
 
 
 @pytest.fixture(scope="module")
@@ -360,15 +362,18 @@ def test_other_lane_exemption_is_cited_unselected_by_the_marker_and_selected_by_
     assert not problems, "\n".join(problems)
 
 
-def test_marker_selects_exactly_what_the_default_lane_selects_in_the_pack_paths(
+def test_marker_over_the_whole_tree_selects_what_the_default_lane_selects_in_the_pack_paths(
     selected_by_marker: frozenset[str], selected_by_default_lane: frozenset[str]
 ) -> None:
     leaked = sorted(selected_by_marker - selected_by_default_lane)
     missed = sorted(selected_by_default_lane - selected_by_marker)
 
     assert selected_by_marker
-    assert not leaked, f"selected by -m {MARKER} but deselected by the default -m: {leaked}"
-    assert not missed, f"selected by the default -m but not by -m {MARKER}: {missed}"
+    assert not leaked, (
+        f"selected by -m {MARKER} but not by the default -m in the pack paths (a test tagged by "
+        f"hand outside them, or a perf/fuzz/harness item): {leaked}"
+    )
+    assert not missed, f"selected by the default -m in the pack paths, not by -m {MARKER}: {missed}"
 
 
 def test_marker_selects_pack_files_and_nothing_else_through_a_real_collect_only_run() -> None:
