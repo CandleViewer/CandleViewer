@@ -31,6 +31,26 @@ groups:
         annotations:
           summary: "Expected metric cv_kek_degraded_state is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #2496: the series behind the NetBindingUnsafe and AuthRecoveryCodeUsed pages. The mesh
+      # gauge went unscraped for its whole life before #2496; a page on it could never fire.
+      - alert: ExpectedMetricMissingNetBindingSafe
+        expr: absent(net_binding_safe)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric net_binding_safe is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingAuthRecoveryCodesUsedTotal
+        expr: absent(auth_recovery_codes_used_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric auth_recovery_codes_used_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingPgUp
         expr: absent(pg_up)
         for: 15m

@@ -99,6 +99,12 @@ auth_revocation_latency_seconds = Histogram(
     "Seconds from session revocation to its WebSocket connection being closed.",
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
 )
+# SR-022 (#2496): one per accepted recovery code, counted before its `auth.recovery_code_used`
+# audit write, so it can exceed those rows when that write fails or audit is not wired.
+# `AuthRecoveryCodeUsed` pages the Owner on any increase. No label: the audit row names the user.
+auth_recovery_codes_used_total = Counter(
+    "auth_recovery_codes_used_total", "Recovery codes accepted at /auth/mfa/recovery (SR-022)."
+)
 
 _KNOWN_REASONS = frozenset(
     {
@@ -162,6 +168,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_stepup_failures_total",
         "authz_denied_total",
         "auth_totp_clock_skew_total",
+        "auth_recovery_codes_used_total",
     }
 )
 

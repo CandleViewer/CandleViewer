@@ -23,7 +23,8 @@ internet, independent of and enforced *before* authentication:
   an `InMemoryAuditSink` test double are provided. The real audit module
   (owned by its own ticket, C-3.3) wires a concrete sink in the composition
   root once it lands.
-- `metrics.net_binding_safe` — the `net_binding_safe` Prometheus gauge.
+- `metrics.net_binding_safe` — the `net_binding_safe` Prometheus gauge;
+  `metrics.export_net_metrics` serves it on the scraped registry (#2496).
 - `host_sockets.real_socket_enumerator` — the `psutil`-backed enumerator the
   composition root wires into `BindingSelfCheck` in production.
 - `scheduler.MeshSelfCheckScheduler` — supervises the hourly re-check
@@ -53,6 +54,7 @@ __all__ = [
     "ReadOnlyGate",
     "SystemTopicPublisher",
     "apply_self_check_result",
+    "export_net_metrics",
     "net_binding_safe",
     "real_socket_enumerator",
     "register_system_topic_subscriber",
@@ -62,7 +64,7 @@ from .audit import AuditSink, InMemoryAuditSink, NullAuditSink
 from .binding_check import BindingCheckResult, BindingSelfCheck, apply_self_check_result
 from .cidr import CidrAllowList
 from .host_sockets import real_socket_enumerator
-from .metrics import net_binding_safe
+from .metrics import export_net_metrics, net_binding_safe
 from .middleware import RESOLVED_SOURCE_KEY, MeshOnlyMiddleware
 from .read_only_gate import ReadOnlyGate
 from .scheduler import MeshSelfCheckScheduler

@@ -161,6 +161,29 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: net_binding_safe{env="live"}
+    values: 1+0x4 0+0x10
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: NetBindingUnsafe
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: net
+        env: live
+      exp_annotations:
+        summary: 'Mesh binding guard tripped: order placement is read-only'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-netbindingunsafe
+- interval: 1m
+  input_series:
+  - series: net_binding_safe{env="live"}
+    values: 1+0x15
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: NetBindingUnsafe
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: cv_synthetic_alert
     values: 1+0x10
   alert_rule_test:
@@ -313,6 +336,29 @@ tests:
   alert_rule_test:
   - eval_time: 15m
     alertname: AuthLockouts
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_recovery_codes_used_total{env="live"}
+    values: 0+0x10 1+0x10
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthRecoveryCodeUsed
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: auth_recovery
+        env: live
+      exp_annotations:
+        summary: 'A recovery code was used: confirm it was the account holder'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authrecoverycodeused
+- interval: 1m
+  input_series:
+  - series: auth_recovery_codes_used_total{env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthRecoveryCodeUsed
     exp_alerts: []
 - interval: 1m
   input_series:

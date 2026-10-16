@@ -168,6 +168,7 @@ from candleviewer.net import (
     MeshSelfCheckScheduler,
     ReadOnlyGate,
     SystemTopicPublisher,
+    export_net_metrics,
     net_binding_safe,
     real_socket_enumerator,
     register_system_topic_subscriber,
@@ -1250,6 +1251,8 @@ def create_app(
         ctx.metrics, env=resolved.environment.value
     )
     app.state.secrets_metrics = export_secrets_metrics(ctx.metrics, env=resolved.environment.value)
+    # #2496: the mesh-guard gauge, read by the `NetBindingUnsafe` page.
+    app.state.net_metrics = export_net_metrics(ctx.metrics, env=resolved.environment.value)
     # E17-T02: CVWB encode frames/bytes per body_kind.
     app.state.cvwb_metrics = export_cvwb_metrics(ctx.metrics, env=resolved.environment.value)
     # #377: every `cv_ws_*` gateway series (lifecycle, subscriptions, sequencing).

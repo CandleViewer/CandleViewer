@@ -44,6 +44,14 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
     "KekUnavailable": (
         'cv_kek_degraded_state{env="live"}', "1+0x20", "0+0x20", "5m", {"env": "live"}
     ),
+    # #2496: safe, then the hourly re-check finds an unsafe bind; pages with no hold time.
+    "NetBindingUnsafe": (
+        'net_binding_safe{env="live"}',
+        "1+0x4 0+0x10",
+        "1+0x15",
+        "5m",
+        {"env": "live"},
+    ),
     "SyntheticAlert": ("cv_synthetic_alert", "1+0x10", "0+0x10", "5m", {}),
     "PublicWsDown": (
         'ws_connection_state{socket="public"}',
@@ -69,6 +77,14 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         {},
     ),
     "AuthLockouts": ("auth_lockouts_total", "0+0x10 1+0x10", "0+0x20", "15m", {}),
+    # #2496 (SR-022): a single accepted recovery code is enough.
+    "AuthRecoveryCodeUsed": (
+        'auth_recovery_codes_used_total{env="live"}',
+        "0+0x10 1+0x10",
+        "0+0x20",
+        "15m",
+        {"env": "live"},
+    ),
     "CredentialVerificationFailures": (
         "credential_verification_failures_total",
         "0+0x10 1+0x10",

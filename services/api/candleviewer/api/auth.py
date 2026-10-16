@@ -84,7 +84,10 @@ from candleviewer.auth.errors import (
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
 )
-from candleviewer.auth.metrics import auth_session_fixation_attempts_total
+from candleviewer.auth.metrics import (
+    auth_recovery_codes_used_total,
+    auth_session_fixation_attempts_total,
+)
 from candleviewer.auth.models import (
     LoginRequest,
     MfaChallengeResult,
@@ -457,6 +460,9 @@ def make_auth_router(
             # contact-the-owner message the UI must render differently.
             return _problem(401, "Recovery failed", "invalid or expired code")
 
+        # SR-022 (#2496): each use pages the Owner (`AuthRecoveryCodeUsed`). Counted before the
+        # audit write, so a failing audit sink cannot hide a use (the count can then exceed rows).
+        auth_recovery_codes_used_total.inc()
         await _audit(
             audit_service,
             "auth.recovery_code_used",

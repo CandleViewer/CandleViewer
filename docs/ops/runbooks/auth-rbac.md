@@ -266,15 +266,18 @@ Reason codes (`net/binding_check.py`, `net/scheduler.py`):
 | `net.binding_check_failed`      | the socket table could not be read (fail-closed)              |
 | `net.self_check_timed_out`      | the check exceeded its time limit                             |
 
-1. Read the gauge on the metrics listener: expect `net_binding_safe 0`, e.g. `curl -s http://127.0.0.1:9108/metrics | grep net_binding_safe`. Read the reason code from the
-   `system` topic event or the API log.
+1. The `NetBindingUnsafe` page fires as soon as the gauge reads 0
+   (`docs/plan/07-release-and-prr.md#alert-netbindingunsafe`). Read the gauge on the metrics
+   listener: expect `net_binding_safe{env="<env>"} 0`, e.g. `curl -s http://127.0.0.1:9108/metrics | grep net_binding_safe`
+   (served there since #2496; before that the gauge was never on the listener). Read the reason
+   code from the `system` topic event, `mesh_reason_code` on `/readyz`, or the API log.
 2. Diagnose on the host: list listening sockets for the API process with your platform's tool
    (for example `ss -ltnp`) and compare with the intended bind. On WSL, a Windows port-proxy rule can
    re-expose a loopback listener; check it (`20-architecture.md`, "WSL hazards").
 3. Fix the bind or the proxy rule, then restart the API process so the boot check runs; or wait for
    the next hourly pass. There is **no command or endpoint to clear the gate**. `ReadOnlyGate.clear`
    accepts only a fresh passing result, and nothing exposes it to an operator.
-4. Verify: `net_binding_safe 1`, and a `system` topic event clears the state with reason
+4. Verify: `net_binding_safe{env="<env>"} 1`, and a `system` topic event clears the state with reason
    `net.binding_safe`. Orders are accepted again.
 
 Stop and escalate if the failing listener is public and you cannot explain it: treat as an exposure
