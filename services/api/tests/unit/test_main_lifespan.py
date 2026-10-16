@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import FastAPI
@@ -131,6 +132,17 @@ async def test_lifespan_starts_and_stops_every_supervised_module() -> None:
 
     assert ctx.storage.stopped is True
     assert ctx.ws.stopped is True
+
+
+async def test_lifespan_starts_and_stops_the_drawings_purge_task() -> None:
+    app = FastAPI()
+    app.state.app_context = _fake_ctx()
+    app.state.drawings_purge_task = task = SimpleNamespace(start=Mock(), stop=AsyncMock())
+
+    async with _lifespan(app):
+        task.start.assert_called_once_with()
+
+    task.stop.assert_awaited_once_with()
 
 
 async def test_lifespan_leaves_read_only_mode_on_when_boot_check_trips_the_gate() -> None:
