@@ -62,12 +62,21 @@ _MAX_DEPTH: Final[int] = 6
 #: 6-digit code (TOTP shape) — all fairly permissive because the *label*
 #: (key-name check above) already carries most of the recall.
 _JWT_RE = r"[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+#: `_JWT_RE` as `_VALUE_PATTERN` scans it (#2689): it starts only where a run of segment characters
+#: starts, and each segment is possessive. Unanchored, the greedy first segment was retried from
+#: every offset of a long dot-free run and backtracked each time: O(n^2), ~10 ms per call at
+#: `_MAX_SCAN_LEN` on client-shaped text. A segment never contains `.`, so a match inside a run
+#: implies one from the run's start and no segment ever has to give characters back: with this
+#: form `_VALUE_PATTERN.search` returns the same group and span as with `_JWT_RE`
+#: (property-tested), in linear time. `bundle_scan` keeps `_JWT_RE`: its `\b` anchors can start a
+#: match inside a run, so they need the backtracking form.
+_JWT_SCAN_RE = r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{10,}+\.[A-Za-z0-9_-]{10,}+\.[A-Za-z0-9_-]{10,}+"
 _APIKEY_RE = r"\b[A-Za-z0-9]{18,36}\b"
 _TOTP_RE = r"\b\d{6}\b"
 #: `secrets.token_urlsafe(32)` invite token (43 chars; sits in URL path `/invites/<token>`; C-12.6).
 _INVITE_SHAPE_RE = r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])"
 _VALUE_PATTERN = re.compile(
-    f"(?P<jwt>{_JWT_RE})|(?P<apikey>{_APIKEY_RE})|(?P<invite>{_INVITE_SHAPE_RE})"
+    f"(?P<jwt>{_JWT_SCAN_RE})|(?P<apikey>{_APIKEY_RE})|(?P<invite>{_INVITE_SHAPE_RE})"
     f"|(?P<totp>{_TOTP_RE})"
 )
 
