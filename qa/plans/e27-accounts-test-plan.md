@@ -72,14 +72,21 @@ path or private field, so it survives refactors of E27-T03, E27-T04 and E27-S01.
   screen capture).
 - **Audit step:** a case with an audit event ends with "query
   `GET /admin/audit?subject_type=<exchange_account|api_key|setting>&subject_id=<id>`; expect each
-  event the case lists exactly once for its subject, under a name in §8.1, and no secret in the
-  payload". The actor is the acting user (`actor_user_id`), except events marked `(system)`:
-  time- or policy-driven events with no acting user, which carry `actor_user_id: null` (SR-062
-  `actor_type: system`). A case that triggers several actions lists every event and every metric
-  movement, with the step that causes it.
+  event the case lists once per action that causes it (one entry per denied call or
+  subscription), for its subject, under a name in §8.1, and no secret in the payload". An event
+  with no subject id to query, such as a refused create, is found by `action` and
+  `actor_user_id` instead. The actor is the acting user (`actor_user_id`), except events marked
+  `(system)`: time- or policy-driven events with no acting user, which carry
+  `actor_user_id: null` (SR-062 `actor_type: system`). A case that triggers several actions lists
+  every event and every metric movement, with the step that causes it.
 - **Step-up:** §9.4. **Clock:** §9.5. **Orders:** every `POST /orders` sends the reference order
   (§9.7). Manual runs may stopwatch second-scale deadlines (30 s, 60 s) with a ±2 s tolerance;
   automation uses the test clock or event waiters, never a sleep (C-13.7).
+- **Key tests:** successive `POST .../keys/{keyId}/test` calls on one key, within a case or across
+  cases run in sequence, are at least 60 s apart (in automation a separate key per case or a
+  test-clock advance, §9.5; in manual runs a wait). The E27 threat model plans a throttle of one
+  test per minute per key (KV-D01) that `testApiKey` does not document yet (it lists `200`, `403`
+  and `404` only), so a faster call could be refused for a reason no case asserts.
 - **Idempotency-Key:** every call to an operation the contract marks `x-idempotency: required`
   (`createApiKey`, `rotateApiKey`, `placeOrder`, `cancelOrder`, `closeAllPositions`,
   `setPositionLeverage`) sends a fresh `Idempotency-Key` unless the case says otherwise (TC-121),
@@ -96,7 +103,9 @@ path or private field, so it survives refactors of E27-T03, E27-T04 and E27-S01.
 - **KB:** `Y` = also execute keyboard-only, no pointer (`docs/plan/05-accessibility-standard.md` §3);
   `—` = API-only or no separate keyboard pass needed. The full audit is E27-Q04.
 - **Auto:** `Q02` = automated by E27-Q02 · `Q02·clk` = automated, needs the test clock (§9.5) ·
-  `+manual` = plus a manual part (timing, copy review or a restart) · `manual` = human only.
+  `+manual` = plus a manual part (such as timing, copy review or the alert channel's page) ·
+  `manual` = human only. A restart is not a manual part: E27-Q02 restarts the #2893 stack (TC-115,
+  TC-212, §9.5).
 - **Out of scope:** writing the specs (E27-Q02), the accessibility audit (E27-Q04), load and chaos
   (E27-Q03), adversarial depth (E27-X02), the full route × role matrix (E27-X03), restore and
   compromise drills (E27-X04), profiles and trade groups (E28), the OMS (E29), the dead-man's switch
@@ -158,7 +167,7 @@ once recorded, the tier cannot be cleared (`setSubaccountTier`).
 | E27-TC-005 | neg | US-ACCT-001 | TC-015 done, so no tier is recorded yet; five demo sub-account shells under `QA Cap Main` (§9.2) | 1. `PUT /admin/capacity/subaccount-tier` with `{"tier": "regular"}`; `GET /admin/capacity`. 2. Start adding a sixth demo sub under `QA Cap Main`. 3. Try to save without acknowledging. 4. Acknowledge and save. 5. `GET /admin/capacity`. | Step 1: `200` with a `SubaccountCapacity` body `tier: regular`, `cap: 5`, `tier_source: recorded`, `used: 5` (`used` is the most non-deleted sub-accounts under any one main account of the process environment, `CV_ENV` = `demo` on this stack, 20 §7.2; `QA Cap Main` holds the most, §9.2), the same `subaccounts` slice in `GET /admin/capacity` at once, and one `settings.change` entry with the before and after tier (`setSubaccountTier`; 21 §3.9 names it the only write path). Step 2 shows the cap "5 regular / 20 Business KYC" with the recorded tier stated (US-ACCT-001, US-ADMIN-014). Step 3: save unavailable until the explicit acknowledgement (US-ACCT-001; SCR-125 and SCR-126 do not cover the cap, confirm against E27-D02). Step 4: `409 conflict` (the contract rejects the 6th and has no acknowledgement field, §10 DC-17). Step 5: `used` stays 5. | HAR, SS, AUD | `settings.change` (step 1, queried by `action`; subject `setting` `accounts.subaccount_tier`) · — | Y | Q02+manual |
 | E27-TC-006 | neg | US-ACCT-001 | TC-001 done | Register a demo account labelled `qa main`, UID `90000002`. | Rejected with a 4xx problem naming `label`: labels are unique per environment, ignoring case (21 §3.2.1); no row. | HAR | — · — | Y | Q02 |
 | E27-TC-007 | pos | US-ACCT-001 | TC-001 done | Register a live account labelled `QA Main`, UID `90000003`. | `201`: the same label is allowed in the other environment. | HAR, AUD | `account.created` · — | — | Q02 |
-| E27-TC-008 | neg | US-ACCT-001 | `manager-with-grants`, then `viewer-granted` | 1. `GET /me`. 2. Open `/admin/accounts`. 3. `POST /exchange-accounts` with a valid body. | 1: no `accounts:write`. 2: the router's not-found page (SCR-155), with the copy of any unknown route and no Admin navigation entry; no account data and no add control rendered (14 §10: non-owners get 404 from the router; hiding is not the control, step 3 is). 3: `403 forbidden` with `required_permissions: [accounts:write]`, no step-up challenge (RBAC is decided first, `/auth/step-up`), nothing created, denial audited (11 global AC 1). Same for the viewer. | HAR, SS, AUD | `authz.denied` · — | Y | Q02 |
+| E27-TC-008 | neg | US-ACCT-001 | `manager-with-grants`, then `viewer-granted` | 1. `GET /me`. 2. Open `/admin/accounts`. 3. `POST /exchange-accounts` with a valid body. | 1: no `accounts:write`. 2: the router's not-found page (SCR-155), with the copy of any unknown route and no Admin navigation entry; no account data and no add control rendered (14 §10: non-owners get 404 from the router; hiding is not the control, step 3 is). 3: `403 forbidden` with `required_permissions: [accounts:write]`, no step-up challenge (RBAC is decided first, `/auth/step-up`), nothing created, denial audited (11 global AC 1). Same for the viewer. | HAR, SS, AUD | `authz.denied` (step 3, one per user; found by `action` and actor, §0) · — | Y | Q02 |
 | E27-TC-009 | neg | US-ACCT-001 | — | `POST /exchange-accounts` with: a) UID `12a4`; b) UID `123`; c) empty label; d) an 81-character label; e) kind sub without a parent; f) an extra property `acknowledged: true`. Repeat a–e in the SCR-126 form. | Each `422 validation_failed` naming the field (422 is the status `createExchangeAccount` documents; the registry lists 400, §10 DC-11; f: unknown property refused); nothing created; the form shows each error inline, linked to its field (CMP-040). | HAR, SS, A11Y | — · — | Y | Q02 |
 | E27-TC-010 | neg | US-ACCT-001 | `QA Main (live)` from TC-004 | Register a demo sub-account whose parent is `QA Main (live)`. | Rejected, no row: a sub-account's environment must equal its parent's (21 §3.2.1, C-2.11). | HAR | — · — | — | Q02 |
 | E27-TC-011 | pos | US-ACCT-001 | TC-001 done | 1. Rename `QA Main` to `QA Main A` (`PATCH` with `If-Match`; step-up). 2. `PATCH` carrying `exchange_uid` or `environment`. 3. Rename it back to `QA Main` (§9.2). | 1: `200`; the new label shows on SCR-125 and in the drawer heading. 2: refused with a `validation_failed` problem naming the field, nothing changed (the request schema has neither field: UID and environment never change after registration). `updateExchangeAccount` documents neither 400 nor 422, so the status is recorded, not asserted (§10 DC-11). 3: `200`; the label is `QA Main` again. | HAR, SS, AUD | `account.updated` (label before/after; steps 1 and 3) · — | Y | Q02 |
@@ -231,7 +240,7 @@ cases:
 | E27-TC-128 | neg | US-ACCT-003 | Three verified accounts; one key switched to `ip_missing` | Restart. | Every stored key is re-checked (SR-031, R3 exit #9): only that account is flagged, with an alert raised, and the other two still show verified; Read-only as in TC-126. | SS, HAR, AUD, MET | `account.disabled_by_policy` (system) + one self-check result per key (system) · +3 (one fail) | — | Q02+manual |
 | E27-TC-129 | neg | US-ACCT-003 | Account verified, the only stored key; scenario `bybit_5xx` for every start-up check | Restart. | The inconclusive check counts as failed (04 §5.14 KV3): the account never shows "verified" from a check that did not finish; an alert raised; Read-only as in TC-126. | SS, HAR, AUD, MET | `account.disabled_by_policy` (system) + the self-check result (system) · +1 fail | — | Q02+manual |
 | E27-TC-130 | neg | US-ACCT-003 | Scenario `new_key_48h` (`query-api` reports `createdAt` 2 h before load) | 1. Save. 2. Open SCR-125 and SCR-079. 3. The reference order (§9.7) on the account. 4. Advance the clock past `createdAt` + 48 h and re-establish freshness (§9.5); reopen both screens. | 1: `201`, `verification.passed: true`, and one `verification.warnings[]` entry naming the 48 h new-key restriction and its lift time, `createdAt` + 48 h (fixed vocabulary, #2417). The key `status` is a `KeyStatus` value, `active`; `restricted` is UI text only (§10 DC-23). 2: SCR-125 shows "within Bybit's 48 h new-key restriction" and SCR-079 key status "restricted", each with the lift time (per spec; confirm against E27-D02). 3: Accepted (§9.7): the restriction gates live use, and demo trading continues meanwhile (SCR-017, SCR-122; SCR-060's `pending-key` state names no environment, §10 DC-23). 4: the chip is gone and SCR-079 shows the key as valid. | HAR, SS, AUD, MET | `account.updated` (step 1) · +1 pass | Y | Q02·clk+manual |
-| E27-TC-131 | neg | US-ACCT-002 | `manager-with-grants` (trade grant on the account) | `POST .../keys`, `GET .../keys`, `POST .../keys/{keyId}/test` on the granted account. | Each `403 forbidden` (`keys:manage` and `keys:read` are Owner-only, 04 §7.2.1); no challenge; denials audited. | HAR, AUD | `authz.denied` · — | — | Q02 |
+| E27-TC-131 | neg | US-ACCT-002 | `manager-with-grants` (trade grant on the account) | `POST .../keys`, `GET .../keys`, `POST .../keys/{keyId}/test` on the granted account. | Each `403 forbidden` (`keys:manage` and `keys:read` are Owner-only, 04 §7.2.1); no challenge; denials audited. | HAR, AUD | `authz.denied` (one per denied call: three) · — | — | Q02 |
 | E27-TC-132 | neg | US-ACCT-003 | Two verified accounts, `acct-demo-main` (holding `open_position_btcusdt_5x_sl` and `working_orders_2`) and `acct-demo-sub1`; T0 = the last self-check (SCR-125 "verified `<time>`", `LOG`); test clock (§9.5) | 1. Without restarting, switch `acct-demo-main`'s key to a) `withdraw_enabled`, b) `ip_missing`. 2. Advance to T0 + 59 min; read `LOG` and SCR-125. 3. Advance to T0 + 60 min, plus 1 min scheduler tolerance; read `LOG`, SCR-125, SCR-079, alerts and `system`. 4. The reference order (§9.7) on both accounts; cancel an order and flatten on `acct-demo-main`. | Step 2: while `LOG` shows no `query-api` call since T0, the account still shows verified (no verdict without a check). An earlier periodic run is allowed, because C-12.2 sets the longest interval; its time is recorded. By step 3: `LOG` shows a `query-api` call for each stored key since T0 (C-12.2 hourly; a 6 h or nightly cadence fails here, §10 DC-05); `acct-demo-main` is disabled by policy with the reason shown and an alert raised; SCR-125's verification time moves to the new run. Step 4: Read-only, so the reference order is refused on both accounts while cancel and flatten work. A build that checks only at start-up fails this case. | SS, WS, HAR, LOG, AUD, MET | `account.disabled_by_policy` (system) + one self-check result per key (system) · +2 (one fail) per variant | — | Q02·clk |
 | E27-TC-133 | neg | US-ACCT-007 | Demo-bound account; scenario `unknown_key` (a key id no environment issued, such as a typo) | Paste the key; Save. | The same status, rule and copy as TC-113: Refused (check: environment) with "key does not belong to this environment"; `LOG` as in TC-113: no signed or private-WS traffic to a live host. A difference from TC-113 claims a determination the system cannot make without contacting live (§10 DC-29). | HAR, SS, LOG, AUD, MET | `key.verification_failed` · +1 fail | — | Q02 |
 | E27-TC-134 | neg | US-ACCT-003 | Two verified accounts, `acct-demo-main` and `acct-demo-sub1`; `acct-demo-main`'s key switched to `stored_key_rejected` after storage (deleted at Bybit, never revoked locally) | 1. Restart (the start-up self-check). 2. `GET /exchange-accounts/{accountId}` and `GET .../keys` for both accounts; watch SCR-125, SCR-079, alerts and `system`. 3. The reference order (§9.7) on both accounts. | `acct-demo-main` shows `key_status: invalid` and its key `status: invalid` (`KeyStatus`); SCR-125 shows the "key invalid" state as text and SCR-079 the banner "This account's API key was rejected — trading disabled for it" (per spec; confirm against E27-D02); an alert raised. `acct-demo-sub1` still shows verified. The check cannot verify withdrawal-off or the allowlist for that key, so it counts as failed (04 §5.14 KV3) and the system is Read-only as in TC-126 (C-12.2, §10 DC-04): step 3 is refused on both accounts. | SS, WS, HAR, AUD, MET | `account.disabled_by_policy` (system) + one self-check result per key (system) · +2 (one fail) | — | Q02+manual |
@@ -294,8 +303,8 @@ stated; the §9.3 overlays add positions, orders and history); `manager-with-gra
 | E27-TC-309 | neg | US-ACCT-006 | As TC-308 | Type the label in another case, with a trailing space, and another account's label. | Confirm stays unavailable each time; nothing is sent and nothing changes. | SS, HAR | — · — | Y | Q02 |
 | E27-TC-310 | neg | US-ACCT-006 | Shared setup plus the overlays `open_position_btcusdt_5x_sl` and `working_orders_2` | 1. SCR-125 → Delete. 2. `DELETE /exchange-accounts/{accountId}` directly (step-up). | The dialog lists the blockers with counts and offers no delete confirm (SCR-129); the API answers `409 conflict`; nothing changes. | SS, HAR | — · — | Y | Q02 |
 | E27-TC-311 | pos | US-ACCT-006 | Shared setup plus the overlay `history_round_trip` (flat, with order, execution and audit history) | 1. Delete: typed label plus step-up. 2. `GET /exchange-accounts`; `GET /orders` and `GET /executions` for the account; `GET /admin/audit` for it. | `204`; the dialog stated that delete is irreversible and history is kept. The account is no longer active (the contract marks it `disabled`, the schema soft-deletes, §10 DC-10); its keys are revoked locally; its orders, executions and audit entries are still listed. | HAR, SS, AUD | `account.deleted`, `key.revoked` (its key) · — | Y | Q02 |
-| E27-TC-312 | neg | US-ACCT-006 | TC-308 done | As the manager: `GET /exchange-accounts/{accountId}`; `sub` `wallet` for it. | REST `403 account_scope_denied` (or `404`, hidden by scope); WS `sub` → `account_scope_denied`; the earlier subscriptions had already ended with `revoked`. | HAR, WS, AUD | `authz.denied` · — | — | Q02 |
-| E27-TC-313 | neg | US-ACCT-006 | Key revoked in TC-301 | Restart; let the start-up self-check run. | The key stays revoked and the account inactive; `LOG` shows no request with that key after the restart, and the start-up check queries `acct-demo-sub2`'s key only: local revocation is durable. | LOG, HAR, AUD, MET | the start-up self-check result for `acct-demo-sub2`'s key (system), none for the revoked key · +1 pass | — | Q02+manual |
+| E27-TC-312 | neg | US-ACCT-006 | TC-308 done | As the manager: `GET /exchange-accounts/{accountId}`; `sub` `wallet` for it. | REST `403 account_scope_denied` (or `404`, hidden by scope); WS `sub` → `account_scope_denied`; the earlier subscriptions had already ended with `revoked`. | HAR, WS, AUD | `authz.denied` (REST, when it answers `403`), `authz.denied` (WS `sub`) · — | — | Q02 |
+| E27-TC-313 | neg | US-ACCT-006 | Key revoked in TC-301 | Restart; let the start-up self-check run. | The key stays revoked and the account inactive; `LOG` shows no request with that key after the restart, and the start-up check queries `acct-demo-sub2`'s key only: local revocation is durable. | LOG, HAR, AUD, MET | the start-up self-check result for `acct-demo-sub2`'s key (system), none for the revoked key · +1 pass | — | Q02 |
 | E27-TC-314 | pos | US-ACCT-006 | Shared setup plus the overlay `working_orders_2` | 1. SCR-128 → mark the key as compromised; confirm; step-up (a key action, `keys:manage`, 04 §7.2.1). 2. `GET .../keys`, `LOG`, the reference order (§9.7) for the account and for `acct-demo-sub2`. | The immediate effect SCR-128 names: the key is disabled and order placement for the account halted. The reference order for it is refused; `LOG` shows no request signed with the key after the confirmation, and its private WS session to the stub is closed (04 §5.14 KV14). For `acct-demo-sub2` it is Accepted. The working orders' state is recorded, not asserted (SCR-128 says only "orders halted"). The entry is audited at high severity (`severity` `error` or `critical`: the enum has no `high`). Per SCR-128 spec; confirm against E27-D02; no route is documented (§10 DC-28). | SS, HAR, LOG, AUD | `admin.key_marked_compromised` · — | Y | Q02+manual |
 | E27-TC-315 | neg | US-ACCT-006 | Shared setup; a session with no live `keys` grant; then `manager-with-grants` | 1. Mark the key as compromised and cancel a) the confirmation, b) the step-up dialog. 2. As the manager, open `/admin/accounts`. | 1: nothing changes: the key stays active, the reference order for the account is Accepted (§9.7) and no `admin.key_marked_compromised` entry exists. 2: the router's not-found page (SCR-155, 14 §10), so no mark-as-compromised control is reachable (Owner only, `keys:manage`). Per SCR-128 spec; confirm against E27-D02 (§10 DC-28). | SS, HAR, AUD | — · — | Y | Q02 |
 | E27-TC-316 | neg | US-ACCT-006 | Shared setup plus the overlay `open_position_btcusdt_5x_sl` | 1. SCR-125 → Disable; read the dialog. 2. `PATCH /exchange-accounts/{accountId}` with `enabled: false` (`If-Match`; step-up) and no position choice. 3. If step 2 answered `409`: disable through the dialog, leaving the position open, with the typed label and step-up. 4. `GET /positions`, `GET /exchange-accounts/{accountId}`, `LOG`; the reference order (§9.7) for the account. | Step 1: the dialog lists the open position, says it is not closed automatically and offers "flatten first" (SCR-129). Step 2: either `409` with the consequence summary and nothing changed (SR-E27-07), or `200` (the contract and SCR-129 document no refusal); the answer is recorded, not asserted (§10 DC-32). After the disable: `enabled: false`; the position is still open with its native SL on the exchange, and `LOG` shows no request that cancels or clears it (C-2.6); the reference order is refused. | SS, HAR, LOG, AUD | `account.disabled` (step 2 or 3) · — | Y | Q02+manual |
@@ -329,8 +338,8 @@ stored (§9.3).
 | E27-TC-411 | neg | US-ACCT-010 | Scenario `ws_blip_20s`, switched in at runtime once the key is stored; T0 = the switch (§9.3) | Watch from T0 for 60 s. | Never red and order entry never disabled for the 20 s outage (T0 + 10 s to T0 + 30 s); amber is allowed. | SS, HAR, MET | — · never down | — | Q02·clk |
 | E27-TC-412 | pos | US-ACCT-010 | TC-410 state | Switch to `compliant`. | Back to green and order entry re-enabled; open orders and positions are reconciled before they are shown as live (03 §9.1); one announcement. | SS, HAR, LOG, MET | — · → healthy | Y | Q02 |
 | E27-TC-413 | pos | US-ACCT-010 | Three accounts; scenario `compliant` | Keep SCR-125 open 5 min with the network log recording. | Health fields are fetched on open and every 60 s, never per second; the browser never calls the exchange (SCR-125, SCR-128). | HAR | — · — | — | manual |
-| E27-TC-414 | neg | US-ACCT-008 | `manager-with-grants` (grant on `acct-demo-sub1` only) | 1. `GET /exchange-accounts`. 2. `GET /exchange-accounts/{acct-demo-sub2}`. 3. WS `sub` `wallet` for sub2 alone, then for sub1 and sub2. | 1: sub1 only (reads narrow silently). 2: `403 account_scope_denied`. 3: error `account_scope_denied`, then `sub_ok.effective` = sub1. | HAR, WS, AUD | `authz.denied` · — | — | Q02 |
-| E27-TC-415 | pos | US-ACCT-009 | Owner; scenario `leverage_ok` with the overlay `open_position_btcusdt_5x_sl`; profile cap 10x | Set 10x on the SCR-079 leverage slider and apply. | `PUT /positions/{positionId}/leverage` with `{"leverage": "10"}` → `200`; the drawer and the `positions` frame show 10. Risk-limit tiers are shown beside the choice (US-ACCT-009 NFR); the liquidation preview is text, announced politely (CMP-104); the change is audited (no catalogued event name, §10 DC-08). | HAR, SS, WS, A11Y, AUD | leverage change · — | Y | Q02 |
+| E27-TC-414 | neg | US-ACCT-008 | `manager-with-grants` (grant on `acct-demo-sub1` only) | 1. `GET /exchange-accounts`. 2. `GET /exchange-accounts/{acct-demo-sub2}`. 3. WS `sub` `wallet` for sub2 alone, then for sub1 and sub2. | 1: sub1 only (reads narrow silently). 2: `403 account_scope_denied`. 3: error `account_scope_denied`, then `sub_ok.effective` = sub1. | HAR, WS, AUD | `authz.denied` (REST, step 2), `authz.denied` (WS, step 3's refused `sub`; an entry for the narrowed second `sub` is recorded, not asserted) · — | — | Q02 |
+| E27-TC-415 | pos | US-ACCT-009 | Owner; scenario `leverage_ok` with the overlay `open_position_btcusdt_5x_sl`; profile cap 10x | Set 10x on the SCR-079 leverage slider and apply. | `PUT /positions/{positionId}/leverage` with `{"leverage": "10"}` → `200`; the drawer and the `positions` frame show 10. Risk-limit tiers are shown beside the choice (US-ACCT-009 NFR); the liquidation preview is text, announced politely (CMP-104); the change is audited (04 §8.2 catalogues no name for it; E27-S05 assigns `account.leverage_changed`, §8.1). | HAR, SS, WS, A11Y, AUD | `account.leverage_changed` · — | Y | Q02 |
 | E27-TC-416 | neg | US-ACCT-009 | As TC-415; scenario `leverage_refused_open_position` | Request 8x. | `502 exchange_error` carrying the code and message the scenario sent (an unconfirmed stand-in, compared with the scenario, never with a fixed code, §9.3). The UI shows that reason (code in details) and the slider returns to 5x; the snapshot is unchanged. | HAR, SS | — · — | Y | Q02 |
 | E27-TC-417 | neg | US-ACCT-009 | As TC-415 (cap 10x) | 1. Drag the slider past 10x. 2. `PUT /positions/{positionId}/leverage` with `{"leverage": "20"}` directly. | 1: refused client-side, with the cap stated. 2: refused server-side (`risk_limit_breached`, 403 in the registry, 422 in the contract example, §10 DC-11). `LOG` shows zero set-leverage requests; leverage unchanged. | HAR, SS, LOG | — · — | Y | Q02 |
 | E27-TC-418 | neg | US-ACCT-009 | `manager-with-grants` (trade grant); scenario `leverage_ok` with `open_position_btcusdt_5x_sl` on the granted account | `PUT /positions/{positionId}/leverage`. | `403` per 04 §7.2.2 row 18 (Owner only); nothing reaches the exchange. §7.2.1 and the story's "trader" persona disagree (§10 DC-15), so a `200` is raised as needs-clarification, not passed. | HAR, LOG, AUD | `authz.denied` · — | — | Q02 |
@@ -355,13 +364,13 @@ failure case, and no case is marked "cannot be executed".
 | US-ACCT-003 | API key self-check | 012, 101, 116, 124 | 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 117, 122, 123, 125, 126, 127, 128, 129, 130, 132, 134 | 102, 103, 104, 106, 107, 108, 109, 110, 111, 112, 116, 117, 122, 123, 124, 125, 132 | 012, 101, 105, 126, 127, 128, 129, 130, 134 | — |
 | US-ACCT-004 | Key rotation with overlap | 201, 202, 203 | 204, 205, 206 | 202, 203, 204, 205, 206 | 201 | — |
 | US-ACCT-005 | Key rotation policy reminder | 207, 210 | 208, 209, 211, 212 | 207, 208, 209, 211, 212 | — | 210 |
-| US-ACCT-006 | Revoke a key immediately | 301, 302, 303, 308, 311, 314 | 304, 305, 306, 307, 309, 310, 312, 313, 315, 316 | 303, 304, 306, 307, 309, 310, 311, 312, 315 | 301, 302, 305, 308, 313, 314, 316 | — |
+| US-ACCT-006 | Revoke a key immediately | 301, 302, 303, 308, 311, 314 | 304, 305, 306, 307, 309, 310, 312, 313, 315, 316 | 303, 304, 306, 307, 309, 310, 311, 312, 313, 315 | 301, 302, 305, 308, 314, 316 | — |
 | US-ACCT-007 | Environment binding per account | 114 | 113, 115, 133 | 113, 114, 115, 133 | — | — |
 | US-ACCT-008 | Account balance & margin snapshot | 401, 402, 406, 422 | 403, 404, 405, 407, 414 | 401, 406, 407, 414, 422 | 403, 404, 405 | 402 |
 | US-ACCT-009 | Leverage and margin mode control | 415, 419 | 416, 417, 418, 420, 421 | 415, 416, 417, 418, 419, 420, 421 | — | — |
 | US-ACCT-010 | Account health & connection state | 408, 412, 413 | 409, 410, 411 | 408, 411, 412 | 409, 410 | 413 |
 
-Totals: 99 cases, 32 positive and 67 negative or failure; 71 automated, 24 automated with a manual part, 4 manual only.
+Totals: 99 cases, 32 positive and 67 negative or failure; 72 automated, 23 automated with a manual part, 4 manual only.
 
 ## 7. Negative and abuse-adjacent cases owned by QA, and the R3 gate
 
@@ -396,37 +405,51 @@ malformed exchange payloads) belongs to E27-X02; the full route × role matrix t
 
 ### 8.1 Audit events
 
-The ticket, the screens, the contract, `04-security-program.md` §8.2 and the names registered
-today (E27 threat model §8.1; `—` where it lists none) name these events differently (§10 DC-08).
-Until one registered vocabulary is published (SR-E27-09), the audit step passes when each event
-the case lists appears exactly once for its subject, with the actor the case gives (§0) and under
-any name in its row below; record which name appeared. A missing or malformed entry is filed
-against the acting case (§0.1). An `/admin/*` call may also write `admin.area_entered`
-(`outcome=success`, or `outcome=denied` when refused; 04 §6.9, SCR-120): it is never one of a
-case's events, and an admin-area denial is audited that way, not as a second `rbac.denied`.
+The ticket, the screens, the contract, the implementing tickets (the names the E27 threat model
+§8.1 lists under "Event the model requires", and each ticket's audit line), `04-security-program.md`
+§8.2 and the names registered today (E27 threat model §8.1; `—` where it lists none) name these
+events differently (§10 DC-08). Until one registered vocabulary is published (SR-E27-09), the
+audit step passes when each event the case lists appears once per action that causes it (one
+entry per denied call or subscription, §0) for its subject, with the actor the case gives (§0)
+and under any name in its row below; record which name appeared. Where a source writes one action
+under two names of the same row (04 §8.2 `key.created` and `key.verified`; a failed check's
+`account.tested` and `security.key_policy_violation`), the pair counts as one entry. A missing or
+malformed entry is filed against the acting case (§0.1).
 
-| Ticket, screen or contract name                                                   | 04 §8.2 name                                            | Registered today                                           | Cases                                  |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------- |
-| `account.created`                                                                 | `account.registered`                                    | `accounts.create`                                          | 001, 002, 004, 007, 012, 013, 014      |
-| `account.updated` (key attached)                                                  | `key.created` and `key.verified`                        | `api_key.import`                                           | 012, 101, 116, 117, 119, 121, 122, 130 |
-| `account.updated` (label, margin or position mode)                                | none catalogued                                         | —                                                          | 011, 419                               |
-| `account.tested` (Test connection by the acting user)                             | `key.verified` / `key.verification_failed`              | —                                                          | 101, 114, 118, 124, 125                |
-| `account.tested` (system: a start-up or hourly self-check result per key, SR-031) | `key.verified` / `key.verification_failed`              | —                                                          | 101, 115, 126–129, 132, 134, 212, 313  |
-| `account.key_rotated`                                                             | `key.rotated`                                           | `api_key.rotate`                                           | 201, 205                               |
-| `account.disabled`                                                                | none catalogued                                         | —                                                          | 308, 316                               |
-| `account.deleted`                                                                 | `account.removed`                                       | —                                                          | 311                                    |
-| `account.disabled_by_policy` (system)                                             | `key.disabled_for_trading`                              | —                                                          | 126, 127, 128, 129, 132, 134, 212      |
-| none in the ticket                                                                | `key.verification_failed`                               | —                                                          | 102–113, 119, 122, 123, 133, 204       |
-| none in the ticket                                                                | `key.revoked`                                           | `api_key.revoke`                                           | 203, 301, 302, 303, 306, 311           |
-| none in the ticket                                                                | `key.retired` (system, at drain end)                    | —                                                          | 202                                    |
-| none in the ticket                                                                | `key.expiry_warning`                                    | —                                                          | 116                                    |
-| `admin.secrets_policy_changed` (SCR-128)                                          | `setting.changed`                                       | —                                                          | 210                                    |
-| `settings.change` (contract `setSubaccountTier`, 21 §3.9)                         | `setting.changed`                                       | —                                                          | 005, 014                               |
-| `admin.key_marked_compromised` (SCR-128)                                          | none catalogued                                         | —                                                          | 314                                    |
-| `health.diagnostics_exported` (`createSupportBundle`)                             | none catalogued                                         | —                                                          | 118                                    |
-| none in the ticket                                                                | `authz.denied`                                          | `rbac.denied`; a WS subscribe denial `ws.subscribe.denied` | 008, 131, 206, 307, 312, 414, 418      |
-| none in the ticket                                                                | `position.flattened`                                    | —                                                          | 303                                    |
-| none in the ticket                                                                | none catalogued for a leverage change (US-ACCT-009 NFR) | —                                                          | 415                                    |
+Other events the E27 threat model requires may appear beside a case's events; they are recorded,
+never counted for or against the case: the `security.credential_*` and `security.kek_*` entries
+(E27-T02; a revoke or delete adds `security.credential_destroyed`, E27-S04),
+`accounts.enable_trading` (the C-2.8 pass that arms trading), `account.health_changed` (E27-T04;
+the cases assert health through `cv_account_health_state`, §8.2) and `api_key.reveal_attempt`
+(TC-118's reveal probes; owned by E27-X02 and E27-X03). An `/admin/*` call may also write
+`admin.area_entered` (`outcome=success`, or `outcome=denied` when refused; 04 §6.9, SCR-120): it
+is never one of a case's events, and an admin-area denial is audited that way, not as a second
+`rbac.denied`.
+
+<!-- prettier-ignore -->
+| Ticket, screen or contract name | Implementing-ticket name | 04 §8.2 name | Registered today (per the E27 threat model) | Cases |
+| --- | --- | --- | --- | --- |
+| `account.created` | same (E27-S01) | `account.registered` | `accounts.create` | 001, 002, 004, 007, 012, 013, 014 |
+| `account.updated` (key attached) | `account.key_imported` (E27-T03) | `key.created` and `key.verified` | `api_key.import` | 012, 101, 116, 117, 119, 121, 122, 130 |
+| `account.updated` (label, margin or position mode) | same for a label (E27-S01); `account.margin_mode_changed` for a margin mode (E27-S05) | none catalogued | — | 011, 419 |
+| `account.tested` (Test connection by the acting user) | same (E27-T03), with `security.key_policy_violation` for a failed check | `key.verified` / `key.verification_failed` | — | 101, 114, 118, 124, 125 |
+| `account.tested` (system: a start-up or hourly self-check result per key, SR-031) | same (E27-T03), with `security.key_policy_violation` for a failed check | `key.verified` / `key.verification_failed` | — | 101, 115, 126–129, 132, 134, 212, 313 |
+| `account.key_rotated` | same (E27-S03) | `key.rotated` | `api_key.rotate` | 201, 205 |
+| `account.disabled` | same (E27-S04) | none catalogued | — | 308, 316 |
+| `account.deleted` | same (E27-S04) | `account.removed` | — | 311 |
+| `account.disabled_by_policy` (system) | same (E27-T03, E27-T04) | `key.disabled_for_trading` | — | 126, 127, 128, 129, 132, 134, 212 |
+| none in the ticket | `security.key_policy_violation` (payload `{rule, key_id}`; E27-T03, E27-S02), or `account.tested` with a failed verdict (E27-T03) | `key.verification_failed` | — | 102–113, 119, 122, 123, 133, 204 |
+| none in the ticket | `account.key_revoked` (E27-S04) | `key.revoked` | `api_key.revoke` | 203, 301, 302, 303, 306, 311 |
+| none in the ticket | — | `key.retired` (system, at drain end) | — | 202 |
+| none in the ticket | — | `key.expiry_warning` | — | 116 |
+| `admin.secrets_policy_changed` (SCR-128) | same, payload `{key, before, after}` (E27-S03) | `setting.changed` | — | 210 |
+| `settings.change` (contract `setSubaccountTier`, 21 §3.9) | same (E42-T01) | `setting.changed` | — | 005, 014 |
+| `admin.key_marked_compromised` (SCR-128) | same (E27-S03) | none catalogued | — | 314 |
+| `health.diagnostics_exported` (`createSupportBundle`) | same (E04-S02) | none catalogued | — | 118 |
+| none in the ticket | — | `authz.denied` (a refused REST call) | `rbac.denied` | 008, 131, 206, 307, 312, 414, 418 |
+| none in the ticket | — | `authz.denied` (WS: a refused subscription) | `ws.subscribe.denied` | 312, 414 |
+| none in the ticket | — | `position.flattened` | — | 303 |
+| none in the ticket | `account.leverage_changed` (payload `{account, symbol, before, after}`; E27-S05) | none catalogued (US-ACCT-009 NFR) | — | 415 |
 
 ### 8.2 Metrics
 
@@ -566,13 +589,14 @@ are this plan's additions. Rules for every scenario:
 
 On `403 step_up_required`, call `POST /auth/step-up` with the password, a code from `totp_gen`
 (E09 plan §6.2) and the `challenge_id`, then re-send the held request unchanged (same body and
-`Idempotency-Key`). Key actions use the `keys` class, which has a 5-minute grace (only
-`live_enablement` and `killswitch` are no-grace classes), and the class of the account routes is
-not stated (§10 DC-19): a second action within 5 minutes may not be challenged again. Cases that
-assert the challenge (001, 206, 307, 315) therefore start from a session without a live grant:
-sign in fresh or let the grace expire. Driven through an `/admin/*` screen, they also start more
-than 5 minutes after the SCR-149 pass (§0), because nothing says whether that pass opens a grace;
-a missing challenge is then raised as needs-clarification against §10 DC-34, not passed.
+`Idempotency-Key`). Key actions use the `keys` class, which has a 5-minute grace (the contract's
+no-grace classes are `live_enablement`, `killswitch` and `backups`, `authStepUp`), and the class
+of the account routes is not stated (§10 DC-19): a second action within 5 minutes may not be
+challenged again. Cases that assert the challenge (001, 206, 307, 315) therefore start from a
+session without a live grant: sign in fresh or let the grace expire. Driven through an `/admin/*`
+screen, they also start more than 5 minutes after the SCR-149 pass (§0), because nothing says
+whether that pass opens a grace; a missing challenge is then raised as needs-clarification
+against §10 DC-34, not passed.
 
 ### 9.5 Clock control
 
@@ -589,13 +613,15 @@ move the application's clock. Second-scale cases (30 s, 60 s) may be stopwatched
 verification is younger than 1 h plus 15 min; a key past that window trips the whole system
 read-only, with a P1 alert, and E27-T03 may latch the trip until a restart whose start-up check
 passes. So after any advance longer than 1 h 15 min, and before asserting tradeability,
-"verified" or an alert count, a case re-establishes freshness: it waits until `LOG` shows a
-passing `query-api` call for every stored key made after the advance (or SCR-125's verification
-time moves past it) and, if the system is still read-only, restarts and waits for the start-up
-check the same way. Read-only and its alert between the advance and that check are expected, not
-a defect, and are not counted among the case's alerts. This applies to TC-130 step 4 and the key
-ages of TC-207 to TC-209; TC-212 restarts after its advance anyway, TC-132's advances stay inside
-the window, and an advance past 15 minutes also needs a new SCR-149 pass (§0).
+"verified" or an alert count, a case re-establishes freshness: it waits, for at most one
+self-check period after the advance (1 h plus the 1 min scheduler tolerance of TC-132, on the
+test clock), until `LOG` shows a passing `query-api` call for every stored key made after the
+advance (or SCR-125's verification time moves past it). If no such call appears in that period,
+or the system is still read-only, it restarts and waits for the start-up check the same way.
+Read-only and its alert between the advance and that check are expected, not a defect, and are
+not counted among the case's alerts. This applies to TC-130 step 4 and the key ages of TC-207 to
+TC-209; TC-212 restarts after its advance anyway, TC-132's advances stay inside the window, and
+an advance past 15 minutes also needs a new SCR-149 pass (§0).
 
 ### 9.6 Stub request log (#2893)
 
@@ -648,7 +674,7 @@ before E27-Q02 automates the affected cases.
 | DC-05 | Self-check cadence: hourly (C-12.2), every 6 h (US-ACCT-003 NFR, SR-031), nightly (`createApiKey`); the E27 threat model picks hourly (SR-E27-05) | C-12.2 | 126–129, 132 | new |
 | DC-06 | Rotation overlap: 15 min (US-ACCT-004), 900 s grace (21 §3.2.3), `overlap_seconds` default 300 (contract), 24 h (SR-035, ADR-0009 design item 5) | US-ACCT-004 | 201, 202 | #2417 |
 | DC-07 | US-ACCT-004 and US-ACCT-006 attempt a Bybit revoke or delete; the contract revokes locally only, and #2417 keeps that because a compliant key cannot delete itself at Bybit; the open-position choice is missing from the contract. `key_delete_5xx` is therefore exercised only as a negative guard: an outbound delete call is a deviation, not a pass branch | Contract (local only) | 202, 301, 304, 306 | #2417 |
-| DC-08 | Audit vocabulary differs between the ticket and screens (`account.*`), 04 §8.2 (`account.registered`, `key.*`, `authz.denied`), the audit route's examples (`key.rotate`) and the names registered today (E27 threat model §8.1: `accounts.create`, `api_key.import`, `api_key.rotate`, `api_key.revoke`, and `rbac.denied` and `ws.subscribe.denied` for denials; 04 §6.9 audits an admin-area denial as `admin.area_entered` with `outcome=denied` instead); no event exists for a leverage change, and the ticket's list has none for a revoke | §8.1 mapping: any name in the event's row | All with audit | new (SR-E27-09) |
+| DC-08 | Audit vocabulary differs between the ticket and screens (`account.*`), the implementing tickets (E27 threat model §8.1 and the tickets' audit lines: `account.key_imported` in E27-T03, `security.key_policy_violation` with `{rule, key_id}` in E27-T03 and E27-S02, `account.key_revoked` in E27-S04, `account.leverage_changed` and `account.margin_mode_changed` in E27-S05, `account.health_changed` in E27-T04), 04 §8.2 (`account.registered`, `key.*`, `authz.denied`), the audit route's examples (`key.rotate`) and the names registered today (E27 threat model §8.1: `accounts.create`, `api_key.import`, `api_key.rotate`, `api_key.revoke`, and `rbac.denied` and `ws.subscribe.denied` for denials; 04 §6.9 audits an admin-area denial as `admin.area_entered` with `outcome=denied` instead). 04 §8.2 catalogues no event for a leverage or margin-mode change, which only E27-S05 names, and the ticket's list has none for a revoke, which E27-S04 names `account.key_revoked` (04 §8.2: `key.revoked`) | §8.1 mapping: any name in the event's row | All with audit | new (SR-E27-09) |
 | DC-09 | The key-age policy (US-ACCT-005, SCR-128) has no documented route or setting; SR-037 sets 180 days for demo keys while the story assumes 90 | UI only; policy set explicitly | 207–212 | new |
 | DC-10 | SCR-129 makes delete irreversible and separate from disable; the contract's `DELETE` "marks it `disabled`"; 21 §3.2.1 soft-deletes | Observable outcome only | 308, 311 | new |
 | DC-11 | `validation_failed` is 400 in the registry but 422 in `UnprocessableEntity` and the `createApiKey` example; `createExchangeAccount`, `createApiKey` and `rotateApiKey` document 422, `updateExchangeAccount` documents neither. `createApiKey` documents no 429 although `exchange_rate_limited` is 429; `risk_limit_breached` is 403 in the registry but 422 in the `UnprocessableEntity` example. An order refused for account state is the order-entry gate's `403 trading_disabled` with a `reason` (`account_disabled_by_policy`, `no_active_key`, `account_unhealthy`; 24 §8.10), but no reason covers the system-wide read-only refusal, and a red account fits both `account_unhealthy` and `exchange_unavailable` (503, "Exchange connectivity lost (WS down and REST failing)"), which `placeOrder` documents | Each operation's documented status; the registry where none is documented; an order refused for account state: `403` with the code and any `reason` recorded; a red account: `403 trading_disabled` with `reason: account_unhealthy` or `503 exchange_unavailable`, recorded (§9.7) | 009, 011, 102–113, 123, 410, 417; every reference-order refusal (§9.7) | new |
@@ -659,7 +685,7 @@ before E27-Q02 automates the affected cases.
 | DC-16 | Duplicate-UID copy: "This UID is already registered as `<label>`" (US-ACCT-001) against "This Bybit UID is already connected as `'<label>'`." (SCR-126) | Message names the label | 003 | new |
 | DC-17 | Sub-account cap: US-ACCT-001 lets the owner acknowledge the cap and add a sixth; US-ADMIN-014 blocks the add at capacity; the contract rejects "the 6th" with `conflict` and has no acknowledgement field. `setSubaccountTier` says a recorded higher tier widens that local cap (`business_kyc`: 20), but nothing says which cap applies while the tier is unrecorded | Contract: `regular` 409 at the 6th, `business_kyc` 409 at the 21st, unrecorded 409 at the 6th (the unqualified text) | 005, 014, 015 | new |
 | DC-18 | SR-030 stores a failing credential "disabled with a blocking banner"; the contract, 30 §7.2 and the ticket never persist a rejected key | Contract | 102–113 | new |
-| DC-19 | 04 §7.2.1 requires step-up for `accounts:write` (SR-E27-02), but the `action_class` enum (`keys`, `users`, `live_enablement`, `killswitch`, `risk_caps`, `recorder`) has no class for account routes and the routes do not say which applies | 04 §7.2.1 | 001, 011, 308, 311 | new |
+| DC-19 | 04 §7.2.1 requires step-up for `accounts:write` (SR-E27-02), but the `authStepUp` `action_class` enum (`keys`, `users`, `live_enablement`, `killswitch`, `risk_caps`, `recorder`, `flags`, `audit`, `backups`) has no class for account routes and the routes do not say which applies | 04 §7.2.1 | 001, 011, 308, 311 | new |
 | DC-20 | `setUserAccountAccess` closes subscriptions with an `unsubscribed` frame that `23-ws-protocol.md` does not define; §9.5 uses `revoked` | 23 §9.5 | 301, 308, 312 | new |
 | DC-21 | Story references: SCR-129 cites US-ACCT-008 in its validation line (disable and delete are US-ACCT-006); SCR-126 cites `US-SEC-004`, and no SEC domain exists in 11; SCR-127 cites US-ACCT-003; the ticket cites 21 "§3.13", which is §3.1.3 | Story text | — | new |
 | DC-22 | CMP-034 is a "secret reveal" component with a reveal toggle, CMP-033 lists "API key display", and SCR-126 and SCR-127 use CMP-034, against US-ACCT-002's "no reveal control anywhere" | US-ACCT-002 | 118 | #2417 (reveal scope) |
