@@ -8363,7 +8363,7 @@ paths:
         download is a link that works once and expires 5 minutes after issue (E42-T05). Issuing
         needs a fresh `backups` step-up elevation. `backups` is a no-grace class
         (`NO_GRACE_ACTION_CLASSES` in `auth/step_up.py` and `statechart/bindings/b16_session.py`,
-        kept equal by `tests/xstate_contract/test_b16.py`; #2751 adds it to both), so each link
+        kept equal by `tests/xstate_contract/test_b16.py`), so each link
         spends one code; without one the route answers `403 step_up_required` with `action_class`
         set to `backups`. Issuing is audited as `backup.downloaded` with `after_state.stage: issued`
         at severity `error` before the response. The link appears only in this response body: access
@@ -8798,7 +8798,8 @@ paths:
                     value is `400`. Without a pending challenge it is required.
                     `audit` gates the audit-log export (`exportAuditLog`) and the download of
                     its file (`downloadAuditExport`); `backups` gates a backup restore
-                    (`restoreBackup`), one fresh code per restore.
+                    or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`,
+                    `deleteBackup`), one fresh code per action.
                   type: string
                   enum:
                     [

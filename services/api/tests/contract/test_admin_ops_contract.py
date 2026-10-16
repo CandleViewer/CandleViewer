@@ -226,7 +226,9 @@ def test_backup_actions_need_a_usable_backup_and_audit_at_severity_error() -> No
 
 def test_backups_is_a_no_grace_class_for_restore_download_and_delete_only() -> None:
     classes = _STEP_UP["requestBody"]["content"]["application/json"]["schema"]["properties"]
-    assert "backups" in classes["action_class"]["enum"]
+    klass = classes["action_class"]
+    assert "backups" in klass["enum"]
+    assert "`deleteBackup`), one fresh code per action" in text(klass["description"])
     step_up = text(_STEP_UP["description"])
     assert "`live_enablement`, `killswitch` and `backups` are no-grace" in step_up
     assert _RESTORE["summary"] == "Restore from a backup (owner, step-up `backups`)"
@@ -309,4 +311,6 @@ def test_docs_share_the_audit_vocabulary_and_the_backups_step_up() -> None:
     assert "✔(restore+delete step-up)" in sec and "✔(step-up: restore, delete, link)" in sec
     assert "(`live_enablement`/`killswitch`/`backups`: none, fresh code each time)" in internal
     assert "never embeds `str(exc)` or raw probe output" in internal
+    assert "registers the issue and delete routes in `DANGEROUS_ROUTES`, as restore is" in internal
+    assert "redact_text`, cut to 200 and 2000 characters" in _doc("21-database-schema.md")
     assert "There is no resolution text because nobody writes one" in _doc("21-database-schema.md")
