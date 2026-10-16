@@ -6,12 +6,18 @@ transaction (S3), whose hook refuses an unacknowledged unknown count (AC7) and w
 (C-2.9): `not_applied` if the store never reached its commit, `outcome_unknown` (no after state)
 if the commit itself failed, since a driver timeout or a cancellation there may have gone through.
 A retry does not settle that: if the commit landed, the revoked ids died with the exception and a
-repeat is AC5's no-op, which returns none (see `SqlAlchemyUserLifecycleStore.disable`). The
-post-commit steps (sockets, session sweep, B16 REVOKE, invite) are slice S4b's."""
+repeat is AC5's no-op, which returns none (see `SqlAlchemyUserLifecycleStore.disable`). Then, in a
+shielded tracked task, never rolled back: socket close (`bye user_disabled`, 4403), a sweep of any
+session still live after the transaction (defence in depth: a mint or a refresh refuses a disabled
+user, #2992, and `require_active` revokes a survivor, #3011), one B16 REVOKE per session (R5), an
+`invited` user's open invite (R6; the invite store writes its record ahead); each await bounded,
+all by a deadline. A repeat (AC5's no-op) re-runs only the sweep (and B16 for swept sessions). S5
+adds the rule disarm."""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -32,13 +38,18 @@ from candleviewer.admin.errors import (
 from candleviewer.admin.lifecycle_metrics import user_lifecycle_steps_total, user_lifecycle_total
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.auth.errors import InviteNotFound
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.invite_repository import InviteAudit
+from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import OwnerFloorError
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.auth.session_service import RevocationSink, publish_revoked
 from candleviewer.auth.step_up import PositionStateProvider
-from candleviewer.observability.context import current_request_id
+from candleviewer.observability.context import current_request_id, spawn
 from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.user_lifecycle import (
+    REVOKED_REASON,
     LifecycleAuditHook,
     UserSelfTargetError,
     UserStatusChange,
@@ -48,6 +59,7 @@ POSITIONS_DECISION: Final = "leave"  # O2: positions and orders stay as they are
 CLOSING_TIMEOUT_S: Final = 2.0  # bounds the closing record; the writer may still be slow
 NOT_APPLIED: Final = "not_applied"  # a closing record's reason: rolled back, nothing changed
 OUTCOME_UNKNOWN: Final = "outcome_unknown"  # ... or its commit failed and may have gone through
+STEPS: Final = ("socket_close", "session_sweep", "b16_revoke", "invite_revoke")
 _AUDIT_DOWN = (AuditError, RuntimeError)  # `AuditWriter` refusals; RuntimeError: not started
 
 
@@ -65,9 +77,26 @@ class OpenOrderCounter(Protocol):  # `None` while unknown (UL-F9: no order has a
     async def open_order_count(self, user_id: str) -> int | None: ...
 
 
+class SessionSweeper(Protocol):  # `SessionService`: revokes and publishes each live session
+    async def revoke_all(self, user_id: str, *, reason: str) -> tuple[SessionRecord, ...]: ...
+
+
+class SessionRows(Protocol):  # `SessionRepository`
+    async def find_by_id(self, session_id: str) -> SessionRecord | None: ...
+
+
+class SessionRevokeRecorder(Protocol):  # the process's B16 charts: `StepUpService.chart`
+    async def revoke(self, record: SessionRecord, now: datetime, reason: str) -> None: ...
+
+
+class InviteRevoker(Protocol):  # `InviteService`: `audit` runs only if one is open (#2793)
+    async def revoke(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class DisableResult:  # `changed` is False for AC5's no-op
     changed: bool
+    failed_steps: tuple[str, ...] = ()
 
 
 class _AuditRefusedError(Exception):
@@ -153,14 +182,25 @@ class UserDisableService:
         *,
         positions: PositionStateProvider,
         orders: OpenOrderCounter,
+        sessions: SessionSweeper,
+        session_rows: SessionRows,
+        chart: SessionRevokeRecorder,
+        publish_revocation: RevocationSink,
+        invites: InviteRevoker,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         count_timeout_s: float = 2.0,  # bounds each count read: a timeout is unknown (AC7)
         closing_timeout_s: float = CLOSING_TIMEOUT_S,
+        step_timeout_s: float = 2.0,  # bounds each await after the commit (R7)
+        deadline_s: float = 5.0,  # bounds all of them: US-ADMIN-001's 5 s
     ) -> None:
         self._store, self._audit, self._clock = store, audit, clock
         self._positions, self._orders = positions, orders
         self._count_timeout_s = count_timeout_s
-        self._closing_timeout_s = closing_timeout_s
+        self._sessions, self._rows, self._chart = sessions, session_rows, chart
+        self._publish, self._invites = publish_revocation, invites
+        self._closing_timeout_s, self._step_timeout_s = closing_timeout_s, step_timeout_s
+        self._deadline_s = deadline_s
+        self._cascades: set[asyncio.Task[tuple[str, ...]]] = set()  # tracked: see `drain`
 
     async def disable(
         self,
@@ -171,7 +211,8 @@ class UserDisableService:
     ) -> DisableResult:
         """Raises a `UserLifecycleError` with nothing changed, or a store failure: rolled back,
         unless the commit itself failed, whose outcome is unknown: if it landed, a retry does not
-        settle it, since AC5's no-op returns no ids (see `SqlAlchemyUserLifecycleStore.disable`)."""
+        settle it, since AC5's no-op returns no ids (see `SqlAlchemyUserLifecycleStore.disable`).
+        A caller cancelled after the commit leaves the steps to finish in their task (R7)."""
         rid, now, uid = _request_uuid(), self._clock(), str(user_id)
         await self._guard(user_id, actor, rid)
         bound = self._count_timeout_s
@@ -189,7 +230,22 @@ class UserDisableService:
             raise self._refused("not_found", UserNotFoundError(uid))
         result = "disabled" if change.changed else "noop"  # a no-op writes no record (AC5)
         user_lifecycle_total.labels(action="disable", result=result).inc()
-        return DisableResult(change.changed)
+        task = spawn(self._cascade(change, actor.user_id, rid, now), name="user-disable-steps")
+        self._cascades.add(task)
+        task.add_done_callback(self._untrack)
+        return DisableResult(change.changed, await asyncio.shield(task))
+
+    def _untrack(self, task: asyncio.Task[tuple[str, ...]]) -> None:
+        """A raise is logged here too: once the caller is cancelled, no one awaits the task."""
+        self._cascades.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            with contextlib.suppress(Exception):  # a log sink must not raise out of a callback
+                _log().error("users.disable.steps_failed", error=type(exc).__name__, exc_info=exc)
+
+    async def drain(self) -> None:
+        """Shutdown: wait for the steps still in flight; each run ends by its deadline."""
+        if self._cascades:
+            await asyncio.wait(set(self._cascades))
 
     async def _guard(
         self, user_id: uuid.UUID, actor: PrincipalSnapshot, rid: uuid.UUID | None
@@ -289,6 +345,69 @@ class UserDisableService:
         )
         await tally.run(record)
         self._step("closing_record", tally, who["object_id"])
+
+    async def _cascade(
+        self, change: UserStatusChange, actor: uuid.UUID, rid: uuid.UUID | None, now: datetime
+    ) -> tuple[str, ...]:
+        """R7: each await bounded, all by the deadline. Each step gets a callable, so a port that
+        raises before it returns an awaitable fails its own step and the rest still run. A step
+        cut off (the deadline, a raise outside a step, a cancellation) is failed, not skipped. No
+        `Exception` reaches the caller after the commit; a cancellation (a non-`Exception`) is
+        re-raised once counted."""
+        user, t = change.user_id, {name: _Tally(self._step_timeout_s) for name in STEPS}
+        logged: list[str] = []
+
+        def log(name: str) -> None:
+            self._step(name, t[name], user)
+            logged.append(name)
+
+        async def publish(session_id: str, reason: str) -> None:  # isolated per session
+            await t["socket_close"].run(partial(self._publish, session_id, reason))
+
+        try:
+            async with asyncio.timeout(self._deadline_s):
+                await publish_revoked(publish, map(str, change.revoked_session_ids), REVOKED_REASON)
+                log("socket_close")
+                sweep = partial(self._sessions.revoke_all, str(user), reason=REVOKED_REASON)
+                swept: tuple[SessionRecord, ...] = await t["session_sweep"].run(sweep) or ()
+                log("session_sweep")
+                revoked: list[uuid.UUID | SessionRecord] = [*change.revoked_session_ids, *swept]
+                for session in revoked:
+                    await t["b16_revoke"].run(partial(self._record_revoke, session, now))
+                log("b16_revoke")
+                if change.before == "invited":
+                    await t["invite_revoke"].run(partial(self._revoke_invite, user, actor, rid))
+                log("invite_revoke")
+        except BaseException as exc:  # every step not yet logged is failed, whatever cut it off
+            for name in (n for n in STEPS if n not in logged):
+                if name != "invite_revoke" or change.before == "invited":  # else nothing to do
+                    t[name].failures, t[name].error = t[name].failures + 1, type(exc).__name__
+                log(name)
+            if not isinstance(exc, Exception):  # a cancellation (shutdown) reaches the caller
+                raise
+        return tuple(name for name in STEPS if t[name].failures)
+
+    async def _record_revoke(self, session: uuid.UUID | SessionRecord, now: datetime) -> None:
+        """One B16 REVOKE; its action writes `auth.session_revoked` (R5)."""
+        if isinstance(session, SessionRecord):
+            record: SessionRecord | None = session
+        else:
+            record = await self._rows.find_by_id(str(session))
+        if record is None:
+            raise LookupError("revoked session row not found")
+        await self._chart.revoke(record, now, REVOKED_REASON)
+
+    async def _revoke_invite(
+        self, user_id: uuid.UUID, actor: uuid.UUID, rid: uuid.UUID | None
+    ) -> None:
+        """R6: the invite store writes the record ahead (C-2.9), only for an open invite."""
+
+        async def write_ahead(_: uuid.UUID, role: str) -> None:
+            fields = {"after_state": {"role": role}, "reason": REVOKED_REASON}
+            await self._audit.emit("users.invite_revoked", **_who(actor, user_id, rid), **fields)
+
+        with contextlib.suppress(InviteNotFound):
+            await self._invites.revoke(user_id, audit=write_ahead)
 
     def _refused(self, result: str, error: UserLifecycleError) -> UserLifecycleError:
         user_lifecycle_total.labels(action="disable", result=result).inc()
