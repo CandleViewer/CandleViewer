@@ -145,6 +145,25 @@ def test_promtool_cases_cover_every_new_page_rule() -> None:
     assert page - {"BybitClockDriftCritical"} <= covered
 
 
+#: The child routes by their whole matcher list (see `_routes_by_matchers`).
+PAGE_ROUTE = ('severity = "page"',)
+EVENT_PAGE_ROUTE = ('severity = "page"', 'resolves = "window"')
+TICKET_ROUTE = ('severity = "ticket"',)
+
+
+def _routes_by_matchers(
+    routes: list[dict[str, Any]] | None = None,
+) -> dict[tuple[str, ...], dict[str, Any]]:
+    """The child routes keyed by their whole matcher list. The event route (#2931) shares its
+    first matcher with the generic page route, so keying on `matchers[0]` keeps whichever is
+    listed last, and a reorder would make a test check the other route without failing.
+    `routes` replaces the configured child routes, to show what a different order would do."""
+    listed = AM["route"]["routes"] if routes is None else routes
+    by = {tuple(route["matchers"]): route for route in listed}
+    assert len(by) == len(listed), "two child routes have the same matchers"
+    return by
+
+
 def test_grouping_and_repeat_intervals() -> None:
     r = AM["route"]
     assert r["group_by"] == ["alertname", "component", "env"]
@@ -153,15 +172,32 @@ def test_grouping_and_repeat_intervals() -> None:
         "5m",
         "4h",
     )
-    by = {x["matchers"][0]: x for x in r["routes"]}
-    assert by['severity = "page"']["repeat_interval"] == "30m"
+    assert _routes_by_matchers()[PAGE_ROUTE]["repeat_interval"] == "30m"
 
 
 def test_page_bypasses_quiet_hours_ticket_muted() -> None:
-    by = {x["matchers"][0]: x for x in AM["route"]["routes"]}
-    assert "mute_time_intervals" not in by['severity = "page"']
-    assert by['severity = "ticket"']["mute_time_intervals"] == ["quiet_hours"]
+    by = _routes_by_matchers()
+    assert "mute_time_intervals" not in by[PAGE_ROUTE]
+    assert by[TICKET_ROUTE]["mute_time_intervals"] == ["quiet_hours"]
     assert {t["name"] for t in AM["time_intervals"]} == {"quiet_hours"}
+
+
+def test_route_lookup_by_matchers_does_not_depend_on_route_order() -> None:
+    """#2931 review: the generic page route is found by its whole matcher list, so listing the
+    event route after it (which `test_event_route_is_listed_before_the_generic_page_route`
+    rejects on its own) cannot make the two tests above check the wrong route."""
+    routes = AM["route"]["routes"]
+    for order in (routes, list(reversed(routes))):
+        by = _routes_by_matchers(order)
+        assert by[PAGE_ROUTE]["receiver"] == "page"
+        assert by[EVENT_PAGE_ROUTE]["receiver"] == "page_event"
+
+
+def test_route_lookup_by_matchers_refuses_two_routes_with_the_same_matchers() -> None:
+    """A duplicated matcher list would silently drop one route from the lookup."""
+    duplicated = [*AM["route"]["routes"], dict(AM["route"]["routes"][-1])]
+    with pytest.raises(AssertionError, match="same matchers"):
+        _routes_by_matchers(duplicated)
 
 
 def test_receivers_exist_and_no_inline_secret() -> None:
@@ -341,6 +377,18 @@ def _slack(receiver: str) -> dict[str, Any]:
     return dict(config)
 
 
+def _receiver_without_resolved(name: str) -> dict[str, Any]:
+    """A receiver as configured, minus its name and `send_resolved`, the one setting the event
+    receiver is meant to change. Every other key, at either level, is kept."""
+    receiver = next(r for r in AM["receivers"] if r["name"] == name)
+    out = {key: value for key, value in receiver.items() if key != "name"}
+    out["slack_configs"] = [
+        {key: value for key, value in config.items() if key != "send_resolved"}
+        for config in receiver["slack_configs"]
+    ]
+    return out
+
+
 def _matches(matcher: str, labels: dict[str, str]) -> bool:
     """Whether one Alertmanager matcher (`=`, `!=`, `=~`, `!~`) holds for `labels`."""
     parsed = re.fullmatch(r'(\w+)\s*(=~|!~|!=|=)\s*"([^"]*)"', matcher)
@@ -371,9 +419,11 @@ def test_event_type_page_rules_carry_the_resolves_window_label() -> None:
 def test_event_type_page_goes_to_the_page_channel_without_a_resolved_message() -> None:
     """#2931: the firing page still reaches the Owner on the page webhook, with the same
     payload template and the same quiet-hours bypass and repeat as every page (SR-022). Only
-    the [RESOLVED] message is gone."""
-    page, event = _slack("page"), _slack("page_event")
-    generic = next(r for r in AM["route"]["routes"] if r["matchers"] == ['severity = "page"'])
+    the [RESOLVED] message is gone. The whole receiver is compared bar `send_resolved`, so a
+    key added to `page` later (a channel, an http_config, a second sink) has to be mirrored,
+    and the route sets nothing but its receiver, matchers and repeat."""
+    by = _routes_by_matchers()
+    generic, event_route = by[PAGE_ROUTE], by[EVENT_PAGE_ROUTE]
     event_rules = [r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES]
     assert {r["alert"] for r in event_rules} == EVENT_TYPE_PAGES
     for rule in event_rules:
@@ -381,9 +431,9 @@ def test_event_type_page_goes_to_the_page_channel_without_a_resolved_message() -
         assert route["receiver"] == "page_event"
         assert "mute_time_intervals" not in route
         assert route["repeat_interval"] == generic["repeat_interval"]
-    assert event["send_resolved"] is False
-    assert event["api_url_file"] == page["api_url_file"]
-    assert (event["title"], event["text"]) == (page["title"], page["text"])
+    assert set(event_route) == {"matchers", "receiver", "repeat_interval"}
+    assert _slack("page_event")["send_resolved"] is False
+    assert _receiver_without_resolved("page_event") == _receiver_without_resolved("page")
 
 
 def test_condition_pages_keep_their_resolved_notification() -> None:
