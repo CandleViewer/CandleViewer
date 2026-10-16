@@ -1775,7 +1775,7 @@ incidents = Table(
     CheckConstraint("occurrences >= 1", name="inc_count"),
     CheckConstraint("last_seen_at >= first_seen_at", name="inc_seen"),
     CheckConstraint("status <> 'acknowledged' OR acknowledged_at IS NOT NULL", name="inc_ack"),
-    CheckConstraint("status <> 'resolved' OR resolved_at IS NOT NULL", name="inc_resolved"),
+    CheckConstraint("(status = 'resolved') = (resolved_at IS NOT NULL)", name="inc_resolved"),
     Index("ux_incidents_group", "component", "signature", unique=True),
     Index("ix_incidents_seen", text("last_seen_at DESC")),
     Index("ix_incidents_status_seen", "status", text("last_seen_at DESC")),
@@ -1794,8 +1794,8 @@ backups = Table(
         "encryption_ref",
         Text,
         comment=(
-            "SECRET: keyring handle of the backup encryption key (21 Sec.12); "
-            "never returned by any API, never logged"
+            "SECRET: opaque keyring alias of the backup encryption key, never key material "
+            "(21 Sec.12); never returned by any API, never logged"
         ),
     ),
     Column("covers_from", TIMESTAMP(timezone=True)),
@@ -1811,6 +1811,7 @@ backups = Table(
     Column("triggered_by_user", ForeignKey("users.id", ondelete="SET NULL")),
     Column("started_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("finished_at", TIMESTAMP(timezone=True)),
+    Column("retention_until", TIMESTAMP(timezone=True)),
     CheckConstraint(
         "triggered_by IN ('schedule','manual','pre_migration','pre_release','pre_restore')",
         name="bk_trigger",

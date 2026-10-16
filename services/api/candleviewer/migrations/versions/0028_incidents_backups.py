@@ -6,11 +6,12 @@ Create Date: 2026-10-16
 
 Purely additive (C-5.1). `incidents` is `docs/plan/21-database-schema.md` Sec.3.10.2a verbatim
 (the incident read model behind `GET /admin/incidents`, new with E42-T05) and `backups` is
-Sec.3.10.3 verbatim (the register's `0012_governance` row). `backup_kind` and `backup_status`
-(Sec.1.2) had no earlier owner, so they are created here; `severity` comes from 0003.
+Sec.3.10.3 verbatim plus `retention_until` (added in the E42-T05 review: the `Backup` contract
+returns it and `kind` + `started_at` cannot derive it). `backup_kind` and `backup_status` (Sec.1.2)
+had no earlier owner, so they are created here; `severity` comes from 0003.
 
-* `backups.encryption_ref` is class S (Sec.12, C-5.9) and carries the `SECRET:` column comment
-  the model mirrors verbatim. No seed, trigger or GRANT (`pg_bootstrap.sql` default privileges).
+* `backups.encryption_ref` is class S (Sec.12, C-5.9): an opaque keyring alias, never key material;
+  the model mirrors its `SECRET:` comment verbatim. No seed, trigger or GRANT (`pg_bootstrap.sql`).
 * `SET LOCAL lock_timeout = '5s'` brackets both directions (0019/0022/0025 pattern, C-5.6): the
   FKs lock `users` on the way in and the drops on the way out, so each wait is bounded.
 * Downgrade locks both tables, refuses while either holds rows, then drops tables and types.
@@ -72,7 +73,7 @@ CREATE TABLE incidents (
   CONSTRAINT inc_count     CHECK (occurrences >= 1),
   CONSTRAINT inc_seen      CHECK (last_seen_at >= first_seen_at),
   CONSTRAINT inc_ack       CHECK (status <> 'acknowledged' OR acknowledged_at IS NOT NULL),
-  CONSTRAINT inc_resolved  CHECK (status <> 'resolved' OR resolved_at IS NOT NULL)
+  CONSTRAINT inc_resolved  CHECK ((status = 'resolved') = (resolved_at IS NOT NULL))
 );
 CREATE UNIQUE INDEX ux_incidents_group ON incidents (component, signature);
 CREATE INDEX ix_incidents_seen        ON incidents (last_seen_at DESC);
@@ -96,13 +97,14 @@ CREATE TABLE backups (
   wal_end_lsn    text,
   duration_ms    integer,
   verified_at    timestamptz,
-  verify_method  text,             -- 'restore_smoke' | 'checksum' | 'pg_verifybackup'
+  verify_method  text,             -- 'restore_smoke' | 'checksum' | 'pg_verifybackup' | 'duckdb_scan'
   restored_at    timestamptz,
   error_message  text,
-  triggered_by   text NOT NULL DEFAULT 'schedule',  -- schedule | manual | pre_migration | pre_release
+  triggered_by   text NOT NULL DEFAULT 'schedule',  -- schedule | manual | pre_migration | pre_release | pre_restore
   triggered_by_user uuid REFERENCES users(id) ON DELETE SET NULL,
   started_at     timestamptz NOT NULL DEFAULT now(),
   finished_at    timestamptz,
+  retention_until timestamptz,     -- artefact prunable after this; set by the backup engine
   CONSTRAINT bk_trigger CHECK (triggered_by IN ('schedule','manual','pre_migration','pre_release','pre_restore')),
   CONSTRAINT bk_verify  CHECK (verify_method IS NULL OR verify_method IN ('restore_smoke','checksum','pg_verifybackup','duckdb_scan'))
 );
@@ -112,7 +114,7 @@ CREATE INDEX ix_backups_failed    ON backups (started_at DESC) WHERE status = 'f
 
 # C-5.9 / Sec.12: the classification declaration. Keep byte-identical to `models.backups`.
 _COMMENT_SQL = """
-COMMENT ON COLUMN backups.encryption_ref IS 'SECRET: keyring handle of the backup encryption key (21 Sec.12); never returned by any API, never logged';
+COMMENT ON COLUMN backups.encryption_ref IS 'SECRET: opaque keyring alias of the backup encryption key, never key material (21 Sec.12); never returned by any API, never logged';
 """
 
 _DOWNGRADE_SQL = """

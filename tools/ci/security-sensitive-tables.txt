@@ -8,3 +8,4 @@
 api_keys
 exchange_accounts
 account_profiles
+backups

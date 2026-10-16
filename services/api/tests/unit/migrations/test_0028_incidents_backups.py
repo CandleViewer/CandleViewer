@@ -27,7 +27,7 @@ _STATUSES = ("running", "ok", "failed", "verified", "restored")
 
 
 def _alembic(*args: str) -> str:
-    r = subprocess.run(  # noqa: S603 -- fixed argv, literal alembic subcommands, no shell
+    r = subprocess.run(  # noqa: S603 -- fixed argv, literal alembic subcommands, no shell (#966)
         [sys.executable, "-m", "alembic", *args],
         cwd=_ROOT, env={**os.environ}, capture_output=True, text=True, timeout=60,
     )  # fmt: skip
@@ -92,7 +92,7 @@ def test_upgrade_tags_encryption_ref_as_secret_per_classification() -> None:
     """C-5.9 / 21 Sec.12: `backups.encryption_ref` is class S; the comment is the declaration and
     the model mirrors it verbatim (`alembic check` diffs column comments too)."""
     comment = models.backups.c.encryption_ref.comment
-    assert comment is not None and comment.startswith("SECRET:")
+    assert comment is not None and comment.startswith("SECRET:") and "key material" in comment
     assert f"COMMENT ON COLUMN backups.encryption_ref IS '{comment}';" in _up()
     assert [c.name for c in models.backups.columns if c.comment] == ["encryption_ref"]
     assert not [c.name for c in models.incidents.columns if c.comment]

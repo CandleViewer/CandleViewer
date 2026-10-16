@@ -37,7 +37,7 @@ Conn = psycopg.Connection[tuple[Any, ...]]
 
 def _alembic(dsn: str, *args: str) -> subprocess.CompletedProcess[str]:
     """Bounded, so a lost `lock_timeout` fails the test instead of hanging it."""
-    return subprocess.run(  # noqa: S603 -- fixed argv, literal alembic subcommands, no shell
+    return subprocess.run(  # noqa: S603 -- fixed argv, literal alembic subcommands, no shell (#966)
         [sys.executable, "-m", "alembic", *args],
         cwd=_ROOT,
         env={**os.environ, "CV_PG_DSN": dsn.replace("postgresql+asyncpg", "postgresql+psycopg")},
@@ -253,28 +253,17 @@ def test_a_held_users_lock_makes_either_direction_give_up(
         pytest.param({"last_seen_at": _NOW - timedelta(seconds=1)}, "inc_seen", id="seen-order"),
         pytest.param({"status": "acknowledged"}, "inc_ack", id="ack-without-time"),
         pytest.param({"status": "resolved"}, "inc_resolved", id="resolved-without-time"),
-    ],
-)
-def test_invalid_incident_is_rejected_by_its_named_constraint(
-    pg_dsn: str, cols: dict[str, object], constraint: str
-) -> None:
-    with _conn(pg_dsn) as c, pytest.raises(pgerr.CheckViolation) as exc:
-        _incident(c, **cols)
-    assert exc.value.diag.constraint_name == constraint
-
-
-@pytest.mark.parametrize(
-    ("cols", "constraint"),
-    [
+        pytest.param({"resolved_at": _NOW}, "inc_resolved", id="resolved-time-while-open"),
         pytest.param({"triggered_by": "cron"}, "bk_trigger", id="trigger-unknown"),
         pytest.param({"verify_method": "eyeball"}, "bk_verify", id="verify-unknown"),
     ],
 )
-def test_invalid_backup_is_rejected_by_its_named_constraint(
+def test_invalid_row_is_rejected_by_its_named_constraint(
     pg_dsn: str, cols: dict[str, object], constraint: str
 ) -> None:
+    insert = _incident if constraint.startswith("inc_") else _backup
     with _conn(pg_dsn) as c, pytest.raises(pgerr.CheckViolation) as exc:
-        _backup(c, **cols)
+        insert(c, **cols)
     assert exc.value.diag.constraint_name == constraint
 
 
@@ -287,11 +276,11 @@ def test_the_plan_defaults_apply(pg_dsn: str) -> None:
         ).fetchone()
         assert incident == ("open", 1, None, None)
         backup = c.execute(
-            "SELECT status, encrypted, triggered_by, started_at <= now() FROM backups "
-            "WHERE id = %s",
+            "SELECT status, encrypted, triggered_by, started_at <= now(), retention_until "
+            "FROM backups WHERE id = %s",
             (bid,),
         ).fetchone()
-        assert backup == ("running", True, "schedule", True)
+        assert backup == ("running", True, "schedule", True, None)
         assert _incident(c, status="acknowledged", acknowledged_at=_NOW, severity="critical")
         assert _incident(c, status="resolved", resolved_at=_NOW)
 
