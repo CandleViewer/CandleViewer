@@ -86,7 +86,7 @@ def test_gateway_authenticated_socket_unsub_ok() -> None:
         _hello(ws)
         ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "ok"}})
         assert ws.receive_json()["t"] == "auth_ok"
-        ws.send_json({"t": "unsub", "id": "u", "p": {"topics": ["book.X", 3]}})
+        ws.send_json({"t": "unsub", "id": "u", "p": {"topics": ["book.X"]}})
         assert ws.receive_json()["t"] == "unsub_ok"
 
 

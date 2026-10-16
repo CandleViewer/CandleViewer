@@ -382,7 +382,7 @@ def test_failed_reauth_keeps_prior_identity_until_it_expires(world: _World) -> N
         _hello(ws)
         _auth(ws)
         assert _auth(ws, "bad")["p"]["code"] == "auth_failed"
-        ws.send_json({"t": "unsub", "id": "u", "p": {"topics": []}})
+        ws.send_json({"t": "unsub", "id": "u", "p": {"topics": ["book.BTCUSDT.50"]}})
         assert _recv(ws)["t"] == "unsub_ok"  # still authenticated
         _advance(ws, world, TOKEN_TTL_S - 1.0)
         world.clock.now = float(TOKEN_TTL_S)
