@@ -66,6 +66,6 @@ Negative / risks:
 - Chaos suite (`03-testing-strategy.md`): kill the process mid-submission, drop the private WS for 60 s, inject 10018 and 10002, replay duplicate acks — in every case, no duplicate position and no unmanaged order.
 - Contract tests against recorded Bybit fixtures for every state transition.
 
-## Amendment 1 (2026-10-16, E29-T02 #846)
+## Amendment 1 (2026-10-16, E29-T02 #846; decision owner-delegated per #1778, interim, owner veto on #2701)
 
-Refines binding rule 1; does not reverse it (orchestrator ruling B2 on #846). The `orderLinkId` format is defined only in `docs/plan/24-internal-schemas.md` §8.3, its owner under C-16.5, and that scheme replaces the `{group_id}-{account_short}-{seq}` shape in rule 1. Generating the id before the first send and reusing it unchanged on every retry are unchanged.
+Refines binding rule 1; does not reverse it ([orchestrator ruling B2 on #846](https://github.com/basiltt/CandleViewer/issues/846#issuecomment-6204432470)). The `orderLinkId` format is defined only in `docs/plan/24-internal-schemas.md` §8.3, its owner under C-16.5, and that scheme replaces the `{group_id}-{account_short}-{seq}` shape in rule 1. Generating the id before the first send and reusing it unchanged on every retry are unchanged.
