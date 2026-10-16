@@ -8,9 +8,11 @@ Owner scoping (C-12.4): every method takes the caller's `owner` and the implemen
 re-checks it in SQL. The router's RBAC check is the first line of defence; the data-layer
 filter means a router bug can never read or write another user's drawing.
 
-No existence oracle: a missing row, a soft-deleted row and another owner's row are
+No existence oracle on the wire: a missing row, a soft-deleted row and another owner's row are
 indistinguishable to the caller (`DrawingNotFoundError`, `target_unavailable`,
-`id_unavailable`), so ids cannot be probed for existence across users.
+`id_unavailable`), so ids cannot be probed for existence across users. At this layer a batch
+update/delete aimed at a foreign or missing id reports the internal `target_not_owned` (see
+`BATCH_RULES`), which the API audits and maps to the wire `target_unavailable`.
 """
 
 from __future__ import annotations

@@ -269,9 +269,11 @@ class _Session:
     def __init__(self, script: list[list[dict[str, object]]]) -> None:
         self._script = script
         self.statements: list[str] = []
+        self.params: list[dict[str, Any]] = []
 
     async def execute(self, stmt: sa.TextClause, params: dict[str, Any]) -> _Result:
         self.statements.append(str(stmt)[:20])
+        self.params.append(params)
         return _Result(self._script.pop(0))
 
 
@@ -298,9 +300,9 @@ class _Rel:
         return self.uow
 
 
-def _snap_row(i: str) -> dict[str, object]:
-    return {"id": i, "owner_user_id": "o", "symbol": "BTCUSDT", "tool": "trendline",
-            "deleted_at": None, "updated_at": _T}  # fmt: skip
+def _snap_row(i: str) -> dict[str, object]:  # the columns of `_SNAPSHOT`: the caller's rows only
+    return {"id": i, "symbol": "BTCUSDT", "tool": "trendline", "deleted_at": None,
+            "updated_at": _T}  # fmt: skip
 
 
 async def _run(script: list[list[dict[str, object]]], ops: list[Any]) -> tuple[_Rel, BatchOpFailed]:
@@ -333,6 +335,31 @@ async def test_batch_delete_returning_fewer_ids_is_target_unavailable_at_the_mis
     script = [[_snap_row("d1"), _snap_row("d2")], [{"id": "d2"}]]
     rel, err = await _run(script, ops)
     assert (err.index, err.rule) == (0, "target_unavailable")
+    assert rel.uow.commits == 0
+
+
+async def test_the_snapshot_is_taken_for_the_caller_alone() -> None:
+    rel, err = await _run([[]], [UpdateOp("u", _T, _fields())])
+    assert rel.uow.session.params == [{"ids": ["u"], "owner": "o"}]  # the lock stays on own rows
+    assert (err.index, err.rule) == (0, "target_not_owned")  # absent from it: foreign or missing
+    assert rel.uow.session.statements == [str(_STATEMENTS["_SNAPSHOT"])[:20]]  # and nothing else
+    assert rel.uow.commits == 0
+
+
+@pytest.mark.parametrize("kind", ["update", "delete"])
+@pytest.mark.parametrize(
+    ("in_snapshot", "rule"), [(True, "target_unavailable"), (False, "target_not_owned")]
+)
+async def test_only_a_target_missing_from_the_snapshot_is_not_owned(
+    kind: str, in_snapshot: bool, rule: str
+) -> None:
+    """R3/R4: a write that finds no row for a target the caller's snapshot holds fails closed as
+    the caller's own `target_unavailable`. The API audits `target_not_owned` as a cross-owner
+    probe, so relabelling either branch would audit the caller's own row."""
+    op = UpdateOp("t", _T, _fields()) if kind == "update" else DeleteOp("t", _T)
+    script: list[list[dict[str, object]]] = [[_snap_row("t")] if in_snapshot else [], []]
+    rel, err = await _run(script, [op])
+    assert (err.index, err.rule) == (0, rule)
     assert rel.uow.commits == 0
 
 

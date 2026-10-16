@@ -243,9 +243,13 @@ def _rows_param(rows: list[dict[str, Any]]) -> str:
 
 
 def _first_failure(
-    owner: str, ops: Sequence[BatchOp], snap: Mapping[str, Mapping[str, Any]]
+    ops: Sequence[BatchOp], snap: Mapping[str, Mapping[str, Any]]
 ) -> tuple[int, str] | None:
     """First `(index, rule)` a batch hits against the locked snapshot, in operation order.
+
+    `snap` holds only the caller's own rows, live or soft-deleted (`_SNAPSHOT` is owner-scoped),
+    so an update/delete target absent from it is another owner's or missing: `target_not_owned`,
+    which nothing tells apart. The caller's own soft-deleted row is `target_unavailable`.
 
     Pure: the per-op rules the repository always applied, plus the write-time outcomes the old
     one-statement-per-op loop produced when an id repeats (the bulk statements would otherwise
@@ -263,7 +267,9 @@ def _first_failure(
                 return i, "id_unavailable"
             created.add(op.id)
             continue
-        if existing is None or existing["owner_user_id"] != owner or existing["deleted_at"]:
+        if existing is None:  # another owner's row or none at all: told apart by nothing
+            return i, "target_not_owned"
+        if existing["deleted_at"]:
             return i, "target_unavailable"
         if existing["updated_at"] != op.if_match:
             return i, "version_conflict"
@@ -390,13 +396,10 @@ class SqlAlchemyDrawingRepository:
             (i, op) for i, op in enumerate(ops) if isinstance(op, DeleteOp)
         ]
         async with self._relational.unit_of_work() as uow:
-            snap: dict[str, Mapping[str, Any]] = {
-                r["id"]: dict(r)
-                for r in (
-                    await uow.session.execute(_SNAPSHOT, {"ids": [op.id for op in ops]})
-                ).mappings()
-            }
-            failure = _first_failure(owner, ops, snap)
+            ids = [op.id for op in ops]
+            locked = await uow.session.execute(_SNAPSHOT, {"ids": ids, "owner": owner})
+            snap: dict[str, Mapping[str, Any]] = {r["id"]: dict(r) for r in locked.mappings()}
+            failure = _first_failure(ops, snap)  # `snap` is the caller's own rows only
             # Creates before the first snapshot failure are inserted too, so a concurrent PK
             # collision at an earlier index still wins, exactly as in operation order.
             limit = failure[0] if failure is not None else len(ops)
