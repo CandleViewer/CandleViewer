@@ -14,6 +14,7 @@ from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.admin.overview.fanout import (
+    _REASON_MAX,
     DEFAULT_BUDGET_S,
     Degraded,
     PartFailed,
@@ -382,8 +383,9 @@ class Corrupt(PartFailed):
         (Corrupt(), ("error", "part: unrecognised value", "part:Corrupt")),
         (OSError("postgresql://u:hunter2@db/x"), ("error", "part: source failed", "part:OSError")),
         (asyncio.CancelledError(), ("error", "part: source failed", "part:CancelledError")),
+        (TimeoutError(), ("error", "part: source failed", "part:TimeoutError")),
     ],
-    ids=["unavailable", "fixed-detail", "class-only-reason", "stray-cancel"],
+    ids=["unavailable", "fixed-detail", "class-only-reason", "stray-cancel", "own-timeout"],
 )
 async def test_read_part_maps_a_failure_to_a_fixed_problem(
     raised: BaseException, problem: tuple[str, str, str]
@@ -405,7 +407,7 @@ def test_combine_prefers_the_error_and_joins_every_reason() -> None:
         1, "error", "b: source failed", "a:unwired--b:OSError"
     )
     long: Problem = ("error", "x: source failed", "x:" + "E" * 70)
-    assert len(combine(1, [long, long]).reason) == 80  # type: ignore[union-attr]  # Degraded here
+    assert len(combine(1, [long, long]).reason) == _REASON_MAX  # type: ignore[union-attr]  # Degraded here
 
 
 async def test_read_part_lets_a_real_cancellation_through() -> None:

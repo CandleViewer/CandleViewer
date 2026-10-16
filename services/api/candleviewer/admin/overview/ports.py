@@ -42,6 +42,14 @@ class CountsPort(Protocol):
         """Distinct (component, kind) of unresolved `error`/`critical` system events."""
 
 
+class SubaccountPort(Protocol):
+    """Bound to the process environment at construction (C-2.11): demo or testnet sub-accounts
+    never count against a live cap, and the reverse."""
+
+    async def subaccounts_in_use(self) -> int:
+        """Most non-deleted sub-accounts under any one main account (the cap is per main)."""
+
+
 @dataclass(frozen=True, slots=True)
 class RecorderStatus:
     symbols_recording: int
@@ -56,18 +64,31 @@ class SymbolStorage:
     #: `None` until the recorder has a measured growth fit for this symbol.
     daily_growth_bytes: int | None
     pinned: bool
+    #: `None` for a pinned symbol: kept forever, so its growth is unbounded.
     retention_days: int | None
+    #: In the current recorded-symbol set (only these grow).
+    recording: bool
 
 
 @dataclass(frozen=True, slots=True)
 class StorageSnapshot:
-    """The recorder's DiskBudget view: measured, never assumed (`None` = not measured yet)."""
+    """The recorder's DiskBudget view: measured, never assumed (`None` = not measured yet).
+
+    Adapters take growth from `DiskBudget.measured_growth()`, never from `report()`, which
+    folds "not measured yet" into `0`."""
 
     used_bytes: int
     free_bytes: int
     daily_growth_bytes: int | None
     days_until_full: float | None
     symbols: tuple[SymbolStorage, ...]
+    #: The recorder's disk cap (`BudgetConfig.cap_bytes`, mandatory).
+    cap_bytes: int
+
+    @property
+    def headroom_bytes(self) -> int:
+        """`min(cap - used, free)`, never below 0. Zero is exhaustion now: 0 days, everywhere."""
+        return max(min(self.cap_bytes - self.used_bytes, self.free_bytes), 0)
 
 
 class RecorderPort(Protocol):
@@ -102,6 +123,19 @@ class RateBudgetUse:
 
 class RateLimitPort(Protocol):
     async def rate_budget(self) -> tuple[RateBudgetUse, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class RecordedTier:
+    tier: str
+    recorded_at: datetime
+
+
+class TierPort(Protocol):
+    async def recorded_tier(self) -> RecordedTier | None:
+        """The `accounts.subaccount_tier` system setting. `None` means only "no row" (never
+        recorded); an adapter raises on any read failure, never returns `None` for it. The
+        route slice's adapter must test both."""
 
 
 class OmsPort(Protocol):

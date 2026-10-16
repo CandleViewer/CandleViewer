@@ -39,7 +39,8 @@ FAILED_DETAIL: Final = "source failed"
 #: A seatbelt only, not the protection: every `detail` and `reason` is a fixed literal or an
 #: exception class name built in code. This merely refuses empty, oversized or odd strings.
 _DETAIL_RE: Final = re.compile(r"[A-Za-z0-9 _:.-]{1,200}")
-_REASON_RE: Final = re.compile(r"[A-Za-z0-9_.:-]{1,80}")
+_REASON_MAX: Final = 80
+_REASON_RE: Final = re.compile(rf"[A-Za-z0-9_.:-]{{1,{_REASON_MAX}}}")
 #: (status, fixed wire detail, logged-only reason: the part and the exception class).
 Problem = tuple[Literal["error", "unavailable"], str, str]
 
@@ -89,7 +90,7 @@ class Degraded[T]:
     def __post_init__(self) -> None:
         _checked(self.detail)
         if not _REASON_RE.fullmatch(self.reason):
-            raise ValueError("slice reason must be 1-80 chars of [A-Za-z0-9_.:-]")
+            raise ValueError(f"slice reason must be 1-{_REASON_MAX} chars of [A-Za-z0-9_.:-]")
 
 
 class SourceUnavailable(Exception):
@@ -111,15 +112,17 @@ async def read_part[T](
 ) -> tuple[T | None, Problem | None]:
     """One independently degradable part of a slice, under its own sub-budget. Never raises
     but for a real cancellation; only fixed details go out, the exception class is logged."""
+    budget = asyncio.timeout(budget_s)
     try:
-        async with asyncio.timeout(budget_s):
+        async with budget:
             return await load(), None
     except SourceUnavailable as exc:
         return None, ("unavailable", exc.detail, f"{what}:unwired")
     except PartFailed as exc:
         return None, ("error", f"{what}: {exc.detail}", f"{what}:{type(exc).__name__}")
-    except TimeoutError:
-        return None, ("error", f"{what}: timed out", f"{what}:TimeoutError")
+    except TimeoutError:  # "timed out" only when our own sub-budget expired, as in `_run`
+        detail = "timed out" if budget.expired() else "source failed"
+        return None, ("error", f"{what}: {detail}", f"{what}:TimeoutError")
     except asyncio.CancelledError:
         if _cancelling():
             raise
@@ -135,7 +138,7 @@ def combine[T](value: T, problems: Sequence[Problem | None]) -> T | Degraded[T]:
     if not found:
         return value
     worst = next((p for p in found if p[0] == "error"), found[0])
-    return Degraded(value, worst[0], worst[1], "--".join(p[2] for p in found)[:80])
+    return Degraded(value, worst[0], worst[1], "--".join(p[2] for p in found)[:_REASON_MAX])
 
 
 class SliceFanOut:

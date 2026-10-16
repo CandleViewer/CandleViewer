@@ -49,8 +49,8 @@ class Counts:
 
 
 class Recorder:
-    def __init__(self, *, hang: bool = False, sampled: bool = True) -> None:
-        self.hang, self.sampled = hang, sampled
+    def __init__(self, *, hang: bool = False, sampled: bool = True, full: bool = False) -> None:
+        self.hang, self.sampled, self.full = hang, sampled, full
 
     async def recorder_status(self) -> RecorderStatus:
         if self.hang:  # the AC's "does not respond within its 300 ms budget"
@@ -58,7 +58,11 @@ class Recorder:
         return RecorderStatus(symbols_recording=3, symbols_degraded=0, lag_seconds_p99=0.042)
 
     async def storage_snapshot(self) -> StorageSnapshot | None:
-        return StorageSnapshot(41 * GB, 400 * GB, None, 187.5, ()) if self.sampled else None
+        if self.full:  # at the cap; the DiskBudget runway is unknown (no growth fit)
+            return StorageSnapshot(100 * GB, 400 * GB, None, None, (), 100 * GB)
+        return (
+            StorageSnapshot(41 * GB, 400 * GB, None, 187.5, (), 1000 * GB) if self.sampled else None
+        )
 
 
 class Oms:
@@ -138,6 +142,11 @@ async def test_keys_nearing_expiry_are_counted_over_the_next_30_days() -> None:
     assert counts.expiring_before == NOW + timedelta(days=30)
 
 
+async def test_zero_headroom_reports_zero_days_as_the_capacity_report_does() -> None:
+    snap = await _service(recorder=Recorder(full=True)).overview()
+    assert snap.storage.value == StorageHeadroom(100 * GB, 400 * GB, 0.0)
+
+
 async def test_storage_before_the_first_disk_sample_is_unavailable() -> None:
     snap = await _service(recorder=Recorder(sampled=False)).overview()
     assert (snap.storage.status, snap.storage.detail) == (
@@ -178,6 +187,7 @@ async def test_a_failing_flag_read_leaves_no_task_behind() -> None:
     before = asyncio.all_tasks()
     snap = await _service(oms=Oms(kill="raise", live="hang")).overview()
     assert (snap.trading.status, snap.trading.detail) == ("error", "kill_switch: source failed")
+    assert snap.trading.value == TradingState(None, None, 2)  # unread: None, never False
     assert asyncio.all_tasks() == before  # the old nested gather leaked one task per call
 
 
