@@ -28,7 +28,7 @@ def matrix() -> dict[str, Any]:
 
 
 @pytest.fixture(scope="module")
-def _world_module() -> Iterator[World]:
+def _world_module(tmp_path_factory: pytest.TempPathFactory) -> Iterator[World]:
     """The real-app world, built once per test module of this pack.
 
     `app.py` has no injection seam for the identity provider or the alert repository, so the two
@@ -40,7 +40,7 @@ def _world_module() -> Iterator[World]:
     """
     mp = pytest.MonkeyPatch()
     try:
-        yield build_world(mp)
+        yield build_world(mp, bars_state_root=tmp_path_factory.mktemp("bars-state"))
     finally:
         mp.undo()
 

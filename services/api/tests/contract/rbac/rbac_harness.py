@@ -351,7 +351,7 @@ def audit_adapter(sink: _AuditSink) -> Any:
     return _audit
 
 
-def build_world(mp: pytest.MonkeyPatch) -> World:
+def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path) -> World:
     """Build the app. Patches are applied through `mp` and live as long as the caller's context
     (the alert repository is resolved per request, so the patch must outlive `create_app`)."""
     spec = load_contract()
@@ -375,9 +375,11 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
     purge_backend = _PurgeBackend()
     mp.setattr(appmod, "build_retention_manager", lambda *_a, **_k: purge_backend)
     mp.setenv("CV_ALLOWED_ORIGINS", WS_ORIGIN)  # create_app() reads get_settings()
-    # `bars.*` answers `unknown_topic` while the feature is off (23 §6.1, #399 slice E); the
-    # matrix asserts its authorization outcome, so the pack runs with the feature on.
+    # `bars.*` answers `unknown_topic` while the feature is off (23 §6.1, #399 slice E), but the
+    # matrix asserts its authorization outcome, so the pack runs with the feature on and keeps the
+    # builders' state blobs under the test's own tmp dir. Remove both lines with the flag (#399).
     mp.setenv("CV_BARS_ENABLED", "true")
+    mp.setenv("CV_BARS_STATE_ROOT", str(bars_state_root))
     app = appmod.create_app(
         principal_resolver=resolver,
         user_role_store=users,
