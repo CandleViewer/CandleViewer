@@ -2,15 +2,18 @@
 
 Exercises the four Gherkin scenarios from the ticket by faking `subprocess.run`
 so the test never actually invokes `pnpm generate` or touches real git state
-(no network, deterministic, fast).
+(no network, deterministic, fast). The #2743 scenarios at the end run the real
+gate in a throwaway git repository instead, with a stand-in for `pnpm generate`.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import posixpath
 import re
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -488,3 +491,103 @@ def test_generate_outputs_keep_every_repo_level_file_the_generators_write() -> N
     _, writes = _generator_access()
     outputs = _generate_globs("packages/protocol/turbo.json", "outputs")
     assert _uncovered(writes, outputs) == []
+
+
+# #2743: packages/protocol no longer commits a manifest of generated-file hashes, so
+# this gate alone must catch a committed hand edit of a generated file: regenerating
+# overwrites the edit and `git diff` reports it (CI-GEN-001). These scenarios run the
+# real gate against a throwaway git repository with the repo's own .gitignore; only
+# `pnpm generate` is replaced, by a stand-in that rewrites two generated files and
+# the git-ignored local manifest (no node toolchain, no network). The contract
+# subset pair is the autouse `contract_pair`.
+_HEADER = "// GENERATED FILE — DO NOT EDIT BY HAND.\n"
+_GENERATED_DIR = "packages/protocol/src/generated"
+_GENERATED = {
+    f"{_GENERATED_DIR}/rest/index.ts": _HEADER + "export type Rest = 1;\n",
+    f"{_GENERATED_DIR}/ws/index.ts": _HEADER + "export type Ws = 1;\n",
+}
+_LOCAL_MANIFEST = "packages/protocol/.cache/generated-manifest.json"
+_GENERATOR = f"""
+import json, pathlib
+files = {_GENERATED!r}
+for rel, text in files.items():
+    path = pathlib.Path(rel)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8", newline="\\n")
+manifest = pathlib.Path({_LOCAL_MANIFEST!r})
+manifest.parent.mkdir(parents=True, exist_ok=True)
+manifest.write_text(json.dumps(sorted(files)), encoding="utf-8")
+"""
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+@pytest.fixture
+def generated_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A freshly generated, committed tree; the gate's cwd for the test."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".gitignore").write_text(
+        (_REPO_ROOT / ".gitignore").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    generator = tmp_path / "generate.py"
+    generator.write_text(_GENERATOR, encoding="utf-8")
+    monkeypatch.setattr(gen_gate, "GENERATE_CMD", [sys.executable, str(generator)])
+    monkeypatch.chdir(root)
+    subprocess.run(gen_gate.GENERATE_CMD, check=True)
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "generated")
+    return root
+
+
+def test_fresh_tree_passes_and_the_local_manifest_stays_untracked(
+    generated_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The real gate passes a fresh tree; the repo's .gitignore keeps the manifest out."""
+    assert (generated_repo / _LOCAL_MANIFEST).is_file()
+    assert _LOCAL_MANIFEST not in _git(generated_repo, "ls-files").splitlines()
+    assert gen_gate.main([]) == 0
+    assert "OK" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("rel", sorted(_GENERATED))
+def test_committed_hand_edit_of_a_generated_file_fails_ci_gen_001(
+    generated_repo: Path, rel: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A committed hand edit fails with no committed manifest to compare against."""
+    path = generated_repo / rel
+    path.write_text(
+        path.read_text(encoding="utf-8") + "export type HandEdited = true;\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    _git(generated_repo, "commit", "-qam", "hand edit")
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert "CI-GEN-001" in err
+    assert f"a/{rel}" in err and "-export type HandEdited = true;" in err
+
+
+def test_local_manifest_would_fail_ci_gen_002_if_it_were_not_ignored(
+    generated_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With no ignore rule covering it (the test empties .gitignore; in the repo the
+    generic `.cache/` line covers it), the local manifest is untracked output."""
+    (generated_repo / ".gitignore").write_text("", encoding="utf-8")
+    _git(generated_repo, "commit", "-qam", "no ignores")
+    assert gen_gate.main([]) == 1
+    err = capsys.readouterr().err
+    assert "CI-GEN-002" in err and "packages/protocol/.cache/" in err

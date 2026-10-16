@@ -88,28 +88,38 @@ def test_catalogue_no_disallowed_label_names() -> None:
         assert not {lbl.lower() for lbl in s.labels} & DISALLOWED_LABEL_NAMES, s.name
 
 
-def _architecture_metric_types() -> dict[str, str]:
-    """Metric name -> the Type cell of its row in the 20-architecture.md §12.1 table."""
+def _architecture_12_1_rows() -> list[tuple[list[str], list[str]]]:
+    """(backticked names in the Metric cell, `/`-separated Type kinds) per §12.1 table row."""
     doc = next(
         p / "docs/plan/20-architecture.md"
         for p in Path(__file__).resolve().parents
         if (p / "docs/plan/20-architecture.md").exists()
     ).read_text(encoding="utf-8")
-    types: dict[str, str] = {}
+    rows: list[tuple[list[str], list[str]]] = []
     for line in doc[doc.index("### 12.1") : doc.index("### 12.2")].splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if line.startswith("|") and len(cells) == 4:  # Domain | Metric | Type | Purpose / alert
-            for name in re.findall(r"`([a-z][a-z0-9_:]+)(?:\{[^`]*\})?`", cells[1]):
-                types[name] = cells[2]
-    return types
+            names = re.findall(r"`([a-z][a-z0-9_:]+)(?:\{[^`]*\})?`", cells[1])
+            rows.append((names, [kind.strip() for kind in cells[2].split("/")]))
+    return rows
 
 
 def test_catalogue_rows_are_documented_in_architecture_12_1() -> None:
-    """A golden row change is a §12.1 change: every metric is in the table's Metric column and its
-    kind in that row's Type column (labels: test_architecture_doc_sync.py)."""
-    documented = _architecture_metric_types()
-    missing = [s.name for s in CATALOGUE if s.name not in documented]
-    wrong_kind = [s.name for s in CATALOGUE if s.kind not in documented.get(s.name, s.kind)]
+    """A golden row change is a §12.1 change: every metric is in the table's Metric column, and
+    its row's Type cell lists each metric's kind in order or, the other convention in use, the
+    row's distinct kinds in order of first use (labels: test_architecture_doc_sync.py)."""
+    kinds = {s.name: s.kind for s in CATALOGUE}
+    rows = _architecture_12_1_rows()
+    missing = sorted(kinds.keys() - {name for names, _ in rows for name in names})
+    wrong_kind: list[str] = []
+    for names, types in rows:
+        row = [kinds.get(name) for name in names]  # None: a label value or uncatalogued name
+        first_use = list(dict.fromkeys(kind for kind in row if kind))
+        in_order = len(types) == len(row) and all(
+            kind in (None, documented) for kind, documented in zip(row, types, strict=True)
+        )
+        if first_use and not in_order and types != first_use:
+            wrong_kind.append(f"{', '.join(names)}: Type {'/'.join(types)}")
     assert (missing, wrong_kind) == ([], [])
 
 

@@ -18,10 +18,12 @@ decoders and sequence/resync helpers.
   `pnpm generate` regenerates it and records every file's sha256 in
   `.cache/generated-manifest.json`, which is git-ignored and never committed
   (#2743: every contract PR conflicted on a committed manifest).
-  `scripts/check-generated-guard.mjs` fails if a file lacks its header or no
-  longer matches what the last `pnpm generate` recorded (a hand edit since
-  then); with no recorded manifest it checks the headers only. A committed hand
-  edit fails CI's `gen / gen-freshness` check, which regenerates and diffs.
+  `scripts/check-generated-guard.mjs` fails if a file lacks its header or
+  matches neither what the last `pnpm generate` recorded nor its copy at HEAD
+  (a hand edit since then; the record does not move with git, so HEAD's copy
+  covers what a pull, rebase or checkout wrote); with no recorded manifest it
+  checks the headers only. A committed hand edit fails CI's
+  `gen / gen-freshness` check, which regenerates and diffs.
 - `src/runtime/` — sequence-gap classification (`checkSequence`) and binary
   frame decoders for the six §3.4 `body_kind`s (book snapshot/delta, trades,
   bars, footprint, heatmap column) over untrusted WS input; a fuzz target for
