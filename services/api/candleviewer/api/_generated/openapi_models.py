@@ -110,6 +110,36 @@ class Problem(BaseModel):
     exchange: Annotated[
         Exchange | None, Field(description="Present when the failure originated at Bybit.")
     ] = None
+    action_class: Annotated[
+        str | None,
+        Field(
+            description="`step_up_required` only: the step-up class the refused request needs, one of the `action_class` values of `POST /auth/step-up`.\n"
+        ),
+    ] = None
+    challenge_id: Annotated[
+        UUID | None,
+        Field(
+            description="`step_up_required` only: the challenge this refusal issued (#2304), a random UUIDv4 scoped to the issuing session, so a value from another session is unknown. One challenge is live per session; a newer refusal supersedes it. Send it as `challenge_id` to `POST /auth/step-up`; a step-up for a no-grace class must send it.\n"
+        ),
+    ] = None
+    challenge_expires_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="`step_up_required` only: when the challenge expires, 5 minutes after issue (server clock). The client drops the held request then, without sending it.\n"
+        ),
+    ] = None
+    action_summary: Annotated[
+        str | None,
+        Field(
+            description="`step_up_required` only: server-composed text naming exactly what the refused request would execute, built from the validated request (for example \"Release kill switch, scope global\"). It comes from a fixed per-route template. Request values appear in it only as validated enum values (bare) or as identifiers and server-resolved labels (quoted, each bounded by its own schema's `maxLength` or `format`), never as free text such as a `reason`, and never as key material, a password, a token, a TOTP or recovery code or any field the redaction deny-list names (C-12.6). A label alone never identifies an account or a rule, because labels can be renamed and need not be unique: each account named in it is followed by its `environment` and `exchange_uid` and each rule by the environments its scope includes, rendered bare (for example \"Release kill switch, accounts 'demo-1' (demo, UID 1001234)\" or \"Arm rule 'Break-even' (live)\"); an account's `environment` and `exchange_uid` never change after it is registered. Naming a rule this way is provisional: two rules can share a label and environments, and `rules:write` can rename a rule and change its scope, bindings and active version without a step-up, so the route slice of #2304 decides, before any rule template ships, whether a rule is also named by its bound accounts and whether the grant that arms it is also bound to its active version. Before a label is quoted, an apostrophe or a backslash in it is preceded by a backslash, and every character outside printable ASCII (U+0020 to U+007E) is written as `\\u{`, its code point in upper-case hex zero-padded to four digits, and `}` (U+000A becomes `\\u{000A}`, U+202E becomes `\\u{202E}` and U+1F600 becomes `\\u{1F600}`). That covers line breaks and other control characters, bidi embedding, override and isolate marks and look-alike quotation marks, so the quotes bound the label: the label `demo-1' (demo)` is quoted as `'demo-1\\' (demo)'`. The step-up dialog shows it verbatim as its accessible description; a client never composes its own.\n"
+        ),
+    ] = None
+    target: Annotated[
+        str | None,
+        Field(
+            description="`step_up_required` only: the exact, case-sensitive text a typed confirmation must equal when the action asks for one (for example the account name), else null. Like `action_summary`, it is an identifier or a server-resolved label of the validated request, never free text or credential material. It is a label only when no other object of its kind that the caller can see has that label, compared case-insensitively, and the label is printable ASCII; otherwise it is the object's identifier.\n"
+        ),
+    ] = None
 
 
 class PageMeta(BaseModel):

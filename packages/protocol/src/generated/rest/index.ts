@@ -815,7 +815,11 @@ export interface paths {
     put?: never;
     /**
      * Elevate the current session for one action class with password and TOTP
-     * @description Requires the caller's **password and a TOTP code** (owner decision #1778 AE). The password is verified first (same Argon2id path and lockout counters as login), then the code. A missing `password` is `422`; any wrong factor is the same `401 mfa_invalid` and never reveals which one failed. Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement` and `killswitch` are no-grace classes: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_granted`, `auth.step_up_failed`, `auth.session_readonly_downgrade`).
+     * @description Requires the caller's **password and a TOTP code** (owner decision #1778 AE). The password is verified first (same Argon2id path and lockout counters as login), then the code. A missing `password` is `422`; any wrong factor is the same `401 mfa_invalid` and never reveals which one failed.
+     *     **Challenges (#2304).** Every `403 step_up_required` is a challenge for the one request it refused. Its problem body carries `challenge_id`, `challenge_expires_at` (5 minutes after issue), `action_class`, `action_summary` and `target` (see `Problem`). A challenge is issued only to a caller the operation would otherwise admit: authentication, CSRF, session state, request validation, RBAC permission and account scope are all decided before the step-up gate, and a caller refused by any of them gets that refusal (such as `401 unauthenticated`, `403 forbidden`, `403 account_scope_denied` or `404 not_found`), never a challenge, so `action_summary` never resolves a label the caller may not read. The server composes `action_summary` from the validated request with a fixed per-route template, so it names what would execute. Request values appear in it only as validated enum values or as identifiers and server-resolved labels, never as free text such as a `reason` and never as credential material; the client shows it verbatim and never composes its own. A label never identifies an account or a rule on its own: each account named in it is followed by its `environment` and `exchange_uid` and each rule by the environments its scope includes, rendered bare, and every label is escaped before it is quoted (see `Problem`; naming a rule this way is provisional until the route slice of #2304 settles it). A session has at most one live challenge. A newer `403 step_up_required` supersedes it, and it also ends when a step-up uses it, at `challenge_expires_at`, when the session turns read-only and when it idle-locks (#2301). This operation elevates against the live challenge: `challenge_id`, when sent, must name it. A step-up for a no-grace class (named by the live challenge or by `action_class`) must send it: without it, or without a live challenge, the answer is `400`, so `action_class` alone never elevates a no-grace class. Audit: `auth.step_up_required` records the `challenge_id`; `auth.step_up_granted` records it too, plus the bound request's SHA-256 fingerprint for a no-grace class; `auth.step_up_mismatch` records the bound and the refused request's fingerprints. No audit record carries `action_summary`, `target`, a request body, the password or the code.
+     *     **Binding (no-grace classes).** For `live_enablement` and `killswitch` the one-shot grant is bound to the challenged request: its method, its path including any query string, and its canonical JSON body. The fingerprint is the hex SHA-256 of the method, a line feed, the raw request target (path and query string exactly as received, with no percent-decoding and no trailing-slash or parameter-order normalisation), a line feed, and the RFC 8785 (JCS) serialisation of the body as the operation validated it (empty when the operation takes no body). The server parses and validates the body once, and `action_summary`, the fingerprint and the executed action all come from that one object, so number forms, string escapes and duplicate member names cannot make them disagree; no Unicode normalisation is applied. Headers, `Idempotency-Key` included, are not part of the binding. Only that identical request can use the grant. Any other request of the class is refused with `403 step_up_required`, which is a new challenge for that request, and audited as `auth.step_up_mismatch`. The refusal does not use up the grant: it stays bound to the challenged request until that request uses it or a newer step-up for the class replaces it. The grant expires 60 seconds after the step-up, which leaves time only for the immediate re-send, and it also ends when the session turns read-only, when it idle-locks (#2301) and at logout. For a no-grace class the `200`'s `elevated_until` is that expiry, 60 seconds after the step-up, and its `step_up_expires_at` is null. A session holds at most one grant per no-grace class. Grace classes keep the unbound 5-minute window described below.
+     *     **Holding the refused request.** The client keeps the refused request unchanged (method, path, body and `Idempotency-Key`) and re-sends it as is after a successful step-up. The refusal bound no idempotency key (Idempotency, "Binding point"), so the re-send is a first submission and executes once. On cancel, at `challenge_expires_at`, on the third failure (`session_read_only`), on idle lock and at absolute session expiry the client drops the request without sending it and tells the user it was not sent. If the re-send gets no answer after a successful step-up (a network error or a timeout), the action may have executed: the client never reports it as not sent and never re-sends it on its own, and reads the affected state back to learn the outcome.
+     *     Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement` and `killswitch` are no-grace classes: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
      */
     post: operations["authStepUp"];
     delete?: never;
@@ -6329,6 +6333,20 @@ export interface components {
     PositionMode: "one_way" | "hedge";
     /** @description RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue. */
     Problem: {
+      /** @description `step_up_required` only: the step-up class the refused request needs, one of the `action_class` values of `POST /auth/step-up`. */
+      action_class?: string;
+      /** @description `step_up_required` only: server-composed text naming exactly what the refused request would execute, built from the validated request (for example "Release kill switch, scope global"). It comes from a fixed per-route template. Request values appear in it only as validated enum values (bare) or as identifiers and server-resolved labels (quoted, each bounded by its own schema's `maxLength` or `format`), never as free text such as a `reason`, and never as key material, a password, a token, a TOTP or recovery code or any field the redaction deny-list names (C-12.6). A label alone never identifies an account or a rule, because labels can be renamed and need not be unique: each account named in it is followed by its `environment` and `exchange_uid` and each rule by the environments its scope includes, rendered bare (for example "Release kill switch, accounts 'demo-1' (demo, UID 1001234)" or "Arm rule 'Break-even' (live)"); an account's `environment` and `exchange_uid` never change after it is registered. Naming a rule this way is provisional: two rules can share a label and environments, and `rules:write` can rename a rule and change its scope, bindings and active version without a step-up, so the route slice of #2304 decides, before any rule template ships, whether a rule is also named by its bound accounts and whether the grant that arms it is also bound to its active version. Before a label is quoted, an apostrophe or a backslash in it is preceded by a backslash, and every character outside printable ASCII (U+0020 to U+007E) is written as `\u{`, its code point in upper-case hex zero-padded to four digits, and `}` (U+000A becomes `\u{000A}`, U+202E becomes `\u{202E}` and U+1F600 becomes `\u{1F600}`). That covers line breaks and other control characters, bidi embedding, override and isolate marks and look-alike quotation marks, so the quotes bound the label: the label `demo-1' (demo)` is quoted as `'demo-1\' (demo)'`. The step-up dialog shows it verbatim as its accessible description; a client never composes its own. */
+      action_summary?: string;
+      /**
+       * Format: date-time
+       * @description `step_up_required` only: when the challenge expires, 5 minutes after issue (server clock). The client drops the held request then, without sending it.
+       */
+      challenge_expires_at?: string;
+      /**
+       * Format: uuid
+       * @description `step_up_required` only: the challenge this refusal issued (#2304), a random UUIDv4 scoped to the issuing session, so a value from another session is unknown. One challenge is live per session; a newer refusal supersedes it. Send it as `challenge_id` to `POST /auth/step-up`; a step-up for a no-grace class must send it.
+       */
+      challenge_id?: string;
       /** @description Stable machine-readable error code from `x-error-codes`. */
       code: string;
       detail?: string;
@@ -6350,6 +6368,8 @@ export interface components {
       required_permissions?: string[];
       retry_after_seconds?: number;
       status: number;
+      /** @description `step_up_required` only: the exact, case-sensitive text a typed confirmation must equal when the action asks for one (for example the account name), else null. Like `action_summary`, it is an identifier or a server-resolved label of the validated request, never free text or credential material. It is a label only when no other object of its kind that the caller can see has that label, compared case-insensitively, and the label is printable ASCII; otherwise it is the object's identifier. */
+      target?: string | null;
       title: string;
       /**
        * Format: uri
@@ -7887,7 +7907,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). */
     Forbidden: {
       headers: {
         [name: string]: unknown;
@@ -8000,7 +8020,7 @@ export interface components {
     HotkeyProfileId: string;
     /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`. */
     IdempotencyKey: string;
-    /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+    /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
     IdempotencyKeyRequired: string;
     /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
     IfMatch: string;
@@ -8332,7 +8352,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -8636,7 +8656,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -8678,7 +8698,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -8742,7 +8762,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -9587,6 +9607,11 @@ export interface operations {
            * @enum {string}
            */
           action_class?: "keys" | "users" | "live_enablement" | "killswitch" | "risk_caps";
+          /**
+           * Format: uuid
+           * @description The `challenge_id` of the `403 step_up_required` being answered (#2304). Required for a no-grace class (`live_enablement` or `killswitch`, named by the live challenge or by `action_class`): omitting it is `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a grace class: without it the server uses the session's live challenge. This grace-class optionality is transitional and ends with #2725 (the web client sends `challenge_id` on every step-up); from then on it is required whenever the session has a live challenge. A value that does not name the live challenge (expired, superseded, already used or unknown), or that is sent when there is none, gets `400 validation_failed` with `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is decided before the password and code are checked: no factor is verified, no failure is counted and nothing is elevated. The client then drops the held request without sending it.
+           */
+          challenge_id?: string;
           code: string;
           /** Format: password */
           password: string;
@@ -10306,7 +10331,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -10387,7 +10412,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -11633,7 +11658,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12372,7 +12397,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12441,7 +12466,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12477,7 +12502,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
         "If-Match"?: components["parameters"]["IfMatch"];
@@ -12544,7 +12569,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12662,7 +12687,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12702,7 +12727,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12744,7 +12769,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12784,7 +12809,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -12825,7 +12850,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -13387,7 +13412,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -13742,7 +13767,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14564,7 +14589,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14626,7 +14651,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14666,7 +14691,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14768,7 +14793,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. */
+        /** @description Client-generated UUIDv4. REQUIRED on this operation; also seeds the deterministic exchange `orderLinkId`. Recorded only after authentication, CSRF, session state and authorisation all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
