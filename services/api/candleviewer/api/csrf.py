@@ -41,10 +41,13 @@ A refusal is always `403 csrf_token_invalid` (`detail` never echoes a value),
 `auth_csrf_refused_total{reason}`, and an `auth.csrf_refused` audit record
 (C-2.9) with a bounded path (the contract route template or `(unmatched)`), up to
 a budget: per session for refusals bound to a live session, per source IP for the
-rest, plus a global cap on audits in flight (C-2.18). Over a budget the reply is
-the same 403 with `Retry-After` and no audit write; the metric keeps counting
-(`audit_throttled`). The audit write is never cancelled mid-append (see
-`RefusalAuditTracker`); a slow or failed write still refuses the request.
+rest, plus a global cap on audits in flight (C-2.18). Over a budget
+(`audit_throttled`) or with the cap full of stuck writes (`audit_saturated`) the
+reply is the same 403 with `Retry-After` and no audit write. The audit write is never
+cancelled mid-append (see `RefusalAuditTracker`); one that outlasts the wait
+(`audit_slow`) or fails (`audit_unavailable`) still refuses the request. Each counts
+beside the refusal's own reason (`auth.metrics.CSRF_AUDIT_REASONS`), and the
+`CsrfRefusalAuditUnavailable` / `CsrfRefusalAuditDegraded` alerts read them.
 There is no bearer exemption, no flag and no test bypass (C-4.14).
 """
 
@@ -254,18 +257,31 @@ def match_operation(method: str, path: str, operations: tuple[_Operation, ...]) 
     return _UNMATCHED
 
 
-class RefusalAuditTracker:
-    """Bounded set of in-flight refusal audits (C-2.18).
+#: Called once for a tracked write that may be lost: it failed after its caller stopped
+#: waiting, or it was still running when `drain()` gave up. The owner counts it.
+LostWrite = Callable[[], None]
 
-    Each audit runs as a tracked task under `asyncio.shield` so a timeout never
-    cancels `AuditWriter.emit` mid-append (cancelling would release the WAL lock
-    while the append thread still runs; writer fix #2250). At most `cap` may be in
-    flight: over the cap the caller skips the write (counted `audit_throttled`).
-    `drain()` waits a bounded time at shutdown, before the audit module stops."""
+
+def _count_audit_unavailable() -> None:
+    auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
+
+
+class RefusalAuditTracker:
+    """Bounded set of in-flight refusal audits (C-2.18), and the accounting for the ones
+    nobody waits for any more. Shared by the CSRF guard and the session-fixation audit, so
+    it knows no metric: a consumer passes `on_lost` to `track()` to count its own writes.
+
+    Each audit runs as a tracked task under `asyncio.shield` so a timeout never cancels
+    `AuditWriter.emit` mid-append (that would release the WAL lock while the append thread
+    still runs; writer fix #2250). At most `cap` may be in flight: over it the caller
+    skips the write. A caller that stops waiting (timeout, or its request was cancelled)
+    hands the task over with `mark_timed_out()`: when the write fails the tracker logs it
+    and calls `on_lost`. `drain()` waits a bounded time at shutdown, before the audit
+    module stops, and calls `on_lost` for each write still running (it may be lost)."""
 
     def __init__(self, cap: int = MAX_INFLIGHT_AUDITS) -> None:
         self._cap = cap
-        self._tasks: set[asyncio.Task[None]] = set()
+        self._tasks: dict[asyncio.Task[None], LostWrite | None] = {}
         self._timed_out: set[asyncio.Task[None]] = set()
 
     def __len__(self) -> int:
@@ -275,32 +291,47 @@ class RefusalAuditTracker:
     def full(self) -> bool:
         return len(self._tasks) >= self._cap
 
-    def track(self, coro: Coroutine[Any, Any, None]) -> asyncio.Task[None]:
+    def track(
+        self, coro: Coroutine[Any, Any, None], *, on_lost: LostWrite | None = None
+    ) -> asyncio.Task[None]:
         """Run *coro* as a tracked task (not a lifecycle `start`; nothing to stop)."""
         task = spawn(coro, name="csrf-refusal-audit")
-        self._tasks.add(task)
+        self._tasks[task] = on_lost
         task.add_done_callback(self._done)
         return task
 
     def mark_timed_out(self, task: asyncio.Task[None]) -> None:
+        """The caller stopped waiting for *task* (timeout, or its request was cancelled):
+        the tracker reports its failure when it ends."""
         if not task.done():
             self._timed_out.add(task)
 
     def _done(self, task: asyncio.Task[None]) -> None:
-        self._tasks.discard(task)
-        late = task in self._timed_out
+        on_lost = self._tasks.pop(task, None)
+        if task not in self._timed_out:
+            return  # the awaiting caller handles its outcome
         self._timed_out.discard(task)
-        if late and not task.cancelled() and task.exception() is not None:
-            # Only failures nobody awaited any more are reported here.
-            exc = task.exception()
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
             _log().error("auth.csrf_refused.audit_failed_late", error=type(exc).__name__)
+            if on_lost is not None:
+                on_lost()
 
     async def drain(self, timeout_s: float = AUDIT_TIMEOUT_S) -> int:
-        """Wait up to *timeout_s* for in-flight audits; returns how many remain."""
+        """Wait up to *timeout_s* for in-flight audits; returns how many remain. Each one
+        that remains may be lost when the audit module stops, so its `on_lost` is called
+        once (a later failure of the same write is not reported again)."""
         pending = set(self._tasks)
         if pending:
             await asyncio.wait(pending, timeout=timeout_s)
-        return len(self._tasks)
+        left = dict(self._tasks)
+        for task, on_lost in left.items():
+            self._timed_out.discard(task)
+            if on_lost is not None:
+                on_lost()
+        return len(left)
 
 
 class CsrfMiddleware:
@@ -401,6 +432,13 @@ class CsrfMiddleware:
         throttle.record_failure(key)
         return True
 
+    def _skip_reason(self, throttle: PerIpLoginThrottle, key: str) -> str | None:
+        """Why this refusal's audit write is skipped, or `None` to write it. The cap on
+        writes in flight is checked first, so a saturated tracker spends no budget."""
+        if self.tracker.full:
+            return "audit_saturated"
+        return None if self._take(throttle, key) else "audit_throttled"
+
     async def _refuse(
         self,
         scope: Scope,
@@ -423,11 +461,14 @@ class CsrfMiddleware:
             throttle, key = self._anon, ip or "(unknown)"
         response = csrf_problem(reason)
         log = _log()
-        if self.tracker.full or not self._take(throttle, key):
-            auth_csrf_refused_total.labels(reason="audit_throttled").inc()
+        skipped = self._skip_reason(throttle, key)
+        if skipped is not None:
+            auth_csrf_refused_total.labels(reason=skipped).inc()
             retry = throttle.retry_after_s(key) or int(self._audit_timeout_s) or 1
             response.headers["Retry-After"] = str(retry)
-            log.warning("auth.csrf_refused.unaudited", reason=reason.value, path=path)
+            log.warning(
+                "auth.csrf_refused.unaudited", reason=reason.value, path=path, cause=skipped
+            )
             await response(scope, receive, send)
             return
         log.warning("auth.csrf_refused", reason=reason.value, method=method, path=path)
@@ -445,22 +486,35 @@ class CsrfMiddleware:
         await response(scope, receive, send)
 
     async def _emit_audit(self, why: str, **fields: Any) -> None:
-        """Write the refusal record without ever cancelling the writer mid-append:
-        a tracked task under `asyncio.shield` (see `RefusalAuditTracker`). A slow write
-        refuses at the timeout (`audit_slow`) and is left to finish; a failed write is
-        `audit_unavailable`. Either way the request stays refused (fail closed)."""
-        task = self.tracker.track(self._audit.emit("auth.csrf_refused", **fields))
+        """Write the refusal record without ever cancelling the writer mid-append: a tracked
+        task under `asyncio.shield` (see `RefusalAuditTracker`). The request stays refused
+        (fail closed) whatever happens to the write. One that outlasts the wait is
+        `audit_slow`; one that fails is `audit_unavailable`, also when the writer raises
+        `TimeoutError` itself (the task's own outcome decides, not the clock). A failure after
+        the caller stopped waiting, or its request was cancelled, is the tracker's to report."""
+        task = self.tracker.track(
+            self._audit.emit("auth.csrf_refused", **fields), on_lost=_count_audit_unavailable
+        )
         try:
             await asyncio.wait_for(asyncio.shield(task), self._audit_timeout_s)
         except TimeoutError:
+            failure = task.exception() if task.done() and not task.cancelled() else None
+            if failure is not None:
+                self._audit_failed(why, failure)
+                return
             self.tracker.mark_timed_out(task)
             auth_csrf_refused_total.labels(reason="audit_slow").inc()
             _log().warning("auth.csrf_refused.audit_slow", reason=why)
+        except asyncio.CancelledError:
+            self.tracker.mark_timed_out(task)
+            raise
         except Exception as exc:
-            auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
-            _log().error(
-                "auth.csrf_refused.audit_unavailable", reason=why, error=type(exc).__name__
-            )
+            self._audit_failed(why, exc)
+
+    @staticmethod
+    def _audit_failed(why: str, exc: BaseException) -> None:
+        _count_audit_unavailable()
+        _log().error("auth.csrf_refused.audit_unavailable", reason=why, error=type(exc).__name__)
 
 
 async def _bad_path(scope: Scope, receive: Receive, send: Send) -> None:

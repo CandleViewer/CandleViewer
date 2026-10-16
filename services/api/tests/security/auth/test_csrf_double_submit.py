@@ -842,12 +842,9 @@ def test_refresh_csrf_refusal_with_audit_writer_down_is_403_not_500(stack: _Stac
     assert auth_csrf_refused_total.labels(reason="audit_unavailable")._value.get() == before + 1
 
 
-def test_tracker_is_on_app_state_and_drained_by_the_lifespan() -> None:
-    """r3: in-flight refusal audits are reachable from app state and the ASGI lifespan
-    drains them (bounded) before the modules stop."""
-    import inspect
-
-    from candleviewer import main as main_mod
+def test_tracker_is_on_app_state_and_shared_with_the_middleware() -> None:
+    """r3: the tracker the lifespan drains is on app state (the drain itself is asserted in
+    `tests/unit/test_main_lifespan_csrf_drain.py`)."""
     from candleviewer.api.csrf import CsrfMiddleware, RefusalAuditTracker
 
     app = appmod.create_app()
@@ -856,5 +853,38 @@ def test_tracker_is_on_app_state_and_drained_by_the_lifespan() -> None:
     csrf_cls: object = CsrfMiddleware
     mw = next(m for m in app.user_middleware if m.cls is csrf_cls)
     assert mw.kwargs["tracker"] is tracker
-    src = inspect.getsource(main_mod._lifespan)
-    assert src.index("csrf_refusal_audits") < src.index("supervisor.stop_all()")
+
+
+def test_every_reason_series_is_on_the_scraped_registry_before_any_refusal() -> None:
+    """#2264 (2): every reason is served by the scraped registry with no refusal needed first,
+    so `increase()` sees even the first one after a restart."""
+    import re
+
+    from prometheus_client import generate_latest
+
+    from candleviewer.auth.metrics import CSRF_AUDIT_REASONS, CSRF_REFUSAL_REASONS
+
+    text = generate_latest(appmod.create_app().state.app_context.metrics).decode()
+    served = set(re.findall(r'^auth_csrf_refused_total\{[^}]*reason="([a-z_]+)"', text, re.M))
+    assert served == {*CSRF_REFUSAL_REASONS, *CSRF_AUDIT_REASONS}
+
+
+def test_the_guard_judges_session_liveness_with_the_stack_clock(stack: _Stack) -> None:
+    """#2264 (3): `create_app` gives the guard the clock `SessionService` uses. Under it
+    (2026-10-09) the session is live, so its refusal is audited on the per-session budget even
+    after the per-IP budget is spent. By wall time it would look long expired, share the spent
+    per-IP budget, and leave no audit row."""
+    access = _bearer(stack.login())
+    stack.client.cookies.clear()
+    for _ in range(20):  # the whole per-IP budget, on refusals bound to no session
+        assert stack.client.post("/auth/logout").status_code == 403
+    assert len(stack.audit.of("auth.csrf_refused")) == 20
+    other_sessions_token = stack.codec.issue(str(uuid.uuid4()))
+    out = stack.client.post(
+        "/auth/logout",
+        headers={"Authorization": f"Bearer {access}", CSRF_HEADER: other_sessions_token},
+        cookies={CSRF_COOKIE: other_sessions_token},
+    )
+    assert out.status_code == 403 and out.json()["code"] == "csrf_token_invalid"
+    rows = stack.audit.of("auth.csrf_refused")
+    assert len(rows) == 21 and rows[-1]["session_id"] is not None

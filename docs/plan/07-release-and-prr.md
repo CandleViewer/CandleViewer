@@ -1219,18 +1219,24 @@ sed -n 1,40p services/api/candleviewer/observability/redaction.py
 
 <a id="alert-csrfrefusalshigh"></a>
 
-### CsrfRefusalsHigh / CsrfRefusalAuditUnavailable
+### CsrfRefusalsHigh / CsrfRefusalAuditUnavailable / CsrfRefusalAuditDegraded
 
 | Element               | Detail                                                                                                                                                                                                                                                                                                                           |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. What fired         | More than 20 SR-041 CSRF refusals in 10 min (`auth_csrf_refused_total`), or a refusal whose `auth.csrf_refused` audit write failed (`reason="audit_unavailable"`). Ticket.                                                                                                                                                       |
-| 2. User impact        | Refused writes return `403 csrf_token_invalid` (over the per-IP refusal budget the reply is the same 403 + `Retry-After`, but no audit row is written; `reason="audit_throttled"` counts those). Legitimate users see failed saves only if their client is broken.                                                               |
+| 1. What fired         | `CsrfRefusalsHigh`: more than 20 SR-041 refusals in 10 min. `CsrfRefusalAuditUnavailable`: an `auth.csrf_refused` audit write failed. `CsrfRefusalAuditDegraded`: a write was slow or the in-flight cap was full (reasons below). Ticket.                                                                                        |
+| 2. User impact        | Refused writes return `403 csrf_token_invalid`. Past a budget or the in-flight cap the reply is the same 403 + `Retry-After` with no audit row (reasons below). Legitimate users see failed saves only if their client is broken.                                                                                                |
 | 3. What is still safe | Refusals fail closed: nothing was changed by a refused request. Off-mesh traffic never reaches the guard (MeshOnly runs first).                                                                                                                                                                                                  |
 | 5. Remediation        | Group `auth.csrf_refused` rows by `reason` and `actor_ip`. `cross_origin`/`missing` from one IP: a cross-site attempt; block it. `wrong_session` across users after a deploy: check `CV_AUTH_CSRF_KEY_HEX` matches on every process (rotation: `docs/ops/runbooks/auth-rbac.md`). `audit_unavailable`: fix the audit sink (WAL). |
 | 6. Escalation         | Security reviewer; Owner if a cross-site campaign is confirmed (`SECURITY.md`).                                                                                                                                                                                                                                                  |
-| 7. Verify recovery    | `increase(auth_csrf_refused_total[10m])` back under the threshold; no new `audit_unavailable`.                                                                                                                                                                                                                                   |
+| 7. Verify recovery    | `increase(auth_csrf_refused_total[10m])` back under the threshold; no new `audit_unavailable`, `audit_slow` or `audit_saturated` for 15 min.                                                                                                                                                                                     |
 
-**4. First three diagnostic commands** (run from the repo root; expected healthy result: few or no refusals, none `audit_unavailable`.)
+Each refusal also counts under an audit reason when its record was not written normally; all nine reasons of the counter exist as series from process start.
+
+- `audit_throttled`: past the budget of 20 audited refusals per minute for each live session, and for each source IP (everything else). Deliberate flood control: no alert of its own.
+- `audit_saturated`: 64 audit writes already in flight, so this one was not attempted (`CsrfRefusalAuditDegraded`). `audit_slow`: the guard stopped waiting at 2 s; the write may still land (`CsrfRefusalAuditDegraded`). Both mean the audit WAL is stalled (disk latency, a wedged fsync), which also delays every other audited action: fix the disk first.
+- `audit_unavailable`: the write failed, also after the guard stopped waiting (`CsrfRefusalAuditUnavailable`). Those refusals have no audit row: bound the gap with the `auth.csrf_refused` log lines. A write still running at shutdown counts too, but the metrics listener has stopped by then: the signal is the log line `shutdown with N CSRF-refusal audit(s) still in flight`.
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: few or no refusals, none `audit_unavailable`, `audit_slow` or `audit_saturated`.)
 
 ```bash
 curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (reason) (increase(auth_csrf_refused_total[1h]))'

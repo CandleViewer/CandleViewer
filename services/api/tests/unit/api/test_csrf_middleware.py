@@ -14,12 +14,14 @@ from fastapi.testclient import TestClient
 from candleviewer.api.csrf import (
     CsrfMiddleware,
     CsrfRefusal,
+    RefusalAuditTracker,
     is_exempt,
     is_unsafe,
     route_path,
     verify_refresh_csrf,
 )
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec
+from candleviewer.auth.metrics import CSRF_AUDIT_REASONS, auth_csrf_refused_total
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.ws.lifecycle import origin_refusal
@@ -380,19 +382,33 @@ def test_allowed_origin_and_same_site_pass() -> None:
 # -- audit flood / failure -------------------------------------------------------------------
 
 
+def _snapshot() -> dict[str, float]:
+    """The audit bookkeeping counters (`auth_csrf_refused_total{reason=audit_*}`) right now."""
+    return {
+        r: float(auth_csrf_refused_total.labels(reason=r)._value.get()) for r in CSRF_AUDIT_REASONS
+    }
+
+
+def _delta(before: dict[str, float]) -> dict[str, float]:
+    """What changed since `before`; unchanged reasons are left out, so an equality check also
+    proves that no other bookkeeping reason moved."""
+    now = _snapshot()
+    return {r: now[r] - before[r] for r in now if now[r] != before[r]}
+
+
 def test_over_budget_refusals_stay_403_without_audit_but_counted() -> None:
     """Over the per-IP budget only the audit write is skipped: the reply stays the same
     403 csrf_token_invalid (+Retry-After) so client recovery keeps working."""
-    from candleviewer.auth.metrics import auth_csrf_refused_total
-
     client, audit = _app(_Sessions(), anon_max=3)
     before = auth_csrf_refused_total.labels(reason="missing")._value.get()
+    bookkeeping = _snapshot()
     rs = [client.post("/w/x") for _ in range(6)]
     assert [r.status_code for r in rs] == [403] * 6
     assert all(_code(r) == "csrf_token_invalid" for r in rs)
     assert "retry-after" not in rs[2].headers and int(rs[3].headers["retry-after"]) >= 1
     assert len(audit.calls) == 3  # no audit write once over the per-IP budget
     assert auth_csrf_refused_total.labels(reason="missing")._value.get() == before + 6
+    assert _delta(bookkeeping) == {"audit_throttled": 3}  # a budget, not the in-flight cap
 
 
 @pytest.mark.parametrize("bearer", ["revoked", "expired", "ttl_expired", "idle_locked"])
@@ -474,7 +490,9 @@ def test_slow_audit_is_never_cancelled_mid_append() -> None:
         seen["records"] = list(wal.records)
         seen["locked_at_end"] = wal.lock.locked()
 
+    before = _snapshot()
     asyncio.run(drive())
+    assert _delta(before) == {"audit_slow": 1}  # slow once, and the record landed: not lost
     assert seen["status"] == 403
     assert seen["locked_after_refusal"] is True  # NOT released by a cancellation
     assert seen["pending"] == 1  # tracked (strong reference)
@@ -535,11 +553,8 @@ def test_inflight_audits_are_capped_during_a_wal_stall() -> None:
     """C-2.18 (#2238 r3): with the writer stalled, a flood of refusals (each from its own
     live session, so no per-session/IP budget applies) never puts more than the cap in
     flight, nor more than the cap waiting on the WAL lock; the rest are counted
-    `audit_throttled` and still get the same 403."""
+    `audit_saturated` (the cap, not a budget) and still get the same 403."""
     import threading
-
-    from candleviewer.api.csrf import RefusalAuditTracker
-    from candleviewer.auth.metrics import auth_csrf_refused_total
 
     release = threading.Event()
     waiters = {"max": 0, "now": 0}
@@ -585,7 +600,7 @@ def test_inflight_audits_are_capped_during_a_wal_stall() -> None:
         return {"type": "http.request", "body": b""}
 
     async def drive() -> None:
-        before = auth_csrf_refused_total.labels(reason="audit_throttled")._value.get()
+        before = _snapshot()
         peak = 0
         for _ in range(60):
             sid = uuid.uuid4()
@@ -605,8 +620,9 @@ def test_inflight_audits_are_capped_during_a_wal_stall() -> None:
             statuses.append(sent[0]["status"])
             peak = max(peak, len(mw.tracker))
         assert peak <= cap and waiters["max"] <= cap
-        throttled = auth_csrf_refused_total.labels(reason="audit_throttled")._value.get()
-        assert throttled - before == 60 - cap
+        moved = _delta(before)
+        assert moved["audit_saturated"] == 60 - cap
+        assert "audit_throttled" not in moved
         release.set()
         assert await mw.tracker.drain(5) == 0
         assert wal.records == cap
@@ -616,8 +632,6 @@ def test_inflight_audits_are_capped_during_a_wal_stall() -> None:
 
 
 def test_tracker_drain_is_bounded_and_reports_leftovers() -> None:
-    from candleviewer.api.csrf import RefusalAuditTracker
-
     async def never() -> None:
         await asyncio.Event().wait()
 
@@ -631,25 +645,194 @@ def test_tracker_drain_is_bounded_and_reports_leftovers() -> None:
     assert asyncio.run(drive()) == 1
 
 
-def test_late_audit_failure_is_logged_with_its_type_only_after_timeout() -> None:
+def test_late_failures_and_drain_leftovers_are_reported_once_and_only_to_their_owner() -> None:
+    """The tracker is shared (CSRF guard, session-fixation audit) and knows no metric: each
+    write's own `on_lost` hears of it once, and a write without one moves no CSRF series."""
+    lost: list[str] = []
+
+    async def drive() -> tuple[int, list[str], dict[str, float]]:
+        assert await RefusalAuditTracker().drain(0.01) == 0  # idle: nothing to wait for
+        early, late = asyncio.Event(), asyncio.Event()
+
+        async def fails_on(signal: asyncio.Event) -> None:
+            await signal.wait()
+            raise OSError("EIO")
+
+        before = _snapshot()
+        tracker = RefusalAuditTracker()
+        gone = tracker.track(fails_on(early))  # no owner, like the session-fixation audit
+        tracker.mark_timed_out(gone)
+        early.set()
+        await asyncio.gather(gone, return_exceptions=True)  # failed after its caller left
+        owned = tracker.track(fails_on(late), on_lost=lambda: lost.append("owned"))
+        ownerless = tracker.track(fails_on(late))
+        tracker.mark_timed_out(owned)
+        tracker.mark_timed_out(ownerless)
+        left = await tracker.drain(0.01)
+        at_drain = list(lost)
+        late.set()
+        await asyncio.gather(owned, ownerless, return_exceptions=True)  # both fail after it
+        return left, at_drain, _delta(before)
+
+    left, at_drain, moved = asyncio.run(drive())
+    assert left == 2 and at_drain == ["owned"]
+    assert lost == ["owned"]  # the later failure is not reported again
+    assert moved == {}
+
+
+# -- audit bookkeeping through the middleware (#2264) ---------------------------------------------
+
+
+class _FailsWhenSignalled:
+    """An audit sink that blocks until `fail` is set and then raises: a disk that errors late."""
+
+    def __init__(self) -> None:
+        self.started, self.fail = asyncio.Event(), asyncio.Event()
+
+    async def emit(self, action: str, **kw: Any) -> None:
+        self.started.set()
+        await self.fail.wait()
+        raise OSError("EIO")
+
+
+def _middleware(
+    audit: Any, *, timeout_s: float = 0.05, cap: int = 64, anon_max: int = 1000
+) -> CsrfMiddleware:
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        raise AssertionError("refused requests never reach the app")
+
+    return CsrfMiddleware(
+        inner,
+        codec=_CODEC,
+        sessions=lambda: None,
+        audit=audit,
+        allowed_origins=frozenset(),
+        anon_throttle=PerIpLoginThrottle(max_attempts=anon_max, window_s=60.0, clock=lambda: 0.0),
+        audit_timeout_s=timeout_s,
+        clock=lambda: _NOW,
+        tracker=RefusalAuditTracker(cap=cap),
+    )
+
+
+async def _refused_request(mw: CsrfMiddleware) -> dict[str, Any]:
+    """One unauthenticated POST (always refused, `missing`); returns the response start."""
+    sent: list[Any] = []
+
+    async def recv() -> Any:
+        return {"type": "http.request", "body": b""}
+
+    async def send(msg: Any) -> None:
+        sent.append(msg)
+
+    scope = {"type": "http", "method": "POST", "path": "/w/x", "headers": []}
+    await mw(scope, recv, send)
+    start: dict[str, Any] = sent[0]
+    return start
+
+
+def _refuse_once(sink: Any) -> tuple[int, dict[str, float]]:
+    """One refused request through a fresh middleware: (status, bookkeeping that moved)."""
+
+    async def drive() -> tuple[int, dict[str, float]]:
+        before = _snapshot()
+        start = await _refused_request(_middleware(sink))
+        return start["status"], _delta(before)
+
+    return asyncio.run(drive())
+
+
+def test_audit_failing_after_the_wait_counts_slow_at_the_wait_then_unavailable_once() -> None:
+    """#2264 (1): a write that outlasts the wait and then fails is lost, not merely slow.
+    Only its error type is logged, never its message."""
     from structlog.testing import capture_logs
 
-    from candleviewer.api.csrf import RefusalAuditTracker
-
-    async def boom() -> None:
-        await asyncio.sleep(0)
-        raise RuntimeError("disk gone")
-
-    async def drive() -> None:
-        tracker = RefusalAuditTracker()
-        awaited = tracker.track(boom())  # its failure is handled by the awaiting caller
-        late = tracker.track(boom())
-        tracker.mark_timed_out(late)
-        await asyncio.wait({awaited, late})
-        for t in (awaited, late):
-            t.exception()  # retrieved: no "never retrieved" noise
+    async def drive() -> tuple[int, dict[str, float], dict[str, float]]:
+        sink, before = _FailsWhenSignalled(), _snapshot()
+        mw = _middleware(sink)
+        start = await _refused_request(mw)
+        at_the_wait = _delta(before)
+        sink.fail.set()
+        assert await mw.tracker.drain(5) == 0
+        return start["status"], at_the_wait, _delta(before)
 
     with capture_logs() as logs:
-        asyncio.run(drive())
-    late_logs = [e for e in logs if e["event"] == "auth.csrf_refused.audit_failed_late"]
-    assert len(late_logs) == 1 and late_logs[0]["error"] == "RuntimeError"
+        status, at_the_wait, at_the_end = asyncio.run(drive())
+    assert status == 403 and at_the_wait == {"audit_slow": 1}
+    assert at_the_end == {"audit_slow": 1, "audit_unavailable": 1}
+    late = [e for e in logs if e["event"] == "auth.csrf_refused.audit_failed_late"]
+    assert [e["error"] for e in late] == ["OSError"]
+
+
+def test_a_cancelled_request_still_accounts_for_its_audit_failing_later() -> None:
+    """#2264 (1): with its request cancelled nobody awaits the write any more, so its later
+    failure has to be counted by the tracker (the shield would swallow it)."""
+
+    async def drive() -> dict[str, float]:
+        sink, before = _FailsWhenSignalled(), _snapshot()
+        mw = _middleware(sink, timeout_s=30)
+        request = asyncio.ensure_future(_refused_request(mw))
+        await sink.started.wait()  # the request is parked on its audit wait
+        request.cancel()
+        await asyncio.gather(request, return_exceptions=True)
+        sink.fail.set()
+        assert await mw.tracker.drain(5) == 0
+        return _delta(before)
+
+    assert asyncio.run(drive()) == {"audit_unavailable": 1}
+
+
+def test_a_writer_raising_timeout_itself_is_a_failure_not_slowness() -> None:
+    """The same branch as `wait_for` reporting its timeout after the write has failed."""
+
+    class _TimesOut:
+        async def emit(self, action: str, **kw: Any) -> None:
+            raise TimeoutError("fsync timed out")
+
+    assert _refuse_once(_TimesOut()) == (403, {"audit_unavailable": 1})
+
+
+def test_a_write_landing_in_the_turn_the_wait_ends_counts_slow_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The boundary: `wait_for` reports its timeout after the shielded write has finished."""
+
+    class _Lands:
+        async def emit(self, action: str, **kw: Any) -> None:
+            await asyncio.sleep(0)
+
+    async def lost_race(awaitable: Any, _wait: float | None) -> None:
+        await awaitable
+        raise TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", lost_race)
+    assert _refuse_once(_Lands()) == (403, {"audit_slow": 1})
+
+
+def test_a_full_tracker_skips_the_audit_as_saturated_and_spends_no_budget() -> None:
+    """#2264 (1): with the in-flight cap full of stuck writes the audit is skipped on purpose,
+    under a reason of its own (not the per-IP budget's) and without spending that budget:
+    once the writes clear, the same client is audited again, in full."""
+
+    async def drive() -> tuple[list[dict[str, Any]], list[str], dict[str, float]]:
+        release, written = asyncio.Event(), []
+
+        class _StuckUntilReleased:
+            async def emit(self, action: str, **kw: Any) -> None:
+                written.append(action)
+                await release.wait()
+
+        before = _snapshot()
+        mw = _middleware(_StuckUntilReleased(), timeout_s=0.01, cap=1, anon_max=2)
+        starts = [await _refused_request(mw)]  # audited (1 of 2), then stuck: the cap is full
+        starts.append(await _refused_request(mw))  # saturated: skipped, spends nothing
+        release.set()
+        assert await mw.tracker.drain(5) == 0
+        starts.append(await _refused_request(mw))  # audited again (2 of 2)
+        starts.append(await _refused_request(mw))  # over the budget: throttled
+        return starts, written, _delta(before)
+
+    starts, written, moved = asyncio.run(drive())
+    assert [s["status"] for s in starts] == [403] * 4
+    assert [b"retry-after" in dict(s["headers"]) for s in starts] == [False, True, False, True]
+    assert written == ["auth.csrf_refused"] * 2
+    assert moved == {"audit_slow": 1, "audit_saturated": 1, "audit_throttled": 1}

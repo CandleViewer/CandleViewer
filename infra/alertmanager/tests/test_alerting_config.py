@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -92,17 +93,28 @@ def test_required_rules_present() -> None:
     assert required <= names
 
 
+def _reason_matcher(expr: str) -> tuple[str, set[str]]:
+    """The one `reason` matcher in a PromQL expression: (operator, alternatives)."""
+    found = re.findall(r'reason\s*(=~|!~|!=|=)\s*"([^"]*)"', expr)
+    assert len(found) == 1, (expr, found)
+    return found[0][0], set(found[0][1].split("|"))
+
+
 def test_csrf_refusal_alerts_watch_the_bounded_metric() -> None:
-    """#2090: the CSRF alerts use the closed-label counter, never a per-path series."""
+    """#2090: the CSRF alerts use the closed-label counter, never a per-path series.
+    #2264: matchers are parsed, not searched as substrings, so flipping an operator fails."""
     rules = {r["alert"]: r for r in _rules()}
-    for name in ("CsrfRefusalsHigh", "CsrfRefusalAuditUnavailable"):
+    names = ("CsrfRefusalsHigh", "CsrfRefusalAuditUnavailable", "CsrfRefusalAuditDegraded")
+    for name in names:
         assert "auth_csrf_refused_total" in rules[name]["expr"]
         assert rules[name]["labels"]["severity"] == "ticket"
         assert rules[name]["labels"]["component"] == "auth"
-    high = rules["CsrfRefusalsHigh"]["expr"]
-    for bookkeeping in ("audit_unavailable", "audit_slow", "audit_throttled"):
-        assert bookkeeping in high  # excluded: only real refusal reasons drive the alert
-    assert 'reason="audit_unavailable"' in rules["CsrfRefusalAuditUnavailable"]["expr"]
+    bookkeeping = {"audit_unavailable", "audit_slow", "audit_throttled", "audit_saturated"}
+    assert _reason_matcher(rules["CsrfRefusalsHigh"]["expr"]) == ("!~", bookkeeping)
+    unavailable = _reason_matcher(rules["CsrfRefusalAuditUnavailable"]["expr"])
+    assert unavailable == ("=", {"audit_unavailable"})
+    degraded = _reason_matcher(rules["CsrfRefusalAuditDegraded"]["expr"])
+    assert degraded == ("=~", {"audit_slow", "audit_saturated"})
 
 
 def test_oms_unknown_orders_for_60s() -> None:

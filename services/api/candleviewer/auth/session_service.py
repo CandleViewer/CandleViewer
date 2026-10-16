@@ -140,10 +140,16 @@ def hash_access_token(token: str) -> uuid.UUID:
 
 
 def is_live_session(session: SessionRecord, *, now: datetime) -> bool:
-    """Read-only twin of `authenticate_access_token`'s acceptance rule: not revoked,
-    not absolute-expired, not idle-locked, and the access handle within
+    """Read-only twin of the strict acceptance rule of `authenticate_access_token`
+    (`allow_locked=False`, which ends in `require_active`): not revoked, not
+    absolute-expired, not idle-locked, and the access handle within
     `ACCESS_TOKEN_TTL`. No state change; used to decide whether a CSRF refusal is
-    bound to a session that could actually act (#2238 review)."""
+    bound to a session that could actually act (#2238 review). A property test pins
+    the two together (#2264).
+
+    The `allow_locked=True` path (logout, revoke) is laxer on purpose: an idle-locked session
+    can still act there, which this predicate does not model, so a CSRF refusal on those
+    routes for such a session draws on the per-IP audit budget (conservative)."""
     return (
         not session.is_revoked
         and not session.is_absolute_expired(now=now)

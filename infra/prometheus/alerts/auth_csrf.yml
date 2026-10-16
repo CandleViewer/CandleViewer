@@ -1,11 +1,16 @@
 # #2090 (SR-041): a burst of CSRF refusals means a cross-site attack in progress, a
 # broken client (token not sent / not rotated) or a key mismatch across processes.
 # Refusals are already audited (auth.csrf_refused); this makes them visible.
+# #2264: the counter also carries audit bookkeeping reasons (`audit_unavailable`, `audit_slow`,
+# `audit_saturated`, `audit_throttled`; `auth.metrics.CSRF_AUDIT_REASONS`). A refusal counts
+# under its own reason and again under one of these when its audit record was not written
+# normally, so CsrfRefusalsHigh must exclude all of them (a test ties that list to the code).
+# Only `audit_throttled` is deliberate flood control, so it alone has no alert.
 groups:
   - name: auth-csrf
     rules:
       - alert: CsrfRefusalsHigh
-        expr: sum(increase(auth_csrf_refused_total{reason!~"audit_unavailable|audit_slow|audit_throttled"}[10m])) > 20
+        expr: sum(increase(auth_csrf_refused_total{reason!~"audit_unavailable|audit_slow|audit_throttled|audit_saturated"}[10m])) > 20
         for: 5m
         labels:
           severity: ticket
@@ -25,6 +30,19 @@ groups:
           runbook_url: "docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh"
           summary: "CSRF refusals could not be audited (C-2.9)"
           description: >-
-            The guard refused requests but the audit write failed. Requests stayed
-            refused; the audit trail has gaps. Check the audit WAL. (Slow writes are
-            counted separately as audit_slow and still land.)
+            The guard refused requests but an auth.csrf_refused audit write failed: at once,
+            after the guard stopped waiting for it (2 s), or it was still running at
+            shutdown. Requests stayed refused; the audit trail has gaps. Check the audit WAL.
+      - alert: CsrfRefusalAuditDegraded
+        expr: sum by (env) (increase(auth_csrf_refused_total{reason=~"audit_slow|audit_saturated"}[15m])) > 0
+        labels:
+          severity: ticket
+          component: auth
+        annotations:
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh"
+          summary: "CSRF refusal audit writes are slow or backed up (C-2.9)"
+          description: >-
+            A refusal's audit write took over 2 s (audit_slow; it may still land) or 64 were
+            already in flight so it was not attempted (audit_saturated). Both mean the audit
+            WAL is stalled, which delays every other audited action. Requests stayed refused.
+            Check disk latency and the audit WAL.
