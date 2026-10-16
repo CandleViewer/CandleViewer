@@ -17,7 +17,9 @@ This script is the single implementation invoked by
    and we fail *before* even looking at git diff, so a flaky generator never
    masquerades as a "someone forgot to regenerate" freshness failure.
 2. Runs ``git diff --exit-code -- packages/protocol`` (CI-GEN-001: drift
-   against a committed schema change).
+   against a committed schema change). This is also the hand-edit guard for
+   committed generated files: regenerating overwrites the edit, so it shows
+   up as a diff. No committed manifest takes part (#2743).
 3. Runs ``git status --porcelain -- packages/protocol`` (CI-GEN-002:
    untracked generated output the first check cannot see).
 4. Checks that the packaged contract subset (#2555) was cut from the committed

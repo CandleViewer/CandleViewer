@@ -56,6 +56,9 @@ Desktop.ini
 *.log
 logs/
 .cache/
+# hand-edit guard manifest that `pnpm generate` writes; never committed (#2743). If it were not
+# ignored, gen-freshness would report it as untracked generated output (CI-GEN-002).
+packages/protocol/.cache/
 CLAUDE.local.md
 
 # agent scratch + worktrees
