@@ -18,9 +18,12 @@ Two refinements apply in ``--mode pinned`` only (#579 triage,
 * ``KNOWN_DELTAS`` excuses a row whose nightly status differs from the
   committed baseline for a reason the research docs already record. Each entry
   names the one status it excuses and carries its justification line, like
-  ``run_gate.py``'s ``*_BASELINE_FAILURES`` lists. Any other status of that row
-  (an ERROR, a different FAIL/PASS) is judged by the ordinary rules, and a row
-  that no longer shows its documented status is reported as drift.
+  ``run_gate.py``'s ``*_BASELINE_FAILURES`` lists. An entry may also set a
+  ``floor``: the row is excused only while the leading number of its detail
+  (the measured value) parses and is at or above it, so a collapse still gates.
+  Any other status of that row (an ERROR, a different FAIL/PASS) is judged by
+  the ordinary rules, and a row that no longer shows its documented status is
+  reported as drift.
 * When ``--bench`` is supplied, BENCH-6 is judged once, from that measurement.
   ``run_gate.py``'s own ``bench:BENCH-6`` row runs the same script, so it is
   reported but not counted a second time.
@@ -33,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections.abc import Mapping
 from pathlib import Path
@@ -52,6 +56,7 @@ class KnownDelta(NamedTuple):
 
     status: str  # the single status this entry excuses
     why: str  # one justification line, citing the doc that records it
+    floor: float | None = None  # lowest measured value still excused; None = any value
 
 
 # #579 (81-nightly-gate-triage.md). result-v0.9.1.json was recorded once, on
@@ -65,7 +70,10 @@ KNOWN_DELTAS: dict[str, KnownDelta] = {
         "(c) architectural and permanent: per-tick rule evaluation stays plain code "
         "(owner decision 2026-09-24 in 29-statechart-adoption-plan.md; "
         "79-r14-final-readiness-verdict.md s.0 and s.9: 380.9 vs 2,000 ev/s, row 8). "
+        "Excused only at or above 380.9 ev/s, the study figure that decision rests on (the "
+        "nightly reads 569-1,195); a lower or unreadable value is a regression. "
         "The baseline ran without benches; BENCH-7 remains the hot-path regression guard.",
+        floor=380.9,
     ),
     "verifyM4:174": KnownDelta(
         "FAIL",
@@ -109,12 +117,50 @@ def _statuses(result: dict[str, Any]) -> dict[str, str]:
     return {_key(c): str(c.get("status")) for c in result.get("checks", [])}
 
 
+# run_gate.py words a bench row's detail as "569.00 ev/s (need >= 2,000.00; ...)".
+_LEADING_NUMBER = re.compile(r"\s*((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)")
+
+
+def measured(detail: object) -> float | None:
+    """The leading number of a bench row's ``detail`` (thousands separators allowed), or None."""
+    m = _LEADING_NUMBER.match(detail) if isinstance(detail, str) else None
+    return float(m.group(1).replace(",", "")) if m else None
+
+
+def _excused(row: Mapping[str, Any] | None, delta: KnownDelta) -> bool:
+    """``row`` shows the status ``delta`` excuses and, if it sets a floor, a value at or above it.
+
+    A floor that cannot be checked (no readable value) excuses nothing: fail closed.
+    """
+    if row is None or row.get("status") != delta.status:
+        return False
+    if delta.floor is None:
+        return True
+    value = measured(row.get("detail"))
+    return value is not None and value >= delta.floor
+
+
 def documented_deltas(
     result: dict[str, Any], table: Mapping[str, KnownDelta] = KNOWN_DELTAS
 ) -> list[str]:
-    """Rows showing exactly the status their ``KNOWN_DELTAS`` entry excuses."""
-    now = _statuses(result)
-    return sorted(k for k, d in table.items() if now.get(k) == d.status)
+    """Rows their ``KNOWN_DELTAS`` entry excuses: the documented status, at or above any floor."""
+    rows = {_key(c): c for c in result.get("checks", [])}
+    return sorted(k for k, d in table.items() if _excused(rows.get(k), d))
+
+
+def below_floor(
+    result: dict[str, Any], table: Mapping[str, KnownDelta] = KNOWN_DELTAS
+) -> list[str]:
+    """Rows at the documented status that the floor does not excuse: they are regressions."""
+    rows = {_key(c): c for c in result.get("checks", [])}
+    out: list[str] = []
+    for k, d in table.items():
+        row = rows.get(k)
+        if row is not None and row.get("status") == d.status and not _excused(row, d):
+            value = measured(row.get("detail"))
+            shown = "unreadable" if value is None else f"{value:,.2f}"
+            out.append(f"{k} {d.status}: measured {shown}, floor {d.floor}")
+    return sorted(out)
 
 
 def delta_drift(
@@ -187,6 +233,7 @@ def render(
     documented: list[tuple[str, KnownDelta]] | None = None,
     drift: list[str] | None = None,
     bench6_row: str | None = None,
+    unexcused: list[str] | None = None,
 ) -> str:
     gating = mode == "pinned"
     red = bool(new) or bench_ok is False
@@ -216,6 +263,7 @@ def render(
     if documented is not None:
         lines += ["", "## Documented deltas vs committed baseline - excused, each justified"]
         lines += [f"- {k} {d.status}: {d.why}" for k, d in documented] or ["- none"]
+        lines += [f"- NOT EXCUSED (blocking): {u}" for u in unexcused or []]
         lines += [f"- DRIFT (re-triage the entry, non-blocking): {d}" for d in drift or []]
     lines += ["", "## BENCH-6 (timer lateness, 500 busy machines, p99)"]
     if bench_ok is None:
@@ -283,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         documented=[(k, KNOWN_DELTAS[k]) for k in deltas] if pinned else None,
         drift=delta_drift(result) if pinned else None,
         bench6_row=bench6_row,
+        unexcused=below_floor(result) if pinned else None,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(report, encoding="utf-8")

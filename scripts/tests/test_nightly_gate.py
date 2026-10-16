@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.statechart.nightly_gate import (
@@ -16,6 +18,7 @@ from tools.statechart.nightly_gate import (
     delta_drift,
     documented_deltas,
     main,
+    measured,
     regressions,
 )
 
@@ -131,11 +134,25 @@ def _with(*extra: tuple[str, str, str]) -> dict[str, Any]:
     return cur
 
 
+def _bench2(detail: str | None, *extra: tuple[str, str, str]) -> dict[str, Any]:
+    """A BENCH-2 FAIL whose detail is ``detail`` (none when None), plus any ``extra`` rows."""
+    cur = _with(("bench", "BENCH-2", "FAIL"), *extra)
+    if detail is not None:
+        next(c for c in cur["checks"] if c["id"] == "BENCH-2")["detail"] = detail
+    return cur
+
+
+def _need(value: str) -> str:
+    """The detail run_gate.py writes for a BENCH-2 reading of ``value`` ev/s."""
+    return f"{value} ev/s (need >= 2,000.00; 0.7.0 baseline 288.00)"
+
+
 def test_every_known_delta_excuses_a_fail_and_carries_a_justification() -> None:
     assert KNOWN_DELTAS
     for key, delta in KNOWN_DELTAS.items():
         assert delta.status == "FAIL", key  # an ERROR row is never excusable
         assert delta.why.startswith(("(c) ", "(d) ")) and len(delta.why) > 80, key
+    assert KNOWN_DELTAS["bench:BENCH-2"].floor == 380.9  # the study figure the decision rests on
 
 
 def test_regressions_excused_keys_are_not_reported() -> None:
@@ -144,9 +161,7 @@ def test_regressions_excused_keys_are_not_reported() -> None:
 
 
 def test_pinned_documented_deltas_are_excused_and_listed(tmp_path: Path) -> None:
-    cur = _with(
-        ("bench", "BENCH-2", "FAIL"), ("verifyM4", "174", "FAIL"), ("verifyM5", "174", "FAIL")
-    )
+    cur = _bench2(_need("569.00"), ("verifyM4", "174", "FAIL"), ("verifyM5", "174", "FAIL"))
     assert documented_deltas(cur) == ["bench:BENCH-2", "verifyM4:174", "verifyM5:174"]
     assert delta_drift(cur) == []
     rc, report = _run(tmp_path, "pinned", cur)
@@ -155,9 +170,43 @@ def test_pinned_documented_deltas_are_excused_and_listed(tmp_path: Path) -> None
 
 
 def test_documented_delta_excuses_only_its_own_status(tmp_path: Path) -> None:
-    rc, report = _run(tmp_path, "pinned", _with(("bench", "BENCH-2", "ERROR")))
+    cur = _with(("bench", "BENCH-2", "ERROR"), ("verifyM4", "174", "ERROR"))
+    cur["checks"][-2]["detail"] = _need("569.00")  # readable, so only its status keeps it out
+    rc, report = _run(tmp_path, "pinned", cur)
     assert rc == 1 and "**RED**" in report
-    assert regressions(_with(("bench", "BENCH-2", "ERROR")), BASE) == ["bench:BENCH-2"]
+    assert "- bench:BENCH-2\n" in report and "- verifyM4:174\n" in report
+    assert regressions(cur, BASE) == ["bench:BENCH-2", "verifyM4:174"]
+
+
+def test_measured_reads_the_leading_number_of_a_bench_detail() -> None:
+    assert measured(_need("569.00")) == 569.0 and measured(_need("1,195.00")) == 1195.0
+    assert not any(measured(d) is not None for d in ("", "exit 1: boom", "ev/s 569.00", None))
+
+
+@pytest.mark.parametrize("value", ["380.90", "380.91", "569.00", "1,195.00", "12,345.00"])
+def test_bench2_is_excused_at_its_floor_and_above(tmp_path: Path, value: str) -> None:
+    cur = _bench2(_need(value))
+    assert documented_deltas(cur) == ["bench:BENCH-2"]
+    rc, report = _run(tmp_path, "pinned", cur)
+    assert rc == 0 and "**GREEN**" in report and "NOT EXCUSED" not in report
+
+
+@pytest.mark.parametrize("value", ["380.89", "379.00", "40.00", "0.00"])
+def test_bench2_below_its_floor_is_a_regression(tmp_path: Path, value: str) -> None:
+    cur = _bench2(_need(value))
+    assert documented_deltas(cur) == []
+    assert regressions(cur, BASE, frozenset(documented_deltas(cur))) == ["bench:BENCH-2"]
+    rc, report = _run(tmp_path, "pinned", cur)
+    assert rc == 1 and "**RED**" in report and "- bench:BENCH-2\n" in report
+    assert f"- NOT EXCUSED (blocking): bench:BENCH-2 FAIL: measured {value}, floor 380.9" in report
+
+
+@pytest.mark.parametrize("detail", [None, "", "exit 1: boom", "n/a (need >= 2,000.00)"])
+def test_bench2_without_a_readable_value_is_not_excused(tmp_path: Path, detail: str | None) -> None:
+    cur = _bench2(detail)
+    assert documented_deltas(cur) == []
+    rc, report = _run(tmp_path, "pinned", cur)
+    assert rc == 1 and "measured unreadable, floor 380.9" in report
 
 
 def test_documented_delta_drift_is_reported_but_never_gates(tmp_path: Path) -> None:
@@ -169,8 +218,9 @@ def test_documented_delta_drift_is_reported_but_never_gates(tmp_path: Path) -> N
 
 
 def test_upstream_mode_does_not_excuse_documented_deltas(tmp_path: Path) -> None:
-    rc, report = _run(tmp_path, "upstream", _with(("bench", "BENCH-2", "FAIL")))
-    assert rc == 0 and "- bench:BENCH-2" in report and "Documented deltas" not in report
+    rc, report = _run(tmp_path, "upstream", _bench2(_need("569.00"), ("verifyM4", "174", "FAIL")))
+    assert rc == 0 and "- bench:BENCH-2" in report and "- verifyM4:174" in report
+    assert "Documented deltas" not in report
 
 
 def test_bench6_row_is_superseded_only_when_bench_is_supplied(tmp_path: Path) -> None:
