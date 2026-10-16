@@ -241,6 +241,8 @@ def test_downgrade_gives_up_on_a_reader_lock_instead_of_queueing(pg_dsn: str) ->
     with _conn(pg_dsn) as c:
         c.execute("DELETE FROM feature_flags")
         try:
+            # Start at this revision, so a later head never takes the lock first.
+            assert _alembic(pg_dsn, "downgrade", _REV).returncode == 0
             with _conn(pg_dsn) as holder, holder.transaction():
                 holder.execute("LOCK TABLE users IN ACCESS SHARE MODE")
                 refused = _alembic(pg_dsn, "downgrade", _PREV)
