@@ -16,10 +16,11 @@ server-side, deny-by-default, C-12.4):
 - an allowed caller's verified principal is left on `request.state.admin_principal`, so a write
   route can audit its actor without resolving the session again.
 
-`reauth_age_s` is `null` until E09 puts the step-up time on the principal (#2754); the key is
-reserved so the record keeps its shape (a `token` key would be masked by `audit/redact.py`).
-Step-up (SR-025) is not this guard's job: it stays enforced by the `DANGEROUS_ROUTES` middleware
-in `candleviewer/api/step_up.py`, so a route on this router must not assume elevation is checked.
+`reauth_age_s` is the whole seconds from the caller's last step-up on this session to the
+injected clock (`AuditPrincipal.reauth_age_s`, #2754), or `null` before any step-up; a `token`
+key would be masked by `audit/redact.py`. It is observability only, never a gate: step-up
+(SR-025) is not this guard's job. It stays enforced by the `DANGEROUS_ROUTES` middleware in
+`candleviewer/api/step_up.py`, so a route on this router must not assume elevation is checked.
 Refusals are RFC 9457 problem documents carrying the contract's `code` (C-6.5), rendered by
 `admin_area_refused_handler` (registered in `create_app`).
 """
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any, Final, Protocol
 
 import structlog
@@ -98,10 +100,18 @@ async def admin_area_refused_handler(_request: Request, exc: Exception) -> JSONR
     return JSONResponse(body, status_code=status, media_type="application/problem+json")
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 def admin_area(
-    permission: Permission, resolver: PrincipalResolver | None, audit: AuditEmitter | None
+    permission: Permission,
+    resolver: PrincipalResolver | None,
+    audit: AuditEmitter | None,
+    clock: Callable[[], datetime] = _utc_now,
 ) -> Callable[[Request], Awaitable[AuditPrincipal]]:
-    """The dependency itself: the verified principal, or an `AdminAreaRefused`."""
+    """The dependency itself: the verified principal, or an `AdminAreaRefused`. `clock` is the
+    injected time source the record's `reauth_age_s` is measured against."""
 
     async def enter(request: Request) -> AuditPrincipal:
         if resolver is None:
@@ -127,7 +137,7 @@ def admin_area(
                 outcome=AuditOutcome.SUCCESS if allowed else AuditOutcome.DENIED,
                 severity=Severity.INFO if allowed else Severity.WARNING,
                 reason=None if allowed else f"missing_permission:{permission}",
-                after_state={"route": route, "reauth_age_s": None},
+                after_state={"route": route, "reauth_age_s": principal.reauth_age_s(clock())},
                 request_id=principal.request_id,
             )
         except Exception as exc:  # any audit failure shuts the area (write-ahead, C-2.9)
@@ -149,8 +159,12 @@ def admin_area(
 
 
 def admin_router(
-    permission: Permission, *, resolver: PrincipalResolver | None, audit: AuditEmitter | None
+    permission: Permission,
+    *,
+    resolver: PrincipalResolver | None,
+    audit: AuditEmitter | None,
+    clock: Callable[[], datetime] = _utc_now,
 ) -> APIRouter:
     """An `/admin` router whose every route passes the audited admin-area check first."""
-    guard = Depends(admin_area(permission, resolver, audit))
+    guard = Depends(admin_area(permission, resolver, audit, clock))
     return APIRouter(prefix="/admin", tags=["admin"], dependencies=[guard])

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -34,11 +36,17 @@ AUDIT = Permission.AUDIT_READ  # held by the viewer and the manager, not the own
 _ERRORS = "https://candleviewer.local/errors/"
 
 
+_NOW = datetime(2026, 10, 16, 9, 30, 0, tzinfo=UTC)
+
+
 def _guarded(
-    resolver: PrincipalResolver | None, audit: AuditEmitter | None, permission: Permission = READ
+    resolver: PrincipalResolver | None,
+    audit: AuditEmitter | None,
+    permission: Permission = READ,
+    clock: Callable[[], datetime] = lambda: _NOW,
 ) -> tuple[TestClient, list[str]]:
     served: list[str] = []
-    router = admin_router(permission, resolver=resolver, audit=audit)
+    router = admin_router(permission, resolver=resolver, audit=audit, clock=clock)
 
     @router.get("/probe")
     @router.get("/probe/{item}")
@@ -212,3 +220,51 @@ async def test_the_record_survives_the_real_writer_and_its_redactor(tmp_path: Pa
     rows = [(r["action"], r["outcome"], json.loads(r["after_state"])) for r in repo.rows]
     state = {"route": "/admin/overview", "reauth_age_s": None}  # unmasked, both keys
     assert rows == [(AREA_ENTERED, "success", state), (AREA_ENTERED, "denied", state)]
+
+
+@pytest.mark.parametrize("role", ["owner", "viewer"])
+@pytest.mark.parametrize(
+    ("ago", "age"), [(None, None), (0, 0), (47, 47), (301, 301), (86_400, 86_400)]
+)
+def test_reauth_age_s_is_null_before_any_step_up_and_whole_seconds_after(
+    role: str, ago: int | None, age: int | None
+) -> None:
+    """Allowed and denied callers alike; past the 300 s grace window the age keeps counting."""
+    stepped = None if ago is None else _NOW - timedelta(seconds=ago)
+    spy = AuditSpy()
+    client, _ = _guarded(Resolver(stepped), spy)
+    client.get("/admin/probe", headers={"x-role": role})
+    assert spy.records == [expected_record(role, "/admin/probe", reauth_age_s=age)]
+
+
+def test_reauth_age_s_is_measured_against_the_injected_clock_only() -> None:
+    later = datetime(2031, 1, 1, tzinfo=UTC)  # nowhere near any wall clock
+    spy = AuditSpy()
+    client, _ = _guarded(Resolver(later - timedelta(seconds=42)), spy, clock=lambda: later)
+    client.get("/admin/probe", headers={"x-role": "owner"})
+    assert spy.records == [expected_record("owner", "/admin/probe", reauth_age_s=42)]
+
+
+@pytest.mark.parametrize("ago", [None, 30 * 86_400])
+def test_a_missing_or_stale_step_up_never_refuses_the_route(ago: int | None) -> None:
+    """Observability only: `admin:read` has no step-up mark, so the guard never gates on the age."""
+    stepped = None if ago is None else _NOW - timedelta(seconds=ago)
+    client, served = _guarded(Resolver(stepped), AuditSpy())
+    assert client.get("/admin/probe", headers={"x-role": "owner"}).status_code == 200
+    assert served == ["owner"]
+
+
+async def test_the_age_survives_the_real_writer_and_its_redactor_as_an_integer(
+    tmp_path: Path,
+) -> None:
+    repo = FakeAuditRepository()
+    writer = AuditWriter(repo, str(tmp_path / "audit.wal"), sleep=repo.retry_sleep)
+    await writer.start()
+    enter = admin_area(READ, Resolver(_NOW - timedelta(seconds=47)), writer, lambda: _NOW)
+    await enter(_request("owner"))
+    await writer.flush(5)
+    await writer.stop(1)
+    (row,) = repo.rows
+    state = json.loads(row["after_state"])
+    assert state == {"route": "/admin/overview", "reauth_age_s": 47}
+    assert type(state["reauth_age_s"]) is int
