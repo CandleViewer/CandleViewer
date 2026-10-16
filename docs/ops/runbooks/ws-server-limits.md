@@ -84,8 +84,9 @@ A start that fails inside the lifespan exits with code 3. stderr stays empty, th
 `Application startup failed. Exiting.`, and the line before it, the cause, is one marker:
 `{"event":"[redacted:key-shape]","level":"error",...}`. uvicorn logs the whole traceback as a single
 text, and the redaction filter replaces a text by one marker when any token in it has the shape of
-a secret. An exception class name such as `ConnectionRefusedError` is enough. Keep redaction on and
-find the cause from what the lifespan depends on. `candleviewer/app.py` starts the modules in
+a secret. An exception class name such as `ConnectionRefusedError` is enough. (#2868 tracks
+token-level redaction, which would keep the cause readable.) Keep redaction on and find the cause
+from what the lifespan depends on. `candleviewer/app.py` starts the modules in
 `_SUPERVISOR_ORDER` (`storage`, `audit`, `secrets`, `auth`, ..., `rules`, ...) and the first one
 that raises ends the start. Check, in this order:
 
