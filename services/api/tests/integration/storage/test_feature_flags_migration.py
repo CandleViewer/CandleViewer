@@ -170,6 +170,7 @@ def _assert_matches_plan_doc(c: Conn) -> None:
     assert names == {
         "feature_flags_pkey",
         "feature_flags_key_key",
+        "feature_flags_updated_by_fkey",
         "ff_key",
         "ff_pct",
         "ff_shape",
@@ -294,6 +295,12 @@ def test_boundary_flags_are_accepted_with_the_plan_defaults(pg_dsn: str) -> None
         assert row == ("boolean", "", False, False, "platform", None, True)
 
 
+def test_flag_writer_must_exist(pg_dsn: str) -> None:
+    with _conn(pg_dsn) as c, pytest.raises(pgerr.ForeignKeyViolation) as exc:
+        _flag(c, updated_by=str(uuid.uuid4()))
+    assert exc.value.diag.constraint_name == "feature_flags_updated_by_fkey"
+
+
 def test_flag_key_is_unique(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
         key = _key()
@@ -346,13 +353,16 @@ def _has_override(c: Conn, oid: str) -> bool:
 def test_delete_rules_cascade_to_overrides_and_detach_the_setter(pg_dsn: str) -> None:
     with _conn(pg_dsn) as c:
         _active_owner(c)
-        fid, gone, setter = _flag(c), _user(c), _user(c)
+        gone, setter = _user(c), _user(c)
+        fid = _flag(c, updated_by=setter)
         mine, theirs = _override(c, fid, user_id=gone), _override(c, fid, user_id=setter)
         by_setter = _override(c, _flag(c), user_id=_user(c), set_by=setter)
         c.execute("DELETE FROM users WHERE id = ANY(%s)", ([gone, setter],))
         assert not _has_override(c, mine) and not _has_override(c, theirs)
         row = c.execute("SELECT set_by FROM feature_flag_overrides WHERE id = %s", (by_setter,))
         assert row.fetchone() == (None,)  # the setter's other overrides survive, detached
+        writer = c.execute("SELECT updated_by FROM feature_flags WHERE id = %s", (fid,))
+        assert writer.fetchone() == (None,)  # the flag survives its last writer, detached
         by_role = _override(c, fid, role_id=_role(c, "owner"))
         c.execute("DELETE FROM feature_flags WHERE id = %s", (fid,))
         assert not _has_override(c, by_role)

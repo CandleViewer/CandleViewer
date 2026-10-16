@@ -1706,6 +1706,7 @@ feature_flags = Table(
     Column("is_killswitch", Boolean, nullable=False, server_default=text("false")),
     Column("owner_team", Text, nullable=False, server_default=text("'platform'")),
     Column("expires_at", TIMESTAMP(timezone=True)),
+    Column("updated_by", ForeignKey("users.id", ondelete="SET NULL")),
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     UniqueConstraint("key", name="feature_flags_key_key"),

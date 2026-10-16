@@ -9,6 +9,10 @@ unique indexes are `docs/plan/21-database-schema.md` Sec.3.9 verbatim (the regis
 `0012_governance` row; `settings`, from the same section, shipped alone as `0025_settings`).
 `flag_kind` (Sec.1.2) had no earlier owner, so it is created here, its values in doc order.
 
+* Deviation, agreed before merge (E42-T03 review): `feature_flags.updated_by` is not in the
+  original Sec.3.9 DDL. The PUT records its writer (`FeatureFlag.updated_by`), so the column was
+  added to Sec.3.9 and here together. `default_value` is the deployment-wide stored value the PUT
+  writes; the contract's `FeatureFlag.value` is per caller, so there is no current-value column.
 * No column can hold a credential, token or PII (Sec.12 "everything else", class P0), so no column
   carries a classification comment. `feature_flag_overrides.reason` is operator free text.
 * No triggers: the flag store sets `updated_at` (0022/0025 precedent). No GRANTs: the default
@@ -66,6 +70,7 @@ CREATE TABLE feature_flags (
   is_killswitch boolean NOT NULL DEFAULT false,
   owner_team    text NOT NULL DEFAULT 'platform',
   expires_at    timestamptz,               -- flag debt hygiene: CI warns past this date
+  updated_by    uuid REFERENCES users(id) ON DELETE SET NULL,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT ff_key   CHECK (key ~ '^[a-z0-9_]+([.][a-z0-9_]+){0,3}$'),

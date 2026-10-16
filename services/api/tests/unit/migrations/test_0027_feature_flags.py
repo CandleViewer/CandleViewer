@@ -131,6 +131,7 @@ _FLAG_COLUMNS = [
     ("is_killswitch", False, "false", Boolean),
     ("owner_team", False, "'platform'", Text),
     ("expires_at", True, None, TIMESTAMP),
+    ("updated_by", True, None, UUID),  # added before merge (E42-T03 review), in Sec.3.9 too
     ("created_at", False, "now()", TIMESTAMP),
     ("updated_at", False, "now()", TIMESTAMP),
 ]
@@ -178,7 +179,11 @@ def test_models_mirror_the_foreign_keys_and_their_delete_rules() -> None:
         ("role_id", "roles", "CASCADE"),
         ("set_by", "users", "SET NULL"),
     }
-    assert not models.feature_flags.foreign_keys
+    flag_fks = {
+        (fk.parent.name, fk.column.table.name, fk.ondelete)
+        for fk in models.feature_flags.foreign_keys
+    }
+    assert flag_fks == {("updated_by", "users", "SET NULL")}
 
 
 def _checks(table: Any) -> dict[str, str]:
