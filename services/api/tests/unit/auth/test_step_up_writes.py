@@ -1,5 +1,5 @@
 """#2304 (security review round 3) and #2798: every write of a session's step-up columns is a
-pure change applied to the row as it is when written (`SessionRepository.update_step_up_state`),
+change applied to the row as it is when written (`SessionRepository.update_step_up_state`),
 never to a copy read before it, and a one-shot grant is used by one conditional write
 (`consume_step_up_key`). A grant used while another request of the session is in flight stays
 used, whichever writer races it, and a downgrade that lands meanwhile stands.
@@ -11,18 +11,24 @@ lock."""
 from __future__ import annotations
 
 import asyncio
+import functools
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 
 import pytest
 
-from candleviewer.auth.errors import SessionReadOnly, StepUpCodeInvalid, StepUpRequired
+from candleviewer.auth.errors import (
+    SessionReadOnly,
+    SessionRevoked,
+    StepUpCodeInvalid,
+    StepUpRequired,
+)
 from candleviewer.auth.models import SessionRecord
-from candleviewer.auth.step_up import READONLY_WINDOW, StepUpService
+from candleviewer.auth.step_up import FAILURE_CAP, READONLY_WINDOW, StepUpService, _Strike
 
 from .session_fakes import FakeSessionRepository
-from .test_step_up import PASSWORD, _Clock, _code, _setup
+from .test_step_up import PASSWORD, _Clock, _code, _sample, _setup
 
 #: The request a no-grace grant is bound to, and the grant a no-grace step-up left on the row.
 _BOUND = "a" * 64
@@ -187,6 +193,29 @@ async def test_step_up_of_a_session_downgraded_during_its_check_opens_nothing(
     assert (row.step_up_elevations, row.step_up_failures) == ({}, 3)
 
 
+async def test_failed_step_up_of_a_session_downgraded_during_its_check_keeps_that_downgrade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three wrong step-ups land 30 s after a fourth began, while it is in its password check:
+    the downgrade they started stands as set, and is counted once, not again by the fourth."""
+    svc, clock, _seed, user, sessions = await _setup()
+    downgrades = _sample("auth_readonly_downgrades_total")
+
+    async def downgraded_later() -> None:
+        clock.now += timedelta(seconds=30)
+        await _three_strikes(svc, user)
+
+    _in_password_check(monkeypatch, svc, downgraded_later)
+
+    with pytest.raises(SessionReadOnly) as refused:
+        await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
+
+    row = sessions.sessions["s1"]
+    assert refused.value.until == clock.now + READONLY_WINDOW == row.readonly_until
+    assert (row.step_up_elevations, row.step_up_failures) == ({}, 3)
+    assert _sample("auth_readonly_downgrades_total") == downgrades + 1
+
+
 async def test_lifting_a_lapsed_downgrade_keeps_a_challenge_issued_since_its_read(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -235,3 +264,43 @@ async def test_identical_requests_racing_inside_the_window_use_the_grant_once(
     refused = [r for r in results if type(r) is StepUpRequired]
     assert (results.count(None), len(refused)) == (1, 1)
     assert sessions.sessions["s1"].step_up_elevations == {}
+
+
+async def _wrong_code(svc: StepUpService, user: uuid.UUID, seed: bytes, clock: _Clock) -> None:
+    await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
+
+
+@pytest.mark.parametrize(
+    ("writer", "gap"),
+    [(_challenge, "read"), (_wrong_code, "check"), (_grant, "check")],
+    ids=["challenge", "strike", "grant"],
+)
+async def test_write_of_a_session_revoked_since_its_read_is_refused_as_revoked(
+    monkeypatch: pytest.MonkeyPatch, writer: Writer, gap: str
+) -> None:
+    """The row refuses a write once it is revoked (`None`), so the writer fails closed and never
+    reports the challenge, strike or grant it did not store."""
+    svc, clock, seed, user, sessions = await _setup()
+    revoked = functools.partial(sessions.revoke, "s1", reason="logout", now=clock.now)
+    if gap == "read":
+        _after_next_read(monkeypatch, sessions, revoked)
+    else:
+        _in_password_check(monkeypatch, svc, revoked)
+
+    with pytest.raises(SessionRevoked):
+        await writer(svc, user, seed, clock)
+
+    row = sessions.sessions["s1"]
+    assert (row.step_up_elevations, row.step_up_failures) == ({}, 0)
+
+
+def test_strike_notes_on_itself_whether_this_write_started_the_downgrade() -> None:
+    """The one change that reports on itself: each call sets `downgraded` afresh."""
+    now = _Clock().now
+    strike = _Strike(now)
+    strike(({}, FAILURE_CAP - 1, None))
+    assert strike.downgraded
+    strike(({}, 0, None))
+    assert not strike.downgraded
+    standing = ({}, FAILURE_CAP, now + READONLY_WINDOW)
+    assert strike(standing) is standing and not strike.downgraded

@@ -18,7 +18,9 @@ from candleviewer.auth.models import SessionRecord
 
 #: #2304: a row's step-up columns, `(step_up_elevations, step_up_failures, readonly_until)`.
 StepUpState = tuple[dict[str, datetime], int, datetime | None]
-#: A pure function from the step-up columns the row holds to the columns to store.
+#: A function from the step-up columns the row holds to the columns to store: it uses only those
+#: and the values it was built with, does no I/O and never awaits. It may note its own outcome on
+#: itself (the strike's `downgraded`), so the repository calls it once, under the row lock.
 StepUpChange = Callable[[StepUpState], StepUpState]
 
 
@@ -85,7 +87,9 @@ class SessionRepository(Protocol):
         lock, so a write never carries a stale read: a concurrent
         `consume_step_up_key` (or any other write of the row) lands wholly
         before the read or after the write, and a used one-shot grant is never
-        written back. `change` is pure and never awaits. Returns the updated
+        written back. `change` runs once, under the lock, on the columns as the
+        row holds them: it does no I/O and never awaits, and may note its own
+        outcome on itself (the strike's `downgraded`). Returns the updated
         row, or `None` if revoked/absent (`change` is then not called)."""
         ...
 

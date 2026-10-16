@@ -3763,6 +3763,8 @@ A scheduled run that finds the verify slot held waits for it and is never skippe
 
 Adding an action requires a code change plus a test; the set is closed so that dashboards and alerts can be exhaustive.
 
+`auth.step_up_failed` records two kinds of event, told apart by `outcome` (#2304). A wrong password or code, or a locked account, is outcome `failure` with reason `<action_class>:remaining=<n>` and no object; it counts a strike. A step-up refused before any factor is checked (`400 validation_failed` from `POST /auth/step-up`) is outcome `denied` with `object_kind` `step_up_challenge`, the presented `challenge_id` (if any) as `object_id` and the refusal rule as reason: `challenge_expired`, `challenge_required`, `challenge_mismatch` or `required`. It counts no strike and is audited within the same per-session refusal budget as `auth.csrf_refused`. A query or alert that counts factor failures filters on `outcome = failure`.
+
 **Retention:** audit rows are kept **forever** (they are small), exported nightly to the cold tier, and included in every backup. They are never subject to the data-retention job.
 
 ---

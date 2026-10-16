@@ -53,13 +53,19 @@ def test_invite_confirm_counts_non_ascii_digit_codes_toward_the_address_limit(st
     assert stack.client.post(url, json=body).status_code == 429  # the tenth failure tripped it
 
 
-def test_step_up_refuses_a_non_ascii_digit_code_like_a_wrong_one_and_counts_a_strike(
+def test_step_up_refuses_a_non_ascii_digit_code_before_any_factor_is_checked(
     stack: Stack,
 ) -> None:
-    headers, _ = stack.principal("owner", "owner", Permission.USERS_WRITE)
+    """#2304: `POST /auth/step-up` holds its body to the contract (`code` is `^[0-9]{6}$`), so a
+    code in other digits is `400 validation_failed` before the password or the code is checked:
+    never a 500, and no strike (the next wrong code still leaves two)."""
+    headers, seed = stack.principal("owner", "owner", Permission.USERS_WRITE)
     body = {"code": ARABIC_INDIC_CODE, "password": PW, "action_class": "users"}
 
     refused = stack.client.post("/auth/step-up", headers=headers, json=body)
+    wrong = body | {"code": _wrong_ascii_code(stack, seed)}
+    counted = stack.client.post("/auth/step-up", headers=headers, json=wrong)
 
-    assert (refused.status_code, refused.json()["code"]) == (401, "mfa_invalid"), refused.text
-    assert refused.json()["failures_remaining"] == 2  # one strike of three, as for a wrong code
+    assert (refused.status_code, refused.json()["code"]) == (400, "validation_failed"), refused.text
+    assert [error["field"] for error in refused.json()["errors"]] == ["code"]
+    assert (counted.status_code, counted.json()["failures_remaining"]) == (401, 2), counted.text
