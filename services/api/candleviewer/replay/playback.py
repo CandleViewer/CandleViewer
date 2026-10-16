@@ -83,15 +83,17 @@ class ReplaySink(Protocol):
     """Where the clock hands recorded events, one at a time and in order (the injector)."""
 
     async def deliver(self, event: RecordedEvent) -> None:
-        """Accept `event`. Awaiting is backpressure: the clock slows and never drops. If this
-        raises, the clock stops (`on_stop("error", exc)`) with `event` still pending: the next
-        `play()` delivers it again before anything after it (at-least-once for that event)."""
+        """Accept `event`. Awaiting is backpressure: the clock slows and never drops. Unlike an
+        observer, it may raise: playback then stops (`on_stop("error", exc)`; a step raises it)
+        with `event` still pending, and the next `play()` or step delivers it again before
+        anything after it (at-least-once for that event)."""
         ...
 
 
 class PlaybackObserver(Protocol):
     """Session-layer callbacks. Each one is synchronous and non-blocking (no I/O), because it
-    runs on the playback path."""
+    runs on the playback path, and must not raise or call back into the clock. A raising
+    `on_stop` fails the playback task, so the session's TaskGroup ends in an `ExceptionGroup`."""
 
     def on_gap(self, gap: ReplayGap, *, stopped: bool) -> None:
         """A recording gap was reached: skipped (`stopped=False`) or stopped at."""
@@ -102,7 +104,7 @@ class PlaybackObserver(Protocol):
         ...
 
     def on_stop(self, reason: StopReason, error: Exception | None) -> None:
-        """Playback ended. `error` is set only for `reason == "error"`: the source's `ReplayError`
+        """Playback ended. `error` is set only for `reason == "error"`: what the source raised
         (the source is done, so the clock refuses to play until repositioned), or whatever the
         sink raised (its event stays pending for a retry)."""
         ...

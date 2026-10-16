@@ -34,7 +34,7 @@ stop, not per event; `replay_backpressure_seconds_total` is the wall time given 
 is the replay "now" for downstream clocks; it never passes an event not yet delivered, so a bar
 never closes ahead of its own trades.
 
-**Failures.** A source `ReplayError` stops playback (`error`) after every event before it, and the
+**Failures.** Any source exception stops playback (`error`) after every event before it, and the
 clock then refuses to play from that source. If the sink raises, playback stops (`error`) with the
 event still pending, and the next `play()` delivers it first: nothing is lost.
 """
@@ -53,7 +53,7 @@ import structlog
 
 from candleviewer.observability import spawn
 from candleviewer.observability.metrics import Counter, Gauge, Histogram
-from candleviewer.replay.errors import ReplayClockStateError, ReplayError, ReplayRequestInvalid
+from candleviewer.replay.errors import ReplayClockStateError, ReplayRequestInvalid
 from candleviewer.replay.models import ReplayGap, ReplayItem
 from candleviewer.replay.pacing import MS_PER_S, US_PER_MS, Pacer, RateWindow
 from candleviewer.replay.playback import (
@@ -133,8 +133,9 @@ class ReplayClock:
         self._range = (start_us, end_us)
         self._end_us, self._cursor, self._speed = end_us, start_us, check_speed(speed)
         self._pending: ReplayItem | None = None
-        self._failed: ReplayError | None = None
+        self._failed: Exception | None = None  # what the source raised: it is done
         self._drained = self._stop = self._closed = self._stepping = False
+        self._starting = False  # play() started and `_play` has not anchored yet
         self._pacer: Pacer | None = None
         self._window = RateWindow(self._cfg.rate_window_s)
         self._wake = asyncio.Event()
@@ -167,8 +168,9 @@ class ReplayClock:
         return None if stack is None else await stack.__aexit__(et, exc, tb)
 
     async def aclose(self) -> None:
-        """Destroy: cancel playback, then close the source exactly once. Every caller awaits the
-        same shielded close, so a caller cancelled again meanwhile cannot leave the source open."""
+        """Destroy: cancel playback, then close the source exactly once, after any old source a
+        reposition is still closing. Every caller awaits the same shielded close, so a caller
+        cancelled again meanwhile cannot leave a source open."""
         self._closed = True
         if self._closing is None:
             self._closing = spawn(self._shutdown(), name="replay-clock-close")
@@ -181,6 +183,8 @@ class ReplayClock:
                 task.cancel()
                 await asyncio.wait({task})
         finally:
+            if self._closers:  # old sources a reposition is still closing: wait for them too
+                await asyncio.wait(self._closers)
             await self._source.aclose()
 
     @property
@@ -199,7 +203,7 @@ class ReplayClock:
             raise ReplayClockStateError("playback is already running or still stopping")
         if self._speed == STEP:
             raise ReplayClockStateError("speed 0 is step mode: step instead of playing")
-        self._stop = False
+        self._stop, self._starting = False, True
         self._task = _child(group, self._play())
         return self._task
 
@@ -213,10 +217,11 @@ class ReplayClock:
             await asyncio.wait({task})
 
     def set_speed(self, speed: float) -> None:
-        """Change speed (B12 `set_speed`); the current speed again is a no-op. While paced, the
-        schedule continues from its own position, so a change is continuous and never forgives
-        lateness. Leaving the schedule (unbounded, or `STEP`, which pauses) books that lateness as
-        lost time, so it never hides backpressure."""
+        """Change speed (B12 `set_speed`); the current speed again is a no-op, and before `play()`
+        anchors its schedule the speed is only recorded. While paced, the schedule continues from
+        its own position; behind schedule, from the pending event's due time, so its lateness
+        carries over as is instead of being re-scaled or forgiven. Leaving the schedule (unbounded
+        or `STEP`, which pauses) books that lateness as lost time: it never hides backpressure."""
         speed = check_speed(speed)
         if speed == self._speed:
             return
@@ -224,10 +229,17 @@ class ReplayClock:
         self._speed = speed
         if not self.playing:
             return
+        if self._starting:  # `_play` has not anchored yet: it anchors at this speed
+            self._stop |= speed == STEP
+            return
         now, pacer, pending = self._time.now(), self._pacer, self._pending
         self._cursor = self._position(now)  # the clamped position: what the session reports
+        # behind schedule, a paced change takes effect from the pending event's due time: its
+        # lateness carries over as is, never re-scaled to the new speed (or forgiven)
+        at = now
         if pacer is not None and speed > 0:
-            pacer.set_speed(speed, wall=now, position_us=pacer.position(now))
+            at = now if pending is None else min(now, pacer.due(pending.ts_us))
+            pacer.set_speed(speed, wall=at, position_us=pacer.position(at))
         else:
             if pacer is not None and pending is not None:
                 lost = max(0.0, now - pacer.due(pending.ts_us))
@@ -238,9 +250,11 @@ class ReplayClock:
             self._pacer = (
                 Pacer(speed, wall=now, ts_us=max(here, self._cursor)) if speed > 0 else None
             )
+            _set_ratio(id(self), None)  # unpaced until now, or from now: no achieved ratio
             if speed == STEP:
                 self._stop = True
-        self._window.restart(wall=now, lost_s=self._lost_s, position_us=self._cursor)
+        # the window counts what is booked and what is still outstanding, as `_run` does
+        self._window.restart(wall=now, lost_s=self._lost_s + now - at, position_us=self._cursor)
         self._wake.set()
 
     async def step_events(self, count: int = 1) -> StopReason:
@@ -348,6 +362,7 @@ class ReplayClock:
             now = self._time.now()
             if self._speed > 0:  # the schedule starts once the first event is read
                 self._pacer = Pacer(self._speed, wall=now, ts_us=self._cursor)
+            self._starting = False  # from here a speed change re-anchors this schedule
             self._window.restart(wall=now, lost_s=self._lost_s, position_us=self._cursor)
             reason = await self._run()
         except Exception as exc:  # the source failed (`_failed`), or the sink raised: nothing lost
@@ -476,7 +491,7 @@ class ReplayClock:
             except StopAsyncIteration:
                 self._drained = True
                 return None
-            except ReplayError as exc:  # a storage failure ends the source: remember it
+            except Exception as exc:  # any source failure ends it (`ReplaySource`): remember it
                 self._failed = exc
                 raise
             self._pending = item
