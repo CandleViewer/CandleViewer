@@ -1,26 +1,24 @@
 """Maintenance mode control plane (E42-T03, module M21).
 
 Enforcement is synchronous code, never a statechart (C-2.21): `MaintenanceGate` is a
-process-wide boolean that the order-acceptance check (`api.order_entry_gate`) consults before
-any OMS work, so refusing orders is structural, not best effort. The gate is engaged while
-`maintenance.mode` **or** `killswitch.order_entry` is on, and while either is unknown: it starts
-engaged and stays engaged when the store cannot be read (fail closed, D1).
+process-wide boolean that the order-entry check (`api.order_entry_gate`) consults before any OMS
+work, so refusing is structural, not best effort. It is engaged while `maintenance.mode` **or**
+`killswitch.order_entry` is on, and while either is unknown: it starts engaged and stays engaged
+when the store or a row cannot be read (fail closed, D1).
 
-`MaintenanceController` keeps the gate in step:
-- `gate_hook` runs first on `FlagWriter`'s change hook, from the committed row, so a write that
-  turns maintenance on closes the gate before the write returns; the push runs next, and
-  `effects_hook` last, so a slow side effect never delays the notice;
-- `run` re-reads both flags with a fresh store read every `REFRESH_S` (5 s), so a change made
-  directly in the database is applied within 5 s without a restart;
-- the gate is applied without waiting on anything: a write bumps a generation, and a poll that
-  read before that write drops its reading instead of overwriting the newer committed value;
-  polls and side effects are serialised by one lock.
+`MaintenanceController` keeps the gate in step: `gate_hook` runs first on `FlagWriter`'s change
+hook and closes the gate from the committed row before the write returns (the push runs next and
+`effects_hook` last, so a slow side effect never delays the notice); `run` re-reads both flags
+fresh every `REFRESH_S` (5 s), so a database change applies within 5 s without a restart; a write
+bumps a generation, so a poll that read before it drops its reading; one lock serialises polls
+and side effects.
 
-Side effects run only on a value actually read as `True` from the store or committed by a write,
-never on the fail-closed reading: entering maintenance cancels running emulated algos through
-`AlgoCanceller` and pauses the recorder only when `maintenance.keep_recorder` is false. Each has
-a timeout, and an entry that fails is retried on the next poll. Native exchange stop-losses are
-never touched: no port here can reach them (C-2.6).
+Side effects run only at a real transition to a value actually read as `True` from the store or
+committed by a write (D1c), never on a fail-closed reading (an outage or an unreadable row):
+entering maintenance cancels running emulated algos through `AlgoCanceller` and pauses the
+recorder only when `maintenance.keep_recorder` is false. Resting orders are not cancelled and
+can still fill. Each effect has a timeout, and an entry that fails is retried on the next poll.
+Native exchange stop-losses are never touched: no port here can reach them (C-2.6).
 """
 
 from __future__ import annotations
@@ -33,9 +31,9 @@ import structlog
 
 from candleviewer.admin.flags.catalogue import MAINTENANCE_KEEP_RECORDER, MAINTENANCE_MODE
 from candleviewer.admin.flags.metrics import maintenance_mode_gauge
-from candleviewer.admin.flags.resolver import StoredFlag, resolve
+from candleviewer.admin.flags.resolver import StoredFlag
 from candleviewer.admin.flags.service import KILLSWITCH_TTL_S, FlagService
-from candleviewer.admin.flags.writes import ChangeHook
+from candleviewer.admin.flags.writes import ChangeHook, readable
 
 KILL_ORDER_ENTRY: Final = "killswitch.order_entry"
 GATE_FLAGS: Final = (MAINTENANCE_MODE, KILL_ORDER_ENTRY)
@@ -126,15 +124,14 @@ class MaintenanceController:
             for key in GATE_FLAGS:
                 spec = self._service.registry[key]
                 stored = await self._service.stored(spec)
-                readings[key] = (
-                    None if stored is None else bool(resolve(spec, stored, user_id=None))
-                )
+                value = readable(spec, stored)  # an outage or an unreadable row is unknown
+                readings[key] = None if value is None else value is True
             if generation == self._generation:  # a write applied meanwhile is newer: keep it
                 self._values.update(readings)
                 self._apply()
             maintenance = self._values[MAINTENANCE_MODE]
             if maintenance is None:
-                logger().warning("maintenance_store_unavailable")  # engaged; no side effect
+                logger().warning("maintenance_state_unknown")  # an outage or unreadable row
                 return
             await self._effects(maintenance)
 

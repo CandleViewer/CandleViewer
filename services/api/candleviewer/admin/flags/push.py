@@ -1,15 +1,14 @@
-"""Role-filtered `system` pushes of flag changes and maintenance notices (E42-T03, module M21).
+"""Visibility-filtered `system` pushes of flag changes and maintenance notices (E42-T03, M21).
 
-`FlagPush.flag_changed` is the `FlagWriter` change hook. For every authenticated session it sends
-`SystemUpdate {kind: "feature_flags", feature_flags: {key: value}}` carrying only the changed
-key, resolved for that session's user exactly as `GET /admin/feature-flags` resolves it. A
-session whose role may not see the flag gets no frame, so a manager or viewer never learns an
-owner-only key (`23-ws-protocol.md` 15.9). Changing `maintenance.mode` also sends every session
-a `notice` with `reason` `maintenance.enabled` or `maintenance.disabled`.
-
-Sessions come through the `SessionDirectory` port (the composition root adapts the WS hub to
-it), so the admin module never imports the WS gateway. The push is synchronous fan-out onto
-each session's bounded outbound queue, measured by `cv_flag_push_latency_seconds`.
+`FlagPush.flag_changed` is the `FlagWriter` change hook. Every authenticated session that the
+flag's mandatory `visibility` admits gets `SystemUpdate {kind: "feature_flags", feature_flags:
+{key: value}}` carrying only the changed key, resolved for that session's user exactly as
+`GET /admin/feature-flags` resolves it; no other session gets a frame, so a manager or viewer
+never learns an `owner_only` key (`23-ws-protocol.md` 15.9, D6a). A real transition of the
+stored `maintenance.mode` (D1c) also sends every session a `notice`. Sessions come through the
+`SessionDirectory` port (the composition root adapts the WS hub to it), so the admin module never
+imports the WS gateway. The push is synchronous fan-out onto each session's bounded outbound
+queue, past the 1 s `system` throttle (8.1), measured by `cv_flag_push_latency_seconds`.
 """
 
 from __future__ import annotations
@@ -26,6 +25,7 @@ from candleviewer.admin.flags.catalogue import MAINTENANCE_MODE
 from candleviewer.admin.flags.metrics import flag_push_latency_seconds
 from candleviewer.admin.flags.resolver import StoredFlag, resolve
 from candleviewer.admin.flags.service import FlagService
+from candleviewer.admin.flags.writes import stored_transition
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -43,8 +43,8 @@ NOTICES: Final = {
 class Session:
     user_id: UUID
     roles: frozenset[str]
-    #: Enqueues one frame on the session's bounded outbound queue. Must not raise; a session
-    #: that does anyway is logged and skipped, so it can never stop the fan-out.
+    #: Enqueues one frame on the session's bounded outbound queue, past the `system` throttle
+    #: (8.1). Must not raise; one that does is logged and skipped, never stopping the fan-out.
     push_system: Callable[[dict[str, Any]], None]
 
 
@@ -67,7 +67,7 @@ class FlagPush:
         session that may see the flag; a real maintenance toggle also notifies every session."""
         start = self._clock()
         spec = self._service.registry[key]
-        toggled = key == MAINTENANCE_MODE and (before is None or before.value != after.value)
+        toggled = key == MAINTENANCE_MODE and stored_transition(spec, before, after)
         notice = None
         if toggled:
             reason, severity, message = NOTICES[after.value is True]

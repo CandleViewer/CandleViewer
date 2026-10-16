@@ -33,7 +33,7 @@ from candleviewer.admin.flags.metrics import EXPORTED_NAMES, maintenance_mode_ga
 from candleviewer.admin.flags.push import FlagPush, Session
 from candleviewer.api.order_entry_gate import order_entry_refusal
 from candleviewer.audit.access import AuditPrincipal
-from tests.unit.admin.flag_fakes import Clock, FakeAudit, FakeFlagStore
+from tests.unit.admin.flag_fakes import Clock, FakeAudit, FakeFlagStore, FakeStepUp
 
 _OWNER = AuditPrincipal(user_id=UUID(int=1), username="owner", permissions=frozenset({"*"}))
 
@@ -90,7 +90,7 @@ class _Rig:
         hook = chain_hooks(
             self.controller.gate_hook, push.flag_changed, self.controller.effects_hook
         )
-        self.writer = FlagWriter(self.service, FakeAudit(), on_change=hook)
+        self.writer = FlagWriter(self.service, FakeAudit(), FakeStepUp(), on_change=hook)
         self.stop_after = 1
 
     async def _sleep(self, seconds: float) -> None:
@@ -113,7 +113,7 @@ class _Rig:
             expected_updated_at=self.store.rows[key].updated_at,
         )
 
-    def db(self, key: str, value: bool) -> None:
+    def db(self, key: str, value: object) -> None:
         self.store.rows[key] = replace(self.store.rows[key], value=value)
 
 
@@ -139,7 +139,9 @@ async def test_orders_are_refused_right_after_the_write_returns_before_any_oms_w
         assert (await client.post("/orders")).status_code == 202
         await rig.toggle(MAINTENANCE_MODE, True)
         refused = await client.post("/orders")
-    assert (refused.status_code, refused.json()["code"]) == (403, "trading_disabled")
+    body = refused.json()
+    assert (refused.status_code, body["code"]) == (403, "trading_disabled")
+    assert (body["reason"], body["title"]) == ("maintenance", "Order entry refused")  # D5a
     assert oms == ["submit"]
 
 
@@ -180,14 +182,16 @@ async def test_the_order_kill_switch_also_engages_the_gate() -> None:
     assert rig.algos.calls == []
 
 
-async def test_an_unreadable_store_engages_the_gate_without_side_effects() -> None:
+@pytest.mark.parametrize("outage", [True, False])
+async def test_a_fail_closed_reading_engages_the_gate_without_side_effects(outage: bool) -> None:
     rig = await _Rig().start()
-    rig.store.down = True
+    rig.store.down = outage
+    rig.db(MAINTENANCE_MODE, True if outage else "on")  # an outage, or one unreadable row
     with capture_logs() as logs:
         await rig.controller.refresh()
     assert rig.controller.gate.engaged
     assert rig.algos.calls == [] and rig.recorder.calls == []
-    assert "maintenance_store_unavailable" in [e["event"] for e in logs]
+    assert "maintenance_state_unknown" in [e["event"] for e in logs]
 
 
 async def test_a_database_change_is_picked_up_by_the_next_poll() -> None:

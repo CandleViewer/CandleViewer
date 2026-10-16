@@ -24,7 +24,7 @@ from candleviewer.admin.flags import (
 from candleviewer.admin.flags.metrics import flag_push_latency_seconds
 from candleviewer.admin.flags.push import FlagPush, Session
 from candleviewer.audit.access import AuditPrincipal
-from tests.unit.admin.flag_fakes import T0, Clock, FakeAudit, FakeFlagStore
+from tests.unit.admin.flag_fakes import T0, Clock, FakeAudit, FakeFlagStore, FakeStepUp
 
 _OWNER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001")
 _MANAGER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002")
@@ -84,29 +84,33 @@ async def test_every_frame_validates_against_the_system_schema() -> None:
             jsonschema.Draft202012Validator(_SYSTEM).validate(frame)
 
 
-async def test_a_manager_and_a_viewer_never_learn_an_owner_only_key() -> None:
+@pytest.mark.parametrize("key", ["maintenance.keep_recorder", "killswitch.ingestion"])
+async def test_a_manager_and_a_viewer_never_learn_an_owner_only_key(key: str) -> None:
     _, push, store, sessions = await _rig()
-    before = store.rows["maintenance.keep_recorder"]
-    await push.flag_changed("maintenance.keep_recorder", before, replace(before, value=False))
+    before = store.rows[key]
+    await push.flag_changed(key, before, replace(before, value=not before.value))
     assert len(sessions.frames[_OWNER]) == 1
     assert sessions.frames[_MANAGER] == sessions.frames[_VIEWER] == []
 
 
-async def test_a_maintenance_toggle_notifies_every_session() -> None:
+@pytest.mark.parametrize(
+    ("was", "now", "notices"),
+    [
+        (False, True, [("maintenance.enabled", "warning")]),
+        (True, False, [("maintenance.disabled", "info")]),
+        (1, True, [("maintenance.enabled", "warning")]),  # unreadable (1 == True): unknown to true
+        ("on", False, []),  # unknown to false is no transition (D1c)
+        (True, True, []),
+    ],
+)
+async def test_only_a_real_stored_maintenance_transition_notifies_every_session(
+    was: object, now: bool, notices: list[tuple[str, str]]
+) -> None:
     _, push, store, sessions = await _rig()
-    before = store.rows[MAINTENANCE_MODE]
-    await push.flag_changed(MAINTENANCE_MODE, before, replace(before, value=True))
+    before = replace(store.rows[MAINTENANCE_MODE], value=was)
+    await push.flag_changed(MAINTENANCE_MODE, before, replace(before, value=now))
     for frames in sessions.frames.values():
-        assert [(f["reason"], f["severity"]) for f in frames if f["kind"] == "notice"] == [
-            ("maintenance.enabled", "warning")
-        ]
-
-
-async def test_a_maintenance_re_set_to_the_same_value_sends_no_notice() -> None:
-    _, push, store, sessions = await _rig()
-    row = store.rows[MAINTENANCE_MODE]
-    await push.flag_changed(MAINTENANCE_MODE, row, row)
-    assert all(f["kind"] == "feature_flags" for frames in sessions.frames.values() for f in frames)
+        assert [(f["reason"], f["severity"]) for f in frames if f["kind"] == "notice"] == notices
 
 
 async def test_one_broken_session_never_stops_the_fan_out() -> None:
@@ -147,7 +151,7 @@ async def test_the_push_is_timed() -> None:
 @pytest.mark.perf
 async def test_a_write_reaches_all_three_sessions_within_2_s() -> None:
     service, push, store, sessions = await _rig()
-    writer = FlagWriter(service, FakeAudit(), on_change=push.flag_changed)
+    writer = FlagWriter(service, FakeAudit(), FakeStepUp(), on_change=push.flag_changed)
     start = time.monotonic()
     await writer.set(
         "rules.graph_editor",
