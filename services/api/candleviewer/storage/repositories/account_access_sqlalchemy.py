@@ -8,7 +8,7 @@ commit. Any error, including an audit write that fails or exceeds `audit_timeout
 everything back. A commit that then fails or is cancelled appends `users.access_change_failed`
 (outcome failure) to close that record, as `secrets/broker.py` closes a borrow (C-2.9). An
 unchanged set writes and audits nothing. Each call logs one line naming its outcome. The audit
-emitter is injected: storage may not import audit (C-3.3).
+emitter is injected: storage (M10) may depend on M1 only (CONSTITUTION §3 module table).
 """
 
 from __future__ import annotations
@@ -130,7 +130,8 @@ class SqlAlchemyAccountAccessStore:
 
         Raises `AccessUserNotFoundError`, `AccessUserNotActiveError`,
         `AccessUnknownAccountError` or `AccessAuditUnavailableError`; on any of them nothing
-        changes."""
+        changes. A write-ahead record whose emit timed out or was cancelled may still land, and
+        no closing record follows (see `_write_ahead`): the grant rows are the truth."""
         outcome = "error"
         written: AccessChange | None = None  # recorded ahead, commit not yet confirmed
         try:
@@ -201,6 +202,9 @@ class SqlAlchemyAccountAccessStore:
     async def _write_ahead(
         self, change: AccessChange, actor: uuid.UUID, request_id: uuid.UUID | None
     ) -> None:
+        """A refused record was never written. After a timeout or a cancel it is unknown whether
+        it landed (`AuditWriter.emit` finishes an append it has started), and nothing closes it:
+        the transaction rolls back, and the grant rows are the truth."""
         try:
             await self._emit(_CHANGE, change, actor, request_id, "success", None)
         except Exception as exc:  # the writer's refusal (WAL full, stopped) or the timeout

@@ -8,8 +8,9 @@ import contextlib
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import orjson
 import pytest
@@ -17,9 +18,12 @@ import structlog
 from asyncpg.pgproto.pgproto import UUID as DriverUUID
 
 from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.audit.repository import AuditRepository
+from candleviewer.audit.writer import AuditWriter
 from candleviewer.storage.repositories import account_access_sqlalchemy as m
 from candleviewer.storage.repositories import onboarding_sqlalchemy as onboarding
 from candleviewer.storage.repositories.account_access import (
+    AccessAuditEmitter,
     AccessAuditUnavailableError,
     AccessChange,
     AccessLevel,
@@ -120,7 +124,9 @@ class _Audit:
             raise self.error
 
 
-def _store(rel: _Rel, audit: _Audit, timeout_s: float = 2.0) -> m.SqlAlchemyAccountAccessStore:
+def _store(
+    rel: _Rel, audit: AccessAuditEmitter, timeout_s: float = 2.0
+) -> m.SqlAlchemyAccountAccessStore:
     return m.SqlAlchemyAccountAccessStore(
         rel,  # type: ignore[arg-type]  # fake unit of work
         audit=audit,
@@ -285,7 +291,9 @@ async def test_replace_never_commits_when_the_audit_record_cannot_be_written(
     with pytest.raises(AccessAuditUnavailableError):
         async with asyncio.timeout(_WAIT_S):  # the store's own bound must fire first
             await _store(rel, audit, timeout_s).replace_grants(_USER, {}, actor_user_id=_ACTOR)
-    assert len(audit.calls) == 1 and not rel.committed  # nothing written ahead: nothing to close
+    # No closing record: a refused record never landed; a hung one may still (the writer
+    # finishes an append it has started), and the uncommitted grant rows are the truth.
+    assert len(audit.calls) == 1 and not rel.committed
 
 
 async def test_replace_cancelled_while_auditing_propagates_and_never_commits() -> None:
@@ -298,7 +306,7 @@ async def test_replace_cancelled_while_auditing_propagates_and_never_commits() -
     with pytest.raises(asyncio.CancelledError):
         async with asyncio.timeout(_WAIT_S):
             await task
-    assert not rel.committed
+    assert len(audit.calls) == 1 and not rel.committed  # unclosed: the rows are the truth
 
 
 async def test_replace_whose_commit_fails_closes_the_write_ahead_record() -> None:
@@ -348,6 +356,35 @@ async def test_replace_whose_session_close_fails_after_the_commit_is_still_repla
         await _replace(rel, audit, {})
     assert [a for a, _, _, _ in audit.calls] == ["users.access_change"]  # nothing to close
     assert [e["outcome"] for e in logs] == ["replaced"]
+
+
+class _AuditTable:
+    """`audit_log` as the real writer's flusher sees it: `insert` is the one call it makes."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict[str, Any]] = []
+
+    async def insert(self, record: dict[str, Any]) -> None:
+        self.rows.append(record)
+
+
+async def test_replace_writes_both_records_through_the_real_audit_writer(tmp_path: Path) -> None:
+    # `_store` takes an `AccessAuditEmitter`: mypy --strict proves `AuditWriter` is one, and
+    # the writer accepts the store's "success"/"failure" outcomes and both actions.
+    table = _AuditTable()
+    writer = AuditWriter(cast(AuditRepository, table), str(tmp_path / "audit.wal"))
+    rel = _Rel(rows=_LIVE_A, on_commit=_lose_connection)
+    await writer.start()
+    try:
+        with pytest.raises(RuntimeError, match="connection lost"):
+            await _store(rel, writer).replace_grants(_USER, {}, actor_user_id=_ACTOR)
+        await writer.flush(_WAIT_S)
+    finally:
+        await writer.stop(1)
+    assert [(r["action"], r["outcome"]) for r in table.rows] == [
+        ("users.access_change", "success"),
+        ("users.access_change_failed", "failure"),
+    ]
 
 
 _LogCase = tuple[dict[str, Any], Exception | None, dict[uuid.UUID, AccessLevel], str, str]

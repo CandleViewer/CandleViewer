@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 #: `AccountAccessGrantInput.level` (22-api-openapi.yaml): `trade` implies `read`.
 AccessLevel = Literal["read", "trade"]
@@ -44,8 +44,8 @@ class AccessAuditUnavailableError(Exception):
 
 
 class AccessAuditEmitter(Protocol):
-    """The subset of `AuditWriter.emit` the store calls. Injected by the composition root:
-    storage (M10) may not import audit (M19), so `outcome` is an `AuditOutcome` value."""
+    """The subset of `AuditWriter.emit` the store calls; the writer itself satisfies it.
+    Injected by the composition root: storage (M10) may not import audit (M19)."""
 
     async def emit(
         self,
@@ -58,7 +58,8 @@ class AccessAuditEmitter(Protocol):
         before_state: dict[str, object],
         after_state: dict[str, object],
         request_id: uuid.UUID | None,
-        outcome: str,
+        # An `AuditOutcome`, which storage cannot import: `Any`, as in `auth/scopes.py`.
+        outcome: Any = ...,
         reason: str | None,
     ) -> None: ...
 
