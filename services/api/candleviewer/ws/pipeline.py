@@ -13,7 +13,15 @@ identity (token expiry, revocation, a disabled user) and every `slow_consumer` c
 lanes, so the `bye` is next; any other close keeps the priority lane ahead of the `bye` and
 discards the normal lane. Nothing is queued after a close. The flush runs under one deadline,
 `BackpressureConfig.close_flush_s` from the first close on (a later seal never extends it): the
-writer `arm`s it, and past it gives up with no `bye` (§4.4).
+writer `arm`s it, and past it gives up with no `bye` (§4.4). That expiry is counted as
+`cv_ws_overflow_total{reason="close_flush_deadline"}` whatever the close's reason, on top of the
+`close_budget` a step 3 close has already counted (§8.4 step 4); the close audit's fields for it
+arrive with the ladder's audit trigger.
+
+The deadline is on the event loop's clock (`loop.time()`), not on the gateway's injected `clock`:
+only an `asyncio.Timeout` can cancel a send that a peer which stopped reading has parked, and it
+reads the loop's clock. So a test cannot advance it; it bounds it with a short `close_flush_s` and
+a send that never completes, which leaves the deadline as the only way out.
 
 A frame its encoder refuses is a server fault and fails closed: `internal_error` (§10.1). The
 droppable case of §10.1 (a market-data frame drops its topic to a `backpressure` re-snapshot
@@ -48,6 +56,8 @@ SLOW_CONSUMER_MESSAGE: Final = "Client is not draining its outbound queue."
 #: What an encoder raises for a frame it cannot serialise: a non-finite number (JSON), a type
 #: neither codec knows, an integer out of MessagePack's range, a reference cycle.
 _ENCODE_ERRORS: Final = (ValueError, TypeError, OverflowError, RecursionError)
+#: §8.4 step 4: a close whose flush deadline expired, whatever its reason.
+CLOSE_FLUSH_DEADLINE: Final = "close_flush_deadline"
 #: The frame types the server sends (§13.1): a log line names one of these, else `other`.
 _SERVER_TYPES: Final = frozenset(
     (
@@ -106,6 +116,11 @@ class ConnectionPipeline:
         self._deadline: float | None = None
         self._timeout: asyncio.Timeout | None = None
 
+    @property
+    def deadline(self) -> float | None:
+        """The close's flush deadline on the loop's clock, from the first close; None before."""
+        return self._deadline
+
     def push(self, frame: Mapping[str, Any], received: float | None = None) -> None:
         """Queue one frame; nothing once a close or `release` happened (WS-D01)."""
         if self.terminal is not None or self.released:
@@ -156,6 +171,17 @@ class ConnectionPipeline:
 
     def disarm(self) -> None:
         self._timeout = None
+
+    def abandon(self, reason: str | None) -> None:
+        """A flush deadline expired: the flush is abandoned with no `bye` (§4.4). Counted whatever
+        the close's `reason` (the `bye`'s), in addition to a step 3 value (§8.4 step 4)."""
+        cv_ws_overflow_total.labels(reason=CLOSE_FLUSH_DEADLINE).inc()
+        _log().warning(
+            "ws close deadline passed",
+            connection_id=self._connection_id,
+            reason=reason,
+            queued=len(self.queue),
+        )
 
     def release(self) -> None:
         """Teardown: free both lanes; nothing is queued after it."""

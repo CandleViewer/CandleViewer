@@ -30,7 +30,7 @@ from candleviewer.audit.models import Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S, Settings
-from candleviewer.ws import outbound, pipeline
+from candleviewer.ws import gateway, outbound, pipeline
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.binary import encode_b64
 from candleviewer.ws.cvwb_vectors import vector_frames
@@ -412,6 +412,10 @@ def _closes(reason: str) -> float:
     return _counter(cv_ws_closes_total, reason=reason)
 
 
+def _overflow(reason: str) -> float:
+    return _counter(cv_ws_overflow_total, reason=reason)
+
+
 def _rows(rig: _Rig) -> list[tuple[str, str, Severity]]:
     return [(r["action"], r["reason"], r["severity"]) for r in rig.audit.records]
 
@@ -455,9 +459,11 @@ async def test_frames_are_encoded_once_and_counted_at_wire_length(
 async def test_over_budget_closes_slow_consumer_4429() -> None:
     """§8.4 step 3 (S2a: no drop step yet): the push that leaves the budget closes the connection
     `slow_consumer`; both lanes are cleared, so the `bye` is next, with `retry_after_ms` and the
-    generic message. Counted twice over (closes, `close_budget`) and audited at `warning`."""
+    generic message. Counted twice over (closes, `close_budget`) and audited at `warning`; the
+    `bye` went out, so no flush expired."""
     rig, sock = _Rig(BackpressureConfig(max_frames=8)), _Wire()
-    closes, budget = _closes("slow_consumer"), _counter(cv_ws_overflow_total, reason="close_budget")
+    closes, budget = _closes("slow_consumer"), _overflow("close_budget")
+    expired = _overflow("close_flush_deadline")
     async with asyncio.timeout(_DEADLINE_S):
         handler, _ = await rig.open(sock)
         await rig.sub(sock)
@@ -474,7 +480,7 @@ async def test_over_budget_closes_slow_consumer_4429() -> None:
     }
     assert sock.closed_with == 4429 and sock.sent.empty()
     assert _closes("slow_consumer") == closes + 1
-    assert _counter(cv_ws_overflow_total, reason="close_budget") == budget + 1
+    assert (_overflow("close_budget"), _overflow("close_flush_deadline")) == (budget + 1, expired)
     assert _rows(rig) == [("ws.connection.closed", "slow_consumer", Severity.WARNING)]
 
 
@@ -584,9 +590,10 @@ async def test_a_frame_taken_before_a_sealing_close_is_never_sent(
 async def test_a_parked_send_is_torn_down_within_the_close_deadline() -> None:
     """WS-D01 (D3): a peer that neither reads nor sends cannot hold a closing connection: past
     `close_flush_s` the writer abandons the flush with no `bye`, the handler tears down, and the
-    audit row still reads the `bye`'s reason. Without the deadline this test's own timeout
-    fires."""
+    audit row still reads the `bye`'s reason. The expiry is counted as `close_flush_deadline`
+    and logged (§8.4). Without the deadline this test's own timeout fires."""
     rig, sock = _Rig(BackpressureConfig(close_flush_s=0.01)), _Wire()
+    expired, budget = _overflow("close_flush_deadline"), _overflow("close_budget")
     with capture_logs() as logs:
         async with asyncio.timeout(_DEADLINE_S):
             handler, conn = await rig.open(sock)
@@ -598,23 +605,73 @@ async def test_a_parked_send_is_torn_down_within_the_close_deadline() -> None:
             await handler
     assert len(sock.raw) == sent and sock.closed_with is None and conn.close_code is None
     assert _rows(rig) == [("ws.connection.closed", "slow_consumer", Severity.WARNING)]
+    assert (_overflow("close_flush_deadline"), _overflow("close_budget")) == (expired + 1, budget)
     (passed,) = [e for e in logs if e["event"] == "ws close deadline passed"]
     assert (passed["reason"], passed["queued"]) == ("slow_consumer", 0)
+    assert passed["log_level"] == "warning"
+
+
+async def test_a_step_3_close_whose_flush_expires_counts_under_both_reasons() -> None:
+    """§8.4 step 4: a budget close whose flush also expires counts `close_budget` at the close
+    and `close_flush_deadline` at the expiry; the audit row keeps `slow_consumer`."""
+    rig, sock = _Rig(BackpressureConfig(max_frames=8, close_flush_s=0.01)), _Wire()
+    expired, budget = _overflow("close_flush_deadline"), _overflow("close_budget")
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, _ = await rig.open(sock)
+        sock.hold()
+        rig.hub.broadcast_system({"kind": "tick"})
+        await sock.parked.wait()  # the writer holds that frame, and the queue is empty
+        sent = len(sock.raw)
+        for i in range(9):
+            rig.hub.broadcast_system({"kind": "tick", "n": i})  # the ninth is one over
+        await handler
+    assert len(sock.raw) == sent and sock.closed_with is None
+    assert _overflow("close_budget") == budget + 1
+    assert _overflow("close_flush_deadline") == expired + 1
+    assert _rows(rig) == [("ws.connection.closed", "slow_consumer", Severity.WARNING)]
+
+
+async def test_a_fault_flush_during_a_close_gets_what_is_left_of_its_deadline() -> None:
+    """§8.4, one deadline: a fault's `bye` while a close flushes is bounded by that close's
+    deadline, not a second window; with no close under way it gets a fresh `close_flush_s`.
+    Flag off it has no bound, as before."""
+    loop = asyncio.get_running_loop()
+    kw: dict[str, Any] = {"encoding": _JSON, "clock": float, "wall_ms": int, "auth_timeout_s": 1}
+    async with gateway._fault_flush(_Connection(cast(Any, _Wire()), **kw)) as unbounded:
+        assert unbounded is None
+    conn = _Connection(cast(Any, _Wire()), **kw, backpressure=BackpressureConfig(close_flush_s=0.5))
+    assert conn.pipeline is not None and conn.pipeline.deadline is None
+    before = loop.time()
+    async with gateway._fault_flush(conn) as fresh:
+        assert isinstance(fresh, asyncio.Timeout)
+        when = fresh.when()
+    assert when is not None and before + 0.5 <= when <= loop.time() + 0.5
+    conn.close_with("heartbeat_timeout")
+    deadline = conn.pipeline.deadline
+    async with gateway._fault_flush(conn) as rest:
+        assert isinstance(rest, asyncio.Timeout) and deadline is not None
+        assert rest.when() == deadline
 
 
 async def test_the_fault_bye_is_bounded_by_the_close_deadline_under_the_flag() -> None:
     """A server fault's `bye` and 1011 go out under the same deadline, so a peer that stopped
-    reading cannot park the fault path either (flag off it stays unbounded)."""
+    reading cannot park the fault path either (flag off it stays unbounded); its expiry is
+    counted and logged like the writer's."""
     rig, sock = _Rig(BackpressureConfig(close_flush_s=0.01)), _Wire()
     rig.expires_at = datetime(2100, 1, 1)  # naive: an authenticator contract fault (1011)
-    async with asyncio.timeout(_DEADLINE_S):
-        handler = asyncio.create_task(rig.endpoint(sock))
-        sock.feed({"t": "hello", "id": "h"})
-        await sock.next()
-        sock.hold()
-        sock.feed({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
-        await handler
+    expired = _overflow("close_flush_deadline")
+    with capture_logs() as logs:
+        async with asyncio.timeout(_DEADLINE_S):
+            handler = asyncio.create_task(rig.endpoint(sock))
+            sock.feed({"t": "hello", "id": "h"})
+            await sock.next()
+            sock.hold()
+            sock.feed({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
+            await handler
     assert [kind for kind, _ in sock.raw] == ["text"] and sock.closed_with is None
+    assert _overflow("close_flush_deadline") == expired + 1
+    (passed,) = [e for e in logs if e["event"] == "ws close deadline passed"]
+    assert passed["reason"] == "internal_error"
 
 
 async def test_orders_encode_failure_closes_internal_error_audited_counted_redacted() -> None:

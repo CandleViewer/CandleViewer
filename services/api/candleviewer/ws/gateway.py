@@ -76,7 +76,7 @@ import contextlib
 import json
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any, Final, Protocol
@@ -676,10 +676,30 @@ def _step(conn: _Connection, name: str) -> Iterator[None]:
 
 def _fault_flush(conn: _Connection) -> contextlib.AbstractAsyncContextManager[object]:
     """The bound on a fault's `bye` and 1011: the close flush deadline with the flag on (a peer
-    that stopped reading would park it), none with it off, as before."""
+    that stopped reading would park them, `_bounded_flush`), none with it off, as before."""
     if conn.pipeline is None:
         return contextlib.nullcontext()
-    return asyncio.timeout(conn.pipeline.config.close_flush_s)
+    return _bounded_flush(conn.pipeline)
+
+
+@contextlib.asynccontextmanager
+async def _bounded_flush(pipe: ConnectionPipeline) -> AsyncIterator[asyncio.Timeout]:
+    """With a close under way, what is left of its deadline (one deadline, never a second window:
+    `23-ws-protocol.md` §8.4); else a fresh `close_flush_s`. Past it the flush is abandoned with
+    no `bye`, counted and logged as the writer's is."""
+    deadline = pipe.deadline
+    scope = (
+        asyncio.timeout(pipe.config.close_flush_s)
+        if deadline is None
+        else asyncio.timeout_at(deadline)
+    )
+    try:
+        async with scope:
+            yield scope
+    except TimeoutError:
+        if not scope.expired():
+            raise
+        pipe.abandon("internal_error")
 
 
 def _reply(t: str, frame_id: Any, **fields: Any) -> dict[str, Any]:
@@ -714,8 +734,10 @@ def make_ws_router(
     system_notices: Callable[[], list[dict[str, Any]]] | None = None,
     backpressure: BackpressureConfig | None = None,
 ) -> APIRouter:
-    """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline,
-    so tests inject a fake clock; `tick_s` is only the poll cadence.
+    """The `/ws` endpoint. `clock` (monotonic seconds) drives every deadline but one, so tests
+    inject a fake clock; `tick_s` is only the poll cadence. The exception is the close flush
+    deadline with the flag on, which runs on the event loop's clock: only an `asyncio.Timeout`
+    can cancel a send that a peer which stopped reading has parked (`ws/pipeline.py`).
 
     `backpressure` (E17-T03, #412) selects the budgeted outbound pipeline (`ws/pipeline.py`,
     `23-ws-protocol.md` §8.4): its budget binds both lanes, and a close flushes under its
@@ -1143,7 +1165,8 @@ def make_ws_router(
         """The writer with the flag on (still the one writer task, TG5): the priority lane
         first, each payload as the pipeline encoded it; after a close, what the close kept, then
         the `bye` and the close frame. The close's flush deadline bounds all of it: past it the
-        flush is abandoned with no `bye` (§4.4) and the handler tears the socket down."""
+        flush is abandoned with no `bye` (§4.4), counted (`ConnectionPipeline.abandon`), and the
+        handler tears the socket down."""
         queue = pipe.queue
         pings = 0
         try:
@@ -1180,13 +1203,7 @@ def make_ws_router(
         except TimeoutError:
             if not deadline.expired():
                 raise
-            reason = pipe.terminal.bye["p"].get("reason") if pipe.terminal else None
-            _log().warning(
-                "ws close deadline passed",
-                connection_id=conn.connection_id,
-                reason=reason,
-                queued=len(queue),
-            )
+            pipe.abandon(pipe.terminal.bye["p"].get("reason") if pipe.terminal else None)
         finally:
             pipe.disarm()
 

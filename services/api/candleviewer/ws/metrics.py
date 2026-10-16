@@ -249,7 +249,8 @@ cv_ws_clock_skew_ms = Histogram(
 # -- E17-T03 backpressure (pacing.py, outbound.py) -----------------------------------------------
 cv_ws_overflow_total = Counter(
     "cv_ws_overflow_total",
-    "23 section 8.4 ladder steps by reason: per topic drop, unmergeable, resnapshot; per close.",
+    "23 section 8.4 overflow by reason: per topic drop, unmergeable, resnapshot; per close, "
+    "and per close whose flush deadline expired.",
     labelnames=("reason",),
 )
 cv_ws_malformed_updates_total = Counter(
