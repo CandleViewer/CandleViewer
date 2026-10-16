@@ -173,7 +173,7 @@ manual-review; adversarial cases go to E17-X02 (§7). Row ids are `WS-xnn`.
 
 | ID     | Flow / element   | Threat                                                                                                                                                                                                                                                                                                                                                            | L   | I   | Risk   | Control                                                                                                                                                                                                                                                                                                                             | Owner            | Verify                    | Disp. | Residual                  |
 | ------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | --- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- | ------------------------- | ----- | ------------------------- |
-| WS-D01 | F12, P6          | Slow consumer grows server memory                                                                                                                                                                                                                                                                                                                                 | H   | M   | High   | Today: 1 024-frame push bound, close `4429 slow_consumer`. Planned: 8 MiB / 2 000-frame budget and the four-step ladder (SR-073). The 8 MiB number is **both** the DoS control and the performance budget (§6)                                                                                                                      | E17-T03, #2155   | unit, chaos               | M     | Low                       |
+| WS-D01 | F12, P6          | Slow consumer grows server memory                                                                                                                                                                                                                                                                                                                                 | H   | M   | High   | Today: 1 024-frame push bound, close `4429 slow_consumer`. Planned: 8 MiB / 2 000-frame budget and the four-step ladder (SR-073). The 8 MiB number is **both** the DoS control and the performance budget (§6); a flush past 2 s is abandoned, never the attempt (S11 exception, 23 §4.4)                                           | E17-T03, #2155   | unit, chaos               | M     | Low                       |
 | WS-D02 | F3, P1           | Slow auth/principal lookup stalls the handshake while sockets accumulate                                                                                                                                                                                                                                                                                          | L   | M   | Low    | Auth timeout closes the socket; wrapping the awaits in `asyncio.timeout` is open (#2155, C-2.18) Requirement: SR-073.                                                                                                                                                                                                               | #2155            | unit                      | M     | Low                       |
 | WS-D03 | F11, P4          | Resync loop forces repeated snapshot rebuilds                                                                                                                                                                                                                                                                                                                     | M   | M   | Medium | 5 resyncs / topic / minute, then `resync_rate_limited` and revocation (planned) Requirement: SR-040.                                                                                                                                                                                                                                | E17-S03          | unit, chaos               | M     | Low                       |
 | WS-D04 | F5, P2/P5        | Subscription / symbol exhaustion                                                                                                                                                                                                                                                                                                                                  | M   | M   | Medium | 50 topics per `sub` (caps the **accepted** topics only; entries beyond it are still parsed, echoed and audited, so it does not bound per-frame work, reply size or audit writes: see WS-D15), 200 subscriptions and 40 symbols per connection, 8 connections per user; shared upstream refs with grace release Requirement: SR-073. | E17-S02          | unit, load                | M     | Medium (WS-D15 open)      |
@@ -352,14 +352,17 @@ removal #2900) swaps the mechanism that enforces the outbound bound; the bound i
 frames while it is off), so the flag gates no safety invariant (C-4.14). With it on, both lanes of the queue are
 inside the same 8 MiB / 2 000-frame accounting: a peer that cannot drain `orders`, `executions`, `system` or
 control frames meets the same `slow_consumer` close as any other (`23-ws-protocol.md` §8.4), and no lane is
-unbounded (C-2.18). `CV_WS_QUEUE_BYTES` and `CV_WS_QUEUE_FRAMES` accept values up to this table's numbers and
-no more: lowering is allowed, and a raise is a change to a number in this table, which needs a security review in
-the same PR. Lowering is the safe direction for this threat, so the floors (4 MiB, one maximum outbound frame, and
-256 frames, above the 200-subscription cap) are typo guards and not a control: they stop a misconfiguration from
-closing every connection at its first large frame, and promise no more than that one frame fits.
-`CV_WS_CLASSIFY_INTERVAL_MS` is held to 500-10 000 ms. A closing connection is bound by one 2 s flush deadline, the
-close flush the gateway already has and `23-ws-protocol.md` §9.4 already counts once in the stop budget: past it
-the transport closes with no `bye` (§4.4). Flag off, as built, the same 2 s starts when the reader returns, so a
+unbounded (C-2.18). `CV_WS_QUEUE_BYTES` and `CV_WS_QUEUE_FRAMES` accept values from their floors up to this
+table's numbers: lowering never goes below the floor (4 194 304 bytes, one maximum outbound frame, and 256 frames,
+above the 200-subscription cap), and a raise is a change to a number in this table, which needs a security review
+in the same PR. Lowering is the safe direction for this threat, so the floors are typo guards and not a control:
+they stop a misconfiguration from closing every connection at its first large frame, and promise no more than
+that one frame fits. `CV_WS_CLASSIFY_INTERVAL_MS` is held to 500-10 000 ms. A closing connection is bound by one
+2 s flush deadline, the close flush the gateway already has and `23-ws-protocol.md` §9.4 already counts once in
+the stop budget: on deadline expiry the flush is abandoned and the transport closes with no `bye` (the S11
+exception of §4.4). The `bye` is always enqueued before the 2 s starts, so the server abandons an undeliverable
+flush, never the attempt, and an expiry is observable: its close audit row carries `trigger` `flush_deadline` and
+the close metric's label the same value (§8). Flag off, as built, the same 2 s starts when the reader returns, so a
 peer that is silent as well as not reading is ended by the transport keepalive alone (15 s ping, 45 s timeout).
 
 ## 7. Abuse-case seeds (handed to E17-X02)
@@ -437,10 +440,12 @@ a user's first refusal in a window. Every close also writes the generic `ws clos
 limiter's `4429` close (D05), so RSK-063's trigger reads the dedicated counter.
 
 **Close detail (E17-T03).** A `slow_consumer` close is the one `ws.connection.closed` row at `warning`
-(`23-ws-protocol.md` §4.3). With the backpressure flag on, one of §8.4 step 3 also carries `after_state`
-`{"trigger": "budget"}` or `{"trigger": "redrop"}`, the trigger that fired (flag off: none). The vocabulary is
-closed (two values, never a topic name or a count), so the row stays one fixed-size record, and an identity whose
-`redrop` closes repeat (a client that cannot recover its snapshots) reads differently from one with `budget`
+(`23-ws-protocol.md` §4.3). With the backpressure flag on, a close also carries `after_state` `{"trigger": ...}`
+when a trigger fired (flag off: none): `budget` or `redrop` for one of §8.4 step 3, and `flush_deadline` for a
+close of any reason whose `bye` flush missed the 2 s deadline (the S11 exception of §4.4), which is the value when
+both apply, while the step 3 trigger stays in the step 4 metric. The vocabulary is closed (three values, never a
+topic name or a count), so the row stays one fixed-size record, and an identity whose `redrop` closes repeat (a
+client that cannot recover its snapshots) reads differently from one with `budget` closes or `flush_deadline`
 closes (a client that cannot drain at all). The registry's eviction of a connection whose `permission_change` or
 `revoked` send stalled or failed (the fan-out send timeout above) is also a `slow_consumer` close: it carries no
 `after_state`, and with the flag on, like every `slow_consumer` close, it clears both lanes before the `bye`, so
