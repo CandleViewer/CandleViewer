@@ -1048,8 +1048,9 @@ def create_app(
     ctx.mesh_system_topic_publisher.direct_sinks.append(ws_hub.broadcast_system)
     # #2492: unless a test injects them, the owner user-management routes (role change,
     # invites, owner TOTP reset) get the session-backed snapshot resolver and the Postgres
-    # role store. The fake backend has no identity or role store to authorise against, so
-    # both stay `None` there and those routes fail closed with 501 (never unchecked).
+    # role store; the E09-S06 onboarding checklist gets the same resolver (#2506). The fake
+    # backend has no identity, role store or onboarding store to authorise against, so they
+    # stay `None` there and those routes fail closed with 501 (never unchecked).
     owner_resolver: SnapshotResolver | None = principal_resolver
     if owner_resolver is None and identity is not None:
         owner_resolver = SessionSnapshotResolver(lambda: ctx.auth.sessions, identity)
@@ -1142,7 +1143,7 @@ def create_app(
         _build_onboarding_router(
             resolved,
             ctx,
-            principal_resolver,
+            owner_resolver,  # session-backed unless a test injects one (#2506)
             _OnboardingMetrics(metrics_facade),
             onboarding_store,
         )
