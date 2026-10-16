@@ -205,7 +205,8 @@ class Settings(BaseSettings):
     auth_csrf_previous_key_hex: SecretStr | None = None
     # #2086: server test clock for the seeded e2e stack (`candleviewer.auth.testnet_clock`).
     # Auth time = UTC + the offset in `CV_TEST_CLOCK_FILE`. Both are set together, and only on
-    # testnet with no exchange key; anything else refuses startup (E16-FR-11).
+    # testnet with no exchange key; anything else refuses startup (E16-FR-11). #2728: the file
+    # is an absolute path with no `..` and must not be a symlink.
     test_clock: bool = False
     test_clock_file: str | None = None
 
@@ -422,7 +423,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _refuse_test_clock_outside_keyless_testnet(self) -> Settings:
         """#2086 Q1 (E16-FR-11, E49 T-E1): the test clock moves auth time, so live, demo or a
-        configured exchange key refuses startup before any module starts."""
+        configured exchange key refuses startup before any module starts. #2728: the file path
+        is checked like `CV_BARS_STATE_ROOT` (absolute, no `..`, not a symlink)."""
         if not self.test_clock and not self.test_clock_file:
             return self
         refusal = self.test_clock_refusal()
@@ -430,6 +432,13 @@ class Settings(BaseSettings):
             raise ValueError(refusal)
         if not (self.test_clock and self.test_clock_file):
             raise ValueError("CV_TEST_CLOCK and CV_TEST_CLOCK_FILE must be set together")
+        path = Path(self.test_clock_file)
+        if not path.is_absolute():
+            raise ValueError("CV_TEST_CLOCK_FILE must be an absolute path")
+        if ".." in path.parts:
+            raise ValueError("CV_TEST_CLOCK_FILE must not contain '..'")
+        if path.is_symlink():
+            raise ValueError("CV_TEST_CLOCK_FILE must not be a symlink")
         return self
 
     @field_validator("bind_host")

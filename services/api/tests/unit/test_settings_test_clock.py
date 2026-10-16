@@ -7,6 +7,8 @@ module starts unless the environment is testnet with no exchange key configured.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -77,3 +79,29 @@ def test_settings_test_clock_refusal_never_echoes_the_key(
     assert "exchange key" in message
     assert "input_value" not in message
     assert canary[-12:] not in message
+
+
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [("offset", "must be an absolute path"), ("/run/cv-test-clock/../offset", "must not contain")],
+    ids=["relative", "dot-dot"],
+)
+def test_settings_test_clock_file_must_be_absolute_without_dot_dot(
+    monkeypatch: pytest.MonkeyPatch, path: str, reason: str
+) -> None:
+    """#2728: checked like `CV_BARS_STATE_ROOT`, at load, before any module starts."""
+    env = {"CV_ENVIRONMENT": "testnet", "CV_TEST_CLOCK": "true", "CV_TEST_CLOCK_FILE": path}
+
+    with pytest.raises(ValidationError, match=reason):
+        _settings(monkeypatch, **env)
+
+
+def test_settings_test_clock_file_must_not_be_a_symlink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    link = tmp_path / "offset"
+    link.symlink_to(tmp_path / "target")
+    env = {"CV_ENVIRONMENT": "testnet", "CV_TEST_CLOCK": "true", "CV_TEST_CLOCK_FILE": str(link)}
+
+    with pytest.raises(ValidationError, match="must not be a symlink"):
+        _settings(monkeypatch, **env)

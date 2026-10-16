@@ -86,6 +86,7 @@ Executed by the release owner (rotates among Architect/DevSecOps/a nominated lea
 
 - [ ] Tag `vX.Y.Z` created from `release/<semver>` HEAD.
 - [ ] GitHub Release published with generated changelog.
+- [ ] **Test-only settings absent (E16 R-E3, E16-FR-11):** the production config (live, and staging on demo) sets neither `CV_TEST_CLOCK` nor `CV_TEST_CLOCK_FILE`; boot refuses them outside a keyless testnet (#2086). `CV_ALLOW_SHARED_VOLUME` joins this check when E16-T07 adds it (#1741).
 - [ ] Deploy to **prod (live)** using the same deployment automation validated on staging (no manual prod-only steps — if a manual step is unavoidable, it's documented in a runbook and rehearsed on staging first).
 - [ ] Feature flags for any train-scoped functionality flipped to their intended prod default (often still off, ramped gradually — see §8 post-release monitoring).
 - [ ] Rollback procedure (§7) reconfirmed ready (previous tag deployable, DB migrations reversible or forward-only-safe) before traffic is allowed to reach the new build unattended.

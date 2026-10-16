@@ -144,6 +144,7 @@ mitigation; a row with no verification is itself a finding (flagged `[FINDING]`)
 | U31 | A route's declared capability is correct but its scope argument is wrong (e.g. checks role but not account membership) — the "second-layer" domain check gap | M | H | **High** | SR-050 second-layer domain check is a *distinct* control from the capability check, not a duplicate: `authorize()` verifies role+capability, then the caller's own domain logic re-verifies account membership against `user_account_access` before the mutation; contract test asserts both layers independently (a route with a valid capability but wrong scope arg must still 403) | `authorize()` contract test (route × role × correct-capability/wrong-scope matrix), specifically distinguishing this from U15/U16 | Low |
 | U32 | A stale permission snapshot in a live session survives a role change (e.g. a demoted Manager's already-open session keeps prior access) | M | H | **High** | SR-013 rotation-on-privilege-change (U6's control) is necessary but not sufficient on its own for *authorization freshness* — every `authorize()` call re-reads current role/scope from Postgres (or a short-lived, explicitly-invalidated cache per ADR-0010 Consequences), never from data cached in the session object at login time | `test_role_change_takes_effect_on_next_request_without_relogin`, cache-invalidation unit test | Low |
 | D1-shared | Admin route hidden in the UI but its API remains callable by a Manager (shared with Area 7 D1; listed here because it is `authorize()`'s job to prevent it) | M | H | **Critical** | SR-017 (see U3): server-side capability check is the only control; UI hiding is cosmetic. Route-coverage test calls every admin route as every role | Same as U3's `test_app_fails_to_start_with_undeclared_route` plus per-route role-matrix test | Low |
+| U33 | The keyless-testnet server test clock (`CV_TEST_CLOCK`, #2086) moves auth time; reachable in live or demo, or beside an exchange key, it would revive an expired step-up or session, release a lockout early or stretch an invite. A path that is a symlink, FIFO or device node would redirect or stall the read | M | H | **High** | Settings refuses both test-clock keys unless `CV_ENVIRONMENT=testnet` with no exchange key, before any module starts (E16-FR-11, E49 T-E1), and `build_test_clock` re-checks it; no HTTP route moves time, only the host file; the path is absolute, without `..` and not a symlink at load, and each read opens it non-blocking with `O_NOFOLLOW`, requires a regular file and reads at most 33 bytes; an injected `auth_clock` always wins; boot logs `auth.test_clock_enabled` and writes the `system.config.test_clock_enabled` audit record, and a failed write fails boot; the release deploy checklist forbids both keys in production (`07-release-and-prr.md` §4.4) | `test_settings_test_clock_is_refused_unless_fully_set_on_a_keyless_testnet`, `test_build_test_clock_refuses_settings_that_skipped_validation`, `test_create_app_by_default_never_builds_the_test_clock`, `test_create_app_injected_auth_clock_wins_over_the_test_clock`, `test_offset_clock_never_follows_a_symlink`, `test_offset_clock_opens_without_blocking_or_following_a_symlink`, `test_lifespan_audits_the_test_clock_before_serving` | Low |
 
 #### 3.6.1 Break-glass path — its own trust boundary (U10 edge case)
 
@@ -197,6 +198,7 @@ edge cases (§3.6.1) are the sole accepted-residual-risk items, and they are dat
 | U24 | SR-067 (Area 7 pattern, applied to auth/audit exports) | no |
 | U25, U26 | (none existing) | **new: SR-056** uniform error responses (403 vs 404 indistinguishable; build metadata Owner-only) |
 | U30 | (none existing) | **new: SR-057** `authorize()`/`ScopeResolver` API has no permissive default; enforced by type system + lint + test |
+| U33 | E16-FR-11 (E16 R-E3), E49 T-E1/T-E2, C-2.11 | no — the test-clock gate and its boot audit record (#2086, #2728) |
 | §3.6.1 break-glass residual | SR-023 (envelope) + host hardening (out of scope) | **Accepted risk, dated 2026-09-29**, Owner sign-off pending at the review session (§7) — host-level compromise defeats break-glass isolation; bounded by the fact it already implies A-01/A-02 compromise |
 
 `04-security-program.md` §6 should be amended in a follow-up PR to add SR-021 (amend), SR-013 (clarify),
@@ -214,6 +216,9 @@ epic's own verification tickets:
   recovery-code single-use, admin-route role matrix (U3/D1-shared, U4, D-series).
 - `E09-Q03` matrix cell: the full route × role × scope contract test (U15, U16, U31) is one matrix, not
   N separate suites — implementers should extend the existing matrix rather than hand-roll per-route tests.
+- U33 (test clock): the unit tests named in its row (`test_settings_test_clock.py`,
+  `test_testnet_clock.py`, `test_main_lifespan.py`); the cases that use the clock run only on the
+  seeded e2e stack (`qa/plans/e09-auth-rbac-test-plan.md` §6.3).
 - `E09-X03` SAST/DAST rules cover: log-redaction pattern scan (U22), CSP header assertion (U5),
   `0.0.0.0` binding lint (shared with RSK-022), Semgrep rule for raw `authorize()` calls missing an
   explicit scope argument (U30).

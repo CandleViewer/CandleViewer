@@ -113,6 +113,10 @@ fix merged (#2140 → #2137, #2141 → #2138, #2142 → #2139). The rules now co
   feed have not landed, and health checks use `register_*_probe` functions, not routes. The rule
   therefore implements the documented pattern. The web-bundle half of AC-12 (SCR-046 in a
   production JS build) belongs to the frontend build check, not this Python rule.
+- **Since #2086:** the backend has one settings-gated clock seam, `CV_TEST_CLOCK`
+  (`auth/testnet_clock.py`). It has no route and imports no test library, so this rule does not
+  match it. `Settings` refuses it unless the environment is testnet with no exchange key
+  (E16-FR-11), `build_test_clock` re-checks that, and boot audits it (E09 threat model U33, #2728).
 - **Fix:** move the seam under `tests/`, or register it inside the environment guard.
 
 ## cv-untrusted-exchange-response

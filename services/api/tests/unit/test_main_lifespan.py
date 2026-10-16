@@ -13,9 +13,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 
 from candleviewer.main import _lifespan
+from candleviewer.settings import Environment
 
 
 class _FakeGate:
@@ -53,6 +55,22 @@ class _FakeModule:
         self.stopped = True
 
 
+class _FakeAudit(_FakeModule):
+    """The audit module with a writer (real backend): `is_active`, then `writer.emit`."""
+
+    def __init__(self, failure: Exception | None = None) -> None:
+        super().__init__()
+        self.is_active = True
+        self.writer = self
+        self.actions: list[str] = []
+        self._failure = failure
+
+    async def emit(self, action: str, **_fields: object) -> None:
+        if self._failure is not None:
+            raise self._failure
+        self.actions.append(action)
+
+
 def _fake_ctx() -> SimpleNamespace:
     module_names = [
         "storage",
@@ -81,7 +99,7 @@ def _fake_ctx() -> SimpleNamespace:
     ]
     modules = {name: _FakeModule() for name in module_names}
     return SimpleNamespace(
-        settings=SimpleNamespace(metrics_enabled=False),
+        settings=SimpleNamespace(metrics_enabled=False, test_clock=False),
         mesh_self_check=_FakeSelfCheck(),
         oms_read_only_gate=_FakeGate(),
         **modules,
@@ -124,3 +142,38 @@ async def test_lifespan_leaves_read_only_mode_on_when_boot_check_trips_the_gate(
 
     async with _lifespan(app):
         assert ctx.oms_read_only_gate.is_read_only is True
+
+
+def _test_clock_ctx(audit: _FakeAudit) -> SimpleNamespace:
+    ctx = _fake_ctx()
+    ctx.settings = SimpleNamespace(
+        metrics_enabled=False,
+        test_clock=True,
+        test_clock_file="/run/cv-test-clock/offset",
+        environment=Environment.TESTNET,
+    )
+    ctx.audit = audit
+    return ctx
+
+
+async def test_lifespan_audits_the_test_clock_before_serving() -> None:
+    """#2728 (E16 R-E3 "config audit"): the record is written before the app serves."""
+    app = FastAPI()
+    ctx = _test_clock_ctx(_FakeAudit())
+    app.state.app_context = ctx
+
+    async with _lifespan(app):
+        assert ctx.audit.actions == ["system.config.test_clock_enabled"]
+
+
+async def test_lifespan_stops_every_module_when_the_test_clock_audit_fails() -> None:
+    """#2728: a failed boot record fails boot, and no started module is left running."""
+    app = FastAPI()
+    ctx = _test_clock_ctx(_FakeAudit(failure=RuntimeError("audit unavailable")))
+    app.state.app_context = ctx
+
+    with pytest.raises(RuntimeError, match="audit unavailable"):
+        await _lifespan(app).__aenter__()
+
+    assert (ctx.storage.stopped, ctx.audit.stopped, ctx.ws.stopped) == (True, True, True)
+    assert ctx.mesh_self_check.run_once_calls == 0
