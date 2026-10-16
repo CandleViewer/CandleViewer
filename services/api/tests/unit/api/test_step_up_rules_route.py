@@ -14,7 +14,6 @@ from fastapi import FastAPI
 
 from candleviewer.api.rules_actor import SessionRulesActorResolver, make_rules_audit
 from candleviewer.api.rules_crud import make_rules_crud_router
-from candleviewer.auth.models import SessionRecord
 from candleviewer.rules.manager import InMemoryRuleStore, RulesManager
 from candleviewer.rules.vocabulary import default_registry
 from tests.contract.test_step_up_challenge_contract import _SPEC, _STEP_UP_REQUIRED_BODY, _validator
@@ -33,13 +32,6 @@ class _Identity:
         return {"permissions": ["rules:read", "rules:write", "rules:arm_live"], "account_scope": []}
 
 
-class _TouchingSessions(_Sessions):
-    """The resolver authenticates with `touch=True`; the harness sessions keep no idle clock."""
-
-    async def authenticate_access_token(self, token: str, touch: bool = False) -> SessionRecord:
-        return await super().authenticate_access_token(token)
-
-
 async def _armable(w: _World, count: int = 1) -> tuple[list[str], list[str]]:
     """Mount `/rules` on the harness app and create `count` live-scoped rules, simulated and
     ready to arm. Returns their ids and the rules audit trail. The manager's records go to the
@@ -56,7 +48,7 @@ async def _armable(w: _World, count: int = 1) -> tuple[list[str], list[str]]:
 
     mgr = RulesManager(InMemoryRuleStore(), default_registry(), audit=audit, broadcast=broadcast)
     resolver = SessionRulesActorResolver(
-        lambda: _TouchingSessions(w.sessions), lambda: w.auth.step_up, _Identity(), w.audit
+        lambda: _Sessions(w.sessions), lambda: w.auth.step_up, _Identity(), w.audit
     )
     app = w.client.app
     assert isinstance(app, FastAPI)  # the harness app, not yet serving: routes may be added

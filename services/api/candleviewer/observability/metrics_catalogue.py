@@ -2537,7 +2537,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "AuthAuditOutcomeLost (any in 15m, ticket) / AuthAuditOutcomesLostBurst (>5 in 15m, page)",
         _L,
         "E09",
-        max_series=4,
+        max_series=5,
         exported=True,
     ),
     _s(

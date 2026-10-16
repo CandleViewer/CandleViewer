@@ -21,7 +21,7 @@ _MANAGER = uuid.uuid4()
 
 
 class _Sessions:
-    async def authenticate_access_token(self, token: str, *, touch: bool = False) -> Any:
+    async def authenticate_access_token(self, token: str) -> Any:
         users = {"owner-tok": _OWNER, "mgr-tok": _MANAGER}
         if token not in users:
             raise SessionNotFound("nope")
@@ -124,7 +124,7 @@ def _resolver_client(sessions: Any, identity: Any) -> TestClient:
 
 def _raising_sessions(exc: Exception) -> Any:
     class _S:
-        async def authenticate_access_token(self, token: str, *, touch: bool = False) -> Any:
+        async def authenticate_access_token(self, token: str) -> Any:
             raise exc
 
     return _S()

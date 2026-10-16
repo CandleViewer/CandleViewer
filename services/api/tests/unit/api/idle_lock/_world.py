@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI
 from jsonschema import Draft202012Validator
+from prometheus_client import REGISTRY
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
@@ -152,11 +153,12 @@ class World:
             chart=SessionChart(),
         )
         self.audit = _Audit()
+        self.auth = _Auth(self.sessions)
 
         app = FastAPI()
         app.include_router(
             make_session_router(
-                _Auth(self.sessions),
+                self.auth,
                 self.audit,
                 identity=_Identity() if identity else None,
                 allowed_origins=frozenset({_ORIGIN}),
@@ -236,3 +238,8 @@ async def _open(
 
 async def _session(w: World, headers: dict[str, str]) -> httpx.Response:
     return await w.client.get("/api/v1/auth/session", headers=headers)
+
+
+def _lost(action: str) -> float:
+    """`auth_audit_outcome_lost_total{action}` on the process-default registry (never reset)."""
+    return REGISTRY.get_sample_value("auth_audit_outcome_lost_total", {"action": action}) or 0.0

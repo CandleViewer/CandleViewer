@@ -165,7 +165,7 @@ async def test_require_active_refuses_a_disabled_users_live_session(
     revocations = _sample("auth_session_revocations_total", reason="user_disabled")
 
     with pytest.raises(SessionRevoked) as refused:
-        await service.authenticate_access_token(minted.access_token, touch=True)
+        await service.authenticate_access_token(minted.access_token)
 
     sid = str(minted.session_id)
     assert refused.value.reason == "user_disabled"

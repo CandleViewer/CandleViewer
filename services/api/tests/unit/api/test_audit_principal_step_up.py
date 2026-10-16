@@ -49,7 +49,7 @@ class _Sessions:
         self.record = record
         self.calls = 0
 
-    async def authenticate_access_token(self, token: str, *, touch: bool = False) -> Any:
+    async def authenticate_access_token(self, token: str) -> Any:
         self.calls += 1
         return self.record
 
@@ -116,6 +116,7 @@ async def test_reauth_age_is_right_across_the_grace_window_and_an_idle_lock() ->
     await svc.step_up(str(user), sid, "keys", _code(seed, clock), PASSWORD)
     clock.now = _T0 + timedelta(seconds=90)
     assert (await principal()).reauth_age_s(clock.now) == 90
+    await session_service.touch(sid)  # #2300: the client's extend; a request is never activity
 
     # The window ends at 300 s; the step-up still happened, so the age keeps counting.
     clock.now = _T0 + GRACE_WINDOW + timedelta(seconds=1)

@@ -51,7 +51,7 @@ class FakeBearerSessions:
             return SimpleNamespace(id=TEST_SID, user_id=TEST_SID)
         return None
 
-    async def authenticate_access_token(self, token: str, **_kw: Any) -> Any:
+    async def authenticate_access_token(self, token: str) -> Any:
         found = await self.peek_access_token(token)
         if found is None:
             raise SessionNotFound("not a test bearer")

@@ -1,8 +1,9 @@
 """`SessionService` / `StepUpService` changes for the idle-lock routes (#2300).
 
 `unlock(check=..., write_ahead=...)` (C-2.9: the record precedes the change; a failure counts
-even when its record cannot be written), `SessionIdleLocked.idle_locked_at` and
-`verify_password` on login's lockout counters. No DB, no network, fixed clock.
+even when its record cannot be written), refresh is not activity, authentication never is,
+`is_idle_locked_session`, `SessionIdleLocked.idle_locked_at` and `verify_password` on login's
+lockout counters. No DB, no network, fixed clock.
 """
 
 from __future__ import annotations
@@ -26,10 +27,12 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD
 from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import (
+    ACCESS_TOKEN_TTL,
     MAX_UNLOCK_ATTEMPTS,
     PasswordCheck,
     SessionService,
     UnlockOutcome,
+    is_idle_locked_session,
 )
 from candleviewer.auth.step_up import StepUpChallenge, StepUpService
 from tests.conftest import RecordingAuditSink
@@ -259,6 +262,47 @@ async def test_observe_brings_the_chart_up_to_the_row_and_records_nothing_else(
         await chart.stop()
 
 
+async def test_refresh_is_not_activity_the_successor_keeps_the_idle_deadline() -> None:
+    svc, repo, clock = _svc()
+    minted = await svc.mint(_USER, idle_timeout_s=int(_IDLE.total_seconds()))
+    clock.now += timedelta(seconds=200)
+    outcome = await svc.refresh(minted.refresh_token)
+    successor = await repo.find_by_id(str(outcome.minted.session_id))
+    assert successor is not None
+    assert (successor.last_seen_at, successor.issued_at) == (_T0, clock.now)
+    clock.now = _T0 + _IDLE
+    with pytest.raises(SessionIdleLocked) as locked:
+        await svc.refresh(outcome.minted.refresh_token)
+    assert locked.value.idle_locked_at == _T0 + _IDLE
+
+
+async def test_authenticating_a_request_never_re_stamps_last_seen_at() -> None:
+    svc, repo, clock = _svc()
+    minted = await svc.mint(_USER, idle_timeout_s=int(_IDLE.total_seconds()))
+    clock.now += timedelta(seconds=100)
+    await svc.authenticate_access_token(minted.access_token)
+    row = await repo.find_by_id(str(minted.session_id))
+    assert row is not None and row.last_seen_at == _T0
+    clock.now = _T0 + _IDLE
+    with pytest.raises(SessionIdleLocked) as locked:
+        await svc.authenticate_access_token(minted.access_token)
+    assert locked.value.idle_locked_at == _T0 + _IDLE
+    assert svc.now() == clock.now
+
+
+async def test_is_idle_locked_session_holds_only_for_an_otherwise_accepted_session() -> None:
+    svc, repo, clock = _svc()
+    minted = await svc.mint(_USER, idle_timeout_s=int(_IDLE.total_seconds()))
+    row = await repo.find_by_id(str(minted.session_id))
+    assert row is not None
+    assert not is_idle_locked_session(row, now=_T0 + _IDLE - timedelta(seconds=1))
+    assert is_idle_locked_session(row, now=_T0 + _IDLE)
+    assert not is_idle_locked_session(row, now=_T0 + ACCESS_TOKEN_TTL)  # token gone: 401
+    assert not is_idle_locked_session(row, now=row.expires_at)  # past the 12 h lifetime
+    revoked = await svc.revoke(str(minted.session_id), reason="logout")
+    assert revoked is not None and not is_idle_locked_session(revoked, now=_T0 + _IDLE)
+
+
 async def _step_up(users: FakeUserRepository) -> StepUpService:
     return StepUpService(
         FakeMfaRepository(),
@@ -319,14 +363,14 @@ async def test_a_failed_revoke_at_the_cap_keeps_the_count_so_the_next_failure_re
     assert row is not None and row.revoked_reason == "unlock_attempts_exceeded"
 
 
-async def test_allow_locked_authentication_refuses_a_session_past_its_lifetime() -> None:
-    """#2389 gap J: logout and the other allow-locked callers answer an expired session as
-    they answer a revoked one, even while its access token still lives."""
+async def test_allow_locked_access_refuses_a_locked_session_past_its_lifetime() -> None:
+    """#2389 gap J: a read allowed while locked answers an expired session as it answers a
+    revoked one, even while it is idle-locked and its access token still lives."""
     svc, _repo, clock = _svc()
-    minted = await svc.mint(_USER, expires_at=_T0 + timedelta(minutes=5))
-    clock.now = _T0 + timedelta(minutes=5)  # access token (12 min) still inside its lifetime
+    minted = await svc.mint(_USER, idle_timeout_s=300, expires_at=_T0 + timedelta(minutes=10))
+    clock.now = _T0 + timedelta(minutes=10)  # locked since minute 5; the 12 min token lives
     with pytest.raises(SessionRevoked) as expired:
-        await svc.authenticate_access_token(minted.access_token, allow_locked=True)
+        await svc.require_active(str(minted.session_id), allow_locked=True)
     assert expired.value.reason == "expired"
 
 

@@ -22,7 +22,7 @@ rules:
       # needs the same bound, stated in review.
       # #2453: each name below has a closed value set in code and a `max_series` cap in the
       # catalogue; none carries an identifier (user, account, order id, raw path, free text).
-      # action (#2914): audit action of a lost outcome record, closed set + `other`; max_series=4.
+      # action (#2914): audit action of a lost outcome record, closed set + `other`; max_series=5.
       # action, also (E42-T04, #965, cv_user_lifecycle_total): {disable}; with `result`,
       #   max_series=9 (`admin/lifecycle_metrics.ACTION_RESULTS`).
       # bucket (E15-T01): workspace-count buckets {1, 2-4, 5-8, 9-16, 17-32}; max_series=5.

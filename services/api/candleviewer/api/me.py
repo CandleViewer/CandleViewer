@@ -77,9 +77,7 @@ _NO_STORE: Final = {"Cache-Control": "no-store"}  # SR-178: the shell holds thes
 
 
 class _Sessions(Protocol):
-    async def authenticate_access_token(
-        self, raw_access_token: str, *, touch: bool = False, allow_locked: bool = False
-    ) -> SessionRecord: ...
+    async def authenticate_access_token(self, raw_access_token: str) -> SessionRecord: ...
 
 
 class AuthLike(Protocol):
@@ -180,7 +178,7 @@ def make_me_router(
         if token is None:
             return _unauthenticated()
         try:
-            record = await auth.sessions.authenticate_access_token(token, touch=True)
+            record = await auth.sessions.authenticate_access_token(token)  # never activity
         except SessionIdleLocked as exc:  # not sign-in: the unlock screen (contract "Idle lock")
             return idle_locked_problem(exc.idle_locked_at)
         except AuthError:  # unknown, expired or revoked: one answer

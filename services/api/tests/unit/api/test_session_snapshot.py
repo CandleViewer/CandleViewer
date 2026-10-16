@@ -18,12 +18,11 @@ _UID = uuid.uuid4()
 
 class _Sessions:
     def __init__(self, exc: Exception | None = None) -> None:
-        self.exc, self.touched = exc, list[bool]()
+        self.exc = exc
 
-    async def authenticate_access_token(self, token: str, *, touch: bool = False) -> Any:
+    async def authenticate_access_token(self, token: str) -> Any:
         if self.exc is not None:
             raise self.exc
-        self.touched.append(touch)
         return SimpleNamespace(id=uuid.uuid4(), user_id=_UID)
 
 
@@ -50,7 +49,9 @@ async def test_resolve_active_owner_maps_roles_and_known_permissions_only() -> N
     snap = await SessionSnapshotResolver(lambda: sessions, _Identity()).resolve(_request())
     assert snap is not None and snap.user_id == _UID and snap.is_owner
     assert snap.permissions == frozenset({Permission.USERS_WRITE})  # unknown code dropped
-    assert snap.account_grants == () and sessions.touched == [True]
+    # #2300: resolving a principal is never activity: the fake takes no `touch`, so a resolver
+    # that passed one would fail here (the real signature has none).
+    assert snap.account_grants == ()
 
 
 @pytest.mark.parametrize(

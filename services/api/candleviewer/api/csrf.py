@@ -30,17 +30,20 @@ Then, except for the five pre-session operations (contract "Exempt"):
    or the sessions backend is not wired, the request is refused
    (`wrong_session`): header == cookie is never sufficient on its own.
 
-`POST /auth/refresh` (exact path) is the one exception to steps 2-5: its session
-is the one bound to the presented refresh token, which the route itself loads.
-After its throttles and reuse detection (a rotated-out token only revokes, never
-mints), the route runs the full check with `verify_refresh_csrf()` before it
-audits or rotates. `POST /auth/logout` (exact path) is a partial exception, only
-when the `cv_refresh` cookie identifies it (contract "Idle lock", #2300): the
-cookie is present and no access token inside its lifetime is (no bearer, or one
-past `ACCESS_TOKEN_TTL`). Steps 2-4 still run here; step 5, the binding, is the
-route's, against the cookie's session. A logout identified by its access token
-is bound here, like every other bearer request. The middleware never reads a
-request body, so a body it cannot read can never weaken the check.
+`POST /auth/refresh` and `POST /auth/unlock` (exact paths) are the exceptions to
+steps 2-5: each acts on a session the route itself loads. Refresh's is the one
+bound to the presented refresh token. Unlock's is the access token's, or the
+`cv_refresh` cookie's when no access token is inside its lifetime (contract
+"Idle lock", #2300). After its throttles (and, for refresh, reuse detection: a
+rotated-out token only revokes, never mints), the route runs the full check with
+`verify_refresh_csrf()` against that session before it audits or changes
+anything. `POST /auth/logout` (exact path) is a partial exception, only when
+that cookie identifies it: the cookie is present and no access token inside its
+lifetime is (no bearer, or one past `ACCESS_TOKEN_TTL`). Steps 2-4 still run
+here; step 5, the binding, is the route's, against the cookie's session. A
+logout identified by its access token is bound here, like every other bearer
+request. The middleware never reads a request body, so a body it cannot read
+can never weaken the check.
 
 A refusal is always `403 csrf_token_invalid` (`detail` never echoes a value),
 `auth_csrf_refused_total{reason}`, and an `auth.csrf_refused` audit record
@@ -94,7 +97,10 @@ _EXEMPT_PATH = re.compile(
     r"/(?:auth/login|auth/mfa/verify|auth/mfa/recovery|invites/[^/]+|invites/[^/]+/confirm)"
 )
 REFRESH_PATH = "/auth/refresh"
+UNLOCK_PATH = "/auth/unlock"
 LOGOUT_PATH = "/auth/logout"
+#: POSTs whose route runs the SR-041 check itself, against the session it loads.
+_ROUTE_CHECKED_PATHS = frozenset({REFRESH_PATH, UNLOCK_PATH})
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 _UNMATCHED = "(unmatched)"
 #: Refusals not bound to a live session, per source IP per window, that are
@@ -443,10 +449,10 @@ class CsrfMiddleware:
         if is_exempt(scope["method"], path):
             await self._app(scope, receive, send)
             return
-        if route_path(path) == REFRESH_PATH and scope["method"] == "POST":
-            # The refresh route runs the whole SR-041 check itself, against the exact
-            # session it would rotate (after its throttles and reuse detection, before
-            # any audit or rotation): `verify_refresh_csrf`. The path is matched exactly
+        if route_path(path) in _ROUTE_CHECKED_PATHS and scope["method"] == "POST":
+            # Refresh and unlock run the whole SR-041 check themselves, against the
+            # exact session they act on (after their throttles, before any audit or
+            # state change): `verify_refresh_csrf`. The path is matched exactly
             # (control characters were refused above), so no variant reaches the
             # route without that check.
             await self._app(scope, receive, send)

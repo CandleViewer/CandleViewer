@@ -12,7 +12,7 @@ documented JSON).
 `session_revoked`, `unauthenticated`) and `409` (`conflict`) carry codes of their own, so they reuse
 no shared response. Its session is locked by an idle timeout that has passed while its access token
 still lives, its password check stands in for login's (the B16 chart is real), and its `503` for an
-unwired backend is driven bare too.
+unwired backend is driven bare too. `authExtendSession` (#2300) is pinned like `authLogout`.
 
 Provider side: each operation is driven to every status it declares, through the real session
 router behind the app's SR-041 guard and error handler, over the shared in-memory fakes
@@ -79,6 +79,7 @@ _DECLARED: dict[str, frozenset[int]] = {
     "authLogout": frozenset({204, 401, 403, 422, 503}),
     "revokeMySession": frozenset({204, 401, 403, 404, 422, 503}),
     "authUnlock": frozenset({200, 401, 403, 409, 422, 429, 503}),
+    "authExtendSession": frozenset({200, 401, 403, 503}),
 }
 #: Failure statuses an operation documents itself, with codes of its own (#2300).
 _OWN_RESPONSE: dict[str, frozenset[int]] = {"authUnlock": frozenset({401, 409})}
@@ -371,6 +372,14 @@ _ANSWERS: dict[str, list[tuple[int, str, Callable[[], _World], _Send]]] = {
         (503, "audit inactive", _LOCKED_NO_SINK, _unlock),
         (503, "audit refused", _LOCKED_SINK_REFUSES, _unlock),
         (503, "backend unwired", _BARE_NO_BACKEND, _unlock),
+    ],
+    "authExtendSession": [
+        (200, "extended", _OK, lambda w, c: w.post("/auth/session/extend", c)),
+        (401, "session gone", _GONE, lambda w, c: w.post("/auth/session/extend", c)),
+        (403, "csrf", _OK, lambda w, c: w.post("/auth/session/extend", c, headers=_BAD)),
+        (503, "audit inactive", _NO_SINK, lambda w, c: w.post("/auth/session/extend", c)),
+        (503, "audit refused", _SINK_REFUSES, lambda w, c: w.post("/auth/session/extend", c)),
+        (503, "backend unwired", _BARE_NO_BACKEND, lambda w, c: w.post("/auth/session/extend", c)),
     ],
 }
 _CASES = [

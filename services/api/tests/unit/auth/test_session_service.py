@@ -349,6 +349,8 @@ async def test_refresh_preserves_the_original_absolute_expiry() -> None:
     outcome = await service.refresh(minted.refresh_token)
     assert outcome.minted.expires_at == original_expires_at
 
+    # #2300: a refresh is not activity, so the chain stays unlocked only through extend.
+    await service.touch(str(outcome.minted.session_id))
     clock.advance(timedelta(minutes=30))
     outcome2 = await service.refresh(outcome.minted.refresh_token)
     assert outcome2.minted.expires_at == original_expires_at

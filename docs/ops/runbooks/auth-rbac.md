@@ -784,7 +784,7 @@ of an accepted code stay silent.
 
 ## 10. An audit outcome record was lost (`AuthAuditOutcomeLost`, `AuthAuditOutcomesLostBurst`)
 
-The alert runbook is `docs/plan/07-release-and-prr.md#alert-authauditoutcomelost`. Two session
+The alert runbook is `docs/plan/07-release-and-prr.md#alert-authauditoutcomelost`. Three session
 routes write a record after the service has acted or refused, so a refusal of the sink cannot undo
 the decision and the answer stands. `POST /auth/logout` writes one `auth.logout` row first (naming
 its targets in `after_state.session_ids`: the first 50, with the total in
@@ -792,7 +792,9 @@ its targets in `after_state.session_ids`: the first 50, with the total in
 revoked: a refusal at the first row is a `503` that changes nothing, at a later row still a `204`.
 `POST /auth/refresh` writes `auth.refresh_reuse_detected` for a concurrent-refresh race after the
 service has refused it, and `auth.session_refreshed` (`denied`, reason `user_disabled`, #2911)
-after it refuses a disabled user's refresh; the answer stays the uniform `401`.
+after it refuses a disabled user's refresh (the uniform `401`) or, reason `idle_locked` (#2300), a
+refresh of a session that locked after its check; `POST /auth/session/extend` writes
+`auth.session_extended` (`denied`) after it refuses an extension its intent row announced.
 
 Each lost row adds one to `auth_audit_outcome_lost_total{action}` and logs one error,
 `auth.session_audit.outcome_lost`, with `action`, `session_id` and `error` (the writer's refusal
@@ -813,13 +815,17 @@ the `sessions` row (`revoked_at`, `revoked_reason`) records the revocation; a lo
 with reason `rotation_reuse` when the service found the token already rotated (a refresh that lost
 the claim race to a concurrent one revoked nothing, so the log line and this row are the only
 trace); a lost `auth.session_refreshed` denial leaves the attempt's own `auth.session_refreshed`
-row (`success`) uncorrected: nothing was minted, and the user is `disabled` or gone. Never write
+row (`success`) uncorrected: nothing was minted, and the user is `disabled` or gone or the session
+idle-locked (not revoked; `last_seen_at` plus `idle_timeout_s` before the attempt); a lost
+`auth.session_extended` denial leaves the extension's `success` row uncorrected: the deadline did
+not move, and the `sessions` row says why (idle-locked, revoked or gone). Never write
 the missing rows by hand: only the audit writer writes the table. There is no
 automatic retry: that half of rule 2 (`04-security-program.md` section 8.3) is the time-boxed
 exception EX-07 (section 16.2), which ends when the journal-first lane (#3009) exists.
 
-While the sink refuses records, sign-out, session revocation and refresh answer `503` and change
-nothing (C-2.9): an access token lapses within 12 minutes and a longer refusal ends every session
+While the sink refuses records, sign-out, session revocation, refresh, extend and unlock answer
+`503` and change nothing (C-2.9): sessions idle-lock at their idle deadline and cannot be unlocked,
+an access token lapses within 12 minutes and a longer refusal ends every session
 and sign-in (accepted residual risk RR-16, `04-security-program.md` section 16.1). The break-glass
 reset (section 3, E09-S11 #2119, not runnable yet) will be the Owner's emergency path: it runs only
 with cv-api stopped and journals to its own host file, never the sink. `AuthAuditOutcomeLost` is a
@@ -828,8 +834,8 @@ last loss, so a lone loss at night is not delivered and the page (more than 5 in
 not cover it (#2621, section 1): in the morning, read the counter and `outcome_lost` log lines.
 
 No page does not mean the sink is healthy: the page reads only outcome rows lost after an action,
-while a refusing sink makes every sign-out, revoke and refresh fail closed at its write-ahead record
-with a `503` that no counter or alert sees. Those refusals show only as
+while a refusing sink makes every sign-out, revoke, refresh, extend and unlock fail closed at its
+write-ahead record with a `503` that no counter or alert sees. Those refusals show only as
 `auth.session_audit.writer_refused` log lines (the alert runbook's third command greps them); a
 counter for them is requested under #3009 and E27 KV-D04 (#2267). A page that has cleared is no
 better evidence: it sends no `[RESOLVED]` message and clears with its 15-minute window, so the test

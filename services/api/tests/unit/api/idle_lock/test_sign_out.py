@@ -1,5 +1,5 @@
 """Ending sessions while idle-locked (#2300; contract info "Idle lock"): `POST /auth/logout`
-by access token or `cv_refresh` cookie."""
+by access token or `cv_refresh` cookie, and `DELETE /me/sessions/{sessionId}`."""
 
 from __future__ import annotations
 
@@ -147,4 +147,19 @@ async def test_cookie_logout_with_an_undeclared_query_parameter_is_422_revoking_
     assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
     assert [e["field"] for e in r.json()["errors"]] == ["query.user_id"]
     assert not (await w.row(minted)).is_revoked
+    assert w.audit.writer.records == [] and w.published == []
+
+
+async def test_a_locked_session_cannot_revoke_another_session(w: World) -> None:
+    """#2389 gap F: refused by the route itself, not only by `IdleLockMiddleware` (absent
+    here), so the router never relies on how it is mounted; nothing is audited."""
+    uid = await w.add_user()
+    locked = await w.mint(uid)
+    elsewhere = await w.mint(uid, idle_timeout_s=3600)
+    w.lock()
+    r = await w.client.delete(
+        f"/api/v1/me/sessions/{elsewhere.session_id}", headers=_bearer(locked)
+    )
+    assert (r.status_code, r.json()["code"]) == (401, "session_idle_locked")
+    assert not (await w.row(elsewhere)).is_revoked
     assert w.audit.writer.records == [] and w.published == []

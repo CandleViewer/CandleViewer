@@ -137,7 +137,7 @@ async def _arm_consume(
     from candleviewer.api.rules_actor import SessionRulesActorResolver
 
     class _Sessions:
-        async def authenticate_access_token(self, token: str, touch: bool = True) -> object:
+        async def authenticate_access_token(self, token: str) -> object:
             return SimpleNamespace(user_id=_UID, id="s1")
 
     class _Identity:
@@ -311,7 +311,7 @@ def _resolver(roles: list[str]) -> object:
     from candleviewer.api.rules_actor import SessionRulesActorResolver
 
     class _Sessions:
-        async def authenticate_access_token(self, token: str, touch: bool = True) -> object:
+        async def authenticate_access_token(self, token: str) -> object:
             return SimpleNamespace(user_id=_UID, id="s1")
 
     class _Identity:

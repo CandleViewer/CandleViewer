@@ -7,9 +7,12 @@ Every Gherkin scenario in the ticket maps to a method here:
 - `mint()` — first-login session creation (called after `LoginService`/
   `MfaService` complete the two-legged login, per those modules' own
   `NotImplementedError`/`MfaVerifiedResult` "E09-S03 scope" notes).
-- `refresh()` — "Refresh-token reuse kills the family".
+- `refresh()` — "Refresh-token reuse kills the family". Not activity: the
+  successor inherits `last_seen_at` (#2300).
 - `touch()` — "Idle lock preserves the data feed" (re-stamps
-  `last_seen_at`, i.e. the `REQUEST` event on B16).
+  `last_seen_at`, i.e. the `REQUEST` event on B16). Activity is explicit
+  (#2300): only `POST /auth/session/extend` calls it, and authenticating a
+  request never does.
 - `require_active()` — "Order entry is refused while locked": the
   per-request/per-WS-frame revocation + idle-lock check every caller in
   the OMS/WS path must run before honouring a session id.
@@ -197,21 +200,34 @@ def hash_access_token(token: str) -> uuid.UUID:
 
 def is_live_session(session: SessionRecord, *, now: datetime) -> bool:
     """Read-only twin of the strict acceptance rule of `authenticate_access_token`
-    (`allow_locked=False`, which ends in `require_active`): not revoked, not
+    (which ends in `require_active`): not revoked, not
     absolute-expired, not idle-locked, and the access handle within
     `ACCESS_TOKEN_TTL`. No state change; used to decide whether a CSRF refusal is
     bound to a session that could actually act (#2238 review). A property test pins
     the two together (#2264).
 
-    The `allow_locked=True` path (logout, revoke) is laxer on purpose: an idle-locked session
-    can still act there, which this predicate does not model, so a CSRF refusal on those
-    routes for such a session draws on the per-IP audit budget (conservative). The user's
+    A bearer logout is laxer on purpose: an idle-locked session can still sign out (#2300),
+    which this predicate does not model, so a CSRF refusal of such a logout draws on the
+    per-IP audit budget (conservative). The user's
     status is not part of it either: `peek_access_token` reads none, and `require_active`
     refuses and revokes a disabled user's session itself (#2911)."""
     return (
         not session.is_revoked
         and not session.is_absolute_expired(now=now)
         and not session.is_idle_locked(now=now)
+        and now < session.issued_at + ACCESS_TOKEN_TTL
+    )
+
+
+def is_idle_locked_session(session: SessionRecord, *, now: datetime) -> bool:
+    """The idle-lock twin of `is_live_session` (#2300): a session that
+    `authenticate_access_token` would accept but for the idle lock (not revoked,
+    inside its absolute lifetime, access handle within `ACCESS_TOKEN_TTL`) and
+    past its `idle_deadline`. Such a request answers `401 session_idle_locked`
+    instead of `unauthenticated`. No state change."""
+    return (
+        session.is_idle_locked(now=now)
+        and not session.is_absolute_expired(now=now)
         and now < session.issued_at + ACCESS_TOKEN_TTL
     )
 
@@ -343,6 +359,7 @@ class SessionService:
         idle_timeout_s: int = DEFAULT_IDLE_TIMEOUT_S,
         mfa_satisfied: bool = True,
         expires_at: datetime | None = None,
+        last_seen_at: datetime | None = None,
     ) -> MintedSession:
         """Issue a brand-new session — session fixation is prevented by
         always minting a fresh `session_id`/refresh token here, never
@@ -353,7 +370,8 @@ class SessionService:
         absolute deadline to its successor (review finding, PR #1628,
         high: rotation must not reset the 12 h absolute lifetime). First-
         login callers never pass it, so a brand-new session still gets
-        `now + ABSOLUTE_LIFETIME`.
+        `now + ABSOLUTE_LIFETIME`. *last_seen_at* does the same for the idle
+        deadline (#2300: a refresh is not activity).
 
         Raises `UserDisabled` when the user is `disabled` or gone (#2911):
         the repository reads `users.status` under the user-row lock in the
@@ -370,7 +388,7 @@ class SessionService:
             refresh_token_hash=_hash_refresh_token(raw_token),
             access_token_jti=hash_access_token(raw_access),
             issued_at=now,
-            last_seen_at=now,
+            last_seen_at=last_seen_at if last_seen_at is not None else now,
             expires_at=expires_at if expires_at is not None else now + ABSOLUTE_LIFETIME,
             revoked_at=None,
             revoked_reason=None,
@@ -498,6 +516,9 @@ class SessionService:
             # never be able to extend a session past its original 12 h
             # absolute lifetime (ticket "Scope / Deliverables").
             expires_at=presented.expires_at,
+            # #2300: a refresh is not activity. The successor keeps the presented
+            # session's idle deadline, so a client refreshing on schedule still locks.
+            last_seen_at=presented.last_seen_at,
         )
         await self._repository.link_rotation(
             prev_session_id=str(presented.id), next_session_id=str(minted.session_id)
@@ -605,13 +626,14 @@ class SessionService:
             return None
         return found
 
-    async def authenticate_access_token(
-        self, raw_access_token: str, *, touch: bool = False, allow_locked: bool = False
-    ) -> SessionRecord:
+    async def authenticate_access_token(self, raw_access_token: str) -> SessionRecord:
         """Per-request authentication (ADR-0020): resolve the opaque bearer
         handle to its session, refusing unknown, expired-token, revoked and
         idle-locked sessions. Raises `SessionNotFound`, `SessionRevoked`,
-        `SessionIdleLocked`. *touch* re-stamps `last_seen_at` (activity)."""
+        `SessionIdleLocked`. Never activity (#2300): it never re-stamps
+        `last_seen_at`; `touch()` and `unlock()` are the only writers. The
+        operations allowed while locked identify their session with
+        `peek_access_token` instead."""
         jti = hash_access_token(raw_access_token)
         found = await self._repository.find_by_access_token_jti(str(jti))
         if found is None or not hmac.compare_digest(
@@ -620,16 +642,6 @@ class SessionService:
             raise SessionNotFound("no session for this access token")
         if self._clock() >= found.issued_at + ACCESS_TOKEN_TTL:
             raise SessionNotFound("access token expired")
-        if allow_locked:
-            # For a caller that serves an idle-locked session. A revoked or
-            # expired session is refused like any other (#2389 gap J).
-            if found.is_revoked:
-                raise SessionRevoked(found.revoked_reason or "revoked")
-            if found.is_absolute_expired(now=self._clock()):
-                raise SessionRevoked("expired")
-            return found
-        if touch:
-            return await self.touch(str(found.id))
         return await self.require_active(str(found.id))
 
     async def touch(self, session_id: str) -> SessionRecord:

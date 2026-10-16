@@ -149,9 +149,12 @@ Evidence for AC-AUD-01/02, all in the CI integration lane (`pytest tests/integra
   `test_truncate_refused_even_for_owner` in `services/api/tests/integration/audit/test_audit_repository.py`.
 
 Evidence for AC-LOCK-01..04 (#2300, `POST /auth/unlock`): router-level tests in
-`services/api/tests/unit/api/idle_lock/`, in `test_unlock.py` unless another file is named. The
-deployed app keeps the route dark until #2300's last slice wires it: `create_app()` passes no unlock
-authority yet, so it answers 503 to everyone.
+`services/api/tests/unit/api/idle_lock/`, in `test_unlock.py` unless another file is named. In the
+deployed app, `CsrfMiddleware` refuses a foreign `Origin` and then hands `POST /auth/unlock` to the
+route's own SR-041 check, as it does refresh (`_ROUTE_CHECKED_PATHS` in `api/csrf.py`). Through
+`create_app()`: `test_a_locked_session_reads_itself_and_unlocks_with_the_password_only` and
+`test_after_a_reload_the_cookie_alone_unlocks_through_the_csrf_guard`
+(`services/api/tests/security/auth/test_idle_lock_http.py`).
 
 - AC-LOCK-01: `test_unlock_with_the_password_lifts_the_lock_and_restamps_the_deadline`,
   `test_unlock_clears_every_step_up_grant_in_the_one_write_that_lifts_the_lock` (no unlock carries
@@ -241,7 +244,7 @@ not through `create_app()`.
 | AC-MFA-01..07                          | `auth.mfa_failed` (failure) per refused verify or recovery; the challenge lock has no row of its own                                         | `auth_login_failures_total{method}` scraped (#2319): `totp`, `recovery_code`    | `AuthLoginFailureSpike` (every method)                                               | `test_obs_mfa_*`                                                                          |
 | AC-SES-01, 01c, 07                     | `auth.session_fixation_attempt` (denied, warning), per-IP and global budgets                                                                 | `auth_session_fixation_attempts_total{reason}`, scraped                         | none                                                                                 | `test_session_abuse.py::test_ac_ses_01*`, `tests/unit/api/test_session_fixation_audit.py` |
 | AC-SES-03                              | `auth.refresh_reuse_detected` (denied, critical)                                                                                             | `auth_refresh_reuse_total`, scraped (#2319)                                     | none yet: no rule reads it (#2746)                                                   | `test_obs_refresh_*`                                                                      |
-| AC-SES-03 race, logout (#2914)         | `auth.refresh_reuse_detected` (race), `auth.session_revoked` (logout), `auth.session_refreshed` (disabled user), lost after the action       | `auth_audit_outcome_lost_total{action}`, scraped                                | `AuthAuditOutcomeLost` (ticket), `AuthAuditOutcomesLostBurst` (> 5 in 15 min, page)  | `test_sessions_router_audit_writer.py`, `test_audit_outcome_lost_alerts.py`               |
+| AC-SES-03 race, logout (#2914)         | `auth.refresh_reuse_detected`, `auth.session_revoked`, `auth.session_refreshed`, `auth.session_extended`: outcome rows lost after the action | `auth_audit_outcome_lost_total{action}`, scraped                                | `AuthAuditOutcomeLost` (ticket), `AuthAuditOutcomesLostBurst` (> 5 in 15 min, page)  | `test_sessions_router_audit_writer.py`, `test_audit_outcome_lost_alerts.py`               |
 | AC-SES-05, AC-SES-06                   | none: expiry is the normal refresh trigger; F-2                                                                                              | none                                                                            | none                                                                                 | by design                                                                                 |
 | AC-CSRF-01/02/04, 06..10               | `auth.csrf_refused` (denied, warning), capped                                                                                                | `auth_csrf_refused_total{reason}`, scraped                                      | `CsrfRefusalsHigh`, `CsrfRefusalAuditUnavailable`, `CsrfRefusalAuditDegraded`        | `test_obs_csrf_*`, `test_csrf_double_submit.py`                                           |
 | AC-CSRF-05 (IDOR probe)                | `auth.session_revoke_denied` (denied, warning) per probe, budgeted per user and overall; the 404 is unchanged                                | `auth_session_revoke_denied_total`, scraped (#2319)                             | none yet: no rule reads it (#2746)                                                   | `test_obs_csrf_*`, `test_session_abuse.py::test_ac_csrf_05_*`                             |

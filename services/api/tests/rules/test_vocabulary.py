@@ -211,7 +211,7 @@ def test_rule_ir_schema_endpoint() -> None:
 
 
 class _RealSessions:
-    async def authenticate_access_token(self, token: str, *, touch: bool = False) -> typing.Any:
+    async def authenticate_access_token(self, token: str) -> typing.Any:
         import uuid
         from types import SimpleNamespace
 

@@ -387,8 +387,7 @@ operations:
     permissions: []
     scope: self
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml by #2300 slice 1/2 (contract); the route ships in slice 2/2
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /auth/session/view-as:
     permissions: []
@@ -420,9 +419,7 @@ operations:
     permissions: []
     scope: self
     public: false
-    state: not_executable
-    reason: 'mounted dark by #2300 slice 2e: create_app() wires no step-up authority yet, so
-      every actor gets 503; slice 2f wires it'
+    state: executed
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   GET /chart-templates:
     permissions: ['workspaces:read']

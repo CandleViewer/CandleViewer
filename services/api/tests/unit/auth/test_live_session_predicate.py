@@ -1,7 +1,7 @@
 """#2264: `is_live_session` and `SessionService.authenticate_access_token` agree.
 
 The CSRF guard picks the audit budget of a refusal with `is_live_session`, a read-only twin of
-the strict acceptance rule (`allow_locked=False`) of `authenticate_access_token`. They state one
+the strict acceptance rule of `authenticate_access_token`. They state one
 rule twice, so this pins them together: for any record and clock the twin says "live" exactly
 when the strict path accepts. If either changes alone, this fails.
 """
@@ -61,10 +61,10 @@ async def _session_in(wanted: _State) -> tuple[SessionService, SessionRecord, st
     return service, record, minted.access_token
 
 
-async def _agree(state: _State, *, touch: bool) -> None:
+async def _agree(state: _State) -> None:
     service, record, token = await _session_in(state)
     try:
-        await service.authenticate_access_token(token, touch=touch)
+        await service.authenticate_access_token(token)  # never activity (#2300)
         accepted = True
     except (SessionNotFound, SessionRevoked, SessionIdleLocked):
         accepted = False
@@ -95,13 +95,13 @@ def test_is_live_session_holds_exactly_when_the_strict_path_accepts(
     age_us: int, idle_gap_us: int, idle_timeout_s: int, absolute_left_us: int, revoked: bool
 ) -> None:
     state = _State(age_us, idle_gap_us, idle_timeout_s, absolute_left_us, revoked)
-    asyncio.run(_agree(state, touch=False))
-    asyncio.run(_agree(state, touch=True))
+    asyncio.run(_agree(state))
 
 
-async def test_allow_locked_path_accepts_an_idle_locked_session_the_predicate_rejects() -> None:
-    """Logout / revoke act on an idle-locked session (the lock is cosmetic on the client), so a
-    refusal there is not "live" for the CSRF audit budget although the route would accept it."""
+async def test_a_logout_finds_an_idle_locked_session_the_predicate_rejects() -> None:
+    """A bearer logout finds its session with `peek_access_token`, idle-locked or not (#2300),
+    so a refusal there is not "live" for the CSRF audit budget although the route serves it."""
     service, record, token = await _session_in(_State(_SEC, 2 * _IDLE, 900, _FAR, False))
     assert is_live_session(record, now=_NOW) is False
-    assert (await service.authenticate_access_token(token, allow_locked=True)).id == record.id
+    found = await service.peek_access_token(token)
+    assert found is not None and found.id == record.id

@@ -89,7 +89,8 @@ auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets perf
 #: catalogue's `max_series` (this set plus `other`) with it.
 AUDIT_OUTCOME_ACTIONS: tuple[str, ...] = (
     "auth.refresh_reuse_detected",  # the concurrent-refresh race (`api/sessions.py`)
-    "auth.session_refreshed",  # a disabled user's refused refresh, reason `user_disabled` (#2911)
+    "auth.session_extended",  # an extension refused after its intent: locked or ended (#2300)
+    "auth.session_refreshed",  # a refused refresh: `user_disabled` (#2911) or `idle_locked` (#2300)
     "auth.session_revoked",  # one per session `POST /auth/logout` revoked
 )
 auth_audit_outcome_lost_total = Counter(

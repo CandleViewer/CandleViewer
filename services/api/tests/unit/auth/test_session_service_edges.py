@@ -82,7 +82,7 @@ async def test_access_token_lookups_reject_unknown_expired_and_revoked() -> None
         await svc.authenticate_access_token("nope")
     await svc.revoke(str(m.session_id), reason="logout")
     with pytest.raises(SessionRevoked):
-        await svc.authenticate_access_token(m.access_token, allow_locked=True)
+        await svc.authenticate_access_token(m.access_token)
     clock.now = _NOW + ACCESS_TOKEN_TTL + timedelta(seconds=1)
     with pytest.raises(SessionNotFound):
         await svc.authenticate_access_token(m.access_token)

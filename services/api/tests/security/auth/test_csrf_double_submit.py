@@ -283,7 +283,7 @@ def test_expired_access_token_still_gets_its_mac_verified_then_the_route_401(
 
 
 def test_idle_locked_session_logout_still_works_with_its_token(stack: _Stack) -> None:
-    """`allow_locked`: the guard's session lookup ignores the idle lock, so logout of a
+    """The guard's session lookup (`peek_access_token`) ignores the idle lock, so logout of a
     locked session (with its own token) is not a CSRF refusal and succeeds."""
     r = stack.login()
     portal = stack.client.portal
