@@ -129,7 +129,8 @@ class Stack:
         # A short drain: the harness's clients are closed by the test itself. Set on the dict, so it
         # holds whether or not `uvicorn_kwargs` carries its own drain bound (#2565 adds one).
         kw["timeout_graceful_shutdown"] = 2
-        conf = uvicorn.Config(app, **kw, lifespan="off", log_config=None)
+        # Merged as a dict, so it holds whether or not `uvicorn_kwargs` already sets `log_config`.
+        conf = uvicorn.Config(app, **{**kw, "lifespan": "off", "log_config": None})
         self.server = PlannedShutdownServer(conf)
         self._sock = socket.create_server((HOST, 0))
         self.port: int = self._sock.getsockname()[1]
