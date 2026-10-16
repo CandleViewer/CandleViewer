@@ -3828,7 +3828,7 @@ here and checked against the charts by the contract test, never restated (C-2.19
 | Auth timeout                   | 10 s; 3 failed attempts                            |
 | Replay `history` caps          | bars ≤1 000, footprint ≤200, heatmap window ≤900 s |
 | Terminal machine retention     | 60 s, at most 10 000 entries (oldest first)        |
-| Machine registry entries (live and terminal) | 20 000; a new entity is refused, none is evicted |
+| Machine registry entries       | 20 000, live and terminal; new entity refused      |
 
 ### 16.3 Performance budgets
 
