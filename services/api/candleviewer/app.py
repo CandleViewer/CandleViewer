@@ -62,6 +62,7 @@ from candleviewer.api import (
     make_ticker_router,
     make_trades_router,
 )
+from candleviewer.api.admin_capacity import make_admin_capacity_router
 from candleviewer.api.admin_overview import make_admin_overview_router
 from candleviewer.api.alerts import make_alerts_router
 from candleviewer.api.audit_principal import SessionAuditPrincipalResolver
@@ -1240,6 +1241,14 @@ def create_app(
         make_admin_overview_router(
             admin_overview,
             admin_capacity,
+            resolver=audit_resolver,
+            audit=_LazyAuditEmitter(ctx.audit),
+        )
+    )
+    app.include_router(
+        make_admin_capacity_router(
+            admin_capacity,
+            admin_settings,
             resolver=audit_resolver,
             audit=_LazyAuditEmitter(ctx.audit),
         )
