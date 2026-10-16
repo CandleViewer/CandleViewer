@@ -1,7 +1,8 @@
 """`0024_api_keys_write_once` (#2336): offline render, guarded columns, refusal text, downgrade.
 
-Real-Postgres behaviour (refusals, M10 writes, cv_app privileges, round trip) is covered by
-`tests/integration/auth/test_0024_api_keys_write_once_migration.py`.
+The guarded columns are #2607's shared `PROTECTED_COLUMNS`, the list the store guard uses too
+(#2758). Real-Postgres behaviour (refusals, M10 writes, cv_app privileges, round trip) is covered
+by `tests/integration/auth/test_0024_api_keys_write_once_migration.py`.
 """
 
 from __future__ import annotations
@@ -16,24 +17,11 @@ import pytest
 from sqlalchemy import LargeBinary
 
 from candleviewer.db import models
+from tests.unit.credentials_m2._write_once import PROTECTED_COLUMNS
 
 _ROOT = Path(__file__).resolve().parents[3]
 _REV, _PREV = "0024_api_keys_write_once", "0023_replay_sessions"
 _UP, _DOWN = f"{_PREV}:{_REV}", f"{_REV}:{_PREV}"
-# TODO(#2336): this slice merges after #2607. On that rebase, add `key_id_last4` to #2607's
-# `tests/unit/credentials_m2/_write_once.PROTECTED_COLUMNS` and import it here instead of this copy.
-#: The ticket's six columns plus `key_id_last4`, the display tail derived from the sealed key id.
-PROTECTED = frozenset(
-    {
-        "id",
-        "exchange_account_id",
-        "key_id_enc",
-        "key_id_last4",
-        "secret_enc",
-        "enc_nonce",
-        "enc_alg",
-    }
-)
 
 
 def _sql(direction: str, span: str) -> str:
@@ -46,8 +34,17 @@ def _sql(direction: str, span: str) -> str:
 
 
 def _in_order(sql: str, steps: list[str]) -> bool:
+    """True if every step occurs in `sql` in this order. A missing step fails here, by name,
+    instead of as `str.index`'s bare `ValueError: substring not found`."""
+    missing = [step for step in steps if step not in sql]
+    assert not missing, f"not in the rendered SQL: {missing}"
     positions = [sql.index(step) for step in steps]
     return positions == sorted(positions)
+
+
+def test_in_order_names_a_missing_step() -> None:
+    with pytest.raises(AssertionError, match=re.escape("['DROP TABLE api_keys;']")):
+        _in_order("SET LOCAL lock_timeout = '5s';", ["DROP TABLE api_keys;"])
 
 
 def test_upgrade_creates_the_guard_and_revokes_delete_under_a_bounded_lock_wait() -> None:
@@ -72,14 +69,14 @@ def test_trigger_compares_exactly_the_protected_columns() -> None:
         r"WHEN NEW\.(\w+) IS DISTINCT FROM OLD\.(\w+) THEN '(\w+)'", _sql("upgrade", _UP)
     )
     assert all(new == old == named for new, old, named in arms)
-    assert sorted(new for new, _, _ in arms) == sorted(PROTECTED)
+    assert sorted(new for new, _, _ in arms) == sorted(PROTECTED_COLUMNS)
 
 
 def test_every_bytea_column_of_api_keys_is_protected() -> None:
     """Tripwire: a new sealed column fails here until it is reviewed into the write-once set."""
     sealed = {c.name for c in models.api_keys.columns if isinstance(c.type, LargeBinary)}
     assert sealed
-    assert sealed <= PROTECTED
+    assert sealed <= PROTECTED_COLUMNS
 
 
 def test_refusal_names_the_column_and_never_a_value() -> None:

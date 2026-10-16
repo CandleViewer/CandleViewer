@@ -34,6 +34,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2, kek
+from tests.unit.credentials_m2._write_once import PROTECTED_COLUMNS
 
 pytestmark = pytest.mark.integration
 
@@ -46,8 +47,9 @@ _ACCT2 = UUID("00000000-0000-4000-8000-0000000002a2")  # same env: FK and unique
 _SNAP: dict[str, Any] = {"uid": "1", "permissions": {"ContractTrade": ["Order"], "Wallet": []}}
 _OLD_KEY, _NEW_KEY = "older" + "0" * 11 + "WXYZ", "newer" + "0" * 11 + "WXYZ"  # same last4
 _SEALED = ("key_id_enc", "secret_enc", "enc_nonce", "dek_ref", "kek_version")
-#: A value per protected column that passes every CHECK and FK; `ak_alg` admits only the
-#: current `enc_alg`, which is fine because BEFORE row triggers fire before CHECKs.
+#: A value per `PROTECTED_COLUMNS` entry (#2607's shared list) that passes every CHECK and FK;
+#: `ak_alg` admits only the current `enc_alg`, which is fine because BEFORE row triggers fire
+#: before CHECKs.
 _CHANGES: dict[str, Any] = {
     "id": UUID("00000000-0000-4000-8000-0000000002ff"),
     "exchange_account_id": _ACCT2,
@@ -69,6 +71,21 @@ _OTHERS = (
     "key_id_last4 = key_id_last4, secret_enc = secret_enc, enc_nonce = enc_nonce, "
     "enc_alg = enc_alg WHERE id = %s"
 )
+#: The other two statements that update an existing row (#2758): an upsert that takes its
+#: conflict branch and a MERGE that takes its MATCHED branch, each changing `secret_enc`.
+_UPSERT_AND_MERGE = {
+    "insert-on-conflict-do-update": (
+        "INSERT INTO api_keys (id, exchange_account_id, label, key_id_enc, key_id_last4, "
+        "secret_enc, enc_nonce, dek_ref, permission_snapshot) SELECT id, exchange_account_id, "
+        "label, key_id_enc, key_id_last4, %(sealed)s, enc_nonce, dek_ref, permission_snapshot "
+        "FROM api_keys WHERE id = %(id)s "
+        "ON CONFLICT (id) DO UPDATE SET secret_enc = EXCLUDED.secret_enc"
+    ),
+    "merge-when-matched-update": (
+        "MERGE INTO api_keys k USING (SELECT %(id)s::uuid AS id) s ON k.id = s.id "
+        "WHEN MATCHED THEN UPDATE SET secret_enc = %(sealed)s"
+    ),
+}
 
 
 @pytest.fixture(scope="module")
@@ -217,15 +234,14 @@ async def _api_key(b: CredentialBroker, key_id: UUID) -> str:
     return (await handle.sign(key_id, (KEY_ID_SLOT,), purpose="sign_rest")).api_key.reveal()
 
 
-@pytest.mark.parametrize(("column", "value"), list(_CHANGES.items()), ids=list(_CHANGES))
-def test_changing_a_protected_column_is_refused_atomically(
-    pg: str, column: str, value: Any
-) -> None:
+@pytest.mark.parametrize("column", sorted(PROTECTED_COLUMNS))
+def test_changing_a_protected_column_is_refused_atomically(pg: str, column: str) -> None:
     """One cv_app statement renames two rows and changes `column` on one: refused as a whole
     (SQLSTATE 23514), naming the column and no value; both rows stay byte-identical. Each row
     takes the change once, so whatever order the scan visits them in, one statement has already
     updated the other row when the trigger refuses."""
     _at(pg, _REV)
+    value = _CHANGES[column]
     rows = _insert(pg), _insert(pg)
     before = _rows(pg, *rows)
     change = sql.SQL(
@@ -238,6 +254,19 @@ def test_changing_a_protected_column_is_refused_atomically(
         assert refused.value.diag.message_primary == _refusal(column)
         assert refused.value.diag.message_detail is None
     assert _rows(pg, *rows) == before
+
+
+@pytest.mark.parametrize("statement", list(_UPSERT_AND_MERGE.values()), ids=list(_UPSERT_AND_MERGE))
+def test_an_upsert_or_a_merge_cannot_change_a_protected_column(pg: str, statement: str) -> None:
+    """Both update the existing row, so the BEFORE UPDATE guard fires: the cv_app statement is
+    refused with the same 23514 refusal and the row stays byte-identical."""
+    _at(pg, _REV)
+    key_id = _insert(pg)
+    before = _rows(pg, key_id)
+    with pytest.raises(psycopg.errors.CheckViolation) as refused:
+        _exec(_as(pg, "cv_app"), statement, {"id": key_id, "sealed": _CHANGES["secret_enc"]})
+    assert refused.value.diag.message_primary == _refusal("secret_enc")
+    assert _rows(pg, key_id) == before
 
 
 def test_other_columns_and_unchanged_values_stay_writable(pg: str) -> None:
@@ -308,6 +337,9 @@ async def test_m10_rewrap_touch_and_revoke_still_succeed(pg: str) -> None:
         "ALTER TABLE api_keys DISABLE TRIGGER trg_api_keys_write_once",
         "DROP TRIGGER trg_api_keys_write_once ON api_keys",
         "SET session_replication_role = replica",
+        # Needs the TRIGGER privilege; one sorting after the guard could rewrite NEW after it.
+        "CREATE TRIGGER zz_after_the_guard BEFORE UPDATE ON api_keys FOR EACH ROW "
+        "EXECUTE FUNCTION suppress_redundant_updates_trigger()",
     ],
 )
 def test_cv_app_can_neither_delete_rows_nor_switch_the_guard_off(pg: str, statement: str) -> None:
