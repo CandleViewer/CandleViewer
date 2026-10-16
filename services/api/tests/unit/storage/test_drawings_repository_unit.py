@@ -122,13 +122,21 @@ def test_every_statement_is_owner_scoped_except_the_unscoped_ones(name: str) -> 
         assert "owner_user_id = CAST(:owner AS uuid)" in text
 
 
-def test_only_three_statements_are_unscoped() -> None:
-    assert mod.UNSCOPED == frozenset({"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE"})
+def test_only_two_statements_are_unscoped() -> None:
+    assert mod.UNSCOPED == frozenset({"_EXISTS_OTHER", "_PURGE"})
     assert set(mod.UNSCOPED) <= set(_STATEMENTS)
 
 
 def test_snapshot_locks_rows_in_a_deterministic_order() -> None:
     assert "ORDER BY id FOR UPDATE" in str(_STATEMENTS["_SNAPSHOT"])
+
+
+def test_snapshot_locks_only_the_callers_rows() -> None:
+    """The owner filter is in the locking statement's own WHERE (#357 R1): a batch naming a
+    foreign id must never take a row lock on, or wait for, another user's drawing."""
+    text = str(_STATEMENTS["_SNAPSHOT"])
+    where = text.split(" WHERE ", 1)[1].split(" ORDER BY ", 1)[0]
+    assert "AND owner_user_id = CAST(:owner AS uuid)" in where and "FOR UPDATE" in text
 
 
 def test_read_allow_list_excludes_internal_columns() -> None:
@@ -215,6 +223,14 @@ def test_immutable_field_is_a_known_batch_rule() -> None:
 def test_snapshot_selects_symbol_and_tool_for_the_immutability_check() -> None:
     text = str(_STATEMENTS["_SNAPSHOT"])
     assert "symbol" in text and "tool" in text
+
+
+def test_target_not_owned_is_an_internal_batch_rule() -> None:
+    from candleviewer.storage.repositories.drawings import BATCH_RULES
+
+    assert "target_not_owned" in BATCH_RULES
+    assert BatchOpFailed(1, "target_not_owned").rule == "target_not_owned"
+    assert "target_not_owned" in (mod.__doc__ or "")
 
 
 def test_batch_op_failed_rejects_an_unknown_rule() -> None:

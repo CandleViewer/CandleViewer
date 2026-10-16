@@ -80,6 +80,7 @@ def test_batch_create_with_another_users_id_is_id_unavailable(env: Env) -> None:
     env.user = USER_B
     taken = _batch(env, {"op": "create", "id": mine["id"], "drawing": TRENDLINE})
     assert taken.json()["errors"][0]["rule"] == "id_unavailable"  # owner and state not revealed
+    assert env.audit.denied() == []  # a clash is no update/delete aimed at the row: not audited
     env.user = USER_A
     assert env.listed() == [mine]
 

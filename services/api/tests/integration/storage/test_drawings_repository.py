@@ -1,6 +1,11 @@
 """Integration: `SqlAlchemyDrawingRepository` on real Postgres 16 (E14-T01, migration 0021).
 
 CI-only (testcontainers; no docker socket locally).
+
+Batch rule names: an update/delete target outside the caller's own rows (another owner's, live or
+deleted, or missing) is `target_not_owned`, the repository's internal name for what the API audits
+and answers as the wire rule `target_unavailable`; the caller's own soft-deleted target is
+`target_unavailable`. Test names that say `target_unavailable` speak of the wire rule.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import psycopg
 import pytest
 import pytest_asyncio
 import sqlalchemy as sa
+from sqlalchemy import event
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.storage.repositories.drawings import (
@@ -240,14 +246,18 @@ async def test_batch_id_unavailable_for_foreign_and_own_deleted_ids(
     repo: SqlAlchemyDrawingRepository, pg_dsn: str
 ) -> None:
     a, b = _user(pg_dsn), _user(pg_dsn)
-    foreign, own = str(uuid.uuid4()), str(uuid.uuid4())
+    foreign, own, foreign_gone = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     await repo.create(b, foreign, _f())
     await repo.create(a, own, _f())
     await repo.soft_delete(a, own)
-    for taken in (foreign, own):
+    await repo.create(b, foreign_gone, _f())  # the snapshot sees only A's rows: for a foreign id
+    await repo.soft_delete(b, foreign_gone)  # it is the INSERT's primary-key collision, any state
+    for taken in (foreign, own, foreign_gone):
+        fresh = str(uuid.uuid4())
         with pytest.raises(BatchOpFailed) as err:
-            await repo.apply_batch(a, [CreateOp(str(uuid.uuid4()), _f()), CreateOp(taken, _f())])
+            await repo.apply_batch(a, [CreateOp(fresh, _f()), CreateOp(taken, _f())])
         assert (err.value.index, err.value.rule) == (1, "id_unavailable")
+        assert await repo.get(a, fresh) is None  # the whole batch rolled back, the INSERT clash too
 
 
 async def test_batch_foreign_target_is_target_unavailable_and_stale_is_version_conflict(
@@ -257,7 +267,7 @@ async def test_batch_foreign_target_is_target_unavailable_and_stale_is_version_c
     row = await repo.create(a, rid, _f())
     with pytest.raises(BatchOpFailed) as foreign:
         await repo.apply_batch(b, [DeleteOp(rid, row.updated_at)])
-    assert (foreign.value.index, foreign.value.rule) == (0, "target_unavailable")
+    assert (foreign.value.index, foreign.value.rule) == (0, "target_not_owned")
     fresh = await repo.update(a, rid, _f(label="v2"), if_match=None)
     mine = str(uuid.uuid4())
     with pytest.raises(BatchOpFailed) as stale:
@@ -265,6 +275,52 @@ async def test_batch_foreign_target_is_target_unavailable_and_stale_is_version_c
     assert (stale.value.index, stale.value.rule) == (1, "version_conflict")
     assert await repo.get(a, mine) is None
     assert await repo.get(a, rid) == fresh
+
+
+def _lockable(dsn: str, drawing_id: str) -> bool:
+    """True when a second connection can lock the row at once (`FOR UPDATE NOWAIT`)."""
+    with _sync(dsn) as c:
+        try:
+            c.execute("SELECT 1 FROM drawings WHERE id = %s FOR UPDATE NOWAIT", (drawing_id,))
+        except psycopg.errors.LockNotAvailable:
+            return False
+    return True
+
+
+@pytest.mark.parametrize(
+    ("kind", "rule"),
+    [("update", "target_not_owned"), ("delete", "target_not_owned"), ("create", "id_unavailable")],
+)
+async def test_a_batch_naming_a_foreign_id_never_locks_the_victims_row(
+    pg_dsn: str, kind: str, rule: str
+) -> None:
+    """#357 R1: right after B's `SELECT … FOR UPDATE`, with B's batch transaction still open,
+    another connection can lock A's row at once, and not B's own (the positive control)."""
+    a, b, victim, mine = _user(pg_dsn), _user(pg_dsn), str(uuid.uuid4()), str(uuid.uuid4())
+    held: dict[str, bool] = {}
+
+    def probe(conn: Any, cursor: Any, statement: str, params: Any, ctx: Any, many: bool) -> None:
+        if "FOR UPDATE" in statement:  # the batch snapshot is the only locking statement
+            held["victim"], held["own"] = not _lockable(pg_dsn, victim), not _lockable(pg_dsn, mine)
+
+    rel = SqlAlchemyRelationalRepository(pg_dsn, "drawings-lock-it")
+    try:
+        repo = SqlAlchemyDrawingRepository(rel)
+        await repo.create(a, victim, _f(label="victim"))
+        own = await repo.create(b, mine, _f(label="own"))
+        event.listen(rel._engine.sync_engine, "after_cursor_execute", probe)
+        aimed: BatchOp = {
+            "update": UpdateOp(victim, _T, _f()),
+            "delete": DeleteOp(victim, _T),
+            "create": CreateOp(victim, _f()),
+        }[kind]
+        with pytest.raises(BatchOpFailed) as err:
+            await repo.apply_batch(b, [UpdateOp(mine, own.updated_at, _f(label="x")), aimed])
+    finally:
+        await rel.dispose()
+    assert (err.value.index, err.value.rule) == (1, rule)
+    assert held == {"victim": False, "own": True}
+    assert _lockable(pg_dsn, victim) and _lockable(pg_dsn, mine)  # rolled back: nothing held
 
 
 async def test_batch_success_collects_results_in_op_order(
@@ -358,7 +414,7 @@ async def test_idor_batch_update_by_other_owner_with_real_token_changes_nothing(
     mine = await repo.create(a, rid, _f(label="mine"))
     with pytest.raises(BatchOpFailed) as err:
         await repo.apply_batch(b, [UpdateOp(rid, mine.updated_at, _f(label="hijack"))])
-    assert (err.value.index, err.value.rule) == (0, "target_unavailable")
+    assert (err.value.index, err.value.rule) == (0, "target_not_owned")
     after = await repo.get(a, rid)
     assert after is not None and (after.label, after.updated_at) == ("mine", mine.updated_at)
 
@@ -389,7 +445,7 @@ async def test_idor_other_owners_deleted_row_is_target_unavailable_in_a_batch(
     for op in (DeleteOp(rid, mine.updated_at), UpdateOp(rid, mine.updated_at, _f(label="x"))):
         with pytest.raises(BatchOpFailed) as err:
             await repo.apply_batch(b, [op])
-        assert (err.value.index, err.value.rule) == (0, "target_unavailable")
+        assert (err.value.index, err.value.rule) == (0, "target_not_owned")
     with _sync(pg_dsn) as c:
         assert (
             c.execute("SELECT label, updated_at FROM drawings WHERE id = %s", (rid,)).fetchone()
@@ -420,7 +476,7 @@ async def test_batch_stale_update_token_and_never_existed_target(
     assert (stale.value.index, stale.value.rule) == (0, "version_conflict")
     with pytest.raises(BatchOpFailed) as ghost:
         await repo.apply_batch(a, [UpdateOp(str(uuid.uuid4()), _T, _f())])
-    assert (ghost.value.index, ghost.value.rule) == (0, "target_unavailable")
+    assert (ghost.value.index, ghost.value.rule) == (0, "target_not_owned")
     assert await repo.get(a, rid) == cur
 
 
@@ -444,7 +500,7 @@ async def test_immutable_field_is_never_an_oracle_for_another_owner(
     repo: SqlAlchemyDrawingRepository, pg_dsn: str, target: str, change: str
 ) -> None:
     """Ownership/liveness is checked BEFORE immutability: B changing symbol/tool on a row
-    it cannot see must get `target_unavailable`, never `immutable_field` (which would leak
+    it cannot see must get `target_not_owned`, never `immutable_field` (which would leak
     A's symbol/tool). Pins the check order."""
     a, b, rid = _user(pg_dsn), _user(pg_dsn), str(uuid.uuid4())
     token = _T
@@ -457,7 +513,7 @@ async def test_immutable_field_is_never_an_oracle_for_another_owner(
     fields = _f("ETHUSDT") if change == "symbol" else dataclasses.replace(_f(), tool="rectangle")
     with pytest.raises(BatchOpFailed) as err:
         await repo.apply_batch(b, [UpdateOp(rid, token, fields)])
-    assert (err.value.index, err.value.rule) == (0, "target_unavailable")
+    assert (err.value.index, err.value.rule) == (0, "target_not_owned")
     if target == "live":
         assert await repo.get(a, rid) == mine
 

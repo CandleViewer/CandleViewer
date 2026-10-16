@@ -35,8 +35,18 @@ class DrawingIdUnavailableError(Exception):
 
 #: Rules a failing batch op can report (the API maps them to `errors[0].rule`).
 #: `immutable_field`: an update tried to change `symbol` or `tool` (immutable, as on PUT).
+#: `target_not_owned` is internal and never on the wire: the update/delete target is not among
+#: the caller's rows (another owner's or missing, which the repository cannot and must not tell
+#: apart). The API audits it, then answers it exactly as `target_unavailable`, which is what the
+#: caller's own soft-deleted target reports, without an audit record.
 BATCH_RULES = frozenset(
-    {"target_unavailable", "version_conflict", "id_unavailable", "immutable_field"}
+    {
+        "target_unavailable",
+        "target_not_owned",
+        "version_conflict",
+        "id_unavailable",
+        "immutable_field",
+    }
 )
 
 

@@ -147,12 +147,14 @@ class FakeDrawingRepo:
         saved, created, updated, deleted = (dict(self.rows), dict(self.deleted)), [], [], []
         try:
             for i, op in enumerate(ops):
-                row = self.rows.get(op.id)  # any owner, any state (the SQL snapshot)
-                if isinstance(op, CreateOp):
+                row = self.rows.get(op.id)  # any owner, any state
+                if isinstance(op, CreateOp):  # the SQL: the INSERT's PK collision for a foreign id
                     if row is not None:
                         raise BatchOpFailed(i, "id_unavailable")
                     created.append(self._put(owner, op.id, op.fields, T0))
-                elif row is None or row.owner_user_id != owner or op.id in self.deleted:
+                elif row is None or row.owner_user_id != owner:  # not in the caller's snapshot
+                    raise BatchOpFailed(i, "target_not_owned")
+                elif op.id in self.deleted:  # the caller's own soft-deleted row: in the snapshot
                     raise BatchOpFailed(i, "target_unavailable")
                 elif row.updated_at != op.if_match:
                     raise BatchOpFailed(i, "version_conflict")
@@ -186,7 +188,7 @@ class Audit:
 class Env:
     """Router-only app with a fake repository; `user` is the caller (None = no session)."""
 
-    def __init__(self, *, wired: bool = True, metrics: Any = None) -> None:
+    def __init__(self, *, wired: bool = True, metrics: Any = None, idempotency: Any = None) -> None:
         self.repo, self.audit = FakeDrawingRepo(), Audit()
         self.user: uuid.UUID | None = USER_A
         self.repo_up, self.now = True, T0.timestamp()  # store reachable; the router's clock
@@ -205,7 +207,7 @@ class Env:
         app = FastAPI()
         app.include_router(make_drawings_router(
             lambda: self.repo if self.repo_up else None, _Resolver() if wired else None,
-            self.audit, clock=lambda: self.now, metrics=metrics,
+            self.audit, clock=lambda: self.now, metrics=metrics, idempotency=idempotency,
         ))  # fmt: skip
         self.c = TestClient(app)
 
