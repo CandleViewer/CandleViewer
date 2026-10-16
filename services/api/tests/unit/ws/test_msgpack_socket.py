@@ -1,8 +1,10 @@
 """#2483: `cv.v1.msgpack` frames (`23-ws-protocol.md` §2.2, §3.2, §3.6; SR-184, SR-185, C-12.6),
 mostly at the socket: the real gateway in the E17-S01 lifecycle rig, on a msgpack connection.
 
-Each malformed frame below is a `ping` the gateway would answer with `pong` if the decoder let it
-through, so an `err` proves the decoder refused it."""
+Each malformed frame below, except the three no-envelope rows (`NO_ENVELOPE`, #2905), is a `ping`
+the gateway would answer with `pong` if the decoder let it through, so an `err` proves the decoder
+refused it. The `err` of the three comes from `dispatch`, which counts a frame that is no envelope
+as a strike."""
 
 from __future__ import annotations
 

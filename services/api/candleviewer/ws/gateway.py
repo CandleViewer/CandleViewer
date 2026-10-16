@@ -490,9 +490,12 @@ class _Connection:
 
         Size is checked on the raw payload BEFORE any decoding (1009). Each subprotocol has one
         frame kind (§2.2): a text frame on `cv.v1.msgpack` and a binary one on `cv.v1.json` are
-        malformed. The kind is the key the message carries, never whether its payload is empty:
-        `b""` is a binary frame. The SR-185 decoder (`ws/codec.py`) decodes msgpack. A decoded
-        frame may be `None` (`null`, nil): it is no envelope, so `dispatch` counts a strike."""
+        malformed. The payload is the `bytes` value unless that is `None`, else the text (or
+        `""`), and its type is the kind (`bytes` binary, `str` text), empty or not: `b""` is a
+        binary frame. The SR-185 decoder (`ws/codec.py`) decodes msgpack. For any frame a
+        conforming ASGI server delivers (`bytes` under `bytes`, `str` under `text`), this does
+        not raise: a refusal is `[]`, and a decoded `None` (`null`, nil) is no envelope, so
+        `dispatch` counts a strike for either."""
         binary = msg.get("bytes")
         raw: str | bytes = binary if binary is not None else (msg.get("text") or "")
         size = len(raw.encode()) if isinstance(raw, str) else len(raw)
