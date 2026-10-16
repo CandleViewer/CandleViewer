@@ -245,7 +245,7 @@ def test_runtime_stop_notifies_once(
 
 async def test_runtime_stop_cut_short_may_notify_again() -> None:
     """A planned shutdown cancelled mid-grace (a second Ctrl+C) leaves a later `stop()` free to
-    notify again; `start()` re-arms it too."""
+    notify again; `start()` re-arms it too, and clears the hub's `shutting_down` for the restart."""
     long_grace = _settings().model_copy(update={"ws_shutdown_grace_ms": 60_000})
     runtime = WsRuntime(GatewayHub(), UpstreamRefs(), long_grace)
     first = asyncio.ensure_future(runtime.stop())
@@ -254,9 +254,11 @@ async def test_runtime_stop_cut_short_may_notify_again() -> None:
     with pytest.raises(asyncio.CancelledError):
         await first
     assert runtime._notified is False
+    assert runtime.hub.shutting_down is True  # cut short, the server is still going down
     runtime._notified = True
     runtime.start()
     assert runtime._notified is False and runtime._sweeper is not None
+    assert runtime.hub.shutting_down is False
     runtime._sweeper.cancel()
     await asyncio.wait({runtime._sweeper})
 

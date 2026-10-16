@@ -449,9 +449,17 @@ class ConnectionAuthz:
         sub.upstream, sub.bar_lease = (), None
 
     def release_all(self) -> None:
-        """Connection closed: release every upstream ref / bar lease (the 30 s grace applies)."""
+        """Connection closed: release every upstream ref / bar lease (the 30 s grace applies).
+        Each subscription is released under its own guard: one whose release raises (`BarsError`,
+        for a lease another connection's failed `register` dropped) is logged and the
+        subscriptions after it are still released, not left holding their leases for good."""
         for sub in list(self.by_id.values()):
-            self._drop(sub)
+            try:
+                self._drop(sub)
+            except Exception:
+                _log().error(
+                    "ws subscription release failed", consumer=self._consumer(sub), exc_info=True
+                )
 
     def ctl(self, ch: Any, body: Any) -> tuple[dict[str, Any], bool]:
         """§5.4: retune a live subscription. Returns (`effective`, resnapshot) or raises
