@@ -41,7 +41,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "8a6c3f1d04afec81155b8689210f452da12e3f611a6db728376bcad3da071e32"
+GOLDEN_CATALOGUE_SHA256 = "56569a6e21006a0c706b277f1f0366ad132a4863a12b9843d231117de4901170"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -179,6 +179,7 @@ def test_cardinality_check_logs_breached_metrics() -> None:
 def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     """E12-T03: the bars series are `live` via `export_bars_metrics`, not `register_r0`."""
     import candleviewer.bars.builder_set  # noqa: F401 - owns metric families (via its imports)
+    from candleviewer.admin.lifecycle_metrics import EXPORTED_NAMES as LIFECYCLE_NAMES
     from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
     from candleviewer.bars.metrics import EXPORTED_NAMES, export_bars_metrics
     from candleviewer.bars.time_builder import bars_built_total
@@ -188,6 +189,7 @@ def test_exported_bars_metrics_served_on_app_registry_with_env() -> None:
     from candleviewer.ws.metrics import EXPORTED_NAMES as CVWB_NAMES
 
     others = CVWB_NAMES | RECORDER_NAMES | CV_WS_NAMES | AUTH_EXPORTED_NAMES | SECRETS_NAMES
+    others |= LIFECYCLE_NAMES
     exported = {s.name for s in live_specs() if s.exported} - others
     assert exported == EXPORTED_NAMES
     m = Metrics("demo")
