@@ -133,10 +133,10 @@ class UnlockPasswordInvalid(AuthError):
 class RefreshReuseDetected(AuthError):
     """A refresh token that has already been rotated was presented again
     (ticket "Refresh-token reuse kills the family"). The entire rotation
-    family has been revoked with `revoked_reason='rotation_reuse'` by the
-    time this is raised; callers must emit `auth.refresh_reuse_detected` at
-    severity `critical` and push every id in `revoked_session_ids` to the
-    revocation publisher (WS close 4401, US-ONB-009)."""
+    family has been revoked with `revoked_reason='rotation_reuse'`, and every
+    id in `revoked_session_ids` published to the revocation sink (WS close
+    4401, US-ONB-009, #2272), by the time this is raised; callers must emit
+    `auth.refresh_reuse_detected` at severity `critical`."""
 
     def __init__(self, message: str, *, revoked_session_ids: tuple[str, ...] = ()) -> None:
         super().__init__(message)

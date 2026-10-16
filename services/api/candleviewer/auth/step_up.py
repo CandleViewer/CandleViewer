@@ -45,6 +45,7 @@ from candleviewer.auth.models import SessionRecord, UserRecord
 from candleviewer.auth.repository import UserRepository
 from candleviewer.auth.session_chart import SessionChart, to_us
 from candleviewer.auth.session_repository import SessionRepository
+from candleviewer.auth.session_service import RevocationSink, publish_revoked
 from candleviewer.auth.totp import verify_code
 
 #: Ticket: "a 5-minute grace per action class".
@@ -134,9 +135,12 @@ class StepUpService:
         hasher: Hasher,
         *,
         clock: Clock = _utc_now,
+        publish_revocation: RevocationSink | None = None,
         chart: SessionChart | None = None,
     ) -> None:
         self._chart = chart if chart is not None else SessionChart()
+        #: #2272: the owner TOTP reset closes the target's sockets through it.
+        self._publish_revocation = publish_revocation
         self._mfa = mfa_repository
         self._sessions = session_repository
         self._encryptor = encryptor
@@ -409,6 +413,10 @@ class StepUpService:
             await self._mfa.revoke_method(str(method.id), now=now)
         revoked = await self._sessions.revoke_all_for_user(
             target_user_id, reason="mfa_reset_by_owner", now=now
+        )
+        # #2272: close the target's sockets first, before the chart records.
+        await publish_revoked(
+            self._publish_revocation, (str(gone.id) for gone in revoked), "mfa_reset_by_owner"
         )
         for gone in revoked:  # revoked by the row update above; B16 records it
             await self._chart.revoke(gone, now, "mfa_reset_by_owner")

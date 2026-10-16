@@ -21,6 +21,12 @@ Every Gherkin scenario in the ticket maps to a method here:
 Audit emission is the router's job, exactly like `LoginService`/
 `MfaService` (`auth` may not import `audit` — `forbidden-M18`); this module
 raises typed errors and returns typed results only.
+
+Revocation propagation (#2272, `23-ws-protocol.md` §9.5) is this module's:
+every path that revokes a session publishes its id to the injected
+`RevocationSink` after the row update, so no caller can forget to. A
+refresh-token rotation is not published: the client re-`auth`s its socket
+in place (§4.1).
 """
 
 from __future__ import annotations
@@ -29,8 +35,11 @@ import hashlib
 import hmac
 import secrets
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import structlog
 
 from candleviewer.auth.errors import (
     RefreshReuseDetected,
@@ -79,9 +88,41 @@ MAX_UNLOCK_ATTEMPTS = 5
 
 Clock = Callable[[], datetime]
 
+#: `(session_id, reason)`, awaited once per revoked session after its row
+#: update. The composition root wires it to the WS `RevocationHub` (`auth`
+#: never imports `ws`) and maps `reason`, the revoke reason, to the client's
+#: closed `bye` set (#2272).
+RevocationSink = Callable[[str, str], Awaitable[None]]
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
+
+
+async def publish_revoked(
+    sink: RevocationSink | None, session_ids: Iterable[str], reason: str
+) -> None:
+    """Publish each revoked session id to *sink*. Callers run this after the
+    row update, so a closed socket cannot re-`auth` on the same session. A
+    failed publish is logged and skips nothing else: the revocation stands,
+    and that socket still ends at its access token's expiry at the latest."""
+    if sink is None:
+        return
+    for session_id in session_ids:
+        try:
+            await sink(session_id, reason)
+        except Exception:  # isolate the sink: the other sessions must still close
+            _log().error(
+                "auth.session_revocation_publish_failed",
+                session_id=session_id,
+                reason=reason,
+                exc_info=True,
+            )
 
 
 def _hash_refresh_token(token: str) -> str:
@@ -138,11 +179,13 @@ class SessionService:
         *,
         clock: Clock = _utc_now,
         refresh_token_factory: Callable[[], str] = lambda: secrets.token_urlsafe(48),
+        publish_revocation: RevocationSink | None = None,
     ) -> None:
         self._repository = repository
         self._hasher = hasher
         self._clock = clock
         self._refresh_token_factory = refresh_token_factory
+        self._publish_revocation = publish_revocation
         #: Review finding (PR #1628, low): bounded, in-process counter of
         #: consecutive failed `unlock()` attempts per session id. Not
         #: persisted (a restart resets it, same trade-off as
@@ -247,6 +290,9 @@ class SessionService:
             family = await self._repository.walk_rotation_family(str(presented.id))
             for member_id in family:
                 await self._repository.revoke(member_id, reason="rotation_reuse", now=now)
+            # Every member, the already-rotated ones too: a socket that has not
+            # re-`auth`ed since its rotation still runs on the older id.
+            await self._publish(family, "rotation_reuse")
             auth_refresh_reuse_total.inc()
             auth_session_revocations_total.labels(reason="rotation_reuse").inc(len(family))
             raise RefreshReuseDetected(
@@ -258,7 +304,8 @@ class SessionService:
             raise SessionRevoked(presented.revoked_reason or "revoked")
 
         if presented.is_absolute_expired(now=now):
-            await self._repository.revoke(str(presented.id), reason="expired", now=now)
+            expired = await self._repository.revoke(str(presented.id), reason="expired", now=now)
+            await self._publish_row(expired, "expired")
             raise SessionRevoked("expired")
 
         if presented.is_idle_locked(now=now):
@@ -327,8 +374,10 @@ class SessionService:
         if session.is_absolute_expired(now=now):
             # Fail closed: revoke() returns None when a concurrent caller won
             # the race, and the stale copy must never be accepted (#2273).
+            # Publish only the row this call revoked (#2272).
             if not session.is_revoked:
-                await self._repository.revoke(session_id, reason="expired", now=now)
+                expired = await self._repository.revoke(session_id, reason="expired", now=now)
+                await self._publish_row(expired, "expired")
             raise SessionRevoked(session.revoked_reason or "expired")
 
         if session.is_revoked:
@@ -418,9 +467,10 @@ class SessionService:
             failures = self._unlock_failures.get(session_id, 0) + 1
             if failures >= MAX_UNLOCK_ATTEMPTS:
                 self._unlock_failures.pop(session_id, None)
-                await self._repository.revoke(
+                revoked = await self._repository.revoke(
                     session_id, reason="unlock_attempts_exceeded", now=now
                 )
+                await self._publish_row(revoked, "unlock_attempts_exceeded")
                 raise SessionRevoked("unlock_attempts_exceeded")
             if session_id not in self._unlock_failures and (
                 len(self._unlock_failures) >= self._MAX_TRACKED_UNLOCK_SESSIONS
@@ -445,6 +495,7 @@ class SessionService:
         if revoked is not None:
             auth_sessions_active.dec()
             auth_session_revocations_total.labels(reason=normalise_reason(reason)).inc()
+        await self._publish_row(revoked, reason)
         return revoked
 
     async def revoke_all(
@@ -460,7 +511,17 @@ class SessionService:
         )
         auth_sessions_active.dec(len(revoked))
         auth_session_revocations_total.labels(reason=normalise_reason(reason)).inc(len(revoked))
+        await self._publish((str(r.id) for r in revoked), reason)
         return revoked
+
+    async def _publish(self, session_ids: Iterable[str], reason: str) -> None:
+        await publish_revoked(self._publish_revocation, session_ids, reason)
+
+    async def _publish_row(self, revoked: SessionRecord | None, reason: str) -> None:
+        """Publish a row this call revoked. `None` means it was already
+        revoked, and whoever revoked it published it then."""
+        if revoked is not None:
+            await self._publish((str(revoked.id),), reason)
 
     # -- read views ------------------------------------------------------
 

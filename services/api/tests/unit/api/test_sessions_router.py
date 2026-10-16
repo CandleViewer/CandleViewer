@@ -73,16 +73,20 @@ class _Env:
         audit: Any = None,
     ) -> None:
         self.repo = FakeSessionRepository()
-        self.svc = SessionService(
-            self.repo, Hasher(pepper=os.urandom(16).hex()), clock=lambda: _NOW
-        )
-        self.audit = audit if audit is not None else _Audit()
-        self.t = 0.0
         self.revoked: list[tuple[str, str]] = []
 
         async def publish(sid: str, reason: str) -> None:
             self.revoked.append((sid, reason))
 
+        # #2272: the service publishes every revocation; the router no longer does.
+        self.svc = SessionService(
+            self.repo,
+            Hasher(pepper=os.urandom(16).hex()),
+            clock=lambda: _NOW,
+            publish_revocation=publish,
+        )
+        self.audit = audit if audit is not None else _Audit()
+        self.t = 0.0
         self.identity = _Identity() if identity else None
         app = FastAPI()
         app.include_router(
@@ -90,7 +94,6 @@ class _Env:
                 _Auth(self.svc),
                 self.audit,
                 identity=self.identity,
-                publish_revocation=publish,
                 allowed_origins=origins,
                 ip_throttle=PerIpLoginThrottle(
                     max_attempts=throttle_max, window_s=60.0, clock=lambda: self.t
@@ -219,7 +222,7 @@ async def test_revoke_own_other_session_publishes_revocation(env: _Env) -> None:
     b = await env.mint(user)
     r = env.client.delete(f"/api/v1/me/sessions/{b.session_id}", headers=_h(a.access_token))
     assert r.status_code == 204
-    assert env.revoked == [(str(b.session_id), "session_revoked")]
+    assert env.revoked == [(str(b.session_id), "user_revoked")]
     assert env.client.get("/api/v1/auth/session", headers=_h(b.access_token)).status_code == 401
 
 
