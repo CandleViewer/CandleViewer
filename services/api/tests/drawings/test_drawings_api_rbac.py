@@ -58,8 +58,8 @@ def test_idor_matrix(op: str, actor: str) -> None:
         assert reasons == ["missing_permission:workspaces:write:self"]
         assert env.repo.calls[calls_before:] == []
     else:
-        foreign_probe = op in ("write:put", "delete:delete")
-        assert reasons == (["not_owner:workspaces:write:self"] if foreign_probe else [])
+        probes = ("write:put", "delete:delete", "write:batch_update", "delete:batch_delete")
+        assert reasons == (["not_owner:workspaces:write:self"] if op in probes else [])
 
 
 def test_production_create_app_resolves_callers_from_the_session(

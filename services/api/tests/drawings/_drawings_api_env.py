@@ -147,12 +147,14 @@ class FakeDrawingRepo:
         saved, created, updated, deleted = (dict(self.rows), dict(self.deleted)), [], [], []
         try:
             for i, op in enumerate(ops):
-                row = self.rows.get(op.id)  # any owner, any state (the SQL snapshot)
-                if isinstance(op, CreateOp):
+                row = self.rows.get(op.id)  # any owner, any state
+                if isinstance(op, CreateOp):  # the SQL: the INSERT's PK collision for a foreign id
                     if row is not None:
                         raise BatchOpFailed(i, "id_unavailable")
                     created.append(self._put(owner, op.id, op.fields, T0))
-                elif row is None or row.owner_user_id != owner or op.id in self.deleted:
+                elif row is None or row.owner_user_id != owner:  # not in the caller's snapshot
+                    raise BatchOpFailed(i, "target_not_owned")
+                elif op.id in self.deleted:  # the caller's own soft-deleted row: in the snapshot
                     raise BatchOpFailed(i, "target_unavailable")
                 elif row.updated_at != op.if_match:
                     raise BatchOpFailed(i, "version_conflict")

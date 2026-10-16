@@ -1,15 +1,22 @@
 """Postgres drawings repository (migration `0021_drawings`, E14-T01).
 
 Static, parameterised `sa.text` only. Every statement is filtered by
-`owner_user_id = CAST(:owner AS uuid)` (C-12.4 data-layer re-check) except three:
-`exists_for_other_owner` (its whole purpose), the batch snapshot (it must see foreign and
-deleted rows to answer `id_unavailable` identically for all of them) and `purge_deleted`
-(retention job, no caller identity). Every UPDATE bumps `updated_at` strictly
-monotonically so the token never repeats, even inside one clock tick.
+`owner_user_id = CAST(:owner AS uuid)` (C-12.4 data-layer re-check) except two:
+`exists_for_other_owner` (its whole purpose) and `purge_deleted` (retention job, no caller
+identity). Every UPDATE bumps `updated_at` strictly monotonically so the token never repeats,
+even inside one clock tick.
 
-Batch failure rules (`BatchOpFailed.rule`): `target_unavailable`, `version_conflict`,
-`id_unavailable` and `immutable_field` (an update changing `symbol` or `tool`; checked against
-the row locked by the snapshot, so it is race-free).
+The batch snapshot is owner-scoped too, so it locks and sees only the caller's own rows (live or
+soft-deleted): a batch naming a foreign id never takes a lock on, or waits for, another user's row.
+A create on a foreign id misses the snapshot and is refused by its INSERT's primary-key collision,
+the same `id_unavailable` as for the caller's own rows.
+
+Batch failure rules (`BatchOpFailed.rule`): `target_unavailable` (the caller's own soft-deleted
+row, or an UPDATE/DELETE that unexpectedly touched no row), `target_not_owned` (an update/delete
+target absent from the snapshot: another owner's or missing; internal, the API audits it and
+answers it as `target_unavailable`), `version_conflict`, `id_unavailable` and `immutable_field`
+(an update changing `symbol` or `tool`; checked against the row locked by the snapshot, so it is
+race-free).
 """
 
 from __future__ import annotations
@@ -98,9 +105,9 @@ _SOFT_DELETE = sa.text(
     "AND deleted_at IS NULL"
 )
 _SNAPSHOT = sa.text(
-    "SELECT id::text AS id, owner_user_id::text AS owner_user_id, symbol, tool, deleted_at, "
-    "updated_at "
-    "FROM drawings WHERE id = ANY(CAST(:ids AS uuid[])) ORDER BY id FOR UPDATE"
+    "SELECT id::text AS id, symbol, tool, deleted_at, updated_at "
+    "FROM drawings WHERE id = ANY(CAST(:ids AS uuid[])) AND owner_user_id = CAST(:owner AS uuid) "
+    "ORDER BY id FOR UPDATE"
 )
 _PURGE = sa.text(
     "DELETE FROM drawings WHERE id IN (SELECT id FROM drawings WHERE deleted_at IS NOT NULL "
@@ -108,7 +115,7 @@ _PURGE = sa.text(
 )
 
 #: Statements allowed to omit the owner filter (see module docstring); tested.
-UNSCOPED = frozenset({"_EXISTS_OTHER", "_SNAPSHOT", "_PURGE"})
+UNSCOPED = frozenset({"_EXISTS_OTHER", "_PURGE"})
 
 #: Upper bound for one purge call so a single transaction stays short.
 MAX_PURGE_BATCH = 10_000
@@ -245,9 +252,8 @@ class SqlAlchemyDrawingRepository:
         deleted: list[str] = []
         async with self._relational.unit_of_work() as uow:
             ids = [op.id for op in ops]
-            snap = {
-                r["id"]: r for r in (await uow.session.execute(_SNAPSHOT, {"ids": ids})).mappings()
-            }
+            locked = await uow.session.execute(_SNAPSHOT, {"ids": ids, "owner": owner})
+            snap = {r["id"]: r for r in locked.mappings()}  # the caller's rows only
             for i, op in enumerate(ops):
                 existing = snap.get(op.id)
                 if isinstance(op, CreateOp):
@@ -263,7 +269,9 @@ class SqlAlchemyDrawingRepository:
                         raise
                     created.append(_to_row(row))
                     continue
-                if existing is None or existing["owner_user_id"] != owner or existing["deleted_at"]:
+                if existing is None:  # another owner's row or none at all: told apart by nothing
+                    raise BatchOpFailed(i, "target_not_owned")
+                if existing["deleted_at"]:
                     raise BatchOpFailed(i, "target_unavailable")
                 if existing["updated_at"] != op.if_match:
                     raise BatchOpFailed(i, "version_conflict")

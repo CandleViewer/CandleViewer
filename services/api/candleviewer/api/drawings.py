@@ -4,9 +4,12 @@ Callers come from the session (`SessionAuditPrincipalResolver`, as `/admin/audit
 runs per request through `auth.scopes.enforce()`, each denial audited as `rbac.denied` (SR-062):
 `workspaces:read` to list, `workspaces:write` to write. `scope: self`: every statement is filtered
 by the caller; a missing, deleted or foreign drawing is the same 404, and a foreign live id on
-PUT/DELETE is also audited (`object_kind="drawing"`). Drawing writes are not audited (not a C-2.9
-action). Bodies are read raw so byte, depth and batch-size caps run before pydantic; no content is
-logged. POST and batch replay an `Idempotency-Key` from a bounded per-user cache.
+PUT/DELETE is also audited (`object_kind="drawing"`). A batch update/delete whose target is not the
+caller's, foreign and missing alike, is the same 409 `target_unavailable` as the caller's own
+soft-deleted target but is audited too: telling them apart would need a second lookup and a timing
+difference. Drawing writes are not audited (not a C-2.9 action). Bodies are read raw so byte, depth
+and batch-size caps run before pydantic; no content is logged. POST and batch replay an
+`Idempotency-Key` from a bounded per-user cache.
 """
 
 import base64
@@ -456,16 +459,19 @@ def make_drawings_router(
             raise _Problem("store_unavailable", "The drawings store is unavailable.")
         return repo
 
+    async def audit_not_owner(p: AuditPrincipal, did: str) -> None:
+        """`rbac.denied` for a write aimed at a drawing id that is not the caller's (SR-062)."""
+        await audit.emit(
+            "rbac.denied", actor_label=str(p.user_id), actor_user_id=p.user_id, actor_ip=p.ip,
+            session_id=p.session_id, request_id=p.request_id, object_kind="drawing",
+            object_id=did, outcome=AuditOutcome.DENIED, severity=Severity.WARNING,
+            reason="not_owner:workspaces:write:self",
+        )  # fmt: skip
+
     async def not_found(p: AuditPrincipal, did: str) -> _Problem:
         """Same 404 for a missing, deleted or foreign id; a foreign live id is audited."""
-        owner = str(p.user_id)
-        if await store().exists_for_other_owner(owner, did):
-            await audit.emit(
-                "rbac.denied", actor_label=owner, actor_user_id=p.user_id, actor_ip=p.ip,
-                session_id=p.session_id, request_id=p.request_id, object_kind="drawing",
-                object_id=did, outcome=AuditOutcome.DENIED, severity=Severity.WARNING,
-                reason="not_owner:workspaces:write:self",
-            )  # fmt: skip
+        if await store().exists_for_other_owner(str(p.user_id), did):
+            await audit_not_owner(p, did)
         return _not_found()
 
     def idempotency_key(request: Request, operation: str) -> str | None:
@@ -585,7 +591,8 @@ def make_drawings_router(
 
     @router.post("/drawings/batch")
     async def batch_drawings(request: Request) -> Response:
-        owner = str((await caller(request, Permission.WORKSPACES_WRITE)).user_id)
+        principal = await caller(request, Permission.WORKSPACES_WRITE)
+        owner = str(principal.user_id)
         key = idempotency_key(request, "batchUpsertDrawings")
         raw = await _read_capped(request, MAX_BATCH_BODY_BYTES)
         digest = hashlib.sha256(raw).hexdigest()
@@ -608,10 +615,14 @@ def make_drawings_router(
             if exc.rule == "immutable_field":  # as on PUT; checked under the row lock (C2)
                 msg = "symbol and tool cannot change"
                 raise _invalid([_rule(f"{field}.drawing", exc.rule, msg)]) from None
-            conflict(exc.rule)
-            _log().info("drawings_batch_conflict", user_id=owner, op_count=len(ops), rule=exc.rule)
-            msg = _BATCH_RULES.get(exc.rule, "This operation cannot be applied.")
-            errs = [_rule(field, exc.rule, msg)]
+            rule = exc.rule
+            if rule == "target_not_owned":  # foreign or missing, told apart by nothing: audited
+                await audit_not_owner(principal, ops[exc.index].id)  # before the problem is raised
+                rule = "target_unavailable"  # the wire rule (and metric label) of every such target
+            conflict(rule)
+            _log().info("drawings_batch_conflict", user_id=owner, op_count=len(ops), rule=rule)
+            msg = _BATCH_RULES.get(rule, "This operation cannot be applied.")
+            errs = [_rule(field, rule, msg)]
             raise _Problem("conflict", "The batch was rolled back.", errors=errs) from None
         _log().info("drawings_batch_applied", user_id=owner, op_count=len(ops))
         created, updated = [_dump(r) for r in res.created], [_dump(r) for r in res.updated]
