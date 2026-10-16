@@ -56,11 +56,12 @@ FAILURE_CAP = 3
 #: Ticket: read-only downgrade lasts 5 minutes.
 READONLY_WINDOW = timedelta(minutes=5)
 #: `recorder`: irreversible recorded-data purge (permission 51, E16-T06); a grace class.
+#: #2751 (SR-025): `audit` gates the audit-log export, `backups` a backup restore.
 ACTION_CLASSES = frozenset(
-    {"keys", "users", "live_enablement", "killswitch", "risk_caps", "recorder"}
+    {"keys", "users", "live_enablement", "killswitch", "risk_caps", "recorder", "audit", "backups"}
 )
-#: Ticket "No-grace list": always a fresh code.
-NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch"})
+#: Ticket "No-grace list": always a fresh code. `backups`: a restore is irreversible.
+NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch", "backups"})
 #: `PositionStateProvider.source` when no position store exists yet.
 POSITION_SOURCE_NOT_DEPLOYED = "not_deployed"
 #: Key prefix (in `step_up_elevations`) of the challenge issued by the last 403.
