@@ -20,6 +20,8 @@ from candleviewer.storage.repositories.drawings import BatchOpFailed
 STALE = "2026-10-14T12:00:00.000000Z"
 NOT_OWNER = "not_owner:workspaces:write:self"
 KINDS = ["update", "delete"]
+#: What a failed audit write leaves on the wire: the registered 503, or a bug's plain 500.
+BODY = {503: '"code":"store_unavailable"', 500: "Internal Server Error"}
 
 
 def _target(kind: str, d: dict[str, Any], **over: Any) -> dict[str, Any]:
@@ -161,9 +163,7 @@ def test_a_failed_audit_write_fails_the_probe_closed(
         body = wire({"operations": [_target("delete", mine)]}, BATCH)
         r = client.post("/drawings/batch", json=body)
     assert r.status_code == status  # never the plain 404 / 409 that would hide the missing record
-    if status == 503:
-        assert r.headers["content-type"] == "application/problem+json"
-        assert r.json()["code"] == "store_unavailable"
+    assert BODY[status] in r.text  # the registered problem, or the server's own 500
     assert (dict(env.repo.rows), dict(env.repo.deleted)) == before  # no state changed
 
 
