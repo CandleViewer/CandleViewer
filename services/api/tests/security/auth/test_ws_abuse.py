@@ -82,6 +82,14 @@ def _sub_refused(ws: Any, *topics: Any) -> dict[str, Any]:
     return dict(reply["p"])
 
 
+def _unsub_refused(ws: Any, *topics: Any) -> dict[str, Any]:
+    """An `unsub` whose shape breaks §13.5 is refused whole too: one `err` (§5.3, #2572)."""
+    ws.send_json({"t": "unsub", "id": "u", "p": {"topics": list(topics)}})
+    reply = _recv(ws)
+    assert (reply["t"], reply["id"]) == ("err", "u"), reply
+    return dict(reply["p"])
+
+
 def _unsub(ws: Any, *topics: str) -> list[dict[str, Any]]:
     ws.send_json({"t": "unsub", "id": "u", "p": {"topics": list(topics)}})
     reply = _recv(ws)
@@ -198,7 +206,10 @@ def test_ac_ws_04_name_that_is_not_a_topic_name_refuses_its_whole_sub(
     with _authenticated(stack) as ws:
         err = _sub_refused(ws, name)
         assert (err["code"], err["field"], err["close"]) == ("invalid_options", "topics[0]", False)
-        assert [r.get("noop") for r in _unsub(ws, name)] == [True]  # nothing was attached
+        # Its `unsub` is refused whole as well (§5.3, #2572), so it cannot probe what is attached:
+        # the mixed-frame test below shows a refused `sub` attaches nothing, not a granted topic.
+        again = _unsub_refused(ws, name)
+        assert (again["code"], again["field"], again["close"]) == (err["code"], "topics[0]", False)
 
 
 @_MALFORMED_NAMES
