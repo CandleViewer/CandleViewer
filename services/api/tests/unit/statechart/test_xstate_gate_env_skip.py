@@ -8,13 +8,16 @@ The xstate nightly gate must be environment-independent:
 * a check script that needs an upstream dev venv it cannot find exits 77,
   which ``run_gate.classify_exit`` records as ``SKIP-ENV`` ("skipped
   (environment)"), and ``tools/statechart/nightly_gate.py`` never counts it
-  as a regression (nor as a fix).
+  as a regression (nor as a fix);
+* the nightly workflow builds the two upstream dev venvs those scripts look
+  for, and ``run_gate`` can read BENCH-6's bare-JSON wrapper output (#579).
 """
 
 from __future__ import annotations
 
 import ast
 import importlib
+import json
 import re
 import subprocess
 import sys
@@ -188,6 +191,28 @@ def test_ci_upstream_default_matches_workflow_checkout_path() -> None:
     )
     assert "path: _upstream" in workflow
     assert _paths.CI_UPSTREAM == _REPO_ROOT / "_upstream"
+
+
+def test_nightly_workflow_builds_the_upstream_dev_venvs_the_env_rows_need() -> None:
+    # #579: without these the 13 env rows (e.g. verifyM3:142, verify:LC-53) are SKIP-ENV.
+    workflow = (_REPO_ROOT / ".github" / "workflows" / "xstate-nightly.yml").read_text(
+        encoding="utf-8"
+    )
+    for venv in (".venv-main", ".venv-gate"):
+        assert f"_upstream/{venv}" in workflow, venv
+
+
+def test_parse_bare_json_reads_the_bench6_wrapper_output() -> None:
+    # bench_c_timers_v2.py prints one bare JSON document, never `=== name ===` blocks (#579).
+    out = json.dumps({"summary_by_busy_level": {"500": {"p99": 28.7}}}, indent=2) + "\nlog\n"
+    spec = next(s for s in run_gate.THRESHOLDS if s["id"] == "BENCH-6")
+    assert run_gate.parse_bench_blocks(out) == {}
+    assert run_gate.dig(run_gate.parse_bare_json(out), spec["path"]) == 28.7
+
+
+def test_parse_bare_json_without_a_json_object_is_empty() -> None:
+    for text in ("no json here", "{ broken", "[1, 2]", ""):
+        assert run_gate.parse_bare_json(text) == {}, text
 
 
 def test_upstream_dev_python_missing_venv_exits_skip_env(

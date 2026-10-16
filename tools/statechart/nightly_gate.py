@@ -12,6 +12,19 @@ Consumes the ``--json`` output of ``docs/research/xstate/gate/run_gate.py`` and
 * ``--mode upstream`` never gates: same report, always exit 0, every delta is
   an informational note that feeds the upstream-liaison chore.
 
+Two refinements apply in ``--mode pinned`` only (#579 triage,
+``docs/research/xstate/81-nightly-gate-triage.md``):
+
+* ``KNOWN_DELTAS`` excuses a row whose nightly status differs from the
+  committed baseline for a reason the research docs already record. Each entry
+  names the one status it excuses and carries its justification line, like
+  ``run_gate.py``'s ``*_BASELINE_FAILURES`` lists. Any other status of that row
+  (an ERROR, a different FAIL/PASS) is judged by the ordinary rules, and a row
+  that no longer shows its documented status is reported as drift.
+* When ``--bench`` is supplied, BENCH-6 is judged once, from that measurement.
+  ``run_gate.py``'s own ``bench:BENCH-6`` row runs the same script, so it is
+  reported but not counted a second time.
+
 Offline and deterministic: it only reads files. Exit 0 = green (or
 informational), 1 = pinned regression / BENCH-6 breach, 2 = unreadable input.
 """
@@ -21,14 +34,53 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 BENCH6_THRESHOLD_MS = 100.0
 BENCH6_LEVEL = "500"
 SKIP_ENV = "SKIP-ENV"
 # Above this share of SKIP-ENV checks the report warns that the run says little (#1928).
 SKIP_WARN_RATIO = 0.25
+# run_gate.py's own BENCH-6 row; superseded by ``--bench`` when that is supplied (#579).
+BENCH6_ROW = "bench:BENCH-6"
+
+
+class KnownDelta(NamedTuple):
+    """A documented, justified difference from the committed baseline."""
+
+    status: str  # the single status this entry excuses
+    why: str  # one justification line, citing the doc that records it
+
+
+# #579 (81-nightly-gate-triage.md). result-v0.9.1.json was recorded once, on
+# Windows / Python 3.13.7 and without benchmarks; the nightly runs on Linux with
+# them. Only rows whose difference is already documented are listed. BENCH-1 is
+# deliberately absent: a shared-runner BENCH-1 is inconclusive, and how to gate it
+# is an open owner decision (item M on #1778).
+KNOWN_DELTAS: dict[str, KnownDelta] = {
+    "bench:BENCH-2": KnownDelta(
+        "FAIL",
+        "(c) architectural and permanent: per-tick rule evaluation stays plain code "
+        "(owner decision 2026-09-24 in 29-statechart-adoption-plan.md; "
+        "79-r14-final-readiness-verdict.md s.0 and s.9: 380.9 vs 2,000 ev/s, row 8). "
+        "The baseline ran without benches; BENCH-7 remains the hot-path regression guard.",
+    ),
+    "verifyM4:174": KnownDelta(
+        "FAIL",
+        "(d) stale criterion [2]: it asserts busy-loop `after` lateness > 15 ms, which only "
+        "the Windows ~15.6 ms timer tick produced (20-adoption-gate.md s.3, BENCH-5). "
+        "Upstream re-measured #174's busy loop at 0-1 ms (CHANGELOG 0.9.0); Linux reads ~1 ms. "
+        "Criteria [1] docs and [3] plain-def service blocks ~500 ms still hold.",
+    ),
+    "verifyM5:174": KnownDelta(
+        "FAIL",
+        "(d) stale criterion [2], as verifyM4:174 (Windows timer tick, not the library). "
+        "Criteria [1] docs, [3] plain-def service blocks ~500 ms and [4] async def remedy "
+        "fires on time still hold (44-r7 and 49-r8 verdicts: #174 DOCUMENTED-ONLY).",
+    ),
+}
 
 
 def _key(check: dict[str, Any]) -> str:
@@ -45,10 +97,36 @@ def _blocking_failures(result: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-def regressions(result: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
-    """Blocking failures present in ``result`` but not in ``baseline``."""
+def regressions(
+    result: dict[str, Any], baseline: dict[str, Any], excused: frozenset[str] = frozenset()
+) -> list[str]:
+    """Blocking failures present in ``result`` but not in ``baseline`` nor ``excused``."""
     known = _blocking_failures(baseline)
-    return sorted(k for k in _blocking_failures(result) if k not in known)
+    return sorted(k for k in _blocking_failures(result) if k not in known and k not in excused)
+
+
+def _statuses(result: dict[str, Any]) -> dict[str, str]:
+    return {_key(c): str(c.get("status")) for c in result.get("checks", [])}
+
+
+def documented_deltas(
+    result: dict[str, Any], table: Mapping[str, KnownDelta] = KNOWN_DELTAS
+) -> list[str]:
+    """Rows showing exactly the status their ``KNOWN_DELTAS`` entry excuses."""
+    now = _statuses(result)
+    return sorted(k for k, d in table.items() if now.get(k) == d.status)
+
+
+def delta_drift(
+    result: dict[str, Any], table: Mapping[str, KnownDelta] = KNOWN_DELTAS
+) -> list[str]:
+    """Entries whose row is missing or shows another status: the entry needs re-triage."""
+    now = _statuses(result)
+    return sorted(
+        f"{k} is {now.get(k, 'missing')}, documented as {d.status}"
+        for k, d in table.items()
+        if now.get(k) not in (d.status, SKIP_ENV)
+    )
 
 
 def skipped_env(result: dict[str, Any]) -> list[str]:
@@ -106,6 +184,9 @@ def render(
     skipped: list[str] | None = None,
     lost: list[str] | None = None,
     ratio: float = 0.0,
+    documented: list[tuple[str, KnownDelta]] | None = None,
+    drift: list[str] | None = None,
+    bench6_row: str | None = None,
 ) -> str:
     gating = mode == "pinned"
     red = bool(new) or bench_ok is False
@@ -132,6 +213,10 @@ def render(
             f"- WARNING: {ratio:.0%} of checks skipped (environment), above "
             f"{SKIP_WARN_RATIO:.0%}; this run covers little (non-blocking)"
         )
+    if documented is not None:
+        lines += ["", "## Documented deltas vs committed baseline - excused, each justified"]
+        lines += [f"- {k} {d.status}: {d.why}" for k, d in documented] or ["- none"]
+        lines += [f"- DRIFT (re-triage the entry, non-blocking): {d}" for d in drift or []]
     lines += ["", "## BENCH-6 (timer lateness, 500 busy machines, p99)"]
     if bench_ok is None:
         lines.append("- not run")
@@ -139,6 +224,11 @@ def render(
         shown = "missing" if p99 is None else f"{p99:.1f} ms"
         status = "ok" if bench_ok else "BREACH"
         lines.append(f"- p99 {shown} vs budget {threshold:.0f} ms: {status}")
+    if bench6_row is not None:
+        lines.append(
+            f"- run_gate row {BENCH6_ROW} ({bench6_row}) runs the same script: "
+            "superseded by this measurement, not counted twice"
+        )
     if gating and red:
         lines += ["", "Notify: E50-C17 (upstream liaison) - pinned gate regression."]
     return "\n".join(lines) + "\n"
@@ -168,7 +258,14 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, TypeError) as exc:
         print(f"nightly_gate: {exc}", file=sys.stderr)
         return 2
-    new = regressions(result, baseline)
+    pinned = args.mode == "pinned"
+    deltas = documented_deltas(result) if pinned else []
+    excused = set(deltas)
+    bench6_row = None
+    if pinned and bench is not None:
+        excused.add(BENCH6_ROW)
+        bench6_row = _statuses(result).get(BENCH6_ROW, "missing")
+    new = regressions(result, baseline, frozenset(excused))
     gone = fixed(result, baseline)
     ok, p99 = bench6(bench, args.threshold)
     report = render(
@@ -183,6 +280,9 @@ def main(argv: list[str] | None = None) -> int:
         skipped=skipped_env(result),
         lost=coverage_lost(result, baseline),
         ratio=skip_ratio(result),
+        documented=[(k, KNOWN_DELTAS[k]) for k in deltas] if pinned else None,
+        drift=delta_drift(result) if pinned else None,
+        bench6_row=bench6_row,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(report, encoding="utf-8")
