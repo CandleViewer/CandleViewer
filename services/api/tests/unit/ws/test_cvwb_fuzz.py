@@ -226,16 +226,17 @@ def test_msgpack_client_decode_structured_frames_stay_bounded(
 
 # SR-128 (targeted): every count field that cannot fit is rejected up front by `_fits`. Removing
 # the body-prefix (row_count), per-group cell_count or trailing record-count check fails here.
-# The OUTER footprint group-count check (L235) and the per-group prefix `_fits(1, ...)` (L239) back
+# The OUTER footprint group-count `_fits(count, ...)` and the per-group prefix `_fits(1, ...)` back
 # each other up (both raise "exceeds"); removing one alone costs at most a bounded loop, never an
-# allocation, so neither is separately observable and neither is probed on its own.
+# allocation, so this test probes neither. The outer check's 28-byte v2 stride (#2529) is pinned
+# by its message in test_cvwb_binary.py instead.
 _VALUES = (0, 1, 0xFFFF, 0x7FFFFFFF, 0xFFFFFFFF)
 # (body_kind, count offset, stride, bytes before the first counted record)
 _SITES = (
     (1, 12, 17, 24),
     (2, 12, 17, 24),
     (3, 12, 22, 24),
-    (5, 28, 33, 32),
+    (5, 44, 33, 52),  # first group's cell_count at 24 + 20; cells after the 28-byte prefix
     (6, 44, 16, 48),
 )
 

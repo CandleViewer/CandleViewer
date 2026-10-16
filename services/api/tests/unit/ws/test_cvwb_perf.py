@@ -42,7 +42,7 @@ def _delta(n: int) -> bytes:
 
 def _footprint(cells: int) -> bytes:
     rec = tuple((6_500_000 + i, 10 + i, 20 + i, 1, 2) for i in range(cells))
-    return encode(Frame(FOOTPRINT, (), 0, 2, 3, 1_700_000_000_000, groups=((0, rec),)))
+    return encode(Frame(FOOTPRINT, (), 0, 2, 3, 1_700_000_000_000, groups=(((0, 0, 0, 0), rec),)))
 
 
 @pytest.mark.perf

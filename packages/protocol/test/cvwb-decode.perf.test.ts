@@ -32,16 +32,17 @@ function delta(n: number): Uint8Array {
   return out;
 }
 
-/** footprint frame (kind 5): one group of `cells` 33-byte cells. */
+/** footprint frame (kind 5, v2): one 28-byte group prefix, then `cells` 33-byte cells. */
 function footprint(cells: number): Uint8Array {
+  const prefix = 28; // u64 generation, u64 index, u32 ts_offset_ms, u32 cell_count, u8 flags, pad3
   const stride = 33;
-  const out = new Uint8Array(COMMON_HEADER_BYTES + 8 + cells * stride);
+  const out = new Uint8Array(COMMON_HEADER_BYTES + prefix + cells * stride);
   out.set(header("footprint-empty-group"));
   const v = new DataView(out.buffer);
   v.setUint32(12, 1, true);
-  v.setUint32(COMMON_HEADER_BYTES + 4, cells, true);
+  v.setUint32(COMMON_HEADER_BYTES + 20, cells, true);
   for (let i = 0; i < cells; i++) {
-    v.setBigInt64(COMMON_HEADER_BYTES + 8 + i * stride, BigInt(6_500_000 + i), true);
+    v.setBigInt64(COMMON_HEADER_BYTES + prefix + i * stride, BigInt(6_500_000 + i), true);
   }
   return out;
 }

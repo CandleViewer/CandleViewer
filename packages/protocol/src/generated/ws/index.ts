@@ -514,6 +514,14 @@ export interface FootprintSymbolBarTypeParam {
   price_grouping?: number;
   bars: {
     /**
+     * ADR-0033 series generation (= epoch); 0 until ratified. Part of the bar key (§8.2).
+     */
+    generation: number;
+    /**
+     * Bar index, strictly increasing within a generation; with generation, the bar key (§8.2), which also joins this bar to the same bar on the series' bars topic (§6.1). t_ms may repeat for non-time bars.
+     */
+    index: number;
+    /**
      * Epoch milliseconds, UTC.
      */
     t_ms: number;

@@ -97,13 +97,30 @@ def vector_frames() -> list[tuple[str, Frame]]:
                 1_789_132_200_000,
                 groups=(
                     (
-                        0,
+                        (7, 42, 0, 1),  # closed (flags bit0 confirm)
                         (
                             (6_500_000, 10, 20, 3, 0b1001),
                             (6_500_005, 0, _U64_MAX, _U32_MAX, 0b0110),
                         ),
                     ),
-                    (60_000, ()),
+                    ((7, 43, 60_000, 0), ()),  # forming
+                ),
+            ),
+        ),
+        (
+            # #2529: one trade closes bar N and opens bar N+1 in the same millisecond, so both share
+            # an open time (and here a price); only (generation, index) tells them apart.
+            "footprint_shared_open_time",
+            Frame(
+                FOOTPRINT,
+                (),
+                0b0010,
+                1,
+                3,
+                1_789_132_200_000,
+                groups=(
+                    ((0, 1_000, 59_999, 1), ((6_500_010, 5, 0, 1, 0b0001),)),  # bar N, closed
+                    ((0, 1_001, 59_999, 0), ((6_500_010, 0, 7, 1, 0b0010),)),  # bar N+1, forming
                 ),
             ),
         ),
@@ -140,7 +157,10 @@ def render_vectors() -> str:
                 "groups": (
                     None
                     if f.groups is None
-                    else [[str(ts), [[str(v) for v in c] for c in cells]] for ts, cells in f.groups]
+                    else [
+                        [[str(v) for v in prefix], [[str(v) for v in c] for c in cells]]
+                        for prefix, cells in f.groups
+                    ]
                 ),
             }
         )
@@ -149,6 +169,9 @@ def render_vectors() -> str:
 
 _HDR = struct.Struct("<IBBBBB3xIQ")
 _MAGIC = 0x43565742
+#: kind 5 v2 group prefix (#2529): generation, index, ts_offset_ms, cell_count, flags, 3 pad bytes
+_FP_GROUP = struct.Struct("<QQIIB3x")
+_FP_CELL = struct.Struct("<qQQIB4x")
 
 
 def _h(
@@ -162,13 +185,18 @@ def _h(
     qs: int = 3,
     ts: int = 0,
 ) -> bytes:
-    version = ver if ver is not None else (2 if kind == BARS else 1)
+    version = ver if ver is not None else (2 if kind in (BARS, FOOTPRINT) else 1)
     return _HDR.pack(magic, version, kind, flags, ps, qs, count, ts)
 
 
 def corpus_seeds() -> list[tuple[str, str, bytes]]:
     """``(name, expect, bytes)``; ``expect`` is ``ok`` or ``malformed`` (SR-155 seeds)."""
     one_bar = encode(vector_frames()[4][1])[24 : 24 + 85]
+    fp_cell = _FP_CELL.pack(6_500_000, 1, 2, 1, 0b1000)
+    fp_group = _FP_GROUP.pack(0, 7, 60_000, 1, 1) + fp_cell  # one closed v2 group of one cell, 61 B
+    v1_fp_group = struct.pack("<II", 60_000, 1) + fp_cell  # the same bar as a v1 encoder sent it
+    reserved_flags = _FP_GROUP.pack(0, 7, 60_000, 1, 0b1111_1110) + fp_cell  # bits 1-7 set
+    group_pad = _FP_GROUP.pack(0, 7, 60_000, 1, 1)[:25] + bytes([0xFF]) * 3 + fp_cell
     book_rec = struct.pack("<BqQ", 0, 6_500_000, 1)
     nan_bits = struct.pack("<Q", 0x7FF8_0000_0000_0000)  # NaN-shaped bits in an int field
     s: list[tuple[str, str, bytes]] = [
@@ -199,14 +227,24 @@ def corpus_seeds() -> list[tuple[str, str, bytes]]:
         ("bars-count0-trailing", "malformed", _h(BARS, 0) + bytes(8)),
         ("bars-count1-trailing", "malformed", _h(BARS, 1) + one_bar + bytes(8)),
         ("bars-exact-one", "ok", _h(BARS, 1) + one_bar),
-        ("footprint-groups-max-u32", "malformed", _h(FOOTPRINT, _U32_MAX) + bytes(8)),
+        ("footprint-groups-max-u32", "malformed", _h(FOOTPRINT, _U32_MAX) + bytes(28)),
         (
             "footprint-cell-count-oversized",
             "malformed",
-            _h(FOOTPRINT, 1) + struct.pack("<II", 0, _U32_MAX) + bytes(33),
+            _h(FOOTPRINT, 1) + _FP_GROUP.pack(0, 0, 0, _U32_MAX, 0) + bytes(33),
         ),
-        ("footprint-group-prefix-truncated", "malformed", _h(FOOTPRINT, 2) + bytes(12)),
-        ("footprint-empty-group", "ok", _h(FOOTPRINT, 1) + bytes(8)),
+        ("footprint-group-prefix-truncated", "malformed", _h(FOOTPRINT, 2) + bytes(42)),
+        ("footprint-empty-group", "ok", _h(FOOTPRINT, 1) + bytes(28)),
+        # #2529 (footprint v2: 28-byte group prefix with the section 8.2 bar key and flags):
+        ("footprint-v1-frame", "malformed", _h(FOOTPRINT, 1, ver=1) + v1_fp_group),
+        ("footprint-v1-header-v2-group", "malformed", _h(FOOTPRINT, 1, ver=1) + fp_group),
+        ("footprint-v2-header-v1-empty-group", "malformed", _h(FOOTPRINT, 1) + bytes(8)),
+        ("footprint-group-prefix-27", "malformed", _h(FOOTPRINT, 1) + fp_group[:27]),
+        ("footprint-group-cell-truncated", "malformed", _h(FOOTPRINT, 1) + fp_group[:-1]),
+        ("footprint-exact-one-group", "ok", _h(FOOTPRINT, 1) + fp_group),
+        ("footprint-one-group-trailing-8", "ok", _h(FOOTPRINT, 1) + fp_group + bytes(8)),
+        ("footprint-group-reserved-flag-bits", "ok", _h(FOOTPRINT, 1) + reserved_flags),
+        ("footprint-group-pad-nonzero", "ok", _h(FOOTPRINT, 1) + group_pad),
         ("heatmap-prefix-truncated", "malformed", _h(HEATMAP_COLUMN, 1) + bytes(23)),
         (
             "heatmap-row-count-max-u32",
@@ -242,12 +280,16 @@ def corpus_seeds() -> list[tuple[str, str, bytes]]:
         (
             "footprint-cell-count-body-plus-1",
             "malformed",
-            _h(FOOTPRINT, 1) + struct.pack("<II", 0, 2) + cell,
+            _h(FOOTPRINT, 1) + _FP_GROUP.pack(0, 0, 0, 2, 0) + cell,
         ),
         (
             "footprint-second-group-overflow",
             "malformed",
-            _h(FOOTPRINT, 2) + struct.pack("<II", 0, 1) + cell + struct.pack("<II", 1, 9) + cell,
+            _h(FOOTPRINT, 2)
+            + _FP_GROUP.pack(0, 0, 0, 1, 0)
+            + cell
+            + _FP_GROUP.pack(0, 1, 1, 9, 0)
+            + cell,
         ),
         # Pinned ACCEPT behaviour: section 3.4 does not yet say whether non-zero reserved
         # header bytes, unknown flag bits or non-zero record pad bytes must be rejected.
@@ -262,7 +304,7 @@ def corpus_seeds() -> list[tuple[str, str, bytes]]:
         (
             "footprint-cell-pad-nonzero",
             "ok",
-            _h(FOOTPRINT, 1) + struct.pack("<II", 0, 1) + cell[:29] + bytes([0xFF]) * 4,
+            _h(FOOTPRINT, 1) + _FP_GROUP.pack(0, 0, 0, 1, 0) + cell[:29] + bytes([0xFF]) * 4,
         ),
     ]
     s.extend((f"valid-{n}", "ok", encode(f)) for n, f in vector_frames())
@@ -343,7 +385,10 @@ def structured(f: Frame) -> dict[str, Any]:
     elif f.body_kind == FOOTPRINT:
         out["bars"] = [
             {
+                "generation": generation,
+                "index": index,
                 "t_ms": (base + ts),
+                "confirm": bool(group_flags & 1),  # bit0 only; bits 1-7 are reserved and ignored
                 "cells": [
                     {
                         "price": p(c[0]),
@@ -355,7 +400,7 @@ def structured(f: Frame) -> dict[str, Any]:
                     for c in cells
                 ],
             }
-            for ts, cells in (f.groups or ())
+            for (generation, index, ts, group_flags), cells in (f.groups or ())
         ]
         out["coalesced"] = bool(f.flags & 0b10)
     else:

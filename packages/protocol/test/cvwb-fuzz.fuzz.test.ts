@@ -125,8 +125,9 @@ const SITES: Site[] = [
   { decode: decodeBookSnapshot, kinds: [1], offset: 12, stride: 17, base: 24, minLen: 24 },
   { decode: decodeBookDelta, kinds: [2], offset: 12, stride: 17, base: 24, minLen: 24 },
   { decode: decodeTrades, kinds: [3], offset: 12, stride: 22, base: 24, minLen: 24 },
-  { decode: decodeFootprint, kinds: [5], offset: 12, stride: 8, base: 24, minLen: 24 },
-  { decode: decodeFootprint, kinds: [5], offset: 28, stride: 33, base: 32, minLen: 32 },
+  // footprint v2 (#2529): group count x 28-byte prefix; first group's cell_count at 24 + 20.
+  { decode: decodeFootprint, kinds: [5], offset: 12, stride: 28, base: 24, minLen: 24 },
+  { decode: decodeFootprint, kinds: [5], offset: 44, stride: 33, base: 52, minLen: 52 },
   { decode: decodeHeatmapColumn, kinds: [6], offset: 44, stride: 16, base: 48, minLen: 48 },
 ];
 

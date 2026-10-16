@@ -70,7 +70,7 @@ _SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
             "symbol": _SYM,
             "bar_type": "time",
             "param": "1",
-            "bars": [{"t_ms": 1, "cells": []}],
+            "bars": [{"generation": 0, "index": 1, "t_ms": 1, "cells": []}],
         },
     ),
     "heatmap": (
@@ -265,6 +265,8 @@ def _reference_workspace() -> tuple[Source, list[dict[str, Any]]]:
             "param": "5",
             "bars": [
                 {
+                    "generation": 0,
+                    "index": b,
                     "t_ms": 1_789_000_000_000 + b * 300_000,
                     "cells": [
                         {"price": f"{100 + p}.0", "bid_volume": "1.5", "ask_volume": "2.5"}

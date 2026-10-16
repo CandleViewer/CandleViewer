@@ -41,7 +41,18 @@ _HEADER: Final = struct.Struct(HEADER.fmt)
 _STRUCTS: Final[dict[str, struct.Struct]] = {}
 
 Record = tuple[int, ...]
-Group = tuple[int, tuple[Record, ...]]
+#: One footprint bar: ``((generation, index, ts_offset_ms, flags), cells)``. The prefix is the
+#: kind-5 group prefix in declaration order without ``cell_count`` (derived from ``cells``);
+#: ``(generation, index)`` is the section 8.2 bar key and ``flags`` bit0 is ``confirm``
+#: (body_kind 5 format_version 2, #2529).
+Group = tuple[Record, tuple[Record, ...]]
+
+#: The group prefix field derived from ``len(cells)``. It is not the last field (``flags``
+#: follows it), so the codec finds it by name in the generated layout.
+_GROUP_COUNT: Final = "cell_count"
+#: Group ``flags`` bits the encoder may send: bit0 ``confirm``. Bits 1-7 are reserved, 0 on send
+#: and ignored on receive (section 3.4), so a later flag is additive.
+_GROUP_KNOWN_FLAGS: Final = 0b0000_0001
 
 
 def _st(part: Part) -> struct.Struct:
@@ -76,7 +87,8 @@ class Frame:
 
     * kinds 1-4: ``records`` are flat field tuples in declaration order (pad excluded);
     * kind 1 also has ``trailer`` = ``(xu, xseq)``;
-    * kind 5: ``groups`` = ``((ts_offset_ms, cells), ...)``, ``cell_count`` derived;
+    * kind 5: ``groups`` = ``(((generation, index, ts_offset_ms, flags), cells), ...)``,
+      ``cell_count`` derived;
     * kind 6: ``prefix`` = ``(ts_offset_ms, price_min, price_step)``, ``records`` = rows,
       ``row_count`` derived; header ``record_count`` is 1 (one column).
     """
@@ -136,6 +148,8 @@ def encode(frame: Frame) -> bytes:
         raise FrameEncodeError(f"{kind.name}: groups must be given iff the kind declares them")
     if kind.group_prefix is not None and frame.records:
         raise FrameEncodeError(f"{kind.name}: records live inside groups")
+    if kind.group_prefix is not None:
+        _check_groups(frame.groups, kind.group_prefix, kind.name)
     out = bytearray(HEADER.size + _body_size(frame, kind))
     rec = _st(kind.record)
     try:
@@ -157,8 +171,9 @@ def encode(frame: Frame) -> bytes:
             off += kind.body_prefix.size
         if kind.group_prefix is not None:
             gp = _st(kind.group_prefix)
-            for ts_offset_ms, cells in frame.groups or ():
-                gp.pack_into(out, off, ts_offset_ms, len(cells))
+            ci = _count_at(kind.group_prefix)
+            for group_prefix, cells in frame.groups or ():
+                gp.pack_into(out, off, *group_prefix[:ci], len(cells), *group_prefix[ci:])
                 off += kind.group_prefix.size
                 for cell in cells:
                     rec.pack_into(out, off, *cell)
@@ -171,10 +186,41 @@ def encode(frame: Frame) -> bytes:
             _st(kind.trailer).pack_into(out, off, *frame.trailer)
     except struct.error as exc:
         raise FrameEncodeError(f"{kind.name}: value out of range for section 3.4: {exc}") from exc
+    except TypeError as exc:  # a record that is not a tuple: `*record` cannot expand it
+        raise FrameEncodeError(f"{kind.name}: a record is not a tuple of ints: {exc}") from exc
     frames, nbytes = ENCODED[kind.id]  # O(1) per frame; success path only
     frames.inc()
     nbytes.inc(len(out))
     return bytes(out)
+
+
+def _count_at(part: Part) -> int:
+    """Position of ``cell_count`` among the packed group prefix fields."""
+    return part.fields.index(_GROUP_COUNT)
+
+
+def _check_groups(groups: object, part: Part, name: str) -> None:
+    """Refuse a malformed ``groups`` before anything is sized or unpacked from it: a tuple of
+    ``(prefix, cells)`` tuples, each prefix one int per field but the derived ``cell_count``, i.e.
+    ``(generation, index, ts_offset_ms, flags)`` since kind 5 v2 (#2529). A v1-shaped group (a bare
+    ``ts_offset_ms``) or any other loose shape is a typed error, never the bare ValueError or
+    TypeError that unpacking it would raise. So are reserved ``flags`` bits, which are 0 on send."""
+    fields = tuple(f for f in part.fields if f != _GROUP_COUNT)
+    shape = f"{name}: groups are a tuple of (({', '.join(fields)}), cells)"
+    if not isinstance(groups, tuple):
+        raise FrameEncodeError(shape)
+    for group in groups:
+        if not (
+            isinstance(group, tuple)
+            and len(group) == 2
+            and isinstance(group[0], tuple)
+            and len(group[0]) == len(fields)
+            and isinstance(group[1], tuple)
+        ):
+            raise FrameEncodeError(shape)
+        flags = group[0][fields.index("flags")] if "flags" in fields else 0
+        if isinstance(flags, int) and flags & ~_GROUP_KNOWN_FLAGS:
+            raise FrameEncodeError(f"{name}: reserved group flag bits are 0 on send, got {flags}")
 
 
 def _check_enums(part: Part, record: Record) -> None:
@@ -238,13 +284,17 @@ def decode(data: bytes | bytearray | memoryview) -> Frame:
     if kind.group_prefix is not None:
         _fits(count, kind.group_prefix.size, avail, kind.name)
         gp = _st(kind.group_prefix)
+        ci = _count_at(kind.group_prefix)
         groups: list[Group] = []
         for g in range(count):
             _fits(1, kind.group_prefix.size, n - off, f"{kind.name} group {g}")
-            ts_offset_ms, cell_count = gp.unpack_from(view, off)
+            values = gp.unpack_from(view, off)
+            cell_count = values[ci]
             off += kind.group_prefix.size
             _fits(cell_count, kind.record.size, n - off, f"{kind.name} group {g}")
-            groups.append((ts_offset_ms, _rows(view, off, cell_count, kind.record, kind.name)))
+            cells = _rows(view, off, cell_count, kind.record, kind.name)
+            # Reserved flag bits are kept as received (lossless); consumers read bit0 only.
+            groups.append((values[:ci] + values[ci + 1 :], cells))
             off += cell_count * kind.record.size
         return Frame(body_kind, (), flags, p_scale, q_scale, ts_base, groups=tuple(groups))
     trailer_size = kind.trailer.size if kind.trailer is not None else 0
