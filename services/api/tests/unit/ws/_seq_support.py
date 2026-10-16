@@ -178,6 +178,7 @@ class Conn:
     def sub(self, entry: Any, **kw: Any) -> tuple[dict[str, Any], Subscription]:
         result, sub = self.authz.admit(entry, **kw)
         assert sub is not None, result
+        sub.announced = True  # the gateway's `sub_ok` is queued (#2831)
         self.emitter.flush_pending([sub])
         return result, sub
 

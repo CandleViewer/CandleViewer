@@ -226,9 +226,7 @@ def test_snap_and_d_frames_every_topic_family_validate_against_ws_schema(
     conn.authz.principal = PrincipalSnapshot(
         USER, frozenset({"owner"}), frozenset(Permission), (AccountGrant(ACC_A, True, True, True),)
     )
-    _, sub = conn.authz.admit(_entry(family, shape))
-    assert sub is not None
-    conn.emitter.flush_pending([sub])
+    _, sub = conn.sub(_entry(family, shape))  # admit, the `sub_ok` (#2831), then the flush
     assert conn.emitter.delta(sub, delta_body)
     snap, d = conn.take()  # Conn.push validated both against the envelope + payload schema
     assert (snap["t"], snap["s"], snap["meta"]["source"]) == ("snap", 1, "live")

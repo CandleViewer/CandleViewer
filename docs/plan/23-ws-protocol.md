@@ -1046,6 +1046,8 @@ The server accepts this **only** when it can prove continuity: it holds state co
 - While a subscription is `snapshot_pending`, no `d` is sent on it. Snapshots come from the owning module (book, bars, order-flow). Until a module's adapter has landed (#2195 bars, #2196 book, #2197 order-flow), its families stay `snapshot_pending` and no `snap` is emitted. Such a pending subscription is never an error; the §6.1 `bars.*` refusals happen at subscribe, before it is pending.
 - `snapshot: false` without provable continuity is answered with `snapshot_forced: true` (§7.6).
 - A `resync` with no `ch` (absent or `null`), or with an unknown `reason`, is answered with `err` `frame_malformed`. A `ch` that is present and not `null`, but is not a topic name, is answered with `invalid_options` instead (§7.5, #2572).
+- A §7.4 resync of a subscription that already awaits a `snap` keeps that `snap`'s `reason`, as `ctl` does (§5.4), except that `upstream_desync`, an incident, replaces any reason but `initial` and `backpressure` (#2831).
+- A topic held for a `backpressure` snapshot (§8.4 step 2) answers a client resync (§7.5) with that `snap` only: the resync still counts against the 5-per-minute limit, and the overflow ladder alone sends the `snap` (#2831).
 - Every `revoked` frame, including the §7.5 `resync_rate_limited` one, always carries `resubscribe_allowed`. It is `true` only when a scope narrowed and some accounts were kept (E17-S02, #2159).
 - Snapshots over 4 MiB are chunked. Public snapshots are cached per topic and identity. Private snapshots are never cached or shared.
 - Metrics: `cv_ws_resync_total{reason}`, `cv_ws_snapshot_bytes{topic}`, `cv_ws_snapshot_build_seconds{topic}`, `cv_ws_sequence_gaps_detected_total` and `cv_ws_stale_topics_in_use`.

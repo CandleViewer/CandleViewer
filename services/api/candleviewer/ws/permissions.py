@@ -217,6 +217,10 @@ class Subscription:
     #: §6.4 `machines`: the entity's scope, read from its entry at `sub`, so every RBAC change
     #: re-checks it without a lookup.
     entity: EntityScope | None = None
+    #: #2831: whether its `sub_ok` is queued; no `snap` goes out before it (§7.1). `_admit`
+    #: records it False and `handle_sub` sets it once that reply is queued. It holds the `snap`
+    #: only: a `d` for a §7.6 continuity attach can still precede `sub_ok` (#2909).
+    announced: bool = True
     #: §7.5 client-resync times (monotonic s); bounded to the 5-per-minute window.
     resyncs: collections.deque[float] = field(
         default_factory=lambda: collections.deque(maxlen=RESYNC_MAX_PER_WINDOW)
@@ -392,6 +396,7 @@ class ConnectionAuthz:
             rs,
             snapshot_pending=snapshot,
             entity=entity,
+            announced=False,
         )
         if not snapshot and not self._continuity(sub):
             sub.snapshot_pending = forced = True  # §7.6: continuity unproven -> snap anyway
@@ -886,7 +891,13 @@ async def handle_sub(
 ) -> None:
     """Gateway hook for a `sub` frame: exactly one result per topic, in request order (S1);
     one bad topic never fails the batch (§5.2). A frame whose shape breaks §13.5 is refused
-    whole instead: one `err`, no `sub_ok`, nothing subscribed and no strike (#2396, #2399)."""
+    whole instead: one `err`, no `sub_ok`, nothing subscribed and no strike (#2396, #2399).
+
+    #2831: the new subscriptions are announced only once the `sub_ok` is queued, so no hub
+    flush or resnapshot during the awaits below can send a `snap` ahead of it; the gateway's
+    flush then sends it. A refused topic is dropped unannounced. One left unannounced by a
+    raise or a cancellation never gets a `snap`: the connection ends (a raise closes it 1011)
+    and its teardown releases the subscription."""
     body: Any = frame.get("p")  # a dict once `sub_shape_error` passes it
     fid = _frame_id(frame)
     shape = sub_shape_error(body)
@@ -894,6 +905,7 @@ async def handle_sub(
         await send(build_ws_error(shape.code, id=fid, message=shape.message, field=shape.field))
         return
     results: list[dict[str, Any]] = []
+    admitted: list[Subscription] = []
     snapshot = body.get("snapshot", True)
     replay = body.get("replay_session_id")
     for index, entry in enumerate(body["topics"]):
@@ -904,6 +916,8 @@ async def handle_sub(
             result, sub = authz.admit(entry, snapshot=snapshot, replay_session_id=replay)
             if sub is not None:
                 result = await authz.subscribe_upstream(sub) or result
+                if result["ok"]:
+                    admitted.append(sub)
         results.append(result)
         _observe(ch, result)
         if not result["ok"]:
@@ -915,6 +929,8 @@ async def handle_sub(
     if now_ms is not None:
         out["ts"] = now_ms
     await send(out)
+    for sub in admitted:  # with no await since `send` queued the reply
+        sub.announced = True
 
 
 def handle_unsub(authz: ConnectionAuthz, frame: dict[str, Any], now_ms: int) -> dict[str, Any]:

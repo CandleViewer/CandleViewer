@@ -15,6 +15,8 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.bars.errors import SpecCapExceeded
+from candleviewer.bars.models import BarSpec
 from candleviewer.ws.binary import (
     BOOK_DELTA,
     FLAG_PARTIAL,
@@ -26,7 +28,7 @@ from candleviewer.ws.binary import (
     decode_b64,
     encode,
 )
-from candleviewer.ws.permissions import VersionedSnapshot
+from candleviewer.ws.permissions import Subscription, VersionedSnapshot, handle_sub
 from candleviewer.ws.sequencing import (
     HEATMAP_SNAPSHOT_MAX_COLUMNS,
     MAX_OUTBOUND_FRAME_BYTES,
@@ -45,6 +47,7 @@ from candleviewer.ws.sequencing import (
     split_structured,
     window_delta,
 )
+from candleviewer.ws.upstream import UpstreamRefs
 from tests._corpus import frames as corpus_frames
 from tests.unit.ws._seq_support import ACC_A, ACC_B, PERMS, USER, Book, Conn, Source
 
@@ -290,6 +293,156 @@ def test_upstream_guard_classifies_gap_out_of_order_and_duplicate(
     assert guard.observe("X", 51, snapshot=False) == "apply"
     guard.forget("X")
     assert guard.observe("X", 52, snapshot=False) == "drop"
+
+
+# -- Scenario: no `snap` before `sub_ok`; only the ladder sends `backpressure` (#2831) ---------
+
+
+def _hub_book(
+    *, unavailable: bool = False, replay: bool = False
+) -> tuple[SequencingHub, Conn, Subscription, Source]:
+    src = _book_source()
+    if unavailable:
+        src.unavailable.add("BTCUSDT")
+    hub, conn = SequencingHub(), Conn(src)
+    hub.register(conn.authz, conn.emitter)
+    _, sub = conn.sub("book.BTCUSDT.50", replay_session_id=RS if replay else None)
+    conn.take()
+    return hub, conn, sub, src
+
+
+def _hold(sub: Subscription) -> None:
+    sub.snapshot_pending, sub.pending_reason = True, "backpressure"  # as the ladder drops it
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "kept"),
+    [
+        ("initial", "upstream_reconnect", "initial"),
+        ("upstream_desync", "upstream_reconnect", "upstream_desync"),
+        ("initial", "upstream_desync", "initial"),  # an attach is never counted as a resync
+        ("client_resync", "upstream_desync", "upstream_desync"),  # an incident is never hidden
+        ("reconfigure", "replay_seek", "reconfigure"),
+    ],
+)
+def test_resnapshot_keeps_an_already_pending_reason(first: str, second: str, kept: str) -> None:
+    hub, conn, sub, src = _hub_book(unavailable=first == "initial", replay=second == "replay_seek")
+    if first != "initial":  # settled: `first` pends it, as nothing can be built yet
+        src.unavailable.add("BTCUSDT")
+        assert hub.resnapshot(lambda s: s is sub, first) == 0
+    trigger = getattr(hub, second)  # the hub trigger named for the reason
+    assert trigger(RS if second == "replay_seek" else "BTCUSDT") == 0
+    assert sub.pending_reason == kept
+    src.unavailable.clear()
+    incidents = _resync_count("upstream_desync")
+    assert hub.flush_pending() == 1
+    (snap,) = conn.take()
+    assert snap["meta"]["reason"] == kept
+    assert _resync_count("upstream_desync") == incidents + (kept == "upstream_desync")
+
+
+def test_resnapshot_never_sends_a_backpressure_pended_snapshot() -> None:
+    hub, conn, sub, src = _hub_book()
+    with pytest.raises(ValueError, match="only the overflow ladder"):
+        hub.resnapshot(lambda s: True, "backpressure")
+    _hold(sub)
+    assert hub.upstream_reconnect("BTCUSDT") == 0
+    assert (conn.take(), sub.pending_reason) == ([], "backpressure")
+    builds = src.builds
+    assert conn.emitter.snapshot(sub, "backpressure")  # what the ladder's `drain` sends
+    assert (src.builds, conn.take()[0]["meta"]["reason"]) == (builds + 1, "backpressure")
+
+
+def test_resnapshot_upstream_desync_never_displaces_a_backpressure_hold() -> None:
+    hub, conn, sub, _ = _hub_book()
+    _hold(sub)
+    assert hub.upstream_desync("BTCUSDT") == 0  # an incident, yet the ladder still owns the hold
+    assert (conn.take(), sub.pending_reason) == ([], "backpressure")
+
+
+def test_emitter_flush_pending_skips_backpressure() -> None:
+    hub, conn, held, src = _hub_book()
+    src.bodies["trades"] = SnapshotBody({"symbol": "BTCUSDT", "trades": []})
+    _, other = conn.sub("trades.BTCUSDT")
+    conn.take()
+    _hold(held)
+    other.snapshot_pending, other.pending_reason = True, "upstream_reconnect"
+    assert conn.emitter.flush_pending([held, other]) == 1 and hub.flush_pending() == 0
+    assert [f["ch"] for f in conn.take()] == ["trades.BTCUSDT"] and held.snapshot_pending
+
+
+def test_client_resync_of_a_backpressure_pended_topic_waits_for_drain() -> None:
+    _, conn, sub, _ = _hub_book()
+    _hold(sub)
+    for i in range(5):
+        conn.clock.now = float(i)
+        _resync(conn, sub.ch)
+    assert (conn.take(), sub.pending_reason, len(sub.resyncs)) == ([], "backpressure", 5)
+    assert conn.emitter.snapshot(sub, "backpressure")  # the ladder's `drain`
+    conn.clock.now = 60.0  # the first resync ages out of the window
+    _resync(conn, sub.ch)  # settled again: answered at once
+    _resync(conn, sub.ch)  # the four held ones left in the window still count
+    out = conn.take()
+    assert [f["t"] for f in out] == ["snap", "snap", "err", "revoked"]
+    assert [f["meta"]["reason"] for f in out[:2]] == ["backpressure", "client_resync"]
+
+
+class _CappedBars:
+    async def register(
+        self, spec: BarSpec, symbol: str, consumer: str, user: str | None = None
+    ) -> None:
+        raise SpecCapExceeded("per_user", 8, 8)
+
+    def release(self, spec_hash: str, symbol: str, consumer: str) -> None:
+        pass
+
+
+class _DownSink:
+    async def open(self, key: Any) -> None:
+        raise RuntimeError("upstream down")
+
+    async def drop(self, key: Any) -> None:
+        pass
+
+
+async def test_sub_ok_announces_only_the_topics_it_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = Conn(_book_source())
+    conn.authz.services.bars = _CappedBars()
+    admitted: list[Subscription] = []
+    admit = conn.authz.admit
+
+    def spy(entry: Any, **kw: Any) -> tuple[dict[str, Any], Subscription | None]:
+        result, sub = admit(entry, **kw)
+        admitted.extend([sub] if sub is not None else [])
+        return result, sub
+
+    monkeypatch.setattr(conn.authz, "admit", spy)
+    replies: list[tuple[list[bool], list[bool]]] = []
+
+    async def send(frame: dict[str, Any]) -> None:
+        replies.append(([r["ok"] for r in frame["p"]["results"]], [s.announced for s in admitted]))
+
+    topics = ["bars.BTCUSDT.time.5", "book.BTCUSDT.50"]
+    await handle_sub(conn.authz, {"t": "sub", "p": {"topics": topics}}, send)
+    assert replies == [([False, True], [False, False])]  # nothing announced before `sub_ok`
+    assert [s.announced for s in admitted] == [False, True]  # the refused one never
+
+
+async def test_a_raising_subscribe_upstream_never_snapshots_the_unacknowledged_topic() -> None:
+    hub, conn = SequencingHub(), Conn(_book_source())
+    hub.register(conn.authz, conn.emitter)
+    conn.authz.services.upstream = UpstreamRefs(_DownSink())
+    sent: list[dict[str, Any]] = []
+
+    async def send(frame: dict[str, Any]) -> None:
+        sent.append(frame)
+
+    with pytest.raises(RuntimeError, match="upstream down"):  # the gateway closes 1011
+        await handle_sub(conn.authz, {"t": "sub", "p": {"topics": ["book.BTCUSDT.50"]}}, send)
+    assert (sent, hub.flush_pending(), conn.take()) == ([], 0, [])
+    assert [s.announced for s in conn.authz.by_id.values()] == [False]
 
 
 # -- Scenario: a client resyncing in a loop is stopped -----------------------------------------
