@@ -1,14 +1,16 @@
 """#837 Q5: the order-entry gate kernel, `candleviewer.domain.order_entry`. A frozen composed gate
 puts the maintenance check first and never runs dry; every call names the account; the first
-refusal wins; nothing fails open (no maintenance check, an account check in the maintenance slot,
-a non-check, a missing or mistyped account id, a raising check); a refusal uses the closed reason
-set and a short detail without ids. These tests need only the kernel, so the maintenance slot takes
-a minimal fake that declares `scope = "global"`: the admin `MaintenanceGate` lives outside it."""
+refusal wins; nothing fails open (no maintenance check, an account check or a class in the
+maintenance slot, a non-check, a missing or mistyped account id, a look-alike refusal, a raising
+check); a refusal uses the closed reason set and a short detail without ids. These tests need only
+the kernel, so the maintenance slot takes a minimal fake that declares `scope = "global"`: the admin
+`MaintenanceGate` lives outside it."""
 
 from __future__ import annotations
 
 import dataclasses
 from types import ModuleType, SimpleNamespace
+from typing import ClassVar, Literal
 from uuid import UUID
 
 import pytest
@@ -38,7 +40,7 @@ class _Raising:
 class _Maintenance:
     """A minimal global maintenance check; the admin `MaintenanceGate` is outside the kernel."""
 
-    scope = "global"
+    scope: ClassVar[Literal["global"]] = "global"
 
     def __init__(self, engaged: bool) -> None:
         self._engaged = engaged
@@ -49,6 +51,10 @@ class _Maintenance:
 
 def _maintenance(engaged: bool) -> _Maintenance:
     return _Maintenance(engaged)
+
+
+class _AccountScoped(_Check):
+    scope: ClassVar[Literal["account"]] = "account"
 
 
 def test_the_reason_set_is_closed() -> None:
@@ -77,6 +83,7 @@ def test_a_refusal_is_frozen() -> None:
         "x" * 201,
         "Account a1000000-0000-4000-8000-000000000001 refused",
         "deadbeefcafe0123babe",
+        "Account abcdef01-abcd-4bcd-8bcd-abcdef012345 refused",
         "Account ABCDEF01-ABCD-4BCD-8BCD-ABCDEF012345 refused",
         "DEADBEEFCAFEBABEFACE",
     ],
@@ -103,6 +110,22 @@ def test_the_maintenance_check_is_a_required_argument() -> None:
         OrderEntryGate()  # type: ignore[call-arg]  # mypy rejects the call too, so this is pinned
 
 
+def test_an_account_check_in_the_maintenance_slot_fails_type_checking() -> None:
+    with pytest.raises(TypeError, match="global maintenance check"):
+        OrderEntryGate(_Check())  # type: ignore[arg-type]  # mypy rejects it too, so this is pinned
+
+
+def test_a_check_declaring_another_scope_fails_type_checking() -> None:
+    with pytest.raises(TypeError, match="global maintenance check"):
+        OrderEntryGate(_AccountScoped())  # type: ignore[arg-type]  # the Literal is pinned too
+
+
+def test_a_class_is_not_a_maintenance_check() -> None:
+    a_class: object = _Maintenance
+    with pytest.raises(TypeError, match="global maintenance check"):
+        OrderEntryGate(a_class)  # type: ignore[arg-type]  # a class, not an instance
+
+
 @pytest.mark.parametrize(
     "bad", [_Check(), SimpleNamespace(scope="account", refusal=lambda account_id: None), object()]
 )
@@ -112,8 +135,9 @@ def test_only_the_global_maintenance_check_takes_the_maintenance_slot(bad: objec
 
 
 def test_the_maintenance_slot_is_validated_like_every_other_check() -> None:
+    claims_global: object = SimpleNamespace(scope="global")
     with pytest.raises(TypeError, match="not an order-entry check"):
-        OrderEntryGate(SimpleNamespace(scope="global"))
+        OrderEntryGate(claims_global)  # type: ignore[arg-type]  # the runtime guard
 
 
 def test_a_check_whose_refusal_is_not_callable_is_rejected() -> None:
@@ -142,6 +166,26 @@ def test_maintenance_comes_first_and_wins_whatever_the_account_check_order(rever
     refusal = gate.refusal(_ACCOUNT)
     assert refusal is not None and refusal.reason == "maintenance"
     assert (first.seen, second.seen) == ([], [])
+
+
+@pytest.mark.parametrize(
+    "lookalike",
+    [
+        SimpleNamespace(reason="balance_stale", detail="The balance is stale."),
+        {"reason": "x"},
+        False,
+    ],
+)
+def test_a_look_alike_refusal_is_refused_not_relayed(lookalike: object) -> None:
+    check = _Check(lookalike)  # type: ignore[arg-type]  # a look-alike, not the kernel's refusal
+    gate = OrderEntryGate(_maintenance(False), check)
+    with pytest.raises(TypeError, match="_Check"):
+        gate.refusal(_ACCOUNT)
+
+
+def test_a_real_refusal_is_relayed_unchanged() -> None:
+    gate = OrderEntryGate(_maintenance(False), _Check(_NO_KEY))
+    assert gate.refusal(_ACCOUNT) is _NO_KEY
 
 
 def test_a_middle_check_refuses_when_the_first_lets_the_order_through() -> None:
