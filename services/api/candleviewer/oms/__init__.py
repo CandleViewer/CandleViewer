@@ -18,6 +18,8 @@ docs/plan/20-architecture.md Sec.3 and the module table in CONSTITUTION.md Sec.3
   (`order_link_allocator`), success-after-lookup and history retention
   (`order_link_resolution`), the typed errors (`errors`) and the in-memory lookup fake
   (`fakes`). The submission pipeline that calls them is E29-T04.
+- The order persistence (E29-T01): `OrderRepository` and `OrderEventRepository`
+  (`repository`) over the driver-free stores of M10, and `DuplicateOrderLinkId`.
 
 `service.py` (the lifecycle contract) and `models.py` are still the E02-T05 scaffold: the
 supervisor can construct and sequence the module, and `start()` builds the `Validator`, but
@@ -26,6 +28,15 @@ no other order logic runs yet.
 
 from __future__ import annotations
 
+from .errors import DuplicateOrderLinkId
+from .repository import OrderEventRepository, OrderRepository
 from .validator import OrderPlacementRefused, ReadOnlyCheck, Validator
 
-__all__: list[str] = ["OrderPlacementRefused", "ReadOnlyCheck", "Validator"]
+__all__: list[str] = [
+    "DuplicateOrderLinkId",
+    "OrderEventRepository",
+    "OrderPlacementRefused",
+    "OrderRepository",
+    "ReadOnlyCheck",
+    "Validator",
+]

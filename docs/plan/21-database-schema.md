@@ -1345,6 +1345,8 @@ CREATE TRIGGER trg_oe_no_truncate BEFORE TRUNCATE ON order_events
 
 Partitioned by month (`PARTITION BY RANGE (event_ts)`) once volume exceeds 20 M rows; partitions older than 24 months are detached and exported to Parquet (§5).
 
+**Writes (E29-T01).** Rows are written only through the order store (`storage/repositories/orders_sqlalchemy.py`, behind the OMS's `OrderRepository` and `OrderEventRepository`). It assigns `seq`: 0 for the event inserted with its order row, in the same statement, then the next value under a lock on the order row, so `seq` stays dense per order. Every `payload` passes `redact_exchange_payload()` before it is bound: headers, credential-named fields, the `args` of an `auth` frame, URL queries and credential-shaped strings are replaced, and anything that is not plain JSON or exceeds the size bounds is cut, so no credential or signature reaches the table.
+
 #### 3.3.6 `executions` — fills (append-only, exchange truth)
 
 ```sql
