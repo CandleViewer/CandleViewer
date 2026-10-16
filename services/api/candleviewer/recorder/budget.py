@@ -375,6 +375,12 @@ class DiskBudget:
         self._task: asyncio.Task[None] | None = None
 
     @property
+    def config(self) -> BudgetConfig:
+        """The frozen config this budget runs with. Readers (the admin read model, E42-T01) take
+        the cap, the sample interval and the retention from it, not from the settings."""
+        return self._cfg
+
+    @property
     def level(self) -> DiskPressureLevel:
         """Plain enum for synchronous / hot-path readers (C-2.20); updated every sample."""
         return self._ladder.level
