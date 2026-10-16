@@ -38,13 +38,31 @@ auth_step_up_failures_total = Counter(
 auth_readonly_downgrades_total = Counter(
     "auth_readonly_downgrades_total", "Sessions downgraded to read-only after repeated failures."
 )
+#: `auth_csrf_refused_total{reason}` is a closed set in two halves (#2264). A refusal counts once
+#: under why it was refused, and again under an audit reason when its `auth.csrf_refused`
+#: record was not written normally; the refusal alert excludes the second half (pinned by a test).
+CSRF_REFUSAL_REASONS: tuple[str, ...] = (
+    "missing",
+    "mismatch",
+    "bad_mac",
+    "wrong_session",
+    "cross_origin",
+)
+CSRF_AUDIT_REASONS: tuple[str, ...] = (
+    "audit_unavailable",  # the write failed: after the wait, or still running at shutdown
+    "audit_slow",  # the request stopped waiting at the timeout; the write may still land
+    "audit_throttled",  # over the per-session / per-IP budget: no write attempted, on purpose
+    "audit_saturated",  # the in-flight cap is full of stuck writes: no write attempted
+)
 auth_csrf_refused_total = Counter(
     "auth_csrf_refused_total",
     "State-changing requests refused by the SR-041/SR-042 CSRF guard, by reason.",
-    # closed set: missing | mismatch | bad_mac | wrong_session | cross_origin (refusals)
-    #             | audit_unavailable | audit_slow | audit_throttled (audit bookkeeping)
     ["reason"],
 )
+# Bind every reason now: a series created at its first event gives `increase()` nothing to
+# subtract, so the first refusal or audit failure after every restart would never alert.
+for _csrf_reason in (*CSRF_REFUSAL_REASONS, *CSRF_AUDIT_REASONS):
+    auth_csrf_refused_total.labels(reason=_csrf_reason)
 auth_mfa_resets_total = Counter("auth_mfa_resets_total", "Owner TOTP resets performed.")
 # SR-125 (#2117), catalogued `live` and re-exported below. Each is incremented at the decision
 # that makes it true; none carries a user, account, IP or free-form label.

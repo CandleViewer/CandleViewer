@@ -1535,7 +1535,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "refusals",
         ("reason",),
         "State-changing requests refused by the SR-041/SR-042 CSRF guard, by bounded reason.",
-        "CsrfRefusalsHigh (>20/10m) / CsrfRefusalAuditUnavailable (ticket)",
+        "CsrfRefusalsHigh (>20/10m) / CsrfRefusalAuditUnavailable / "
+        "CsrfRefusalAuditDegraded (ticket)",
         _L,
         "E09",
         max_series=12,

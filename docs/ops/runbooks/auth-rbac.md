@@ -353,7 +353,7 @@ repository's secret settings, never from an agent session.
   as `auth_csrf_previous_key_hex` (verify-only) and a new `auth_csrf_key_hex`, restart, then drop the
   previous key after one refresh lifetime (12 h). A dropped or changed key only forces clients to
   re-fetch the cookie via `GET /auth/session`; no data is lost. Startup refuses a CSRF key (current
-  or previous) equal to the TOTP or recovery key. Alerts: `CsrfRefusalsHigh`,
+  or previous) equal to the TOTP or recovery key. Alerts: `CsrfRefusalsHigh`, `CsrfRefusalAuditDegraded`,
   `CsrfRefusalAuditUnavailable` (`docs/plan/07-release-and-prr.md#alert-csrfrefusalshigh`).
 - **SR-042 origins (`CV_ALLOWED_ORIGINS`).** The allow-list decides. The CSRF guard admits a
   state-changing request whose `Origin` is in this exact list, whatever `Sec-Fetch-Site` says (a
