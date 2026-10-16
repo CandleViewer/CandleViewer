@@ -69,16 +69,31 @@ class SystemClock:
         return datetime.now(UTC)
 
 
+#: US-ACCT-010's caps on the two windows, written once here: a heartbeat older than 10 s must not
+#: show `healthy`, and order entry must close within 30 s of the last WS or REST success. They are
+#: limits, not tuning room, and no flag may move them (C-4.14). `Settings` mirrors them as its
+#: `le=` bounds, because M1 may not import `accounts`; a test pins the pair.
+HEARTBEAT_MAX_S: Final = 10.0
+DOWN_MAX_S: Final = 30.0
+
+
 @dataclass(frozen=True, slots=True)
 class HealthThresholds:
-    """`CV_ACCOUNT_HEARTBEAT_S`: max heartbeat age; `CV_ACCOUNT_DOWN_S`: silence before down."""
+    """`CV_ACCOUNT_HEARTBEAT_S`: max heartbeat age; `CV_ACCOUNT_DOWN_S`: silence before down.
+    Neither may exceed its US-ACCT-010 cap, which is also its default, so no caller can build a
+    monitor that holds an old heartbeat `healthy` or admits orders through a longer silence."""
 
-    heartbeat_s: float = 10.0
-    down_s: float = 30.0
+    heartbeat_s: float = HEARTBEAT_MAX_S
+    down_s: float = DOWN_MAX_S
 
     def __post_init__(self) -> None:
         if not 0 < self.heartbeat_s < self.down_s:
             raise ValueError("health thresholds need 0 < heartbeat_s < down_s")
+        if self.heartbeat_s > HEARTBEAT_MAX_S or self.down_s > DOWN_MAX_S:
+            raise ValueError(
+                f"health thresholds are capped at heartbeat_s <= {HEARTBEAT_MAX_S:g} and "
+                f"down_s <= {DOWN_MAX_S:g} (US-ACCT-010)"
+            )
 
     @classmethod
     def from_settings(cls, settings: Settings) -> HealthThresholds:

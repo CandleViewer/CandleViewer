@@ -16,13 +16,15 @@ from structlog.testing import capture_logs
 
 from candleviewer.accounts.health import (
     CONNECTION_STATE,
+    DOWN_MAX_S,
+    HEARTBEAT_MAX_S,
     AccountHealthMonitor,
     HealthState,
     HealthThresholds,
     SystemClock,
     epoch_ms,
 )
-from candleviewer.settings import Settings
+from candleviewer.settings import ACCOUNT_DOWN_MAX_S, ACCOUNT_HEARTBEAT_MAX_S, Settings
 from tests.unit.accounts._fakes import ACC, T0, FakeClock
 
 
@@ -132,6 +134,26 @@ def test_thresholds_come_from_settings_and_must_be_ordered() -> None:
     assert HealthThresholds.from_settings(settings_) == HealthThresholds(5, 20)
     with pytest.raises(ValueError, match="heartbeat_s < down_s"):
         HealthThresholds(10, 10)
+
+
+@pytest.mark.parametrize(("heartbeat", "down"), [(10.001, 30), (10, 30.001), (11, 31)])
+def test_thresholds_cannot_exceed_the_us_acct_010_caps(heartbeat: float, down: float) -> None:
+    with pytest.raises(ValueError, match="capped at"):
+        HealthThresholds(heartbeat, down)
+
+
+def test_thresholds_at_the_us_acct_010_caps_are_accepted() -> None:
+    assert HealthThresholds(10, 30) == HealthThresholds(HEARTBEAT_MAX_S, DOWN_MAX_S)
+
+
+def test_the_defaults_are_the_us_acct_010_caps_in_thresholds_and_settings() -> None:
+    assert HealthThresholds() == HealthThresholds(10, 30)
+    assert HealthThresholds.from_settings(Settings()) == HealthThresholds()
+
+
+def test_settings_carry_the_same_caps_as_the_health_module() -> None:
+    """M1 may not import `accounts`, so `Settings` mirrors the caps; the pair must not drift."""
+    assert (ACCOUNT_HEARTBEAT_MAX_S, ACCOUNT_DOWN_MAX_S) == (HEARTBEAT_MAX_S, DOWN_MAX_S)
 
 
 @pytest.mark.parametrize(

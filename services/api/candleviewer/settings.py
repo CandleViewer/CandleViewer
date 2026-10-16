@@ -32,6 +32,11 @@ _QUESTDB_DEV_PASSWORD = "quest"  # noqa: S105 - the QuestDB OSS default, refused
 _REDACT_NAME_RE = re.compile(r"(key|secret|token|password|dsn)", re.IGNORECASE)
 #: QuestDB PGWire default port, for a `questdb_pg` `host[:port]` that omits the port.
 QUESTDB_PG_DEFAULT_PORT = 8812
+#: US-ACCT-010's caps on `account_heartbeat_s` and `account_down_s`, which are also their defaults.
+#: `HEARTBEAT_MAX_S` and `DOWN_MAX_S` in `accounts/health.py` own them. M1 may not import
+#: `accounts`, so they are mirrored here, and a test pins the pair.
+ACCOUNT_HEARTBEAT_MAX_S: Final = 10.0
+ACCOUNT_DOWN_MAX_S: Final = 30.0
 
 # #2565: timings of the planned shutdown that are code constants, not settings. They live in M1
 # because `Settings` checks them against the configured terms (`_refuse_unfittable_stop_budget` sums
@@ -493,11 +498,13 @@ class Settings(BaseSettings):
     # E27-T04: account health windows (deployment config for v1, decision Q4 on #837). A heartbeat
     # is the private WS's successful auth reply, then any pong or topic message on that socket;
     # the client pings every account_heartbeat_s / 2 (5 s), not at the exchange's suggested 20 s.
-    # The caps are US-ACCT-010's NFRs, not tuning room: le=10 because a heartbeat older than 10 s
-    # must not show healthy, le=30 because order entry must close within 30 s of the last WS or
-    # REST success. No value switches either check off (C-4.14).
-    account_heartbeat_s: float = Field(default=10.0, gt=0.0, le=10.0)
-    account_down_s: float = Field(default=30.0, gt=0.0, le=30.0)
+    # The caps are US-ACCT-010's NFRs, not tuning room: a heartbeat older than 10 s must not show
+    # healthy, and order entry must close within 30 s of the last WS or REST success. No value
+    # switches either check off (C-4.14).
+    account_heartbeat_s: float = Field(
+        default=ACCOUNT_HEARTBEAT_MAX_S, gt=0.0, le=ACCOUNT_HEARTBEAT_MAX_S
+    )
+    account_down_s: float = Field(default=ACCOUNT_DOWN_MAX_S, gt=0.0, le=ACCOUNT_DOWN_MAX_S)
 
     git_sha: str = "unknown"
     version: str = "0.1.0"
