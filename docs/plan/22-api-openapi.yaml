@@ -8351,6 +8351,17 @@ paths:
         `x-rbac.permissions`), and the accounts they may read/trade. The UI uses this to
         decide which affordances to render; it is never the authorisation control itself
         (04-security-program.md section 7.3).
+
+        Self only: the caller is the session's user and nothing else selects whom it describes, so
+        any query parameter is refused with `422` (SR-026). `role` is the highest role the user
+        holds (`owner`, then `manager`, then `viewer`); `permissions` is the union over every live
+        role. `accounts` lists every live account for an owner (mode `trade`) and, for anyone else,
+        the live, unfrozen accounts they hold a view grant on (`trade` only with the trade grant).
+        `session.environment` is the deployment's environment, `session.elevated_until` the latest
+        live step-up grace expiry on the session (`null` when none) and
+        `session.one_click_armed_until` is `null` until one-click arming is served.
+        `onboarding_complete` is not served yet and is omitted. A user with no live role is
+        `403 forbidden`. The response is `Cache-Control: no-store`.
       x-rbac: { permissions: [], scope: self }
       responses:
         "200":
@@ -8359,6 +8370,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Me" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /me/preferences:
     get:
@@ -8368,6 +8381,11 @@ paths:
       description: >
         Alias of `GET /settings` scoped to the calling user; kept as a distinct operation
         because the app shell fetches it alongside `/me` on boot.
+
+        Self only: any query parameter is refused with `422` (SR-026). Until a store for
+        per-user overrides and a deployment default set exist, the effective settings are empty
+        (`_meta.overridden` is `[]`) and the client applies its built-in defaults. The response is
+        `Cache-Control: no-store`.
       x-rbac: { permissions: [settings:read], scope: self }
       responses:
         "200":
@@ -8376,6 +8394,8 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Settings" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
     patch:
       tags: [settings]
       operationId: updateMyPreferences
@@ -8458,6 +8478,10 @@ paths:
       description: >
         Flattened view of the active `HotkeyProfile`, used by the hotkey cheatsheet
         (SCR-013) and the command palette (SCR-012).
+
+        Self only: any query parameter is refused with `422` (SR-026). While the caller has no
+        stored profile, `hotkey_profile_id` is absent and `bindings` is empty, and the client
+        applies its built-in keymap. The response is `Cache-Control: no-store`.
       x-rbac: { permissions: [settings:read], scope: self }
       responses:
         "200":
@@ -8469,6 +8493,9 @@ paths:
                 properties:
                   hotkey_profile_id: { type: string, format: uuid }
                   bindings: { type: array, items: { $ref: "#/components/schemas/HotkeyBinding" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
 
   /auth/step-up:
     post:
