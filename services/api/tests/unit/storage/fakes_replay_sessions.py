@@ -138,8 +138,9 @@ class FakeReplaySessionRepository:
         # Like the adapter, ids are parsed client-side first: garbage is a ValueError, never a
         # constraint, and every uuid is stored in canonical lower-case form.
         sid, uid = str(uuid.UUID(row.id)), str(uuid.UUID(row.user_id))
-        recording, account = _stored_uuid(row.recording_session_id), _stored_uuid(
-            row.paper_account_id
+        recording, account = (
+            _stored_uuid(row.recording_session_id),
+            _stored_uuid(row.paper_account_id),
         )
         if not _SYMBOL_CODE.fullmatch(
             row.symbol
@@ -243,8 +244,11 @@ class FakeReplaySessionRepository:
         self, user_id: str, session_id: str, *, speed: Decimal
     ) -> ReplaySessionRow:
         now = self._clock()
-        stored = _numeric_6_2(speed)  # an unstorable speed fails before any row is matched
+        # Ids first, like the adapter: a malformed or unknown id is "not found" whatever the speed.
+        # Whether Postgres coerces the speed before matching an unknown row depends on the plan,
+        # so the contract pins the owned-row and malformed-id outcomes only.
         row = self._writable(user_id, session_id)
+        stored = _numeric_6_2(speed)
         self._check(
             start=row.range_start, end=row.range_end, cursor=row.cursor_ts, speed=stored,
             paper=row.paper_trading, account=row.paper_account_id, tier=row.source_tier,

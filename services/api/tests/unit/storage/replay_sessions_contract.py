@@ -401,16 +401,20 @@ class ReplaySessionRepositoryContract:
         "speed",
         [Decimal(12_345), Decimal("9999.995"), Decimal("Infinity"), Decimal("-Infinity")],
     )
-    async def test_an_unstorable_speed_fails_by_name_even_when_no_row_matches(
+    async def test_an_unstorable_speed_is_rps_speed_on_the_row_and_not_found_on_a_bad_id(
         self, h: Harness, speed: Decimal
     ) -> None:
-        # Postgres coerces the value to numeric(6,2) before it matches a row, so a missing or
-        # foreign row is still `rps_speed`, not "not found".
+        # On the owned row an unstorable speed is the `rps_speed` check, whatever plan Postgres
+        # uses. Ids are parsed before anything reaches the database, so a malformed id is "not
+        # found" even then. (Whether Postgres coerces the speed before matching an unknown but
+        # well-formed id depends on the plan, so that case is deliberately not pinned.)
         row = await h.in_state(S.PAUSED)
-        for uid, sid in ((row.user_id, str(uuid.uuid4())), (h.new_user(), row.id)):
-            with pytest.raises(ReplaySessionConstraintError) as err:
+        with pytest.raises(ReplaySessionConstraintError) as err:
+            await h.repo.update_speed(row.user_id, row.id, speed=speed)
+        assert err.value.constraint == "rps_speed"
+        for uid, sid in ((row.user_id, "not-a-uuid"), ("not-a-uuid", row.id)):
+            with pytest.raises(ReplaySessionNotFoundError):
                 await h.repo.update_speed(uid, sid, speed=speed)
-            assert err.value.constraint == "rps_speed"
         assert await h.repo.get(row.user_id, row.id) == row
 
     async def test_nan_speed_is_an_ordinary_check_failure_not_a_coercion_error(
