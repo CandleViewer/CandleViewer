@@ -1,17 +1,19 @@
-"""What a step-up challenge restates and binds (#2304; PR #2290 ruling, rule 4).
+"""What a step-up challenge restates, and the fingerprint of the request it refuses (#2304; PR
+#2290 ruling, rule 4).
 
 Restates: `Problem.action_summary` is the route's fixed-template text over the validated request,
 naming each account by its label, `environment` and `exchange_uid` with every label escaped so
 its quotes bound it; `Problem.target` is the typed-confirmation text. Both come from server-side
 records, never from the client.
 
-Binds: a no-grace grant (`live_enablement`, `killswitch`) is bound to the SHA-256 fingerprint of
-the challenged request: the method, a line feed, the raw request target (path and query string as
-received: no percent-decoding, no trailing-slash or parameter-order normalisation), a line feed,
-and the RFC 8785 (JCS) serialisation of the body as the operation validated it (empty when the
-operation takes no body). Headers, `Idempotency-Key` included, are not part of the binding. Pure
-functions, no I/O; the caller passes the one object its route validated, so the summary, the
-fingerprint and the executed action cannot disagree.
+Fingerprints: `request_fingerprint` is the hex SHA-256 of the method, a line feed, the raw
+request target (path and query string as received: no percent-decoding, no trailing-slash or
+parameter-order normalisation), a line feed, and the RFC 8785 (JCS) serialisation of the body as
+the operation validated it (empty when the operation takes no body). Headers, `Idempotency-Key`
+included, are not part of it. It names one request exactly, so the grant of a no-grace class
+(`auth.step_up.NO_GRACE_ACTION_CLASSES`) can be bound to the challenged request. Pure functions,
+no I/O; the caller passes the one object its route validated, so the summary, the fingerprint and
+the executed action cannot disagree.
 """
 
 from __future__ import annotations

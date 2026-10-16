@@ -293,6 +293,20 @@ async def require_elevation_for(
     return None
 
 
+async def require_session_elevation(
+    auth: _AuthLike, session_id: object | None, action_class: str
+) -> JSONResponse | None:
+    """`require_elevation_for` for a handler that resolved its caller itself (#2304): with no
+    session there is nothing to elevate and no challenge to issue (401), and sessions wired
+    without step-up are a wiring fault (503, as on the path-gated routes), never a refusal no
+    client could answer."""
+    if session_id is None:
+        return _unauthenticated()
+    if not auth.step_up_is_active:
+        return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+    return await require_elevation_for(auth, str(session_id), action_class)
+
+
 #: `is_dangerous` routes (permissions seeded `is_dangerous=true`) -> the
 #: step-up action class that must be elevated. Method + path regex. Paths are
 #: the `22-api-openapi.yaml` contract; entries for routes that later epics
@@ -656,4 +670,9 @@ def make_step_up_router(
     return router
 
 
-__all__ = ["make_read_only_guard", "make_step_up_router", "require_elevation_for"]
+__all__ = [
+    "make_read_only_guard",
+    "make_step_up_router",
+    "require_elevation_for",
+    "require_session_elevation",
+]

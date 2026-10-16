@@ -20,10 +20,14 @@ challenge per session (`record_pending`), stored on the row with its id,
 class, 5-minute expiry and, for a no-grace class, the SHA-256 fingerprint of
 the refused request. A no-grace step-up must name it, and its one-shot grant
 (60 s) is bound to that fingerprint: only the identical request can use it,
-once. The grant is used by one conditional write (`consume_step_up_key`), and
-every other write of the step-up columns is a pure change applied to the row
-as it is under its lock (`update_step_up_state`), never to a copy read before
-it: a grant used while another request of the session is in flight stays used.
+once.
+
+Writes (#2304, #2798): a no-grace class's one-shot grant is used by one
+conditional write (`consume_step_up_key`), and every other write of the
+step-up columns is a pure change applied to the row as it is under its lock
+(`update_step_up_state`), never to a copy read before it: of two requests
+racing to use a grant one does, and a grant used while another request of
+the session is in flight stays used.
 """
 
 from __future__ import annotations
@@ -80,7 +84,9 @@ NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch"})
 POSITION_SOURCE_NOT_DEPLOYED = "not_deployed"
 #: Key prefix (in `step_up_elevations`) of the challenge issued by the last 403.
 _PENDING = "pending:"
-#: Key prefix of a no-grace class's one-shot grant (#2304: bound to one request).
+#: Key prefix (in `step_up_elevations`) of a one-shot grant: a no-grace class's is stored as
+#: `once:<class>:<challenge_id>:<sha256>` by `step_up()`, bound to the challenged request
+#: (#2304), and removed by `consume_single_use`.
 _ONCE = "once:"
 #: #2304: a challenge expires 5 minutes after issue; a one-shot grant 60 s after the
 #: step-up, which leaves time only for the immediate re-send.
@@ -100,18 +106,24 @@ def last_step_up_at(elevations: dict[str, datetime]) -> datetime | None:
     """When the session's most recent successful step-up happened, whatever its action class,
     or `None` when the row records none (#2754).
 
-    `step_up()` stores `now + GRACE_WINDOW` under the class (`once:<class>` for a one-shot
-    grant), so a grant's expiry less the window is the instant it was given. A `pending:`
-    challenge carries the same expiry but is no step-up, and a key that is not an action class
-    is ignored. A grant stays on the row after its window lapses, so the instant outlives the
-    window; it is gone once something removes the grant: an idle-lock unlock (B16.7), the
-    read-only downgrade, the spend of a one-shot grant, or a later write that prunes lapsed
-    windows. A token refresh starts a successor row, which holds none. Observability only:
-    elevation is still decided by `require_elevation`, never here."""
+    `step_up()` stores a grace class's window under the class (`now + GRACE_WINDOW`) and a
+    no-grace class's one-shot grant under its bound `once:` key (`now + SINGLE_USE_WINDOW`,
+    #2304), so a grant's expiry less its window is the instant it was given (a class-only
+    `once:<class>` grant from before #2304 had the grace window). A `pending:` challenge is no
+    step-up, and a key that is no grant is ignored. A grant stays on the row after its window
+    lapses, so the instant outlives the window; it is gone once something removes the grant: an
+    idle-lock unlock (B16.7), the read-only downgrade, the spend of a one-shot grant, or a later
+    write that prunes lapsed windows. A token refresh starts a successor row, which holds none.
+    Observability only: elevation is still decided by `require_elevation`, never here."""
     given = [
         until - GRACE_WINDOW
         for key, until in elevations.items()
         if key.removeprefix(_ONCE) in ACTION_CLASSES
+    ]
+    given += [
+        until - SINGLE_USE_WINDOW
+        for key, until in elevations.items()
+        if StepUpChallenge.parse(key, until, _ONCE) is not None
     ]
     return max(given) if given else None
 
@@ -170,11 +182,15 @@ class StepUpChallenge:
     @classmethod
     def parse(cls, key: str, expires_at: datetime, prefix: str) -> StepUpChallenge | None:
         """The entry stored under `key`, or None for any other key (including the
-        class-only keys written before #2304, which therefore bind nothing)."""
+        class-only keys written before #2304, which therefore bind nothing). A
+        one-shot grant is a no-grace class's and always names the request it binds,
+        so a `once:` key without a fingerprint is no grant at all."""
         parts = key.removeprefix(prefix).split(":") if key.startswith(prefix) else []
         if len(parts) not in (2, 3) or parts[0] not in ACTION_CLASSES:
             return None
         fingerprint = parts[2] if len(parts) == 3 else None
+        if prefix == _ONCE and (parts[0] not in NO_GRACE_ACTION_CLASSES or fingerprint is None):
+            return None
         if fingerprint is not None and not _FINGERPRINT.fullmatch(fingerprint):
             return None
         try:
@@ -230,21 +246,21 @@ def _unexpired(elevations: dict[str, datetime], now: datetime) -> dict[str, date
     return {k: v for k, v in elevations.items() if v > now}
 
 
-def _issue(challenge: StepUpChallenge, now: datetime) -> StepUpChange:
+def _issue(key: str, until: datetime, now: datetime) -> StepUpChange:
     """The new challenge supersedes the live one; nothing else on the row changes."""
 
     def change(state: StepUpState) -> StepUpState:
         elevations, failures, readonly_until = state
         kept = {k: v for k, v in _unexpired(elevations, now).items() if not k.startswith(_PENDING)}
-        return {**kept, challenge.key(): challenge.expires_at}, failures, readonly_until
+        return {**kept, key: until}, failures, readonly_until
 
     return change
 
 
 def _elevate(action_class: str, grant_key: str, until: datetime, now: datetime) -> StepUpChange:
-    """The challenge is used up. A no-grace class holds one grant, bound to the challenged
-    request (a newer step-up replaces it); a grace class a window. A downgrade that landed
-    during the factor check stands, and nothing is elevated."""
+    """The challenge is used up. A no-grace class holds one grant (a newer step-up replaces
+    it), a grace class a window. A downgrade that landed during the factor check stands, and
+    nothing is elevated."""
     once = f"{_ONCE}{action_class}"
 
     def change(state: StepUpState) -> StepUpState:
@@ -468,7 +484,7 @@ class StepUpService:
             raise SessionRevoked("step_up")
         now = self._clock()
         challenge = StepUpChallenge(uuid.uuid4(), action_class, now + CHALLENGE_WINDOW, fingerprint)
-        await self._update(session_id, _issue(challenge, now))
+        await self._update(session_id, _issue(challenge.key(), challenge.expires_at, now))
         # Challenge issued (the 403 is decided): B16 audits `step_up_required`.
         await self._record(
             record,
@@ -562,14 +578,14 @@ class StepUpService:
         grant = next(
             (g for g in _stored(record, now, _ONCE) if g.action_class == action_class), None
         )
-        if grant is None:
+        if grant is None or grant.fingerprint is None:  # `parse` keeps only bound grants
             raise StepUpRequired(action_class)
         if grant.fingerprint != fingerprint:
             raise StepUpMismatch(
                 action_class,
                 user_id=str(record.user_id),
                 challenge_id=str(grant.challenge_id),
-                bound=grant.fingerprint or "",
+                bound=grant.fingerprint,
                 refused=fingerprint,
             )
         used = await self._sessions.consume_step_up_key(session_id, key=grant.key(_ONCE), now=now)

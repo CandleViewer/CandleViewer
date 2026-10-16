@@ -20,7 +20,7 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
-from candleviewer.auth.step_up import StepUpService
+from candleviewer.auth.step_up import NO_GRACE_ACTION_CLASSES, StepUpService
 from candleviewer.auth.totp import generate_code, time_step_for
 
 from .auth_fakes import FakeUserRepository, make_user
@@ -115,7 +115,7 @@ async def test_grace_window_within_action_class() -> None:
         await svc.require_elevation("s1", "keys")
 
 
-@pytest.mark.parametrize("cls", ["live_enablement", "killswitch"])
+@pytest.mark.parametrize("cls", sorted(NO_GRACE_ACTION_CLASSES))
 async def test_grace_never_applies_to_no_grace_classes(cls: str) -> None:
     svc, clock, seed, user, _ = await _setup()
     await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)

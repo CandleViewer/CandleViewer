@@ -25,6 +25,7 @@ from candleviewer.api.step_up import (
     make_read_only_guard,
     make_step_up_router,
     require_elevation_for,
+    require_session_elevation,
 )
 from candleviewer.api.step_up_challenge import (
     ChallengeText,
@@ -412,3 +413,22 @@ async def test_no_password_code_or_request_body_reaches_logs_or_audit(
     recorded = repr(w.audit.calls)
     for secret in (_PW, f"'{code}'", f'"{code}"', "private-note-7731"):
         assert secret not in caplog.text and secret not in recorded
+
+
+@pytest.mark.parametrize(
+    ("session", "wired", "status"),
+    [(False, True, 401), (True, False, 503), (True, True, 403)],
+    ids=["no-session", "step-up-not-wired", "challenged"],
+)
+async def test_handler_gate_challenges_only_a_session_it_can_challenge(
+    session: bool, wired: bool, status: int
+) -> None:
+    """A handler that resolved its caller itself (the recorder purge) refuses without a challenge
+    when there is no session to challenge or no step-up service to issue one (#2304)."""
+    w = await _world()
+    w.auth.step_up_is_active = wired
+    sid = w.sessions["tok"].id if session else None
+    denied = await require_session_elevation(w.auth, sid, "keys")
+    assert denied is not None and denied.status_code == status
+    assert (b"challenge_id" in denied.body) is (status == 403)
+    assert len(w.of("auth.step_up_required")) == (status == 403)
