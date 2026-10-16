@@ -10,6 +10,9 @@ soft-deleted target but is audited too: telling them apart would need a second l
 difference. Drawing writes are not audited (not a C-2.9 action). Bodies are read raw so byte, depth
 and batch-size caps run before pydantic; no content is logged. POST and batch replay an
 `Idempotency-Key` from a bounded per-user cache.
+
+A denial whose `rbac.denied` record cannot be made durable is answered 503 `store_unavailable`
+with no state change, never 403/404/409; allowed requests never reach the audit writer.
 """
 
 import base64
