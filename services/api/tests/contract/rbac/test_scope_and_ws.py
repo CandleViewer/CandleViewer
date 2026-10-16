@@ -4,6 +4,7 @@ and WS parity assertions for the RBAC matrix pack (E09-Q03)."""
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -13,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from candleviewer.api.deny_by_default import served_operations
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import Allow, Deny, decide
 from tests.contract.rbac.rbac_harness import (
@@ -345,6 +347,62 @@ def test_administrative_mutations_require_step_up_even_for_the_owner(
     assert resp.status_code == 403
     assert resp.json().get("code") == "step_up_required"
     assert world.users.roles == world.users.initial_roles
+
+
+#: Owner-only, step-up-gated mutations the app does not serve yet. Mounting one fails
+#: `test_unmounted_administrative_mutations_are_not_served_yet` until it moves into
+#: `_ADMIN_MUTATIONS` with a request body, so the two tests above cover it (#2575).
+_ADMIN_MUTATIONS_UNMOUNTED = [
+    ("POST", "/admin/recorder/purge"),  # 04 §7.2.2 row 9a; mounted by E16-T08 (#492)
+]
+#: The matrix row of an Owner-only operation (the `POST /admin/audit/verify` shape).
+_OWNER_ONLY_OUTCOMES = {
+    "owner": "allow",
+    "manager_with_grant": "403",
+    "manager_without_grant": "403",
+    "viewer": "403",
+    "unauthenticated": "401",
+}
+_OWNER_ONLY_MUTATIONS = [(m, p) for m, p, _ in _ADMIN_MUTATIONS] + _ADMIN_MUTATIONS_UNMOUNTED
+
+
+def _shape(path: str) -> str:
+    """`/users/{uid}/roles` here and `/users/{userId}/roles` in the matrix are one operation."""
+    return re.sub(r"\{[^}]+\}", "{}", path)
+
+
+def _matrix_outcomes(method: str, path: str) -> dict[str, str]:
+    from tests.contract.rbac.test_route_matrix import _OPS
+
+    rows = [
+        row["outcomes"]
+        for key, row in _OPS.items()
+        if key.split(" ", 1)[0] == method and _shape(key.split(" ", 1)[1]) == _shape(path)
+    ]
+    assert len(rows) == 1, f"{method} {path}: expected one matrix row, found {len(rows)}"
+    outcomes: dict[str, str] = rows[0]
+    return outcomes
+
+
+@pytest.mark.parametrize(("method", "path"), _OWNER_ONLY_MUTATIONS)
+def test_administrative_mutation_rows_are_owner_only_even_while_unmounted(
+    method: str, path: str
+) -> None:
+    """#2575: an Owner-only narrowing within a permission Managers hold (purge: `recording:write`,
+    04 §7.2.2 row 9a) lives only in the matrix, so the row must refuse every non-Owner before
+    the route is mounted; a Manager `allow` would certify a handler that lets any Manager purge."""
+    assert _matrix_outcomes(method, path) == _OWNER_ONLY_OUTCOMES, f"{method} {path}"
+
+
+def test_unmounted_administrative_mutations_are_not_served_yet(world: World) -> None:
+    """#492 guard: once the app serves one of `_ADMIN_MUTATIONS_UNMOUNTED`, this fails until the
+    route moves into `_ADMIN_MUTATIONS`, so the Owner-only and step-up tests cannot miss it."""
+    served = {(m, _shape(p)) for m, p in served_operations(world.app)}
+    now_served = [f"{m} {p}" for m, p in _ADMIN_MUTATIONS_UNMOUNTED if (m, _shape(p)) in served]
+    assert not now_served, (
+        "now served: move these into _ADMIN_MUTATIONS with a request body so the Owner-only "
+        "and step-up tests run against them: " + ", ".join(now_served)
+    )
 
 
 # -- WS parity ----------------------------------------------------------------------------------
