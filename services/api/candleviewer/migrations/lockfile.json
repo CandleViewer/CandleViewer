@@ -139,7 +139,7 @@
     },
     "0029_oms_core": {
       "path": "services/api/candleviewer/migrations/versions/0029_oms_core.py",
-      "sha256": "0c9a4cd0b2620387ae42112adf8cf057a7842167a4adbe4e558b28cdbf175e77",
+      "sha256": "3dba4a2e2285ba19e9ec726785c6cafd9701b0ae254663e94fe687299d777a66",
       "down_revision": "0028_incidents_backups"
     }
   }
