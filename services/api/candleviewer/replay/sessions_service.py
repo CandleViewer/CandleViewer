@@ -168,6 +168,12 @@ class SnapshotSource(Protocol):
     async def load(self, key: MachineKey) -> SealedSnapshot | None: ...
 
 
+#: `(session_id, user_id, reason)` once a session is destroyed (`client` | `idle_reclaim`): the
+#: seam E26-T05's WS layer uses to revoke the session's subscriptions with
+#: `replay_session_ended` (#624 reclaim AC). No-op until it is wired; failures are logged.
+SessionEnded = Callable[[str, str, str], Awaitable[None]]
+
+
 @dataclass(frozen=True, slots=True)
 class ReplayLimits:
     """The `CV_REPLAY_*` settings (24 §13.7)."""
@@ -263,12 +269,14 @@ class ReplaySessionService:
         snapshots: SnapshotSource | None = None,
         restorer: Restorer | None = None,
         persister: Persister | None = None,
+        on_ended: SessionEnded | None = None,
     ) -> None:
         self._repo, self._coverage, self._audit, self._limits = repo, coverage, audit, limits
         self._handles: SessionHandles = handles or NoHandles()
         self._paper_gate, self._env, self._clock, self._sleep = paper_gate, env, clock, sleep
         self._gateway = gateway or Gateway()
         self._snapshots, self._restorer, self._persister = snapshots, restorer, persister
+        self._on_ended = on_ended
         self._live: dict[str, _Live] = {}
         #: Sessions whose chart entered a state since the last mirror (<= one entry per session).
         self._dirty: dict[str, None] = {}
@@ -331,6 +339,24 @@ class ReplaySessionService:
         await asyncio.gather(*tasks, return_exceptions=True)
         for live in list(self._live.values()):
             await self._retire(live, persist=True)
+
+    @property
+    def tasks_alive(self) -> bool:
+        """Both tracked tasks are running (module health, `ReplayService.health`)."""
+        return bool(self._tasks) and not any(task.done() for task in self._tasks)
+
+    @property
+    def limits(self) -> ReplayLimits:
+        return self._limits
+
+    async def _ended(self, live: _Live, reason: str) -> None:
+        """Tell `on_ended` the session is gone (best effort: a failure is logged, never raised)."""
+        if self._on_ended is None:
+            return
+        try:
+            await self._io("on_ended", self._on_ended(live.id, live.user_id, reason))
+        except Exception as exc:
+            logger().error("replay_session_ended_failed", session_id=live.id, error=str(exc))
 
     async def _mirror_loop(self) -> None:
         while True:
@@ -459,9 +485,11 @@ class ReplaySessionService:
         B12.3 handles `DESTROY` only in created/paused/finished/error, so a `playing` session is
         paused and a `buffering` one cancelled first (a `stepping` step is let finish; if it has
         not, this refuses and the next sweep retries). The handles are released exactly once
-        and the interpreter retired. False when already destroyed (INV-B12-e)."""
+        and the interpreter is always retired, even when mirroring the row fails: the row then
+        stays live and a retry revives and destroys it. `on_ended` is told in every case.
+        False when already destroyed (INV-B12-e)."""
         if reason not in _REASONS:
-            raise ValueError("reason must be 'client' or 'idle_reclaim'")
+            raise ReplaySessionValidationError("reason must be 'client' or 'idle_reclaim'")
         live = await self._owned(user_id, session_id)
         if live is None:
             return False
@@ -481,9 +509,12 @@ class ReplaySessionService:
             await self._emit("replay.session.destroyed", live.id, live.user_id, after, actor=actor)
             await self._send_replay(live, "DESTROY", reason=reason)
             live.done = True
-            await self._release(live)
-            await self._sync(live)
-            await self._retire(live)
+            try:
+                await self._release(live)
+                await self._sync(live)
+            finally:
+                await self._retire(live)
+                await self._ended(live, reason)
         return True
 
     async def reclaim_idle(self, now: datetime) -> int:
@@ -493,7 +524,8 @@ class ReplaySessionService:
         session already destroyed is skipped, so a second pass is a no-op. Returns the count."""
         cutoff = now - self._limits.idle_ttl
         batch = self._limits.reclaim_batch
-        due = {r.id: r.user_id for r in await self._repo.list_idle_since(cutoff, batch)}
+        idle = await self._io("repository", self._repo.list_idle_since(cutoff, batch))
+        due = {r.id: r.user_id for r in idle}
         due.update({s.id: s.user_id for s in self._live.values() if s.touched < cutoff})
         reclaimed = 0
         for sid, uid in list(due.items())[:batch]:
@@ -537,11 +569,12 @@ class ReplaySessionService:
         key = MachineKey(MACHINE, row.id, self._env)
         sealed = None
         if self._snapshots is not None and self._restorer is not None:
-            sealed = await self._snapshots.load(key)
+            sealed = await self._io("snapshot", self._snapshots.load(key))
         interp: Any = None
         if sealed is not None and self._restorer is not None:
             try:  # a refused envelope is quarantined and paged by the Restorer; rebuild instead
-                interp = (await restore_chart(self._restorer, key, sealed)).interpreter
+                restored = await self._io("restore", restore_chart(self._restorer, key, sealed))
+                interp = restored.interpreter
             except RestoreRefusedError:
                 interp = None
         if interp is None:
@@ -598,10 +631,9 @@ class ReplaySessionService:
             live.unsubscribe()
         self._gateway.unregister(live.key)
         if persist and self._persister is not None and live.interp.is_running:
+            key = MachineKey(MACHINE, live.id, self._env)
             try:
-                await self._persister.persist(
-                    live.interp, key=MachineKey(MACHINE, live.id, self._env)
-                )
+                await self._io("persist", self._persister.persist(live.interp, key=key))
                 return
             except Exception as exc:  # e.g. a faulted context (MUST-01): stop without a snapshot
                 logger().error(

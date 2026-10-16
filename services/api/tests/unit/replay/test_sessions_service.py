@@ -8,6 +8,7 @@ releases. The chart is the real committed B12 contract built through `statechart
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
@@ -15,9 +16,10 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 import candleviewer.statechart.bindings.b12_replay as b12
@@ -33,6 +35,7 @@ from candleviewer.replay.sessions_service import (
     to_us,
 )
 from candleviewer.statechart.gateway import Gateway, GatewayError
+from candleviewer.statechart.registry import Registry
 from candleviewer.storage.repositories.replay_sessions import (
     ReplaySessionCreate,
     ReplaySessionIllegalUpdateError,
@@ -106,12 +109,15 @@ class Env:
         return self.svc
 
 
-def make_env(*, cap: int = 2, repo: FakeReplaySessionRepository | None = None, **kw: Any) -> Env:
+def make_env(
+    *, cap: int = 2, batch: int = 50, repo: FakeReplaySessionRepository | None = None, **kw: Any
+) -> Env:
     clock = FakeClock(datetime(2026, 10, 1, tzinfo=UTC))
     env = Env(clock=clock, repo=repo or FakeReplaySessionRepository(clock))
     limits = ReplayLimits(
-        idle_ttl=timedelta(hours=2), max_sessions_per_user=cap, max_window=timedelta(hours=24)
-    )
+        idle_ttl=timedelta(hours=2), max_sessions_per_user=cap, max_window=timedelta(hours=24),
+        reclaim_batch=batch,
+    )  # fmt: skip
     env.svc = ReplaySessionService(
         env.repo, coverage=env.coverage, audit=env.audit, handles=env.handles,
         limits=limits, clock=clock, **kw,
@@ -472,6 +478,67 @@ async def test_destroy_is_refused_when_the_audit_record_cannot_be_written() -> N
     assert env.handles.released[sid] == 0 and env.s.state_of(sid) == "created"
 
 
+async def test_destroy_cancels_a_buffering_session_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(b12.SERVICES, "seek_and_prime", _gated(asyncio.Event()))
+    env = make_env()
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id  # held in `buffering`
+    assert await env.s.destroy(USER_A, sid) is True  # CANCEL, then DESTROY (B12.3)
+    assert env.handles.released[sid] == 1
+    assert await state_in_db(env, USER_A, sid) is ReplayState.DESTROYED
+
+
+async def test_destroy_during_a_running_step_is_refused_and_releases_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gate = asyncio.Event()
+    monkeypatch.setitem(b12.SERVICES, "emit_one_step", _gated(gate))
+    env = make_env()
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, sid, "STEP")
+    with pytest.raises(ReplaySessionIllegalUpdateError):
+        await env.s.destroy(USER_A, sid)
+    assert env.handles.released[sid] == 0 and env.s.state_of(sid) == "stepping"
+    assert "replay.session.destroyed" not in env.audit.actions()  # refused before the audit
+    gate.set()
+    assert await env.s.destroy(USER_A, sid) is True
+
+
+class _LosesOneDestroyWrite(FakeReplaySessionRepository):
+    async def update_state(self, user_id: str, session_id: str, **kw: Any) -> Any:
+        if kw["state"] is ReplayState.DESTROYED and not getattr(self, "lost", False):
+            self.lost = True
+            raise ConnectionError("database down")
+        return await super().update_state(user_id, session_id, **kw)
+
+
+async def test_a_lost_destroy_write_still_retires_the_chart_and_a_retry_completes_it() -> None:
+    env = make_env(repo=_LosesOneDestroyWrite())
+    sid = (await env.s.create(USER_A, request())).id
+    with pytest.raises(ConnectionError):
+        await env.s.destroy(USER_A, sid)
+    assert env.s.state_of(sid) is None and env.handles.released[sid] == 1
+    assert await env.s.destroy(USER_A, sid) is True  # revived from the live row, then destroyed
+    assert await state_in_db(env, USER_A, sid) is ReplayState.DESTROYED
+    assert env.handles.released[sid] == 2  # each acquired set released once
+
+
+async def test_destroy_tells_on_ended_once_even_when_the_listener_fails() -> None:
+    ended: list[tuple[str, str, str]] = []
+
+    async def on_ended(session_id: str, user_id: str, reason: str) -> None:
+        ended.append((session_id, user_id, reason))
+        raise RuntimeError("ws gateway down")
+
+    env = make_env(on_ended=on_ended)
+    sid = (await env.s.create(USER_A, request())).id
+    assert await env.s.destroy(USER_A, sid) is True
+    env.clock.advance(hours=3)
+    other = (await env.s.create(USER_A, request())).id
+    env.clock.advance(hours=3)
+    assert await env.s.reclaim_idle(env.clock()) == 1
+    assert ended == [(sid, USER_A, "client"), (other, USER_A, "idle_reclaim")]
+
+
 async def test_reclaim_idle_destroys_exactly_the_idle_set_once() -> None:
     env = make_env(cap=3)
     playing = (await env.s.create(USER_A, request(), prepare=True)).id
@@ -485,6 +552,34 @@ async def test_reclaim_idle_destroys_exactly_the_idle_set_once() -> None:
     assert await state_in_db(env, USER_B, fresh) is ReplayState.PAUSED
     reasons = [kw["reason"] for a, kw in env.audit.rows if a == "replay.session.destroyed"]
     assert reasons == ["idle_reclaim", "idle_reclaim"]
+
+
+async def test_reclaim_idle_takes_at_most_one_batch_per_sweep() -> None:
+    env = make_env(cap=3, batch=2)
+    for _ in range(3):
+        await env.s.create(USER_A, request())
+    env.clock.advance(hours=3)
+    assert await env.s.reclaim_idle(env.clock()) == 2
+    assert await env.s.reclaim_idle(env.clock()) == 1
+
+
+async def test_a_control_call_postpones_idle_reclaim() -> None:
+    env = make_env()
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    env.clock.advance(minutes=90)
+    await env.s.transition(USER_A, sid, "STEP")  # paused -> stepping -> paused: only the touch
+    env.clock.advance(minutes=60)
+    assert await env.s.reclaim_idle(env.clock()) == 0
+
+
+async def test_a_state_change_postpones_idle_reclaim() -> None:
+    env = make_env()
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, sid, "PLAY")
+    env.clock.advance(minutes=90)
+    await env.s.transition(USER_A, sid, "RANGE_END")  # a clock event: no touch, a new state
+    env.clock.advance(minutes=60)
+    assert await env.s.reclaim_idle(env.clock()) == 0
 
 
 async def test_the_reclaimer_runs_as_a_tracked_task_until_stopped() -> None:
@@ -520,13 +615,32 @@ async def test_the_module_lifecycle_owns_the_service_and_survives_a_boot_outage(
     from candleviewer.replay.service import ReplayService
 
     module, env = ReplayService(), make_env(repo=_DownRepository())
-    assert module.health().detail == "replay sessions off"
+    assert module.health().status is HealthStatus.STOPPED
     module.attach_sessions(env.s)
     await module.start(cast(Any, None))  # the outage is logged; the sessions revive on next use
     assert module.health().status is HealthStatus.OK
     assert (await env.s.create(USER_A, request(), prepare=True)).state is ReplayState.PAUSED
     await module.stop(1.0)
     assert module.health().status is HealthStatus.STOPPED
+
+
+async def test_module_health_degrades_when_a_session_task_dies() -> None:
+    from candleviewer.observability.health import HealthStatus
+    from candleviewer.replay.service import ReplayService
+
+    async def broken_sleep(_seconds: float) -> None:
+        raise RuntimeError("timer broken")
+
+    module, env = ReplayService(), make_env(sleep=broken_sleep)
+    module.attach_sessions(env.s)
+    await module.start(cast(Any, None))
+
+    async def dead() -> bool:
+        return not env.s.tasks_alive
+
+    await until(dead)
+    assert module.health().status is HealthStatus.DEGRADED
+    await module.stop(1.0)
 
 
 # --- restart survival (US-RPL-009) and async completions ------------------------------------
@@ -579,7 +693,8 @@ class _Sealed:
         return None
 
 
-async def test_restart_restores_a_sealed_snapshot_through_statechart_persistence() -> None:
+def _persistence() -> tuple[_Sealed, dict[str, Any]]:
+    """A `Persister`/`Restorer` pair over one in-memory store, journal and key ring."""
     from candleviewer.statechart.factory import default_clock
     from candleviewer.statechart.persistence import (
         ChainTripLatch,
@@ -588,7 +703,6 @@ async def test_restart_restores_a_sealed_snapshot_through_statechart_persistence
         Restorer,
         hmac_sealer,
     )  # fmt: skip
-    from candleviewer.statechart.registry import Registry
 
     reg, sealed, journal = Registry(), _Sealed(), InMemoryDrainJournal()
     persist = Persister(
@@ -599,7 +713,11 @@ async def test_restart_restores_a_sealed_snapshot_through_statechart_persistence
         registry=reg, keys=sealed, journal=journal, audit=sealed, pager=sealed,
         latch=ChainTripLatch(), plugins=tuple, clock=default_clock(), lane="control",
     )  # fmt: skip
-    kw: dict[str, Any] = {"persister": persist, "snapshots": sealed, "restorer": restore}
+    return sealed, {"persister": persist, "snapshots": sealed, "restorer": restore}
+
+
+async def test_restart_restores_a_sealed_snapshot_through_statechart_persistence() -> None:
+    sealed, kw = _persistence()
     env = make_env(**kw)
     sid = (await env.s.create(USER_A, request(), prepare=True)).id
     await env.s.stop()  # drain -> journal -> sealed snapshot -> stop (CV-C65')
@@ -608,6 +726,21 @@ async def test_restart_restores_a_sealed_snapshot_through_statechart_persistence
     assert again.s.state_of(sid) == "paused" and sealed.quarantined == []
     assert await state_in_db(again, USER_A, sid) is ReplayState.PAUSED
     assert (await again.s.transition(USER_A, sid, "PLAY")).state is ReplayState.PLAYING
+    await again.s.stop()
+
+
+@pytest.mark.parametrize("tampered", ["seal", "machine_hash"])
+async def test_restart_rebuilds_from_the_row_when_the_snapshot_is_refused(tampered: str) -> None:
+    sealed, kw = _persistence()
+    env = make_env(**kw)
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.stop()
+    [(key, envelope)] = sealed.saved.items()
+    forged = {"seal": replace(envelope.seal, tag="0" * 64), "machine_hash": "0" * 64}[tampered]
+    sealed.saved[key] = replace(envelope, **{tampered: forged})
+    again = make_env(repo=env.repo, **kw)
+    await again.s.start()
+    assert again.s.state_of(sid) == "created" and len(sealed.quarantined) == 1
     await again.s.stop()
 
 
@@ -645,33 +778,87 @@ async def test_a_slow_seek_can_be_cancelled_or_completes_later_and_is_mirrored(
 
 # --- properties and audit -------------------------------------------------------------------
 
-_EVENTS = ["PREPARE", "PLAY", "PAUSE", "STEP", "SEEK", "SET_SPEED", "CANCEL", "RANGE_END"]
-_EVENTS += ["SOURCE_ERROR", "CONSUMER_SLOW", "DESTROY"]
+#: B12's own transition table is the oracle: the controls each state handles, plus `DESTROY`
+#: (`playing`/`buffering` are wound down first; a running step refuses it) and `RELEASE` (let a
+#: held seek or step complete).
+_CHART = Registry().get("replay")
+_CONTROLS = frozenset({
+    "PREPARE", "PLAY", "PAUSE", "STEP", "SEEK", "SET_SPEED", "CANCEL", "RANGE_END",
+    "CONSUMER_SLOW", "SOURCE_ERROR",
+})  # fmt: skip
 
 
-async def _mirror_scenario(events: list[str]) -> None:
-    env = make_env()
-    sid = (await env.s.create(USER_A, request())).id
-    for event in events:
-        try:
-            if event == "DESTROY":
-                await env.s.destroy(USER_A, sid)
+def _moves(leaf: str) -> list[str]:
+    moves = [e for e in _CHART["states"][leaf].get("on", {}) if e in _CONTROLS]
+    moves += [] if leaf == "stepping" else ["DESTROY"]
+    return moves + (["RELEASE"] if leaf in ("buffering", "stepping") else [])
+
+
+async def _walk(path: list[tuple[int, bool]]) -> set[str]:
+    """Drive one session along legal moves. After every move the row mirrors the chart and the
+    handles are released iff the session is destroyed (INV-B12-e). A `slow` move holds the
+    seek/step, so `buffering` and `stepping` are observed, not only passed through."""
+    gate = asyncio.Event()
+    with patch.dict(b12.SERVICES, {"seek_and_prime": _gated(gate), "emit_one_step": _gated(gate)}):
+        env = make_env()
+        await env.s.start()
+        sid = (await env.s.create(USER_A, request())).id
+        seen = {"created"}
+
+        async def mirrored() -> bool:
+            leaf = env.s.state_of(sid)
+            return (await state_in_db(env, USER_A, sid)).value == (leaf or "destroyed")
+
+        async def moved_on() -> bool:  # a released seek/step has completed
+            return env.s.state_of(sid) not in ("buffering", "stepping")
+
+        for pick, slow in path:
+            leaf = env.s.state_of(sid)
+            if leaf is None:
+                break
+            move = (moves := _moves(leaf))[pick % len(moves)]
+            if slow and move != "RELEASE":
+                gate.clear()
             else:
-                await env.s.transition(USER_A, sid, event, _PAYLOADS.get(event))
-        except ReplaySessionIllegalUpdateError:
-            pass
-        leaf = env.s.state_of(sid)
-        assert (await state_in_db(env, USER_A, sid)).value == (leaf or "destroyed"), events
-        assert env.handles.released[sid] == (0 if leaf else 1), events
-    await env.s.stop()
+                gate.set()
+            with contextlib.suppress(ReplaySessionIllegalUpdateError):
+                if move == "DESTROY":
+                    await env.s.destroy(USER_A, sid)
+                elif move != "RELEASE":
+                    await env.s.transition(USER_A, sid, move, _PAYLOADS.get(move))
+            if move == "RELEASE":
+                await until(moved_on)
+            await until(mirrored)
+            seen.add(env.s.state_of(sid) or "destroyed")
+            assert env.handles.released[sid] == (0 if env.s.state_of(sid) else 1), path
+        gate.set()
+        await env.s.stop()
+    return seen
 
 
-@settings(max_examples=40, deadline=None)
-@given(st.lists(st.sampled_from(_EVENTS), max_size=12))
+_TO_FINISHED = [(0, False), (0, False), (4, False), (1, False)]
+_TO_ERROR = [(0, False), (0, False), (5, False)]
+_HOLDING = [(0, True), (2, False), (1, True), (0, False)]
+
+
+@settings(max_examples=200, deadline=None)
+@given(st.lists(st.tuples(st.integers(0, 6), st.booleans()), max_size=14))
+@example(_TO_FINISHED)
+@example(_TO_ERROR)
+@example(_HOLDING)
 def test_row_status_mirrors_the_machine_and_handles_release_exactly_once(
-    events: list[str],
+    path: list[tuple[int, bool]],
 ) -> None:
-    asyncio.run(_mirror_scenario(events))
+    asyncio.run(_walk(path))
+
+
+def test_the_legal_walk_reaches_every_chart_state() -> None:
+    seen: set[str] = set()
+    for path in (_TO_FINISHED, _TO_ERROR, _HOLDING):
+        seen |= asyncio.run(_walk(path))
+    assert seen == {
+        "created", "buffering", "paused", "stepping", "playing", "finished", "error", "destroyed",
+    }  # fmt: skip
 
 
 async def test_audit_rows_are_registered_attributed_and_carry_only_session_facts() -> None:

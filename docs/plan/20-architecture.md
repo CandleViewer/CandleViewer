@@ -845,7 +845,7 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_ALLOW_SHARED_VOLUME`         | bool   | `false`                   | process | SR-096 escape hatch; refused unless testnet (E16-FR-11)                                                             |
 | `CV_REPLAY_IDLE_TTL_S`           | float  | `7200`                    | process | replay session with no control call this long is DESTROYed (`idle_reclaim`)                                         |
 | `CV_REPLAY_RECLAIM_INTERVAL_S`   | float  | `60`                      | process | idle-reclaim sweep cadence (one bounded batch per sweep)                                                            |
-| `CV_REPLAY_MAX_SESSIONS_PER_USER` | int    | `2`                       | process | open replay sessions per user; create / `PREPARE` past it refused                                                   |
+| `CV_REPLAY_MAX_SESSIONS_PER_USER` | int   | `2`                       | process | open replay sessions per user; create / `PREPARE` past it refused                                                   |
 | `CV_REPLAY_MAX_WINDOW_HOURS`     | int    | `24`                      | process | replay window cap; a longer window is a 422 before any I/O                                                          |
 | `CV_ORDER_RATE_PER_UID`          | int    | `8`                       | runtime | below Bybit's 10/s for headroom                                                                                     |
 | `CV_NATIVE_SL_DEADLINE_MS`       | int    | `3000`                    | runtime | NakedPositionAlert threshold                                                                                        |

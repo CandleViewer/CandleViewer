@@ -40,6 +40,13 @@ class ReplayService:
         self._started = False
 
     def health(self) -> HealthReport:
-        status = HealthStatus.OK if self._started else HealthStatus.STOPPED
-        detail = "replay sessions on" if self.sessions is not None else "replay sessions off"
-        return HealthReport(module="", status=status, detail=detail)
+        """STOPPED until started; DEGRADED when the session service's mirror or reclaim task
+        has died (sessions would stop mirroring or being reclaimed)."""
+        if not self._started:
+            return HealthReport(module="", status=HealthStatus.STOPPED, detail="replay stopped")
+        if self.sessions is None:
+            return HealthReport(module="", status=HealthStatus.OK, detail="replay sessions off")
+        if not self.sessions.tasks_alive:
+            detail = "replay session tasks stopped"
+            return HealthReport(module="", status=HealthStatus.DEGRADED, detail=detail)
+        return HealthReport(module="", status=HealthStatus.OK, detail="replay sessions on")
