@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 
 import pytest
 from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
 from candleviewer.bars import series_store
 from candleviewer.bars.emit import BarEmission
 from candleviewer.bars.errors import SpecCapExceeded
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
-from candleviewer.bars.series_store import MAX_HISTORY, RELEASE_GRACE_S, SeriesStore
+from candleviewer.bars.reader import BarTail
+from candleviewer.bars.series_store import (
+    MAX_HISTORY,
+    RECENT_CLOSES,
+    RELEASE_GRACE_S,
+    RETRY_AFTER_S,
+    SeriesStore,
+)
 
 SPEC = BarSpec(kind="time", interval_ms=300_000)
 SYM, H = "BTCUSDT", SPEC.spec_hash
@@ -102,6 +112,21 @@ async def test_sink_amended_close_of_a_bar_not_held_is_ignored() -> None:
     before = store.version(SYM, H)
     await emit(store, up("close", 3, amended=True))  # older than the window: nothing to replace
     assert view(store) == ([5, 6], None) and store.version(SYM, H) == before
+
+
+@pytest.mark.parametrize(
+    ("before", "window"),
+    [((up("open", 0),), ([], 0)), ((up("close", 5), up("close", 6)), ([5, 6], None))],
+    ids=["empty", "5-6"],
+)
+async def test_sink_an_amended_close_above_the_window_is_ignored(
+    before: tuple[BarUpdate, ...], window: tuple[list[int], int | None]
+) -> None:
+    """Never a bar's first sight: above the newest index it would open a hole (#2666 r2)."""
+    store = await held(*before)
+    version = store.version(SYM, H)
+    await emit(store, up("close", 9, amended=True))
+    assert view(store) == window and store.version(SYM, H) == version
 
 
 async def test_sink_a_live_generation_change_resets_the_series_in_both_directions() -> None:
@@ -280,3 +305,529 @@ async def test_recent_closes_are_kept_for_max_series_least_recently_closed_dropp
     await store.ensure(SYM, SPEC)
     await store.ensure(eth, SPEC)
     assert view(store) == ([1, 2], None) and view(store, sym=eth) == ([], None)
+
+
+class Tail:
+    """`TailRead` fake: counts calls, blocks until `gate` is set, then returns `tail` or raises."""
+
+    def __init__(
+        self,
+        bars: Sequence[tuple[int, Bar]] = (),
+        *,
+        error: Exception | None = None,
+        now: bool = False,
+    ) -> None:
+        self.tail, self.error, self.calls = BarTail(list(bars)), error, 0
+        self.gate, self.started = asyncio.Event(), asyncio.Event()
+        if now:
+            self.gate.set()
+
+    async def __call__(self, symbol: str, spec: BarSpec, limit: int) -> BarTail:
+        assert (spec, limit) == (SPEC, MAX_HISTORY)
+        self.calls += 1
+        self.started.set()
+        await self.gate.wait()
+        if self.error is not None:
+            raise self.error
+        return self.tail
+
+
+def rows(*indexes: int, gen: int = 0, shift: int = 0) -> list[tuple[int, Bar]]:
+    return [(gen, bar(i, shift=shift)) for i in indexes]
+
+
+def events(logs: Sequence[Mapping[str, object]], name: str) -> list[Mapping[str, object]]:
+    return [e for e in logs if e["event"] == name]
+
+
+async def test_concurrent_ensure_waits_for_the_one_hydration() -> None:
+    tail = Tail(rows(0))
+    store = SeriesStore(tail)
+    first = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    second = asyncio.create_task(store.ensure(SYM, SPEC))
+    await asyncio.sleep(0)  # let the second ensure reach its wait (a yield, not a delay)
+    assert not second.done()
+    tail.gate.set()
+    await first
+    await asyncio.wait_for(second, 1.0)  # a bound, not a delay
+    assert tail.calls == 1 and view(store) == ([0], None)
+
+
+async def test_version_moves_when_a_read_lands() -> None:
+    """A snapshot cached while the read was in flight must not outlive it."""
+    tail = Tail(rows(0))
+    store = SeriesStore(tail)
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    before = store.version(SYM, H)
+    tail.gate.set()
+    await task
+    assert store.version(SYM, H) > before
+
+
+@pytest.mark.parametrize(
+    ("error", "error_type"),
+    [(OSError("questdb down"), "OSError"), (RuntimeError("bad query " * 20), "RuntimeError"),
+     (None, "TimeoutError")],
+    ids=["os-error", "any-error", "timeout"],
+)  # fmt: skip
+async def test_a_failed_or_timed_out_read_leaves_the_series_live_and_says_so(
+    error: Exception | None, error_type: str
+) -> None:
+    tail = Tail(error=error, now=error is not None)  # a hung read meets the (zero) timeout
+    store = SeriesStore(tail, timeout_s=5.0 if error else 0.0)
+    with capture_logs() as logs:
+        async with asyncio.timeout(1.0):  # a bound: a lost store timeout fails here, not hangs
+            await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 4), up("open", 5))
+    assert view(store) == ([4], 5) and not store.hydrated(SYM, H)
+    assert events(logs, "bars_series_hydrate_failed") == [{
+        "event": "bars_series_hydrate_failed", "log_level": "warning", "spec_hash": H,
+        "symbol": SYM, "error_type": error_type, "error": str(error or "")[:120],
+    }]  # fmt: skip
+
+
+async def test_a_failed_read_is_read_again_by_an_ensure_retry_after_s_later() -> None:
+    """One QuestDB blip must not leave a series history-less for its whole hold."""
+    clock = Clock()
+    tail = Tail(error=OSError("questdb down"), now=True)
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    clock.t += RETRY_AFTER_S - 0.5
+    await store.ensure(SYM, SPEC)
+    assert tail.calls == 1 and not store.hydrated(SYM, H)
+    tail.error, tail.tail = None, BarTail(rows(0))
+    clock.t += 0.5  # exactly `retry_after_s` after the failed read
+    await store.ensure(SYM, SPEC)
+    assert tail.calls == 2 and store.hydrated(SYM, H) and view(store) == ([0], None)
+
+
+async def test_a_cancelled_first_ensure_hands_its_read_to_a_waiter() -> None:
+    """A client's disconnect must not leave another's series history-less: the waiter reads
+    again, keeps a close seen during the abandoned read, and the cancelled one holds nothing."""
+    clock = Clock()
+    tail = Tail(rows(0))
+    store = SeriesStore(tail, clock=clock)
+    first = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    second = asyncio.create_task(store.ensure(SYM, SPEC))
+    await asyncio.sleep(0)  # the second reaches its wait (a yield, not a delay)
+    await emit(store, up("close", 1))  # not stored yet; the abandoned read's replay goes
+    tail.started.clear()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    await asyncio.wait_for(tail.started.wait(), 1.0)  # the waiter's own read (a bound)
+    tail.gate.set()
+    hold = await asyncio.wait_for(second, 1.0)
+    assert tail.calls == 2 and store.hydrated(SYM, H) and view(store) == ([0, 1], None)
+    hold.release()  # the last hold: the cancelled ensure took none with it
+    clock.t += RELEASE_GRACE_S
+    await store.ensure("ETHUSDT", SPEC)
+    assert store.latest(SYM, H, 1) is None
+
+
+async def test_waiters_share_the_read_that_replaces_a_cancelled_one() -> None:
+    """The second waiter waits for the first waiter's read instead of starting a third."""
+    tail = Tail(rows(0))
+    store = SeriesStore(tail)
+    first = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    waiters = [asyncio.create_task(store.ensure(SYM, SPEC)) for _ in range(2)]
+    await asyncio.sleep(0)  # both reach their wait (a yield, not a delay)
+    tail.started.clear()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    await asyncio.wait_for(tail.started.wait(), 1.0)  # a waiter's read is in flight
+    tail.gate.set()
+    await asyncio.wait_for(asyncio.gather(*waiters), 1.0)
+    assert tail.calls == 2 and store.hydrated(SYM, H) and view(store) == ([0], None)
+
+
+async def test_each_read_waits_on_a_fresh_unset_event() -> None:
+    """A waiter on an event the last read left set would spin and freeze the loop (white-box)."""
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(0), dropped=1)  # degraded: the next ensure reads again
+    store = SeriesStore(tail, retry_after_s=0.0)
+    await store.ensure(SYM, SPEC)
+    tail.gate.clear()
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await asyncio.sleep(0)  # the second read starts (a yield, not a delay)
+    assert tail.calls == 2 and not store._series[(SYM, H)].ready.is_set()
+    tail.gate.set()
+    await task
+
+
+async def test_a_cancelled_lone_read_does_not_hold_off_the_next_ensure() -> None:
+    """A cancellation is not a completed read: the next `ensure` reads at once."""
+    tail = Tail(rows(0))
+    store = SeriesStore(tail, clock=Clock())
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    tail.gate.set()
+    await store.ensure(SYM, SPEC)
+    assert tail.calls == 2 and store.hydrated(SYM, H)
+
+
+@pytest.mark.parametrize(("degraded", "reads"), [(False, 1), (True, 2)], ids=["failed", "degraded"])
+async def test_a_waiter_keeps_a_failed_read_but_reads_a_degraded_one_again(
+    degraded: bool, reads: int
+) -> None:
+    """A failed read completed: its waiters keep the result. A degraded read is never final
+    (SR-E12-11): a waiter reads again as soon as `retry_after_s` allows (0 here)."""
+    tail = Tail(error=None if degraded else OSError("questdb down"))
+    tail.tail = BarTail(rows(0), dropped=1)
+    store = SeriesStore(tail, retry_after_s=0.0)
+    first = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    second = asyncio.create_task(store.ensure(SYM, SPEC))
+    await asyncio.sleep(0)  # the second reaches its wait (a yield, not a delay)
+    tail.gate.set()
+    await first
+    await asyncio.wait_for(second, 1.0)
+    assert tail.calls == reads
+
+
+async def test_a_degraded_read_is_served_but_not_final_and_is_read_again_later() -> None:
+    """SR-E12-11: a tail missing integrity-dropped rows is served, not `hydrated`, and read again
+    `retry_after_s` later. A hole inside the rows is not a gap."""
+    clock = Clock()
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(0, 2), dropped=1)
+    store = SeriesStore(tail, clock=clock)
+    with capture_logs() as logs:
+        await store.ensure(SYM, SPEC)
+    assert view(store) == ([0, 2], None) and not store.hydrated(SYM, H)
+    assert not store.gapped(SYM, H) and events(logs, "bars_series_hydrate_degraded") == [{
+        "event": "bars_series_hydrate_degraded", "log_level": "warning", "spec_hash": H,
+        "symbol": SYM, "dropped": 1,
+    }]  # fmt: skip
+    clock.t += RETRY_AFTER_S - 0.5
+    await store.ensure(SYM, SPEC)
+    assert tail.calls == 1
+    tail.tail = BarTail(rows(0, 1, 2))
+    clock.t += 0.5
+    await store.ensure(SYM, SPEC)
+    assert tail.calls == 2 and store.hydrated(SYM, H) and view(store) == ([0, 1, 2], None)
+
+
+async def test_closes_emitted_just_before_the_hold_fill_the_junction() -> None:
+    """The review's case: rows 0..9 are stored; closes 10 and 11 were emitted before the hold but
+    are not queryable yet; an amended close of stored bar 8, 12 and the forming 13 arrive during
+    the read. No hole and no gap warning; bar 8 takes its amended close."""
+    tail = Tail(rows(*range(10)))
+    store = SeriesStore(tail)
+    await emit(store, up("close", 10), up("close", 11))  # nobody holds the series yet
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    with capture_logs() as logs:
+        await emit(store, up("close", 8, amended=True, close="108"), up("close", 12))
+        await emit(store, up("open", 13))
+        tail.gate.set()
+        await task
+    assert view(store) == (list(range(13)), 13) and store.hydrated(SYM, H)
+    assert closes(store)[8] == (8, "108") and not store.gapped(SYM, H)
+    assert not events(logs, "bars_series_gap")
+
+
+async def test_more_closes_during_the_read_than_the_ring_keeps_leave_no_gap() -> None:
+    """Beyond the ring's 16, the read's replay keeps every close seen during it, in order."""
+    tail = Tail(rows(*range(10)))
+    store = SeriesStore(tail)
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    await emit(store, *(up("close", i) for i in range(10, 14 + RECENT_CLOSES)))
+    tail.gate.set()
+    await task
+    assert view(store)[0] == list(range(30)) and store.hydrated(SYM, H) and not store.gapped(SYM, H)
+
+
+async def test_the_closes_seen_during_a_read_are_bounded_and_the_oldest_are_shed() -> None:
+    """C-2.18: a burst bigger than `MAX_HISTORY` during a read keeps the newest closes."""
+    tail = Tail(rows(0))
+    store = SeriesStore(tail)
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    await emit(store, *(up("close", i) for i in range(1, MAX_HISTORY + 51)))
+    replay = store._series[(SYM, H)].replay  # white-box: the bound itself
+    assert replay is not None and len(replay) == MAX_HISTORY and replay[0][0].bar.index == 51
+    tail.gate.set()
+    await task
+    closed, _ = view(store)
+    assert len(closed) == MAX_HISTORY and closed[-1] == MAX_HISTORY + 50
+
+
+async def test_a_jump_past_the_recent_closes_flags_a_gap_that_the_next_read_heals() -> None:
+    """More closes than the ring keeps went unstored before the hold: the fold flags the jump
+    once, and an `ensure` `retry_after_s` later reads the rows the writer has landed by then."""
+    clock = Clock()
+    tail = Tail(rows(*range(10)), now=True)
+    store = SeriesStore(tail, clock=clock)
+    await emit(store, *(up("close", i) for i in range(10, 14 + RECENT_CLOSES)))
+    with capture_logs() as logs:
+        await store.ensure(SYM, SPEC)
+    assert store.gapped(SYM, H) and view(store)[0] == [*range(10), *range(14, 30)]
+    assert events(logs, "bars_series_gap") == [{
+        "event": "bars_series_gap", "log_level": "warning", "spec_hash": H, "symbol": SYM,
+        "from_index": 10, "to_index": 13,
+    }]  # fmt: skip
+    tail.tail = BarTail(rows(*range(30)))
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert tail.calls == 2 and not store.gapped(SYM, H) and view(store)[0] == list(range(30))
+
+
+async def test_a_re_read_keeps_the_live_bars_storage_still_lacks() -> None:
+    """The writer still lags at the second read: the bars the series held stay (#2666 r2)."""
+    clock = Clock()
+    tail = Tail(rows(*range(10)), now=True)
+    store = SeriesStore(tail, clock=clock)
+    await emit(store, *(up("close", i) for i in range(10, 30)))
+    await store.ensure(SYM, SPEC)  # bars 10..13 are missing: gapped
+    await emit(store, *(up("close", i) for i in range(30, 50)))
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)  # storage still ends at 9
+    assert (tail.calls, view(store)[0]) == (2, [*range(10), *range(14, 50)])
+
+
+async def test_a_re_read_keeps_a_live_amendment_the_ring_has_rolled_out() -> None:
+    """A held bar replaces its stored twin: bar 2's amended close has left the 16-close ring and
+    the writer still holds the original."""
+    clock = Clock()
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(*range(5)), dropped=1)  # degraded: the next ensure reads again
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 2, amended=True, close="102"))
+    await emit(store, *(up("close", i) for i in range(5, 5 + 2 * RECENT_CLOSES)))
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert tail.calls == 2 and closes(store)[2] == (2, "102")
+
+
+async def test_a_re_read_keeps_no_held_bar_of_another_generation() -> None:
+    """Nothing seen live and the newest row is another generation's: no old bar stays."""
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(0, 1), dropped=1)  # degraded: the next ensure reads again
+    store = SeriesStore(tail, retry_after_s=0.0)
+    await store.ensure(SYM, SPEC)
+    tail.tail = BarTail([*rows(0, 1), (7, bar(0, shift=1))])  # a twin at bar 1's open time
+    await store.ensure(SYM, SPEC)
+    assert (generation(store), view(store)) == (7, ([0], None))
+
+
+async def test_a_re_read_that_adopts_the_rows_generation_stays_hydrated() -> None:
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(0), dropped=1)  # degraded: the next ensure reads again
+    store = SeriesStore(tail, retry_after_s=0.0)
+    await store.ensure(SYM, SPEC)
+    tail.tail = BarTail(rows(0, gen=7))  # nothing seen live: adopting 7 is not a live swap
+    await store.ensure(SYM, SPEC)
+    assert store.hydrated(SYM, H)
+
+
+async def test_a_close_sharing_the_newest_rows_open_time_is_kept() -> None:
+    """Non-time bars can share an open time (renko bricks): live closes are ordered by key."""
+    store = SeriesStore(Tail(rows(6, 7, 8), now=True))
+    await emit(store, up("close", 9, shift=-1))  # opens with bar 8, not stored yet
+    await store.ensure(SYM, SPEC)
+    assert view(store) == ([6, 7, 8, 9], None) and not store.gapped(SYM, H)
+
+
+async def test_a_restarted_run_outranks_the_old_run_still_stored_by_open_time() -> None:
+    """Held bars compare by `(open_time, index)`: the restart opens later with `index` back at 0,
+    so the old run's rows (index 0..9) must not outrank it."""
+    store = SeriesStore(Tail(rows(*range(10)), now=True))
+    await emit(store, up("close", 0, shift=20), up("close", 1, shift=20))
+    await store.ensure(SYM, SPEC)
+    assert view(store) == ([0, 1], None) and store.hydrated(SYM, H) and not store.gapped(SYM, H)
+
+
+async def test_the_first_emission_after_an_empty_read_is_not_a_swap() -> None:
+    """Naming a first generation is not a change of one (23 §8.2): no stored row is left to read."""
+    store = SeriesStore(Tail(now=True))
+    await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 0), generation=3)
+    assert (store.hydrated(SYM, H), generation(store), view(store)) == (True, 3, ([0], None))
+
+
+async def test_a_live_generation_swap_after_the_read_leaves_it_not_hydrated() -> None:
+    """ADR-0033: the new generation's history is in storage, so the series is read again."""
+    store = SeriesStore(Tail(rows(0, 1), now=True))
+    await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 0, shift=5), generation=1)
+    assert (store.hydrated(SYM, H), generation(store), view(store)) == (False, 1, ([0], None))
+
+
+async def test_a_live_close_that_skips_an_index_after_the_read_flags_a_gap() -> None:
+    """Nothing was seen live around a quiet read: the first close past a missing one shows it."""
+    store = SeriesStore(Tail(rows(*range(10)), now=True))
+    await store.ensure(SYM, SPEC)
+    with capture_logs() as logs:
+        await emit(store, up("update", 11), up("close", 11))
+    assert store.gapped(SYM, H) and view(store) == ([*range(10), 11], None)
+    assert [(e["from_index"], e["to_index"]) for e in events(logs, "bars_series_gap")] == [(10, 10)]
+
+
+async def test_an_older_close_the_rows_lack_is_not_mistaken_for_a_restart() -> None:
+    """A row the writer missed, or the run before a cold start, sits in the recent closes. Folded
+    after newer rows it must not reset the series; the hole stays as storage has it."""
+    tail = Tail([*rows(0, 1, 2, 4)], now=True)
+    store = SeriesStore(tail)
+    await emit(store, up("close", 7, shift=-10), up("close", 3), up("close", 4))
+    await store.ensure(SYM, SPEC)
+    assert view(store) == ([0, 1, 2, 4], None) and not store.gapped(SYM, H)
+
+
+async def test_hydration_keeps_the_live_generations_rows_over_another_epochs() -> None:
+    """A cold start after a clock regression (#2662) can take a lower generation than the epoch
+    before it. Seen live, its generation decides: its stored rows stay, the old epoch's go."""
+    tail = Tail([*rows(0, 1, gen=5), *rows(0, 1, gen=3, shift=5)], now=True)
+    store = SeriesStore(tail)
+    await emit(store, up("close", 2, shift=5), generation=3)  # the live builder, before the hold
+    await store.ensure(SYM, SPEC)
+    assert generation(store) == 3 and view(store) == ([0, 1, 2], None)
+
+
+async def test_an_unflipped_rebuilds_rows_do_not_displace_the_live_generations() -> None:
+    """ADR-0033 rebuild rows (a higher generation, not live yet) share the read's window: the
+    rows kept are the live generation's, not the newest row's."""
+    rebuilt = [(7, bar(i, close="107")) for i in (0, 1)]
+    twins = sorted([*rows(0, 1), *rebuilt], key=lambda r: (r[1].open_time, r[0]))
+    store = SeriesStore(Tail(twins, now=True))
+    await emit(store, up("close", 2))  # the live builder, generation 0
+    await store.ensure(SYM, SPEC)
+    assert generation(store) == 0 and closes(store) == [(0, "100"), (1, "100"), (2, "100")]
+
+
+async def test_only_the_newest_generations_recent_closes_are_folded() -> None:
+    """A swap among the closes seen live: the earlier generation's are not the series' bars."""
+    store = SeriesStore(Tail(now=True))
+    await emit(store, up("close", 5))
+    await emit(store, up("close", 7), generation=1)
+    await store.ensure(SYM, SPEC)
+    assert generation(store) == 1 and view(store) == ([7], None) and not store.gapped(SYM, H)
+
+
+async def test_an_old_generations_close_never_overwrites_a_bar_of_the_new_one() -> None:
+    """A replayed close of the old generation that shares a stored bar's key is not that bar."""
+    store = SeriesStore(Tail(rows(0, gen=1), now=True))
+    await emit(store, up("close", 0, close="90"))  # generation 0
+    await emit(store, up("close", 1), generation=1)
+    await store.ensure(SYM, SPEC)
+    assert generation(store) == 1 and closes(store) == [(0, "100"), (1, "100")]
+
+
+async def test_a_generation_swap_during_the_read_keeps_only_the_new_generation() -> None:
+    """The live builder moved to generation 1 (an `open`) while the read was in flight: the
+    stored rows and the earlier closes are generation 0, so only the forming bar remains."""
+    tail = Tail(rows(*range(3)))
+    store = SeriesStore(tail)
+    await emit(store, up("close", 3))
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await tail.started.wait()
+    await emit(store, up("open", 0, shift=9), generation=1)
+    tail.gate.set()
+    await task
+    assert generation(store) == 1 and view(store) == ([], 0) and not store.hydrated(SYM, H)
+
+
+async def hydrated(
+    bars: Sequence[tuple[int, Bar]], builds: dict[tuple[int, int, int], int]
+) -> SeriesStore:
+    tail = Tail(now=True)
+    tail.tail = BarTail(list(bars), builds=builds)
+    store = SeriesStore(tail)
+    await store.ensure(SYM, SPEC)
+    return store
+
+
+def oldest(store: SeriesStore, history: int) -> int | None:
+    got = store.latest(SYM, H, history)
+    assert got is not None
+    return got.oldest_build
+
+
+async def test_latest_names_the_oldest_build_among_the_bars_it_returns() -> None:
+    """§6.1 `meta.build_version`: the lowest among the bars sent. A live re-close of a hydrated
+    bar, or the ring dropping it, leaves only bars built by the running code."""
+    store = await hydrated(rows(0, 1, 2), {(0, 0, T0): 1, (0, 1, T0 + STEP): 2})
+    assert (oldest(store, 3), oldest(store, 2), oldest(store, 1)) == (1, 2, None)
+    await emit(store, up("close", 0, amended=True, close="101"))
+    assert oldest(store, 3) == 2  # bar 0 is the running code's now; bar 1 is not
+    await emit(store, *(up("close", i) for i in range(3, MAX_HISTORY + 1)))  # bar 0 rolls out
+    assert oldest(store, MAX_HISTORY) == 2  # bar 1 is still served, with its mark
+    await emit(store, up("close", MAX_HISTORY + 1))  # bar 1 rolls out
+    assert oldest(store, MAX_HISTORY) is None
+    kept = store._series[(SYM, H)]
+    assert set(kept.stale) <= set(kept.closed)  # white-box: a build mark leaves with its bar
+
+
+async def test_a_restart_forgets_the_old_run_builds() -> None:
+    """A cold start reuses index 0: the new bar 0 is not the old run's stale bar 0."""
+    store = await hydrated(rows(0, 1), {(0, 0, T0): 1})
+    await emit(store, up("close", 0, shift=10))
+    assert view(store) == ([0], None) and oldest(store, 2) is None
+
+
+async def test_build_marks_survive_a_re_read_and_a_live_re_close_clears_one() -> None:
+    """SR-E12-14: a re-read must not pass old-build bars off as current (#399 r3 major)."""
+    clock = Clock()
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(0, 1, 2), builds={(0, 1, T0 + STEP): 1}, dropped=1)  # read again
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    tail.tail = BarTail(rows(0, 1, 2), builds={(0, 1, T0 + STEP): 1})
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert (tail.calls, oldest(store, 3)) == (2, 1)
+    await emit(store, up("close", 1, amended=True, close="101"))
+    assert oldest(store, 3) is None  # re-closed by the running code
+
+
+async def test_a_generation_flip_led_by_an_ignored_emission_moves_the_version() -> None:
+    """An amended close of a bar the new generation does not hold still resets the series."""
+    store = await held(*(up("close", i) for i in range(5)))
+    before = store.version(SYM, H)
+    await emit(store, up("close", 3, amended=True), generation=1)
+    assert (generation(store), view(store)) == (1, ([], None)) and store.version(SYM, H) > before
+
+
+async def test_a_read_across_a_cold_start_marks_only_the_old_runs_bars() -> None:
+    """Two stored runs reuse `(generation, index)` (#2662): the open time keys each build, so the
+    new run's bar 0 is not marked with the old run's build."""
+    builds = {(0, 0, T0): 1, (0, 1, T0 + STEP): 1}
+    store = await hydrated([*rows(0, 1), *rows(0, shift=10)], builds)
+    assert view(store) == ([0], None) and oldest(store, 1) is None
+
+
+async def test_with_nothing_seen_live_the_newest_rows_generation_is_kept() -> None:
+    """The builder starts after the hold: the newest stored epoch is kept, and the rows of
+    another generation are skipped with their builds."""
+    builds = {(5, 0, T0): 1, (5, 1, T0 + STEP): 1, (3, 0, T0 + 5 * STEP): 1}
+    store = await hydrated([*rows(0, 1, gen=5), *rows(0, 1, gen=3, shift=5)], builds)
+    assert generation(store) == 3 and view(store) == ([0, 1], None)
+    assert (oldest(store, 2), oldest(store, 1)) == (1, None)
+
+
+async def test_a_resubscribe_inside_the_grace_reads_nothing() -> None:
+    """BR-38: the series is still kept, so a quick resubscribe does not read it again."""
+    clock = Clock()
+    tail = Tail(rows(0), now=True)
+    store = SeriesStore(tail, clock=clock)
+    (await store.ensure(SYM, SPEC)).release()
+    clock.t += RELEASE_GRACE_S - 0.5
+    await store.ensure(SYM, SPEC)
+    assert tail.calls == 1 and store.hydrated(SYM, H)
+
+
+async def test_an_empty_read_with_nothing_seen_live_names_no_generation() -> None:
+    """No rows and no emission: none is assumed (#2662); the first emission will name it."""
+    store = SeriesStore(Tail(now=True))
+    await store.ensure(SYM, SPEC)
+    assert generation(store) is None and view(store) == ([], None) and store.hydrated(SYM, H)
