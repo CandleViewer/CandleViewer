@@ -1,6 +1,7 @@
 # E26 — STRIDE threat model: replay engine, replay data access and simulated trading
 
-- Ticket: E26-X01 (issue #673). Owner: Security engineer (CODEOWNER). Status: Draft for Security + Architect review.
+- Ticket: E26-X01 (issue #673). Owner: Security engineer (CODEOWNER). Status: **Approved** (2026-10-16; independent
+  security review complete, Fable, #2681; owner acceptance of RR1-RR4 pending, queued on #2701; review log in §13).
 - Method: `docs/plan/04-security-program.md` §5 template (L x I = risk), STRIDE per element (C-12.1). Format mirrors
   `E14-drawings.md`. Referenced, not repeated: `e16-recorder.md` (recorder, retention, archive writes),
   `E07-storage.md` (storage tiers, manifests, the query role), `E17-ws-gateway.md` (the gateway; its WS-T09, WS-E03
@@ -641,17 +642,20 @@ order path (RR1, R8); RSK-070, a replay-origin order reaching an exchange (RR2, 
 activity feeding a real account's risk state (RR3, R4). All three gate R2 (register §10.3). RSK-070 is scored L 2 x I 5
 = 10, High, against this model's inherent Critical for RP-E01: L 2 reflects that no replay order path exists yet and
 E26-S07 is unbuilt, and E26-S07 starting while #2669 is open re-scores it to L 3, Critical (15). RR1-RR3 are open and
-not accepted; RR4 has no entry and is tracked through G6 and G7.
+not accepted; RR4 has no register entry and is tracked through G6 and G7. All four are recorded in
+`04-security-program.md` §16.1 as RR-09 (RR1), RR-10 (RR2), RR-11 (RR3) and RR-12 (RR4), with owner sign-off pending
+(queued on #2701) and review date 2026-11-15, or earlier at the review named in the table above.
 
 ### Sign-off
 
-- Accepted-risk and residual sign-off awaits the Owner and the independent security reviewer (agent-delivery
+- Independent security review complete (Fable, #2681: round 1 at `4497ed4a`, round 2 at `12d46f85`, both APPROVE; the
+  sonnet code review approved at `12d46f85`). Owner acceptance of RR1-RR4 pending, queued on #2701 (agent-delivery
   adaptation, as in `E14-drawings.md`). Architect review via PR review.
 - **Requirement numbers.** The five proposed requirements in §12 stay unnumbered here. Numbering them, and registering
   them in `04-security-program.md` §6, is deferred to the Security engineer at E26-X03, in the form E27 used
   (`SR-E27-nn`, here `SR-E26-nn`).
 - **Open, not accepted.** RR1-RR4 stay High or Critical until G1, G2, G4 and G6 / G7 land. They are release blockers
-  for R2 under 04 §5.11 and are in no 04 §16 entry.
+  for R2 under 04 §5.11 and are recorded as RR-09..RR-12 in 04 §16.1, owner sign-off pending (queued on #2701).
 - **Tabletop walkthroughs** (to be re-run by E26-X02): (1) _A Manager watches the Owner's replay:_ REST is owner-scoped
   by design (RP-S02); on the WS today an arbitrary id is admitted but nothing flows, because no router exists; after
   E26-T05 the sub must fail with `replay_session_not_found` (AC-01). Open until E26-T05. (2) _A trader rehearsing a fill
@@ -662,7 +666,12 @@ not accepted; RR4 has no entry and is tracked through G6 and G7.
 
 ### Review log
 
-| Date       | Reviewer                                       | Result                                                                                                                                                                                                                                                                                        |
-| ---------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-10-15 | author (hpe-worker-2 worker, E26-X01)          | Draft submitted                                                                                                                                                                                                                                                                               |
-| 2026-10-15 | independent code and security reviews (agents) | Security: approve with minors. Code: changes requested (two majors, both rated minor on verification). Revision 2 takes every finding: rows RP-T12, RP-T13 and RP-E07, the results element P11 and §6.2 site 11, the replay topic namespace item (§10 item 16) and the T03 stack in the Basis |
+| Date       | Reviewer                                         | Result                                                                                                                                                                                                                                                                                                   |
+| ---------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-15 | author (hpe-worker-2 worker, E26-X01)            | Draft submitted                                                                                                                                                                                                                                                                                          |
+| 2026-10-15 | security-reviewer (Fable, independent; PR #2681) | Round 1 at 4497ed4a: APPROVE (the four Gherkin scenarios, 19 C-x.y and 19 SR citations, every tally and L x I band verified)                                                                                                                                                                             |
+| 2026-10-15 | code-reviewer (sonnet, independent; PR #2681)    | Round 1 at 4497ed4a: REQUEST_CHANGES (two majors, both rated minor on verification). Revision 2 (12d46f85) takes every finding from both reviews: rows RP-T12, RP-T13 and RP-E07, the results element P11 and §6.2 site 11, the replay topic namespace item (§10 item 16) and the T03 stack in the Basis |
+| 2026-10-15 | security-reviewer (Fable, independent; PR #2681) | Round 2 at 12d46f85: APPROVE; every tally recounted (53 rows, S/T/R/I/D/E 8/13/5/6/14/7, C/H/M/L 1/9/21/22), register census 66, gates green                                                                                                                                                             |
+| 2026-10-15 | code-reviewer (sonnet, independent; PR #2681)    | Round 2 at 12d46f85: APPROVE; seven doc minors tracked on #2733                                                                                                                                                                                                                                          |
+| 2026-10-16 | QA (Fable, independent; #673)                    | FAIL on main cbd574a5: model not Approved, review log incomplete, RR1-RR4 in no 04 §16 entry; closed by this amendment                                                                                                                                                                                   |
+| 2026-10-16 | amendment author (agent)                         | Status Approved; review log completed; RR1-RR4 recorded as RR-09..RR-12 in 04 §16.1 (owner sign-off pending, queued on #2701)                                                                                                                                                                            |
