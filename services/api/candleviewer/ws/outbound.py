@@ -2,9 +2,12 @@
 
 `OutboundQueue` holds one connection's encoded frames on two lanes. The priority lane carries
 `orders`, `executions`, `system` and ping / pong: never dropped, always drained first. The normal
-lane carries everything else, in order. Every frame is counted at its exact encoded length, so
-the budget, `max_bytes` (8 MiB) or `max_frames` (2 000) whichever binds first, is real. Only
-market-data frames (`d` / `snap` of a throttled topic) can be dropped; control frames never are.
+lane carries everything else, in order. Every frame is encoded once, in the connection's
+subprotocol (`encode`: MessagePack bytes, or JSON text that refuses a non-finite number), and
+counted at that exact length, so the budget, `max_bytes` (8 MiB) or `max_frames` (2 000) whichever
+binds first, is what the socket is sent. Only market-data frames (`d` / `snap` of a throttled
+topic) can be dropped; control frames never are. Data frames are keyed by subscription, `(ch,
+replay session)`, so a drop never touches the live and the replay subscription of one `ch` together.
 
 `Backpressure` runs the §8.4 ladder against that budget plus the pacer's pending state:
 
@@ -37,7 +40,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
@@ -58,36 +61,63 @@ PRIORITY_FAMILIES: Final = frozenset({"orders", "executions", "system"})
 _PRIORITY_CONTROL: Final = frozenset({"ping", "pong"})
 _DATA_FRAMES: Final = frozenset({"d", "snap"})
 
+#: A subscription's frames: `(ch, replay_session_id)` (D13).
+Key = tuple[str, str | None]
+#: One frame, serialised as the socket is sent it: JSON text or MessagePack bytes.
+FrameEncoder = Callable[[Mapping[str, Any]], str | bytes]
+
+
+def json_payload(frame: Mapping[str, Any]) -> str:
+    """`cv.v1.json`: the writer's serialisation, ASCII-only, so `len` is the byte count. A NaN or
+    infinity raises `ValueError` rather than leave as invalid JSON."""
+    return json.dumps(frame, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+
 
 @dataclass(frozen=True, slots=True)
 class Queued:
-    """One encoded frame. `family` is its topic family (None for a frame without a channel);
-    `topic` is set only on a droppable market-data frame; `resnap` marks a frame of a
-    `backpressure` snapshot (step 2)."""
+    """One encoded frame: `payload` is exactly what the writer sends. `family` is its topic
+    family (None for a frame without a channel); `key` is set on every `d` / `snap` with a
+    channel, whichever lane it rides; `resnap` marks a frame of a `backpressure` snapshot (step
+    2); `received` is the fan-out stamp of a sampled data frame (`cv_ws_fanout_seconds`)."""
 
-    text: str
+    payload: str | bytes
     priority: bool = False
     family: str | None = None
-    topic: str | None = None
+    key: Key | None = None
     resnap: bool = False
+    received: float | None = None
+
+    @property
+    def size(self) -> int:
+        """Wire bytes: `len` of the bytes, or of the JSON text, which is ASCII-only."""
+        return len(self.payload)
+
+    @property
+    def droppable(self) -> bool:
+        """A market-data frame of a throttled topic: the only kind step 1 drops."""
+        return self.key is not None and not self.priority
 
 
-def encode(frame: Mapping[str, Any]) -> Queued:
-    """Serialise `frame` once, exactly as the writer sends it, and classify it for the lanes.
-    ASCII-only output makes `len(text)` the byte count; a NaN or infinity raises `ValueError`
-    rather than leave as invalid JSON."""
-    text = json.dumps(frame, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
-    ch, kind, meta = frame.get("ch"), frame.get("t"), frame.get("meta")
+def encode(
+    frame: Mapping[str, Any], dumps: FrameEncoder = json_payload, *, received: float | None = None
+) -> Queued:
+    """Serialise `frame` once with the connection's `dumps`, exactly as the writer sends it, and
+    classify it for the lanes. Raises what `dumps` raises."""
+    payload = dumps(frame)
+    ch, kind, meta, rs = frame.get("ch"), frame.get("t"), frame.get("meta"), frame.get("rs")
     family = ch.split(".", 1)[0] if isinstance(ch, str) else None
     priority = family in PRIORITY_FAMILIES or kind in _PRIORITY_CONTROL
-    droppable = kind in _DATA_FRAMES and family is not None and not priority
+    key = None
+    if kind in _DATA_FRAMES and isinstance(ch, str):
+        key = (ch, rs if isinstance(rs, str) else None)
     resnap = (
-        droppable
+        key is not None
+        and not priority
         and kind == "snap"
         and isinstance(meta, Mapping)
         and meta.get("reason") == "backpressure"
     )
-    return Queued(text, priority, family, ch if droppable else None, resnap)
+    return Queued(payload, priority, family, key, resnap, received)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,9 +157,10 @@ class OutboundQueue:
         self.ready = asyncio.Event()
         self._priority: deque[Queued] = deque()
         self._normal: deque[Queued] = deque()
-        self._topic_bytes: dict[str, int] = {}
-        #: Queued `backpressure` snapshot frames (every chunk) per topic.
-        self._resnaps: dict[str, int] = {}
+        #: Queued bytes of each key's droppable frames: the ladder's costs.
+        self._key_bytes: dict[Key, int] = {}
+        #: Queued `backpressure` snapshot frames (every chunk) per key.
+        self._resnaps: dict[Key, int] = {}
 
     def __len__(self) -> int:
         return len(self._priority) + len(self._normal)
@@ -137,11 +168,12 @@ class OutboundQueue:
     def push(self, frame: Queued) -> None:
         lane = self._priority if frame.priority else self._normal
         lane.append(frame)
-        self.bytes += len(frame.text)
-        if frame.topic is not None:
-            self._topic_bytes[frame.topic] = self._topic_bytes.get(frame.topic, 0) + len(frame.text)
+        self.bytes += frame.size
+        key = frame.key
+        if key is not None and not frame.priority:  # droppable
+            self._key_bytes[key] = self._key_bytes.get(key, 0) + frame.size
             if frame.resnap:
-                self._resnaps[frame.topic] = self._resnaps.get(frame.topic, 0) + 1
+                self._resnaps[key] = self._resnaps.get(key, 0) + 1
         self.ready.set()
 
     def pop(self) -> Queued | None:
@@ -156,18 +188,19 @@ class OutboundQueue:
         return frame
 
     def _forget(self, frame: Queued) -> None:
-        self.bytes -= len(frame.text)
-        if frame.topic is not None:
-            left = self._topic_bytes[frame.topic] - len(frame.text)
+        self.bytes -= frame.size
+        key = frame.key
+        if key is not None and not frame.priority:  # droppable
+            left = self._key_bytes[key] - frame.size
             if left:
-                self._topic_bytes[frame.topic] = left
+                self._key_bytes[key] = left
             else:
-                del self._topic_bytes[frame.topic]
+                del self._key_bytes[key]
             if frame.resnap:
-                if self._resnaps[frame.topic] > 1:
-                    self._resnaps[frame.topic] -= 1
+                if self._resnaps[key] > 1:
+                    self._resnaps[key] -= 1
                 else:
-                    del self._resnaps[frame.topic]
+                    del self._resnaps[key]
 
     def pct(self, pending_bytes: int = 0) -> float:
         """Depth as a share of the budget: the larger of the byte and frame fractions (§8.3)."""
@@ -177,20 +210,23 @@ class OutboundQueue:
     def over_budget(self, pending_bytes: int = 0) -> bool:
         return self.bytes + pending_bytes > self.max_bytes or len(self) > self.max_frames
 
-    def resnap_queued(self, topic: str) -> bool:
-        """Whether any frame of a `backpressure` snapshot of `topic` is still waiting."""
-        return topic in self._resnaps
+    def resnap_queued(self, key: Key) -> bool:
+        """Whether any frame of a `backpressure` snapshot of `key` is still waiting."""
+        return key in self._resnaps
 
-    def topic_bytes(self) -> dict[str, int]:
-        """Queued bytes of every topic with droppable frames."""
-        return dict(self._topic_bytes)
+    def key_bytes(self) -> dict[Key, int]:
+        """Queued bytes of every key with droppable frames."""
+        return dict(self._key_bytes)
 
-    def drop(self, topics: Collection[str]) -> int:
-        """Remove the droppable frames of `topics`; returns how many were dropped."""
+    def drop(self, keys: Collection[Key]) -> int:
+        """Remove the droppable frames of `keys` (the normal lane only); returns how many were
+        dropped."""
+        if not any(key in self._key_bytes for key in keys):
+            return 0
         kept: deque[Queued] = deque()
         dropped = 0
         for frame in self._normal:
-            if frame.topic is not None and frame.topic in topics:
+            if frame.droppable and frame.key in keys:
                 self._forget(frame)
                 dropped += 1
             else:
@@ -200,6 +236,25 @@ class OutboundQueue:
             self.ready.clear()
         return dropped
 
+    def clear(self, *, normal_only: bool = False) -> int:
+        """Discard the normal lane, and the priority lane unless `normal_only` (a close, §8.4);
+        returns how many frames went. The accounting is exact afterwards."""
+        dropped = len(self._normal)
+        self._normal.clear()
+        self._key_bytes.clear()  # droppable frames ride the normal lane only
+        self._resnaps.clear()
+        if not normal_only:
+            dropped += len(self._priority)
+            self._priority.clear()
+        self.bytes = sum(frame.size for frame in self._priority)
+        if not self:
+            self.ready.clear()
+        return dropped
+
+    def wake(self) -> None:
+        """Set `ready` with nothing queued: the writer has something to do (a close)."""
+        self.ready.set()
+
 
 class Backpressure:
     """The §8.4 ladder for one connection: `check` after anything grows the queue or the pacer's
@@ -208,10 +263,8 @@ class Backpressure:
     def __init__(self, queue: OutboundQueue, pacer: Pacer) -> None:
         self.queue = queue
         self.pacer = pacer
-        #: Subscriptions (id -> topic) whose `backpressure` snapshot may still be queued.
-        #: Frames are kept per topic, so two subscriptions of one topic (live beside replay)
-        #: settle together.
-        self._snapped: dict[str, str] = {}
+        #: Subscriptions (id -> key) whose `backpressure` snapshot may still be queued.
+        self._snapped: dict[str, Key] = {}
         #: Consecutive drops that found a subscription's `backpressure` snapshot unsent.
         self._redrops: dict[str, int] = {}
         #: While `drain` queues a snapshot, a `check` from its pushes is held here (module doc).
@@ -239,22 +292,20 @@ class Backpressure:
         for sub_id in [s for s in self._snapped if s not in current]:
             del self._snapped[sub_id]
         hint = self._most_expensive(subs)
-        queued = self.queue.topic_bytes().keys()
+        queued = self.queue.key_bytes().keys()
         offending = [
             sub
             for sub in subs
             if not sub.topic.family.never_throttled
             and not sub.snapshot_pending
-            and (sub.ch in queued or self._pending(sub))
+            and (_key(sub) in queued or self._pending(sub))
         ]
         for sub in offending:
             self.pacer.drop(sub)
-        live = {sub.ch for sub in subs if not sub.snapshot_pending}
+        live = {_key(sub) for sub in subs if not sub.snapshot_pending}
         # Frames of a topic awaiting another snapshot, or no longer subscribed, go too. That
         # drop is not a redrop: `_settle` forgets its record and the count starts afresh.
-        self.queue.drop(
-            {topic for topic in queued if topic not in live} | {s.ch for s in offending}
-        )
+        self.queue.drop({key for key in queued if key not in live} | {_key(s) for s in offending})
         for sub in subs:
             self.pacer.shed(sub)  # a window that predates another sender's pending `snap`
         events = []
@@ -272,8 +323,11 @@ class Backpressure:
         return lane is not None and lane.queue.pending
 
     def _most_expensive(self, subs: list[Subscription]) -> tuple[str, ...]:
-        """Topics by queued plus pending bytes, largest first (`bye.hint`)."""
-        costs = self.queue.topic_bytes()
+        """Topics by queued plus pending bytes, largest first (`bye.hint`): a live and a replay
+        subscription of one topic count together."""
+        costs: dict[str, int] = {}
+        for (ch, _), size in self.queue.key_bytes().items():
+            costs[ch] = costs.get(ch, 0) + size
         for sub in subs:
             lane = self.pacer.lanes.get(sub.sub_id)
             if lane is not None and lane.queue.pending_bytes:
@@ -286,8 +340,8 @@ class Backpressure:
         it (or its subscription was re-pended or ended), so that subscription's count starts
         afresh. A ladder drop of a queued one is counted by `_looping`, which removes the record
         first."""
-        for sub_id, topic in list(self._snapped.items()):
-            if not self.queue.resnap_queued(topic):
+        for sub_id, key in list(self._snapped.items()):
+            if not self.queue.resnap_queued(key):
                 del self._snapped[sub_id]
                 self._redrops.pop(sub_id, None)
 
@@ -318,7 +372,7 @@ class Backpressure:
                 self._draining = False
             if queued:
                 del self.pacer.resnapshot_required[sub_id]
-                self._snapped[sub_id] = sub.ch  # before the held check, so a drop is a redrop
+                self._snapped[sub_id] = _key(sub)  # before the held check: a drop is a redrop
                 sent.append(sub.ch)
             deferred, self._deferred = self._deferred, None
             if deferred is not None:
@@ -326,3 +380,7 @@ class Backpressure:
             if queued:
                 break
         return _record([LadderEvent("resnapshot", tuple(sent))] if sent else []) + held
+
+
+def _key(sub: Subscription) -> Key:
+    return (sub.ch, sub.replay_session_id)
