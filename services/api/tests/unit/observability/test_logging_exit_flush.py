@@ -9,15 +9,22 @@ is a fresh interpreter, 20 of them, with no network and no sleep. Without the ho
 lost in every run.
 
 A process ended by a signal (uvicorn re-raises a captured SIGTERM after its graceful shutdown)
-does not run `atexit` hooks; that case is not covered here.
+does not run `atexit` hooks; that case is not covered here. The hook function itself is also
+called directly, in-process, for what the subprocess runs cannot show.
 """
 
 from __future__ import annotations
 
+import io
 import json
+import logging
 import subprocess
 import sys
+from contextlib import redirect_stdout
 from pathlib import Path
+
+from candleviewer.observability import logging as logging_mod
+from candleviewer.observability.logging import configure_logging
 
 #: `services/api`: the child imports `candleviewer` from here, as the other subprocess tests do.
 _API_ROOT = Path(__file__).resolve().parents[3]
@@ -50,3 +57,21 @@ def test_last_line_before_a_non_zero_exit_reaches_stdout() -> None:
         if (done.returncode, events, done.stderr) != (3, [_LINE], ""):
             wrong.append(f"run {run}: exit {done.returncode}, {events}, stderr {done.stderr!r}")
     assert not wrong, f"{len(wrong)} of {_RUNS} runs lost the line: {wrong[:3]}"
+
+
+def test_exit_hook_drops_the_listener_first_and_never_raises() -> None:
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        configure_logging(env="ci", level="info", fmt="json")
+        logging.getLogger("t").info("queued before the hook")
+        logging_mod._stop_listener_at_exit()
+        assert logging_mod._listener is None  # dropped first: the hook stops each listener once
+        logging_mod._stop_listener_at_exit()  # nothing left to stop
+
+        configure_logging(env="ci", level="info", fmt="json")
+        assert logging_mod._listener is not None
+        logging_mod._listener.stop()  # stopped by hand: `_listener` still names it
+        logging_mod._stop_listener_at_exit()  # stopping it again must not raise at exit
+        assert logging_mod._listener is None
+    events = [json.loads(line)["event"] for line in buf.getvalue().splitlines()]
+    assert events == ["queued before the hook"]
