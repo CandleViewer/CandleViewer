@@ -44,9 +44,12 @@ FANOUT_HELP: Final = (
     "Gateway segment of budget #6: a subscription's turn in the hub loop (a paced frame: its "
     "release) to the writer handing the data frame to the socket; sampled 1 in 32 (weighted)."
 )
-#: Frame encode time, 1 us to 50 ms (a 4 MiB snapshot). A small frame encodes in 1 to 4 us
-#: (measured: MessagePack 1.0 us, JSON text 1.8 us, a tiny CVWB body 1.4 to 4.0 us), so three edges
-#: sit below 10 us: with the first at 10 us, a quantile of these would read as that edge.
+#: Frame encode time, 1 us to 100 ms. A small frame encodes in 1 to 4 us (measured: MessagePack
+#: 1.0 us, JSON text 1.8 us, a tiny CVWB body 1.4 to 4.0 us), so three edges sit below 10 us: with
+#: the first at 10 us, a quantile of these would read as that edge. A snapshot chunk at the 4 MiB
+#: frame limit (23 section 3.6) is observed exactly. Its encode took 72 ms on a quiet laptop (a
+#: reviewer's best of 5) and 85 to 170 ms on a busy one (load average 15), so the top edge, 100 ms,
+#: covers the quiet case and part of the busy one: a slower chunk is counted in `+Inf`.
 FRAME_ENCODE_BUCKETS: Final = (
     1e-6,
     2.5e-6,
@@ -61,6 +64,7 @@ FRAME_ENCODE_BUCKETS: Final = (
     1e-2,
     2.5e-2,
     5e-2,
+    1e-1,
 )
 #: Frame size, 64 B to the 4 MiB frame limit (23 section 3.6), a factor of 4 apart.
 FRAME_BYTES_BUCKETS: Final = (64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304)

@@ -1014,7 +1014,7 @@ def make_ws_router(
                         JSON_ENCODE_SECONDS.observe(seconds, SAMPLE_EVERY)
                         JSON_FRAME_BYTES.observe(len(payload), SAMPLE_EVERY)
                     await conn.send_payload(payload)
-                    del payload  # not held across the idle waits: up to 4 MiB for a snapshot chunk
+                    del payload  # the encoded copy (up to 4 MiB, a snapshot chunk) is not kept idle
                     now = conn.clock()  # the watchdog's send time, which this frame also observes
                     conn.watchdog.last_outbound = now
                     FANOUT_SECONDS.observe(now - received, SAMPLE_EVERY)

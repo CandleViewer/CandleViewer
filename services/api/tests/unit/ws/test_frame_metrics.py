@@ -23,7 +23,7 @@ from typing import Any
 
 import msgpack
 import pytest
-from prometheus_client import REGISTRY
+from prometheus_client import REGISTRY, CollectorRegistry
 
 from candleviewer.observability.metrics_catalogue import (
     CATALOGUE,
@@ -134,11 +134,27 @@ def test_what_the_encoder_observes_is_what_a_scrape_serves() -> None:
 
 
 def test_encode_time_buckets_tell_apart_the_few_microseconds_a_small_frame_takes() -> None:
-    """A small frame encodes in 1 to 4 us (MessagePack about 1, JSON text about 2, a CVWB body 1.4
-    to 4): with the first edge at 10 us they would share one bucket, and a quantile of them would
-    read as that edge whatever the frames cost."""
+    """A small frame encodes in 1 to 4 us: with the first edge at 10 us every one of them shared
+    one bucket, and a quantile of them read as that edge whatever the frames cost. A 1, a 2.2 and
+    a 4 us frame now land in three buckets, none of them `+Inf`. That does not separate every
+    pair: a MessagePack frame of 1.05 us shares (1 us, 2.5 us] with a JSON text of 1.8 to 2.2 us,
+    so the two codecs are told apart by the mean (`_sum` / `_count`), not by a quantile."""
     placed = [bisect_left(FRAME_ENCODE_BUCKETS, us * 1e-6) for us in (1.0, 2.2, 4.0)]
     assert len(set(placed)) == 3 and max(placed) < len(FRAME_ENCODE_BUCKETS)  # none in `+Inf`
+
+
+def test_a_snapshot_chunk_at_the_frame_limit_is_inside_the_encode_time_buckets() -> None:
+    """A chunk of 4 MiB (23 section 3.6) is observed exactly and encodes in 72 ms on a quiet laptop
+    (a reviewer's best of 5), 85 to 170 ms on a busy one. It must be counted under a finite edge:
+    in `+Inf` a quantile could only read the top edge, whatever the chunk costs. (The slower of the
+    busy ones, over 100 ms, land there.) Observed through a histogram of the series' own edges (a
+    throwaway one, on a registry of its own), so it is the placement the series serves."""
+    probe = FastHistogram(
+        "probe_seconds", "probe", buckets=FRAME_ENCODE_BUCKETS, registry=CollectorRegistry()
+    )
+    probe.labels().observe(0.072)
+    cumulative, _ = probe.labels().reading()
+    assert cumulative[-2] == cumulative[-1] == 1  # at the top finite edge, not only in `+Inf`
 
 
 def test_kind_is_the_six_body_kinds_plus_json_and_msgpack_and_nothing_identifies_a_series() -> None:
@@ -350,27 +366,48 @@ def test_the_writer_times_and_sizes_only_the_data_frames_the_hub_stamped(
     assert b1 - b0 == n * sum(_size(wire[i]) for i in stamped)
 
 
-def _idle_writer_holds(w: _World) -> set[type]:
-    """The types of the values the connection's writer task holds while it waits for a frame."""
+def _idle_writer(w: _World) -> tuple[str, dict[str, Any]]:
+    """The name of the code the connection's writer task is suspended in, and what it holds there
+    (locals and free variables, by name), while it waits for a frame."""
 
-    async def look() -> set[type]:
+    async def look() -> tuple[str, dict[str, Any]]:
         (task,) = [t for t in asyncio.all_tasks() if t.get_name().endswith("-writer")]
         coro = task.get_coro()
-        assert coro is not None  # a suspended writer, not a finished eager task
-        return {type(v) for v in inspect.getcoroutinelocals(coro).values()}
+        assert inspect.iscoroutine(coro)  # a suspended coroutine, not a finished eager task
+        return coro.cr_code.co_name, dict(inspect.getcoroutinelocals(coro))
 
     assert w.client.portal is not None
-    return w.client.portal.call(look)  # on the app's loop, so after the writer's step has ended
+    # On the app's loop, so after the writer's step has ended. Bound to a typed name: mypy --strict
+    # takes `portal.call`'s result for `Any` here, and refuses to return it from a typed function.
+    held: tuple[str, dict[str, Any]] = w.client.portal.call(look)
+    return held
 
 
 @CODECS
-def test_the_idle_writer_holds_no_copy_of_the_frame_it_sent(subprotocol: list[str]) -> None:
-    """The payload of a stamped frame (up to 4 MiB for a snapshot chunk) is let go once it is
-    sent, not kept across the idle waits until the next stamped frame."""
-    held: list[set[type]] = []
+def test_the_idle_writer_holds_no_encoded_payload_it_sent(
+    monkeypatch: pytest.MonkeyPatch, subprotocol: list[str]
+) -> None:
+    """The encoded payload of a stamped frame (up to 4 MiB for a snapshot chunk) is let go once it
+    is sent, not kept until the next stamped frame. By identity: no value the idle writer holds is
+    one of the payloads it sent, so an unrelated `str` or `bytes` local never fails this, and a
+    failure names the variable. The frame dict (`item`) is still held, as it is on `main`: only
+    the extra encoded copy is released."""
+    send = gateway._Connection.send_payload
+    sent: list[str | bytes] = []  # kept here, so the identity of a payload is not reused
+
+    async def recording_send(conn: Any, payload: str | bytes) -> None:
+        sent.append(payload)
+        await send(conn, payload)
+
+    monkeypatch.setattr(gateway._Connection, "send_payload", recording_send)
+    at_rest: list[tuple[str, dict[str, Any]]] = []
     # `s` 2 to `n`: the last frame the writer sent is the stamped one, then it waits for the next.
-    _session(subprotocol, SAMPLE_EVERY - 1, at_rest=lambda w: held.append(_idle_writer_holds(w)))
-    assert len(held) == 1 and not held[0] & {str, bytes}
+    _session(subprotocol, SAMPLE_EVERY - 1, at_rest=lambda w: at_rest.append(_idle_writer(w)))
+    ((code, held),) = at_rest
+    assert code == "writer"  # what was read is the writer's frame, not that of a wrapper
+    assert _decoded(sent[-1])["s"] == SAMPLE_EVERY  # and the last frame it sent is the stamped one
+    retained = sorted(name for name, value in held.items() if any(value is p for p in sent))
+    assert not retained, f"the idle writer still holds a payload it sent, in: {retained}"
 
 
 @CODECS
