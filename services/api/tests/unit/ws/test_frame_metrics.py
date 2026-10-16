@@ -12,7 +12,11 @@ precedes the send, so a frame the client has received is already counted.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
+from bisect import bisect_left
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Any
@@ -21,7 +25,11 @@ import msgpack
 import pytest
 from prometheus_client import REGISTRY
 
-from candleviewer.observability.metrics_catalogue import CATALOGUE, live_specs
+from candleviewer.observability.metrics_catalogue import (
+    CATALOGUE,
+    FRAME_ENCODE_BUCKETS,
+    live_specs,
+)
 from candleviewer.ws import binary, cvwb_vectors, gateway
 from candleviewer.ws._generated.cvwb_layout import KINDS
 from candleviewer.ws.binary import BOOK_DELTA, Frame, FrameEncodeError
@@ -59,16 +67,17 @@ class _Ticks:
         return self.now
 
 
-def _obs(name: str, **labels: str) -> tuple[float, float]:
-    """(observation count, sum) of one histogram series: the count is weighted."""
-    count = REGISTRY.get_sample_value(f"{name}_count", labels)
-    total = REGISTRY.get_sample_value(f"{name}_sum", labels)
-    assert count is not None and total is not None, (name, labels)
-    return count, total
+def _obs(series: FastHistogram, kind: str) -> tuple[float, float]:
+    """(observation count, sum) of one child, read from the child: the count is weighted. Not
+    through the registry, where every read collects every collector (about 1 ms): a test that
+    reads each kind around each frame would spend C-13.2's 100 ms on collects alone. One test,
+    `test_what_the_encoder_observes_is_what_a_scrape_serves`, reads the registry."""
+    cumulative, total = series.labels(kind).reading()
+    return cumulative[-1], total
 
 
 def _cost(kind: str) -> tuple[tuple[float, float], tuple[float, float]]:
-    return _obs(ENCODE, kind=kind), _obs(BYTES, kind=kind)
+    return _obs(cv_ws_frame_encode_seconds, kind), _obs(cv_ws_frame_bytes, kind)
 
 
 def _encoded(kind: str) -> tuple[float, float]:
@@ -108,7 +117,28 @@ def test_series_are_live_catalogued_registered_once_and_re_exported() -> None:
         assert [f.name for f in REGISTRY.collect()].count(name) == 1, name
         assert metric.labelnames == spec.labels and metric.buckets == spec.buckets, name
         assert spec.help == families[name].documentation and SAMPLED in spec.help, name
-        assert JSON_KIND in spec.help and MSGPACK_KIND in spec.help, name  # it lists the kinds
+        assert f"{JSON_KIND} / {MSGPACK_KIND}" in spec.help, name  # it lists the writer's kinds
+    # What a reader of /metrics cannot see in the numbers: only the msgpack seconds of a binary
+    # frame include the base64 decode, and the bytes are the frame before any deflate.
+    assert "base64" in families[ENCODE].documentation
+    assert "permessage-deflate" in families[BYTES].documentation
+
+
+def test_what_the_encoder_observes_is_what_a_scrape_serves() -> None:
+    """The other tests read the children; a scrape reads the registry: one frame, both series."""
+    binary.encode(_vector("trades"), SAMPLE_EVERY)
+    for name, series in _SERIES.items():
+        cumulative, total = series.labels("trades").reading()
+        assert REGISTRY.get_sample_value(f"{name}_count", {"kind": "trades"}) == cumulative[-1]
+        assert REGISTRY.get_sample_value(f"{name}_sum", {"kind": "trades"}) == total
+
+
+def test_encode_time_buckets_tell_apart_the_few_microseconds_a_small_frame_takes() -> None:
+    """A small frame encodes in 1 to 4 us (MessagePack about 1, JSON text about 2, a CVWB body 1.4
+    to 4): with the first edge at 10 us they would share one bucket, and a quantile of them would
+    read as that edge whatever the frames cost."""
+    placed = [bisect_left(FRAME_ENCODE_BUCKETS, us * 1e-6) for us in (1.0, 2.2, 4.0)]
+    assert len(set(placed)) == 3 and max(placed) < len(FRAME_ENCODE_BUCKETS)  # none in `+Inf`
 
 
 def test_kind_is_the_six_body_kinds_plus_json_and_msgpack_and_nothing_identifies_a_series() -> None:
@@ -252,9 +282,12 @@ def _size(raw: str | bytes) -> int:
     return len(raw) if isinstance(raw, bytes) else len(raw.encode())
 
 
-def _session(subprotocol: list[str], deltas: int) -> list[str | bytes]:
+def _session(
+    subprotocol: list[str], deltas: int, at_rest: Callable[[_World], None] | None = None
+) -> list[str | bytes]:
     """Every message a client gets on `subprotocol` from `hello` to the last of `deltas` deltas on
-    `CH`, as it crossed the wire: `welcome`, `auth_ok`, `sub_ok`, the `snap` (`s` 1), the deltas."""
+    `CH`, as it crossed the wire: `welcome`, `auth_ok`, `sub_ok`, the `snap` (`s` 1), the deltas.
+    `at_rest` runs once the last one is in, with the connection open and its writer idle."""
     w = _World()
     with w.client, w.client.websocket_connect("/ws", subprotocols=subprotocol) as ws:
         _send(ws, {"t": "hello", "id": "h"})
@@ -266,6 +299,8 @@ def _session(subprotocol: list[str], deltas: int) -> list[str | bytes]:
         assert w.client.portal is not None
         w.client.portal.call(lambda: [w.hub.publish(CH, BODY) for _ in range(deltas)])
         wire += [_wire(ws) for _ in range(deltas)]
+        if at_rest is not None:
+            at_rest(w)
     assert [_decoded(m)["t"] for m in wire[:4]] == ["welcome", "auth_ok", "sub_ok", "snap"]
     return wire
 
@@ -276,12 +311,21 @@ def test_the_writer_times_and_sizes_only_the_data_frames_the_hub_stamped(
 ) -> None:
     ticks = _Ticks(1.0)  # the writer's timer pair around the encode: exactly 1 s apart
     monkeypatch.setattr(gateway, "perf_counter", ticks)
-    send = gateway._Connection.send_payload
+    encode, send = gateway._Connection.encode_frame, gateway._Connection.send_payload
+    encoded: list[str | bytes] = []
+    sent: list[str | bytes] = []
+
+    def recording_encode(conn: Any, frame: dict[str, Any]) -> str | bytes:
+        payload = encode(conn, frame)
+        encoded.append(payload)
+        return payload
 
     async def slow_send(conn: Any, payload: str | bytes) -> None:
         ticks.now += 10.0  # a send takes 10 s on the stand-in clock: it is not encode time
+        sent.append(payload)
         await send(conn, payload)
 
+    monkeypatch.setattr(gateway._Connection, "encode_frame", recording_encode)
     monkeypatch.setattr(gateway._Connection, "send_payload", slow_send)
     kind = MSGPACK_KIND if subprotocol == MSGPACK else JSON_KIND
     before = _writer()
@@ -291,6 +335,8 @@ def test_the_writer_times_and_sizes_only_the_data_frames_the_hub_stamped(
     frames = [_decoded(m) for m in wire]
     # Every frame crossed in the connection's own codec: text on `cv.v1.json`, bytes on msgpack.
     assert {type(m) for m in wire} == {bytes if kind == MSGPACK_KIND else str}
+    # Each frame was encoded once, whatever its branch: what was timed and sized is what was sent.
+    assert encoded == sent == wire
     stamped = [i for i, f in enumerate(frames) if f["t"] == "d" and f["s"] % n == 0]
     assert [frames[i]["s"] for i in stamped] == [n, 2 * n]
     assert ticks.reads == 2 * 2  # a timer pair for each stamped frame; none for any other frame
@@ -302,6 +348,29 @@ def test_the_writer_times_and_sizes_only_the_data_frames_the_hub_stamped(
     assert (n1 - n0, c1 - c0) == (2 * n, 2 * n)
     assert t1 - t0 == pytest.approx(2 * n * 1.0)
     assert b1 - b0 == n * sum(_size(wire[i]) for i in stamped)
+
+
+def _idle_writer_holds(w: _World) -> set[type]:
+    """The types of the values the connection's writer task holds while it waits for a frame."""
+
+    async def look() -> set[type]:
+        (task,) = [t for t in asyncio.all_tasks() if t.get_name().endswith("-writer")]
+        coro = task.get_coro()
+        assert coro is not None  # a suspended writer, not a finished eager task
+        return {type(v) for v in inspect.getcoroutinelocals(coro).values()}
+
+    assert w.client.portal is not None
+    return w.client.portal.call(look)  # on the app's loop, so after the writer's step has ended
+
+
+@CODECS
+def test_the_idle_writer_holds_no_copy_of_the_frame_it_sent(subprotocol: list[str]) -> None:
+    """The payload of a stamped frame (up to 4 MiB for a snapshot chunk) is let go once it is
+    sent, not kept across the idle waits until the next stamped frame."""
+    held: list[set[type]] = []
+    # `s` 2 to `n`: the last frame the writer sent is the stamped one, then it waits for the next.
+    _session(subprotocol, SAMPLE_EVERY - 1, at_rest=lambda w: held.append(_idle_writer_holds(w)))
+    assert len(held) == 1 and not held[0] & {str, bytes}
 
 
 @CODECS

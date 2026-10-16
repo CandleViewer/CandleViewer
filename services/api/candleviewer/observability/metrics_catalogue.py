@@ -44,8 +44,24 @@ FANOUT_HELP: Final = (
     "Gateway segment of budget #6: a subscription's turn in the hub loop (a paced frame: its "
     "release) to the writer handing the data frame to the socket; sampled 1 in 32 (weighted)."
 )
-#: Frame encode time, 10 us (a small CVWB delta) to 50 ms (a 4 MiB snapshot).
-FRAME_ENCODE_BUCKETS: Final = (1e-5, 2.5e-5, 5e-5, 1e-4, 2.5e-4, 1e-3, 5e-3, 1e-2, 2.5e-2, 5e-2)
+#: Frame encode time, 1 us to 50 ms (a 4 MiB snapshot). A small frame encodes in 1 to 4 us
+#: (measured: MessagePack 1.0 us, JSON text 1.8 us, a tiny CVWB body 1.4 to 4.0 us), so three edges
+#: sit below 10 us: with the first at 10 us, a quantile of these would read as that edge.
+FRAME_ENCODE_BUCKETS: Final = (
+    1e-6,
+    2.5e-6,
+    5e-6,
+    1e-5,
+    2.5e-5,
+    5e-5,
+    1e-4,
+    2.5e-4,
+    1e-3,
+    5e-3,
+    1e-2,
+    2.5e-2,
+    5e-2,
+)
 #: Frame size, 64 B to the 4 MiB frame limit (23 section 3.6), a factor of 4 apart.
 FRAME_BYTES_BUCKETS: Final = (64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304)
 #: The HELP of the two frame series too (`ws/metrics.py` imports them). A data frame is
@@ -53,13 +69,14 @@ FRAME_BYTES_BUCKETS: Final = (64, 256, 1024, 4096, 16384, 65536, 262144, 1048576
 #: are the frame as its connection's codec sent it (23 section 2.2).
 FRAME_ENCODE_HELP: Final = (
     "Frame encode time. kind: a CVWB body kind (a delta the hub stamps; every snapshot chunk) "
-    "or json / msgpack (a data frame the hub stamps, in its connection's codec); sampled 1 in "
-    "32 (weighted)."
+    "or json / msgpack (a data frame the hub stamps, in its connection's codec; a binary frame's "
+    "msgpack seconds include the base64 decode of its p, json's do not); sampled 1 in 32 "
+    "(weighted)."
 )
 FRAME_BYTES_HELP: Final = (
     "Encoded frame size. kind: a CVWB body kind (header plus body) or json / msgpack (a data "
-    "frame as sent; the same frame counts under both, so do not sum kinds); sampled 1 in 32 "
-    "(weighted) as the encode time."
+    "frame as sent, before any permessage-deflate; the same frame counts under both, so do not "
+    "sum kinds); sampled 1 in 32 (weighted) as the encode time."
 )
 #: Per-engine CPU time per batch.
 ENGINE_BUCKETS: Final = (

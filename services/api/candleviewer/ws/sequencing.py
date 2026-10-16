@@ -438,9 +438,12 @@ class TopicEmitter:
 
     One data frame of a subscription in `SAMPLE_EVERY` (the one whose `s` is a multiple of it)
     leaves with the `clock` reading at which the hub took it (`push_data`), so the writer can
-    observe `cv_ws_fanout_seconds` (budget #6, weighted) once the socket has it. The others leave
-    with none, and the hub reads no clock for them. `clock` must be the clock the writer reads;
-    the gateway passes the connection's own."""
+    observe `cv_ws_fanout_seconds` (budget #6, weighted) once the socket has it. That stamp also
+    picks the frames the cost series observe: the encoder times and sizes a stamped binary delta
+    (`cv_ws_frame_*{kind}`, weighted; a snapshot chunk is observed exactly) and the writer the
+    stamped frame it encodes (`kind` `json` / `msgpack`). The others leave with none, and the hub
+    reads no clock for them. `clock` must be the clock the writer reads; the gateway passes the
+    connection's own."""
 
     def __init__(
         self,
@@ -556,8 +559,10 @@ class TopicEmitter:
         """Emit one `d` consuming exactly one sequence number. Suppressed (False) while the
         subscription awaits its `snap` or is paused, so no delta crosses a gap (§7.1). A frame whose
         `s` is a multiple of `SAMPLE_EVERY` is stamped with the clock now (a paced frame at its
-        release, not at its source update); the others read no clock. `meta` rides on the
-        envelope (bars: the §6.1 `include_delta` echo) and may not name a key the server owns."""
+        release, not at its source update), and a stamped binary delta is also encoded with that
+        weight (timed and sized by `cv_ws_frame_*`); the others read no clock and no timer. `meta`
+        rides on the envelope (bars: the §6.1 `include_delta` echo) and may not name a key the
+        server owns."""
         if meta and SERVER_META_KEYS.intersection(meta):  # a programming error, as for a snap
             raise ValueError("delta meta may not name a server-owned key")
         if sub.snapshot_pending or sub.effective.get("paused") is True:

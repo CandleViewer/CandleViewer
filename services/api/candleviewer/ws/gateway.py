@@ -408,8 +408,9 @@ class _Connection:
         """Queue one frame; a full queue is a slow consumer (C-2.18 policy). A sampled data frame
         comes with `received`, the `clock` reading at which the hub took it, and is queued with it
         as `(received, frame)`: the writer observes `cv_ws_fanout_seconds` from that pair once the
-        socket has the frame. It never reaches the wire, and a frame dropped from the queue (a
-        seal, a full queue) is never observed. Any other frame is queued bare."""
+        socket has the frame, and times and sizes its encode (`cv_ws_frame_*`) before the send. It
+        never reaches the wire, and a frame dropped from the queue (a seal, a full queue) is never
+        observed. Any other frame is queued bare."""
         if self.closing:
             return
         if self.outbound.qsize() >= OUTBOUND_QUEUE_MAX:
@@ -1013,6 +1014,7 @@ def make_ws_router(
                         JSON_ENCODE_SECONDS.observe(seconds, SAMPLE_EVERY)
                         JSON_FRAME_BYTES.observe(len(payload), SAMPLE_EVERY)
                     await conn.send_payload(payload)
+                    del payload  # not held across the idle waits: up to 4 MiB for a snapshot chunk
                     now = conn.clock()  # the watchdog's send time, which this frame also observes
                     conn.watchdog.last_outbound = now
                     FANOUT_SECONDS.observe(now - received, SAMPLE_EVERY)
