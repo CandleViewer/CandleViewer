@@ -27,3 +27,5 @@ Register a health probe through `health_probes.py` so it appears in `/healthz` a
 | Review  | Architect reviewer; page severity also needs the owner                                                         |
 
 An alert without a runbook is not allowed (ADR-0014 section 6); CI enforces it.
+
+A page that fires on a rate window (`increase(...[15m]) > 0`) resolves when the window moves on, not when anyone acts. Where that would make a `[RESOLVED]` message read as handled, label the rule `resolves: window` (an event page): Alertmanager sends it on the page channel with no resolved message (receiver `page_event` in `infra/alertmanager/alertmanager.yml`), and its runbook section says what the Owner does whether or not it has cleared. Pages whose condition clears (a gauge, a state) keep their resolved message. Only pages take the label; `check_alert_rules.py` refuses it elsewhere.

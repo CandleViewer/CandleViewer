@@ -65,6 +65,7 @@ def _muted(cfg: dict[str, Any], labels: dict[str, str], at: time) -> bool:
 
 PAGE = {"severity": "page", "component": "oms"}
 SECURITY_PAGE = {"severity": "page", "component": "audit"}
+EVENT_PAGE = {"severity": "page", "component": "auth_recovery", "resolves": "window"}  # #2931
 TICKET = {"severity": "ticket", "component": "auth"}
 
 
@@ -79,6 +80,7 @@ def test_quiet_hours_mute_ticket_never_page(spec: str) -> None:
     assert _muted(cfg, TICKET, inside)
     assert not _muted(cfg, PAGE, inside)
     assert not _muted(cfg, SECURITY_PAGE, inside)
+    assert not _muted(cfg, EVENT_PAGE, inside)
 
 
 def test_quiet_hours_window_bounds_honour_env() -> None:

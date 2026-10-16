@@ -86,11 +86,15 @@ groups:
         # 15 minutes after a use, so it pages: a muted ticket that resolves inside quiet hours
         # is never notified. Its own component, so this page inhibits none of the auth tickets.
         # The series has no user label; the auth.recovery_code_used audit row names the user.
+        # #2931: an event page. It clears when that window moves on, not when anyone acts, so a
+        # [RESOLVED] would read as handled: `resolves: window` routes it to the receiver that
+        # sends none (infra/alertmanager/alertmanager.yml).
         expr: sum by (env) (increase(auth_recovery_codes_used_total[15m])) > 0
         for: 0m
         labels:
           severity: page
           component: auth_recovery
+          resolves: window
         annotations:
           summary: "A recovery code was used: confirm it was the account holder"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authrecoverycodeused"

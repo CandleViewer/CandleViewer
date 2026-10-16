@@ -169,7 +169,8 @@ def test_receivers_exist_and_no_inline_secret() -> None:
     assert all(x["receiver"] in recv for x in AM["route"]["routes"])
     text = (HERE / "alertmanager.yml").read_text(encoding="utf-8")
     assert "http://" not in text and "https://" not in text
-    assert text.count("url_file:") == 3
+    # page, page_event (#2931: the page secret again), ticket, deadman
+    assert text.count("url_file:") == 4
     assert "alert_page_webhook_url" in text and "alert_ticket_webhook_url" in text
 
 
@@ -280,12 +281,15 @@ def test_ws_origin_refusal_alert_watches_the_bounded_close_reason() -> None:
     assert url == "docs/plan/07-release-and-prr.md#alert-wsoriginrefusalshigh"
 
 
-def _route_for(labels: dict[str, str]) -> dict[str, Any]:
+def _route_for(
+    labels: dict[str, str], routes: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """The child route Alertmanager picks for `labels`: the first whose matchers all hold
-    (no child route sets `continue`), else the root route."""
+    (no child route sets `continue`), else the root route. `routes` replaces the configured
+    child routes, to show what a different order would do."""
     import re
 
-    for route in AM["route"]["routes"]:
+    for route in AM["route"]["routes"] if routes is None else routes:
         assert not route.get("continue", False)
         pairs = [re.fullmatch(r'(\w+)\s*=\s*"([^"]*)"', m) for m in route["matchers"]]
         assert all(p is not None for p in pairs), route["matchers"]  # equality matchers only
@@ -299,19 +303,168 @@ def test_recovery_code_alert_pages_the_owner_on_any_use_even_in_quiet_hours() ->
     The alert resolves 15 minutes after a use. On the muted ticket route, one that fires and
     resolves inside quiet hours is never notified (#2660 review), so its route must have no
     mute. Its own component, so the page-over-ticket rule hides none of the `auth` tickets.
-    The counter carries no user label; the runbook reads the audit log."""
+    The counter carries no user label; the runbook reads the audit log. #2931: it is an event
+    page (`resolves: window`), so it takes the page channel without a [RESOLVED] message."""
     rules = _rules()
     rule = {r["alert"]: r for r in rules}["AuthRecoveryCodeUsed"]
     assert rule["expr"] == "sum by (env) (increase(auth_recovery_codes_used_total[15m])) > 0"
     assert rule["for"] == "0m"
-    assert rule["labels"] == {"severity": "page", "component": "auth_recovery"}
+    assert rule["labels"] == {
+        "severity": "page",
+        "component": "auth_recovery",
+        "resolves": "window",
+    }
     route = _route_for({**rule["labels"], "alertname": rule["alert"], "env": "live"})
-    assert route["receiver"] == "page" and "mute_time_intervals" not in route
+    assert route["receiver"] == "page_event" and "mute_time_intervals" not in route
     url = rule["annotations"]["runbook_url"]
     assert url == "docs/plan/07-release-and-prr.md#alert-authrecoverycodeused"
     assert [r["alert"] for r in rules if r["labels"]["component"] == "auth_recovery"] == [
         "AuthRecoveryCodeUsed"
     ]
+
+
+#: #2931: pages whose resolution only means "the rate window elapsed", not "someone acted". A
+#: [RESOLVED] on the page channel reads as handled although the event still needs the Owner's
+#: review, so each carries `resolves: window` and takes the receiver that sends no resolved
+#: message. #2496 item 3 (the break-glass use alert) adds itself here with the same label.
+EVENT_TYPE_PAGES = {"AuthRecoveryCodeUsed"}
+
+
+def _alert_labels(rule: dict[str, Any]) -> dict[str, str]:
+    """The labels Alertmanager routes on for a rule's alert: its rule labels, name and env."""
+    return {**rule["labels"], "alertname": rule["alert"], "env": "live"}
+
+
+def _slack(receiver: str) -> dict[str, Any]:
+    """The one Slack config of a receiver."""
+    (config,) = next(r for r in AM["receivers"] if r["name"] == receiver)["slack_configs"]
+    return dict(config)
+
+
+def _matches(matcher: str, labels: dict[str, str]) -> bool:
+    """Whether one Alertmanager matcher (`=`, `!=`, `=~`, `!~`) holds for `labels`."""
+    parsed = re.fullmatch(r'(\w+)\s*(=~|!~|!=|=)\s*"([^"]*)"', matcher)
+    assert parsed is not None, matcher
+    key, op, value = parsed.groups()
+    actual = labels.get(key, "")
+    return {
+        "=": actual == value,
+        "!=": actual != value,
+        "=~": re.fullmatch(value, actual) is not None,
+        "!~": re.fullmatch(value, actual) is None,
+    }[op]
+
+
+def test_event_type_page_rules_carry_the_resolves_window_label() -> None:
+    """#2931: the label is the only thing that tells an event page from a condition page, so
+    the set of rules carrying it is pinned both ways. Every event-type page has it, and no
+    condition page (whose [RESOLVED] means the condition cleared) picks it up and loses that
+    message. Each reads a rate window, which is what makes its resolution "the window moved on"."""
+    rules = {r["alert"]: r for r in _rules()}
+    assert {name for name, r in rules.items() if "resolves" in r["labels"]} == EVENT_TYPE_PAGES
+    for name in EVENT_TYPE_PAGES:
+        assert rules[name]["labels"]["severity"] == "page"
+        assert rules[name]["labels"]["resolves"] == "window"
+        assert re.search(r"\[\d+[smhdw]\]", rules[name]["expr"]), rules[name]["expr"]
+
+
+def test_event_type_page_goes_to_the_page_channel_without_a_resolved_message() -> None:
+    """#2931: the firing page still reaches the Owner on the page webhook, with the same
+    payload template and the same quiet-hours bypass and repeat as every page (SR-022). Only
+    the [RESOLVED] message is gone."""
+    page, event = _slack("page"), _slack("page_event")
+    generic = next(r for r in AM["route"]["routes"] if r["matchers"] == ['severity = "page"'])
+    event_rules = [r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES]
+    assert {r["alert"] for r in event_rules} == EVENT_TYPE_PAGES
+    for rule in event_rules:
+        route = _route_for(_alert_labels(rule))
+        assert route["receiver"] == "page_event"
+        assert "mute_time_intervals" not in route
+        assert route["repeat_interval"] == generic["repeat_interval"]
+    assert event["send_resolved"] is False
+    assert event["api_url_file"] == page["api_url_file"]
+    assert (event["title"], event["text"]) == (page["title"], page["text"])
+
+
+def test_condition_pages_keep_their_resolved_notification() -> None:
+    """#2931: a condition page (`pg_up == 0`, an unknown-order gauge, the mesh guard) resolves
+    because the condition cleared, which the Owner wants to read. Each still takes `page`."""
+    pages = [
+        r
+        for r in _rules()
+        if r["labels"]["severity"] == "page" and r["alert"] not in EVENT_TYPE_PAGES
+    ]
+    assert {"PostgresDown", "OmsUnknownOrders", "NetBindingUnsafe"} <= {r["alert"] for r in pages}
+    for rule in pages:
+        assert _route_for(_alert_labels(rule))["receiver"] == "page", rule["alert"]
+    assert _slack("page")["send_resolved"] is True
+
+
+def test_event_route_is_listed_before_the_generic_page_route() -> None:
+    """The first matching child route wins and none sets `continue`, so the generic
+    `severity = "page"` route listed first would shadow the event route and send every event
+    page its [RESOLVED] again."""
+    routes = AM["route"]["routes"]
+    generic = next(i for i, r in enumerate(routes) if r["matchers"] == ['severity = "page"'])
+    event = next(i for i, r in enumerate(routes) if 'resolves = "window"' in r["matchers"])
+    assert event < generic
+    swapped = list(routes)
+    swapped[event], swapped[generic] = swapped[generic], swapped[event]
+    rule = next(r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES)
+    assert _route_for(_alert_labels(rule), swapped)["receiver"] == "page"
+
+
+def test_resolves_label_never_moves_a_ticket_to_the_page_channel() -> None:
+    """The lint refuses `resolves` on a ticket; the route backs it up. A ticket that carries
+    the label still lands on the ticket channel, muted in quiet hours."""
+    route = _route_for({"severity": "ticket", "component": "auth", "resolves": "window"})
+    assert route["receiver"] == "ticket"
+    assert route["mute_time_intervals"] == ["quiet_hours"]
+
+
+def test_event_type_page_is_not_a_target_of_any_inhibit_rule() -> None:
+    """Security signals are never inhibited (see the PostgresDown rule's comment): no inhibit
+    rule can hide an event page, whatever its source."""
+    rule = next(r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES)
+    labels = _alert_labels(rule)
+    for inhibit in AM["inhibit_rules"]:
+        assert not all(_matches(m, labels) for m in inhibit["target_matchers"]), inhibit
+
+
+def test_resolves_label_lint_accepts_window_on_a_page(tmp_path: Path) -> None:
+    labels = "{severity: page, component: c, resolves: window}"
+    assert _bad_rule(tmp_path, labels, "{runbook_url: 'docs/plan/07-release-and-prr.md#x'}") == []
+
+
+def test_resolves_label_lint_rejects_another_value(tmp_path: Path) -> None:
+    """A typo would fall through to the generic page route and quietly send the [RESOLVED] again."""
+    labels = "{severity: page, component: c, resolves: Window}"
+    errs = _bad_rule(tmp_path, labels, "{runbook_url: 'docs/plan/07-release-and-prr.md#x'}")
+    assert errs == ["Bad: resolves label must be 'window'"]
+
+
+def test_resolves_label_lint_rejects_a_ticket(tmp_path: Path) -> None:
+    """Only pages have the event route, so on a ticket the label would do nothing."""
+    labels = "{severity: ticket, component: c, resolves: window}"
+    errs = _bad_rule(tmp_path, labels, "{runbook_url: 'docs/plan/07-release-and-prr.md#x'}")
+    assert errs == ["Bad: resolves label is only valid on a page"]
+
+
+def test_promtool_case_for_each_event_page_expects_the_resolves_label() -> None:
+    """The promtool case is generated from the rule (`gen_promtool_tests.py`): a rule label
+    added without regenerating it fails `promtool test rules` in CI, so check it here."""
+    doc = yaml.safe_load(
+        (INFRA / "prometheus" / "tests" / "system_alerts.test.yml").read_text(encoding="utf-8")
+    )
+    firing = [
+        case
+        for test in doc["tests"]
+        for case in test["alert_rule_test"]
+        if case["alertname"] in EVENT_TYPE_PAGES and case["exp_alerts"]
+    ]
+    assert {case["alertname"] for case in firing} == EVENT_TYPE_PAGES
+    for case in firing:
+        assert all(alert["exp_labels"]["resolves"] == "window" for alert in case["exp_alerts"])
 
 
 def test_net_binding_alert_pages_as_soon_as_the_guard_trips() -> None:
