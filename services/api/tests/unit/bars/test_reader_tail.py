@@ -138,6 +138,20 @@ def test_tail_window_is_twice_the_bars_span_within_the_sr_e12_02_caps(
     assert tail_window_us(spec, MAX_TAIL) == window
 
 
+@pytest.mark.parametrize(
+    ("interval_ms", "bars"),
+    [(43_200_000, 800), (86_400_000, 400), (604_800_000, 57)],
+    ids=["12h", "1d", "1w"],
+)
+def test_the_capped_time_window_holds_the_bar_counts_the_docs_quote(
+    interval_ms: int, bars: int
+) -> None:
+    """`limits.py` and `21-database-schema.md` §9.5 quote these as the most a WS `bars` snapshot
+    holds; amending the cap fails here, so the quoted numbers cannot go stale unnoticed."""
+    spec = BarSpec(kind="time", interval_ms=interval_ms)
+    assert tail_window_us(spec, MAX_TAIL) // (interval_ms * 1_000) == bars
+
+
 async def test_read_tail_binds_its_window_back_from_the_injected_clock() -> None:
     conn = _Conn([])
     tail = await BarReader(conn, _sched, now_us=lambda: NOW).read_tail(SYM, SPEC, 4)
