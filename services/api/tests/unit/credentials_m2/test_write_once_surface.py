@@ -10,9 +10,10 @@ honest regression, not a deliberate bypass: the trigger is the enforcement.
 The SQL tripwire reads every string constant under `candleviewer/`, migrations included. A second
 tripwire reads every Python reference to the `api_keys` Table outside `db/models.py` (which defines
 it) and the migrations (DDL), so a SQLAlchemy Core or ORM write, which names the table with no SQL
-string, is caught as well. Neither reads SQL assembled from parts (f-string fragments, `+`):
-AGENTS.md §5.2 forbids string-built SQL and the `cv-raw-sql-string-interpolation` Semgrep rule
-rejects it in `text()` and `execute()` calls.
+string, is caught as well. The same SQL scan also pins the single writer of the non-protected
+`last_used_at` column: the broker's debounced touch (21 §3.2.2, #2580). Neither reads SQL
+assembled from parts (f-string fragments, `+`): AGENTS.md §5.2 forbids string-built SQL and the
+`cv-raw-sql-string-interpolation` Semgrep rule rejects it in `text()` and `execute()` calls.
 """
 
 from __future__ import annotations
@@ -335,19 +336,37 @@ def test_no_candleviewer_sql_updates_a_protected_api_keys_column() -> None:
     assert risks == {}
 
 
-#: Where SQL may set `api_keys.last_used_at`: the adapter's `_TOUCH`, behind the broker's 60 s
-#: debounce (21 §3.2.2). One debouncer owns the write-amplification guard (#2580).
-_LAST_USED_WRITERS = frozenset({"storage/repositories/credentials_sqlalchemy.py"})
+def _calls_of(attr: str, root: Path = _PKG) -> list[tuple[str, tuple[str, ...]]]:
+    """`(module, class/function nesting)` of every `<expr>.<attr>(...)` call under `root`."""
+    found: list[tuple[str, tuple[str, ...]]] = []
+
+    def walk(node: ast.AST, rel: str, scope: tuple[str, ...]) -> None:
+        if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            scope += (node.name,)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            if node.func.attr == attr:
+                found.append((rel, scope))
+        for child in ast.iter_child_nodes(node):
+            walk(child, rel, scope)
+
+    for path in sorted(root.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if attr in source:
+            walk(ast.parse(source), path.relative_to(root).as_posix(), ())
+    return found
 
 
-def test_only_the_credential_adapter_sets_api_keys_last_used_at() -> None:
-    writers = {
-        where.rpartition(":")[0]
-        for where, sql in _api_keys_sql()
-        for write in _writes(sql)
-        if "last_used_at" in write.targets
-    }
-    assert writers == _LAST_USED_WRITERS
+def test_only_the_debounced_touch_sets_api_keys_last_used_at() -> None:
+    """#2580 (21 §3.2.2): one debouncer owns the write-amplification guard. The only SQL that
+    sets `last_used_at` is the adapter's `_TOUCH`, run only by `touch_last_used`, which only the
+    broker's debounced `_touch` calls."""
+    setting = [
+        sql for _, sql in _api_keys_sql() for w in _writes(sql) if "last_used_at" in w.targets
+    ]
+    tree = ast.parse(Path(adapter.__file__).read_text(encoding="utf-8"))
+    assert setting == [adapter._TOUCH.text]
+    assert _scopes_using(tree, "_TOUCH") == [("SqlAlchemyCredentialStore", "touch_last_used")]
+    assert _calls_of("touch_last_used") == [("secrets/broker.py", ("CredentialBroker", "_touch"))]
 
 
 def _api_keys_line(node: ast.AST) -> int | None:
