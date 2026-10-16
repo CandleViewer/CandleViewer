@@ -5116,7 +5116,7 @@ class AdminOverview(BaseModel):
     storage: Annotated[
         Storage | None,
         Field(
-            description="`days_until_full` is `null` unless growth is measured; the estimated fallback exists only in `CapacityReport.storage`."
+            description="`days_until_full` is `0` when the disk has no headroom left; otherwise it is `null` unless growth is measured. The estimated fallback exists only in `CapacityReport.storage`."
         ),
     ] = None
     trading: Trading1 | None = None
@@ -5148,7 +5148,7 @@ class Storage1(AdminSliceStatus):
     projection_basis: Annotated[
         Literal["measured", "estimated", "nothing_recorded"] | None,
         Field(
-            description="Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day per recorded symbol (7.5e8 bytes, upper bound of the 0.5-0.75 band at 200-depth); `estimated` is `true` (convention C10). `nothing_recorded`: no symbol recorded, so growth is `0` by fact and `days_until_full` is `null`. **Open-ended for readers:** clients must tolerate values they do not know, so adding a basis is an additive change (C-6.3).\n"
+            description="Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day per recorded symbol (7.5e8 bytes, upper bound of the 0.5-0.75 band at 200-depth); `estimated` is `true` (convention C10). `nothing_recorded`: no symbol recorded, so growth is `0` by fact and `days_until_full` is `null`, or `0` when the disk has no headroom left (as for every basis). **Open-ended for readers:** clients must tolerate values they do not know, so adding a basis is an additive change (C-6.3).\n"
         ),
     ] = None
     estimated: Annotated[
