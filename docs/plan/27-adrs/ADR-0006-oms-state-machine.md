@@ -32,7 +32,7 @@ States: `Draft → Validated → Submitting → {Submitted | Rejected | Unknown}
 
 Binding rules:
 
-1. **`orderLinkId` is generated before the first send** as `{group_id}-{account_short}-{seq}` (≤ 36 chars) and reused unchanged on every retry of that logical order. It is the primary key for correlation everywhere — logs, audit, journal, reconciliation.
+1. **`orderLinkId` is generated before the first send** as `{group_id}-{account_short}-{seq}` (≤ 36 chars) _(format superseded by Amendment 1: `docs/plan/24-internal-schemas.md` §8.3)_ and reused unchanged on every retry of that logical order. It is the primary key for correlation everywhere — logs, audit, journal, reconciliation.
 2. **Any transport failure after send lands in `Unknown`.** There is **no blind resubmission** from `Unknown`. Resolution comes only from reconciliation: if `GET /v5/order/realtime` (or the execution backfill) finds the `orderLinkId`, the order transitions to its true state; if two consecutive reconciliation passes find nothing, it becomes `Rejected`.
 3. **`oms_unknown_orders > 0` for 60 s pages the operator.** An unknown order is an operational incident, not a background condition.
 4. **Reconciliation runs on startup, on every private-WS reconnect, and every 30 s.** It diffs local state against exchange truth by `orderLinkId`, backfills executions for the gap window `[last_seen_ts, now]`, and emits corrections onto the bus so every view converges.
@@ -44,12 +44,14 @@ Binding rules:
 ### Consequences
 
 Positive:
+
 - Duplicate orders are structurally prevented, which is the failure mode with the worst financial consequence.
 - Every uncertain state is visible, alertable and auditable rather than silently resolved.
 - Recovery after a crash is a single well-tested procedure rather than ad-hoc repair.
 - `orderLinkId` threading gives end-to-end traceability from the ticket click to the journal entry.
 
 Negative / risks:
+
 - Reconciliation latency means an order can sit in `Unknown` for up to one reconciliation cycle. Accepted and bounded (≤ 30 s, usually immediate because reconnect triggers a pass); the native SL continues to protect the position throughout.
 - More states to test. Mitigated by an exhaustive state-transition test matrix and chaos tests that inject timeouts, duplicate acks, out-of-order fills and reconnect storms.
 
@@ -63,3 +65,7 @@ Negative / risks:
 - Spike S3: 24 h soak of the private WS client on demo with zero missed executions.
 - Chaos suite (`03-testing-strategy.md`): kill the process mid-submission, drop the private WS for 60 s, inject 10018 and 10002, replay duplicate acks — in every case, no duplicate position and no unmanaged order.
 - Contract tests against recorded Bybit fixtures for every state transition.
+
+## Amendment 1 (2026-10-16, E29-T02 #846)
+
+Refines binding rule 1; does not reverse it (orchestrator ruling B2 on #846). The `orderLinkId` format is defined only in `docs/plan/24-internal-schemas.md` §8.3, its owner under C-16.5, and that scheme replaces the `{group_id}-{account_short}-{seq}` shape in rule 1. Generating the id before the first send and reusing it unchanged on every retry are unchanged.
