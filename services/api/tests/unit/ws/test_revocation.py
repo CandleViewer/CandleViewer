@@ -8,11 +8,13 @@ from typing import Any, get_args
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from structlog.testing import capture_logs
 
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.ws.revocation import (
     CLOSE_TOKEN_EXPIRED,
     CLOSE_USER_DISABLED,
+    EVICTION_LOG_EVERY_S,
     REVOKED_MEMORY_S,
     RevocationHub,
     RevokedReason,
@@ -164,9 +166,13 @@ def test_the_default_memory_is_one_access_token_lifetime() -> None:
     assert REVOKED_MEMORY_S == ACCESS_TOKEN_TTL.total_seconds()
 
 
-@pytest.mark.parametrize("kwargs", [{"remember_s": 0.0}, {"max_remembered": 0}])
-def test_the_memory_bounds_must_be_positive(kwargs: dict[str, float]) -> None:
-    with pytest.raises(ValueError, match="remember_s must be > 0"):
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"remember_s": 0.0}, {"remember_s": float("nan")}, {"remember_s": float("inf")},
+     {"max_remembered": 0}],
+)  # fmt: skip
+def test_the_memory_bounds_must_be_finite_and_positive(kwargs: dict[str, float]) -> None:
+    with pytest.raises(ValueError, match="remember_s must be finite and > 0"):
         RevocationHub(**kwargs)  # type: ignore[arg-type]  # float/int kwargs by name
 
 
@@ -195,3 +201,35 @@ async def test_the_memory_matches_a_bounded_ttl_model(
             model.pop(next(iter(model)))
         assert len(hub._revoked) <= cap
         assert {s for s in "abcdef" if hub.was_revoked(s)} == set(model)
+
+
+async def test_a_later_revocation_never_downgrades_a_remembered_user_disabled() -> None:
+    """§9.5: the disabled user's close is 4403; a repeat revocation must not turn it into 4401."""
+    hub = RevocationHub(monotonic=_Clock())
+    await hub.revoke("s1", "user_disabled")
+    await hub.revoke("s1", "session_revoked")
+    assert hub.revoked_reason("s1") == "user_disabled"
+    await hub.revoke("s2", "session_revoked")
+    await hub.revoke("s2", "user_disabled")  # an upgrade still lands
+    assert hub.revoked_reason("s2") == "user_disabled"
+
+
+def test_close_for_builds_the_bye_and_code_of_a_remembered_reason() -> None:
+    hub = RevocationHub(wall_ms=lambda: _NOW_MS)
+    assert hub.close_for("user_disabled") == (user_disabled_bye(_NOW_MS), CLOSE_USER_DISABLED)
+    assert hub.close_for("session_revoked") == (bye_frame("session_revoked"), CLOSE_TOKEN_EXPIRED)
+
+
+async def test_forgetting_a_live_id_at_the_cap_is_logged_at_most_once_a_minute() -> None:
+    clock = _Clock()
+    hub = RevocationHub(max_remembered=1, monotonic=clock)
+    with capture_logs() as logs:
+        await hub.revoke("a")
+        await hub.revoke("b")  # forgets the live "a": logged
+        await hub.revoke("c")  # forgets "b" inside the minute: counted, not logged
+        clock.now += EVICTION_LOG_EVERY_S
+        await hub.revoke("d")  # a minute later: logged again, with the running count
+    warnings = [e for e in logs if e["log_level"] == "warning"]
+    assert [e["evicted_total"] for e in warnings] == [1, 3]
+    assert all(e["max_remembered"] == 1 for e in warnings)
+    assert not any("session" in key for e in warnings for key in e)  # no session id in the log

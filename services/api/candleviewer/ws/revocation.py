@@ -9,13 +9,16 @@ Latency is observed on `auth_revocation_latency_seconds` (alert > 5 s).
 
 The hub also remembers each revoked session id, with its reason, for one access-token
 lifetime (#2739), so an `auth` that was already in flight when the revocation was published
-can still be refused: `revoked_reason` / `was_revoked`. The memory is bounded (C-2.18):
-entries expire after `remember_s`, and past `max_remembered` the oldest is forgotten first,
-which reopens the in-flight window for that one session only.
+can still be refused: `revoked_reason` / `was_revoked`, and `close_for` builds its `bye`. The
+memory is bounded (C-2.18): entries expire after `remember_s`, and past `max_remembered` the
+oldest is forgotten first, which reopens the in-flight window for that one session only and
+is logged (throttled). A remembered `user_disabled` is never downgraded by a later revocation
+of the same session, so the 4403 close survives a repeat (§9.5).
 """
 
 from __future__ import annotations
 
+import math
 import time
 from collections import OrderedDict, defaultdict
 from collections.abc import Awaitable, Callable
@@ -133,6 +136,8 @@ def _wall_ms() -> int:
 REVOKED_MEMORY_S: Final = 720.0
 #: At most this many revoked ids are remembered (C-2.18); the oldest is forgotten first.
 MAX_REVOKED_IDS: Final = 4096
+#: A forced eviction (cap reached while the oldest is still live) is logged at most this often.
+EVICTION_LOG_EVERY_S: Final = 60.0
 
 
 class RevocationHub:
@@ -144,8 +149,8 @@ class RevocationHub:
         max_remembered: int = MAX_REVOKED_IDS,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        if remember_s <= 0 or max_remembered < 1:
-            raise ValueError("remember_s must be > 0 and max_remembered >= 1")
+        if not (math.isfinite(remember_s) and remember_s > 0) or max_remembered < 1:
+            raise ValueError("remember_s must be finite and > 0 and max_remembered >= 1")
         self._sockets: dict[str, list[Closer]] = defaultdict(list)
         #: Stamps the `user_disabled` bye's `ts`; injectable so tests read a fixed clock.
         self._wall_ms = wall_ms
@@ -155,6 +160,9 @@ class RevocationHub:
         #: session id -> (monotonic expiry, reason), oldest first. Every entry lives the same
         #: `remember_s` from a non-decreasing clock, so insertion order is expiry order.
         self._revoked: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        #: Live entries forgotten because the cap was reached, and when that was last logged.
+        self._evicted = 0
+        self._evicted_logged_at: float | None = None
 
     @property
     def remember_s(self) -> float:
@@ -171,10 +179,23 @@ class RevocationHub:
     def _remember(self, session_id: str, reason: str) -> None:
         now = self._monotonic()
         self._prune(now)
-        self._revoked.pop(session_id, None)  # a repeat revocation renews the entry
+        previous = self._revoked.pop(session_id, None)  # a repeat revocation renews the entry
+        if previous is not None and previous[1] == "user_disabled":
+            reason = "user_disabled"  # never downgrade the 4403 close (§9.5)
         self._revoked[session_id] = (now + self._remember_s, reason)
         while len(self._revoked) > self._max_remembered:
-            self._revoked.popitem(last=False)
+            self._revoked.popitem(last=False)  # pruned above, so this one was still live
+            self._evicted += 1
+            if (
+                self._evicted_logged_at is None
+                or now - self._evicted_logged_at >= EVICTION_LOG_EVERY_S
+            ):
+                self._evicted_logged_at = now
+                _log().warning(
+                    "ws revoked-id memory full; oldest live entry forgotten",
+                    evicted_total=self._evicted,
+                    max_remembered=self._max_remembered,
+                )
 
     def revoked_reason(self, session_id: str) -> str | None:
         """The reason `session_id` was revoked within the last `remember_s`, else `None`."""
@@ -194,7 +215,7 @@ class RevocationHub:
         if not self._sockets.get(session_id):
             self._sockets.pop(session_id, None)
 
-    def _close_for(self, reason: str) -> tuple[dict[str, Any], int]:
+    def close_for(self, reason: str) -> tuple[dict[str, Any], int]:
         """The `bye` and close code for `reason`. §9.5: a disabled user gets its own `bye`
         and 4403 (do not reconnect); every other session revocation closes 4401."""
         if reason == "user_disabled":
@@ -209,7 +230,7 @@ class RevocationHub:
         started = time.monotonic()
         for closer in closers:
             try:
-                frame, code = self._close_for(reason)
+                frame, code = self.close_for(reason)
                 await closer(frame, code)
             except Exception:
                 ws_revocation_close_failures_total.inc()
