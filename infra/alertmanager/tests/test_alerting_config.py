@@ -363,7 +363,18 @@ def test_recovery_code_alert_pages_the_owner_on_any_use_even_in_quiet_hours() ->
 #: [RESOLVED] on the page channel reads as handled although the event still needs the Owner's
 #: review, so each carries `resolves: window` and takes the receiver that sends no resolved
 #: message. #2496 item 3 (the break-glass use alert) adds itself here with the same label.
-EVENT_TYPE_PAGES = {"AuthRecoveryCodeUsed"}
+#: Each reads `increase(<counter>[window]) > 0`: a recovery code was used; an audit chain
+#: verification run failed (the break stands and is found again at the next start-up or nightly
+#: run); a trade gap went unrecovered (the trades stay missing from the tape and the recording).
+#: Not classified yet: `NakedPositionDetected`. Whether its [RESOLVED] means "protected again"
+#: or only "the window moved on" depends on how the E32 watchdog counts
+#: `naked_position_alerts_total`: once per detection (an event page), or on every scan while a
+#: position is naked (a condition page). TODO(#932): decide there; add it here if it is the former.
+EVENT_TYPE_PAGES = {
+    "AuditChainVerificationFailed",
+    "AuthRecoveryCodeUsed",
+    "IngestionTradeGapUnrecovered",
+}
 
 
 def _alert_labels(rule: dict[str, Any]) -> dict[str, str]:
@@ -436,15 +447,23 @@ def test_event_type_page_goes_to_the_page_channel_without_a_resolved_message() -
     assert _receiver_without_resolved("page_event") == _receiver_without_resolved("page")
 
 
-def test_condition_pages_keep_their_resolved_notification() -> None:
-    """#2931: a condition page (`pg_up == 0`, an unknown-order gauge, the mesh guard) resolves
-    because the condition cleared, which the Owner wants to read. Each still takes `page`."""
+def test_pages_not_classified_as_event_pages_keep_their_resolved_notification() -> None:
+    """#2931: a page without `resolves: window` keeps `page` and its [RESOLVED]. For a condition
+    page (`pg_up == 0`, an unknown-order gauge, the mesh guard) that is right: it resolves
+    because the condition cleared, which the Owner wants to read. `NakedPositionDetected` is in
+    this group only because it is not classified yet (see EVENT_TYPE_PAGES)."""
     pages = [
         r
         for r in _rules()
         if r["labels"]["severity"] == "page" and r["alert"] not in EVENT_TYPE_PAGES
     ]
-    assert {"PostgresDown", "OmsUnknownOrders", "NetBindingUnsafe"} <= {r["alert"] for r in pages}
+    condition_and_unclassified = {
+        "PostgresDown",
+        "OmsUnknownOrders",
+        "NetBindingUnsafe",
+        "NakedPositionDetected",
+    }
+    assert condition_and_unclassified <= {r["alert"] for r in pages}
     for rule in pages:
         assert _route_for(_alert_labels(rule))["receiver"] == "page", rule["alert"]
     assert _slack("page")["send_resolved"] is True
@@ -460,8 +479,8 @@ def test_event_route_is_listed_before_the_generic_page_route() -> None:
     assert event < generic
     swapped = list(routes)
     swapped[event], swapped[generic] = swapped[generic], swapped[event]
-    rule = next(r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES)
-    assert _route_for(_alert_labels(rule), swapped)["receiver"] == "page"
+    for rule in (r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES):
+        assert _route_for(_alert_labels(rule), swapped)["receiver"] == "page", rule["alert"]
 
 
 def test_resolves_label_never_moves_a_ticket_to_the_page_channel() -> None:
@@ -475,10 +494,11 @@ def test_resolves_label_never_moves_a_ticket_to_the_page_channel() -> None:
 def test_event_type_page_is_not_a_target_of_any_inhibit_rule() -> None:
     """Security signals are never inhibited (see the PostgresDown rule's comment): no inhibit
     rule can hide an event page, whatever its source."""
-    rule = next(r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES)
-    labels = _alert_labels(rule)
-    for inhibit in AM["inhibit_rules"]:
-        assert not all(_matches(m, labels) for m in inhibit["target_matchers"]), inhibit
+    for rule in (r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES):
+        labels = _alert_labels(rule)
+        for inhibit in AM["inhibit_rules"]:
+            hidden = all(_matches(m, labels) for m in inhibit["target_matchers"])
+            assert not hidden, (rule["alert"], inhibit)
 
 
 def test_resolves_label_lint_accepts_window_on_a_page(tmp_path: Path) -> None:
@@ -500,21 +520,47 @@ def test_resolves_label_lint_rejects_a_ticket(tmp_path: Path) -> None:
     assert errs == ["Bad: resolves label is only valid on a page"]
 
 
+def _promtool_cases() -> list[dict[str, Any]]:
+    """Every `alert_rule_test` case of the system and the ingestion promtool test files."""
+    cases: list[dict[str, Any]] = []
+    for name in ("system_alerts.test.yml", "ingestion_alerts.test.yml"):
+        doc = yaml.safe_load((INFRA / "prometheus" / "tests" / name).read_text(encoding="utf-8"))
+        cases += [case for test in doc["tests"] for case in test["alert_rule_test"]]
+    return cases
+
+
 def test_promtool_case_for_each_event_page_expects_the_resolves_label() -> None:
-    """The promtool case is generated from the rule (`gen_promtool_tests.py`): a rule label
-    added without regenerating it fails `promtool test rules` in CI, so check it here."""
-    doc = yaml.safe_load(
-        (INFRA / "prometheus" / "tests" / "system_alerts.test.yml").read_text(encoding="utf-8")
-    )
+    """The system promtool cases are generated from the rules (`gen_promtool_tests.py`) and the
+    ingestion ones are written by hand: a rule label added without updating its case fails
+    `promtool test rules` in CI, so check both files here."""
     firing = [
         case
-        for test in doc["tests"]
-        for case in test["alert_rule_test"]
+        for case in _promtool_cases()
         if case["alertname"] in EVENT_TYPE_PAGES and case["exp_alerts"]
     ]
     assert {case["alertname"] for case in firing} == EVENT_TYPE_PAGES
     for case in firing:
         assert all(alert["exp_labels"]["resolves"] == "window" for alert in case["exp_alerts"])
+
+
+def _runbook_section(rule: dict[str, Any]) -> str:
+    """The runbook text under a rule's `runbook_url` anchor, up to the next anchor."""
+    url: str = rule["annotations"]["runbook_url"]
+    path, _, anchor = url.partition("#")
+    text = (INFRA.parent / path).read_text(encoding="utf-8")
+    start = text.index(f'<a id="{anchor}"></a>')
+    end = text.find('<a id="', start + 1)
+    return text[start:] if end == -1 else text[start:end]
+
+
+def test_every_event_page_runbook_says_no_resolved_follows_and_to_act_either_way() -> None:
+    """#2931: the runbook says what the Owner does after the page, whether or not it has
+    resolved. Each event page's section names the missing [RESOLVED] message and says that its
+    steps apply whether or not the alert has cleared."""
+    for rule in (r for r in _rules() if r["alert"] in EVENT_TYPE_PAGES):
+        section = _runbook_section(rule).lower()
+        assert "[resolved]" in section, rule["alert"]
+        assert "whether or not the alert has cleared" in section, rule["alert"]
 
 
 def test_net_binding_alert_pages_as_soon_as_the_guard_trips() -> None:

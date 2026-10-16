@@ -5,6 +5,9 @@ groups:
     interval: 30s
     rules:
       - alert: NakedPositionDetected
+        # #2931: not classified as an event page (`resolves: window`) yet: that depends on how the
+        # E32 watchdog counts this series. See EVENT_TYPE_PAGES in
+        # infra/alertmanager/tests/test_alerting_config.py.
         expr: increase(naked_position_alerts_total[5m]) > 0
         for: 0m
         labels:
@@ -50,11 +53,16 @@ groups:
           summary: "Disk usage above 95 percent"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-diskcritical"
       - alert: AuditChainVerificationFailed
+        # #2931: an event page. A failed verification run raises the counter and this clears 10
+        # minutes later whether or not the chain was repaired (the break is found again at every
+        # start-up and nightly run), so a [RESOLVED] would read as repaired: `resolves: window`
+        # routes it to the receiver that sends none (infra/alertmanager/alertmanager.yml).
         expr: increase(audit_chain_verification_failures_total[10m]) > 0
         for: 0m
         labels:
           severity: page
           component: audit
+          resolves: window
         annotations:
           summary: "Audit chain verification failed"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-auditchainverificationfailed"
