@@ -294,9 +294,13 @@ set, so a withdrawn account cannot be emitted after the synchronous step. The re
   built under the new scope. What the priority lane holds of it (`orders`, `executions`) is queued ahead of
   `permission_change` in the same lane and needs no drop (dropping it would lose a kept account's last order
   transition). A subscription dropped outright loses its window and its queued normal-lane frames the same way.
-  Invariant: no row of a removed account is delivered after `permission_change`. Owner: E17-T03 (#412); a test
-  asserts it with a full window and a queued backlog (WS-E02, AC-13). With the flag off the single FIFO queue
-  sends everything already queued ahead of `permission_change`, so this window does not exist.
+  Invariant: no row of a removed account is delivered after the first frame that announces the narrowing:
+  `permission_change`, or `auth_ok` on an in-place re-`auth`, which sends none. Owner: E17-T03 (#412); a test
+  asserts it with a full window and a queued backlog (WS-E02). AC-13 covers a subscription dropped outright; no
+  seed covers the kept-accounts case yet (M1 on `positions` [A, B], O withdraws B: no B row after the announcing
+  frame, and a `reconfigure` snap that carries only A), so E17-T03's own test is its only coverage until E17-X02
+  adds one. With the flag off the single FIFO queue sends everything already queued ahead of `permission_change`,
+  so this window does not exist.
 
 Detection: `ws_revoked_total{reason}`, the `ws.subscription.revoked` and `ws.subscribe.denied` audit actions,
 and a metric for denied cross-account subscribes per identity (§8).
@@ -439,8 +443,9 @@ closed (two values, never a topic name or a count), so the row stays one fixed-s
 `redrop` closes repeat (a client that cannot recover its snapshots) reads differently from one with `budget`
 closes (a client that cannot drain at all). The registry's eviction of a connection whose `permission_change` or
 `revoked` send stalled or failed (the fan-out send timeout above) is also a `slow_consumer` close: it carries no
-`after_state`, and like every `slow_consumer` close it clears both lanes before the `bye`, so nothing queued under
-the old scope follows an identity change. A non-droppable frame (`orders`, `executions`, control, `system`) that
+`after_state`, and with the flag on, like every `slow_consumer` close, it clears both lanes before the `bye`, so
+nothing queued under the old scope follows an identity change (flag off, as built: the `bye` follows the frames
+already queued, `23-ws-protocol.md` §8.4). A non-droppable frame (`orders`, `executions`, control, `system`) that
 cannot be encoded, or whose emission raises, closes the connection `internal_error`: it fails closed and never
 drops silently, because a client that missed an order transition or a `revoked` would act on a false state. That
 close is audited (`ws.connection.closed`, reason `internal_error`, `warning`) and counted
