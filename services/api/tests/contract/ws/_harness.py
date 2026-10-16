@@ -348,19 +348,18 @@ class Client:
                 return frame
 
     def recv_err(self) -> dict[str, Any]:
-        """Next `err` frame, checked for its envelope and `code` only.
+        """Next `err` frame, fully validated: the §13 envelope and the `error` payload.
 
-        FINDING F1 (docs/qa): every gateway `err` frame omits `message`, which the §13
-        `error` schema requires, so full-schema validation of `err` cannot pass today. This helper
-        asserts the parts that DO conform (envelope, id/ch echo shape, `code` closure is checked by
-        the caller); it never weakens `validate_frame`, which still rejects `err` frames elsewhere.
+        Frames before it are skipped without validation, so a test does not depend on which other
+        frames precede it. FINDING F1 (every `err` frame omitted `message`) was closed by #2520,
+        so the whole frame is checked; `code` closure is still asserted by the caller.
         """
         frame = self.next_of_raw("err")
-        check_schema(_BASE + "envelope.schema.json", frame, "err envelope")
+        validate_frame(frame)
         return frame
 
     def next_of_raw(self, t: str) -> dict[str, Any]:
-        """Next frame of type `t`, skipping others WITHOUT schema validation (see F1)."""
+        """Next frame of type `t`; frames before it are skipped WITHOUT schema validation."""
         for _ in range(2000):
             frame = self.recv(validate=False)
             if frame["t"] == t:
@@ -400,7 +399,7 @@ class Client:
 
     def bye_then_close(self) -> tuple[dict[str, Any], int]:
         """S11: the next non-ping frame is `bye`, then the socket closes with its code."""
-        bye = self.next_of_raw("bye")  # preceding `err` frames are F1-affected, skipped unvalidated
+        bye = self.next_of_raw("bye")  # frames before the `bye` are skipped unvalidated
         check_schema(_BASE + "envelope.schema.json", bye, "bye")
         check_schema(_BASE + "bye.schema.json", bye["p"], "bye")
         code = self.closed()
