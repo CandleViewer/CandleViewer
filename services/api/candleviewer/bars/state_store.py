@@ -9,13 +9,16 @@ wording was superseded, and msgpack is not a dependency. One file per series:
 reaches a path (SR-E12-12). The envelope holds the builder's own `BuilderState` (its `blob` is
 the builder's orjson document, stored as text) plus the set's watermark: the `ts_event` of the
 last applied trade and the ids of the trades applied at exactly that timestamp, so the
-post-restart replay window is exact.
+post-restart replay window is exact. It also records the series' bar `generation` (#2662), so a
+restore keeps its epoch and a cold start can start above the epoch of a blob it discards.
 
 Writes are atomic: write `<name>.tmp`, flush + fsync, then `os.replace`. A crash before the
 rename leaves the previous blob intact. Reads never raise for bad data: `load()` returns
 `(None, reason)` and the caller discards the blob and cold-starts. A blob is refused when it is
 larger than `MAX_BLOB_BYTES`, unparseable, for another series, or has an unknown envelope
-version. File I/O runs in a worker thread (C-2.18: no blocking I/O on the loop).
+version. Version 1 (before the generation was recorded) still loads, as generation 0, so an
+upgrade restores every series instead of cold-starting it. File I/O runs in a worker thread
+(C-2.18: no blocking I/O on the loop).
 """
 
 from __future__ import annotations
@@ -30,9 +33,12 @@ import orjson
 
 from candleviewer.bars.errors import BarsError
 from candleviewer.bars.models import BuilderState
+from candleviewer.bars.rows import MAX_GENERATION
 from candleviewer.observability.context import run_in_thread
 
-ENVELOPE_VERSION: Final = 1
+ENVELOPE_VERSION: Final = 2
+#: The envelope before `generation` was recorded (#2662); `load` reads it as generation 0.
+LEGACY_ENVELOPE_VERSION: Final = 1
 MAX_BLOB_BYTES: Final = 8 * 1024 * 1024
 _SYMBOL: Final = re.compile(r"^[A-Z0-9]{4,20}$")
 _HASH: Final = re.compile(r"^[0-9a-f]{64}$")
@@ -54,6 +60,10 @@ class Watermark:
 class StoredState:
     state: BuilderState
     watermark: Watermark | None
+    #: The series' bar generation (epoch); a v1 envelope reads as 0. A claim read from an
+    #: unauthenticated file: bounded to `MAX_GENERATION`, and from a discarded blob it only raises
+    #: the floor. Required: a defaulted 0 would silently move a series back to the legacy epoch.
+    generation: int
 
 
 class StateStore:
@@ -75,6 +85,7 @@ class StateStore:
             "last_trade_seq": st.last_trade_seq,
             "blob": st.blob.decode(),
             "wm": None if wm is None else [wm.ts_us, sorted(wm.ids)],
+            "generation": stored.generation,
         }
         await run_in_thread(self._write, self.path(st.symbol, st.spec_hash), orjson.dumps(doc))
 
@@ -105,10 +116,14 @@ class StateStore:
             return None, "too_large"
         try:
             doc = orjson.loads(data)
-            if doc["v"] != ENVELOPE_VERSION:
+            version = doc["v"]
+            if version not in (LEGACY_ENVELOPE_VERSION, ENVELOPE_VERSION):
                 return None, "version"
             if (doc["symbol"], doc["spec_hash"]) != (symbol, spec_hash):
                 return None, "wrong_series"
+            generation = 0 if version == LEGACY_ENVELOPE_VERSION else doc["generation"]
+            if type(generation) is not int or not 0 <= generation <= MAX_GENERATION:
+                return None, "corrupt"  # a float or bool would break the LONG column on write
             state = BuilderState(
                 spec_hash=doc["spec_hash"],
                 symbol=doc["symbol"],
@@ -120,7 +135,7 @@ class StateStore:
             mark = None if wm is None else Watermark(int(wm[0]), frozenset(map(str, wm[1])))
         except (ValueError, KeyError, TypeError, IndexError, AttributeError):
             return None, "corrupt"
-        return StoredState(state, mark), "ok"
+        return StoredState(state, mark, generation), "ok"
 
     async def sweep_tmp(self) -> int:
         """Delete `*.state.json.tmp` leftovers of a crash mid-write; returns the count."""

@@ -33,6 +33,7 @@ from candleviewer.bars.rows import (
     BarPersistError,
     bar_param_for,
     bar_row,
+    check_generation,
     table_for,
 )
 from candleviewer.observability.context import spawn
@@ -185,13 +186,26 @@ class BarWriter:
         while len(self._sources) > MAX_TRACKED_ROWS:
             self._sources.popitem(last=False)
 
-    async def submit(self, bars: Sequence[Bar], spec: BarSpec, *, source: str = "tape") -> None:
+    async def submit(
+        self,
+        bars: Sequence[Bar],
+        spec: BarSpec,
+        *,
+        source: str = "tape",
+        generation: int,
+    ) -> None:
         """Queue rows (validates all first: one bad, synthetic or lower-precedence bar rejects all).
+        `generation` is the series epoch stamped on every row (`WriterSink` passes the emission's);
+        it has no default, so a caller cannot store the wrong epoch by omission.
 
         Precedence is enforced against rows written by this process; a read-side check against
         the stored row's `source` is the E12-T05 backfill caller's job (it owns the read path).
         """
-        await self.submit_rows([bar_row(b, spec, source=source) for b in bars], spec, source=source)
+        await self.submit_rows(
+            [bar_row(b, spec, source=source, generation=generation) for b in bars],
+            spec,
+            source=source,
+        )
 
     async def submit_rows(
         self, rows: list[dict[str, object]], spec: BarSpec, *, source: str
@@ -200,6 +214,8 @@ class BarWriter:
         same precedence, capacity and backpressure path as `submit`."""
         if source not in SOURCE_RANK or any(r.get("source") != source for r in rows):
             raise BarPersistError(f"Every row must carry source '{source}'.")
+        for r in rows:
+            check_generation(r.get("generation"), source=source)
         table = table_for(spec)
         self._check_precedence(table, spec, rows, source)
         self._admit_param(table, spec)

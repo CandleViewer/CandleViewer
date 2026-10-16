@@ -14,9 +14,13 @@ A sink that raises is counted (`bar_emit_sink_errors_total{reason=<sink>}`) and 
 other sinks still get the emission, and
 `CancelledError` is never swallowed.
 
-`generation` is stamped on every emission: 0 for the live series. That matches the
-`(bar_param, generation, index)` identity proposed in #2019 and the ADR-0033 rebuild hook. A
-rebuild would emit under a higher generation through this same path.
+`generation` is stamped on every emission: the series' epoch (`BarBuilderSet._Entry.generation`).
+A restored series keeps its blob's, a cold start begins a new one (#2662), so
+`(bar_param, generation, index)` (#2019) does not repeat (barring the clock-regression residual
+and a restore whose tape lost trades after the watermark, `builder_set.py`). `WriterSink` stores
+it on every row, and `BarSubmitter.submit` has no default
+for it, so an emission's generation cannot be dropped silently. An ADR-0033 rebuild (E12-S12,
+not implemented) would write under a generation of its own and swap a pointer.
 """
 
 from __future__ import annotations
@@ -31,7 +35,6 @@ import structlog
 from candleviewer.bars.metrics import bar_emit_sink_errors_total
 from candleviewer.bars.models import Bar, BarSpec, BarUpdate
 
-LIVE_GENERATION: Final = 0
 #: Per-sink emit bound (§4.2 `Bars lane → sinks` row).
 SINK_TIMEOUT_S: Final = 5.0
 
@@ -52,7 +55,9 @@ class BarSink(Protocol):
 class BarSubmitter(Protocol):
     """The slice of E12-T02 `BarWriter` this module needs."""
 
-    async def submit(self, bars: Sequence[Bar], spec: BarSpec, *, source: str = ...) -> None: ...
+    async def submit(
+        self, bars: Sequence[Bar], spec: BarSpec, *, source: str = ..., generation: int
+    ) -> None: ...
 
 
 class WriterSink:
@@ -70,7 +75,9 @@ class WriterSink:
     async def emit(self, emission: BarEmission) -> None:
         closed = [u.bar for u in emission.updates if u.kind == "close"]
         if closed:
-            await self._writer.submit(closed, emission.spec, source="tape")
+            await self._writer.submit(
+                closed, emission.spec, source="tape", generation=emission.generation
+            )
 
 
 class EmitRouter:

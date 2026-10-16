@@ -1059,7 +1059,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 | `orders`, `executions`          | **Never coalesced, never throttled.**                                                                                                                         | State-machine transitions and fills must be seen individually. |
 | `system`                        | `feature_flags`: per flag key, last-write-wins, a key is never dropped. `notice`, `kill_switch`, `shutdown_notice`: **never coalesced**.                      | A flag delta carries only changed keys; notices are events.    |
 
-**Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts when ADR-0033 starts a new generation/epoch. A channel streams one generation at a time; a generation swap arrives as a new snapshot (ADR-0033 client ingestion). Clients key their bar stores the same way. **Footprint bars take the same key (#2529; decided with E12-T06):** §14.4 bar items carry `generation` and `index`, and so does each CVWB kind-5 group prefix (`format_version = 2`, §3.4), so two footprint bars that share an open time are never merged. Footprint items carry no `amended` (§14.4 has no such field, and kind-5 group `flags` bit1 stays reserved), so the carve-out below does not apply to them, and this contract defines no way to republish a late trade into a confirmed footprint bar: clients keep a confirmed footprint bar as received (the coalescer holds that within one window only), the series' `bars` topic carries the `amended` bar, and that bar's footprint cells are corrected only by the next `snap`, which is authoritative (§7.1). Delivering a late trade on `footprint` sooner is decided with the producer (#2197) and would be additive.
+**Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts at 0 only inside a fresh generation/epoch (ADR-0033; a builder cold start begins one, #2662). No two bars of one channel share `(generation, index)`, barring the clock-regression residual and a restore whose tape lost trades after the watermark (24 §3.5). A channel streams one generation at a time; any change of generation, in either direction, is a swap and arrives as a new snapshot (ADR-0033 client ingestion). Clients key their bar stores the same way. **Footprint bars take the same key (#2529; decided with E12-T06):** §14.4 bar items carry `generation` and `index`, and so does each CVWB kind-5 group prefix (`format_version = 2`, §3.4), so two footprint bars that share an open time are never merged. Footprint items carry no `amended` (§14.4 has no such field, and kind-5 group `flags` bit1 stays reserved), so the carve-out below does not apply to them, and this contract defines no way to republish a late trade into a confirmed footprint bar: clients keep a confirmed footprint bar as received (the coalescer holds that within one window only), the series' `bars` topic carries the `amended` bar, and that bar's footprint cells are corrected only by the next `snap`, which is authoritative (§7.1). Delivering a late trade on `footprint` sooner is decided with the producer (#2197) and would be additive.
 
 **Amended bars (#2018, 24 §3.2).** A late trade can re-close an already-confirmed bar; the server then emits a `confirm: true` item with `amended: true` at the same `(generation, index)`. This is the one carve-out to "confirmed is final": a confirmed→confirmed replacement is permitted (and coalesced last-write-wins) only when the incoming item sets `amended`. A confirmed→unconfirmed replacement is never permitted. Clients replace the stored bar by key and re-render it.
 
@@ -2353,7 +2353,7 @@ result against these schemas, which is what keeps the two representations from d
           "generation": {
             "type": "integer",
             "minimum": 0,
-            "description": "ADR-0033 series generation (= epoch); 0 until ratified. Part of the coalescing key (§8.2)."
+            "description": "ADR-0033 series generation (= epoch): an opaque id that a builder cold start or a rebuild replaces, normally with a higher one; index restarts inside it. Compare for equality only: a change in either direction is a new epoch. Never read it as a time. Part of the coalescing key (§8.2)."
           },
           "index": {
             "type": "integer",
@@ -2399,6 +2399,8 @@ result against these schemas, which is what keeps the two representations from d
 }
 ```
 
+`generation` is an opaque u64 epoch, not always `0`: a builder cold start moves a series to a new one, normally higher (24 §3.1, §3.5). Clients compare for equality; a change in either direction is a new epoch (§8.2). They never read it as a time.
+
 ### 14.4 `FootprintUpdate`
 
 ```json
@@ -2423,7 +2425,7 @@ result against these schemas, which is what keeps the two representations from d
           "generation": {
             "type": "integer",
             "minimum": 0,
-            "description": "ADR-0033 series generation (= epoch); 0 until ratified. Part of the bar key (§8.2)."
+            "description": "ADR-0033 series generation (= epoch), as for the `bars[]` item (§14.3): an opaque id that a builder cold start or a rebuild replaces, normally with a higher one; index restarts inside it. Compare for equality only: a change in either direction is a new epoch. Never read it as a time. Part of the bar key (§8.2)."
           },
           "index": {
             "type": "integer",

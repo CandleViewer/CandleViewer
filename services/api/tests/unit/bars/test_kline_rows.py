@@ -120,7 +120,7 @@ async def test_submit_kline_bars_never_overwrites_tape_written_by_this_process()
     sink = _Sink()
     w = BarWriter(sink)
     await w.start()
-    await w.submit([_tape_bar(T0 + W5)], SPEC, source="tape")
+    await w.submit([_tape_bar(T0 + W5)], SPEC, source="tape", generation=0)
     n = await submit_kline_bars(w, "BTCUSDT", "5", [_k(T0), _k(T0 + W5), _k(T0 + 2 * W5)],
                                   stored_higher=_none_stored)  # fmt: skip
     await w.stop()
@@ -172,7 +172,7 @@ async def test_writer_submit_rows_refuses_mislabelled_source() -> None:
 async def test_writer_submit_rows_kline_over_tape_raises_source_overwrite_refused() -> None:
     w = BarWriter(_Sink())
     await w.start()
-    await w.submit([_tape_bar(T0)], SPEC, source="tape")
+    await w.submit([_tape_bar(T0)], SPEC, source="tape", generation=0)
     with pytest.raises(SourceOverwriteRefused):
         await w.submit_rows([kline_row(_k(T0), SPEC)], SPEC, source="kline")
     await w.stop()

@@ -2218,17 +2218,18 @@ paths:
         `close_time` derived from its first/last trade.
 
         **Ordering and identity (#2014).** A bar's identity is `(series, generation, index)`
-        (21 §4.8, 24 §3.1). The response serves exactly one generation: the series' current
-        generation, pinned for the whole request (ADR-0033 Decision 2), never a mix. Non-time
-        `bars` are ordered by the stored key `(t, generation, index)` ascending (#2017; for one
-        pinned generation this is `(generation, index)` order); time bars by `t`. `t` MAY
-        repeat for non-time bars (an N-threshold print yields N volume bars or renko bricks with
-        one open time; two tick bars can open in the same ms). Clients MUST key bars by
+        (21 §4.8, 24 §3.1). A window may span several generations: every builder cold start
+        begins a new one (24 §3.5) and older epochs stay readable (ADR-0033), so one response
+        can hold bars of more than one generation. Non-time `bars` are ordered by the stored
+        key `(t, generation, index)` ascending (#2017); time bars by `t`. `t` MAY repeat for
+        non-time bars (an N-threshold print yields N volume bars or renko bricks with one open
+        time; two tick bars can open in the same ms). Clients MUST key bars by
         `(generation, index)`, never by `t`. Every bar returned here carries `index` and
         `generation` (they stay optional in the shared `Bar` schema only because
-        `/market/klines` also uses it). Pagination follows C3 and the `MarketCursor` parameter;
-        if the pinned generation was swapped since the cursor was issued, the server returns
-        `invalid_cursor` and the client restarts. A request whose window starts before
+        `/market/klines` also uses it). Pagination follows C3 and the `MarketCursor` parameter.
+        Only an ADR-0033 rebuild swap (Decision 2, not implemented) pins a single generation
+        per response; once it exists, a cursor issued before a swap returns `invalid_cursor`
+        and the client restarts. A request whose window starts before
         `recording_started_at` returns `no_data_recorded` (422) rather than silently
         substituting REST klines, because tick-accurate construction is impossible there.
         **Precedence:** when a non-time window both starts before `recording_started_at` and
@@ -11306,7 +11307,7 @@ components:
             type: integer,
             format: int64,
             minimum: 0,
-            description: "ADR-0033 series generation (= epoch); 0 until ADR-0033 is ratified. Always present on /market/bars.",
+            description: "ADR-0033 series generation (= epoch): an opaque id that a builder cold start or a rebuild replaces, normally with a higher one; index restarts inside it. Compare for equality only: a change in either direction is a new epoch. Never read it as a time. Always present on /market/bars.",
           }
         t:
           {

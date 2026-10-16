@@ -160,16 +160,17 @@ async def test_set_unbuildable_kind_refused_and_lease_rolled_back(tmp_path: Path
 
 async def test_set_writer_and_ws_sinks_get_one_sequence(tmp_path: Path) -> None:
     bus, ws, writer = Bus(), RecordingSink(), FakeWriter()
-    s = make_set(tmp_path, bus=bus, sinks=[WriterSink(writer), ws])
+    s = make_set(tmp_path, bus=bus, sinks=[WriterSink(writer), ws], clock=Clock(T0))
     await s.register(T3, SYM, "a")
     for i in range(7):
         await bus.publish(TOPIC, trade(T0 + i, seq=i))
     await settle(bus, s)
-    assert all(g == 0 for _, g, *_ in ws.seen)  # live generation stamped
+    assert {g for _, g, *_ in ws.seen} == {T0 // 1000}  # the cold-start time in ms is stamped
     ws_closes = [(h, idx) for h, _, k, idx, _ in ws.seen if k == "close"]
     assert (
         [(h, i) for h, i, _ in writer.rows] == ws_closes == [(T3.spec_hash, 0), (T3.spec_hash, 1)]
     )
+    assert writer.generations == [g for _, g, k, *_ in ws.seen if k == "close"]  # same epoch
     await s.stop()
 
 

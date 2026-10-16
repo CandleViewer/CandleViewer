@@ -56,7 +56,9 @@ async def _wait_for_column(
     """
     seen: set[str] = set()
     for _ in range(attempts):
-        rows = await conn.fetch(f"SELECT \"column\" FROM table_columns('{table}')")  # noqa: S608  # nosec B608 - test-owned literal table name
+        rows = await conn.fetch(
+            f"SELECT \"column\" FROM table_columns('{table}')"  # noqa: S608  # nosec B608 - test-owned literal table name
+        )
         seen = {str(r["column"]).lower() for r in rows}
         if column in seen:
             return
@@ -85,7 +87,8 @@ async def wait_for_row_count(
     wal: dict[str, object] = {}
     deadline = asyncio.get_running_loop().time() + timeout_s
     while True:
-        count = int(await conn.fetchval(f"SELECT count() FROM {table}"))  # noqa: S608  # nosec B608 - test-owned literal table name
+        sql = f"SELECT count() FROM {table}"  # noqa: S608  # nosec B608 - test-owned literal table name
+        count = int(await conn.fetchval(sql))
         wal_rows = await conn.fetch("SELECT * FROM wal_tables() WHERE name = $1", table)
         wal = dict(wal_rows[0]) if wal_rows else {}
         caught_up = wal.get("writerTxn") == wal.get("sequencerTxn")
@@ -480,9 +483,9 @@ async def test_bar_writer_row_lands_on_real_questdb(
 
         writer = BarWriter(_Sink())
         await writer.start()
-        await writer.submit([bar], spec, source="tape")
+        await writer.submit([bar], spec, source="tape", generation=0)
         kline_bar = bar.model_copy(update={"index": 4, "open_time": 1_700_000_300_000_000})
-        kline_row = bar_row(kline_bar, spec, source=KLINE_SOURCE)
+        kline_row = bar_row(kline_bar, spec, source=KLINE_SOURCE, generation=0)
         await writer.submit_rows([kline_row], spec, source=KLINE_SOURCE)
         await writer.stop()
         await ilp.stop()

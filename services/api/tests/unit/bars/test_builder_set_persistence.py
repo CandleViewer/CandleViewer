@@ -20,7 +20,19 @@ from candleviewer.bars.state_store import StateStore, StoredState, Watermark
 from candleviewer.bus.bus import Bus
 from candleviewer.exchange.base.models import TradeEvent
 
-from ._set_harness import H1, M1, T3, TOPIC, V5, Clock, FakeTape, RecordingSink, make_set, settle
+from ._set_harness import (
+    H1,
+    M1,
+    T3,
+    TOPIC,
+    V5,
+    Clock,
+    FakeTape,
+    RecordingSink,
+    make_set,
+    settle,
+    write_failures,
+)
 from ._trades import SYM, trade, us
 
 T0 = us("10:00:00")
@@ -137,11 +149,12 @@ async def test_persist_every_60s_with_fake_clock(tmp_path: Path) -> None:
     s = make_set(tmp_path, bus=bus, clock=clock)
     await s.register(T3, SYM, "a")
     path = tmp_path / SYM / f"{T3.spec_hash}.state.json"
+    assert orjson.loads(path.read_bytes())["wm"] is None  # the cold-start blob (#2662)
     await bus.publish(TOPIC, trade(T0, seq=1))
     await settle(bus, s)
     clock.t = T0 + 59_999_999
     await s.tick()
-    assert not path.exists()
+    assert orjson.loads(path.read_bytes())["wm"] is None  # not rewritten before 60 s
     clock.t = T0 + 60_000_000
     await s.tick()
     assert orjson.loads(path.read_bytes())["wm"] == [T0, ["1"]]
@@ -162,7 +175,7 @@ async def test_crash_between_write_and_rename_keeps_old_blob(
         raise OSError("power cut")
 
     monkeypatch.setattr("candleviewer.bars.state_store.os.replace", crash)
-    await s._save(good)  # logged + swallowed, never raises
+    await s._save(good, "periodic")  # logged + swallowed, never raises
     assert store.path(SYM, T3.spec_hash).read_bytes() == before
     loaded, reason = await store.load(SYM, T3.spec_hash)
     assert reason == "ok" and loaded is not None and loaded.state == good.state
@@ -191,7 +204,7 @@ async def test_corrupt_blob_discarded_cold_start_never_raises(tmp_path: Path, va
     path.write_bytes(_corrupt_variants(path.read_bytes())[variant])
     sink, s2 = await _run(tmp_path, [trade(us("11:00:00"), seq=999)])
     assert STATE_COLD_STARTED in s2.health_reasons()
-    assert not path.exists() or variant == "never"
+    assert (await StateStore(tmp_path).load(SYM, T3.spec_hash))[1] == "ok"  # replaced, not kept
     t3 = [u for u in sink.seen if u[0] == T3.spec_hash]
     assert t3[0][2:4] == ("open", 0)  # cold start: fresh series
     await s2.stop()
@@ -246,6 +259,9 @@ async def test_disk_full_on_save_is_logged_not_raised(
         raise OSError(28, os.strerror(28))
 
     monkeypatch.setattr(s._store, "save", full)
+    periodic, final = write_failures("periodic"), write_failures("final")
     clock.t += 60_000_000
     await s.tick()
+    assert write_failures("periodic") == periodic + 1  # counted, by phase
     await s.stop()
+    assert write_failures("final") == final + 1

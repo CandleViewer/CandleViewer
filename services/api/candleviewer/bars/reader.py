@@ -84,13 +84,14 @@ class BarPage:
     next_key: BarKey | None = None
 
 
-#: Ordering (#2017, 21 §9.5 choice (a)). `ts` stays primary everywhere: a builder cold start
-#: restarts `index` at 0 within the same generation (#2126 regression (b)), so `index` alone is
-#: not chronological. `bars_time` holds NULL-`index` kline rows, so it keeps `ts, "index"` with a
-#: `ts` cursor (unique open time per interval). Non-time kinds order by `ts, generation, "index"`
-#: and resume by keyset on that full key, so equal-`ts` siblings (renko multi-brick, volume
-#: splits) are never skipped at a page boundary. Within one pinned generation whose `index`
-#: increases with `ts` this is exactly the contract's `(generation, index)` order.
+#: Ordering (#2017, 21 §9.5 choice (a)). `ts` stays primary everywhere: `index` restarts at 0 in
+#: every new generation (each builder cold start begins one, #2662), so it is not chronological
+#: across generations, and legacy generation-0 history repeats `(generation, index)` after an old
+#: cold start (#2126 regression (b)). `bars_time` holds NULL-`index` kline rows, so it keeps
+#: `ts, "index"` with a `ts` cursor (unique open time per interval). Non-time kinds order by
+#: `ts, generation, "index"` and resume by keyset on that full key, so equal-`ts` siblings (renko
+#: multi-brick, volume splits) are never skipped at a page boundary. Within one generation whose
+#: `index` increases with `ts` this is exactly the contract's `(generation, index)` order.
 #: `index` is a QuestDB reserved word: quoted via the shared helper (#2016), never hand-written.
 _ORDER_BY_TIME = ", ".join(column_identifier(c) for c in ("ts", "index"))
 _ORDER_BY_KEY = ", ".join(column_identifier(c) for c in ("ts", "generation", "index"))

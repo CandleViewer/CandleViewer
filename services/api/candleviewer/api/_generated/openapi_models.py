@@ -987,7 +987,7 @@ class Bar(BaseModel):
     generation: Annotated[
         int | None,
         Field(
-            description="ADR-0033 series generation (= epoch); 0 until ADR-0033 is ratified. Always present on /market/bars.",
+            description="ADR-0033 series generation (= epoch): an opaque id that a builder cold start or a rebuild replaces, normally with a higher one; index restarts inside it. Compare for equality only: a change in either direction is a new epoch. Never read it as a time. Always present on /market/bars.",
             ge=0,
         ),
     ] = None
