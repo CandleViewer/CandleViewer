@@ -285,6 +285,8 @@ async def test_a_role_override_resolves_through_the_service() -> None:
     store.rows[key] = replace(store.rows[key], role_overrides={"manager": False})
     assert await service.value(key, user_id=_OWNER, roles=frozenset({"manager"})) is False
     assert await service.value(key, user_id=_OWNER, roles=frozenset({"viewer"})) is True
+    got = await service.visible(_OWNER, frozenset({"manager"}))  # the list resolves for them too
+    assert next(f.value for f in got.items if f.spec.key == key) is False
 
 
 async def test_every_evaluation_is_counted_per_flag() -> None:

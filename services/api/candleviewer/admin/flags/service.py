@@ -9,7 +9,7 @@ that fails or exceeds the budget is an outage (D1a): every flag resolves to its 
 the list answers `resolution: fail_closed`, and the store is retried 1 s after the failure rather
 than on every request. One unreadable row (D1b) is not an outage: that flag alone fails closed
 and is marked `unreadable`, and an unreadable override row on a non-safety flag is ignored and
-counted. A flag with no row at all (`start()` gives each one) resolves to its default, not its
+counted. A flag with no row (none, unless a boot `ensure` failed) resolves to its default, not its
 fail-closed value; the contract does not cover a row lost at runtime. Reloads are single-flight;
 a load that started before `invalidate()` is dropped, and the read retries once. Resolution
 itself is the pure `resolve`. D1a, D1b, D2a and D6a are decisions of the flag contract (#2592),
