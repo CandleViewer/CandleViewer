@@ -1705,6 +1705,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_break_glass_unresolved_state",
+        "gauge",
+        "state",
+        (),
+        "1 while a break-glass reset (system event auth/break_glass_used) is unresolved, else 0.",
+        "AuthBreakGlassUsed (== 1 over 15m, page)",
+        _L,
+        "E09",
+        exported=True,
+    ),
+    _s(
         "auth_session_fixation_attempts_total",
         "counter",
         "attempts",

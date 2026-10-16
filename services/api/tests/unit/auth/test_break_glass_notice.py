@@ -22,7 +22,9 @@ from typing import Any, cast
 
 import pytest
 import structlog
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import generate_latest
 from pydantic import SecretStr
 
 from candleviewer import app as app_module
@@ -34,6 +36,7 @@ from candleviewer.auth.break_glass_notice import (
     BreakGlassEvents,
     BreakGlassNotice,
 )
+from candleviewer.auth.metrics import auth_break_glass_unresolved_state
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.settings import Environment, Settings
@@ -254,6 +257,27 @@ def test_deployed_app_wires_the_read_only_reader_on_the_real_backend(
         frames = _queued(ws)
     assert [f["p"]["reason"] for f in frames] == [BREAK_GLASS_NOTICE_REASON]
     assert len(store_reads) == 1  # one read at start-up, none for this connection
+
+
+@pytest.fixture
+def _clean_unresolved_gauge() -> Iterator[None]:
+    """`auth_break_glass_unresolved_state` is process-wide: start and leave it at 0."""
+    auth_break_glass_unresolved_state.set(0.0)
+    yield
+    auth_break_glass_unresolved_state.set(0.0)
+
+
+@pytest.mark.usefixtures("_clean_unresolved_gauge")
+def test_deployed_app_serves_the_unresolved_state_on_the_scraped_registry(
+    store_reads: list[SqlAlchemyBreakGlassEvents],
+) -> None:
+    """#2496: what `AuthBreakGlassUsed` reads. The start-up read ran before cv-api served, so the
+    first scrape after the restart that follows a break-glass run already says 1, with `env`."""
+    with _deployed(**_REAL) as client:
+        app = cast(FastAPI, client.app)  # the app `create_app` built; the client types it as ASGI
+        text = generate_latest(app.state.app_context.metrics).decode()
+    assert 'auth_break_glass_unresolved_state{env="demo"} 1.0' in text
+    assert len(store_reads) == 1  # the one start-up read, none for the scrape
 
 
 def test_deployed_app_wires_no_reader_on_the_fake_backend(

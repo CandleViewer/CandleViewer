@@ -364,6 +364,54 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: auth_break_glass_unresolved_state{env="live"}
+    values: 1+0x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuthBreakGlassUsed
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: auth_break_glass
+        resolves: window
+        env: live
+      exp_annotations:
+        summary: 'Break-glass recovery was used on this host: review the audit log'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authbreakglassused
+- interval: 1m
+  input_series:
+  - series: auth_break_glass_unresolved_state{env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: AuthBreakGlassUsed
+    exp_alerts: []
+- interval: 1m
+  input_series:
+  - series: auth_break_glass_unresolved_state{env="live"}
+    values: 1+0x4 _x8
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: AuthBreakGlassUsed
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: auth_break_glass
+        resolves: window
+        env: live
+      exp_annotations:
+        summary: 'Break-glass recovery was used on this host: review the audit log'
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authbreakglassused
+- interval: 1m
+  input_series:
+  - series: auth_break_glass_unresolved_state{env="live"}
+    values: 1+0x4 _x25
+  alert_rule_test:
+  - eval_time: 25m
+    alertname: AuthBreakGlassUsed
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: credential_verification_failures_total
     values: 0+0x10 1+0x10
   alert_rule_test:

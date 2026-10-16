@@ -13,6 +13,9 @@ and recovers from a failed start-up read. Every read is bounded by `READ_TIMEOUT
 one keeps the last state read (never a guessed notice), is counted in `read_failures` and logged
 by error class only. `auth` imports no storage driver (ADR-0003), hence the port, implemented
 read-only by `SqlAlchemyBreakGlassEvents` in `storage/repositories/break_glass_sqlalchemy.py`.
+
+Every successful read also sets `auth_break_glass_unresolved_state` (1 while unresolved, else 0),
+the series `AuthBreakGlassUsed` pages the Owner on (#2496). A failed read leaves it as it was.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from typing import Any, Final, Protocol
 
 import structlog
 
+from candleviewer.auth.metrics import auth_break_glass_unresolved_state
 from candleviewer.observability.context import spawn
 
 #: §15.9 `notice` reason of the break-glass notice (decision R3).
@@ -87,6 +91,7 @@ class BreakGlassNotice:
             )
             return
         self._unresolved = unresolved
+        auth_break_glass_unresolved_state.set(1.0 if unresolved else 0.0)
 
     def notices(self) -> list[dict[str, object]]:
         """The gateway's first-`auth_ok` hook: one notice while unresolved. No I/O."""

@@ -1,4 +1,5 @@
 ["audit_chain_verification_failures_total", "counter", [], "planned", "E43"]
+["auth_break_glass_unresolved_state", "gauge", [], "live", "E09"]
 ["auth_csrf_refused_total", "counter", ["reason"], "live", "E09"]
 ["auth_lockouts_total", "counter", [], "live", "E09"]
 ["auth_login_failures_total", "counter", ["method"], "planned", "E09"]

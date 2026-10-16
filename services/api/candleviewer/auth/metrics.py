@@ -105,6 +105,14 @@ auth_revocation_latency_seconds = Histogram(
 auth_recovery_codes_used_total = Counter(
     "auth_recovery_codes_used_total", "Recovery codes accepted at /auth/mfa/recovery (SR-022)."
 )
+# SR-023 (#2496): 1 while a break-glass reset is unresolved (the critical `system_events` row
+# `auth`/`break_glass_used`), else 0; `BreakGlassNotice` sets it from each successful read and
+# `AuthBreakGlassUsed` pages on 1. A state, not a count of the records the boot fold-in moves
+# (a use folds nothing in, and the fold-in runs before the first scrape): see the alert's rule.
+auth_break_glass_unresolved_state = Gauge(
+    "auth_break_glass_unresolved_state",
+    "1 while a break-glass reset (system event auth/break_glass_used) is unresolved, else 0.",
+)
 
 _KNOWN_REASONS = frozenset(
     {
@@ -169,6 +177,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "authz_denied_total",
         "auth_totp_clock_skew_total",
         "auth_recovery_codes_used_total",
+        "auth_break_glass_unresolved_state",
     }
 )
 

@@ -85,6 +85,15 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "15m",
         {"env": "live"},
     ),
+    # #2496 item 3 (SR-023): the first scrape after the restart that follows a break-glass run
+    # already reads 1 (the start-up read runs before cv-api serves), so the series starts at 1.
+    "AuthBreakGlassUsed": (
+        'auth_break_glass_unresolved_state{env="live"}',
+        "1+0x20",
+        "0+0x20",
+        "5m",
+        {"env": "live"},
+    ),
     "CredentialVerificationFailures": (
         "credential_verification_failures_total",
         "0+0x10 1+0x10",
@@ -107,6 +116,13 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "15m",
         {},
     ),
+}
+
+# alert -> [(values, eval_time, fires)]: more cases on the same series (`_xN`: N missed scrapes).
+EXTRA: dict[str, list[tuple[str, str, bool]]] = {
+    # #2496 item 3: the page rides out a gap shorter than its 15m window (the restart after a
+    # break-glass run, a failed scrape) and ends once the last reading of 1 has aged out of it.
+    "AuthBreakGlassUsed": [("1+0x4 _x8", "12m", True), ("1+0x4 _x25", "25m", False)],
 }
 
 
@@ -154,6 +170,21 @@ def build() -> dict[str, Any]:
                 ],
             }
         )
+        for values, when, fires in EXTRA.get(name, []):
+            expected = (
+                [{"exp_labels": dict(exp), "exp_annotations": annotations_of(name)}]
+                if fires
+                else []
+            )
+            tests.append(
+                {
+                    "interval": "1m",
+                    "input_series": [{"series": series, "values": values}],
+                    "alert_rule_test": [
+                        {"eval_time": when, "alertname": name, "exp_alerts": expected}
+                    ],
+                }
+            )
     return {
         "rule_files": ["../alerts/system_page.yml", "../alerts/system_ticket.yml"],
         "evaluation_interval": "1m",
