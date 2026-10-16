@@ -4,8 +4,9 @@
 two could each remove one of the last two owners. A change that can remove an active owner locks
 the target user (`LOCK_USER`), then every active-owner grant in key order (`lock_active_owners`:
 such changes queue, never deadlock), applies the injected `OwnerFloorCheck` (M18; storage may
-not import auth) to the count read after that lock, and fires the deferred trigger before its
-write-ahead audit (`CONSTRAINTS_NOW`); `refuse_floor_violation` maps its 23514 onto the check.
+not import auth) to the count read after that lock and to the target's `counted_roles`, and
+fires the deferred trigger before its write-ahead audit (`CONSTRAINTS_NOW`);
+`refuse_floor_violation` maps its 23514 onto the check.
 """
 
 from __future__ import annotations
@@ -50,6 +51,12 @@ async def effective_roles(session: AsyncSession, user_id: str) -> frozenset[str]
     """The user's effective role names; `None` when the user does not exist (or is deleted)."""
     row = (await session.execute(ROLES, {"id": user_id})).first()
     return None if row is None else frozenset(row._mapping["roles"] or ())
+
+
+def counted_roles(status: str, roles: frozenset[str]) -> frozenset[str]:
+    """The target's roles as the floor sees them: `COUNT_OWNERS` counts active users only, so a
+    target in any other status holds none of the counted owner grants."""
+    return roles if status == "active" else frozenset()
 
 
 async def lock_active_owners(session: AsyncSession) -> int:
