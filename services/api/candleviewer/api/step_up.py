@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse, Response
 # dispatches on, by construction. A move upstream fails the import, never open.
 from starlette._utils import get_route_path
 
+from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import Severity
 from candleviewer.auth.errors import (
     AuthError,
@@ -44,6 +45,10 @@ _PROBLEM = "application/problem+json"
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 #: Writes that must keep working in the downgrade (ending the session).
 _WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up"})
+
+
+class _AuditRefused(Exception):
+    """The reset's write-ahead audit record could not be written; nothing was changed."""
 
 
 class _Emitter(Protocol):
@@ -433,9 +438,6 @@ def make_step_up_router(
         if not audit_ready():
             return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
 
-        class _Refused(Exception):
-            """The write-ahead record was not written; nothing was changed."""
-
         async def write_ahead(methods: int, sessions: int, /) -> None:
             """C-2.9 (#2510): awaited by `reset_totp` before its first revoke, with the
             counts it is about to revoke (the reset cannot be undone)."""
@@ -448,8 +450,8 @@ def make_step_up_router(
                     object_id=str(user_id),
                     after_state={"methods_revoked": methods, "sessions_revoked": sessions},
                 )
-            except Exception as exc:  # any failed write refuses the reset: nothing changed yet
-                raise _Refused from exc
+            except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
+                raise _AuditRefused from exc
 
         try:
             result = await auth.step_up.reset_totp(
@@ -460,7 +462,7 @@ def make_step_up_router(
             )
         except StepUpRequired as exc:  # self-reset refused
             return required_problem(exc)
-        except _Refused:
+        except _AuditRefused:
             return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
         # Reveals nothing: no secret, recovery code or position data.
         return JSONResponse(

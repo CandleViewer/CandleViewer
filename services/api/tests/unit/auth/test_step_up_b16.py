@@ -140,6 +140,41 @@ async def test_owner_reset_revokes_target_charts_and_audits_revocation(
     assert revoked[0]["reason"] == "mfa_reset_by_owner"
 
 
+async def test_owner_reset_refused_by_its_write_ahead_audit_keeps_chart_and_socket(
+    b16_audit: RecordingAuditSink,
+) -> None:
+    """#2510: `audit` is awaited before the first change, so a raising hook leaves the target's
+    session row and B16 chart as they were and publishes no socket close (WS revocation)."""
+    base, clock, seed, user, sessions = await _setup()
+    published: list[tuple[str, str]] = []
+
+    async def sink(session_id: str, reason: str) -> None:
+        published.append((session_id, reason))
+
+    async def refuse(methods: int, live: int, /) -> None:
+        raise RuntimeError("WAL unwritable")
+
+    deps = (base._mfa, sessions, base._encryptor, base._users, base._hasher)
+    svc = StepUpService(*deps, clock=clock, publish_revocation=sink)
+    target = uuid.uuid4()
+    sessions.sessions["t1"] = _session(target)
+    await svc.record_pending("t1", "keys")  # target has a live chart
+    target_sid = _sid(svc, sessions, "t1")
+    await svc.step_up(str(user), "o1", "users", _code(seed, clock), PASSWORD)
+    with pytest.raises(RuntimeError, match="WAL unwritable"):
+        await svc.reset_totp(
+            actor_session_id="o1", actor_user_id=str(user), target_user_id=str(target), audit=refuse
+        )
+    assert svc.chart.interpreter(target_sid) is not None and published == []
+    assert sessions.sessions["t1"].revoked_at is None
+    assert "auth.session_revoked" not in b16_audit.actions()
+    await svc.reset_totp(  # control: accepted, the same reset closes the socket, drops the chart
+        actor_session_id="o1", actor_user_id=str(user), target_user_id=str(target), audit=_noop
+    )
+    assert published == [(target_sid, "mfa_reset_by_owner")]
+    assert svc.chart.interpreter(target_sid) is None
+
+
 async def test_hydration_from_row_is_not_re_audited(b16_audit: RecordingAuditSink) -> None:
     svc, clock, seed, user, sessions = await _setup()
     await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)

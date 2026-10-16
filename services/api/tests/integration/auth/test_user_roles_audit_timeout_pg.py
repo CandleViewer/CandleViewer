@@ -8,6 +8,7 @@ import uuid
 
 import pytest
 
+from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -34,7 +35,7 @@ async def test_hung_write_ahead_audit_times_out_and_releases_the_locks(pg_dsn: s
 
     demote = frozenset({"viewer"})
     try:
-        with pytest.raises(TimeoutError):
+        with pytest.raises(WriteAheadTimeout):
             await store.apply_roles(c, demote, actor=d, audit=hang)
         assert await store.get_roles(c) == frozenset({"owner"})  # rolled back
         async with asyncio.timeout(5):  # blocks on any lock the timeout left held

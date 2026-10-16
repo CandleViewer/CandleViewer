@@ -21,6 +21,7 @@ import sqlalchemy as sa
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.auth.models import InviteRecord, UserRecord
+from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.invites_sqlalchemy import SqlAlchemyInviteRepository
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -196,14 +197,14 @@ async def test_refused_or_hung_write_ahead_audit_rolls_each_invite_action_back(
     new |= {"invite_id": uuid.uuid4(), "invited_by": by, "token_hash": th, "expires_at": exp}
     again: dict[str, Any] = {"invite_id": uuid.uuid4(), "token_hash": th2, "expires_at": exp}
     try:
-        for hook, raised in ((refuse, RuntimeError), (hang, TimeoutError)):
+        for hook, raised in ((refuse, RuntimeError), (hang, WriteAheadTimeout)):
             with pytest.raises(raised):
                 await repo.create_user_with_invite(**new, audit=hook)
             async with rel.unit_of_work() as uow:
                 left = await uow.session.execute(_COUNT, {"u": "ahead", "h": th})
                 assert left.scalar_one() == 0
         assert await repo.create_user_with_invite(**new, audit=_ok) is True
-        for hook, raised in ((refuse, RuntimeError), (hang, TimeoutError)):
+        for hook, raised in ((refuse, RuntimeError), (hang, WriteAheadTimeout)):
             with pytest.raises(raised):
                 await repo.reissue(uid, **again, invited_by=by, now=now, audit=hook)
             with pytest.raises(raised):

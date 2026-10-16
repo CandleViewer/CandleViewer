@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
+from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories import user_roles_sqlalchemy as m
 
 _UID, _ACTOR = uuid.uuid4(), uuid.uuid4()
@@ -133,6 +134,6 @@ async def test_apply_roles_hung_audit_is_bounded_and_rolls_back() -> None:
 
     fake: Any = rel  # a fake unit of work, not a SqlAlchemyRelationalRepository
     store = m.SqlAlchemyUserRoleStore(fake, owner_floor=_floor, audit_timeout_s=0.01)
-    with pytest.raises(TimeoutError):
+    with pytest.raises(WriteAheadTimeout):
         await store.apply_roles(_UID, frozenset({"viewer"}), actor=_ACTOR, audit=hang)
     assert not rel.committed and 0 < m.WRITE_AHEAD_TIMEOUT_S <= 5

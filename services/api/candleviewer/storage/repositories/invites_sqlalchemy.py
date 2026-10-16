@@ -7,12 +7,11 @@ both win. `user_account_access` is never written (a new user starts with zero
 bindings; E27/E39 grant them). The raw token never reaches this layer.
 Owner actions (create, reissue, revoke) await the caller's write-ahead audit hook
 in their transaction, after staging and before commit (C-2.9, #2510), bounded as
-in `user_roles_sqlalchemy`: a raise or a timeout rolls every row back.
+in `user_roles_sqlalchemy`: a raise or a `WriteAheadTimeout` rolls every row back.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from collections.abc import Awaitable, Callable
@@ -25,7 +24,10 @@ from sqlalchemy.exc import IntegrityError
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
-from candleviewer.storage.repositories.user_roles_sqlalchemy import WRITE_AHEAD_TIMEOUT_S
+from candleviewer.storage.repositories.user_roles_sqlalchemy import (
+    WRITE_AHEAD_TIMEOUT_S,
+    bounded_write_ahead,
+)
 
 #: Write-ahead audit of an owner invite action, `(user_id, role)`; raises to refuse it.
 AuditHook = Callable[[uuid.UUID, str], Awaitable[None]]
@@ -120,8 +122,7 @@ class SqlAlchemyInviteRepository:
 
     async def _write_ahead(self, audit: AuditHook, user_id: uuid.UUID, role: str) -> None:
         """Bounded: the open transaction holds row locks (see `user_roles_sqlalchemy`)."""
-        async with asyncio.timeout(self._audit_timeout_s):
-            await audit(user_id, role)
+        await bounded_write_ahead(audit(user_id, role), self._audit_timeout_s)
 
     async def create_user_with_invite(
         self,

@@ -42,6 +42,7 @@ from candleviewer.auth.invite_repository import InviteAudit
 from candleviewer.auth.invite_service import InviteService
 from candleviewer.auth.models import CreatedInvite, InviteCreateRequest, InviteRecord
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.storage.errors import WriteAheadTimeout
 
 _TOKEN = Path(alias="inviteToken", min_length=16, max_length=128)
 _UNIFORM_DETAIL = "This invitation link is not valid."
@@ -232,7 +233,7 @@ def make_invites_router(
             )
         except InviteConflict:
             return _problem(409, "Conflict", "email or username already in use")
-        except (_AuditRefused, TimeoutError):  # TimeoutError: the SQL store bounds the hook
+        except (_AuditRefused, WriteAheadTimeout):  # the SQL store bounds the hook
             return _problem(503, "Service unavailable", _AUDIT_DOWN)
         return JSONResponse(status_code=201, content=_invite_json(invite))
 
@@ -263,7 +264,7 @@ def make_invites_router(
             invite = await auth.invites.reissue(user_id, invited_by=got.user_id, audit=hook)
         except InviteNotFound:
             return _problem(404, "Not found", "no invited user with this id")
-        except (_AuditRefused, TimeoutError):
+        except (_AuditRefused, WriteAheadTimeout):
             return _problem(503, "Service unavailable", _AUDIT_DOWN)
         return JSONResponse(status_code=201, content=_invite_json(invite))
 
@@ -282,7 +283,7 @@ def make_invites_router(
             )
         except InviteNotFound:
             return _problem(404, "Not found", "no pending invite for this user")
-        except (_AuditRefused, TimeoutError):
+        except (_AuditRefused, WriteAheadTimeout):
             return _problem(503, "Service unavailable", _AUDIT_DOWN)
         return JSONResponse(status_code=200, content={"user_id": str(user_id), "revoked": True})
 

@@ -9,8 +9,8 @@ never deadlock), re-check the floor on that locked count, replace the set, fire
 the deferred owner-floor trigger (SQLSTATE 23514 maps onto the same check), then
 hand the locked before-set to the caller's write-ahead audit hook before commit
 (C-2.9): a refused audit write rolls the change back. Held under those locks, the
-hook is bounded (`WRITE_AHEAD_TIMEOUT_S`, #2510): a timeout rolls back and frees
-them. A timed-out append may still land (`AuditWriter.emit` is cancellation-safe):
+hook is bounded (`WRITE_AHEAD_TIMEOUT_S`, #2510): `WriteAheadTimeout` rolls back and
+frees them. A timed-out append may still land (`AuditWriter.emit` is cancellation-safe):
 the trail may over-report an attempt (as a failed commit can), never under-report.
 """
 
@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
+from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -68,6 +69,17 @@ _GRANT = sa.text(
 _CONSTRAINTS_NOW = sa.text("SET CONSTRAINTS ALL IMMEDIATE")
 
 
+async def bounded_write_ahead(hook: Awaitable[None], timeout_s: float) -> None:
+    """Await a write-ahead audit `hook` in the caller's unit of work (row locks held);
+    past `timeout_s` raise `WriteAheadTimeout`, so the unit of work rolls back. Only that
+    type means "rolled back": a driver or commit `TimeoutError` is not converted."""
+    try:
+        async with asyncio.timeout(timeout_s):
+            await hook
+    except TimeoutError as exc:
+        raise WriteAheadTimeout(f"write-ahead audit exceeded {timeout_s} s") from exc
+
+
 class SqlAlchemyUserRoleStore:
     """Postgres `UserRoleStore`: reads and replaces a user's effective role set."""
 
@@ -99,7 +111,7 @@ class SqlAlchemyUserRoleStore:
     ) -> bool:
         """Replace the role set atomically (new grants record `actor`); False if the user
         does not exist. Raises what the owner-floor check or `audit` raises, or
-        `TimeoutError` when `audit` outlives its bound; each rolls the transaction back,
+        `WriteAheadTimeout` when `audit` outlives its bound; each rolls the transaction back,
         so nothing changes without its audit record."""
         uid, wanted = str(user_id), sorted(roles)
         current: frozenset[str] = frozenset()
@@ -115,8 +127,7 @@ class SqlAlchemyUserRoleStore:
                 await s.execute(_DROP, {"id": uid, "roles": wanted})
                 await s.execute(_GRANT, {"id": uid, "roles": wanted, "by": str(actor)})
                 await s.execute(_CONSTRAINTS_NOW)  # the floor trigger fires before the audit
-                async with asyncio.timeout(self._audit_timeout_s):
-                    await audit(current)
+                await bounded_write_ahead(audit(current), self._audit_timeout_s)
                 await uow.commit()
         except IntegrityError as exc:
             if getattr(exc.orig, "sqlstate", None) == _CHECK_VIOLATION:

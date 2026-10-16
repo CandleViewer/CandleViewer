@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
@@ -17,6 +18,7 @@ from candleviewer.auth.errors import SessionNotFound, StepUpRequired
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.storage.errors import WriteAheadTimeout
 
 OWNER = uuid.uuid4()
 TARGET = uuid.uuid4()
@@ -440,10 +442,23 @@ def test_put_roles_write_ahead_timeout_answers_503_with_nothing_changed() -> Non
 
     class _Hung(_Store):
         async def apply_roles(self, *_a: Any, **_k: Any) -> bool:
-            raise TimeoutError
+            raise WriteAheadTimeout("write-ahead audit exceeded 5.0 s")
 
     store, n = _Hung({"viewer"}, 2), _Notifier()
     r = _client(store, _admin(), _Emitter(), n).put(
         f"/users/{TARGET}/roles", json={"roles": ["manager"]}
     )
     assert r.status_code == 503 and store.roles == {"viewer"} and n.users == []
+
+
+def test_put_roles_other_timeout_is_not_answered_as_nothing_changed() -> None:
+    """#2510: only the store's `WriteAheadTimeout` means rolled back; a driver or commit
+    `TimeoutError` (outcome unknown) is not mapped to 503 'nothing was changed'."""
+
+    class _CommitTimeout(_Store):
+        async def apply_roles(self, *_a: Any, **_k: Any) -> bool:
+            raise TimeoutError
+
+    c = _client(_CommitTimeout({"viewer"}, 2), _admin(), _Emitter(), _Notifier())
+    with pytest.raises(TimeoutError):
+        c.put(f"/users/{TARGET}/roles", json={"roles": ["manager"]})
