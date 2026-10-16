@@ -176,6 +176,10 @@ def _wall_ms() -> int:
 
 
 _CLOSE = object()  # writer sentinel: the next queue item is the close code
+#: `_Connection.decode`'s answer for a frame over the inbound cap, whose `frame_too_big` close is
+#: already queued: the reader stops. Not `None`: `null` (JSON) and nil (msgpack) decode to `None`,
+#: and a frame that does is a non-object strike like any other malformed frame (#2905).
+_OVERSIZE = object()
 _WRITER_DONE: Final = "cv-ws-writer-done"  # cancel msg: writer finished, stop reading
 
 
@@ -482,16 +486,19 @@ class _Connection:
     # -- inbound ------------------------------------------------------------
 
     def decode(self, msg: Mapping[str, Any], max_frame_bytes: int) -> Any:
-        """One ASGI receive message -> decoded frame; `None` after an oversize close.
+        """One ASGI receive message -> decoded frame; `_OVERSIZE` after an oversize close.
 
         Size is checked on the raw payload BEFORE any decoding (1009). Each subprotocol has one
         frame kind (§2.2): a text frame on `cv.v1.msgpack` and a binary one on `cv.v1.json` are
-        malformed. The SR-185 decoder (`ws/codec.py`) decodes msgpack."""
-        raw: str | bytes = msg.get("text") or msg.get("bytes") or ""
+        malformed. The kind is the key the message carries, never whether its payload is empty:
+        `b""` is a binary frame. The SR-185 decoder (`ws/codec.py`) decodes msgpack. A decoded
+        frame may be `None` (`null`, nil): it is no envelope, so `dispatch` counts a strike."""
+        binary = msg.get("bytes")
+        raw: str | bytes = binary if binary is not None else (msg.get("text") or "")
         size = len(raw.encode()) if isinstance(raw, str) else len(raw)
         if size > max_frame_bytes:
             self.close_with("frame_too_big")
-            return None
+            return _OVERSIZE
         try:
             if self.msgpack:
                 return [] if isinstance(raw, str) else decode_client_frame(raw)
@@ -875,7 +882,7 @@ def make_ws_router(
                 return
             conn.watchdog.last_inbound = conn.clock()
             frame = conn.decode(msg, max_frame_bytes)
-            if frame is None:
+            if frame is _OVERSIZE:
                 return
             await dispatch(conn, frame)
 

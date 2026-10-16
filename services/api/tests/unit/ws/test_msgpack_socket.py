@@ -19,7 +19,6 @@ from candleviewer.ws.codec import encode_server_frame
 from candleviewer.ws.cvwb_vectors import vector_frames
 from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES
 from tests.unit.ws.test_lifecycle_socket import (
-    JSON,
     MSGPACK,
     _auth,
     _bye_then_close,
@@ -46,7 +45,8 @@ def _nested(depth: int) -> Any:
     return value
 
 
-#: SR-185 refusals, each wrapped in an otherwise valid `ping`. A text frame is malformed here too.
+#: SR-185 refusals, each wrapped in an otherwise valid `ping`, except the last three: frames that
+#: are no envelope at all (#2905). A text frame is malformed here too (§2.2).
 MALFORMED: Final[dict[str, bytes | str]] = {
     "nesting-past-32": _ping(_nested(32)),  # the envelope is level 1
     "map-past-32-keys": _ping({str(i): 0 for i in range(33)}),
@@ -55,7 +55,12 @@ MALFORMED: Final[dict[str, bytes | str]] = {
     "timestamp": _ping(msgpack.Timestamp(1, 0)),
     "binary-value": _ping(b"x"),
     "json-text-frame": json.dumps({"t": "ping", "id": "p"}),
+    "nil": b"\xc0",  # decodes to `None`, which the reader once took for "oversize close queued"
+    "empty-binary-frame": b"",  # no value at all: truncated
+    "empty-text-frame": "",  # the wrong kind, empty or not
 }
+#: The rows that are no envelope at all.
+NO_ENVELOPE: Final = ("nil", "empty-binary-frame", "empty-text-frame")
 
 
 def _send_raw(ws: Any, data: bytes | str) -> None:
@@ -65,19 +70,10 @@ def _send_raw(ws: Any, data: bytes | str) -> None:
         ws.send_bytes(data)
 
 
-@pytest.mark.parametrize(
-    ("offer", "data"),
-    [
-        *(pytest.param(MSGPACK, data, id=name) for name, data in MALFORMED.items()),
-        # §2.2: one frame kind per subprotocol, so the JSON envelope as a binary frame is refused
-        pytest.param(JSON, b'{"t":"ping","id":"p"}', id="binary-frame-on-json"),
-    ],
-)
-def test_msgpack_malformed_frame_is_a_strike_and_the_socket_survives(
-    offer: list[str], data: bytes | str
-) -> None:
+@pytest.mark.parametrize("data", [pytest.param(d, id=name) for name, d in MALFORMED.items()])
+def test_msgpack_malformed_frame_is_a_strike_and_the_socket_survives(data: bytes | str) -> None:
     w = _World()
-    with w.client, w.client.websocket_connect("/ws", subprotocols=offer) as ws:
+    with w.client, w.client.websocket_connect("/ws", subprotocols=MSGPACK) as ws:
         _hello(ws)
         _send_raw(ws, data)
         err = _recv(ws)
@@ -96,6 +92,36 @@ def test_msgpack_three_malformed_frames_close_bad_client_4400() -> None:
         _send_raw(ws, MALFORMED["trailing-bytes"])
         bye, code = _bye_then_close(ws)
     assert (bye["p"]["reason"], code) == ("bad_client", 4400)
+
+
+@pytest.mark.parametrize("name", NO_ENVELOPE)
+def test_msgpack_frames_that_are_no_envelope_count_strikes_and_the_third_closes_4400(
+    name: str,
+) -> None:
+    """#2905: nil decodes to `None`, which the reader once took for "the oversize close is
+    queued": it ended with no `err`, no strike and no `bye`, and a client saw 1006 (S11). Each
+    of these is a strike like any other malformed frame."""
+    w = _World()
+    with w.client, w.client.websocket_connect("/ws", subprotocols=MSGPACK) as ws:
+        _hello(ws)
+        for _ in range(2):
+            _send_raw(ws, MALFORMED[name])
+            assert _recv(ws)["p"]["code"] == "frame_malformed"
+        _send_raw(ws, MALFORMED[name])
+        bye, code = _bye_then_close(ws)
+    assert (bye["p"]["reason"], code) == ("bad_client", 4400)
+
+
+@pytest.mark.parametrize("name", NO_ENVELOPE)
+def test_msgpack_first_frame_that_is_no_envelope_is_bye_protocol_violation_1002(
+    name: str,
+) -> None:
+    """§4.2, S11: before `hello`, any frame but a `hello` gets `bye protocol_violation` and 1002."""
+    w = _World()
+    with w.client, w.client.websocket_connect("/ws", subprotocols=MSGPACK) as ws:
+        _send_raw(ws, MALFORMED[name])
+        bye, code = _bye_then_close(ws)
+    assert (bye["p"]["reason"], bye["p"]["code"], code) == ("protocol_violation", 1002, 1002)
 
 
 def test_msgpack_frame_over_the_inbound_cap_gets_bye_then_1009_before_decoding() -> None:
