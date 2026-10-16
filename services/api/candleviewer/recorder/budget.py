@@ -431,7 +431,7 @@ class DiskBudget:
         try:
             async with asyncio.timeout(cfg.breakdown_timeout_s):
                 self._breakdown = await self._meter.breakdown()
-            fresh, self._fresh_at = True, now
+            fresh = True
         except Exception as exc:  # best effort: the last sizes and the free-space path go on
             fresh = False  # stale sizes never reach the series or the fit
             logger().warning("disk_budget_breakdown_unavailable", error=type(exc).__name__)
@@ -451,6 +451,8 @@ class DiskBudget:
             used=used, cap=cfg.cap_bytes, free=m.free_bytes, daily_growth=growth, now_us=now
         )
         self._report = self._build_report(m, now, full_at, growth, rates, top, pinned)
+        if fresh:  # published with the report it sized, never ahead of it across the awaits
+            self._fresh_at = now
         self._ladder.evaluate(
             used=used, cap=cfg.cap_bytes, free=m.free_bytes, total=m.total_bytes, runway_days=runway
         )

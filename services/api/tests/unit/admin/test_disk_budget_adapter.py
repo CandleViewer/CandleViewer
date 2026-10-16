@@ -10,6 +10,7 @@ by `sample_once()`."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 import pytest
@@ -120,6 +121,30 @@ async def test_a_breakdown_failing_after_a_success_ages_out_like_the_sample() ->
     with pytest.raises(SourceUnavailable) as refused:  # past them, the old bytes are not shown
         await _snapshot(budget, 180.5)
     assert refused.value.detail == _STALE
+
+
+async def test_a_recovering_pass_publishes_its_breakdown_age_with_its_report() -> None:
+    at, gate = [NOW], asyncio.Event()
+    gate.set()
+
+    async def pins() -> frozenset[str]:  # the pass awaits the pinned set before its report
+        await gate.wait()
+        return frozenset()
+
+    meter = FakeMeter(used=450 * GB, symbols={BTC: 450 * GB})
+    budget, _, _ = make_budget(meter, clock=lambda: at[0], pins=pins)
+    await budget.sample_once()
+    meter.breakdown_fail, at[0] = True, NOW + 180 * US_PER_S
+    await budget.sample_once()  # a fresh report over the sizes from NOW
+    meter.breakdown_fail, meter.used, at[0] = False, 900 * GB, NOW + 240 * US_PER_S
+    gate.clear()
+    recovering = asyncio.create_task(budget.sample_once())  # sized now, held before its report
+    await asyncio.sleep(0)
+    with pytest.raises(SourceUnavailable):  # the old report's 240 s old sizes are not shown
+        await _snapshot(budget, 240.0)
+    gate.set()
+    await recovering
+    assert (await _snapshot(budget, 240.0)).used_bytes == 900 * GB
 
 
 # -- growth: measured, or None -----------------------------------------------------------------

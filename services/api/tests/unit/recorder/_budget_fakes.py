@@ -89,6 +89,7 @@ def make_budget(
     pinned: frozenset[str] = frozenset(),
     sleep: Callable[[float], Awaitable[None]] | None = None,
     bus: FakeBus | None = None,
+    pins: Callable[[], Awaitable[frozenset[str]]] | None = None,
     config: BudgetConfig | None = None,
 ) -> tuple[DiskBudget, FakeEvents, FakeBus]:
     events, bus = FakeEvents(), bus or FakeBus()
@@ -107,7 +108,7 @@ def make_budget(
         config=config or BudgetConfig(cap_bytes=CAP),
         now_us=clock or UsClock(NOW),
         gaps=gap_source if gaps is not None else None,
-        pinned=pinned_source,
+        pinned=pins or pinned_source,
         store=store,
         sleep=sleep or asyncio.sleep,
     )
