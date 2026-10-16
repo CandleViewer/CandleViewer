@@ -41,6 +41,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # E09-X02 AC2 (#2144, U6/SR-013): a session credential this server never issued, or
         # another user's, presented to the session routes or carried into the MFA step.
         "auth.session_fixation_attempt",
+        # #2295: an enrolment-only session refused outside its allow-list, on HTTP (403) or at
+        # the WS `auth` (4403); emitted by api/enrolment_guard.py within its audit budgets.
+        "auth.mfa_enrollment_required",
         "auth.mfa_enroll",
         "auth.mfa_reset",
         "auth.step_up_granted",

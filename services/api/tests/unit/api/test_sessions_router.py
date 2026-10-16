@@ -23,7 +23,8 @@ from candleviewer.api.sessions import (
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.session_service import SessionService
+from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.session_service import SessionClass, SessionService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.csrf_helpers import arm_csrf
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -38,6 +39,10 @@ class _Auth:
     def __init__(self, sessions: SessionService) -> None:
         self.sessions = sessions
         self.sessions_is_active = True
+        self.enrolment_gate_is_active = False  # no user store here (#2295)
+
+    async def classify(self, session: SessionRecord) -> SessionClass:
+        raise AssertionError("the enrolment-only gate is inert without a user store")
 
 
 class _Writer:

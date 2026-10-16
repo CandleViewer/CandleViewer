@@ -25,6 +25,11 @@ every revoke path publishes the revoked ids to the sink the composition root
 wires to the ws `RevocationHub`, which closes the sockets with `4401` (#2272).
 This router publishes nothing itself.
 
+Enrolment-only session (#2295): refresh classifies the presented session as the enrolment
+guard classifies a bearer (`AuthService.classify`). One that would outlive its 15-minute
+lifetime (Q7) gets the uniform `401 refresh_token_invalid` before any audit write or rotation,
+so the client signs in again; one that cannot be classified gets a 503 (fail closed).
+
 Session fixation (U6/SR-013, E09-X02 AC2): a bearer or refresh token that was
 never issued here is refused with the same 401 as any other, and counted
 (`auth_session_fixation_attempts_total`) and audited
@@ -71,13 +76,18 @@ from candleviewer.auth.errors import (
     SessionNotFound,
     SessionRevoked,
 )
-from candleviewer.auth.metrics import auth_csrf_refused_total, auth_session_fixation_attempts_total
+from candleviewer.auth.metrics import (
+    auth_csrf_refused_total,
+    auth_enrolment_refused_total,
+    auth_session_fixation_attempts_total,
+)
 from candleviewer.auth.models import (
     MintedSession,
     RefreshOutcome,
     SessionRecord,
     SessionView,
 )
+from candleviewer.auth.session_service import SessionClass
 from candleviewer.auth.step_up import grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
 
@@ -124,6 +134,11 @@ class AuthServiceLike(Protocol):
 
     @property
     def sessions(self) -> SessionServiceLike: ...
+
+    @property
+    def enrolment_gate_is_active(self) -> bool: ...
+
+    async def classify(self, session: SessionRecord) -> SessionClass: ...
 
 
 class IdentityProvider(Protocol):
@@ -409,6 +424,29 @@ def make_session_router(
                 "auth.session_fixation_attempt.audit_unavailable", error=type(exc).__name__
             )
 
+    async def _refresh_refusal(record: SessionRecord) -> JSONResponse | None:
+        """#2295 (Q7): an enrolment-only session that would outlive its 15 minutes was not
+        minted as one, and the enrolment guard answers its every request 401. Refresh ends it
+        the same way, before any audit write or rotation, so "sign in again" is reached
+        without a bearer too. A session that cannot be classified is refused (fail closed)."""
+        if not auth_service.enrolment_gate_is_active:
+            return None  # no user store: nobody signs in, so no such session exists
+        try:
+            verdict = await auth_service.classify(record)
+        except Exception as exc:
+            auth_enrolment_refused_total.labels(channel="http", reason="unclassified").inc()
+            _log().error(
+                "auth.enrolment_only.unclassified", path="/auth/refresh", error=type(exc).__name__
+            )
+            return _problem(503, "Service unavailable", "the session could not be checked")
+        if verdict is not SessionClass.ENROLMENT_ONLY_EXPIRED:
+            return None
+        auth_enrolment_refused_total.labels(channel="http", reason="expired").inc()
+        _log().warning(
+            "auth.enrolment_only.expired", path="/auth/refresh", session_id=str(record.id)
+        )
+        return _unauthorized("refresh_token_invalid")
+
     def _audit_down() -> JSONResponse:
         # Write-ahead audit failed: nothing has been mutated yet (C-2.9).
         return _problem(503, "Service unavailable", "audit sink not active")
@@ -506,6 +544,10 @@ def make_session_router(
                     auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
                     _log().error("auth.csrf_refused.audit_unavailable", error=type(exc).__name__)
                 return csrf_problem(refusal)
+        if not reuse and not presented_record.is_revoked:
+            refused = await _refresh_refusal(presented_record)
+            if refused is not None:
+                return refused
         # C-2.9 write-ahead: the audit record is written before `refresh()`
         # rotates or revokes anything; if the sink is down we refuse (503)
         # with no state change.

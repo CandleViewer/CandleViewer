@@ -73,7 +73,11 @@ from candleviewer.api.deny_by_default import (
     make_deny_undeclared_dependency,
 )
 from candleviewer.api.drawings import make_drawings_router
-from candleviewer.api.enrolment_guard import make_enrolment_only_guard
+from candleviewer.api.enrolment_guard import (
+    EnrolmentRefusals,
+    make_enrolment_only_guard,
+    sessionless_operations,
+)
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.invites import make_invites_router
@@ -752,21 +756,37 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _session_authenticator(ctx: AppContext) -> Authenticate:
+def _session_authenticator(ctx: AppContext, refusals: EnrolmentRefusals) -> Authenticate:
     """Opaque bearer token -> (session_id, user_id, token expiry) via the session
     service. The expiry is the first instant the service refuses the token on
     time grounds; the gateway ends the socket's identity there (#2259). Raises
-    (fail closed) while no session repository is wired. An enrolment-only session
-    is refused with `AuthRefused` (`bye mfa_enrollment_required`, 4403; #2295); a
-    classification that fails raises like any failed `auth`."""
+    (fail closed) while no session repository is wired.
+
+    #2295: an enrolment-only session is refused with `AuthRefused` (`bye
+    mfa_enrollment_required`, 4403), counted and audited through *refusals* as the HTTP
+    guard's 403 is. One that would outlive its 15 minutes (Q7), and a classification that
+    fails, raise like any failed `auth` (as an expired token does, `23-ws-protocol.md` §4.3),
+    so HTTP (401) and the socket (`auth_failed`) both lead to a new sign-in."""
 
     async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
         record = await ctx.auth.sessions.authenticate_access_token(token)
-        if ctx.auth.enrolment_gate_is_active and (
-            await ctx.auth.classify(record) is not SessionClass.FULL
-        ):
-            raise AuthRefused("mfa_enrollment_required")
+        if ctx.auth.enrolment_gate_is_active:
+            await _refuse_unless_full(record)
         return str(record.id), record.user_id, access_token_expires_at(record)
+
+    async def _refuse_unless_full(record: SessionRecord) -> None:
+        try:
+            verdict = await ctx.auth.classify(record)
+        except Exception as exc:
+            refusals.unclassified(exc, channel="ws", method="GET", path="/ws")
+            raise
+        if verdict is SessionClass.ENROLMENT_ONLY_EXPIRED:
+            refusals.expired(record, channel="ws", method="GET", path="/ws")
+            raise PermissionError("enrolment-only session outlived its lifetime")
+        if verdict is SessionClass.ENROLMENT_ONLY:
+            # The authenticator sees only the token, so the record has no source address.
+            await refusals.refused(record, channel="ws", method="GET", path="/ws", ip=None)
+            raise AuthRefused("mfa_enrollment_required")
 
     return _authenticate
 
@@ -1127,6 +1147,8 @@ def create_app(
     # In-flight CSRF-refusal audits; drained (bounded) at shutdown before audit stops.
     csrf_audits = RefusalAuditTracker()
     app.state.csrf_refusal_audits = csrf_audits
+    # #2295: refusals of an enrolment-only session, HTTP and WS, share that cap and drain.
+    enrolment_refusals = EnrolmentRefusals(_LazyAuditEmitter(ctx.audit), tracker=csrf_audits)
     app.include_router(make_auth_router(ctx.auth, ctx.audit, identity=identity, csrf=csrf_codec))
     # E09-S03: session routes; revocation is pushed to sockets via the hub
     # (4401). Identity provider is E09-T03, so refresh/session return 501 and
@@ -1172,7 +1194,7 @@ def create_app(
     app.state.ws_runtime = WsRuntime(ws_hub, ws_upstream, resolved)
     app.include_router(
         make_ws_router(
-            authenticate=ws_authenticate or _session_authenticator(ctx),
+            authenticate=ws_authenticate or _session_authenticator(ctx, enrolment_refusals),
             registry=ws_registry,
             revocation_hub=revocation_hub,
             allowed_origins=resolved.allowed_origin_set,  # SR-042/SR-183 upgrade check (#2239)
@@ -1215,7 +1237,14 @@ def create_app(
     app.middleware("http")(make_read_only_guard(ctx.auth, _LazyAuditEmitter(ctx.audit)))
     # #2295: the enrolment-only session reaches five operations; added after (so outside) the
     # read-only/step-up guard, so a refused request never records a step-up challenge.
-    app.middleware("http")(make_enrolment_only_guard(ctx.auth))
+    app.middleware("http")(
+        make_enrolment_only_guard(
+            ctx.auth,
+            refusals=enrolment_refusals,
+            operations=declared_operations(spec),
+            sessionless=sessionless_operations(spec),
+        )
+    )
     # Audit emitter + notifier are mandatory; store/resolver `None` -> 501.
     app.include_router(
         make_users_router(

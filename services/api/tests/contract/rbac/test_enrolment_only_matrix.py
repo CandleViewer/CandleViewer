@@ -4,7 +4,10 @@ The pack's real `create_app()` world, where the owner is a user with `mfa_requir
 confirmed method. The owner holds every permission, so any refusal here is the enrolment guard's
 and never RBAC's (forbidden-role case: no role lifts it); every other actor keeps TOTP and sees no
 change (cross-user case). Parametrised over the rows of every mounted route: the pack's totality
-test makes a newly mounted route's row `executed`, and from then on this sweep covers it.
+test makes a newly mounted route's row `executed`, and from then on this sweep covers it. A
+`public: true` row needs no session, so the owner's bearer changes nothing there. A refused
+request writes only the guard's own `auth.mfa_enrollment_required` record (within its budget):
+no handler ran.
 """
 
 from __future__ import annotations
@@ -16,7 +19,7 @@ from typing import Any
 import pytest
 import yaml
 
-from candleviewer.api.enrolment_guard import ENROLMENT_OPERATIONS
+from candleviewer.api.enrolment_guard import ENROLMENT_OPERATIONS, REFUSAL_ACTION
 from candleviewer.auth.models import MfaMethodKind, SessionRecord
 from candleviewer.auth.session_service import ENROLMENT_ONLY_LIFETIME
 from tests.contract.rbac.rbac_harness import (
@@ -34,6 +37,7 @@ with MATRIX_PATH.open(encoding="utf-8") as _fh:
     _OPS: dict[str, dict[str, Any]] = yaml.safe_load(_fh)["operations"]
 _MOUNTED = sorted(k for k, row in _OPS.items() if row["state"] != "not_mounted")
 _ALLOWED = {f"{method} {path}" for method, path in ENROLMENT_OPERATIONS}
+_PUBLIC = {k for k, row in _OPS.items() if row.get("public") is True}
 _CODE = "mfa_enrollment_required"
 _OWNER = user_id_of("owner")
 
@@ -91,13 +95,19 @@ def _code(resp: Any) -> object:
         return None
 
 
+def _handler_actions(world: World) -> list[str]:
+    """Audit actions written by anything but the guard's own refusal record."""
+    return [r["action"] for r in world.audit.records if r["action"] != REFUSAL_ACTION]
+
+
 @pytest.mark.parametrize("key", _MOUNTED)
 def test_enrolment_only_owner_reaches_only_the_allow_list(enrolling: World, key: str) -> None:
     resp = _call(enrolling, key, "owner")
 
     refused = resp.status_code == 403 and _code(resp) == _CODE
-    assert refused is (key not in _ALLOWED), f"{key}: {resp.status_code} {_code(resp)}"
-    assert refused is False or enrolling.audit.records == [], f"{key}: ran behind the refusal"
+    expected = key not in _ALLOWED and key not in _PUBLIC
+    assert refused is expected, f"{key}: {resp.status_code} {_code(resp)}"
+    assert refused is False or _handler_actions(enrolling) == [], f"{key}: ran behind the refusal"
 
 
 @pytest.mark.parametrize("actor", ["manager_with_grant", "manager_without_grant", "viewer"])
@@ -133,4 +143,4 @@ def test_forbidden_role_dangerous_route_refuses_before_any_step_up_challenge(
     resp = enrolling.client.post(f"/users/{target}/mfa/reset", headers=bearer("owner"), json={})
 
     assert (resp.status_code, _code(resp), challenged) == (403, _CODE, [])
-    assert enrolling.audit.records == []
+    assert _handler_actions(enrolling) == []  # no reset record: the handler never ran

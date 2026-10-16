@@ -18,12 +18,14 @@ from typing import Any
 import pytest
 
 from tests.csrf_helpers import csrf_headers
+from tests.unit.auth.auth_fakes import make_user
 
 from ._stack import GRANTED_ACCOUNT, ORIGIN, Grants, Stack
 
 _JSON = ["cv.v1.json"]
 _ORDERS = {"ch": "orders", "opts": {"exchange_account_ids": [str(GRANTED_ACCOUNT)]}}
 _DEADLINE_S = 5.0
+_INERT = "unused"  # stored-hash placeholder: no password is verified on these sockets
 #: Not topic names (`common.schema.json#/$defs/topic`): a `sub` with one is refused whole (#2399).
 #: Keyed by a short label, so a test id never carries a raw control character or 300 characters.
 _MALFORMED = {
@@ -39,6 +41,14 @@ _MALFORMED_NAMES = pytest.mark.parametrize("name", list(_MALFORMED.values()), id
 #: Well-formed names the catalogue does not serve: refused per topic. `orders` is a private family.
 _UNCATALOGUED = ["admin", "orders.admin", "book.BTCUSDT.50.admin"]
 _PER_TOPIC_REFUSALS = {"unknown_topic", "invalid_topic_format"}  # their result codes
+
+
+def _member(stack: Stack, username: str) -> uuid.UUID:
+    """A user the store knows, with a confirmed TOTP method. Every WS `auth` is classified from
+    the user's state (#2295), and a user the store cannot read fails closed."""
+    user = make_user(username=username, email=f"{username}@example.test", password_hash=_INERT)
+    stack.users.add(user)
+    return user.id
 
 
 def _connect(stack: Stack) -> Any:
@@ -92,7 +102,7 @@ def _unsub(ws: Any, *topics: str) -> list[dict[str, Any]]:
 @contextlib.contextmanager
 def _authenticated(stack: Stack) -> Iterator[Any]:
     """A socket past `hello` and `auth`, for a fresh session of the stack's manager."""
-    minted = stack.call(stack.auth.sessions.mint, str(uuid.uuid4()))
+    minted = stack.call(stack.auth.sessions.mint, str(_member(stack, "ws-manager")))
     with _connect(stack) as ws:
         _hello(ws)
         assert _auth(ws, minted.access_token)["t"] == "auth_ok"
@@ -126,7 +136,7 @@ def test_ac_ws_02_auth_frame_replayed_on_second_socket_accepted_while_session_is
     ws_world: tuple[Stack, Grants],
 ) -> None:  # U13; finding F-4: the replay is bounded by the session, not by the socket
     stack, _ = ws_world
-    minted = stack.call(stack.auth.sessions.mint, str(uuid.uuid4()))
+    minted = stack.call(stack.auth.sessions.mint, str(_member(stack, "ws-victim")))
     failures = stack.scraped("cv_ws_auth_failures_total", reason="rejected")
     with (
         _connect(stack) as victim,
@@ -164,7 +174,7 @@ def test_ac_ws_03_socket_held_across_grant_revocation_loses_and_cannot_regain_th
     ws_world: tuple[Stack, Grants],
 ) -> None:  # U32 / §9.5 (the re-auth snapshot race, SR-189, was #2172: fixed by #2318)
     stack, grants = ws_world
-    user = uuid.uuid4()
+    user = _member(stack, "ws-grantee")
     minted = stack.call(stack.auth.sessions.mint, str(user))
     revoked = stack.scraped("cv_ws_revoked_total", reason="account_scope_changed")
     with _connect(stack) as ws:

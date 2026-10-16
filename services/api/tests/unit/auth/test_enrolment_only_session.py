@@ -3,7 +3,8 @@
 Decisions on #2295 and the contract of #2661: the class is derived from the user's state on
 every call, never from a session flag. `mfa_required` with no confirmed MFA method makes every
 session of the user enrolment-only; such a session lives at most 15 minutes from sign-in and
-refresh never extends it (Q7), so one whose expiry lies further ahead is refused.
+refresh never extends it (Q7), so one whose expiry lies further ahead is refused. A session that
+never proved a second factor stays restricted even once its user has one.
 """
 
 from __future__ import annotations
@@ -51,9 +52,14 @@ def _user(*, mfa_required: bool = True, methods: tuple[MfaMethodKind, ...] = ())
     return make_user(password_hash="unused", mfa_required=mfa_required, mfa_methods=methods)
 
 
-def _session(user_id: uuid.UUID, *, expires_in: timedelta) -> SessionRecord:
-    """Only `user_id` and `expires_at` are read by the classification."""
-    return SessionRecord.model_construct(user_id=user_id, issued_at=T0, expires_at=T0 + expires_in)
+def _session(user_id: uuid.UUID, *, expires_in: timedelta, proved: bool = True) -> SessionRecord:
+    """`user_id`, `expires_at` and `mfa_satisfied_at` are what the classification reads."""
+    return SessionRecord.model_construct(
+        user_id=user_id,
+        issued_at=T0,
+        expires_at=T0 + expires_in,
+        mfa_satisfied_at=T0 if proved else None,
+    )
 
 
 # -- the one classification ------------------------------------------------------------------
@@ -80,21 +86,39 @@ def test_classify_session_truth_table(
     assert classify_session(session, user, now=T0) is expected
 
 
+@pytest.mark.parametrize(
+    ("user", "expires_in", "expected"),
+    [
+        (_user(methods=_TOTP), timedelta(minutes=15), _ONLY),  # its user enrolled meanwhile
+        (_user(methods=_TOTP), timedelta(hours=12), _EXPIRED),
+        (_user(), timedelta(minutes=15), _ONLY),
+        (_user(mfa_required=False), timedelta(hours=12), _FULL),  # nothing to prove
+    ],
+)
+def test_classify_session_never_makes_a_password_only_session_full(
+    user: UserRecord, expires_in: timedelta, expected: SessionClass
+) -> None:
+    session = _session(user.id, expires_in=expires_in, proved=False)
+
+    assert classify_session(session, user, now=T0) is expected
+
+
 @given(
     mfa_required=st.booleans(),
     methods=st.lists(st.sampled_from(list(MfaMethodKind)), max_size=3, unique=True),
     known=st.booleans(),
+    proved=st.booleans(),
     seconds_left=st.integers(min_value=-3600, max_value=13 * 3600),
 )
 def test_classify_session_is_full_exactly_when_a_second_factor_is_proven_or_not_required(
-    mfa_required: bool, methods: list[MfaMethodKind], known: bool, seconds_left: int
+    mfa_required: bool, methods: list[MfaMethodKind], known: bool, proved: bool, seconds_left: int
 ) -> None:
     user = _user(mfa_required=mfa_required, methods=tuple(methods)) if known else None
-    session = _session(uuid.uuid4(), expires_in=timedelta(seconds=seconds_left))
+    session = _session(uuid.uuid4(), expires_in=timedelta(seconds=seconds_left), proved=proved)
 
     verdict = classify_session(session, user, now=T0)
 
-    full = user is not None and (bool(user.mfa_methods) or not user.mfa_required)
+    full = user is not None and (not user.mfa_required or (bool(user.mfa_methods) and proved))
     assert (verdict is _FULL) is full
     if not full:
         assert (verdict is _EXPIRED) is (timedelta(seconds=seconds_left) > ENROLMENT_ONLY_LIFETIME)
@@ -126,6 +150,21 @@ async def test_enrolment_gate_needs_the_session_and_the_user_store(
     assert auth.enrolment_gate_is_active is active
 
 
+@pytest.mark.parametrize(("users", "sessions"), [(1, 1), (0, 1), (1, 0), (0, 0)])
+async def test_enrolment_gate_is_off_only_where_no_session_can_come_from_a_sign_in(
+    users: int, sessions: int
+) -> None:
+    """The gate is inert only when nothing authenticates or nobody can sign in (no user store,
+    so no login): no enrolment-only session can exist there (#2295 review)."""
+    auth = AuthService(
+        FakeUserRepository() if users else None,
+        session_repository=FakeSessionRepository() if sessions else None,
+    )
+    await auth.start(cast(Any, None))
+
+    assert auth.enrolment_gate_is_active is (auth.is_active and auth.sessions_is_active)
+
+
 async def test_classify_reads_the_sessions_own_user_on_every_call() -> None:
     users = FakeUserRepository()
     enrolling, other = _user(), _user(methods=_TOTP)
@@ -139,6 +178,19 @@ async def test_classify_reads_the_sessions_own_user_on_every_call() -> None:
     users.add(enrolling.model_copy(update={"mfa_methods": _TOTP}))  # confirmed elsewhere
     assert await auth.classify(session) is _FULL
     users.add(enrolling.model_copy(update={"mfa_methods": ()}))  # e.g. a recovery sign-in
+    assert await auth.classify(session) is _ONLY
+
+
+async def test_classify_keeps_a_password_only_session_restricted_once_its_user_enrols() -> None:
+    users = FakeUserRepository()
+    user = _user()
+    users.add(user)
+    auth = await _auth(users)
+    session = _session(user.id, expires_in=timedelta(minutes=10), proved=False)
+    assert await auth.classify(session) is _ONLY
+
+    users.add(user.model_copy(update={"mfa_methods": _TOTP}))  # a revoke-all that was missed
+
     assert await auth.classify(session) is _ONLY
 
 

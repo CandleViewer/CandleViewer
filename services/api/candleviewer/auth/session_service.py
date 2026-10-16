@@ -194,9 +194,11 @@ class SessionClass(StrEnum):
     no flag, so a TOTP reset, a recovery sign-in or a confirmed enrolment takes effect on
     the next request of every session of that user."""
 
-    #: The user has a confirmed MFA method (or MFA is not required, which C-12.2 forbids).
+    #: The user has a confirmed MFA method and the session proved one (`mfa_satisfied_at`),
+    #: or MFA is not required (which C-12.2 forbids).
     FULL = "full"
-    #: `mfa_required` and no confirmed method: only the five enrolment operations.
+    #: `mfa_required` and no confirmed method, or a session minted on the password alone:
+    #: only the five enrolment operations.
     ENROLMENT_ONLY = "enrolment_only"
     #: As `ENROLMENT_ONLY`, but its absolute expiry lies more than `ENROLMENT_ONLY_LIFETIME`
     #: ahead, so it was not minted as one (say, a full session whose user then lost every
@@ -212,8 +214,16 @@ def classify_session(
     *user* is the session's user as the store reads it now, `None` when there is no such
     live user. `UserRecord.mfa_methods` lists the confirmed, unrevoked methods, the same
     rule `User.mfa_enabled` follows, so the server and the client always agree. Fail
-    closed: a user who cannot be read has no proven second factor."""
-    if user is not None and (user.mfa_methods or not user.mfa_required):
+    closed: a user who cannot be read has no proven second factor.
+
+    A session that never proved a second factor (`mfa_satisfied_at` unset: minted with
+    `mfa_satisfied=False`, on the password alone) stays restricted even once its user has a
+    confirmed method. Revoke-all at confirm (ADR-0010 decision 2) ends such sessions; should
+    one be missed, it still never turns full. `mint` sets `mfa_satisfied_at` by default (the
+    MFA verify path) and `refresh` hands it on, so a full session keeps it."""
+    if user is not None and (
+        not user.mfa_required or (user.mfa_methods and session.mfa_satisfied_at is not None)
+    ):
         return SessionClass.FULL
     if session.expires_at - now > ENROLMENT_ONLY_LIFETIME:
         return SessionClass.ENROLMENT_ONLY_EXPIRED
