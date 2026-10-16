@@ -11,7 +11,7 @@ import {
   writeFileSync,
   appendFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(__dirname, "..");
@@ -41,12 +41,33 @@ function stagePackage(): string {
   return tmpDir;
 }
 
+/** The environment without user/system git config or a hook's GIT_DIR: hermetic git calls. */
+function gitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: devNull,
+    GIT_CONFIG_NOSYSTEM: "1",
+  };
+  for (const name of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"]) delete env[name];
+  return env;
+}
+
 function runScript(root: string, script: string): { status: number | null; output: string } {
   const result = spawnSync("node", [join(root, "scripts", script)], {
     cwd: root,
     encoding: "utf8",
+    env: gitEnv(),
   });
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
+}
+
+function git(root: string, ...args: string[]): void {
+  const result = spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+    cwd: root,
+    encoding: "utf8",
+    env: gitEnv(),
+  });
+  expect(result.status, result.stderr).toBe(0);
 }
 
 describe("generated-file guard", () => {
@@ -84,6 +105,35 @@ describe("generated-file guard", () => {
       expect(guard.output).toContain("pnpm generate");
     },
   );
+
+  it("accepts what git wrote since the last generate, and still fails a hand edit on top", () => {
+    const root = stagePackage();
+    const rest = join(root, "src", "generated", "rest", "index.ts");
+    writeFileSync(join(root, ".gitignore"), ".cache/\n", "utf8");
+    git(root, "init", "-q", "-b", "main");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "generated");
+    expect(runScript(root, "update-manifest.mjs").status).toBe(0);
+    // A pull brings in a merged contract PR: one generated file changed, one new.
+    appendFileSync(rest, "export type Pulled = true;\n");
+    writeFileSync(
+      join(root, "src", "generated", "pulled.ts"),
+      "// GENERATED FILE — DO NOT EDIT BY HAND.\nexport {};\n",
+      "utf8",
+    );
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "pulled");
+
+    const pulled = runScript(root, "check-generated-guard.mjs");
+    expect(pulled.status).toBe(0);
+    expect(pulled.output).toContain("git has since written 2, matching HEAD");
+
+    appendFileSync(rest, "export type HandEdited = true;\n");
+    const edited = runScript(root, "check-generated-guard.mjs");
+    expect(edited.status).toBe(1);
+    expect(edited.output).toContain("rest/index.ts: hash mismatch");
+    expect(edited.output).not.toContain("pulled.ts");
+  });
 
   it("checks headers only, and says so, when no generate has run yet", () => {
     const root = stagePackage();

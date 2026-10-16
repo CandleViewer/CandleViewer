@@ -100,8 +100,9 @@ Full flow: `AGENTS.md` §3 (flowchart) and `docs/plan/01-sdlc-and-branching.md` 
   **flags never gate a safety invariant** (C-4.14).
 - **One ticket = one branch = one PR**, preferred **≤400 changed LOC** excluding generated/lockfiles/
   snapshots; larger needs a "why this can't be split" note (C-4.8).
-- **Conventional commits**: `type(scope): summary`; types `feat fix chore docs test refactor perf build
-ci`; scope = the `area/*` slug without prefix (`chart-engine`, `charting-ui`, `order-flow`,
+- **Conventional commits**: `type(scope): summary`;
+  types `feat fix chore docs test refactor perf build ci`; scope = the `area/*` slug without prefix
+  (`chart-engine`, `charting-ui`, `order-flow`,
   `oms-execution`, `rule-engine`, `paper-trading`, `accounts-admin`, `auth-rbac`, `ingestion`,
   `recorder-replay`, `journal-analytics`, `backend-platform`, `frontend-platform`, `electron-shell`,
   `design-system`, `infra-devops`, `docs`) — `01-sdlc-and-branching.md` §5.2/§6.2. Breaking: `!` + footer.
@@ -140,8 +141,9 @@ ci`; scope = the `area/*` slug without prefix (`chart-engine`, `charting-ui`, `o
 - **Mandatory config block** (`28-statechart-catalogue.md` §1.3c — copy from there, never from memory):
   `strict_config=True`, `strict=True`, `event_schemas=CV_EVENT_SCHEMAS`, bounded `max_queue_size` +
   `overflow_policy="refuse"` (async only), `.use(CvErrorHooks())`, chart root `"onUnhandled": "defer"` +
-  ordered unguarded audit arm, `"maxIterations": 500`. Restore via `from_snapshot(..., minimum_version=3,
-plugins=[CvErrorHooks()])`; drain + journal before `stop()`; `cv_re_mint()` payload-only (CV-C68).
+  ordered unguarded audit arm, `"maxIterations": 500`. Restore via
+  `from_snapshot(..., minimum_version=3, plugins=[CvErrorHooks()])`; drain + journal before `stop()`;
+  `cv_re_mint()` payload-only (CV-C68).
   The CV-C constraint list in C-2.22 is binding.
 - **Hot paths are never statecharts** (C-2.20): book deltas, bar builders, footprint aggregation, per-tick
   rule evaluation, paper fill/queue/fee math, rate-limit governor and fan-out admission. Nothing >~100 Hz
@@ -217,8 +219,9 @@ These rules keep agents from colliding:
    you stop.
 2. **Respect `blocked_by`.** Only start when every blocker is Done. Epic `## Agent guidance` gives the
    dependency order and the parallel lanes — stay in your lane.
-3. **File ownership.** Before editing a file, check open PRs/claimed tickets that touch it (`gh pr list
---search`, the ticket's _Repo paths_). Never edit a file owned by another in-flight ticket without first
+3. **File ownership.** Before editing a file, check open PRs/claimed tickets that touch it
+   (`gh pr list --search`, the ticket's _Repo paths_). Never edit a file owned by another in-flight
+   ticket without first
    commenting on that ticket and agreeing; otherwise, wait for it to merge and rebase.
 4. **Interface first.** Changes to shared contracts — `packages/protocol` (OpenAPI `22-api-openapi.yaml`,
    WS `23-ws-protocol.md`), internal schemas (`24-internal-schemas.md`), DB migrations, statechart JSON —

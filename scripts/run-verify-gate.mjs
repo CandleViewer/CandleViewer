@@ -76,9 +76,10 @@ function printSummary() {
 }
 
 // #2743: the local hand-edit guard compares packages/protocol/src/generated with what the last
-// `pnpm generate` recorded in the git-ignored packages/protocol/.cache/. It runs first: gate #2's
-// typecheck regenerates, which would overwrite a hand edit without a word. Gate #19 is the
-// required check (regenerate + diff); CI has no cache, so this guard is local only.
+// `pnpm generate` recorded in the git-ignored packages/protocol/.cache/, or with HEAD's copy for a
+// file git wrote since (pull, rebase, checkout). It runs first: gate #2's typecheck regenerates,
+// which would overwrite a hand edit without a word. Gate #19 is the required check (regenerate +
+// diff); CI has no cache, so this guard is local only.
 gate("pre", "generated-guard", () =>
   run("node", ["packages/protocol/scripts/check-generated-guard.mjs"]),
 );

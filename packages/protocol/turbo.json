@@ -7,6 +7,7 @@
         "**/*.{yaml,json}",
         "scripts/**",
         "!**/*.md",
+        "!.cache/**",
         "$TURBO_ROOT$/docs/plan/22-api-openapi.yaml",
         "$TURBO_ROOT$/docs/plan/23-ws-protocol.md",
         "$TURBO_ROOT$/docs/plan/ws-schema.json",
