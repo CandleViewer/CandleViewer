@@ -369,8 +369,8 @@ def test_step_up_request_refuses_a_malformed_challenge_id(spec: dict[str, Any]) 
 @pytest.mark.parametrize(
     "rule",
     [
-        "Required for a no-grace class (`live_enablement` or `killswitch`, named by the live "
-        "challenge or by `action_class`)",
+        "Required for a no-grace class (`live_enablement`, `killswitch` or `backups`, named by "
+        "the live challenge or by `action_class`)",
         "omitting it is `400 validation_failed` with "
         "`errors: [{field: challenge_id, rule: challenge_required}]`",
         "Optional for a grace class: without it the server uses the session's live challenge",

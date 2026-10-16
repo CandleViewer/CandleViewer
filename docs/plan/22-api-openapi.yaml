@@ -8186,7 +8186,7 @@ paths:
         fingerprints. No audit record carries `action_summary`, `target`, a request body, the
         password or the code.
 
-        **Binding (no-grace classes).** For `live_enablement` and `killswitch` the one-shot grant
+        **Binding (no-grace classes).** For each no-grace class the one-shot grant
         is bound to the challenged request: its method, its path including any query string, and
         its canonical JSON body. The fingerprint is the hex SHA-256 of the method, a line feed,
         the raw request target (path and query string exactly as received, with no
@@ -8242,8 +8242,8 @@ paths:
                 challenge_id:
                   description: >
                     The `challenge_id` of the `403 step_up_required` being answered (#2304).
-                    Required for a no-grace class (`live_enablement` or `killswitch`, named by
-                    the live challenge or by `action_class`): omitting it is
+                    Required for a no-grace class (`live_enablement`, `killswitch` or `backups`,
+                    named by the live challenge or by `action_class`): omitting it is
                     `400 validation_failed` with
                     `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a
                     grace class: without it the server uses the session's live challenge. This
