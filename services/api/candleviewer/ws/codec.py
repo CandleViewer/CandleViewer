@@ -1,6 +1,6 @@
 """MessagePack decoding of `cv.v1.msgpack` client frames (`23-ws-protocol.md` §2.2, SR-185).
 
-A client frame reaches this decoder only below the 256 KiB inbound cap (SR-040), and the
+A client frame reaches this decoder only at or below the 256 KiB inbound cap (SR-040), and the
 decoder checks the cap again first. The other limits hold *while* msgpack's C unpacker runs
 (the pure-Python fallback is refused at import: it would break the C-2.17 time bound):
 - its nesting stack stops at 1 024 levels;
@@ -31,13 +31,16 @@ Anything else raises `MsgpackFrameError`:
 - invalid UTF-8
 
 Number ranges are the envelope validators' concern, as on the JSON path. The gateway counts a
-`MsgpackFrameError` as `frame_malformed`, as it does for a malformed JSON frame (SR-184).
+`MsgpackFrameError` as `frame_malformed`, as it does for a malformed JSON frame (SR-184). It never
+chains an unpacker error that holds frame content, so an `exc_info` log cannot render that content
+(C-12.6): `ExtraData` holds the whole decoded frame (an `auth` frame's token), a
+`UnicodeDecodeError` the string's bytes.
 """
 
 from __future__ import annotations
 
 import math
-from typing import Any, Final, NoReturn
+from typing import Any, Final, NoReturn, TypeAlias
 
 import msgpack
 
@@ -71,7 +74,11 @@ MAX_MSGPACK_MAP_LEN: Final = 32
 MAX_MSGPACK_VALUES: Final = 16_384
 _SCALARS: Final = (str, int, type(None))  # a bool is an int
 
-type JsonValue = dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None
+# `TypeAlias`, not a PEP 695 `type` statement: Semgrep cannot parse that, and it must scan this
+# security control whole (#2509 round 6).
+JsonValue: TypeAlias = (  # noqa: UP040 - see the comment above (#2483)
+    "dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None"
+)
 
 
 class MsgpackFrameError(ValueError):
@@ -119,7 +126,13 @@ def decode_client_frame(raw: bytes) -> JsonValue:
         )
     except MsgpackFrameError:
         raise
-    except ValueError as exc:  # every unpackb failure: format, stack, extra data, UTF-8, lengths
+    except msgpack.ExtraData:
+        # `ExtraData.unpacked` is the whole decoded frame, an `auth` frame's token included.
+        raise MsgpackFrameError("undecodable frame: ExtraData") from None
+    except UnicodeDecodeError:
+        # Its `object` is the string's bytes: a mangled token is still most of a token.
+        raise MsgpackFrameError("undecodable frame: UnicodeDecodeError") from None
+    except ValueError as exc:  # format, stack, truncated input, lengths, map keys: no content
         raise MsgpackFrameError(f"undecodable frame: {type(exc).__name__}") from exc
     _check(value)
     return value

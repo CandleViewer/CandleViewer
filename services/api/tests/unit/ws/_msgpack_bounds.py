@@ -26,10 +26,16 @@ from __future__ import annotations
 import sys
 from typing import Final
 
+from candleviewer.ws.codec import MAX_MSGPACK_MAP_LEN, MAX_MSGPACK_VALUES
+
 #: Per-frame bound; the JSON path's worst at the cap is about 6 MiB.
 MAX_PEAK_BYTES: Final = 8 << 20
-#: Keys one at-cap frame can bring: 31 per open map level, plus every budgeted map entry.
-MAX_FRAME_KEYS: Final = 40_000
+#: Keys one frame can intern (#2509 round 6). msgpack interns a key when its entry completes:
+#: - each of the unpacker's 1 024 open levels, as a map, holds 31 completed entries (its 32nd key
+#:   waits on a value that is the next level);
+#: - completed maps hold what the budget charged them, 2 per entry after their own 1;
+#: - the map whose charge spends the budget had interned all its keys first.
+MAX_FRAME_KEYS: Final = 31 * 1024 + (MAX_MSGPACK_VALUES - 1) // 2 + MAX_MSGPACK_MAP_LEN
 
 
 def _table_bytes(entries: int) -> int:

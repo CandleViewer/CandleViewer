@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+import traceback
 import tracemalloc
 import uuid
 from collections.abc import Iterator
@@ -31,7 +32,7 @@ from candleviewer.ws.codec import (
 )
 from candleviewer.ws.limits import MAX_INBOUND_FRAME_BYTES, MAX_TOPICS_PER_SUB
 from candleviewer.ws.topics import FAMILIES, UNIVERSAL
-from tests.unit.ws._msgpack_bounds import peak_bound, smallest_resize_bytes
+from tests.unit.ws._msgpack_bounds import MAX_PEAK_BYTES, peak_bound, smallest_resize_bytes
 
 REPO = Path(__file__).resolve().parents[5]
 #: A msgpack timestamp (ext type -1), which the unpacker decodes without calling `ext_hook`.
@@ -110,6 +111,30 @@ def test_msgpack_frame_error_is_a_value_error_with_its_cause() -> None:
     assert isinstance(exc.value.__cause__, ValueError)
 
 
+_MARK: Final = "c4f9e2a1b7d3"  # only the fake token below carries it
+_AUTH: Final = {"t": "auth", "id": "a", "p": {"access_token": f"good-{_MARK}"}}
+#: An `auth` whose token is a str of bytes that are not UTF-8 (`use_bin_type=False` packs bytes as
+#: a str): the `UnicodeDecodeError`'s `object` is those bytes.
+_NOT_UTF8: Final[bytes] = msgpack.packb(
+    {**_AUTH, "p": {"access_token": b"\xff" + _MARK.encode()}}, use_bin_type=False
+)
+
+
+@pytest.mark.parametrize(
+    ("data", "error"),
+    [(_pack(_AUTH) + b"\xc0", "ExtraData"), (_NOT_UTF8, "UnicodeDecodeError")],
+    ids=["trailing-bytes", "invalid-utf8"],
+)
+def test_msgpack_error_never_chains_the_frame_content(data: bytes, error: str) -> None:
+    """#2509 round 6 (C-12.6): `ExtraData` holds the whole decoded frame, an `auth` frame's token
+    included, and a `UnicodeDecodeError` the string's bytes. Neither may ride the chain into an
+    `exc_info` log: what a renderer follows ends at the `MsgpackFrameError`."""
+    with pytest.raises(MsgpackFrameError, match=f"^undecodable frame: {error}$") as exc:
+        decode_client_frame(data)
+    assert exc.value.__cause__ is None and exc.value.__suppress_context__
+    assert _MARK not in "".join(traceback.format_exception(exc.value)) + repr(exc.value.args)
+
+
 @pytest.mark.parametrize(
     "frame", [s for s in CORPUS if s["name"].startswith("valid-")], ids=lambda s: s["name"]
 )
@@ -124,7 +149,12 @@ _json_like = st.recursive(
     | st.integers(-(2**63), 2**64 - 1)
     | st.floats(allow_nan=False, allow_infinity=False)
     | st.text(),
-    lambda children: st.lists(children, max_size=4) | st.dictionaries(st.text(), children),
+    # Within the container caps, so the only refusal a test can meet is the one it asserts: a map
+    # wider than `MAX_MSGPACK_MAP_LEN` is refused for its width, before any nesting check (#2483).
+    lambda children: (
+        st.lists(children, max_size=4)
+        | st.dictionaries(st.text(), children, max_size=MAX_MSGPACK_MAP_LEN)
+    ),
     max_leaves=40,
 )
 
@@ -391,8 +421,15 @@ HOSTILE: Final[dict[str, bytes]] = {
 }
 
 
-@pytest.mark.parametrize("data", HOSTILE.values(), ids=HOSTILE.keys())
-def test_msgpack_hostile_at_cap_frame_is_refused_within_the_allocation_bound(data: bytes) -> None:
+#: The shapes whose keys are new to the process (`_unique_key_levels`): their decode can be the
+#: one that resizes the interned-string table, so they keep that term in their bound.
+_SALTED: Final = frozenset(
+    {"open-map-levels-of-unique-keys", "open-levels-of-unique-key-maps-and-ints"}
+)
+
+
+def _peak(data: bytes) -> int:
+    """Peak traced allocation of one refused decode."""
     tracemalloc.start()
     try:
         with pytest.raises(MsgpackFrameError):
@@ -400,7 +437,18 @@ def test_msgpack_hostile_at_cap_frame_is_refused_within_the_allocation_bound(dat
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
-    assert peak <= peak_bound()
+    return peak
+
+
+@pytest.mark.parametrize("name", HOSTILE)
+def test_msgpack_hostile_at_cap_frame_is_refused_within_the_allocation_bound(name: str) -> None:
+    """#2509 round 6: the per-frame term alone for every shape but the two salted ones. A decode
+    of keys the process already holds resizes the interned table at most every other time, so the
+    smaller of two peaks is the frame's own."""
+    if name in _SALTED:
+        assert _peak(HOSTILE[name]) <= peak_bound()
+    else:
+        assert min(_peak(HOSTILE[name]), _peak(HOSTILE[name])) <= MAX_PEAK_BYTES
 
 
 def test_msgpack_frames_of_new_keys_stay_bounded_through_an_interned_table_resize() -> None:
@@ -412,16 +460,10 @@ def test_msgpack_frames_of_new_keys_stay_bounded_through_an_interned_table_resiz
     floor = smallest_resize_bytes()
     peaks = []
     for salt in range(2, 26):
-        data = _unique_key_levels(salt, maps=True)
-        tracemalloc.start()
-        try:
-            with pytest.raises(MsgpackFrameError):
-                decode_client_frame(data)
-            _, peak = tracemalloc.get_traced_memory()
-        finally:
-            tracemalloc.stop()
+        peak = _peak(_unique_key_levels(salt, maps=True))
         assert peak <= peak_bound()
         peaks.append(peak)
+    floor = min(floor, smallest_resize_bytes())  # the table may hold fewer strings by now
     assert max(peaks) - min(peaks) >= floor // 2, "no interned-table resize was reached"
 
 
