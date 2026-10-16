@@ -3,7 +3,10 @@
 Mirrors the M2 credential gate `reject_withdraw` added by E27-T02 (#2237): C-3.2 bars M13 from
 importing M2, so the rule is restated here instead of shared. Migration 0019's
 `ak_snapshot_shape` CHECK encodes the same rule in SQL; the shared corpus in
-`tests/unit/accounts/_permission_cases.py` keeps the three in agreement.
+`tests/unit/accounts/_permission_cases.py` keeps the three in agreement. The M2 gate also applies
+the SR-030 allow-list before a key is stored (#2270). This predicate and the CHECK stay deny-list
+backstops that agree with each other; they move to the allow-list together, with the migration
+that changes the CHECK.
 """
 
 from __future__ import annotations
@@ -45,7 +48,7 @@ def reject_withdraw(permissions: Mapping[str, object]) -> None:
 
     A right counts as a value inside a group (`"Wallet": ["AccountTransfer"]`, the shape the
     exchange reports) or as a key, at any depth. Matching ignores case and leading/trailing
-    whitespace only, not inner spacing or lookalike characters (allow-list follow-up: #2270).
+    whitespace only, not inner spacing or lookalike characters (the M2 allow-list refuses those).
     A group named for a right that grants nothing (`[]`, `null` or `""`) is allowed. That
     exemption is this predicate's alone: for the legacy key `Withdraw`, `PermissionSnapshot`
     (a list of strings) and 0017's DB conjunct (`jsonb_array_length`) still refuse `null`/`""`.

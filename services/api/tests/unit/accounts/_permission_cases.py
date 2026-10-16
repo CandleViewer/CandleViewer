@@ -1,9 +1,11 @@
-"""Shared C-2.8 / SR-030a permission corpus (#2240).
+"""Shared C-2.8 / SR-030a permission corpus (#2240, #2270).
 
 Every JSON case is run through the M13 predicate and `PermissionSnapshot` (unit tests) and through
-the `ak_snapshot_shape` CHECK of migration 0019 (integration test); all three must agree.
-EXACT_WITHDRAW records the one place where they refuse in different ways, and KNOWN_GAPS the
-spellings all three accept (#2270).
+the `ak_snapshot_shape` CHECK of migration 0019 (integration test); these three deny-list layers
+must agree. EXACT_WITHDRAW records the one place where they refuse in different ways, and
+KNOWN_GAPS the spellings all three accept. The M2 gate adds the SR-030 allow-list (#2270) and
+refuses every KNOWN_GAPS case; GATE_ALLOWS names the JSON cases it accepts
+(tests/unit/credentials_m2/test_allow_list.py).
 
 Shape: the exchange's key-info response (`GET /v5/user/query-api`) reports a key's rights as
 values inside permission groups, e.g. `"Wallet": ["AccountTransfer", "SubMemberTransfer",
@@ -91,14 +93,29 @@ EXACT_WITHDRAW: list[tuple[str, dict[str, Any], bool, str]] = [
     ("withdraw_object", {"Withdraw": {}}, False, "key_withdraw_permission"),
 ]
 
-#: Spellings the substring deny-list misses, at every layer alike: the predicate, the model and
-#: the CHECK all accept them. Pinned so the parity holds and the gap stays visible; the allow-list
-#: in #2270 is the fix.
+#: Spellings the substring deny-list misses (#2262 review), at every deny-list layer alike: the
+#: predicate, the model and the CHECK all accept them. Pinned so their parity holds and the gap
+#: stays visible. The M2 gate's allow-list refuses every one (#2270); M13 and the CHECK keep the
+#: deny-list until a new migration moves the CHECK to the allow-list. Fund groups without either
+#: word come from the E27 threat model, section 5 item 2.
 KNOWN_GAPS: list[Case] = [
     ("gap_inner_space", _with(Wallet=["With draw"]), True),
+    ("gap_inner_hyphen", _with(Wallet=["With-draw"]), True),
     ("gap_zero_width_space", _with(Wallet=["With\u200bdraw"]), True),
+    ("gap_soft_hyphen", _with(Wallet=["AccountTrans\u00adfer"]), True),
+    ("gap_cyrillic_i", _with(Wallet=["W\u0456thdraw"]), True),
+    ("gap_fullwidth_w", _with(Wallet=["\uff37ithdraw"]), True),
     ("gap_long_s", _with(Wallet=["AccountTran\u017ffer"]), True),
+    ("gap_group_key_inner_space", _with(**{"With draw": ["Order"]}), True),
+    ("gap_fund_group_without_either_word", _with(FiatP2P=["FiatP2POrder"]), True),
 ]
+
+#: The JSON_CASES ids the M2 allow-list gate accepts: canonical group names, every value a list,
+#: and no right outside the allow-list. It refuses every other case, including `null`, `""` and
+#: scalar groups that the deny-list layers exempt.
+GATE_ALLOWS = frozenset(
+    {"trade_only_fixture", "no_groups", "withdraw_group_empty", "group_empty_list"}
+)
 
 
 def non_json_cases() -> list[tuple[str, dict[str, Any]]]:
