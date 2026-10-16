@@ -31,6 +31,13 @@ never issued here is refused with the same 401 as any other, and counted
 (`auth.session_fixation_attempt`) within a per-IP and a global budget, through
 the CSRF guard's in-flight-capped, shielded writer path. Expired or revoked
 tokens of real sessions are not attempts and stay silent.
+
+Write-ahead audit (C-2.9, #2251): the record is written before anything is
+rotated, revoked, set or cleared. An inactive sink, or a writer that refuses the
+record (`AuditError`: WAL full or unwritable, writer stopped), answers 503 with
+nothing changed. The one record written after the service has acted (the
+concurrent-refresh race in `/auth/refresh`) cannot undo that: a failed write
+there is logged and the 401 stands.
 """
 
 from __future__ import annotations
@@ -281,7 +288,8 @@ def _tokens(minted: MintedSession, *, include_refresh: bool) -> dict[str, Any]:
 
 
 class AuditUnavailableError(RuntimeError):
-    """Audit sink not active: state-changing session actions fail closed (C-2.9)."""
+    """Audit sink not active, or its writer refused the record: state-changing session
+    actions fail closed (C-2.9). The only error `_audit` raises for an audit failure."""
 
 
 def make_session_router(
@@ -332,16 +340,27 @@ def make_session_router(
     ) -> None:
         if audit_service is None or not audit_service.is_active:
             raise AuditUnavailableError
-        await audit_service.writer.emit(
-            action,
-            actor_label=str(record.user_id) if record else "(unknown)",
-            actor_user_id=record.user_id if record else None,
-            actor_ip=ip,
-            session_id=session_id if session_id is not None else (record.id if record else None),
-            outcome=outcome,
-            severity=severity,
-            reason=reason,
-        )
+        try:
+            await audit_service.writer.emit(
+                action,
+                actor_label=str(record.user_id) if record else "(unknown)",
+                actor_user_id=record.user_id if record else None,
+                actor_ip=ip,
+                session_id=(
+                    session_id if session_id is not None else (record.id if record else None)
+                ),
+                outcome=outcome,
+                severity=severity,
+                reason=reason,
+            )
+        except AuditError as exc:
+            # The writer refused the record (WAL full or unwritable, writer stopped, #2251):
+            # the same fail-closed answer as an inactive sink. The log carries the action and
+            # the class name only, which keeps a registry bug (`UnknownAuditAction`) visible.
+            _log().error(
+                "auth.session_audit.writer_refused", action=action, error=type(exc).__name__
+            )
+            raise AuditUnavailableError from exc
 
     async def _fixation_attempt(request: Request, vector: str) -> None:
         """U6/SR-013 (E09-X02 AC2): a session credential this server never issued was
@@ -482,7 +501,7 @@ def make_session_router(
                         severity=Severity.WARNING,
                         reason=refusal.value,
                     )
-                except (AuditUnavailableError, AuditError) as exc:
+                except AuditUnavailableError as exc:
                     # Refused regardless (fail closed): a 403, never a 500 (#2238 r3).
                     auth_csrf_refused_total.labels(reason="audit_unavailable").inc()
                     _log().error("auth.csrf_refused.audit_unavailable", error=type(exc).__name__)
@@ -512,14 +531,24 @@ def make_session_router(
             if not reuse:
                 # Concurrent-refresh race detected inside the service; the
                 # intent record above is followed by the critical outcome.
-                await _audit(
-                    "auth.refresh_reuse_detected",
-                    record=presented_record,
-                    ip=ip,
-                    outcome=AuditOutcome.DENIED,
-                    severity=Severity.CRITICAL,
-                    reason="rotation_reuse",
-                )
+                try:
+                    await _audit(
+                        "auth.refresh_reuse_detected",
+                        record=presented_record,
+                        ip=ip,
+                        outcome=AuditOutcome.DENIED,
+                        severity=Severity.CRITICAL,
+                        reason="rotation_reuse",
+                    )
+                except AuditUnavailableError:
+                    # Not write-ahead: the service has already decided, and for a rotated token
+                    # revoked the family and published every revocation (#2272), so a 503
+                    # "nothing changed" would be false. The 401 stands; the lost record is the
+                    # alert (04-security-program.md §8.3 rule 2). Never a 500 (#2251).
+                    _log().error(
+                        "auth.refresh_reuse_detected.audit_unavailable",
+                        session_id=str(presented_record.id),
+                    )
             # The service already closed every family member's sockets (#2272).
             return _unauthorized("refresh_token_invalid")
         except (SessionNotFound, SessionRevoked, SessionIdleLocked):
