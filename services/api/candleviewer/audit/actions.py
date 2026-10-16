@@ -81,6 +81,11 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "users.invite_refused",
         "users.invite_role_downgraded",
         "users.disable",
+        # E42-T08 (#2648, #965 R5): a user's account-access grant set replaced, written ahead
+        # of the commit with the live grants before and after (`account_access_sqlalchemy.py`).
+        "users.access_change",
+        # Closes a write-ahead `users.access_change` whose commit failed or was cancelled.
+        "users.access_change_failed",
         "roles.grant",
         "roles.revoke",
         "accounts.create",

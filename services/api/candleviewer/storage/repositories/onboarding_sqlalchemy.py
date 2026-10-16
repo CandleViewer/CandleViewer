@@ -25,9 +25,12 @@ _TOTP = sa.text(
     "SELECT 1 FROM mfa_methods WHERE user_id = CAST(:u AS uuid) AND kind = 'totp' "
     "AND confirmed_at IS NOT NULL AND revoked_at IS NULL LIMIT 1"
 )
-_BOUND = sa.text("SELECT 1 FROM user_account_access WHERE user_id = CAST(:u AS uuid) LIMIT 1")
+# A removed grant stays as a soft revoke (`can_view = false`, E42-T08): only live ones bind.
+_BOUND = sa.text(
+    "SELECT 1 FROM user_account_access WHERE user_id = CAST(:u AS uuid) AND can_view LIMIT 1"
+)
 _LATEST_BINDING = sa.text(
-    "SELECT max(created_at) FROM user_account_access WHERE user_id = CAST(:u AS uuid)"
+    "SELECT max(created_at) FROM user_account_access WHERE user_id = CAST(:u AS uuid) AND can_view"
 )
 
 
