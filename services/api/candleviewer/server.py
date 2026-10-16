@@ -36,8 +36,9 @@ def uvicorn_kwargs(settings: Settings | None = None) -> dict[str, Any]:
     bounds uvicorn's drain of open connections and tasks (#2565): past it uvicorn cancels what is
     left and still sends the lifespan `shutdown`, so the module teardown always runs. It is one
     term of the stop budget `Settings` checks (`api_stop_budget_s`), and `Settings` refuses a drain
-    shorter than a closing socket's audit write (`CLOSE_AUDIT_TIMEOUT_S`), so a close within its
-    bounds writes its `ws.connection.closed` row before anything is cancelled.
+    shorter than one WS close can need (`MIN_DRAIN_TIMEOUT_S`: the flush plus the audit write), so
+    a close within its bounds attempts its `ws.connection.closed` row until its own bound before
+    anything is cancelled.
 
     `proxy_headers=False` (#2275): uvicorn never rewrites `scope["client"]` or the scheme
     from forwarded headers, whatever `FORWARDED_ALLOW_IPS` says, so `scope["client"]` is the

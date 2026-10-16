@@ -197,7 +197,14 @@ from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.service import RulesService
 from candleviewer.rules_store_pg import PostgresRuleStore
-from candleviewer.settings import TEARDOWN_BUDGET_S, Environment, FeedMode, Settings, get_settings
+from candleviewer.settings import (
+    STOP_SLACK_S,
+    TEARDOWN_BUDGET_S,
+    Environment,
+    FeedMode,
+    Settings,
+    get_settings,
+)
 from candleviewer.statechart.bindings.b16_session import set_audit_sink as set_b16_audit_sink
 from candleviewer.statechart.gateway import Gateway, GatewayOverloadedError
 from candleviewer.storage.cold.archive_import import FileImportLedger
@@ -690,7 +697,7 @@ class Supervisor:
         prevents a later one (e.g. `secrets.stop()` zeroing the KEK) from running."""
         for name in names:
             try:
-                async with asyncio.timeout(grace_s + 1.0):
+                async with asyncio.timeout(grace_s + STOP_SLACK_S):
                     await getattr(self._ctx, name).stop(grace_s)
             except Exception:  # incl. TimeoutError; CancelledError still propagates
                 structlog.get_logger("candleviewer.app").exception(

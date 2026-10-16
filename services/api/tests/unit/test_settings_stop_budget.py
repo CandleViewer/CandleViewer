@@ -9,12 +9,15 @@ network, no sleeps.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import uvicorn
 import yaml
 from pydantic import SecretStr, ValidationError
 
@@ -23,7 +26,12 @@ from candleviewer.app import Supervisor
 from candleviewer.settings import (
     CLOSE_AUDIT_TIMEOUT_S,
     CLOSE_FLUSH_TIMEOUT_S,
+    MIN_DRAIN_TIMEOUT_S,
+    MIN_STOP_BUDGET_S,
+    SHUTDOWN_TICKS_S,
+    STOP_SLACK_S,
     TEARDOWN_BUDGET_S,
+    TEARDOWN_STOP_CAP_S,
     Settings,
     get_settings,
 )
@@ -34,12 +42,15 @@ _BASE_COMPOSE = _COMPOSE_DIR / "docker-compose.yml"
 
 
 def _needed_s(s: Settings) -> float:
-    """The four-term sum `Settings` checks, restated independently of its implementation."""
+    """The worst case `Settings` checks, restated independently of its implementation: the grace,
+    the flush, the drain, one module cut at its hard bound (its grace plus the supervisor's slack)
+    and the two 0.1 s ticks of the exit path."""
     return (
         s.ws_shutdown_grace_ms / 1000
         + CLOSE_FLUSH_TIMEOUT_S
         + s.uvicorn_drain_timeout_s
-        + TEARDOWN_BUDGET_S
+        + (TEARDOWN_BUDGET_S + STOP_SLACK_S)
+        + SHUTDOWN_TICKS_S
     )
 
 
@@ -53,7 +64,7 @@ def test_default_settings_fit_the_default_budget() -> None:
         5,
         30,
     )
-    assert _needed_s(s) == 27.0  # 5 s grace + 2 s flush + 5 s drain + 15 s teardown
+    assert _needed_s(s) == pytest.approx(28.2)  # 5 grace + 2 flush + 5 drain + 16 module + 0.2
     assert _needed_s(s) <= s.api_stop_budget_s
 
 
@@ -65,74 +76,94 @@ def test_a_60s_grace_cannot_fit_the_default_budget_and_the_message_names_every_t
         "CV_WS_SHUTDOWN_GRACE_MS=60000",
         "CLOSE_FLUSH_TIMEOUT_S",
         "CV_UVICORN_DRAIN_TIMEOUT_S=5",
-        "TEARDOWN_BUDGET_S",
+        "TEARDOWN_BUDGET_S + STOP_SLACK_S",
+        "SHUTDOWN_TICKS_S",
         "CV_API_STOP_BUDGET_S=30",
     ):
         assert term in message
-    assert "82 s" in message  # 60 + 2 + 5 + 15
+    assert "83.2 s" in message  # 60 + 2 + 5 + 16 + 0.2
 
 
 def test_the_same_grace_fits_a_90s_budget() -> None:
     s = Settings(ws_shutdown_grace_ms=60_000, api_stop_budget_s=90)
-    assert _needed_s(s) == 82.0
+    assert _needed_s(s) == pytest.approx(83.2)
     assert s.api_stop_budget_s == 90
 
 
 def test_a_sum_exactly_at_the_budget_is_accepted_and_one_millisecond_over_is_refused() -> None:
-    assert _needed_s(Settings(ws_shutdown_grace_ms=8000)) == 30.0  # 8 + 2 + 5 + 15
+    at_the_edge = Settings(ws_shutdown_grace_ms=6800)  # 6.8 + 2 + 5 + 16 + 0.2 = 30
+    assert _needed_s(at_the_edge) == pytest.approx(30.0)
     with pytest.raises(ValidationError, match="CV_API_STOP_BUDGET_S=30"):
-        Settings(ws_shutdown_grace_ms=8001)
+        Settings(ws_shutdown_grace_ms=6801)
+
+
+def test_the_old_8s_grace_no_longer_fits_because_one_hung_module_is_cut_at_16s_not_15s() -> None:
+    """The pre-review sum (15 s teardown, no ticks) accepted 8 s: 8 + 2 + 5 + 15 = 30. Then one
+    module that ignores its grace is cut at 16 s and uvicorn's ticks add 0.2 s: 31.2 s, and the
+    runtime would SIGKILL the teardown (secrets zeroing, storage flushes) before it ends."""
+    assert TEARDOWN_STOP_CAP_S == TEARDOWN_BUDGET_S + STOP_SLACK_S == 16.0
+    with pytest.raises(ValidationError, match=r"needs 31\.2 s"):
+        Settings(ws_shutdown_grace_ms=8000)
 
 
 def test_the_drain_timeout_is_a_term_of_the_sum() -> None:
     with pytest.raises(ValidationError, match="CV_UVICORN_DRAIN_TIMEOUT_S=30"):
-        Settings(uvicorn_drain_timeout_s=30)  # 5 + 2 + 30 + 15 = 52 > 30
+        Settings(uvicorn_drain_timeout_s=30)  # 5 + 2 + 30 + 16 + 0.2 = 53.2 > 30
     assert Settings(uvicorn_drain_timeout_s=30, api_stop_budget_s=60).uvicorn_drain_timeout_s == 30
 
 
-# --- the drain floor: a close's audit write is never cut off --------------------------------
+# --- the drain floor: a close's audit write is not cut off -----------------------------------
 # uvicorn cancels what is still running when its drain ends and sends the lifespan `shutdown`
-# without awaiting the cancelled handlers. A closing socket writes its `ws.connection.closed` row
-# last, bounded by CLOSE_AUDIT_TIMEOUT_S, so the drain may not be shorter than that.
+# without awaiting the cancelled handlers. A close can need the flush and then the audit write
+# after `WsRuntime.stop()` stopped waiting (a writer stalled on a peer that stopped reading frees
+# its handler only when uvicorn's `connection.shutdown()` runs), so the drain may not be shorter
+# than their sum. `test_drain_floor_real_socket` shows it on a real server.
 
 
-def test_a_drain_shorter_than_the_close_audit_write_is_refused_and_the_message_names_both() -> None:
+def test_the_floor_is_the_flush_plus_the_audit_write_and_the_budget_floor_follows() -> None:
+    assert MIN_DRAIN_TIMEOUT_S == CLOSE_FLUSH_TIMEOUT_S + CLOSE_AUDIT_TIMEOUT_S == 4
+    assert MIN_STOP_BUDGET_S == 23  # 0 grace + 2 flush + 4 drain + 16 module + 0.2, rounded up
+    s = Settings(ws_shutdown_grace_ms=0, uvicorn_drain_timeout_s=4, api_stop_budget_s=23)
+    assert _needed_s(s) == pytest.approx(22.2) and s.api_stop_budget_s == MIN_STOP_BUDGET_S
+
+
+def test_a_drain_below_the_floor_is_refused_and_the_message_names_both_terms() -> None:
     with pytest.raises(ValidationError) as exc_info:
-        Settings(uvicorn_drain_timeout_s=1)
+        Settings(uvicorn_drain_timeout_s=3)
     (error,) = exc_info.value.errors()
     assert error["loc"] == ("uvicorn_drain_timeout_s",)
     for term in (
-        "CV_UVICORN_DRAIN_TIMEOUT_S=1",
-        "CLOSE_AUDIT_TIMEOUT_S",
-        "2 s",
+        "CV_UVICORN_DRAIN_TIMEOUT_S=3",
+        "4 s",
+        "CLOSE_FLUSH_TIMEOUT_S (2 s)",
+        "CLOSE_AUDIT_TIMEOUT_S (2 s)",
         "ws.connection.closed",
     ):
         assert term in error["msg"]
 
 
-@pytest.mark.parametrize("drain_s", [2, 3, 5, 30])
-def test_a_drain_at_or_above_the_close_audit_write_is_accepted(drain_s: int) -> None:
+@pytest.mark.parametrize("drain_s", [4, 5, 10, 30])
+def test_a_drain_at_or_above_the_floor_is_accepted(drain_s: int) -> None:
     s = Settings(uvicorn_drain_timeout_s=drain_s, api_stop_budget_s=120)
-    assert s.uvicorn_drain_timeout_s == drain_s
-    assert drain_s >= CLOSE_AUDIT_TIMEOUT_S
+    assert s.uvicorn_drain_timeout_s == drain_s >= MIN_DRAIN_TIMEOUT_S
 
 
-def test_the_default_drain_covers_the_close_audit_write() -> None:
-    assert Settings().uvicorn_drain_timeout_s >= CLOSE_AUDIT_TIMEOUT_S
+def test_the_default_drain_covers_the_floor() -> None:
+    assert Settings().uvicorn_drain_timeout_s >= MIN_DRAIN_TIMEOUT_S
 
 
 def test_a_drain_below_the_floor_is_refused_from_the_environment_too(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CV_UVICORN_DRAIN_TIMEOUT_S", "1")
-    with pytest.raises(ValidationError, match="CLOSE_AUDIT_TIMEOUT_S"):
+    monkeypatch.setenv("CV_UVICORN_DRAIN_TIMEOUT_S", "3")
+    with pytest.raises(ValidationError, match="CLOSE_FLUSH_TIMEOUT_S"):
         get_settings()
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("api_stop_budget_s", 9),
+        ("api_stop_budget_s", MIN_STOP_BUDGET_S - 1),  # no grace or drain could ever fit it
         ("api_stop_budget_s", 121),
         ("uvicorn_drain_timeout_s", 0),
         ("uvicorn_drain_timeout_s", 31),
@@ -143,12 +174,20 @@ def test_the_budget_and_the_drain_timeout_are_range_checked(field: str, value: i
         Settings.model_validate({field: value})
 
 
+def test_the_declared_ranges_are_the_ones_that_can_validate() -> None:
+    """The advertised minimums are the smallest values some configuration accepts."""
+    fields = Settings.model_fields
+    drain_min = next(m.ge for m in fields["uvicorn_drain_timeout_s"].metadata if hasattr(m, "ge"))
+    budget_min = next(m.ge for m in fields["api_stop_budget_s"].metadata if hasattr(m, "ge"))
+    assert (drain_min, budget_min) == (MIN_DRAIN_TIMEOUT_S, MIN_STOP_BUDGET_S)
+
+
 def test_the_budget_and_the_drain_timeout_come_from_the_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("CV_API_STOP_BUDGET_S", "60")
     monkeypatch.setenv("CV_UVICORN_DRAIN_TIMEOUT_S", "20")
-    monkeypatch.setenv("CV_WS_SHUTDOWN_GRACE_MS", "15000")  # 15 + 2 + 20 + 15 = 52 <= 60
+    monkeypatch.setenv("CV_WS_SHUTDOWN_GRACE_MS", "15000")  # 15 + 2 + 20 + 16 + 0.2 = 53.2 <= 60
     s = get_settings()
     assert (s.api_stop_budget_s, s.uvicorn_drain_timeout_s, s.ws_shutdown_grace_ms) == (
         60,
@@ -189,11 +228,36 @@ def test_the_ws_close_flush_is_the_term_the_budget_sums(module: Any) -> None:
     assert vars(module)["CLOSE_FLUSH_TIMEOUT_S"] == CLOSE_FLUSH_TIMEOUT_S == 2.0
 
 
-def test_the_ws_close_audit_bound_is_the_floor_the_gateway_spends() -> None:
+def test_the_ws_close_audit_bound_is_the_term_the_floor_uses() -> None:
     """One value for the check and the teardown. The gateway reads it as a module global when it
     writes the close row (`test_lifecycle_socket` patches it there), so a literal in its place
     would break that test."""
     assert vars(gateway)["CLOSE_AUDIT_TIMEOUT_S"] == CLOSE_AUDIT_TIMEOUT_S == 2.0
+
+
+async def test_the_supervisor_cuts_a_hung_stop_at_its_grace_plus_the_shared_slack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The slack in the budget's sum is the one `_stop_each` spends (patched small to run fast)."""
+    monkeypatch.setattr("candleviewer.app.STOP_SLACK_S", 0.1)
+
+    class _Hung:
+        async def stop(self, grace_s: float) -> None:
+            await asyncio.Event().wait()
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    supervisor = Supervisor(SimpleNamespace(audit=_Hung()))  # type: ignore[arg-type]
+    await supervisor._stop_each(["audit"], 0.05)
+    assert 0.15 <= loop.time() - started < 0.6  # the grace plus the patched slack, not 1 s
+
+
+def test_the_two_uvicorn_ticks_the_budget_counts_are_still_in_uvicorn() -> None:
+    """`SHUTDOWN_TICKS_S` is two 0.1 s ticks of uvicorn's own: its main loop, and the settle
+    sleep before the drain. A uvicorn upgrade that changes either must change the constant."""
+    for method in (uvicorn.Server.main_loop, uvicorn.Server.shutdown):
+        assert "asyncio.sleep(0.1)" in inspect.getsource(method)
+    assert SHUTDOWN_TICKS_S == 0.2
 
 
 # --- compose: `stop_grace_period` carries the budget ---------------------------------------
