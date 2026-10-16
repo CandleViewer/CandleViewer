@@ -13,10 +13,12 @@ around it:
 
 Limits: these are AST heuristics, so the following are NOT caught.
 - Climbs spelled another way: `os.path.dirname` chains, `/ "../.."` joins, `joinpath("..")`.
-- Non-literal indices, such as `parents[_N]` or `list(p.parents)[N]`.
+- Non-literal indices, such as `parents[_N]` or `list(p.parents)[N]`; slices (`parents[6:]`);
+  unpacking (`*_, root = p.parents`).
 - Climbs inside a helper, or an immediately invoked lambda, that runs at import.
-- Chains broken by another method (`Path(__file__).with_name("x").parents[4]`), or split across
-  statements and names (`R = Path(__file__).parent`, then `R.parents[3]`).
+- Chains broken by another method when no unbroken part climbs past `/` on its own
+  (`Path(__file__).parents[1].with_name("x").parents[3]`), or split across statements and names
+  (`R = Path(__file__).parent`, then `R.parents[3]`).
 - `import candleviewer.api` followed by `candleviewer.api.rbac_conformance`.
 - Dynamic imports (`importlib.import_module`, `__import__`).
 """
@@ -97,6 +99,19 @@ class _Module:
 @pytest.fixture(scope="module")
 def modules() -> list[_Module]:
     return [_Module(path) for path in sorted(PACKAGE.rglob("*.py"))]
+
+
+@pytest.mark.parametrize(
+    ("relative", "depth"),
+    [
+        ("app.py", 3),
+        ("api/contract_conformance.py", 4),
+        ("migrations/versions/0001_identity_rbac_sessions_mfa.py", 5),
+    ],
+)
+def test_a_scanned_module_is_checked_at_its_image_depth(relative: str, depth: int) -> None:
+    """The depth `_Module` gives a real module, which the package checks climb against."""
+    assert _Module(PACKAGE / relative).image_depth == depth
 
 
 def _levels_up(node: ast.expr) -> int:
