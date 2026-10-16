@@ -17,10 +17,14 @@ Design notes tying back to the ticket's Gherkin:
 - "Catalogue loaded at startup": `refresh_now()` is awaited once, inline,
   before `start()` returns, so `GET /instruments` never serves an empty
   catalogue after boot. #2599: under `start_timeout_s`, so boot never waits
-  longer on the exchange; the schedule then retries soon.
+  longer on the exchange; the schedule then retries soon. #2702: an abandoned
+  fetch counts `instruments_refresh_total{result="timeout"}` and serves a warm
+  (persisted) snapshot stale until a refresh loads.
 - "Refresh without restart": `start()` schedules a periodic task at
-  `ttl_seconds`; `refresh_now()` is also exposed for the "unknown symbol"
-  on-demand path (the router calls it directly).
+  `ttl_seconds`; `ensure_symbol()` serves the "unknown symbol" on-demand path
+  (the router calls it). #2702: one shared refresh task that callers join and
+  wait on for at most `on_demand_timeout_s` (the route then answers 503);
+  `stop()` cancels it.
 - "Refresh fails": a failed fetch marks the existing snapshot stale via
   `InstrumentCatalogueCache.mark_stale` rather than clearing it, increments
   `instruments_refresh_total{result="error"}`, and logs a warning — the
@@ -69,6 +73,10 @@ RETRY_BACKOFF_MAX_S = 300.0
 #: #2599: `start()` waits at most this long for the startup fetch (boot never waits longer
 #: on the exchange); the schedule then retries on the backoff above.
 START_TIMEOUT_S = 10.0
+#: #2702: `ensure_symbol` (the `GET /instruments/{symbol}` on-demand refresh) holds a caller at
+#: most this long, well under the 10 s HTTP client timeouts (the web shell's per request, the
+#: exchange REST client's per attempt); the route then answers 503 and the refresh runs on.
+ON_DEMAND_TIMEOUT_S = 3.0
 
 
 def retry_backoff_s(failures: int, rand: float) -> float:
@@ -123,6 +131,11 @@ class InstrumentRefreshError(IngestionError):
     docstring, "Refresh fails" scenario."""
 
 
+class InstrumentRefreshPendingError(IngestionError):
+    """#2702: the on-demand refresh missed the caller's deadline (it runs on, shared), or the
+    scheduler is stopped: there is no answer yet. The HTTP edge maps it to 503."""
+
+
 class InstrumentsRefreshScheduler:
     """Owns the instrument catalogue: fetch -> parse -> version-diff ->
     persist -> publish -> atomic cache swap, on a 12 h TTL schedule plus
@@ -146,6 +159,7 @@ class InstrumentsRefreshScheduler:
         random_fn: Callable[[], float] = random.random,
         on_demand_cooldown_s: float = 60.0,
         start_timeout_s: float = START_TIMEOUT_S,
+        on_demand_timeout_s: float = ON_DEMAND_TIMEOUT_S,
     ) -> None:
         self._fetch_instruments_info = fetch_instruments_info
         self._repository = repository
@@ -161,8 +175,11 @@ class InstrumentsRefreshScheduler:
         self._start_timeout_s = start_timeout_s
 
         self._on_demand_cooldown_s = on_demand_cooldown_s
+        self._on_demand_timeout_s = on_demand_timeout_s
         self._last_on_demand_us: int | None = None
         self._task: asyncio.Task[None] | None = None
+        #: #2702: the shared on-demand refresh (`ensure_symbol`), if one was started.
+        self._on_demand: asyncio.Task[None] | None = None
         self._stopping = False
         self._refresh_lock = asyncio.Lock()
         #: #2715: set by a failed refresh (the snapshot is marked stale), cleared by a swap.
@@ -180,7 +197,9 @@ class InstrumentsRefreshScheduler:
         #2599: the startup fetch gets at most `start_timeout_s` (the
         supervisor awaits `start()`, so boot never waits longer on the
         exchange); a fetch still running then is abandoned, and the schedule
-        retries it on the short backoff, as after any failed refresh."""
+        retries it on the short backoff, as after any failed refresh. #2702:
+        it counts `result="timeout"` and a warm snapshot it never replaced is
+        served stale (no further await: boot stays bounded)."""
         try:
             persisted = [
                 Instrument.model_validate(row) for row in await self._repository.load_all()
@@ -194,6 +213,7 @@ class InstrumentsRefreshScheduler:
                     by_symbol={i.symbol: i for i in persisted}, fetched_at_us=self._now_us()
                 )
             )
+        warm = self.cache.current()
         loaded = False
         try:
             async with asyncio.timeout(self._start_timeout_s):
@@ -206,6 +226,11 @@ class InstrumentsRefreshScheduler:
             # it on the short backoff (#2599).
             get_logger(__name__).warning("instruments_startup_refresh_failed")
         except TimeoutError:
+            instruments_refresh_total.labels(result="timeout").inc()
+            # Never re-validated: serve the warm (persisted) snapshot stale until a refresh
+            # loads; the schedule's retry, if it fails, persists the same mark.
+            if warm is not None and warm.stale_since_us is None and self.cache.current() is warm:
+                self.cache.mark_stale(stale_since_us=self._now_us())
             get_logger(__name__).warning(
                 "instruments_startup_refresh_timeout", timeout_s=self._start_timeout_s
             )
@@ -213,20 +238,21 @@ class InstrumentsRefreshScheduler:
         self._task = spawn(self._run_periodic(startup_ok=loaded), name="instruments-refresh")
 
     async def stop(self, grace_s: float = 5.0) -> None:
+        """Cancel the schedule and the shared on-demand refresh (#2702), awaiting both for up
+        to `grace_s`. A cancellation of the caller of `stop()` propagates."""
         self._stopping = True
-        if self._task is not None:
-            self._task.cancel()
-            task, self._task = self._task, None
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=grace_s)
-            except TimeoutError:
-                pass
-            except asyncio.CancelledError:
-                # The shield absorbs the *periodic task's* own cancellation;
-                # if the caller of `stop()` was cancelled, propagate it.
-                current = asyncio.current_task()
-                if current is not None and current.cancelling():
-                    raise
+        tasks = [task for task in (self._task, self._on_demand) if task is not None]
+        self._task = self._on_demand = None
+        for task in tasks:
+            task.cancel()
+        try:
+            # The shield keeps `wait_for` from cancelling them twice; `gather` returns their
+            # cancellations as results, so only this caller's own cancellation is raised.
+            await asyncio.wait_for(
+                asyncio.shield(asyncio.gather(*tasks, return_exceptions=True)), timeout=grace_s
+            )
+        except TimeoutError:
+            pass
 
     # -- on-demand refresh (ticket "unknown symbol" + "Refresh does not ----
     # -- stall readers" scenarios) -------------------------------------------
@@ -244,24 +270,48 @@ class InstrumentsRefreshScheduler:
         """ "Refresh without restart" on-demand path: if `symbol` is not in
         the current snapshot, force one refresh and re-check. Returns the
         (possibly newly-fetched) instrument, or `None` if it still is not
-        found after the refresh (unknown to the exchange, not just stale)."""
+        found after the refresh (unknown to the exchange, not just stale).
+
+        #2702: the refresh is one shared task that a concurrent caller joins
+        (one upstream fetch). A caller waits on it through `asyncio.shield`
+        for at most `on_demand_timeout_s`, so neither its deadline nor its
+        cancellation cancels the refresh, then raises
+        `InstrumentRefreshPendingError` (the route answers 503); the refresh
+        runs on until it ends or `stop()` cancels it."""
         current = self.cache.current()
         if current is not None and current.get(symbol) is not None:
             return current.get(symbol)
-        # Unknown-symbol lookups are caller-controlled: throttle the upstream
-        # fetch so a burst of bogus symbols cannot exhaust the REST budget.
-        now = self._now_us()
-        if (
-            self._last_on_demand_us is not None
-            and now - self._last_on_demand_us < self._on_demand_cooldown_s * 1_000_000
-        ):
-            instruments_refresh_total.labels(result="throttled").inc()
-            return None
-        self._last_on_demand_us = now
+        refresh = self._on_demand
+        if refresh is None or refresh.done():
+            if self._stopping:
+                raise InstrumentRefreshPendingError("instrument catalogue scheduler stopped")
+            # Unknown-symbol lookups are caller-controlled: throttle the upstream
+            # fetch so a burst of bogus symbols cannot exhaust the REST budget.
+            now = self._now_us()
+            if (
+                self._last_on_demand_us is not None
+                and now - self._last_on_demand_us < self._on_demand_cooldown_s * 1_000_000
+            ):
+                instruments_refresh_total.labels(result="throttled").inc()
+                return None
+            self._last_on_demand_us = now
+            refresh = self._on_demand = spawn(
+                self._refresh_on_demand(seen=current), name="instruments-refresh-on-demand"
+            )
         try:
-            await self.refresh_now()
-        except InstrumentRefreshError:
-            pass
+            async with asyncio.timeout(self._on_demand_timeout_s):
+                await asyncio.shield(refresh)
+        except TimeoutError as exc:
+            raise InstrumentRefreshPendingError(
+                f"catalogue refresh still running after {self._on_demand_timeout_s} s"
+            ) from exc
+        except asyncio.CancelledError:
+            # The shield passes on `stop()` cancelling the refresh: no answer, as at the
+            # deadline. A cancellation of this caller itself always propagates.
+            caller = asyncio.current_task()
+            if not refresh.cancelled() or (caller is not None and caller.cancelling()):
+                raise
+            raise InstrumentRefreshPendingError("instrument catalogue scheduler stopped") from None
         refreshed = self.cache.current()
         return refreshed.get(symbol) if refreshed is not None else None
 
@@ -274,6 +324,23 @@ class InstrumentsRefreshScheduler:
             await self._refresh_with_retry()
 
     # -- internals -----------------------------------------------------------
+
+    async def _refresh_on_demand(self, *, seen: CatalogueSnapshot | None) -> None:
+        """The shared on-demand refresh task (#2702); `seen` is the snapshot its first caller
+        missed the symbol in. Re-checked after the lock: a refresh it queued behind (the
+        schedule's) that loaded a catalogue makes this fetch moot. A failure is logged (and
+        counted) like any refresh's; the callers answer from whatever is loaded."""
+        try:
+            async with self._refresh_lock:
+                current = self.cache.current()
+                # A load swaps in a new, unmarked snapshot; a failure only marks a copy stale.
+                if current is not None and current is not seen and current.stale_since_us is None:
+                    return
+                await self._refresh_with_retry()
+        except InstrumentRefreshError:
+            pass  # logged and counted by `_refresh_with_retry`
+        except Exception:
+            get_logger(__name__).exception("instruments_on_demand_refresh_unexpected_error")
 
     async def _refresh_with_retry(self) -> None:
         last_error: Exception | None = None
