@@ -22,6 +22,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from candleviewer.domain.order_link import ext_key
+from candleviewer.storage.repositories import exchange_payload
 from candleviewer.storage.repositories.exchange_payload import (
     MAX_CODE_CHARS,
     MAX_DEPTH,
@@ -147,7 +148,7 @@ def test_ordinary_names_are_kept(name: str) -> None:
     ],
 )
 def test_a_credential_shaped_string_is_redacted(text: str) -> None:
-    assert redact_exchange_payload({"retMsg": text}) == {"retMsg": REDACTED}
+    assert redact_exchange_payload({"text": text}) == {"text": REDACTED}
 
 
 @pytest.mark.parametrize(
@@ -163,13 +164,43 @@ def test_a_credential_shaped_string_is_redacted(text: str) -> None:
         "0123456789abcdefg",  # 17: one short of a credential-shaped run
         "63099.800000000000000000",
         "insufficient available balance for this order",
-        "ABCDEFGHIJKLMNOPQRST",  # letters only: a word, not a key
+        "ABCDEFGHIJKLMNOPQRST",  # letters only: a word, not a key, outside a message
         "abcdefghijklmnopqrstuvwxyz",
         "CreateByPartialTakeProfit",  # a CamelCase enum value
         "EC_PostOnlyWillTakeLiquidity",
     ],
 )
 def test_ids_numbers_and_words_are_kept(text: str) -> None:
+    assert redact_exchange_payload({"rejectReason": text}) == {"rejectReason": text}
+
+
+#: 18 letters alone, built at run time (SR-145): the general rule keeps such a run as a word.
+_LETTERS = "".join(chr(ord("A") + 7 * i % 26) for i in range(18))
+
+
+@pytest.mark.parametrize("name", ["retMsg", "ret_msg", "message", "errorMessage", "msg"])
+@pytest.mark.parametrize(
+    "text",
+    [_LETTERS, _LETTERS.lower(), f"API key {_LETTERS} is invalid.", "PostOnlyWillTakeLiquidity"],
+)
+def test_a_message_field_loses_a_run_of_letters_alone(name: str, text: str) -> None:
+    """The message rule (21 Sec.3.3.5): in prose, 18 letters in a row are a key, not a word, at
+    any depth below a message name; a field that is not a message keeps the word."""
+    raw = {name: text, "nested": {name: [text, {"detail": text}]}, "rejectReason": text}
+    assert redact_exchange_payload(raw) == {
+        name: REDACTED,
+        "nested": {name: [REDACTED, {"detail": REDACTED}]},
+        "rejectReason": text,
+    }
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["OK", "insufficient available balance for this order", _OUR, f"order {_OUR} accepted",
+     ext_key(_ORDER_ID), _ORDER_ID, "1760630400000", "1321003749386327552", "0123456789abcdefg",
+     "EC_PostOnly", "DEMO_RETENTION_EXPIRED"],
+)  # fmt: skip
+def test_a_message_field_keeps_ids_numbers_and_words(text: str) -> None:
     assert redact_exchange_payload({"retMsg": text}) == {"retMsg": text}
 
 
@@ -217,6 +248,23 @@ def test_a_value_that_is_not_finite_json_is_redacted(value: object) -> None:
 def test_non_string_and_credential_shaped_keys_are_dropped() -> None:
     raw: dict[Any, Any] = {1: "a", ("t",): "b", _KEY: "c", "kept": "d"}
     assert redact_exchange_payload(raw) == {"kept": "d"}
+
+
+def test_an_over_long_key_is_dropped_before_any_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A key past `MAX_STRING_CHARS` goes before any per-key work, so a megabyte key from the
+    exchange costs no scan on the event loop and the rest of the payload is kept."""
+    scanned: list[int] = []
+    storable = exchange_payload._storable
+
+    def spy(text: str) -> bool:
+        scanned.append(len(text))
+        return storable(text)
+
+    monkeypatch.setattr(exchange_payload, "_storable", spy)
+    fits = "k" * MAX_STRING_CHARS
+    raw = {"a" * 2**20: "x", fits: 1, "kept": "y"}
+    assert redact_exchange_payload(raw) == {fits: 1, "kept": "y"}
+    assert max(scanned) == MAX_STRING_CHARS
 
 
 @pytest.mark.parametrize("bad", ["a\x00b", "lone \ud800 surrogate", "\udfff"])
@@ -321,6 +369,17 @@ def test_exchange_text_past_its_bound_is_oversize() -> None:
     assert redact_exchange_text(code + "1", max_chars=MAX_CODE_CHARS) == OVERSIZE
 
 
+def test_the_message_rule_applies_to_exchange_text_on_request() -> None:
+    """`ret_msg` takes `message=True`: a key of letters alone, which the general rule keeps as a
+    word, is replaced, and so is a CamelCase run there (enum values belong in `ret_code`)."""
+    text = f"API key {_LETTERS} is invalid."
+    assert redact_exchange_text(text) == text
+    assert redact_exchange_text(text, message=True) == REDACTED
+    assert redact_exchange_text("EC_PostOnlyWillTakeLiquidity", message=True) == REDACTED
+    for kept in ("OK", "10004", f"order {_OUR} accepted", "1321003749386327552", None):
+        assert redact_exchange_text(kept, message=True) == kept
+
+
 # -- properties: no seeded secret survives, and a second pass changes nothing --------------------
 
 _ALNUM = string.ascii_letters + string.digits
@@ -368,3 +427,26 @@ def test_no_seeded_secret_survives_in_exchange_text(
     out = redact_exchange_text(f"{before}{glue}{secret}{glue}{after}")
     assert out is not None and secret not in out
     assert redact_exchange_text(out) == out
+
+
+#: Letters alone with a capital, so neither the lower-case words nor a number can hold one.
+_LETTER_RUNS = st.text(string.ascii_letters, min_size=18, max_size=64).filter(
+    lambda s: not s.islower()
+)
+
+
+@given(
+    tree=_JSON,
+    secret=_LETTER_RUNS,
+    name=st.sampled_from(["retMsg", "ret_msg", "message", "errorMessage"]),
+    before=_WORDS,
+    after=_WORDS,
+)
+def test_no_seeded_letters_only_key_survives_in_a_message(
+    tree: Any, secret: str, name: str, before: str, after: str
+) -> None:
+    text = f"{before} {secret} {after}"
+    out = redact_exchange_payload({"tree": tree, "at": [{name: text}]})
+    assert secret not in _blob(out)
+    assert redact_exchange_payload(out) == out
+    assert redact_exchange_text(text, message=True) == REDACTED

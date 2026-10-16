@@ -12,17 +12,21 @@ inside the account, then inserts the event with the next `seq` in a second state
 snapshot sees every committed event; the lock serialises appends to one order, so `seq` stays
 dense and `UNIQUE (order_id, seq)` is only the backstop. Inside the statement builders, before
 anything is bound, `payload` passes `redact_exchange_payload()` and `ret_msg` and `ret_code` pass
-`redact_exchange_text()` (21 Sec.3.3.5; the #845 security notes).
+`redact_exchange_text()`, `ret_msg` with the message rule (21 Sec.3.3.5; the #845 security notes).
 
 Every unit of work first caps each of its statements, lock waits included, at the store's
 `statement_timeout` (`OMS_STATEMENT_TIMEOUT_MS`, the #845 default of `CV_OMS_STATEMENT_TIMEOUT_MS`,
 instead of the repository-wide 30 s), so a blocked order write fails within it and the OMS can
-refuse the order (24 Sec.8.2 S7) rather than hold the submit path.
+refuse the order (24 Sec.8.2 S7) rather than hold the submit path. The cap does not cover opening
+a connection or waiting for the pool; the OMS bounds each call itself (`orders.py`).
 
-A database error of any call, read or write, never leaves with its statement, parameters or
-`DETAIL`, which carry P1 money values (21 Sec.12): it is re-raised `from None` as
-`OrderConstraintError(name)` or `StorageQueryFailed(sqlstate)` (C-12.6), so callers handle one
-error family.
+A failure of any call, read or write, never leaves with its statement, parameters or `DETAIL`,
+which carry P1 money values (21 Sec.12), and is never chained (C-12.6). A database error is
+re-raised `from None` as `OrderConstraintError(name)` or `StorageQueryFailed(sqlstate)`; a
+connection the store cannot get or loses (an `OSError` from the driver, connect timeouts
+included, or the pool's checkout `TimeoutError`) as `StorageTierUnavailable` (24 Sec.8.2 S7:
+Postgres is unavailable). Cancellation passes through unchanged. So a caller meets
+`OrderStoreError` or `StorageError`, never a driver or pool exception.
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 
 from candleviewer.db.models import order_events, orders
-from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories.exchange_payload import (
     MAX_CODE_CHARS,
     redact_exchange_payload,
@@ -79,7 +83,7 @@ def _event_values(event: NewOrderEvent) -> dict[str, Any]:
         "source": event.source,
         "payload": redact_exchange_payload(event.payload),
         "ret_code": redact_exchange_text(event.ret_code, max_chars=MAX_CODE_CHARS),
-        "ret_msg": redact_exchange_text(event.ret_msg),
+        "ret_msg": redact_exchange_text(event.ret_msg, message=True),
         "latency_ms": event.latency_ms,
         "event_ts": event.event_ts,
     }
@@ -192,7 +196,9 @@ def _violated_constraint(exc: DBAPIError) -> str | None:
 
 @contextmanager
 def _constraints() -> Iterator[None]:
-    """A database refusal leaves as a named constraint or a SQLSTATE, never chained (C-12.6)."""
+    """A database refusal leaves as a named constraint or a SQLSTATE, and a connection the store
+    cannot get or loses as `StorageTierUnavailable` naming only the error's type; never chained
+    (C-12.6). `CancelledError` is no `Exception`, so cancellation passes through."""
     try:
         yield
     except DBAPIError as exc:
@@ -200,6 +206,8 @@ def _constraints() -> Iterator[None]:
         if name is None:
             raise StorageQueryFailed(_sqlstate(exc)) from None
         raise OrderConstraintError(name) from None
+    except (OSError, sa.exc.TimeoutError) as exc:
+        raise StorageTierUnavailable(f"postgres unreachable ({type(exc).__name__})") from None
 
 
 class SqlAlchemyOrderStore:
@@ -223,8 +231,8 @@ class SqlAlchemyOrderStore:
 
     @asynccontextmanager
     async def _unit_of_work(self) -> AsyncIterator[SqlAlchemyUnitOfWork]:
-        """One transaction whose statements the store's cap bounds; a database error leaves it
-        as `OrderConstraintError` or `StorageQueryFailed`, unchained."""
+        """One transaction whose statements the store's cap bounds; a failure leaves it as
+        `OrderConstraintError`, `StorageQueryFailed` or `StorageTierUnavailable`, unchained."""
         with _constraints():
             async with self._relational.unit_of_work() as uow:
                 await uow.session.execute(_SET_TIMEOUT, {"timeout": self._timeout})

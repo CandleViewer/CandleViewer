@@ -15,6 +15,18 @@ Money (AGENTS.md Sec.5.2: `Decimal`, never `float`): every numeric(38,18) value 
 `Decimal` that the column holds exactly. `require_money` refuses a float, an int, NaN (which numeric
 stores and which passes every `> 0` CHECK), an infinity and any value the column would round, so
 nothing is changed silently.
+
+Writes here are the insert of an order with its first event (`OrderStore.create`) and the append of
+an event without a state transition (`OrderEventStore.append`). Updates of an existing order
+(state, fills, reject fields) and events with `from_state`/`to_state` land with E29-T03/T04, which
+extend these protocols (the B1 write-ahead transition and the 24 Sec.8.4 pipeline).
+
+For the OMS (24 Sec.8.2 S7): an exception from any call means its write is not confirmed. The OMS
+does not accept the order and sends nothing under its id; a commit cut off by a lost connection
+may still have stored the row, and the id then reads as taken (`link_id_taken`), so the next
+attempt allocates another (24 Sec.8.3 rule 5). The store caps each statement but not opening a
+connection or waiting for the pool, so the OMS bounds every call with `asyncio.timeout`
+(`.claude/rules/20-python-backend.md`).
 """
 
 from __future__ import annotations
@@ -260,6 +272,8 @@ class OrderNotFoundError(OrderStoreError):
 
 
 class OrderStore(Protocol):
+    """Insert and account-scoped reads of `orders`; E29-T03/T04 add the updates (module docs)."""
+
     async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
         """Insert the order and its first event (`seq` 0, `to_state` the order's state) in one
         statement, so one round trip in one transaction (#845 performance notes)."""
@@ -282,6 +296,8 @@ class OrderStore(Protocol):
 
 
 class OrderEventStore(Protocol):
+    """Append and account-scoped reads of `order_events`; E29-T03 adds the transition event."""
+
     async def append(self, account_id: UUID, order_id: UUID, event: NewOrderEvent) -> OrderEventRow:
         """Append with the next `seq`, under a lock on the order row; no state transition
         (`from_state`, `to_state` NULL). `OrderNotFoundError` outside the account."""

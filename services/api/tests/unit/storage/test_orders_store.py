@@ -10,8 +10,10 @@ test_orders_store_pg.py`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import socket
 import traceback
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -26,9 +28,10 @@ import pytest
 from sqlalchemy import CheckConstraint, DateTime, Numeric, TextClause
 from sqlalchemy.engine import Dialect, make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
 from candleviewer.db import models
-from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
 from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories import orders_sqlalchemy as mod
 from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, OVERSIZE, REDACTED
@@ -268,6 +271,33 @@ def test_an_overlong_ret_code_is_bound_as_oversize() -> None:
     assert OVERSIZE in _bound(mod.append_statement(ACCOUNT, ORDER, event))
 
 
+#: 18 letters alone, built at run time (SR-145): a key the general string rule keeps as a word.
+_LETTERS = "".join(chr(ord("A") + 7 * i % 26) for i in range(18))
+_REJECTED_TEXT = f"API key {_LETTERS} is invalid."
+_AUTH_REJECT = _event(
+    kind="reject",
+    source="rest",
+    ret_code="10003",
+    ret_msg=_REJECTED_TEXT,
+    payload={"retCode": 10003, "retMsg": _REJECTED_TEXT, "result": {}},
+)
+
+
+@pytest.mark.parametrize("name", ["create_statement", "append_statement"])
+def test_a_letters_only_key_in_the_exchange_message_is_never_bound(name: str) -> None:
+    """The message rule (21 Sec.3.3.5): `ret_msg` and the payload's message lose a run of letters
+    alone, which the general rule would keep as a word; the code and the rest are kept."""
+    stmt = (
+        mod.create_statement(_new_order(), _AUTH_REJECT)
+        if name == "create_statement"
+        else mod.append_statement(ACCOUNT, ORDER, _AUTH_REJECT)
+    )
+    bound = _bound(stmt)
+    assert _LETTERS not in json.dumps(bound, default=str)
+    assert {"retCode": 10003, "retMsg": REDACTED, "result": {}} in bound
+    assert "10003" in bound and REDACTED in bound
+
+
 def test_list_open_renders_the_open_states_as_literals_for_the_partial_index() -> None:
     sql = _sql(_STATEMENTS["list_open_statement"])
     assert "orders.state IN ('accepted', 'partially_filled', 'pending_amend', " in sql
@@ -332,8 +362,8 @@ class _Rel:
     (the one text clause) is answered without consuming the script and kept out of `statements`.
     """
 
-    def __init__(self, *script: _Result | Exception) -> None:
-        self.script: list[_Result | Exception] = list(script)
+    def __init__(self, *script: _Result | BaseException) -> None:
+        self.script: list[_Result | BaseException] = list(script)
         self.statements: list[Any] = []
         self.units: list[list[tuple[Any, Any]]] = []
         self.commits = 0
@@ -349,7 +379,7 @@ class _Rel:
                 return _Result()
             self.statements.append(stmt)
             step = self.script.pop(0)
-            if isinstance(step, Exception):
+            if isinstance(step, BaseException):
                 raise step
             return step
 
@@ -552,3 +582,71 @@ def test_a_violation_named_on_the_driver_error_itself_is_read_too() -> None:
     orig = _PgError("23505")
     cast(Any, orig).constraint_name = "ux_orders_exch_id"
     assert mod._violated_constraint(DBAPIError("stmt", {}, orig)) == "ux_orders_exch_id"
+
+
+class _Checkout:
+    """A unit of work whose connection checkout fails, as the pool's or the driver's does."""
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+
+    async def __aenter__(self) -> Any:
+        raise self._error
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+class _Down:
+    """A relational repository that cannot hand out a connection."""
+
+    def __init__(self, error: BaseException) -> None:
+        self.error = error
+
+    def unit_of_work(self) -> _Checkout:
+        return _Checkout(self.error)
+
+
+_PEER = "('127.0.0.1', 1)"  # what a driver error names; it must not leave the store
+#: What the driver and the pool raise when Postgres cannot be reached (none is a `DBAPIError`).
+_UNREACHABLE: dict[str, Callable[[], BaseException]] = {
+    "refused": lambda: ConnectionRefusedError(111, f"Connect call failed {_PEER}"),
+    "connect_timeout": lambda: TimeoutError(f"connect to {_PEER} timed out"),
+    "dns": lambda: socket.gaierror(-2, f"Name or service not known {_PEER}"),
+    "pool": lambda: PoolTimeoutError(f"QueuePool limit of size 10 reached {_PEER}"),
+}
+
+
+@pytest.mark.parametrize("call", sorted(_CALLS))
+@pytest.mark.parametrize("error", sorted(_UNREACHABLE))
+async def test_an_unreachable_database_is_tier_unavailable_unchained(call: str, error: str) -> None:
+    """24 Sec.8.2 S7: no connection, for every call, is `StorageTierUnavailable`; the driver's
+    error, which names the peer, is not chained."""
+    exc = _UNREACHABLE[error]()
+    with pytest.raises(StorageTierUnavailable) as err:
+        await _CALLS[call][0](_store(cast(Any, _Down(exc))))
+    assert str(err.value) == f"postgres unreachable ({type(exc).__name__})"
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert _PEER not in "".join(traceback.format_exception(err.value))
+
+
+@pytest.mark.parametrize("write", sorted(_WRITES))
+async def test_a_connection_lost_mid_write_is_tier_unavailable_and_commits_nothing(
+    write: str,
+) -> None:
+    lost = ConnectionResetError(104, f"Connection reset by peer {_PEER}")
+    rel = _Rel(lost) if write == "create" else _Rel(_Result(scalar=LINK), lost)
+    with pytest.raises(StorageTierUnavailable) as err:
+        await _WRITES[write](_store(rel))
+    assert (err.value.__cause__, rel.commits) == (None, 0)
+
+
+@pytest.mark.parametrize("call", ["append", "get"])
+async def test_cancellation_passes_through_the_error_mapping(call: str) -> None:
+    """An `asyncio.timeout` around a call cancels it inside the store: the cancellation must leave
+    as `CancelledError`, never as a storage error (20-python-backend: honour cancellation)."""
+    script = [_Result(scalar=LINK)] if call == "append" else []
+    rel = _Rel(*script, asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await _CALLS[call][0](_store(rel))
+    assert rel.commits == 0
