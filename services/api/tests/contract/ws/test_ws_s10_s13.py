@@ -23,6 +23,7 @@ from candleviewer.ws.errors import UnknownErrorCode, build_ws_error
 from candleviewer.ws.topics import FAMILIES, UNIVERSAL
 from tests.contract.ws._harness import (
     JSON,
+    OFFERS,
     Client,
     World,
     all_private,
@@ -360,14 +361,15 @@ def test_s13_a_client_offering_no_recognised_subprotocol_is_closed_1002() -> Non
     assert exc.value.code == 1002
 
 
-def test_s10_f1_err_frame_validates_against_the_error_schema() -> None:
-    with connect(World()) as c:
+@pytest.mark.parametrize("offer", OFFERS.values(), ids=OFFERS.keys())
+def test_s10_f1_err_frame_validates_against_the_error_schema(offer: list[str]) -> None:
+    with connect(World(), offer) as c:  # `msgpack-preferred`: the `err` arrives as MessagePack
         c.send({"t": "bogus"})
-        c.recv()  # validated: common#/$defs/error requires `message`
+        err = c.recv_err()  # decoded, then validated: common#/$defs/error requires `message`
+        assert err["p"]["code"] == "frame_malformed"
 
 
-@pytest.mark.xfail(strict=True, reason="#377: cv.v1.msgpack codec not implemented (F7)")
-def test_s13_xfail_f7_msgpack_only_offer_negotiates_cv_v1_msgpack() -> None:
+def test_s13_f7_msgpack_only_offer_negotiates_cv_v1_msgpack() -> None:
     """The single F7 pin (§2.2): the preferred subprotocol must be served."""
     w = World()
     with w.client, w.client.websocket_connect("/ws", subprotocols=["cv.v1.msgpack"]) as ws:

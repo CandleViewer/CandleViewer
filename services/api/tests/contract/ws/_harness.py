@@ -23,6 +23,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
+import msgpack
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -31,7 +32,7 @@ from referencing import Registry, Resource
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
-from candleviewer.ws.binary import BOOK_DELTA, Frame, decode_b64
+from candleviewer.ws.binary import BOOK_DELTA, Frame, decode, decode_b64
 from candleviewer.ws.cvwb_vectors import structured, vector_frames
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
@@ -70,10 +71,9 @@ ALL_PERMS = frozenset(
         Permission.RECORDING_READ,
     }
 )
-#: §2.2: the subprotocol offers every test runs under. This build serves `cv.v1.json` only
-#: (`SUPPORTED_SUBPROTOCOLS`); an offer that lists `cv.v1.msgpack` first must still negotiate down
-#: to JSON. A msgpack-ONLY offer is refused with 1002 today (`SUPPORTED_SUBPROTOCOLS`), so the
-#: "runs under cv.v1.msgpack" half of the AC cannot run yet; see the PR's Partial note.
+#: §2.2: the subprotocol offers every test runs under. `cv.v1.msgpack` is served and preferred
+#: (#2483), so the `msgpack-preferred` offer runs the test under MessagePack and `json` under JSON;
+#: the client speaks whichever the server echoed.
 OFFERS: dict[str, list[str]] = {
     "json": ["cv.v1.json"],
     "msgpack-preferred": ["cv.v1.msgpack", "cv.v1.json"],
@@ -143,14 +143,17 @@ def structured_of(frame: dict[str, Any]) -> dict[str, Any]:
     if frame["e"] == "j":
         body: dict[str, Any] = frame["p"]
         return body
-    assert frame["e"] == "b64", frame["e"]
-    return {**topic_fields(frame["ch"]), **structured(decode_b64(frame["p"]))}
+    assert frame["e"] in {"b", "b64"}, frame["e"]  # raw on MessagePack, base64 on JSON (§3.2)
+    part = decode(frame["p"]) if frame["e"] == "b" else decode_b64(frame["p"])
+    return {**topic_fields(frame["ch"]), **structured(part)}
 
 
 def validate_frame(frame: dict[str, Any]) -> None:
     """Envelope (§13.1) + the payload schema of whatever the frame carries."""
     what = f"{frame.get('t')} {frame.get('ch', '')}".strip()
-    check_schema(_BASE + "envelope.schema.json", frame, what)
+    raw = frame.get("p")  # JSON Schema has no bytes: a `bin` is a `contentEncoding: binary` str
+    envelope = {**frame, "p": raw.decode("latin-1")} if isinstance(raw, bytes) else frame
+    check_schema(_BASE + "envelope.schema.json", envelope, what)
     t = frame["t"]
     if t == "err":
         check_schema(_BASE + "common.schema.json#/$defs/error", frame["p"], what)
@@ -158,8 +161,8 @@ def validate_frame(frame: dict[str, Any]) -> None:
         check_schema(_BASE + f"{_CONTROL_SCHEMA[t]}.schema.json", frame.get("p", {}), what)
     elif t in {"snap", "d"}:
         fam = frame["ch"].split(".", 1)[0]
-        if frame["e"] == "b64" and frame.get("s") is None and t == "snap":
-            return  # a non-final snapshot chunk: each part is CVWB-validated by decode_b64
+        if frame["e"] in {"b", "b64"} and frame.get("s") is None and t == "snap":
+            return  # a non-final snapshot chunk: each part is CVWB-validated by its decode
         check_schema(_BASE + f"{fam}.schema.json", structured_of(frame), what)
 
 
@@ -325,6 +328,8 @@ class Client:
         self.ws = ws
         self.conform = conform  # default for `send`/`sub`; negative-path tests turn it off
         self.seen: list[dict[str, Any]] = []
+        #: §2.2: every frame, both ways, is MessagePack on `cv.v1.msgpack`, else JSON text.
+        self.msgpack = ws.accepted_subprotocol == "cv.v1.msgpack"
 
     # -- raw ---
     def send(self, frame: dict[str, Any], *, conform: bool | None = None) -> None:
@@ -333,7 +338,10 @@ class Client:
         invalid one (the negative tests do)."""
         if self.conform if conform is None else conform:
             validate_frame(frame)
-        self.ws.send_json(frame)
+        if self.msgpack:
+            self.ws.send_bytes(msgpack.packb(frame))
+        else:
+            self.ws.send_json(frame)
 
     def send_text(self, text: str) -> None:
         self.ws.send_text(text)
@@ -341,6 +349,7 @@ class Client:
     def recv(self, *, skip_ping: bool = True, validate: bool = True) -> dict[str, Any]:
         while True:
             frame: dict[str, Any] = recv_json(self.ws)
+            assert frame.get("e") != ("b64" if self.msgpack else "b"), frame  # §3.2 per encoding
             if validate:
                 validate_frame(frame)
             self.seen.append(frame)

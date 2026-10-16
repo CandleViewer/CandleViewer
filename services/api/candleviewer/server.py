@@ -4,8 +4,9 @@ Builds the uvicorn configuration from `candleviewer.ws.limits` and
 `candleviewer.ws.lifecycle` so server-level WebSocket limits cannot drift from
 the protocol (`23-ws-protocol.md` §16.2). uvicorn's proxy-header handling is off
 (#2275): `MeshOnlyMiddleware` is the only reader of forwarded headers. The server runs the
-§9.4 planned WebSocket shutdown before uvicorn's own (`PlannedShutdownServer`). uvicorn installs
-no logging config of its own: its loggers use the root handler `configure_logging()` sets up.
+§9.4 planned WebSocket shutdown before uvicorn's own (`PlannedShutdownServer`), and agrees to
+permessage-deflate for `cv.v1.json` only (§3.5, `CvWebSocketsProtocol`). uvicorn installs no
+logging config of its own: its loggers use the root handler `configure_logging()` sets up.
 """
 
 from __future__ import annotations
@@ -20,13 +21,37 @@ from typing import Any
 import structlog
 import uvicorn
 from uvicorn.config import STARTUP_FAILURE
+from uvicorn.protocols.websockets.websockets_sansio_impl import WebSocketsSansIOProtocol
+from websockets.http11 import Request
 
 from candleviewer.observability.context import spawn
 from candleviewer.settings import Settings, get_settings
 from candleviewer.ws import limits
-from candleviewer.ws.lifecycle import HEARTBEAT_INTERVAL_S, HEARTBEAT_TIMEOUT_S
+from candleviewer.ws.lifecycle import (
+    HEARTBEAT_INTERVAL_S,
+    HEARTBEAT_TIMEOUT_S,
+    SUBPROTOCOL_MSGPACK,
+    negotiate_subprotocol,
+)
 
 APP = "candleviewer.main:app"
+
+
+class CvWebSocketsProtocol(WebSocketsSansIOProtocol):
+    """uvicorn's WebSocket protocol (what `ws="auto"` picks), with §3.5's compression per
+    subprotocol. permessage-deflate is agreed in the upgrade, before the gateway accepts a
+    subprotocol, so the §2.2 choice is made here first, on the same offer list uvicorn hands the
+    gateway: for `cv.v1.msgpack` the server agrees to no extension."""
+
+    def handle_connect(self, event: Request) -> None:
+        offered = [
+            token.strip()
+            for header in event.headers.get_all("Sec-WebSocket-Protocol")
+            for token in header.split(",")
+        ]
+        if negotiate_subprotocol(offered) == SUBPROTOCOL_MSGPACK:
+            self.conn.available_extensions = []
+        super().handle_connect(event)
 
 
 def uvicorn_kwargs(settings: Settings | None = None) -> dict[str, Any]:
@@ -57,6 +82,7 @@ def uvicorn_kwargs(settings: Settings | None = None) -> dict[str, Any]:
         "port": cfg.bind_port,
         "proxy_headers": False,
         "log_config": None,
+        "ws": CvWebSocketsProtocol,
         "ws_max_size": limits.SERVER_WS_MAX_SIZE,
         "ws_per_message_deflate": limits.SERVER_WS_PER_MESSAGE_DEFLATE,
         "ws_max_queue": limits.SERVER_WS_MAX_QUEUE,

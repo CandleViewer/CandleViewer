@@ -33,10 +33,9 @@ from candleviewer.ws.limits import (
 
 SUBPROTOCOL_JSON: Final = "cv.v1.json"
 SUBPROTOCOL_MSGPACK: Final = "cv.v1.msgpack"
-#: Subprotocols this build can serve, in server preference order. MessagePack
-#: (§2.2 preferred) needs a runtime msgpack codec that is not yet a declared
-#: dependency, so it is not offered until that lands (see the E17-S01 PR).
-SUPPORTED_SUBPROTOCOLS: Final[tuple[str, ...]] = (SUBPROTOCOL_JSON,)
+#: Subprotocols this build serves, in server preference order (§2.2): MessagePack, decoded under
+#: the SR-185 bounds (`ws/codec.py`), then JSON. The server's order wins over the client's.
+SUPPORTED_SUBPROTOCOLS: Final[tuple[str, ...]] = (SUBPROTOCOL_MSGPACK, SUBPROTOCOL_JSON)
 
 HEARTBEAT_INTERVAL_S: Final = 15.0
 HEARTBEAT_TIMEOUT_S: Final = 45.0

@@ -1,4 +1,5 @@
-"""MessagePack decoding of `cv.v1.msgpack` client frames (`23-ws-protocol.md` §2.2, SR-185).
+"""The `cv.v1.msgpack` codec (`23-ws-protocol.md` §2.2, §3.2; SR-185): client frames decoded under
+bounds, server frames encoded.
 
 A client frame reaches this decoder only at or below the 256 KiB inbound cap (SR-040), and the
 decoder checks the cap again first. The other limits hold *while* msgpack's C unpacker runs
@@ -35,11 +36,16 @@ Number ranges are the envelope validators' concern, as on the JSON path. The gat
 chains an unpacker error that holds frame content, so an `exc_info` log cannot render that content
 (C-12.6): `ExtraData` holds the whole decoded frame (an `auth` frame's token), a
 `UnicodeDecodeError` the string's bytes.
+
+A server frame is the envelope the JSON writer would send, in MessagePack. A CVWB payload that the
+emitter wrapped for JSON (`e: "b64"`) goes out raw instead, as `e: "b"` with a `bin` `p` (§3.2).
 """
 
 from __future__ import annotations
 
+import base64
 import math
+from collections.abc import Mapping
 from typing import Any, Final, NoReturn, TypeAlias
 
 import msgpack
@@ -136,6 +142,14 @@ def decode_client_frame(raw: bytes) -> JsonValue:
         raise MsgpackFrameError(f"undecodable frame: {type(exc).__name__}") from exc
     _check(value)
     return value
+
+
+def encode_server_frame(frame: Mapping[str, Any]) -> bytes:
+    """One server frame as MessagePack (§3.2); a `b64` payload goes out raw, as `e: "b"`."""
+    if frame.get("e") == "b64":
+        frame = {**frame, "e": "b", "p": base64.b64decode(frame["p"], validate=True)}
+    packed: bytes = msgpack.packb(frame, use_bin_type=True)
+    return packed
 
 
 def _refuse_ext(code: int, data: bytes) -> NoReturn:

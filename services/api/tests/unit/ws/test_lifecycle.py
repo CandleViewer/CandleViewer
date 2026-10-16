@@ -70,7 +70,9 @@ def test_lifecycle_auth_before_hello_is_illegal() -> None:
 @pytest.mark.parametrize(
     ("offered", "chosen"),
     [
-        (["cv.v1.msgpack", "cv.v1.json"], "cv.v1.json"),
+        (["cv.v1.msgpack", "cv.v1.json"], "cv.v1.msgpack"),
+        (["cv.v1.json", "cv.v1.msgpack"], "cv.v1.msgpack"),  # the server's order wins (§2.2)
+        (["cv.v1.msgpack"], "cv.v1.msgpack"),
         (["cv.v1.json"], "cv.v1.json"),
         ([" cv.v1.json "], "cv.v1.json"),
         (["cv.v2.json", "graphql-ws"], None),

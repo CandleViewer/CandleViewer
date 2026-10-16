@@ -9,6 +9,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   refusal is counted and logged with the source address MeshOnly admitted, with a cap.
 - **Negotiation** (§2.2): the subprotocol is chosen before `accept`; when the
   client offers none we serve -> close `1002` before the handshake completes.
+  `cv.v1.msgpack` whenever offered: then client frames go to the SR-185 decoder (a
+  text frame is malformed) and server frames are MessagePack (`ws/codec.py`).
 - **hello -> welcome** (§4.2): any other first frame -> `bye` + `1002`.
 - **auth -> auth_ok** (§4.3): the token is read ONLY from the `auth` frame
   body, never the URL. Verified by the injected E09 `authenticate`; the
@@ -64,6 +66,7 @@ from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.net import RESOLVED_SOURCE_KEY
 from candleviewer.observability.context import current_request_id, spawn
 from candleviewer.settings import CLOSE_AUDIT_TIMEOUT_S, CLOSE_FLUSH_TIMEOUT_S
+from candleviewer.ws.codec import decode_client_frame, encode_server_frame
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.lifecycle import (
     CLOSE_REASONS,
@@ -75,6 +78,7 @@ from candleviewer.ws.lifecycle import (
     REFUSAL_LOG_LIMIT,
     REFUSAL_LOG_WINDOW_S,
     SHUTDOWN_GRACE_MS,
+    SUBPROTOCOL_MSGPACK,
     ConnEvent,
     InboundRateLimiter,
     Lifecycle,
@@ -315,6 +319,8 @@ class _Connection:
     ) -> None:
         self.ws = ws
         self.encoding = encoding
+        #: §2.2: every frame, both ways, is MessagePack (`ws/codec.py`); else JSON text.
+        self.msgpack = encoding == SUBPROTOCOL_MSGPACK
         self.connection_id = f"ws_{uuid.uuid4().hex[:12]}"
         self.clock = clock
         self.wall_ms = wall_ms
@@ -384,6 +390,13 @@ class _Connection:
             {"t": "d", "ch": SYSTEM_TOPIC, "s": self.system_seq, "ts": self.wall_ms(), "e": "j"}
             | {"p": body}
         )
+
+    async def send_frame(self, frame: dict[str, Any]) -> None:
+        """Write one frame in the negotiated encoding (§2.2, §3.2)."""
+        if self.msgpack:
+            await self.ws.send_bytes(encode_server_frame(frame))
+        else:
+            await self.ws.send_text(json.dumps(frame, separators=(",", ":")))
 
     def close_with(
         self,
@@ -467,18 +480,21 @@ class _Connection:
     def decode(self, msg: Mapping[str, Any], max_frame_bytes: int) -> Any:
         """One ASGI receive message -> decoded frame; `None` after an oversize close.
 
-        Size is checked on the raw payload BEFORE any decoding (1009)."""
+        Size is checked on the raw payload BEFORE any decoding (1009). On `cv.v1.msgpack` the
+        SR-185 decoder (`ws/codec.py`) decodes it, and a text frame there is malformed."""
         raw: str | bytes = msg.get("text") or msg.get("bytes") or ""
         size = len(raw.encode()) if isinstance(raw, str) else len(raw)
         if size > max_frame_bytes:
             self.close_with("frame_too_big")
             return None
         try:
+            if self.msgpack:
+                return [] if isinstance(raw, str) else decode_client_frame(raw)
             text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             if json_depth_exceeds(text, MAX_JSON_DEPTH):
                 return []  # SR-184: too deep -> protocol violation, never decoded
             return json.loads(text)
-        except (ValueError, RecursionError):  # UnicodeDecodeError is a ValueError
+        except (ValueError, RecursionError):  # as are UnicodeDecodeError and MsgpackFrameError
             return []  # malformed: handled as a non-object frame (a violation)
 
     def violation(self, frame_id: Any, code: str = "frame_malformed") -> None:
@@ -889,12 +905,12 @@ def make_ws_router(
             try:
                 if type(item) is tuple:  # the hub's sampled data frame, queued with its stamp
                     received, item = item
-                    await conn.ws.send_text(json.dumps(item, separators=(",", ":")))
+                    await conn.send_frame(item)
                     now = conn.clock()  # the watchdog's send time, which this frame also observes
                     conn.watchdog.last_outbound = now
                     FANOUT_SECONDS.observe(now - received, SAMPLE_EVERY)
-                else:  # every other frame: sent as ever, no stamp, no observation
-                    await conn.ws.send_text(json.dumps(item, separators=(",", ":")))
+                else:  # every other frame: no stamp, no observation
+                    await conn.send_frame(item)
                     conn.watchdog.last_outbound = conn.clock()
             except WebSocketDisconnect as exc:
                 conn.disconnect_code = exc.code  # the client left mid-send; the reader saw nothing
@@ -968,7 +984,7 @@ def make_ws_router(
                     )
                     with contextlib.suppress(Exception):  # S11: bye before the 1011 close
                         bye = lifecycle_bye("internal_error", now_ms=wall_ms())
-                        await ws.send_text(json.dumps(bye))
+                        await conn.send_frame(bye)
                         await ws.close(code=int(CLOSE_REASONS["internal_error"][0]))
             finally:
                 # Whatever leaves the `try` above runs the whole tail: `_join_writer` re-raises the

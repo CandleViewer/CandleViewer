@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Any
 
+import msgpack
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
@@ -31,11 +32,21 @@ class Clock:
         return BASE_MS + int(self.now * 1000)
 
 
+def _receive(ws: Any) -> dict[str, Any]:
+    """One frame in the negotiated encoding (§2.2): binary MessagePack on `cv.v1.msgpack` (a text
+    frame there fails the test), else JSON text."""
+    if ws.accepted_subprotocol == "cv.v1.msgpack":
+        frame: dict[str, Any] = msgpack.unpackb(ws.receive_bytes())
+        return frame
+    text_frame: dict[str, Any] = ws.receive_json()
+    return text_frame
+
+
 def recv_json(ws: Any) -> dict[str, Any]:
     """Next frame, bounded so a regression fails fast instead of hanging the suite."""
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        frame: dict[str, Any] = pool.submit(ws.receive_json).result(timeout=_TIMEOUT_S)
+        frame: dict[str, Any] = pool.submit(_receive, ws).result(timeout=_TIMEOUT_S)
     except FutureTimeout:
         pytest.fail(f"no WS frame within {_TIMEOUT_S}s")
     finally:
@@ -47,7 +58,7 @@ def close_code(ws: Any) -> int:
     """The close code; fails if a frame arrives instead."""
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        frame = pool.submit(ws.receive_json).result(timeout=_TIMEOUT_S)
+        frame = pool.submit(_receive, ws).result(timeout=_TIMEOUT_S)
     except WebSocketDisconnect as exc:
         return int(exc.code)
     except FutureTimeout:
