@@ -2238,7 +2238,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **Components:** CMP-050 Card, CMP-087 AdminLayout, CMP-088 PageHeader, CMP-138 RiskCapMeter, CMP-173 AuditRow, CMP-178 SystemHealthTile.
 - **Stories:** US-ADMIN-001, US-ADMIN-004, US-ADMIN-011.
 - **Performance:** The overview aggregates from `GET /api/v1/admin/overview` in one call plus `system` for live tiles; it must render in <=800 ms and never block on the slowest subsystem - each tile resolves independently with its own loading and error state.
-- **Analytics/audit:** `admin.overview_viewed` (analytics). Entering any admin route emits the audited `admin.area_entered` `{route, reauthTokenAge}`.
+- **Analytics/audit:** `admin.overview_viewed` (analytics). Entering any admin route emits the audited `admin.area_entered` `{route, reauth_age_s}`.
 - **Design sign-off acceptance checklist:** [ ] tiles for users, accounts, keys needing rotation, recorder, storage, health, flags and last backup drawn [ ] per-tile loading, error and degraded states [ ] alerts for anything requiring owner action, with the action linked [ ] the admin area is visually distinct from the trading app [ ] the re-auth freshness indicator is visible [ ] non-owner access hard-404s (verified, not just hidden)
 
 ### SCR-121 — Admin: users list
