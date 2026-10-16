@@ -27,8 +27,9 @@ A frame its encoder refuses is a server fault and fails closed: `internal_error`
 droppable case of §10.1 (a market-data frame drops its topic to a `backpressure` re-snapshot
 instead) arrives with the ladder; until then it fails closed too. A non-finite number fails only
 on JSON: MessagePack carries it (a producer bug either way). The log line names the frame's
-type, family and error class, never its payload or the error's text (C-12.6), and nothing raises
-into the caller, so one bad frame never stops a fan-out.
+type, family and error class, never its payload or the error's text (C-12.6). Whatever the
+encoder raises is caught, so nothing raises into the caller and one bad frame never stops a
+fan-out.
 
 Plain synchronous code: no I/O and no task of its own; the gateway's writer drives it.
 """
@@ -53,9 +54,6 @@ from candleviewer.ws.topics import FAMILIES
 #: §8.4 step 3's `bye`: one fixed message for both triggers (a `redrop` close happens under budget).
 SLOW_CONSUMER_RETRY_AFTER_MS: Final = 3000
 SLOW_CONSUMER_MESSAGE: Final = "Client is not draining its outbound queue."
-#: What an encoder raises for a frame it cannot serialise: a non-finite number (JSON), a type
-#: neither codec knows, an integer out of MessagePack's range, a reference cycle.
-_ENCODE_ERRORS: Final = (ValueError, TypeError, OverflowError, RecursionError)
 #: §8.4 step 4: a close whose flush deadline expired, whatever its reason.
 CLOSE_FLUSH_DEADLINE: Final = "close_flush_deadline"
 #: The frame types the server sends (§13.1): a log line names one of these, else `other`.
@@ -127,7 +125,7 @@ class ConnectionPipeline:
             return
         try:
             item = encode(frame, self._dumps, received=received)
-        except _ENCODE_ERRORS as exc:
+        except Exception as exc:  # whatever the encoder raises: never into the fan-out (§10.1)
             _log().error("ws frame unencodable", **self._fields(frame), error=type(exc).__name__)
             self._close("internal_error")
             return

@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -123,7 +124,12 @@ class _Wire:
 class _Rig:
     """The real `/ws` router, a `SequencingHub` with a book source, and an audit sink."""
 
-    def __init__(self, backpressure: BackpressureConfig | None = None) -> None:
+    def __init__(
+        self,
+        backpressure: BackpressureConfig | None = None,
+        *,
+        system_notices: Callable[[], list[dict[str, Any]]] | None = None,
+    ) -> None:
         self.clock = _Clock()
         self.audit = _Audit()
         self.hub = GatewayHub()
@@ -157,6 +163,7 @@ class _Rig:
             clock=self.clock,
             wall_ms=self.clock.wall_ms,
             tick_s=0.005,
+            system_notices=system_notices,
             backpressure=backpressure,
         )
         (route,) = router.routes
@@ -385,23 +392,42 @@ async def test_a_seal_during_a_flushing_close_drops_the_priority_lane_too() -> N
     assert pipe.terminal == Terminal(bye, 1001, flush=False)
 
 
+def _nested(depth: int) -> list[Any]:
+    out: list[Any] = []
+    for _ in range(depth):
+        out = [out]
+    return out
+
+
 @pytest.mark.parametrize(
-    "frame",
+    ("encoding", "make", "error"),
     [
-        _d("orders", bad={1}),
-        _d("system", x=float("inf")),
-        {"t": "sub_ok", "id": "s", "p": {"results": [{"x": float("nan")}]}},
-        _d(_BOOK, x=float("nan")),
+        (_JSON, lambda: _d("orders", bad={1}), "TypeError"),
+        (_JSON, lambda: _d("system", x=float("inf")), "ValueError"),
+        (
+            _JSON,
+            lambda: {"t": "sub_ok", "id": "s", "p": {"results": [{"x": float("nan")}]}},
+            "ValueError",
+        ),
+        (_JSON, lambda: _d(_BOOK, x=float("nan")), "ValueError"),
+        (_JSON, lambda: _d("system", x=_nested(100_000)), "RecursionError"),
+        (_MSGPACK, lambda: _d("orders", n=2**70), "OverflowError"),
+        (_MSGPACK, lambda: {"t": "d", "ch": "trades.BTCUSDT", "s": 1, "e": "b64"}, "KeyError"),
     ],
-    ids=["orders", "system", "control", "market"],
+    ids=["orders", "system", "control", "market", "too_deep", "int_range", "b64_without_p"],
 )
-def test_an_unencodable_frame_fails_closed(frame: dict[str, Any]) -> None:
-    """D9 (S2a-i): a frame its encoder refuses closes the connection `internal_error`, never
-    silently dropped. A market-data frame does too until the ladder can re-snapshot it."""
-    pipe, asked = _pipe()
-    pipe.push(frame)
+def test_an_unencodable_frame_fails_closed(
+    encoding: str, make: Callable[[], dict[str, Any]], error: str
+) -> None:
+    """D9 (S2a-i): whatever the encoder raises closes the connection `internal_error`, logged by
+    error class; it is never dropped silently and never raises into the caller (the fan-out). A
+    market-data frame fails closed too until the ladder can re-snapshot it."""
+    pipe, asked = _pipe(encoding)
+    with capture_logs() as logs:
+        pipe.push(make())
     assert asked == [("internal_error", None)]
     assert len(pipe.queue) == 0
+    assert [e["error"] for e in logs if e["event"] == "ws frame unencodable"] == [error]
 
 
 @_ENCODINGS
@@ -605,6 +631,42 @@ async def test_shutdown_notice_precedes_bye_1001_under_the_flag() -> None:
     assert (notice["ch"], notice["p"]["kind"]) == ("system", "shutdown_notice")
     assert (bye["t"], bye["p"]["reason"], sock.closed_with) == ("bye", "shutdown", 1001)
     assert sock.sent.empty()
+
+
+async def test_an_eviction_sends_the_step_3_bye_under_the_flag() -> None:
+    """§8.4: with the flag on every `slow_consumer` `bye` is the step 3 one, the registry's
+    eviction (a `permission_change` or `revoked` it could not send) included: `retry_after_ms`
+    3 000 and the generic message. Both lanes are cleared, so it is next."""
+    rig, sock = _Rig(BackpressureConfig()), _Wire()
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, conn = await rig.open(sock)
+        await rig.sub(sock)
+        rig.book_delta(1)
+        rig.hub.broadcast_system({"kind": "tick"})
+        await conn.evict()
+        (bye,) = await sock.next()
+        await handler
+    assert bye["p"] == slow_consumer_bye(BASE_MS)["p"]
+    assert sock.closed_with == 4429 and sock.sent.empty()
+
+
+@pytest.mark.xfail(
+    strict=True, raises=AssertionError, reason="S2a-ii: the control-frame lane rule (§8.4 Lanes)"
+)
+async def test_auth_ok_precedes_the_system_notices_after_it_under_the_flag() -> None:
+    """§8.4 Lanes: `auth_ok` precedes the `system` frames after it. Until the control-frame lane
+    rule lands, control frames ride the normal lane, so a notice queued in the same turn
+    (E27-T02's degraded or read-only state) overtakes `auth_ok`; S2a-ii flips this case."""
+    rig, sock = _Rig(BackpressureConfig(), system_notices=lambda: [{"kind": "degraded"}]), _Wire()
+    async with asyncio.timeout(_DEADLINE_S):
+        handler = asyncio.create_task(rig.endpoint(sock))
+        sock.feed({"t": "hello", "id": "h", "p": {"clock_ms": BASE_MS}})
+        await sock.next()
+        sock.feed({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
+        first, second = await sock.next(2)
+        handler.cancel()
+        await asyncio.wait({handler})
+    assert [first["t"], second.get("ch")] == ["auth_ok", "system"]
 
 
 async def test_nothing_but_bye_after_the_close() -> None:

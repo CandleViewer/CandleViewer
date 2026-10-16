@@ -157,7 +157,7 @@ from candleviewer.ws.permissions import (
     handle_unsub,
 )
 from candleviewer.ws.permissions import handle_sub as _handle_sub
-from candleviewer.ws.pipeline import ConnectionPipeline, Terminal
+from candleviewer.ws.pipeline import ConnectionPipeline, Terminal, slow_consumer_bye
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import TopicEmitter
 
@@ -579,6 +579,12 @@ class _Connection:
         self.close_with(str(frame["p"]["reason"]), bye=frame, seal=True)
 
     async def evict(self) -> None:
+        """Registry hook: sending a `permission_change` or `revoked` stalled or failed, so the
+        connection closes `slow_consumer`. With the flag on its `bye` is the step 3 one
+        (`retry_after_ms` 3 000 and the generic message, `23-ws-protocol.md` §8.4)."""
+        if self.pipeline is not None:
+            self.close_with("slow_consumer", bye=slow_consumer_bye(self.wall_ms()))
+            return
         self.close_with("slow_consumer")
 
     # -- inbound ------------------------------------------------------------
