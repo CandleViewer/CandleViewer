@@ -76,6 +76,27 @@ class ExchangeAccountRow:
     deleted_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class NewExchangeAccount:
+    id: UUID
+    exchange: str
+    env: str
+    kind: str
+    exchange_uid: str
+    label: str
+    parent_account_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeAccountPatch:
+    """Identity fields and `trading_enabled` are deliberately not patchable."""
+
+    label: str | None = None
+    is_enabled: bool | None = None
+    position_mode: str | None = None
+    margin_mode: str | None = None
+
+
 class AccountsStoreError(Exception):
     """Base for store errors."""
 
@@ -84,7 +105,27 @@ class AccountsStoreScopeDeniedError(AccountsStoreError):
     """Caller is not a live owner (uniform 403; depends only on the caller)."""
 
 
+class AccountsStoreConflictError(AccountsStoreError):
+    def __init__(self, constraint: str) -> None:
+        super().__init__(constraint)
+        self.constraint = constraint
+
+
+class AccountsStoreRuleError(AccountsStoreError):
+    def __init__(self, rule: str) -> None:
+        super().__init__(rule)
+        self.rule = rule
+
+
+class AccountsStoreStaleError(AccountsStoreError):
+    """If-Match token no longer matches a live row."""
+
+
 class AccountsStore(Protocol):
+    async def create_account(
+        self, scope: OwnerScope, new: NewExchangeAccount
+    ) -> ExchangeAccountRow: ...
+
     async def get_account(
         self, scope: AccountScope, account_id: UUID
     ) -> ExchangeAccountRow | None: ...
@@ -98,3 +139,14 @@ class AccountsStore(Protocol):
         after: AccountKey | None,
         limit: int,
     ) -> AccountsPage[ExchangeAccountRow]: ...
+
+    async def update_account(
+        self,
+        scope: OwnerScope,
+        account_id: UUID,
+        patch: ExchangeAccountPatch,
+        *,
+        if_match: datetime | None,
+    ) -> ExchangeAccountRow | None: ...
+
+    async def soft_delete_account(self, scope: OwnerScope, account_id: UUID) -> bool: ...
