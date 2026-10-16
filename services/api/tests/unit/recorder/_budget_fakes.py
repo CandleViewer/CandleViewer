@@ -6,9 +6,10 @@ import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
-from candleviewer.bus.models import Topic
 from candleviewer.recorder.budget import US_PER_S, Breakdown, BudgetConfig, DiskBudget, Point
 from candleviewer.recorder.models import DiskPressureChanged, TierName
+from tests.unit.recorder._fakes import FakeBus
+from tests.unit.recorder._session_fakes import UsClock
 
 GB = 10**9
 NOW = 1_790_000_000 * US_PER_S
@@ -49,21 +50,17 @@ class FakeEvents:
         self.events.append((severity, code, detail))
 
 
-@dataclass
-class FakeBus:
-    events: list[DiskPressureChanged] = field(default_factory=list)
-    fail_next: bool = False
-
-    async def publish(self, topic: Topic, event: DiskPressureChanged) -> None:
-        assert topic.key == "demo.recorder.disk_pressure"
-        if self.fail_next:
-            self.fail_next = False
-            raise OSError("bus unavailable")
-        self.events.append(event)
+def pressure_events(bus: FakeBus) -> list[DiskPressureChanged]:
+    """What `DiskBudget` published, asserting it only used the env's disk-pressure topic."""
+    assert all(
+        key == "demo.recorder.disk_pressure" and isinstance(event, DiskPressureChanged)
+        for key, event in bus.events
+    )
+    return [event for _, event in bus.events]
 
 
 @dataclass
-class FakeStore:
+class FakeSeriesStore:
     points: list[Point] = field(default_factory=list)
     appended: list[Point] = field(default_factory=list)
     broken: bool = False
@@ -83,19 +80,11 @@ class FakeStore:
         self.closed = True
 
 
-@dataclass
-class Clock:
-    t: int = NOW
-
-    def __call__(self) -> int:
-        return self.t
-
-
 def make_budget(
     meter: FakeMeter,
     *,
     clock: Callable[[], int] | None = None,
-    store: FakeStore | None = None,
+    store: FakeSeriesStore | None = None,
     gaps: Sequence[tuple[int, int]] | None = None,
     pinned: frozenset[str] = frozenset(),
     sleep: Callable[[float], Awaitable[None]] | None = None,
@@ -116,7 +105,7 @@ def make_budget(
         bus=bus,
         env="demo",
         config=config or BudgetConfig(cap_bytes=CAP),
-        now_us=clock or Clock(),
+        now_us=clock or UsClock(NOW),
         gaps=gap_source if gaps is not None else None,
         pinned=pinned_source,
         store=store,

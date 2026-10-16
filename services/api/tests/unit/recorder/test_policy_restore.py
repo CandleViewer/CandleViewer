@@ -17,7 +17,7 @@ from candleviewer.statechart.persistence import (
     hmac_sealer,
 )
 from candleviewer.statechart.registry import Registry
-from tests.unit.recorder.conftest import FakeAudit, FakeBus, FakeClock
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
 from tests.xstate_contract._harness import Audit, Keys, Pager, Repo
 
 KEY = MachineKey("recording", "ETHUSDT", "demo")

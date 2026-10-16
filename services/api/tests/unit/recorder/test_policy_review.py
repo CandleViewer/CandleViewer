@@ -12,7 +12,7 @@ from candleviewer.recorder.models import SYSTEM_ACTOR
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy, user_actor
 from candleviewer.statechart import build
 from candleviewer.statechart.factory import default_clock
-from tests.unit.recorder.conftest import FakeAudit, FakeBus, FakeClock
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
 
 OWNER = user_actor("owner-1")
 

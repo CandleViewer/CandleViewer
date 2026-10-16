@@ -33,22 +33,20 @@ from tests.unit.recorder._budget_fakes import (
     GB,
     NOW,
     TOTAL,
-    Clock,
     FakeMeter,
+    FakeSeriesStore,
     make_budget,
 )
-from tests.unit.recorder._budget_fakes import FakeStore as SeriesStoreFake
+from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock
+from tests.unit.recorder._session_fakes import UsClock
 from tests.unit.recorder._writer_helpers import (
     T0,
-    FakeClock,
     FakeEvents,
     FakeSink,
     FakeStore,
     FsyncCounter,
     trade,
 )
-from tests.unit.recorder.conftest import FakeAudit, FakeBus
-from tests.unit.recorder.conftest import FakeClock as PolicyClock
 
 HOUR = 3_600 * US_PER_S
 
@@ -67,7 +65,7 @@ class Gate:
 
 def _writer(gate: Gate) -> tuple[StreamWriter, FakeSink, FakeStore, FakeClock]:
     """No `open()`: the gate and the gap buffer never touch the WAL directory."""
-    sink, store, clock = FakeSink(), FakeStore(), FakeClock()
+    sink, store, clock = FakeSink(), FakeStore(), FakeClock(100.0)
     w = StreamWriter(
         lambda _stream: sink,
         store,
@@ -179,7 +177,7 @@ async def test_a_failing_gate_check_keeps_writing_and_logs_once() -> None:
 async def test_disk_pressure_refuses_new_chart_recording_only(
     bus: FakeBus, audit: FakeAudit
 ) -> None:
-    clock, pressure = PolicyClock(), [True]
+    clock, pressure = FakeClock(), [True]
     p = RecordingPolicy(
         bus=bus,
         audit=audit,
@@ -211,7 +209,7 @@ async def test_disk_pressure_refuses_new_chart_recording_only(
 async def test_position_open_assumes_open_until_positions_reload(
     bus: FakeBus, audit: FakeAudit
 ) -> None:
-    p = RecordingPolicy(disk_refuses=bool, bus=bus, audit=audit, env="demo", now=PolicyClock())
+    p = RecordingPolicy(disk_refuses=bool, bus=bus, audit=audit, env="demo", now=FakeClock())
     try:
         assert p.position_open("BTCUSDT")  # warm-up: the position cache is not authoritative
         p.positions_reloaded()
@@ -225,7 +223,7 @@ async def test_position_open_assumes_open_until_positions_reload(
 
 
 async def test_budget_bools_and_metrics_follow_the_ladder_and_a_refused_volume() -> None:
-    meter, clock = FakeMeter(), Clock()
+    meter, clock = FakeMeter(), UsClock(NOW)
     budget, _, _ = make_budget(meter, clock=clock)
     seen = []
     for pct in (91, 96, 91, 89, 84):
@@ -277,12 +275,12 @@ async def test_a_hung_breakdown_never_freezes_the_free_space_ladder() -> None:
 
 
 async def test_rate_labels_follow_the_reported_symbols_and_future_points_are_ignored() -> None:
-    clock, used = Clock(), 10 * GB
+    clock, used = UsClock(NOW), 10 * GB
     history = [
         Point(t, used - (NOW - t) // 1_000, (("ETHUSDT", 10 * GB - (NOW - t) // US_PER_S),))
         for t in range(NOW - 2 * HOUR, NOW, 600 * US_PER_S)
     ]
-    store = SeriesStoreFake([*history, Point(NOW + US_PER_DAY, 0, ())])  # a future point: ignored
+    store = FakeSeriesStore([*history, Point(NOW + US_PER_DAY, 0, ())])  # a future point: ignored
     meter = FakeMeter(used=used, symbols={"ETHUSDT": 10 * GB})
     budget, _, _ = make_budget(meter, clock=clock, store=store)
     await budget.load_series()
@@ -301,7 +299,11 @@ def _labelled(metric: Gauge, **labels: str) -> float | None:
 
 
 async def test_a_stale_breakdown_never_commits_and_its_age_is_exported() -> None:
-    meter, clock, store = FakeMeter(used=GB, symbols={"BTCUSDT": GB}), Clock(), SeriesStoreFake()
+    meter, clock, store = (
+        FakeMeter(used=GB, symbols={"BTCUSDT": GB}),
+        UsClock(NOW),
+        FakeSeriesStore(),
+    )
     budget, _, _ = make_budget(meter, clock=clock, store=store)
     await budget.sample_once()  # fresh: committed
     meter.breakdown_fail, clock.t = True, clock.t + 600 * US_PER_S
