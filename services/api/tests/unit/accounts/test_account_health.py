@@ -141,6 +141,14 @@ def test_the_us_acct_010_limits_themselves_are_accepted() -> None:
     assert HealthThresholds.from_settings(settings_) == HealthThresholds(10, 30)
 
 
+@pytest.mark.parametrize(("heartbeat", "down"), [(10, 10), (10, 5), (2.5, 2)])
+def test_settings_reject_a_heartbeat_window_not_inside_the_down_window(
+    heartbeat: float, down: float
+) -> None:
+    with pytest.raises(ValidationError, match="CV_ACCOUNT_HEARTBEAT_S must be less than"):
+        Settings(account_heartbeat_s=heartbeat, account_down_s=down)
+
+
 @pytest.mark.parametrize("cadence", [5.0, 9.9, 10.0])
 def test_a_heartbeat_at_least_every_window_keeps_an_idle_account_healthy(cadence: float) -> None:
     monitor, clock, _ = _monitor()

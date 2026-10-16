@@ -90,6 +90,12 @@ def test_no_rotation_setting_switches_the_reminder_off(bad: dict[str, Any]) -> N
         Settings(**bad)
 
 
+@pytest.mark.parametrize(("policy", "warn"), [(14, 14), (2, 14), (90, 364)])
+def test_settings_reject_a_warning_window_not_inside_the_policy(policy: int, warn: int) -> None:
+    with pytest.raises(ValidationError, match="CV_KEY_ROTATION_WARN_DAYS must be less than"):
+        Settings(key_rotation_policy_days=policy, key_rotation_warn_days=warn)
+
+
 @pytest.mark.parametrize(("policy", "warn"), [(14, 14), (14, 30), (90, 0)])
 def test_the_policy_needs_a_warning_window_inside_it(policy: int, warn: int) -> None:
     with pytest.raises(ValueError, match="0 < warn_days < policy_days"):

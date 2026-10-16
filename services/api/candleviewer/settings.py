@@ -320,8 +320,8 @@ class Settings(BaseSettings):
     account_down_s: float = Field(default=30.0, gt=0.0, le=30.0)
     # E27-T04: key-age policy (US-ACCT-005), deployment config for v1 (decision Q4 on #837).
     # Bounded so that no value switches the reminder off (C-4.14): overdue within a year, and a
-    # warning window of at least a day that ends before the due date (the policy checks that).
-    # Age never disables a key.
+    # warning window of at least a day that ends before the due date (Settings and the policy
+    # check that). Age never disables a key.
     key_rotation_policy_days: int = Field(default=90, ge=2, le=365)
     key_rotation_warn_days: int = Field(default=14, ge=1, le=364)
 
@@ -415,6 +415,19 @@ class Settings(BaseSettings):
             raise ValueError(refusal)
         if not (self.test_clock and self.test_clock_file):
             raise ValueError("CV_TEST_CLOCK and CV_TEST_CLOCK_FILE must be set together")
+        return self
+
+    @model_validator(mode="after")
+    def _refuse_unordered_account_windows(self) -> Settings:
+        """E27-T04: the heartbeat window must end inside the down window and the key-rotation
+        warning inside the policy, as `HealthThresholds` and `KeyRotationPolicy` require. A bad
+        pair refuses startup here rather than failing wherever the wiring first builds one."""
+        if not 0 < self.account_heartbeat_s < self.account_down_s:
+            raise ValueError("CV_ACCOUNT_HEARTBEAT_S must be less than CV_ACCOUNT_DOWN_S")
+        if not 0 < self.key_rotation_warn_days < self.key_rotation_policy_days:
+            raise ValueError(
+                "CV_KEY_ROTATION_WARN_DAYS must be less than CV_KEY_ROTATION_POLICY_DAYS"
+            )
         return self
 
     @field_validator("bind_host")
