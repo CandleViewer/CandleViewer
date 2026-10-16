@@ -493,6 +493,21 @@ jobs:
       - name: Build image under test (not pushed)
         run: docker build -f infra/images/Dockerfile.api -t candleviewer-api:ci .
 
+      # #2555: the image ships the package without docs/plan. This imports the ENTRYPOINT
+      # module (candleviewer.server) and the ASGI app it serves (candleviewer.main, what uvicorn
+      # loads), which runs Settings(), configure_logging() and create_app() without entering
+      # the lifespan (Postgres, network). Plain `python -c` from WORKDIR /app finds the package
+      # as `python -m candleviewer.server` does; `-I` would drop /app from sys.path (the venv's
+      # editable .pth names the builder's /build). Only the image just built (--pull never),
+      # no network, no env or secrets beyond the image's own, read-only root as compose runs it.
+      - name: Boot smoke - build the app inside the image
+        timeout-minutes: 2
+        run: >-
+          docker run --rm --pull never --network none --read-only --tmpfs /tmp
+          --entrypoint python candleviewer-api:ci
+          -c 'import candleviewer.server, candleviewer.main as m;
+          print("boot smoke OK:", len(m.app.routes), "routes")'
+
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: candleviewer-api:ci
