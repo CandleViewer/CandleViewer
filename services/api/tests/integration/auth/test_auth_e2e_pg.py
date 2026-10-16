@@ -193,6 +193,41 @@ async def test_wrong_totp_is_rejected_and_no_session_minted(
     assert v.status_code == 401 and "set-cookie" not in v.headers
 
 
+async def test_mfa_verify_after_a_disable_mints_nothing(
+    pg_dsn: str, client: httpx.AsyncClient
+) -> None:
+    """#2911: a user disabled between the password step and the TOTP step gets the operation's
+    401 and no session, and the refusal is audited (`auth.login_failed`, denied)."""
+    await seed(pg_dsn, "e2e_keeper", _PASSWORD, _PEPPER)  # the owner floor keeps an active owner
+    user_id, secret = await _seed_owner_with_totp(pg_dsn, "e2e_disabled")
+    r = await client.post("/auth/login", json={"identifier": "e2e_disabled", "password": _PASSWORD})
+    assert r.status_code == 200, r.text
+    engine = create_async_engine(pg_dsn)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa.text("UPDATE users SET status = 'disabled' WHERE id = CAST(:id AS uuid)"),
+                {"id": user_id},
+            )
+        body = {"mfa_token": r.json()["mfa_token"], "method": "totp", "code": _code(secret)}
+        refused = await client.post("/auth/mfa/verify", json=body)
+        assert refused.status_code == 401 and "set-cookie" not in refused.headers
+        async with engine.connect() as conn:
+            minted = await conn.execute(
+                sa.text("SELECT count(*) FROM sessions WHERE user_id = CAST(:id AS uuid)"),
+                {"id": user_id},
+            )
+            assert minted.scalar_one() == 0
+    finally:
+        await engine.dispose()
+    ctx = client.app_context  # type: ignore[attr-defined]  # set by the client fixture
+    await ctx.audit.writer.flush(10.0)
+    rows = await _audit_rows(pg_dsn, user_id)
+    assert ("auth.login_failed", "denied", "user_disabled") in {
+        (x["action"], x["outcome"], x["reason"]) for x in rows
+    }
+
+
 async def test_skewed_totp_is_refused_generically_and_raises_a_system_event_after_the_hold(
     pg_dsn: str, client: httpx.AsyncClient
 ) -> None:

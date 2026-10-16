@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.session_repository import StepUpChange
 
 
@@ -14,8 +14,23 @@ class FakeSessionRepository:
         # prev_session_id -> next_session_id
         self.rotation_next: dict[str, str] = {}
         self.rotation_prev: dict[str, str] = {}
+        #: #2911: `users.status` by user id (`None`: the user row is gone). Unset is `active`.
+        self.user_statuses: dict[str, UserStatus | None] = {}
 
-    async def create_session(self, session: SessionRecord) -> SessionRecord:
+    def _user_status(self, user_id: object) -> UserStatus | None:
+        return self.user_statuses.get(str(user_id), UserStatus.ACTIVE)
+
+    def _with_status(self, session: SessionRecord | None) -> SessionRecord | None:
+        """#2911: the by-refresh-hash read carries the owner's status."""
+        if session is None:
+            return None
+        return session.model_copy(update={"user_status": self._user_status(session.user_id)})
+
+    async def create_session(self, session: SessionRecord) -> SessionRecord | None:
+        """#2911: nothing is stored when the user is `disabled` or gone; the check and the
+        insert are one step, as the real insert runs under the user row's lock."""
+        if self._user_status(session.user_id) in (UserStatus.DISABLED, None):
+            return None
         self.sessions[str(session.id)] = session
         return session
 
@@ -25,7 +40,7 @@ class FakeSessionRepository:
     async def find_by_refresh_hash(self, refresh_token_hash: str) -> SessionRecord | None:
         for s in self.sessions.values():
             if s.refresh_token_hash == refresh_token_hash:
-                return s
+                return self._with_status(s)
         return None
 
     async def find_by_access_token_jti(self, access_token_jti: str) -> SessionRecord | None:
