@@ -22,6 +22,7 @@ from candleviewer.admin.breakglass import (
     CLOSE_GRACE_S,
     BreakGlassFlow,
     BreakGlassPorts,
+    RunCancelled,
     confirmation_phrase,
     new_phrase_nonce,
 )
@@ -52,6 +53,8 @@ _HASH = hash_recovery_code(_CODE, key=_KEY)
 _PROVEN, _DONE = KekCheckResult(3, True, None), (2, 3, 41)  # methods, sessions, event id
 _PRE_AUDIT = "Audit: no record could be written (pre-audit refusal); the log has the reason."
 _UNRECORDED = "Audit: the outcome record could not be written; the attempt record is kept."
+_AUDITED = "Audit: every record reached audit_log."
+_CANCELLED = "Cancelled: the line above says how the run ended."
 LIVE, DEMO, TESTNET = Environment.LIVE, Environment.DEMO, Environment.TESTNET
 DENIED, FAILURE, SUCCESS = AuditOutcome.DENIED, AuditOutcome.FAILURE, AuditOutcome.SUCCESS
 P = pytest.param
@@ -67,7 +70,8 @@ def _answer[T](value: T | BaseException) -> T:
 @dataclasses.dataclass(eq=False)
 class _Trail:
     """`refuse`: an action it cannot keep; `pending`: what `close()` reports (or raises);
-    `hang`: "emit" or "close" never returns; `close()` frees `lock` (the run lock)."""
+    `hang`: "emit" or "close" parks (and sets `entered`) until `release`; `close()` frees
+    `lock` (the run lock)."""
 
     calls: list[str]
     pending: int | BaseException = 0
@@ -75,13 +79,18 @@ class _Trail:
     hang: str | None = None
     lock: list[_Trail] | None = None
     release: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+    entered: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
     records: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     closed: list[float] = dataclasses.field(default_factory=list)
 
+    async def _park(self, step: str) -> None:
+        if self.hang == step:
+            self.entered.set()
+            await self.release.wait()  # hung unless the test releases it: the flow's timer ends it
+
     async def emit(self, action: str, **fields: Any) -> None:
         self.calls.append(action)
-        if self.hang == "emit":
-            await self.release.wait()  # hung unless the test releases it: the flow's timer ends it
+        await self._park("emit")
         if action == self.refuse:
             raise AuditUnavailable("injected: the trail refused the append")
         self.records.append({"action": action, **fields})
@@ -91,8 +100,7 @@ class _Trail:
         self.closed.append(grace_s)
         if self.lock is not None and self in self.lock:
             self.lock.remove(self)
-        if self.hang == "close":
-            await self.release.wait()
+        await self._park("close")
         return _answer(self.pending)
 
 
@@ -103,7 +111,7 @@ class _Host:
     env: Environment = DEMO
     journal_error: BaseException | None = None
     direct_up: bool | BaseException = True
-    direct_refuse: str | None = None
+    direct_trail: dict[str, Any] = dataclasses.field(default_factory=dict)  # its `_Trail` knobs
     pending: int | BaseException = 0
     refuse: str | None = None
     kek: KekCheckResult = _PROVEN
@@ -113,7 +121,7 @@ class _Host:
     typed: str | BaseException | None = None  # None: the phrase the terminal showed
     code: str | BaseException = _CODE
     outcome: _Outcome | Exception = _DONE
-    hang: str | None = None  # the port that parks until `release` (never set: it is hung)
+    hang: str | None = None  # the port (or journal "emit"/"close") parked until `release`
     hang_after: int = 0  # visits of that port before the one that parks
     lock: list[_Trail] | None = None  # a run lock shared by hosts: one open journal at a time
     calls: list[str] = dataclasses.field(default_factory=list)
@@ -124,10 +132,9 @@ class _Host:
     cut: list[BaseException] = dataclasses.field(default_factory=list)  # what ended a park
 
     def __post_init__(self) -> None:
-        self.journal = _Trail(
-            self.calls, self.pending, self.refuse, self.hang, self.lock, release=self.release
-        )
-        self.direct = _Trail(self.calls, 0, self.direct_refuse)
+        park: dict[str, Any] = {"release": self.release, "entered": self.entered}  # one per test
+        self.journal = _Trail(self.calls, self.pending, self.refuse, self.hang, self.lock, **park)
+        self.direct = _Trail(self.calls, **self.direct_trail, **park)
         reset = BreakGlassResetService(self, recovery_code_key=_KEY, environment=self.env)
         ports = BreakGlassPorts(
             self.open_journal, self.open_direct, self.prove_kek, self.probe, self.resolve_owner,
@@ -193,15 +200,28 @@ class _Host:
         return await self._port("reset", self.outcome)
 
 
-async def _cancelled(w: _Host, *, live_flag: bool) -> None:
+async def _parked(w: _Host) -> None:
+    """Wait for the `hang` port to park, bounded: a flow that never gets there fails, not hangs."""
+    async with asyncio.timeout(5):
+        await w.entered.wait()
+
+
+async def _cancel_exit(running: asyncio.Task[X]) -> X:
+    """The exit the re-raised cancel carries once the run ended (bounded too)."""
+    await asyncio.wait({running}, timeout=5)
+    with pytest.raises(RunCancelled) as cut:
+        running.result()  # InvalidStateError if the run is still going
+    return cut.value.exit
+
+
+async def _cancelled(w: _Host, *, live_flag: bool) -> X:
     """Run, cancel once the `hang` port is parked (Ctrl-C under `asyncio.run`), let the port
-    answer, and check that the run re-raises the cancel."""
+    answer; the run re-raises the cancel with its exit, which this returns."""
     running = asyncio.create_task(w.run(live_flag=live_flag))
-    await w.entered.wait()
+    await _parked(w)
     running.cancel()
     w.release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await running
+    return await _cancel_exit(running)
 
 
 def _rows(records: list[dict[str, Any]]) -> list[tuple[str, AuditOutcome, str | None]]:
@@ -335,7 +355,7 @@ async def test_second_run_refused() -> None:
     lock: list[Any] = []
     first, second = _Host(lock=lock, hang="ask"), _Host(lock=lock)
     running = asyncio.create_task(first.run())
-    await first.entered.wait()
+    await _parked(first)
     assert await second.run() is X.API_RUNNING
     refused = [r["reason"] for r in second.direct.records]
     assert (refused, second.seen) == ([None, "api_running"], [])
@@ -492,30 +512,41 @@ async def test_unresolved_identifier_is_labelled_never_echoed(owner: str, label:
 
 _LOCK = BreakGlassUnavailable("api_running")
 _UNCONFIRMED = "no change is confirmed. Before re-running, check for an unresolved break_glass_used"
+_UNCLOSED = "Audit: the journal did not close cleanly."
+_DIRECT_UNCLOSED = "Audit: the audit_log writer did not close cleanly."
+_LOCKED_OUT = (REFUSED, DENIED, "api_running")
 
 
-@pytest.mark.parametrize(("setup", "exit_code", "last", "shown"), [
-    P({"pending": OSError("injected")}, X.RESET, [(RESET, SUCCESS, None)], "did not close cleanly",
-      id="journal-close-fails"),
+@pytest.mark.parametrize(("setup", "exit_code", "last", "shown", "audit"), [
+    P({"pending": OSError("injected")}, X.RESET, [(RESET, SUCCESS, None)], "done for alice",
+      [_UNCLOSED], id="journal-close-fails"),
     P({"tty": RuntimeError("injected")}, X.STEP_FAILED, [(REFUSED, FAILURE, "step_failed")],
-      "step_failed: flow", id="terminal-port-raises"),
+      "step_failed: flow", [_AUDITED], id="terminal-port-raises"),
     P({"outcome": ConnectionError("injected")}, X.RESET_FAILED, [(RESET, FAILURE, "reset_failed")],
-      _UNCONFIRMED, id="reset-raises-outcome-unconfirmed"),
+      _UNCONFIRMED, [_AUDITED], id="reset-raises-outcome-unconfirmed"),
     P({"journal_error": _LOCK, "direct_up": OSError("injected")}, X.API_RUNNING, [],
-      "pre-audit refusal", id="audit-log-unreachable"),
-    P({"journal_error": _LOCK, "direct_refuse": ATTEMPT}, X.API_RUNNING, [], "pre-audit refusal",
-      id="audit-log-refuses"),
+      "(api_running)", [_PRE_AUDIT], id="audit-log-unreachable"),
+    P({"journal_error": _LOCK, "direct_trail": {"refuse": ATTEMPT}}, X.API_RUNNING, [],
+      "(api_running)", [_PRE_AUDIT], id="audit-log-refuses"),
+    P({"journal_error": _LOCK, "direct_trail": {"refuse": REFUSED}}, X.API_RUNNING, [],
+      "(api_running)", [_UNRECORDED], id="audit-log-keeps-only-the-attempt"),
+    P({"journal_error": _LOCK, "direct_trail": {"pending": OSError("injected")}}, X.API_RUNNING,
+      [_LOCKED_OUT], "(api_running)", [_DIRECT_UNCLOSED], id="audit-log-close-fails"),
 ])  # fmt: skip
 async def test_degraded_ports_fail_closed_with_a_record_where_possible(
-    setup: dict[str, Any], exit_code: X, last: list[Any], shown: str
+    setup: dict[str, Any], exit_code: X, last: list[Any], shown: str, audit: list[str]
 ) -> None:
+    # The summary claims no more than was written, and no less (C-2.9): on the direct path
+    # too, it says which records reached audit_log and whether the writer closed cleanly.
     w = _Host(**setup)
     assert await w.run() is exit_code
     assert _rows(w.journal.records + w.direct.records)[1:] == last
     assert shown in "\n".join(w.lines)
+    assert [line for line in w.lines if line.startswith("Audit:")] == audit
 
 
 @pytest.mark.parametrize(("env", "hang", "after"), [
+    P(DEMO, "emit", 0, id="at-the-attempt-record"),
     P(DEMO, "ask", 0, id="at-the-phrase-prompt"),
     P(LIVE, "ask_secret", 0, id="at-the-code-prompt"),
     P(LIVE, "probe", 1, id="at-the-last-probe"),
@@ -523,29 +554,34 @@ async def test_degraded_ports_fail_closed_with_a_record_where_possible(
 async def test_cancel_before_reset_writes_operator_cancelled_refusal(
     env: Environment, hang: str, after: int
 ) -> None:
-    # Ctrl-C: the trail still closes with a refusal, no reset starts, the cancel propagates.
+    # Ctrl-C: the trail still closes with a refusal, no reset starts, the cancel propagates
+    # with OPERATOR_CANCELLED (exit 16) as the run's exit.
     w = _Host(env, hang=hang, hang_after=after)
-    await _cancelled(w, live_flag=env is LIVE)
+    assert await _cancelled(w, live_flag=env is LIVE) is X.OPERATOR_CANCELLED
     closing = (REFUSED, DENIED, "operator_cancelled")
     assert _rows(w.journal.records) == [(ATTEMPT, SUCCESS, None), closing]
     assert (w.seen, w.journal.closed) == ([], [CLOSE_GRACE_S])
+    assert (w.lines[-1], _CANCELLED in w.lines) == (_AUDITED, False)
 
 
-@pytest.mark.parametrize(("outcome", "closing"), [
-    P(_DONE, (RESET, SUCCESS, None), id="reset-commits"),
-    P(ConnectionError("injected"), (RESET, FAILURE, "reset_failed"), id="reset-raises"),
-    P("recovery_code_invalid", (REFUSED, DENIED, "recovery_code_invalid"), id="reset-refuses"),
+@pytest.mark.parametrize(("outcome", "closing", "exit_code"), [
+    P(_DONE, (RESET, SUCCESS, None), X.RESET, id="reset-commits"),
+    P(ConnectionError("injected"), (RESET, FAILURE, "reset_failed"), X.RESET_FAILED,
+      id="reset-raises"),
+    P("recovery_code_invalid", (REFUSED, DENIED, "recovery_code_invalid"),
+      X.RECOVERY_CODE_INVALID, id="reset-refuses"),
 ])  # fmt: skip
 async def test_cancel_during_reset_lets_it_finish_and_records_its_outcome(
-    outcome: _Outcome | Exception, closing: tuple[str, AuditOutcome, str | None]
+    outcome: _Outcome | Exception, closing: tuple[str, AuditOutcome, str | None], exit_code: X
 ) -> None:
     # A cancel cannot cut the transaction at COMMIT and leave a reset unrecorded: it runs to
-    # its end, its real outcome is recorded and shown, then the cancel propagates.
+    # its end, its real outcome is recorded and shown, then the cancel propagates with that
+    # outcome's exit, so a reset that applied is never reported as a cancel.
     w = _Host(LIVE, hang="reset", outcome=outcome)
-    await _cancelled(w, live_flag=True)
+    assert await _cancelled(w, live_flag=True) is exit_code
     assert _rows(w.journal.records) == [(ATTEMPT, SUCCESS, None), closing]
     assert (len(w.seen), w.journal.closed) == (1, [CLOSE_GRACE_S])
-    assert "Cancelled: the line above says how the run ended." in w.lines
+    assert _CANCELLED in w.lines
 
 
 async def test_reset_cut_short_at_shutdown_is_an_unknown_outcome_not_a_refusal() -> None:
@@ -553,12 +589,11 @@ async def test_reset_cut_short_at_shutdown_is_an_unknown_outcome_not_a_refusal()
     # unknown, so it is a failed reset that may have applied, never "nothing was changed".
     w = _Host(LIVE, hang="reset")
     running = asyncio.create_task(w.run(live_flag=True))
-    await w.entered.wait()
+    await _parked(w)
     running.cancel()
     [reset] = [task for task in asyncio.all_tasks() if task.get_name() == "breakglass.reset"]
     reset.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await running
+    assert await _cancel_exit(running) is X.RESET_FAILED
     assert _rows(w.journal.records)[1:] == [(RESET, FAILURE, "reset_failed")]
     state = {"error": "Interrupted", "outcome": "rolled_back_or_unknown"}
     assert w.journal.records[1]["after_state"] == state
@@ -574,6 +609,34 @@ async def test_cancel_leaves_no_plaintext_code_in_any_frame() -> None:
     assert "BreakGlassFlow._reset" in {frame.f_code.co_qualname for frame in frames}
     plain = (_CODE, normalize_recovery_code(_CODE))
     assert not [v for f in frames for v in f.f_locals.values() if any(p in repr(v) for p in plain)]
+
+
+_ATTEMPTED, _GAVE_UP = (ATTEMPT, SUCCESS, None), (REFUSED, DENIED, "operator_cancelled")
+
+
+@pytest.mark.parametrize(("setup", "exit_code", "rows", "audit"), [
+    P({"hang": "close"}, X.RESET, [_ATTEMPTED, (RESET, SUCCESS, None)], [_UNCLOSED],
+      id="journal-close-after-a-reset"),
+    P({"hang": "journal"}, X.OPERATOR_CANCELLED, [_ATTEMPTED, _GAVE_UP], [_AUDITED],
+      id="journal-open"),
+    P({"journal_error": _LOCK, "hang": "direct"}, X.API_RUNNING, [], [_PRE_AUDIT],
+      id="audit-log-open"),
+    P({"journal_error": _LOCK, "direct_trail": {"hang": "emit"}}, X.API_RUNNING,
+      [_ATTEMPTED, _LOCKED_OUT], [_AUDITED], id="audit-log-record"),
+    P({"journal_error": _LOCK, "direct_trail": {"hang": "close"}}, X.API_RUNNING,
+      [_ATTEMPTED, _LOCKED_OUT], [_DIRECT_UNCLOSED], id="audit-log-close"),
+])  # fmt: skip
+async def test_cancel_while_a_trail_opens_records_or_closes_is_summarised_with_its_exit(
+    setup: dict[str, Any], exit_code: X, rows: list[Any], audit: list[str]
+) -> None:
+    # Ctrl-C in the flush grace (S7: Postgres slow or down) or while a trail opens cuts only
+    # that step; a record still runs to its end. The summary says where the records are, and
+    # the cancel carries how the run ended: a reset that committed stays RESET (exit 0).
+    w = _Host(**setup)
+    assert await _cancelled(w, live_flag=False) is exit_code
+    assert _rows(w.journal.records + w.direct.records) == rows
+    assert [line for line in w.lines if line.startswith("Audit:")] == audit
+    assert (_CANCELLED in w.lines) is (exit_code is not X.OPERATOR_CANCELLED)
 
 
 @pytest.mark.parametrize(("setup", "exit_code", "shown"), [

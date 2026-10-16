@@ -9,7 +9,8 @@ take stays in the journal for cv-api's boot fold-in). Without a journal nothing 
 attempt and the refusal go straight to `audit_log` if it is reachable (else: a pre-audit
 refusal). No input skips a record (C-4.14); no secret is printed, logged or audited (C-12.6).
 A cancel (Ctrl-C) before the reset is an `operator_cancelled` refusal; the reset and every
-record run to their end, so the outcome is recorded; then the cancel is re-raised.
+record run to their end, so the outcome is recorded; a cancel cuts only a trail's open or close.
+The summary is shown, then `RunCancelled` re-raises the cancel with the run's exit status.
 """
 
 from __future__ import annotations
@@ -79,11 +80,21 @@ class BreakGlassExit(IntEnum):
     CONFIRMATION_TIMEOUT = 13
     RECOVERY_CODE_REQUIRED = 14
     RECOVERY_CODE_INVALID = 15
-    OPERATOR_CANCELLED = 16  # recorded, then `run` re-raises the cancel; slice 5 exits with it
+    OPERATOR_CANCELLED = 16  # cancelled before a reset began; carried by `RunCancelled`
 
     @property
     def reason(self) -> str:
         return self.name.lower()
+
+
+class RunCancelled(asyncio.CancelledError):
+    """The run was cancelled (Ctrl-C), raised once the summary is shown. `exit` is how the run
+    ended, the status the CLI exits with: OPERATOR_CANCELLED if the cancel stopped it before a
+    reset began, else the status already under way, so a reset that applied stays RESET."""
+
+    def __init__(self, status: BreakGlassExit) -> None:
+        super().__init__(status)  # `args` alone rebuild it (copy, pickle)
+        self.exit = status
 
 
 _X = BreakGlassExit
@@ -147,7 +158,8 @@ class BreakGlassPorts:
     open_direct: Callable[[], Awaitable[AuditTrail | None]]
     #: `secrets.prove_kek_possession`: metadata only, never enrols (decision O1).
     prove_kek: Callable[[], Awaitable[KekCheckResult]]
-    #: True while another session of the CLI's database role is connected (R2c).
+    #: True while another session of the CLI's database role is connected (R2c). Slice 5
+    #: composes the `pg_stat_activity` probe and its integration test; here it is a port.
     api_running: Callable[[], Awaitable[bool]]
     #: The id of the active Owner with this username or email, else None.
     resolve_owner: Callable[[str], Awaitable[uuid.UUID | None]]
@@ -201,14 +213,15 @@ class _Verdict:
 
 
 class _Records:
-    """One run's records on one trail: critical, `system:breakglass`, no user id. `cancelled`
-    notes a cancel that came while a record or the reset ran to its end; `run` re-raises it."""
+    """One run's records on one trail: critical, `system:breakglass`, no user id. `landed`
+    counts those the trail took; `cancelled` notes a cancel that came while a record, the
+    reset or the close ran (`run` re-raises it after the summary)."""
 
     def __init__(self, trail: AuditTrail, run_id: uuid.UUID, owner: str, env: Environment) -> None:
         self.trail, self.run_id, self.label = trail, run_id, _label(owner)
         self.env = ExchangeEnv(env.value)
         self.target: uuid.UUID | None = None
-        self.cancelled = False
+        self.cancelled, self.landed = False, 0
 
     async def to_the_end[T](self, call: Coroutine[Any, Any, T], name: str) -> T:
         """`call`'s result once it has ended, even if the run is cancelled meanwhile: a cancel
@@ -229,6 +242,21 @@ class _Records:
     ) -> None:
         """Durable when it returns; raises if the trail refuses or takes too long."""
         await self.to_the_end(self._emit(action, outcome, reason, state), "record")
+        self.landed += 1
+
+    async def close(self) -> int | None:
+        """Close with the bounded grace: the count not in `audit_log` yet, or None if the close
+        failed or was cancelled (the journal keeps what it has; the cancel is noted)."""
+        try:
+            async with asyncio.timeout(CLOSE_GRACE_S + CLOSE_SLACK_S):
+                return await self.trail.close(CLOSE_GRACE_S)
+        except asyncio.CancelledError:  # Ctrl-C in the flush grace: noted, re-raised by `run`
+            self.cancelled = True
+            _log().warning("breakglass.trail_close_cancelled", run_id=str(self.run_id))
+        except Exception as exc:
+            error = type(exc).__name__
+            _log().critical("breakglass.trail_close_failed", run_id=str(self.run_id), error=error)
+        return None
 
     async def _emit(
         self, action: str, outcome: AuditOutcome, reason: str | None, state: _State
@@ -250,28 +278,19 @@ class _Records:
             )
 
 
-async def _close(trail: AuditTrail) -> int | None:
-    """Close with the bounded grace; None if that failed (the journal keeps what it has)."""
-    try:
-        async with asyncio.timeout(CLOSE_GRACE_S + CLOSE_SLACK_S):
-            return await trail.close(CLOSE_GRACE_S)
-    except Exception as exc:
-        _log().critical("breakglass.trail_close_failed", error=type(exc).__name__)
-        return None
-
-
-def _audit_lines(verdict: _Verdict, pending: int | None) -> list[str]:
-    """Where the records are, never more than was written (C-2.9): `pending` is what the
-    journal's close left outside `audit_log` (None: it did not close cleanly)."""
-    if verdict.status is _X.AUDIT_UNAVAILABLE:  # the attempt record itself was not written
+def _audit_lines(landed: int, pending: int | None, trail: str = "the journal") -> list[str]:
+    """Where the run's two records are, never more than was written (C-2.9): `landed` of them
+    reached `trail`; `pending` is what its close left outside `audit_log` (None: it did not
+    close cleanly)."""
+    if not landed:  # not even the attempt record
         return [_PRE_AUDIT]
-    lines = [_UNRECORDED] if verdict.unrecorded else []
+    lines = [] if landed > 1 else [_UNRECORDED]
     if pending is None:
-        lines.append("Audit: the journal did not close cleanly.")
+        lines.append(f"Audit: {trail} did not close cleanly.")
     elif pending:
         waiting = f"records waiting in the host journal: {pending}; cv-api folds them in."
         lines.append(f"Audit: {waiting}")
-    elif not verdict.unrecorded:
+    elif landed > 1:
         lines.append(_AUDITED)
     return lines
 
@@ -287,11 +306,14 @@ class BreakGlassFlow:
     async def run(self, owner: str, *, live_flag: bool) -> BreakGlassExit:
         """Reset the MFA of the Owner named `owner` (username or email); `live_flag` is
         `--live`. Returns the exit status; no secret reaches the terminal or the log. A cancel
-        is recorded and summarised first, then re-raised."""
+        is recorded and summarised first, then re-raised as `RunCancelled` with the status."""
         run_id = self._ports.new_run_id()
         try:
             async with asyncio.timeout(STEP_TIMEOUT_S):
                 trail = await self._ports.open_journal()
+        except asyncio.CancelledError:  # Ctrl-C while it opened: refused like any other run
+            cancel = _X.OPERATOR_CANCELLED
+            return await self._refuse_unjournaled(run_id, owner, live_flag, cancel, cancelled=True)
         except Exception as exc:  # unusable, whatever the cause; a held run lock means cv-api
             held = isinstance(exc, BreakGlassUnavailable) and exc.reason == "api_running"
             error = type(exc).__name__
@@ -302,10 +324,10 @@ class BreakGlassFlow:
         try:
             verdict = await self._journaled(records, owner, live_flag)
         finally:
-            pending = await _close(trail)
-        self._summarise(verdict, owner, _audit_lines(verdict, pending), records.cancelled)
-        if records.cancelled:
-            raise asyncio.CancelledError  # honoured now that the trail is closed
+            pending = await records.close()
+        self._summarise(verdict, owner, _audit_lines(records.landed, pending), records.cancelled)
+        if records.cancelled:  # honoured now that the trail is closed and the summary shown
+            raise RunCancelled(verdict.exit)
         return verdict.exit
 
     def _intent(self, live_flag: bool) -> dict[str, Any]:
@@ -429,11 +451,17 @@ class BreakGlassFlow:
         return _Verdict(_X.RESET, counts)
 
     async def _refuse_unjournaled(
-        self, run_id: uuid.UUID, owner: str, live_flag: bool, status: BreakGlassExit
+        self,
+        run_id: uuid.UUID,
+        owner: str,
+        live_flag: bool,
+        status: BreakGlassExit,
+        cancelled: bool = False,
     ) -> BreakGlassExit:
-        """No journal (scenario S3, or cv-api holds the run lock): nothing else runs. The
-        attempt and the refusal go straight to `audit_log` if it can be reached."""
-        recorded, cancelled = False, False
+        """No journal (scenario S3, cv-api holds the run lock, or a cancel while it opened):
+        nothing else runs. The attempt and the refusal go straight to `audit_log` if it can be
+        reached; the summary says which of them got there."""
+        landed, pending = 0, None
         try:
             async with asyncio.timeout(STEP_TIMEOUT_S):
                 trail = await self._ports.open_direct()
@@ -445,16 +473,21 @@ class BreakGlassFlow:
                     )
                     await records.write(REFUSED, AuditOutcome.DENIED, status.reason, None)
                 finally:
-                    pending, cancelled = await _close(trail), records.cancelled
-                recorded = pending == 0
+                    pending = await records.close()
+                    landed, cancelled = records.landed, cancelled or records.cancelled
+        except asyncio.CancelledError:  # while `audit_log` was being reached: nothing written
+            cancelled = True
         except Exception as exc:
             error = type(exc).__name__
             _log().error("breakglass.direct_audit_failed", run_id=str(run_id), error=error)
+        recorded = landed > 1 and pending == 0
         log = _log().warning if recorded else _log().critical
         log("breakglass.refused_unjournaled", run_id=str(run_id), reason=status.reason, ok=recorded)
-        self._summarise(_Verdict(status), owner, [_AUDITED if recorded else _PRE_AUDIT], cancelled)
-        if cancelled:
-            raise asyncio.CancelledError  # honoured once both records ran to their end
+        # Straight to `audit_log`: a count its close left outside it is not a journal's to fold.
+        audit = _audit_lines(landed, 0 if pending == 0 else None, "the audit_log writer")
+        self._summarise(_Verdict(status), owner, audit, cancelled)
+        if cancelled:  # honoured once what reached `audit_log` is summarised
+            raise RunCancelled(status)
         return status
 
     def _summarise(self, verdict: _Verdict, owner: str, audit: list[str], cancelled: bool) -> None:
