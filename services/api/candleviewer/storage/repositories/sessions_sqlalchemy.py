@@ -7,7 +7,10 @@ Protocol; it only needs the plain row model `SessionRecord` (same pattern as
 `audit_sqlalchemy.py`). Every statement is parameterised. Revocation is a
 single conditional `UPDATE ... WHERE revoked_at IS NULL RETURNING`, which is
 what makes `SessionService.refresh()`'s claim-by-revoke race-free and keeps
-the first revocation reason immutable (INV-B16-d).
+the first revocation reason immutable (INV-B16-d). The step-up columns are
+written only from a read taken under the row lock (`update_step_up_state`)
+or by one conditional statement (`consume_step_up_key`), never from a stale
+copy of the row (#2304).
 """
 
 from __future__ import annotations
@@ -23,6 +26,9 @@ import sqlalchemy as sa
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+
+#: `auth.session_repository.StepUpState`, restated: storage may not import `auth` (C-3.1).
+_StepUpState = tuple[dict[str, datetime], int, datetime | None]
 
 # Static column list (no caller data is ever interpolated into any statement).
 _COLUMNS = (
@@ -74,10 +80,27 @@ _REVOKE_ALL_SQL = _sql(
     "AND (CAST(:except_id AS uuid) IS NULL OR id <> CAST(:except_id AS uuid)) "
     "RETURNING @COLS@"
 )
+# #2304: the step-up columns are only ever rewritten from a read taken under the row lock, in the
+# same transaction (`update_step_up_state`). `FOR NO KEY UPDATE` is the lock an UPDATE of non-key
+# columns takes, so every other write of the row (a grant consume, an idle unlock, a revoke)
+# queues behind it or ahead of it, and none of them is undone by a stale copy of the row.
+_LOCK_STEP_UP_SQL = sa.text(
+    "SELECT step_up_elevations::text AS step_up_elevations, step_up_failures, readonly_until "
+    "FROM sessions WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL FOR NO KEY UPDATE"
+)
 _STEP_UP_SQL = _sql(
     "UPDATE sessions SET step_up_elevations = CAST(:elevations AS jsonb), "
     "step_up_failures = :failures, readonly_until = :readonly_until "
     "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL RETURNING @COLS@"
+)
+# #2304: consume a one-shot grant in one conditional statement. A concurrent consumer of the
+# same key re-evaluates the predicate after the first commits, finds the key gone and updates
+# no row, so the grant is used once.
+_CONSUME_STEP_UP_SQL = _sql(
+    "UPDATE sessions SET step_up_elevations = step_up_elevations - CAST(:key AS text) "
+    "WHERE id = CAST(:id AS uuid) AND revoked_at IS NULL "
+    "AND CAST(step_up_elevations ->> CAST(:key AS text) AS timestamptz) > :now "
+    "RETURNING @COLS@"
 )
 _LINK_SQL = sa.text(
     "INSERT INTO sessions_rotation (prev_session_id, next_session_id) "
@@ -94,6 +117,11 @@ _FAMILY_SQL = sa.text("""
     )
     SELECT id::text AS id FROM fam
     """)
+
+
+def _elevations(stored: str | None) -> dict[str, datetime]:
+    """`step_up_elevations` as read (`::text`): key -> ISO-8601 expiry."""
+    return {k: datetime.fromisoformat(v) for k, v in json.loads(stored or "{}").items()}
 
 
 def row_to_fields(row: Any) -> dict[str, Any]:
@@ -115,10 +143,7 @@ def row_to_fields(row: Any) -> dict[str, Any]:
         is_electron=m["is_electron"],
         mfa_satisfied_at=m["mfa_satisfied_at"],
         idle_timeout_s=m["idle_timeout_s"],
-        step_up_elevations={
-            k: datetime.fromisoformat(v)
-            for k, v in json.loads(m["step_up_elevations"] or "{}").items()
-        },
+        step_up_elevations=_elevations(m["step_up_elevations"]),
         step_up_failures=m["step_up_failures"],
         readonly_until=m["readonly_until"],
     )
@@ -199,24 +224,30 @@ class SqlAlchemySessionRepository:
             {"u": user_id, "reason": reason, "now": now, "except_id": except_session_id},
         )
 
-    async def save_step_up_state(
-        self,
-        session_id: str,
-        *,
-        elevations: dict[str, datetime],
-        failures: int,
-        readonly_until: datetime | None,
+    async def update_step_up_state(
+        self, session_id: str, change: Callable[[_StepUpState], _StepUpState]
     ) -> Any:
-        payload = json.dumps({k: v.isoformat() for k, v in elevations.items()})
-        return await self._one(
-            _STEP_UP_SQL,
-            {
+        async with self._relational.unit_of_work() as uow:
+            locked = (await uow.session.execute(_LOCK_STEP_UP_SQL, {"id": session_id})).first()
+            if locked is None:  # revoked or absent: `change` is not called, nothing is written
+                return None
+            m = locked._mapping
+            elevations, failures, readonly_until = change(
+                (_elevations(m["step_up_elevations"]), m["step_up_failures"], m["readonly_until"])
+            )
+            payload = json.dumps({k: v.isoformat() for k, v in elevations.items()})
+            params = {
                 "id": session_id,
                 "elevations": payload,
                 "failures": failures,
                 "readonly_until": readonly_until,
-            },
-        )
+            }
+            row = (await uow.session.execute(_STEP_UP_SQL, params)).first()
+            await uow.commit()
+        return None if row is None else self._make(**row_to_fields(row))
+
+    async def consume_step_up_key(self, session_id: str, *, key: str, now: datetime) -> Any:
+        return await self._one(_CONSUME_STEP_UP_SQL, {"id": session_id, "key": key, "now": now})
 
     async def link_rotation(self, *, prev_session_id: str, next_session_id: str) -> None:
         async with self._relational.unit_of_work() as uow:

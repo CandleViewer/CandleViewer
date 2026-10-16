@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.session_repository import StepUpChange
 
 
 class FakeSessionRepository:
@@ -62,6 +63,26 @@ class FakeSessionRepository:
         self.sessions[session_id] = updated
         return updated
 
+    async def update_step_up_state(
+        self, session_id: str, change: StepUpChange
+    ) -> SessionRecord | None:
+        """Atomic like the locked read-and-write: no await between the read and the write."""
+        session = self.sessions.get(session_id)
+        if session is None or session.revoked_at is not None:
+            return None
+        elevations, failures, readonly_until = change(
+            (dict(session.step_up_elevations), session.step_up_failures, session.readonly_until)
+        )
+        updated = session.model_copy(
+            update={
+                "step_up_elevations": dict(elevations),
+                "step_up_failures": failures,
+                "readonly_until": readonly_until,
+            }
+        )
+        self.sessions[session_id] = updated
+        return updated
+
     async def save_step_up_state(
         self,
         session_id: str,
@@ -70,16 +91,21 @@ class FakeSessionRepository:
         failures: int,
         readonly_until: datetime | None,
     ) -> SessionRecord | None:
-        session = self.sessions.get(session_id)
-        if session is None or session.revoked_at is not None:
-            return None
-        updated = session.model_copy(
-            update={
-                "step_up_elevations": dict(elevations),
-                "step_up_failures": failures,
-                "readonly_until": readonly_until,
-            }
+        """Seed the step-up columns. Tests only: `SessionRepository` has no blind write (#2304)."""
+        return await self.update_step_up_state(
+            session_id, lambda _state: (dict(elevations), failures, readonly_until)
         )
+
+    async def consume_step_up_key(
+        self, session_id: str, *, key: str, now: datetime
+    ) -> SessionRecord | None:
+        """Atomic like the conditional UPDATE: no await between the check and the write."""
+        session = self.sessions.get(session_id)
+        until = None if session is None else session.step_up_elevations.get(key)
+        if session is None or session.revoked_at is not None or until is None or until <= now:
+            return None
+        remaining = {k: v for k, v in session.step_up_elevations.items() if k != key}
+        updated = session.model_copy(update={"step_up_elevations": remaining})
         self.sessions[session_id] = updated
         return updated
 
