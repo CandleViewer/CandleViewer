@@ -2392,7 +2392,42 @@ The offline break-glass Owner reset (E09-S11, SR-023) writes `component='auth'`,
 `kind='break_glass_used'`, `severity='critical'`, unresolved, in the same transaction that revokes
 the Owner's MFA methods and sessions (`revoked_reason='break_glass'`).
 
+#### 3.10.2a `incidents` (E42-T05, migration `0028_incidents_backups`)
+
+The incident read model behind `GET /admin/incidents` (`22-api-openapi.yaml`, `Incident`): one row per `(component, signature)`, materialised when an `error` or `critical` `system_events` row is written, never aggregated per request. `signature` is 16 hex characters of sha256 over the component, the error class (`system_events.kind`) and the message normalised by stripping ids, timestamps, numbers and symbols. `title` is that normalised message and `detail` the latest event's message, both through the audit exporter's redaction allowlist. `severity` is the worst grouped event. A new occurrence reopens a `resolved` incident; an `acknowledged` one stays acknowledged. Data class: P0 (§12). `component` carries no CHECK: it is copied from `system_events.component`, which `se_component` already closes, so a new component needs no second migration.
+
+```sql
+CREATE TABLE incidents (
+  id              uuid PRIMARY KEY,
+  component       text NOT NULL,
+  signature       text NOT NULL,
+  severity        severity NOT NULL,
+  status          text NOT NULL DEFAULT 'open',   -- open | acknowledged | resolved
+  title           text NOT NULL,
+  detail          text,
+  occurrences     integer NOT NULL DEFAULT 1,
+  first_seen_at   timestamptz NOT NULL,
+  last_seen_at    timestamptz NOT NULL,
+  acknowledged_by uuid REFERENCES users(id) ON DELETE SET NULL,
+  acknowledged_at timestamptz,
+  resolved_at     timestamptz,
+  runbook_ref     text,
+  CONSTRAINT inc_signature CHECK (signature ~ '^[0-9a-f]{16}$'),
+  CONSTRAINT inc_severity  CHECK (severity IN ('error','critical')),
+  CONSTRAINT inc_status    CHECK (status IN ('open','acknowledged','resolved')),
+  CONSTRAINT inc_count     CHECK (occurrences >= 1),
+  CONSTRAINT inc_seen      CHECK (last_seen_at >= first_seen_at),
+  CONSTRAINT inc_ack       CHECK (status <> 'acknowledged' OR acknowledged_at IS NOT NULL),
+  CONSTRAINT inc_resolved  CHECK (status <> 'resolved' OR resolved_at IS NOT NULL)
+);
+CREATE UNIQUE INDEX ux_incidents_group ON incidents (component, signature);
+CREATE INDEX ix_incidents_seen        ON incidents (last_seen_at DESC);
+CREATE INDEX ix_incidents_status_seen ON incidents (status, last_seen_at DESC);
+```
+
 #### 3.10.3 `backups`
+
+> Shipped as Alembic `0028_incidents_backups` (E42-T05 #966, on top of `0027_feature_flags`), with `incidents` (§3.10.2a) and the `backup_kind` and `backup_status` types (§1.2): DDL below verbatim. `encryption_ref` is class S (§12) and carries a `SECRET:` column comment. No seed, trigger or grant. Downgrade refuses while either table holds rows.
 
 ```sql
 CREATE TABLE backups (
@@ -3199,7 +3234,7 @@ NAMING_CONVENTION = {
 | `0009_alerts`                 | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                     |
 | `0010_journal`                | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                            |
 | `0011_workspace`              | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; rest pending                   |
-| `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flag tables = `0027_feature_flags`                                     |
+| `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flags = `0027_feature_flags`; `backups` = `0028_incidents_backups`     |
 | `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                              |
 
 ---
