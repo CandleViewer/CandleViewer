@@ -19,9 +19,10 @@ A `RecordedEvent` is tier-independent: prices and sizes are `Decimal` (`AGENTS.m
 ingest counter the recorder stores (24 Sec.2.1), book `cross_seq` is the exchange's own
 sequence, and streams that store none read 0. `tiebreak` is the rest of the
 `21-database-schema.md` Sec.4 dedup key, so `(ts_us, seq, tiebreak)` is unique, and the order
-total, within one `(symbol, stream)` only. Across streams at equal `ts_us` the order is the
-fixed stream ordinal (`STREAM_BY_DB_KIND` order), inserted before `tiebreak` by the replay
-merge (`24-internal-schemas.md` Sec.13.7).
+total, within one `(symbol, stream)` only. Across symbols and streams at equal `ts_us` the
+replay merge decides, and the symbol and sequence-domain ordinals sit before `seq` there (the
+two book streams share `cross_seq`, one domain; every other stream is its own), so `seq` is
+only ever compared inside one sequence space (`24-internal-schemas.md` Sec.13.7).
 
 `event_from_row` is the single canonical mapping from a stored row to a `RecordedEvent`. A
 QuestDB PGWire record and a Parquet row carry the same Sec.4 columns and both tiers go through
@@ -52,8 +53,8 @@ from candleviewer.storage.errors import StorageError, StorageRecordInvalid
 from candleviewer.storage.models import StreamKind, TimeRange
 
 #: Postgres `stream_kind` value -> storage stream, in enum declaration order (21 Sec.1.2).
-#: The order is the replay's stream ordinal: it orders events of different streams that share
-#: `ts_us` (never their `seq`, which is per stream). Read-only: the ordinal is a contract.
+#: The replay merge orders the sequence domains of one instant by it (24 Sec.13.7).
+#: Read-only: the order is a contract.
 STREAM_BY_DB_KIND: Final[Mapping[str, StreamKind]] = MappingProxyType(
     {
         "trades": StreamKind.TRADES,
@@ -204,8 +205,8 @@ def order_key(event: RecordedEvent) -> tuple[int, int, Tiebreak]:
 
     Compare keys of one `(symbol, stream)` only: `seq` is not one sequence space across
     streams, and two streams' tiebreaks need not even be comparable (`TypeError`). Across
-    streams at equal `ts_us` the order is the fixed stream ordinal (`STREAM_BY_DB_KIND`),
-    inserted before `tiebreak` by the replay merge (24 Sec.13.7)."""
+    symbols and streams at equal `ts_us` the replay merge decides: the symbol and
+    sequence-domain ordinals sit before `seq` (24 Sec.13.7)."""
     return event.ts_us, event.seq, event.tiebreak
 
 
@@ -276,11 +277,10 @@ class RecordedStreamReader(Protocol):
         ...
 
 
-# TODO(#2346): rename to `ManifestCoverage`: `recorder/coverage.py` has an unrelated
-# `ArchiveCoverage` port. E26-T02 slices 3-10 import this name, so the rename lands with them.
 @runtime_checkable
-class ArchiveCoverage(Protocol):
+class ManifestCoverage(Protocol):
     """What the cold tier's manifests cover: how `source_tier="auto"` picks a session's tier.
+    (Not `recorder.coverage.ArchiveCoverage`, the E16-T10 imported-archive ledger port.)
 
     Roll-off writes and verifies a partition's manifest before it may drop the hot day (21
     Sec.5.3), so a span with no manifest was never dropped holding data: QuestDB still has
