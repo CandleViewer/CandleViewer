@@ -261,10 +261,10 @@ class SessionRecord(BaseModel):
     step_up_elevations: dict[str, datetime] = Field(default_factory=dict)
     step_up_failures: int = 0
     readonly_until: datetime | None = None
-    #: #2911: the owner's `users.status`, read with the row by `find_by_refresh_hash`; `None`
-    #: from any other read, or when the user row is gone. `refresh` refuses on `None` (fail
-    #: closed), so that read must always populate it (pinned on Postgres by the #2911
-    #: integration tests).
+    #: #2911: the owner's `users.status`, read with the row by `find_by_id` and
+    #: `find_by_refresh_hash`; `None` from any other read, or when the user row is gone.
+    #: `refresh` and `require_active` refuse on `None` (fail closed), so those reads must
+    #: always populate it (pinned on Postgres by the #2911 integration tests).
     user_status: UserStatus | None = None
 
     @property

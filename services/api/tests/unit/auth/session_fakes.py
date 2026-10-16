@@ -21,7 +21,7 @@ class FakeSessionRepository:
         return self.user_statuses.get(str(user_id), UserStatus.ACTIVE)
 
     def _with_status(self, session: SessionRecord | None) -> SessionRecord | None:
-        """#2911: the by-refresh-hash read carries the owner's status."""
+        """#2911: the by-id and by-refresh-hash reads carry the owner's status."""
         if session is None:
             return None
         return session.model_copy(update={"user_status": self._user_status(session.user_id)})
@@ -35,7 +35,7 @@ class FakeSessionRepository:
         return session
 
     async def find_by_id(self, session_id: str) -> SessionRecord | None:
-        return self.sessions.get(session_id)
+        return self._with_status(self.sessions.get(session_id))
 
     async def find_by_refresh_hash(self, refresh_token_hash: str) -> SessionRecord | None:
         for s in self.sessions.values():

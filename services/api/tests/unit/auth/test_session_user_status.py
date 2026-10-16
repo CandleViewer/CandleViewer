@@ -1,11 +1,14 @@
-"""#2911: no session is minted or rotated for a disabled (or deleted) user (SR-029, E42-T04's
-in-flight refresh window). `locked` and `invited` users are not refused: login refuses `disabled`
-only, and the issue keeps the other two as they are.
+"""#2911: no session is minted or rotated for a disabled (or deleted) user, and a disabled user's
+live session is refused and revoked on its next use (SR-029, E42-T04's in-flight refresh window).
+`locked` and `invited` users are not refused: login refuses `disabled` only, and the issue keeps
+the other two as they are.
 
 On the fakes: `FakeSessionRepository.user_statuses` plays `users.status`, read with the session
 row and checked in the same step as the insert, like the real repository under the user-row
-lock. The Postgres side is `tests/integration/auth/test_disabled_user_sessions_pg.py`; the 401s
-are `tests/unit/api/test_sessions_router.py` and `tests/unit/api/test_auth_router.py`.
+lock. The Postgres side is `tests/integration/auth/test_disabled_user_sessions_pg.py`; REST 401
+is `tests/unit/api/test_sessions_router.py`, the socket's `bye user_disabled` + 4403 the SR-029
+drill (`tests/security/auth/test_disable_user_drill.py`). The breach counter for a session that no
+disable revoked is catalogued and served on the scraped registry (SR-125).
 """
 
 from __future__ import annotations
@@ -16,11 +19,17 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
+from prometheus_client import REGISTRY, generate_latest
+from structlog.testing import capture_logs
 
-from candleviewer.auth.errors import UserDisabled
+from candleviewer.app import create_app
+from candleviewer.auth.errors import SessionRevoked, UserDisabled
 from candleviewer.auth.hashing import Hasher
+from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES
 from candleviewer.auth.models import SessionRecord, UserStatus
 from candleviewer.auth.session_service import SessionService
+from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.settings import Environment, Settings
 
 from .session_fakes import FakeSessionRepository
 
@@ -32,8 +41,20 @@ _REFUSED = [pytest.param(UserStatus.DISABLED, id="disabled"), pytest.param(None,
 _KEPT = [UserStatus.ACTIVE, UserStatus.LOCKED, UserStatus.INVITED]
 
 
-def _service(repo: FakeSessionRepository) -> SessionService:
-    return SessionService(repo, Hasher(pepper=os.urandom(16).hex()), clock=lambda: _NOW)
+def _service(
+    repo: FakeSessionRepository, published: list[tuple[str, str]] | None = None
+) -> SessionService:
+    async def publish(session_id: str, reason: str) -> None:
+        if published is not None:
+            published.append((session_id, reason))
+
+    return SessionService(
+        repo, Hasher(pepper=os.urandom(16).hex()), clock=lambda: _NOW, publish_revocation=publish
+    )
+
+
+def _sample(name: str, **labels: str) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
 
 
 class _ParkedMint(FakeSessionRepository):
@@ -126,3 +147,95 @@ async def test_refresh_parked_between_claim_and_mint_across_a_disable_mints_noth
     assert swept == ()  # the claimed session was no longer live, and no successor existed yet
     assert await repo.find_live_by_user(user) == ()
     assert repo.rotation_next == {}
+
+
+@pytest.mark.parametrize("status", _REFUSED)
+async def test_require_active_refuses_a_disabled_users_live_session(
+    status: UserStatus | None,
+) -> None:
+    """Fail closed: refused as revoked with `user_disabled`, the row revoked and the id
+    published, so the hub ends its sockets with `bye user_disabled` + 4403 (§9.5). The breach
+    signal is counted once, and the revocation under `user_disabled`, not `other`."""
+    repo, published = FakeSessionRepository(), list[tuple[str, str]]()
+    service = _service(repo, published)
+    user, bystander = str(uuid.uuid4()), str(uuid.uuid4())
+    minted, kept = await service.mint(user), await service.mint(bystander)
+    repo.user_statuses[user] = status
+    signals = _sample("auth_disabled_user_sessions_revoked_total")
+    revocations = _sample("auth_session_revocations_total", reason="user_disabled")
+
+    with pytest.raises(SessionRevoked) as refused:
+        await service.authenticate_access_token(minted.access_token, touch=True)
+
+    sid = str(minted.session_id)
+    assert refused.value.reason == "user_disabled"
+    assert repo.sessions[sid].revoked_reason == "user_disabled"
+    assert published == [(sid, "user_disabled")]
+    assert _sample("auth_disabled_user_sessions_revoked_total") == signals + 1
+    assert _sample("auth_session_revocations_total", reason="user_disabled") == revocations + 1
+    assert (await service.require_active(str(kept.session_id))).id == kept.session_id
+
+
+@pytest.mark.parametrize("status", _REFUSED)
+async def test_require_active_logs_the_stray_session_for_the_operator(
+    status: UserStatus | None,
+) -> None:
+    """The runbook (auth-rbac section 4) sends the operator to this line: a warning that names
+    the session, the user and the status read (`None`: the row is gone), and holds no token."""
+    repo = FakeSessionRepository()
+    service = _service(repo)
+    user = str(uuid.uuid4())
+    minted = await service.mint(user)
+    repo.user_statuses[user] = status
+
+    with capture_logs() as logs, pytest.raises(SessionRevoked):
+        await service.require_active(str(minted.session_id))
+
+    (line,) = [e for e in logs if e["event"] == "auth.disabled_user_session_revoked"]
+    assert (line["log_level"], line["session_id"], line["user_id"]) == (
+        "warning",
+        str(minted.session_id),
+        user,
+    )
+    assert line["user_status"] == (None if status is None else status.value)
+    assert minted.access_token not in str(line) and minted.refresh_token not in str(line)
+
+
+@pytest.mark.parametrize("status", _KEPT)
+async def test_require_active_keeps_the_live_session_of_a_user_who_is_not_disabled(
+    status: UserStatus,
+) -> None:
+    """`active`, and `locked` / `invited` as the issue keeps them: nothing revoked or counted."""
+    repo, published = FakeSessionRepository(), list[tuple[str, str]]()
+    service = _service(repo, published)
+    user = str(uuid.uuid4())
+    minted = await service.mint(user)
+    repo.user_statuses[user] = status
+    signals = _sample("auth_disabled_user_sessions_revoked_total")
+
+    assert (await service.require_active(str(minted.session_id))).id == minted.session_id
+    assert published == [] and repo.sessions[str(minted.session_id)].revoked_at is None
+    assert _sample("auth_disabled_user_sessions_revoked_total") == signals
+
+
+_SIGNAL = "auth_disabled_user_sessions_revoked_total"
+
+
+def test_the_breach_signal_is_catalogued_live_and_exported() -> None:
+    spec = next(s for s in CATALOGUE if s.name == _SIGNAL)
+
+    assert (spec.kind, spec.labels, spec.status, spec.exported) == ("counter", (), "live", True)
+    assert _SIGNAL in AUTH_EXPORTED_NAMES
+
+
+def test_the_breach_signal_exists_before_the_first_stray_session() -> None:
+    """`increase()` needs a 0 sample before the first one, or that one is never seen."""
+    assert REGISTRY.get_sample_value(_SIGNAL) is not None
+
+
+def test_create_app_serves_the_breach_signal_on_the_scraped_registry() -> None:
+    app = create_app(Settings(environment=Environment.DEMO))
+
+    text = generate_latest(app.state.app_context.metrics).decode()
+
+    assert f'{_SIGNAL}{{env="demo"}} ' in text

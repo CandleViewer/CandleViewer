@@ -1361,6 +1361,7 @@ The machine-readable catalogue is `services/api/candleviewer/observability/metri
 | Security (SR-125) | `auth_session_fixation_attempts_total{reason}` | counter | session fixation / forged-token probing (E09, E09-X02 AC2) |
 | Security (SR-125) | `auth_totp_clock_skew_total{kind}` | counter | TOTP clock skew: a rejected code valid for a step beyond +/-1, by `kind` (`authenticator_behind` / `authenticator_ahead`); also a `totp_clock_skew` system event (E09, E09-Q05) |
 | Security (SR-125) | `auth_refresh_reuse_total` / `auth_session_revocations_total{reason}` / `auth_readonly_downgrades_total` / `users_invites_rejected_total{reason}` | counter | refresh-token reuse (critical), mass revocation, step-up attack, and invite guessing and tampering (E09, E09-X02 #2319); `auth_sessions_active` (drifts) and `cv_ws_errors_total{code}` (label not allow-listed, #2747) are not exported |
+| Security (SR-125) | `auth_disabled_user_sessions_revoked_total` | counter | a live session of a disabled or deleted user that no disable revoked, found and revoked on use: any increase is an SR-029 breach signal, with a WARNING log `auth.disabled_user_session_revoked`; no label (E09, #2911) |
 | Security (SR-125) | `credential_verification_failures_total{reason}` | counter | key revoked or withdrawal permission on (E27) |
 | Security (SR-125) | `rule_circuit_breaker_trips_total` | counter | alert on any (E35) |
 | Security (SR-125) | `audit_chain_verification_failures_total`, `egress_ip_changes_total` | counter | page / alert on any (E43) |

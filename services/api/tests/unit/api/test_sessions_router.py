@@ -185,6 +185,19 @@ async def test_refresh_of_a_disabled_user_is_401_audited_and_rotates_nothing(env
     assert env.repo.sessions[str(m.session_id)].revoked_at is None
 
 
+async def test_a_disabled_users_live_session_is_401_and_revoked_on_use(env: _Env) -> None:
+    """#2911 (`require_active`): REST answers 401; the row is revoked `user_disabled` and its
+    id published, which the hub turns into `bye user_disabled` + 4403."""
+    user = uuid.uuid4()
+    m = await env.mint(user)
+    env.repo.user_statuses[str(user)] = UserStatus.DISABLED
+
+    assert env.client.get("/api/v1/auth/session", headers=_h(m.access_token)).status_code == 401
+
+    assert env.repo.sessions[str(m.session_id)].revoked_reason == "user_disabled"
+    assert env.revoked == [(str(m.session_id), "user_disabled")]
+
+
 async def test_refresh_without_identity_is_501_and_burns_no_token() -> None:
     e = _Env(identity=False)
     m = await e.mint(uuid.uuid4())

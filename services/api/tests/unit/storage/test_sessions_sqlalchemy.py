@@ -248,13 +248,14 @@ async def test_create_session_for_a_locked_or_invited_user_still_inserts(status:
     assert rel.session.calls[1][0].lstrip().startswith("INSERT INTO sessions")
 
 
-async def test_read_by_refresh_hash_carries_the_users_status_in_one_statement() -> None:
-    """#2911: `refresh` decides on the status read with the session row, so it costs no extra
-    round trip."""
+async def test_reads_by_id_and_refresh_hash_carry_the_users_status_in_one_statement() -> None:
+    """#2911: `require_active` and `refresh` decide on the status read with the session row,
+    so an active user's request costs no extra round trip."""
     repo, rel = _repo([_row(user_status="disabled")])
 
+    by_id = await repo.find_by_id("sid")
     by_hash = await repo.find_by_refresh_hash("h")
 
-    assert [_STATUS_READ in sql for sql, _ in rel.session.calls] == [True]
-    assert by_hash["user_status"] == "disabled"
-    assert rel.units == 1
+    assert [_STATUS_READ in sql for sql, _ in rel.session.calls] == [True, True]
+    assert by_id["user_status"] == by_hash["user_status"] == "disabled"
+    assert rel.units == 2
