@@ -6,8 +6,11 @@ whose dependency runs before every handler, so a route added to it cannot skip t
 server-side, deny-by-default, C-12.4):
 - no principal resolver wired: 501; no verified session: 401; no audit writer: 503 for every
   caller (fail closed);
-- otherwise `admin.area_entered` is written first (write-ahead, C-2.9), allowed or denied, with
-  `{route, reauth_age_s}`; a caller without `permission` then gets 403;
+- otherwise a caller without `permission` is counted in `authz_denied_total` (SR-125), as
+  `auth.scopes.enforce` does, before anything is written, so an audit failure cannot hide the
+  denial; then `admin.area_entered` is written first (write-ahead, C-2.9), allowed or denied, with
+  `{route, reauth_age_s}`, and that caller gets 403 (the record is the denial's audit row: there
+  is no second `rbac.denied`);
 - if that record cannot be written the area stays shut: 503 for an allowed caller, while a
   denied caller still gets its 403, never a 500; a cancellation is never swallowed;
 - an allowed caller's verified principal is left on `request.state.admin_principal`, so a write
@@ -34,6 +37,7 @@ from fastapi.responses import JSONResponse
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.metrics import authz_denied_total, normalise_permission
 
 AREA_ENTERED: Final = "admin.area_entered"
 _ERRORS: Final = "https://candleviewer.local/errors/"
@@ -109,6 +113,8 @@ def admin_area(
             raise AdminAreaRefused(503, "audit backend is not wired")
         route = str(getattr(request.scope.get("route"), "path", request.url.path))
         allowed = principal.has(permission)
+        if not allowed:  # SR-125, counted before the audit write as in `auth.scopes.enforce`
+            authz_denied_total.labels(permission=normalise_permission(permission)).inc()
         try:
             await audit.emit(
                 AREA_ENTERED,
