@@ -176,6 +176,9 @@ In Degraded (KEK): market data stays live; **every operation needing the KEK fai
 - key add, key verify/test and key rotation: 403 `kek_unavailable` (rotation preconditions fail);
 - the hourly C-2.8 withdrawal-permission check **fails** (recorded as a failed check, alert raised) —
   it is never skipped or reported green;
+- MFA: the eight operations that check or seal a second factor answer `503 auth_unavailable` and
+  count or consume nothing; users without MFA still sign in and existing sessions keep working
+  (ADR-0009 Amendment 4, `22-api-openapi.yaml` `AuthUnavailable`);
 - `/health` and the `system` WS topic report `secrets` red with reason; critical alert; UI blocking
   banner (E27-D03 / E27-S02); this remediation text is logged verbatim:
   `KEK unavailable (reason=<r>): trading disabled. Ensure the host launcher/systemd credential supplies

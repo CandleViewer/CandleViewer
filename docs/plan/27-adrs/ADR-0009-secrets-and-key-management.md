@@ -178,6 +178,17 @@ KEK behind them. Table and formats: `21-database-schema.md` §3.1.5a. Slices S1�
   Nothing is counted or consumed, and a method this process cannot open never counts as "no
   method". A keyring failure alone reports `secrets` degraded and pages but adds no trading latch;
   a KEK failure still latches it (Amendment 1).
+- **Dev, demo and CI (from S5b).** Today a `demo` or `testnet` process without the env keys falls
+  back to a process-local key. S5b removes that fallback, so from then on no environment has MFA
+  without a keyring: without a KEK (`CV_KEK_SOURCE=none` or a KEK failure) the eight operations
+  answer `503 auth_unavailable`, while users without MFA still sign in. A dev, CI or E2E stack
+  that exercises MFA must supply a KEK by then (`CV_KEK_SOURCE=file` is allowed outside `live`,
+  `docs/plan/spikes/e27-kek.md` §4) and gets its keyring generated at its first boot. Unit tests
+  use the keyring fixture of S5a, never a real KEK. A demo database enrolled under the env keys
+  keeps its enrolments through the one-time import.
+- **Operator recovery.** S6 of #2152 owns the operator path for each reason MFA is unavailable
+  (`auth_keyring_missing`, `auth_keyring_mismatch`, `auth_keyring_stranded`, a KEK failure): the
+  steps in the `kek-custody.md` and `auth-rbac.md` runbooks and the `AuthKeyringUnavailable` alert.
 - **Break-glass (#2119, ruling D5).** The offline KEK proof keeps its single custody pass and, in
   the same pass, returns a digest-only session for the environment's recovery key. M21 receives
   only digests, which count as C-3.2 metadata; without a proven KEK the CLI refuses before any

@@ -365,7 +365,7 @@ x-error-codes:
     surface: [rest, ws] # same slug, same meaning on the WS (23-ws-protocol.md §10.2)
   - code: auth_unavailable
     status: 503
-    title: Second factor unavailable — the KEK or the needed auth key is not loaded
+    title: Second factor temporarily unavailable
     retryable: true
   - code: timeout
     status: 504
@@ -737,7 +737,62 @@ paths:
                     expires_in: 300
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { $ref: "#/components/responses/AuthUnavailable" }
+        "503":
+          description: >
+            A dependency is unavailable or data is degraded. This keeps every meaning of
+            `ServiceUnavailable` (such as `store_unavailable`). For a user with a confirmed MFA
+            method it can also be `code: auth_unavailable` (see `AuthUnavailable`), answered only
+            after the password verified, in place of the `mfa_required` challenge.
+          headers:
+            Retry-After: { $ref: "#/components/headers/RetryAfter" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                wsDown:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/exchange_unavailable",
+                      title: "Exchange connectivity lost",
+                      status: 503,
+                      detail: "Public WS disconnected 42 s ago; REST backfill failing.",
+                      instance: "urn:cv:req:0193f2bb-dddd",
+                      code: exchange_unavailable,
+                      retry_after_seconds: 5,
+                    }
+                storeUnavailable:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/store_unavailable",
+                      title: "QuestDB / Postgres / Parquet tier unavailable",
+                      status: 503,
+                      detail: "The relational store is unavailable.",
+                      instance: "urn:cv:req:0193f2bb-ffff",
+                      code: store_unavailable,
+                      retry_after_seconds: 5,
+                    }
+                stale:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/degraded_data",
+                      title: "Local store is behind the exchange beyond the freshness SLO",
+                      status: 503,
+                      detail: "Book lag 3800 ms exceeds the 2000 ms SLO.",
+                      instance: "urn:cv:req:0193f2bb-eeee",
+                      code: degraded_data,
+                      retry_after_seconds: 2,
+                    }
+                mfaUnavailable:
+                  value:
+                    {
+                      type: "https://candleviewer.local/errors/auth_unavailable",
+                      title: "Second factor temporarily unavailable",
+                      status: 503,
+                      detail: "Two-factor authentication is temporarily unavailable; try again later.",
+                      instance: "urn:cv:req:0193f2bb-5031",
+                      code: auth_unavailable,
+                      retry_after_seconds: 30,
+                    }
 
   /auth/mfa/verify:
     post:
@@ -11011,7 +11066,7 @@ components:
                   retry_after_seconds: 2,
                 }
     AuthUnavailable:
-      description: >
+      description: |
         `code: auth_unavailable` (#2152, ADR-0009 Amendment 4). The second factor cannot be
         checked or sealed: the KEK is unavailable (any reason in `docs/plan/spikes/e27-kek.md`
         section 6), this environment's auth keyring is missing, mismatched or stranded, or the
@@ -11021,15 +11076,63 @@ components:
         `POST /auth/step-up`, `POST /invites/{inviteToken}` and
         `POST /invites/{inviteToken}/confirm`. `POST /auth/login` answers it only for a user with
         a confirmed MFA method and only after the password verified, in place of the
-        `mfa_required` challenge; a wrong password is still `401 unauthenticated`. The answer
-        counts, consumes and changes nothing: no session or `mfa_token` is minted, nothing is
-        revoked, and no MFA attempt, failed-login count, lockout, recovery-code use, invite
-        redemption or enrolment is recorded, so the client may send the same request again after
-        `Retry-After`. A method this process cannot open never counts as "no method": it never
-        leads to an enrolment-only session or a new enrolment. Users without an MFA method still
-        sign in, and existing sessions keep working. `detail` is generic: it names no cause, key,
-        key reference or KEK version (the cause is the `secrets` health reason). Audited as
+        `mfa_required` challenge; a wrong password is still `401 unauthenticated`. Its `503` also
+        keeps every meaning of `ServiceUnavailable`.
+
+        The answer counts, consumes and changes nothing: no session or `mfa_token` is minted,
+        nothing is revoked, and no MFA attempt, failed-login count, lockout, recovery-code use,
+        invite redemption or enrolment is recorded. It stores no idempotency record either, so an
+        `Idempotency-Key` sent with it stays unused: the client may send the same request, with
+        the same key, again after `Retry-After`, and that request is a first submission that
+        executes once, never a replay of the `503` (no `Idempotency-Replayed`). A method this
+        process cannot open never counts as "no method": it never leads to an enrolment-only
+        session or a new enrolment. Users without an MFA method still sign in, and existing
+        sessions keep working. `title` and `detail` are generic: they name no cause, key, key
+        reference or KEK version (the cause is the `secrets` health reason). Audited as
         `auth.mfa_unavailable`.
+
+        **Order of checks.** These refusals come first and keep their answers and counting:
+        authentication, CSRF, session state, rate limits, request validation, the `mfa_token` or
+        invite token, and the per-operation checks named below. The `503` comes next, before
+        anything else is examined: no password is verified except at login, no TOTP code,
+        recovery code or recovery-code pool is examined, and no seed is generated, opened or
+        sealed. One confirmed TOTP method that this process cannot open is enough: a code is
+        never checked against some of the user's methods and then answered `503`.
+
+        - `POST /auth/login` (ruling D4): the user lookup, the lock, the password and the
+          disabled state come first, each with its current answer and counting. The `503` then
+          replaces the `mfa_required` challenge before anything is written: no `mfa_token`, no
+          password rehash, and the failed-login count is neither incremented nor reset. Before
+          the password, a `503` would tell an unauthenticated caller which accounts have MFA;
+          after it, the `503` says no more than the challenge it replaces.
+        - `POST /auth/mfa/verify`: after the `mfa_token` check (unknown, expired or locked is
+          still `401`), before the code. The challenge keeps its attempt count and its expiry.
+        - `POST /auth/mfa/recovery`: after the `mfa_token` check, before the recovery-code pool
+          and the code, so a `503` says nothing about how many codes are left.
+        - `POST /auth/mfa/enroll`: after every refusal that needs no auth key, before a seed is
+          generated; no method is created.
+        - `POST /auth/mfa/enroll/confirm`: after every refusal that needs no auth key, the
+          pending method lookup included (an unknown `method_id` keeps its answer), before the
+          code. Confirming may issue recovery codes, so it needs the method's TOTP key and the
+          recovery key; without either it answers `503` and the method stays pending.
+        - `POST /auth/step-up`: after request validation (the `422` and every `400`, the
+          `challenge_id` ones included) and `403 session_read_only`, before either factor.
+          Whatever password was sent is not verified, so no step-up failure, failed-login count,
+          lockout or read-only downgrade is recorded, nothing is elevated and the live challenge
+          stays live. This differs from login on purpose. Step-up never reveals which factor
+          failed (any wrong factor is the same `401 mfa_invalid`), and a password verified before
+          a `503` would turn an outage into a password check for whoever holds the session. The
+          lockout counters bound password guesses; a `503` verifies no password, so there is
+          nothing to count (ruling D4: nothing counted or consumed), as with the `challenge_id`
+          `400`s.
+        - `POST /invites/{inviteToken}`: after the rate limit (`429`), the body and role checks
+          (`400`, `403`), the token (`404`) and the password policy (`422`), before the password
+          is hashed or the token consumed. The invite stays open and no failed attempt is
+          recorded for the address.
+        - `POST /invites/{inviteToken}/confirm`: after the same rate limit, body and role checks,
+          the token and its enrolment state (`404`) and the pending method lookup, before the
+          code. It needs the same two keys as `POST /auth/mfa/enroll/confirm`. No failed attempt
+          is recorded, and the enrolment window keeps running.
       headers:
         Retry-After: { $ref: "#/components/headers/RetryAfter" }
       content:
@@ -11040,7 +11143,7 @@ components:
               value:
                 {
                   type: "https://candleviewer.local/errors/auth_unavailable",
-                  title: "Second factor unavailable — the KEK or the needed auth key is not loaded",
+                  title: "Second factor temporarily unavailable",
                   status: 503,
                   detail: "Two-factor authentication is temporarily unavailable; try again later.",
                   instance: "urn:cv:req:0193f2bb-5031",

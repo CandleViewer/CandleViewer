@@ -127,7 +127,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.STORE_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "QuestDB / Postgres / Parquet tier unavailable"),
     ErrorCode.AUDIT_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)"),
     ErrorCode.DEGRADED_DATA: ErrorMeta(("rest", "ws",), "any", True, None, None, "Local store is behind the exchange beyond the freshness SLO"),
-    ErrorCode.AUTH_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Second factor unavailable \u2014 the KEK or the needed auth key is not loaded"),
+    ErrorCode.AUTH_UNAVAILABLE: ErrorMeta(("rest",), None, True, None, None, "Second factor temporarily unavailable"),
     ErrorCode.TIMEOUT: ErrorMeta(("rest",), None, True, None, None, "Upstream exchange call exceeded the deadline"),
     ErrorCode.PROTOCOL_VIOLATION: ErrorMeta(("ws",), "connection", False, None, 1002, "Frame out of order or malformed envelope"),
     ErrorCode.FRAME_MALFORMED: ErrorMeta(("ws",), "connection", False, None, 1002, "Binary body inconsistent with its header"),
