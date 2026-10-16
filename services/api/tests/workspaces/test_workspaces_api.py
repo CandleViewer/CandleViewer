@@ -218,7 +218,7 @@ def test_malformed_path_uuid_is_422_and_touches_no_store(env: Env, method: str) 
 def test_idempotency_key_format_is_validated_and_a_valid_key_accepted(env: Env) -> None:
     bad = env.c.post("/workspaces", json=wire({"name": "A"}), headers={"Idempotency-Key": "nope"})
     assert bad.status_code == 422 and bad.json()["errors"][0]["field"] == "Idempotency-Key"
-    key = {"Idempotency-Key": "0b6f1a3e-5c1e-4c1e-9a3e-1b2c3d4e5f60"}
+    key = {"Idempotency-Key": "00000000-0000-4000-8000-000000000001"}
     ok = env.c.post("/workspaces", json=wire({"name": "A"}), headers=key)
     assert ok.status_code == 201 and "idempotency-replayed" not in ok.headers
     w = env.create("B")
