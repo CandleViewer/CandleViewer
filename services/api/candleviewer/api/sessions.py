@@ -30,7 +30,8 @@ guard classifies a bearer (`AuthService.classify`). One that would outlive its 1
 lifetime (Q7) gets the uniform `401 refresh_token_invalid` before any audit write or rotation,
 so the client signs in again; one that cannot be classified gets a 503 (fail closed). Its
 successor's `refresh_expires_in` and cookie `Max-Age` count down to the unchanged expiry, and
-`GET /auth/session` gives it empty grants and no `kill_switch` (contract).
+`GET /auth/session` gives it empty grants and no `kill_switch` (contract) and re-issues its
+CSRF cookie with the same countdown.
 
 Session fixation (U6/SR-013, E09-X02 AC2): a bearer or refresh token that was
 never issued here is refused with the same 401 as any other, and counted
@@ -313,6 +314,12 @@ def refresh_lifetime_s(minted: MintedSession, *, password_only: bool) -> int:
     if not password_only:
         return REFRESH_EXPIRES_IN_S
     return max(0, int((minted.expires_at - minted.issued_at).total_seconds()))
+
+
+def remaining_lifetime_s(record: SessionRecord, *, now: datetime) -> int:
+    """Whole seconds from *now* to *record*'s absolute expiry, never negative: the `Max-Age`
+    of a cookie re-issued for an existing enrolment-only session (#2295, Q7)."""
+    return max(0, int((record.expires_at - now).total_seconds()))
 
 
 #: The `SessionInfo` grants an enrolment-only session gets empty (#2295): it may use nothing
@@ -678,10 +685,17 @@ def make_session_router(
                 },
             }
         )
-        # SR-041 recovery path: re-issue when absent or not verifying.
+        # SR-041 recovery path: re-issue when absent or not verifying. An enrolment-only
+        # session's cookie counts down to its unchanged expiry (#2295, Q7), as at sign-in and
+        # refresh; `_authenticate` just touched the record, so `last_seen_at` is now.
         present = request.cookies.get(CSRF_COOKIE)
         if not present or csrf.verify(present, str(record.id)) is not CsrfVerdict.OK:
-            set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=REFRESH_EXPIRES_IN_S)
+            max_age = (
+                remaining_lifetime_s(record, now=record.last_seen_at)
+                if enrolment_only
+                else REFRESH_EXPIRES_IN_S
+            )
+            set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=max_age)
         return response
 
     @router.get("/auth/sessions")

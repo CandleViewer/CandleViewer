@@ -99,7 +99,9 @@ class FakeMfaRepository:
         await self.replace_recovery_codes(user_id, code_hashes=code_hashes)
         return claimed
 
-    async def confirm_method(self, method_id: str, *, now: datetime) -> MfaMethodRecord:
+    async def seed_confirmed(self, method_id: str, *, now: datetime) -> MfaMethodRecord:
+        """Test seeding only, not `MfaRepository`: mark *method_id* confirmed at *now*.
+        Production confirms through `complete_enrollment` alone (#2295)."""
         method = self.methods[method_id]
         confirmed = method.model_copy(update={"confirmed_at": now})
         self.methods[method_id] = confirmed
@@ -288,7 +290,7 @@ class SkewRig:
             label="",
         )
         if confirmed:
-            await self.repo.confirm_method(str(method.id), now=self.now)
+            await self.repo.seed_confirmed(str(method.id), now=self.now)
         return str(method.id)
 
     async def verify(self, token: str, code: str) -> None:

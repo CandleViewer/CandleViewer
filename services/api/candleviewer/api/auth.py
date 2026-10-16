@@ -20,10 +20,14 @@ no query parameter can name another user. A user who already has a
 confirmed method gets `409` (voluntary re-enrolment is not specified yet).
 Confirm checks the code first, writes its audit records ahead of any change
 (C-2.9), then completes the enrolment in one repository transaction,
-revokes every session of the user and mints a full one (SR-013).
+revokes every session of the user and mints a full one (SR-013). When that
+rotation fails after the commit, the method stays active and the answer is a
+`503` telling the client to sign in again with it (error log
+`auth.enrolment.completed_unrotated`; runbook `auth-rbac.md` section 2).
 `/auth/login` answers a user with `mfa_required` and no confirmed method
 with an enrolment-only session (`22-api-openapi.yaml` "Enrolment-only
-session"); `api/enrolment_guard.py` confines it to five operations.
+session"); `api/enrolment_guard.py` confines it to five operations. A
+session credential carried into that sign-in is audited as at the MFA step.
 
 **Deviation 2 (PR #1618 review finding 2 — acceptance criterion):** the
 ticket's "Valid code creates a session" scenario is not fully met by this
@@ -80,7 +84,12 @@ from candleviewer.auth.errors import (
     RecoveryCodesExhausted,
 )
 from candleviewer.auth.login_service import EnrolmentOnlyLogin
-from candleviewer.auth.metrics import auth_session_fixation_attempts_total
+from candleviewer.auth.metrics import (
+    auth_enrolment_only_sessions_total,
+    auth_enrolments_total,
+    auth_session_fixation_attempts_total,
+    normalise_role,
+)
 from candleviewer.auth.models import (
     LoginRequest,
     MfaChallengeResult,
@@ -108,6 +117,8 @@ _UNAUTHENTICATED = "Missing, malformed or expired access token"
 _CONFLICT = "Concurrent modification or state conflict"
 _INVALID = "Request body or parameters failed schema validation"
 _FAILED = AuditOutcome.FAILURE
+#: The `detail` of a confirm whose enrolment committed but whose session rotation failed (#2295).
+_UNROTATED = "the new TOTP method is active but the session was not rotated; sign in again"
 #: The `MfaMethodRecord` fields the `MfaMethod` response shows (never the secret).
 _METHOD_FIELDS = {"id", "kind", "label", "created_at", "last_used_at"}
 
@@ -285,10 +296,12 @@ def make_auth_router(
     SR-041 `__Host-cv_csrf` cookie wherever a session is minted (#2090)."""
     router = APIRouter(tags=["auth"])
 
-    async def _audit_carried_sessions(request: Request, user_id: uuid.UUID) -> bool:
-        """U6/SR-013 (E09-X02 AC2): a session credential carried into the MFA step is never
-        adopted (`mint` always issues a new id). One that is not this user's own session,
-        i.e. never issued here or another user's, is counted and audited as an attempt.
+    async def _audit_carried_sessions(request: Request, user_id: uuid.UUID, *, stage: str) -> bool:
+        """U6/SR-013 (E09-X02 AC2): a session credential carried into the step that mints a
+        session (*stage*: the MFA step, or the password sign-in of an enrolment-only session,
+        #2295) is never adopted (`mint` always issues a new id). One that is not this user's
+        own session, i.e. never issued here or another user's, is counted and audited as an
+        attempt.
 
         Fail closed (C-2.9 write-ahead): `False` when that record cannot be written, so
         the caller refuses and mints nothing."""
@@ -310,7 +323,7 @@ def make_auth_router(
             auth_session_fixation_attempts_total.labels(reason=reason).inc()
             if audit_service is None or not audit_service.is_active:
                 continue
-            after: dict[str, Any] = {"vector": vector, "stage": "mfa_verify"}
+            after: dict[str, Any] = {"vector": vector, "stage": stage}
             if record is not None:
                 after["presented_session_id"] = str(record.id)
             try:
@@ -359,12 +372,18 @@ def make_auth_router(
         request: Request, identifier: str, user_id: uuid.UUID
     ) -> JSONResponse:
         """#2295 (Q6, Q7): the session of a user who must enrol TOTP is enrolment-only: minted
-        on the password alone for 15 minutes. Write-ahead (C-2.9): `auth.login` and
-        `auth.session_created` (`enrolment_only: true`) precede it; a failed write mints none."""
+        on the password alone for 15 minutes. A session credential carried into this sign-in
+        is audited as at the MFA step (U6/SR-013). Write-ahead (C-2.9): that record,
+        `auth.login` and `auth.session_created` (`enrolment_only: true`) precede the session,
+        and a failed write mints none (503). The user is read before anything is written."""
         ready = _enrolment_ready(mfa=False)
         if isinstance(ready, JSONResponse):
             return ready
         writer, ident = ready
+        unaudited = _problem(503, "Service unavailable", "audit sink not active")
+        if not await _audit_carried_sessions(request, user_id, stage="login"):
+            return unaudited
+        user = await ident.user(str(user_id))
         ip, session_id, only = _client_ip(request), uuid.uuid4(), {"enrolment_only": True}
         try:
             await writer.emit(
@@ -379,11 +398,13 @@ def make_auth_router(
                 after_state={**only, "mfa_satisfied": False},
             )
         except AuditError:
-            return _problem(503, "Service unavailable", "audit sink not active")
+            return unaudited
         minted = await auth_service.sessions.mint_enrolment_only(
             str(user_id), session_id=session_id, ip=ip, user_agent=request.headers.get("user-agent")
         )
-        user = await ident.user(str(user_id))
+        # U33 (RR-15): an Owner's password-only session is the series an alert pages on.
+        role = normalise_role(user.get("roles") or ())
+        auth_enrolment_only_sessions_total.labels(role=role).inc()
         return _signed_in(minted, user, lifetime_s=refresh_lifetime_s(minted, password_only=True))
 
     async def _enrolling_caller(
@@ -522,7 +543,7 @@ def make_auth_router(
             return JSONResponse(status_code=200, content={"status": "authenticated"})
         # QA #1658: second factor satisfied -> mint the session (ADR-0020),
         # set the `cv_refresh` cookie and return `AuthenticatedResponse`.
-        if not await _audit_carried_sessions(request, result.user_id):
+        if not await _audit_carried_sessions(request, result.user_id, stage="mfa_verify"):
             # Fail closed (C-2.9 write-ahead): the attempt could not be recorded, so nothing is
             # minted. 401 is this operation's documented refusal (no 503 in its contract).
             return _problem(401, "MFA verification failed", "audit sink not active")
@@ -639,10 +660,12 @@ def make_auth_router(
 
     @router.post("/auth/mfa/enroll/confirm")
     async def mfa_enroll_confirm(request: Request, body: MfaEnrollConfirmRequest) -> JSONResponse:
-        """#2295 (Q8): the code is checked first (no change), the audit records are written
-        next (C-2.9), then one transaction confirms the method, revokes the user's other TOTP
-        methods and replaces the recovery codes; every session of the user is revoked and a
-        full one minted (SR-013). The 10 new codes appear in this response only."""
+        """#2295 (Q8): the code is checked first and the user read (no change), the audit
+        records are written next (C-2.9), then one transaction confirms the method, revokes the
+        user's other TOTP methods and replaces the recovery codes; every session of the user is
+        revoked and a full one minted (SR-013). The 10 new codes appear in this response only.
+        If that rotation fails after the commit, the method stays active: the answer is a 503
+        telling the client to sign in again with it, and an error log names the sessions."""
         caller = await _enrolling_caller(request)
         if isinstance(caller, JSONResponse):
             return caller
@@ -651,6 +674,7 @@ def make_auth_router(
         mfa, sessions = auth_service.mfa, auth_service.sessions
         try:
             step = await mfa.check_enrollment(uid, method_id=method_id, code=body.code)
+            profile = await ident.user(uid)  # before any change: one failure point fewer
             new_id = uuid.uuid4()  # named by the write-ahead record
             planned: list[tuple[str, uuid.UUID, dict[str, Any] | None, str | None]] = [
                 ("auth.mfa_enrolled", record.id, {"method_id": method_id}, None),
@@ -680,19 +704,33 @@ def make_auth_router(
         except AuditError:
             return _problem(503, "Service unavailable", "audit sink not active")
         except (MfaEnrollmentNotFound, MfaCodeInvalid):  # wrong code, other method, lost race
+            auth_enrolments_total.labels(outcome="refused").inc()
             await _audit(
                 audit_service, "auth.mfa_failed", actor_label=uid, actor_ip=ip, outcome=_FAILED
             )
             detail = "invalid or expired enrolment code"
             return _problem(422, _INVALID, detail, code="validation_failed")
-        await sessions.revoke_all(uid, reason=ENROLLED_REASON)
-        minted = await sessions.mint(
-            uid, ip=ip, user_agent=request.headers.get("user-agent"), session_id=new_id
-        )
+        auth_enrolments_total.labels(outcome="completed").inc()
+        try:
+            await sessions.revoke_all(uid, reason=ENROLLED_REASON)
+            minted = await sessions.mint(
+                uid, ip=ip, user_agent=request.headers.get("user-agent"), session_id=new_id
+            )
+        except Exception as exc:  # any store failure: the committed enrolment stands
+            revoked = [str(sid) for act, sid, _, _ in planned if act == "auth.session_revoked"]
+            _log().error(
+                "auth.enrolment.completed_unrotated",
+                user_id=uid,
+                session_id=str(record.id),
+                revoked_session_ids=revoked,
+                new_session_id=str(new_id),
+                error=type(exc).__name__,
+            )
+            return _problem(503, "Service unavailable", _UNROTATED)
         activated = MfaMethodView(active=True, **method.model_dump(include=_METHOD_FIELDS))
         return _signed_in(
             minted,
-            await ident.user(uid),
+            {**profile, "mfa_enabled": True},  # read before the commit, which enabled MFA
             lifetime_s=REFRESH_EXPIRES_IN_S,
             mfa_method=activated.model_dump(mode="json"),
             recovery_codes=list(codes),

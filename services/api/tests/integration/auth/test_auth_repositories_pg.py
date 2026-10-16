@@ -86,7 +86,11 @@ async def test_mfa_challenge_replay_and_single_use_recovery_code(pg_dsn: str) ->
         method = await mfa.create_pending_method(
             uid, secret_enc=b"enc", **{"secret_key_ref": "k"}, label="phone"
         )
-        await mfa.confirm_method(str(method.id), now=_NOW)
+        # Confirmed the one way production confirms (#2295): accepted at step 9, no codes.
+        confirmed = await mfa.complete_enrollment(
+            uid, method_id=str(method.id), time_step=9, now=_NOW, code_hashes=()
+        )
+        assert confirmed is not None and confirmed.last_accepted_time_step == 9
         assert [m.id for m in await mfa.find_active_totp_methods(uid)] == [method.id]
         assert await mfa.record_time_step(str(method.id), time_step=10) is True
         assert await mfa.record_time_step(str(method.id), time_step=10) is False

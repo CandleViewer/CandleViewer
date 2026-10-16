@@ -9,10 +9,13 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 from pydantic import SecretStr
 
 from candleviewer.app import build_auth_service
+from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.settings import Environment, Settings
+from candleviewer.storage.repositories import mfa_sqlalchemy
 from candleviewer.storage.repositories.mfa_sqlalchemy import SqlAlchemyMfaRepository
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
 
@@ -132,6 +135,18 @@ async def test_complete_enrollment_rolls_back_when_the_method_is_no_longer_confi
     got = await repo.complete_enrollment("u", method_id="m", time_step=7, now=_NOW, code_hashes=())
     assert got is None
     assert [statement for statement, _ in rel.calls][1:] == ["ROLLBACK"]
+
+
+def test_every_statement_that_confirms_a_method_requires_it_to_be_confirmable() -> None:
+    """#2295 DoR: no `UPDATE ... SET confirmed_at` by id alone survives (`confirm_method` is
+    gone), so nothing can re-activate a method a recovery sign-in un-confirmed. The one
+    confirming statement is the claim, guarded by the confirmable-method predicate."""
+    statements = [v.text for v in vars(mfa_sqlalchemy).values() if isinstance(v, sa.TextClause)]
+    confirming = [text for text in statements if "SET confirmed_at = :now" in text]
+    assert confirming == [mfa_sqlalchemy._CLAIM.text]
+    assert mfa_sqlalchemy._CONFIRMABLE in confirming[0]
+    assert not hasattr(SqlAlchemyMfaRepository, "confirm_method")
+    assert not hasattr(MfaRepository, "confirm_method")
 
 
 async def test_pending_lookup_supersede_and_mfa_required_are_parameterised() -> None:

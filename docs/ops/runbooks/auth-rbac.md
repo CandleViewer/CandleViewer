@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -171,7 +171,19 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    confirms a code: that revokes their other methods and sessions, replaces their recovery codes
    with 10 new ones (shown once) and returns a full session. If the 15 minutes run out, they sign
    in again. Verify: audit `auth.session_created` with `enrolment_only: true`, then
-   `auth.mfa_enrolled` and `auth.recovery_codes_regenerated` for the user.
+   `auth.mfa_enrolled` and `auth.recovery_codes_regenerated` for the user; counter
+   `auth_enrolments_total{outcome="completed"}` rises by 1 (`refused` counts wrong codes).
+   - If confirm answers `503`, the user signs in again. When the error log
+     `auth.enrolment.completed_unrotated` names the user, the enrolment completed but the session
+     was not rotated: the new TOTP is active (the next sign-in asks for it), its 10 recovery codes
+     were never shown, and the sessions the log lists may still be live. They stay enrolment-only
+     and end within 15 minutes of their sign-in. The user has no recovery codes they can read; if
+     they need a set, reset their TOTP again (this section) so the next confirm shows one.
+   - An enrolment-only sign-in by an Owner (`auth_enrolment_only_sessions_total{role="owner"}`
+     rising) is expected only after an Owner TOTP reset, a recovery sign-in or a first sign-in.
+     Otherwise treat it as U33 (a stolen password enrolling a TOTP, `04-security-program.md`
+     RR-15): find the `auth.session_created` record with `enrolment_only: true` and its source
+     IP. The paging rule on that series is not written yet (E09-X03).
 5. Verify from telemetry: audit action `auth.mfa_reset_by_owner` (severity critical) with the
    target user:
    `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.mfa_reset_by_owner"`;

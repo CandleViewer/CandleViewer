@@ -2,10 +2,13 @@
 security counters (`auth_lockouts_total`, `authz_denied_total`, `auth_stepup_failures_total`).
 
 Labels are closed sets (revocation `reason` is normalised by `normalise_reason`, the denied
-`permission` by `normalise_permission`) so cardinality stays bounded.
+`permission` by `normalise_permission`, the enrolment-only session's `role` by
+`normalise_role`) so cardinality stays bounded.
 """
 
 from __future__ import annotations
+
+from collections.abc import Iterable
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.observability.metrics import (
@@ -108,6 +111,26 @@ auth_enrolment_refused_total = Counter(
 for _channel in ENROLMENT_REFUSAL_CHANNELS:
     for _reason in ENROLMENT_REFUSAL_REASONS:
         auth_enrolment_refused_total.labels(channel=_channel, reason=_reason)
+#: `auth_enrolment_only_sessions_total{role}` (#2295) closed set: the user's highest system role,
+#: else `other` (see `normalise_role`). An Owner's is the one an alert pages on (U33, RR-15).
+ENROLMENT_ONLY_ROLES: tuple[str, ...] = ("owner", "manager", "viewer", "other")
+auth_enrolment_only_sessions_total = Counter(
+    "auth_enrolment_only_sessions_total",
+    "Enrolment-only sessions minted on the password alone (#2295), by the user's role.",
+    ["role"],
+)
+for _role in ENROLMENT_ONLY_ROLES:
+    auth_enrolment_only_sessions_total.labels(role=_role)
+#: `auth_enrolments_total{outcome}` (#2295) closed set: a confirmation that activated the method,
+#: or one refused for a wrong code or a method that cannot be confirmed (422).
+ENROLMENT_OUTCOMES: tuple[str, ...] = ("completed", "refused")
+auth_enrolments_total = Counter(
+    "auth_enrolments_total",
+    "TOTP enrolment confirmations (#2295), by outcome: completed or refused.",
+    ["outcome"],
+)
+for _outcome in ENROLMENT_OUTCOMES:
+    auth_enrolments_total.labels(outcome=_outcome)
 auth_session_fixation_attempts_total = Counter(
     "auth_session_fixation_attempts_total",
     "Session credentials never issued here, or another user's, presented (U6/SR-013), by reason.",
@@ -134,6 +157,7 @@ _KNOWN_REASONS = frozenset(
         "locked",
         "timeout",
         "unlock_attempts_exceeded",
+        "mfa_enrolled",  # a confirmed enrolment ends every session of the user (#2295)
     }
 )
 
@@ -141,6 +165,13 @@ _KNOWN_REASONS = frozenset(
 def normalise_reason(reason: str | None) -> str:
     """Clamp a free-form revocation reason to the closed label set."""
     return reason if reason in _KNOWN_REASONS else "other"
+
+
+def normalise_role(roles: Iterable[str]) -> str:
+    """The highest system role in *roles* (owner, then manager, then viewer), else `other`:
+    the `auth_enrolment_only_sessions_total` label set stays closed whatever the store holds."""
+    held = frozenset(roles)
+    return next((role for role in ENROLMENT_ONLY_ROLES if role in held), "other")
 
 
 _KNOWN_PERMISSIONS = frozenset(permission.value for permission in Permission)
@@ -180,6 +211,8 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_csrf_refused_total",
         "auth_session_fixation_attempts_total",
         "auth_enrolment_refused_total",
+        "auth_enrolment_only_sessions_total",
+        "auth_enrolments_total",
         "auth_lockouts_total",
         "auth_stepup_failures_total",
         "authz_denied_total",

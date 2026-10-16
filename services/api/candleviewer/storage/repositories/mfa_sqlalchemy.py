@@ -66,9 +66,6 @@ _SUPERSEDE = sa.text(
     "UPDATE mfa_methods SET revoked_at = :now WHERE user_id = CAST(:u AS uuid) "
     "AND confirmed_at IS NULL AND revoked_at IS NULL"
 )
-_CONFIRM = _sql(
-    "UPDATE mfa_methods SET confirmed_at = :now WHERE id = CAST(:id AS uuid) RETURNING @M@"
-)
 _ACTIVE_TOTP = _sql(
     "SELECT @M@ FROM mfa_methods WHERE user_id = CAST(:u AS uuid) AND kind = 'totp' "
     "AND confirmed_at IS NOT NULL AND revoked_at IS NULL ORDER BY created_at DESC"
@@ -193,9 +190,6 @@ class SqlAlchemyMfaRepository:
                 await run(_RC_INSERT, {"id": str(uuid.uuid4()), "u": user_id, "h": h})
             await uow.commit()
         return self._method(**dict(claimed._mapping))
-
-    async def confirm_method(self, method_id: str, *, now: datetime) -> Any:
-        return await self._one(_CONFIRM, {"id": method_id, "now": now}, self._method)
 
     async def find_active_totp_methods(self, user_id: str) -> tuple[Any, ...]:
         rows = await self._run(_ACTIVE_TOTP, {"u": user_id})

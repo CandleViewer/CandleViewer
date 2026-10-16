@@ -261,17 +261,17 @@ operations:
     permissions: []
     scope: self
     public: false
-    state: not_executable
-    reason: 'authorisation is unreachable in the CI app: every actor gets 422 (identity/backend not wired
-      or fail-closed stub)'
+    state: executed
+    request:
+      json: {method: totp}
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   POST /auth/mfa/enroll/confirm:
     permissions: []
     scope: self
     public: false
-    state: not_executable
-    reason: 'authorisation is unreachable in the CI app: every actor gets 422 (identity/backend not wired
-      or fail-closed stub)'
+    state: executed
+    request:
+      json: {method_id: 00000000-0000-4000-8000-0000000000e2, code: '123456'}
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: allow, unauthenticated: '401'}
   DELETE /auth/mfa/methods/{methodId}:
     permissions: ['settings:write']

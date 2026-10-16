@@ -11,8 +11,12 @@ from candleviewer.app import create_app
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.metrics import (
     AUTH_EXPORTED_NAMES,
+    ENROLMENT_ONLY_ROLES,
+    ENROLMENT_OUTCOMES,
     export_auth_metrics,
     normalise_permission,
+    normalise_reason,
+    normalise_role,
 )
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
@@ -20,6 +24,11 @@ from candleviewer.settings import Environment, Settings
 
 SECURITY_SERIES = ("auth_lockouts_total", "authz_denied_total", "auth_stepup_failures_total")
 _SPECS = {spec.name: spec for spec in CATALOGUE}
+#: #2295 (U33 monitoring): each enrolment counter with its one label and closed value set.
+_ENROLMENT_SERIES = {
+    "auth_enrolment_only_sessions_total": ("role", ENROLMENT_ONLY_ROLES),
+    "auth_enrolments_total": ("outcome", ENROLMENT_OUTCOMES),
+}
 
 
 def test_catalogue_declares_the_three_security_series_live_and_exported() -> None:
@@ -80,3 +89,25 @@ def test_create_app_serves_the_three_series_on_the_scraped_registry() -> None:
     for name in SECURITY_SERIES:
         samples = [ln for ln in text.splitlines() if ln.startswith(f"{name}{{")]
         assert samples and all('env="demo"' in ln for ln in samples), name
+
+
+def test_enrolment_series_are_catalogued_exported_and_bound_from_process_start() -> None:
+    for name, (label, values) in _ENROLMENT_SERIES.items():
+        spec = _SPECS[name]
+        assert (spec.kind, spec.status, spec.exported) == ("counter", "live", True), name
+        assert (spec.labels, spec.max_series) == ((label,), len(values)), name
+        assert name in AUTH_EXPORTED_NAMES, name
+        for value in values:
+            assert REGISTRY.get_sample_value(name, {label: value}) is not None, (name, value)
+
+
+def test_normalise_role_keeps_the_highest_system_role_and_clamps_the_rest() -> None:
+    assert normalise_role(["viewer", "owner"]) == "owner"
+    assert normalise_role(("viewer", "manager")) == "manager"
+    assert normalise_role(["viewer"]) == "viewer"
+    for hostile in ([], ["admin"], ["OWNER"], ["owner "], ["x" * 500]):
+        assert normalise_role(hostile) == "other", hostile
+
+
+def test_a_confirmed_enrolment_is_its_own_revocation_reason_not_other() -> None:
+    assert normalise_reason("mfa_enrolled") == "mfa_enrolled"

@@ -82,7 +82,16 @@ async def _seed_owner_with_totp(dsn: str, username: str) -> tuple[str, bytes]:
         method = await mfa.create_pending_method(
             user_id, secret_enc=enc.encrypt(secret), secret_key_ref=enc.key_ref, label="it"
         )
-        await mfa.confirm_method(str(method.id), now=_NOW)
+        # Confirmed the one way production confirms (#2295), as an enrolment 10 minutes ago:
+        # the accepted step (the replay high-water mark) is below every step signed in with.
+        confirmed = await mfa.complete_enrollment(
+            user_id,
+            method_id=str(method.id),
+            time_step=time_step_for(_NOW.timestamp()) - 20,
+            now=_NOW,
+            code_hashes=(),
+        )
+        assert confirmed is not None
     finally:
         await rel.dispose()
     return user_id, secret

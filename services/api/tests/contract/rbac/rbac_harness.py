@@ -31,11 +31,18 @@ from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     InviteNotFound,
     InviteRejected,
+    MfaEnrollmentNotFound,
     SessionNotFound,
     StepUpRequired,
 )
 from candleviewer.auth.generated_permissions import Permission
-from candleviewer.auth.models import MfaMethodKind, SessionRecord, UserRecord, UserStatus
+from candleviewer.auth.models import (
+    MfaEnrollResult,
+    MfaMethodKind,
+    SessionRecord,
+    UserRecord,
+    UserStatus,
+)
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.recorder.retention import PrunePlan, RunReport
 from candleviewer.rules.manager import InMemoryRuleStore
@@ -173,6 +180,28 @@ class _Users:
             locked_until=None,
             mfa_methods=(MfaMethodKind.TOTP,),
         )
+
+
+class _Login:
+    """`LoginService` seam: wired, so the enrolment routes reach their handler (#2295). The
+    pack's sign-in rows post an empty body, which is refused before any call here."""
+
+    async def login(self, *_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("the RBAC pack never signs in")
+
+
+class _Mfa:
+    """`MfaService` seam for enrol and confirm (#2295). Every seeded actor has a confirmed
+    method, so both routes answer 409 before any call here; only the enrolment-only owner of
+    `test_enrolment_only_matrix.py` gets this far. It stores nothing: an enrolment returns a
+    method id and no secret, and every confirmation is refused as not found (422)."""
+
+    async def enroll(self, user_id: str, *_args: Any, **_kwargs: Any) -> MfaEnrollResult:
+        method_id = uuid.uuid5(uuid.UUID(user_id), "enrol")
+        return MfaEnrollResult(method_id=method_id, method=MfaMethodKind.TOTP)
+
+    async def check_enrollment(self, *_args: Any, **_kwargs: Any) -> int:
+        raise MfaEnrollmentNotFound("the RBAC pack stores no pending method")
 
 
 class _Resolver:
@@ -413,6 +442,7 @@ def build_world(mp: pytest.MonkeyPatch) -> World:
     ctx.audit._query = _AuditQuery()  # the lifespan is not started; same seam tests/unit/ws uses
     ctx.auth._sessions = _Sessions()
     ctx.auth._repository = _Users()  # the enrolment-only guard classifies every session
+    ctx.auth._login, ctx.auth._mfa = _Login(), _Mfa()  # enrol and confirm reach the handler
     step_up = _StepUp()
     ctx.auth._step_up = step_up
     ctx.auth._invites = _Invites()

@@ -61,10 +61,6 @@ class MfaRepository(Protocol):
         the method is no longer confirmable (a concurrent confirm or enrolment won)."""
         ...
 
-    async def confirm_method(self, method_id: str, *, now: datetime) -> MfaMethodRecord:
-        """Stamp `confirmed_at = now`; the method becomes active."""
-        ...
-
     async def find_active_totp_methods(self, user_id: str) -> tuple[MfaMethodRecord, ...]:
         """Confirmed, non-revoked `kind='totp'` methods for `user_id`,
         newest-first."""

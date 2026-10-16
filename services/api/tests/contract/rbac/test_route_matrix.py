@@ -294,8 +294,6 @@ _STUB_STATUS: dict[str, int] = {
     "GET /admin/health": 501,
     "PUT /admin/log-level": 501,
     "POST /auth/login": 422,
-    "POST /auth/mfa/enroll": 422,
-    "POST /auth/mfa/enroll/confirm": 422,
     "POST /auth/mfa/recovery": 422,
     "POST /auth/mfa/verify": 422,
     "POST /auth/refresh": 401,

@@ -19,6 +19,8 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+import structlog
+from prometheus_client import REGISTRY
 
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.models import UserRecord
@@ -131,6 +133,19 @@ def _confirm(stack: Stack, headers: dict[str, str], method_id: str, code: str) -
     return stack.client.post("/auth/mfa/enroll/confirm", headers=headers, json=body)
 
 
+def _wrong_code(stack: Stack, seed: bytes) -> str:
+    """Six digits no step of *seed*'s accepted window (+/-1) produces: a wrong guess, never a
+    lucky one."""
+    window = {stack.code(seed, offset) for offset in (-1, 0, 1)}
+    return next(code for code in ("000000", "000001", "000002", "000003") if code not in window)
+
+
+def _revocations(reason: str) -> float:
+    """`auth_session_revocations_total{reason}` on the process-default registry."""
+    sample = REGISTRY.get_sample_value("auth_session_revocations_total", {"reason": reason})
+    return float(sample or 0.0)
+
+
 def _code_hashes(stack: Stack, uid: uuid.UUID) -> set[str | None]:
     rows = _store(stack).recovery_codes.values()
     return {row["code_hash"] for row in rows if row["user_id"] == str(uid)}
@@ -206,6 +221,22 @@ def test_sign_in_without_mfa_required_and_without_a_method_still_fails_closed(
 
     assert _sign_in(stack, "alice").status_code == 501
     assert stack.call(stack.auth.sessions.list_sessions, str(uid)) == ()
+
+
+def test_an_owners_enrolment_only_sign_in_moves_the_series_an_alert_pages_on(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U33 (RR-15): an Owner's password-only session is counted under `role="owner"`."""
+    _must_enrol(stack, "boss")
+
+    async def owner(self: _Identity, user_id: str) -> dict[str, Any]:
+        return {"id": user_id, "username": "boss", "roles": ["owner"], "status": "active"}
+
+    monkeypatch.setattr(_Identity, "user", owner)
+    before = stack.scraped("auth_enrolment_only_sessions_total", role="owner")
+
+    assert _sign_in(stack, "boss").status_code == 200
+    assert stack.scraped("auth_enrolment_only_sessions_total", role="owner") == before + 1
 
 
 # -- POST /auth/mfa/enroll (Q10) -----------------------------------------------------------------
@@ -353,6 +384,99 @@ def test_cross_user_confirming_another_users_pending_method_is_refused(stack: St
     assert len(stack.audit.of("auth.mfa_failed")) == 1
 
 
+def test_confirm_with_a_wrong_code_writes_only_its_failure_and_changes_nothing(
+    stack: Stack,
+) -> None:
+    """The code is checked before any write-ahead record (C-2.9): a wrong guess appends only
+    `auth.mfa_failed`, never a false enrolment, code swap or session record, and the session,
+    the pending method and the old codes survive it, so the right code still completes."""
+    uid = _must_enrol(stack, "alice")
+    old_codes = _code_hashes(stack, uid)
+    headers = _enrolment_only(stack, "alice")
+    method_id, seed = _enrol(stack, headers)
+    methods = dict(_store(stack).methods)
+    refused = stack.scraped("auth_enrolments_total", outcome="refused")
+    mark = len(stack.audit.records)
+
+    resp = _confirm(stack, headers, method_id, _wrong_code(stack, seed))
+
+    assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
+    assert [r["action"] for r in stack.audit.records[mark:]] == ["auth.mfa_failed"]
+    assert stack.call(_store(stack).find_pending_method, method_id, str(uid)) is not None
+    assert (_store(stack).methods, _code_hashes(stack, uid)) == (methods, old_codes)
+    assert stack.client.get("/auth/session", headers=headers).status_code == 200
+    assert stack.scraped("auth_enrolments_total", outcome="refused") == refused + 1
+    assert _confirm(stack, headers, method_id, stack.code(seed)).status_code == 200
+
+
+def test_confirm_reads_the_user_before_anything_is_written_or_changed(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The user the response shows is read before the audit records and the transaction, so a
+    failing identity store cannot leave a committed enrolment without its reply."""
+    uid = _must_enrol(stack, "alice")
+    old_codes = _code_hashes(stack, uid)
+    headers = _enrolment_only(stack, "alice")
+    method_id, seed = _enrol(stack, headers)
+    mark = len(stack.audit.records)
+
+    async def unavailable(self: _Identity, user_id: str) -> dict[str, Any]:
+        raise OSError("identity store unavailable")
+
+    monkeypatch.setattr(_Identity, "user", unavailable)
+    resp = _confirm(stack, headers, method_id, stack.code(seed))
+
+    assert resp.status_code == 500
+    assert stack.audit.records[mark:] == []
+    assert stack.call(_store(stack).find_pending_method, method_id, str(uid)) is not None
+    assert _code_hashes(stack, uid) == old_codes
+
+
+@pytest.mark.parametrize("step", ["revoke_all", "mint"])
+def test_confirm_whose_rotation_fails_keeps_the_enrolment_and_answers_503(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, step: str
+) -> None:
+    """Nothing undoes the commit: a failing revoke-all or mint answers a 503 telling the client to
+    sign in again (never a 500), an error log names the user and the sessions, and the new TOTP
+    signs in."""
+    uid = _must_enrol(stack, "alice")
+    token = _sign_in(stack, "alice").json()["tokens"]["access_token"]
+    sid = stack.call(stack.auth.sessions.peek_access_token, token).id
+    headers = _auth(stack, token)
+    method_id, seed = _enrol(stack, headers)
+    real = getattr(stack.auth.sessions, step)
+
+    async def unavailable(*_args: Any, **_kwargs: Any) -> Any:
+        raise OSError("session store unavailable")
+
+    monkeypatch.setattr(stack.auth.sessions, step, unavailable)
+    with structlog.testing.capture_logs() as logs:
+        resp = _confirm(stack, headers, method_id, stack.code(seed))
+    monkeypatch.setattr(stack.auth.sessions, step, real)
+
+    assert resp.status_code == 503 and "sign in again" in resp.json()["detail"]
+    (event,) = [e for e in logs if e["event"] == "auth.enrolment.completed_unrotated"]
+    assert (event["log_level"], event["user_id"], event["error"]) == ("error", str(uid), "OSError")
+    assert (event["session_id"], event["revoked_session_ids"]) == (str(sid), [str(sid)])
+    assert _store(stack).methods[method_id].confirmed_at is not None
+    stack.clock.now += timedelta(seconds=30)  # the confirming code is spent
+    stack.sign_in("alice", seed)  # asserts 200 for the password and the TOTP step
+
+
+def test_a_completed_enrolment_is_counted_and_its_revocations_keep_their_reason(
+    stack: Stack,
+) -> None:
+    _must_enrol(stack, "alice")
+    headers = _enrolment_only(stack, "alice")
+    method_id, seed = _enrol(stack, headers)
+    completed = stack.scraped("auth_enrolments_total", outcome="completed")
+    revoked = _revocations("mfa_enrolled")
+
+    assert _confirm(stack, headers, method_id, stack.code(seed)).status_code == 200
+    assert stack.scraped("auth_enrolments_total", outcome="completed") == completed + 1
+    assert _revocations("mfa_enrolled") == revoked + 1  # the caller's own: rotated
+
+
 def test_after_a_recovery_sign_in_the_old_method_can_never_be_confirmed_again(
     stack: Stack,
 ) -> None:
@@ -375,10 +499,11 @@ def test_session_info_grants_nothing_and_refresh_counts_down(stack: Stack) -> No
     _must_enrol(stack, "alice")
     resp = _sign_in(stack, "alice")
     raw_refresh = resp.cookies["cv_refresh"]
-    info = stack.client.get(
-        "/auth/session", headers=_auth(stack, resp.json()["tokens"]["access_token"])
-    )
+    access = resp.json()["tokens"]["access_token"]
+    info = stack.client.get("/auth/session", headers=_auth(stack, access))
     stack.clock.now += timedelta(minutes=5)
+    stack.client.cookies.clear()  # no SR-041 cookie: the session read re-issues it
+    reissued = stack.client.get("/auth/session", headers={"Authorization": f"Bearer {access}"})
     sid = stack.call(stack.auth.sessions.peek_refresh, raw_refresh).id
 
     refreshed = stack.client.post(
@@ -390,6 +515,8 @@ def test_session_info_grants_nothing_and_refresh_counts_down(stack: Stack) -> No
     grants = ("permissions", "account_scope", "allowed_environments")
     assert [info.json()[k] for k in grants] == [[], [], []]
     assert "kill_switch" not in info.json()
+    assert "__Host-cv_csrf=" in reissued.headers["set-cookie"]
+    assert "Max-Age=600" in reissued.headers["set-cookie"]  # Q7: never the 12 h of a full one
     assert refreshed.json()["tokens"]["refresh_expires_in"] == 600
     assert "Max-Age=600" in refreshed.headers["set-cookie"]
 
