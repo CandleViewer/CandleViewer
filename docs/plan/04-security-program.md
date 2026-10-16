@@ -733,6 +733,9 @@ See §8 for the full specification.
 | SR-125 | Security-relevant metrics MUST be exported and alerted on: failed logins, lockouts, step-up failures, permission-check failures, credential verification failures, rate-limit rejections, rule circuit-breaker trips, audit chain verification failures, egress IP changes, clock drift, disk high-watermark, WS desync rate. | integration, manual-review |
 | SR-126 | Alert routing MUST reach the Owner out-of-band (a channel that does not depend on the app being healthy), with P1 alerts distinguishable from informational ones.                                                                                                                                                             | drill                      |
 
+Admin-area denials (E42-T01): a denied `/admin/*` request increments `authz_denied_total` (SR-125) and is audited once, as
+`admin.area_entered{outcome=denied}` (SR-062), not as a second `rbac.denied`, so audit-side alerting includes that action.
+
 ### 6.10 Backups and data protection (SR-090…SR-099)
 
 | ID     | Requirement                                                                                                                                                                                                                                                             | Verify                  |
