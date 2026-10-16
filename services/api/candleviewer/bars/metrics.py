@@ -81,7 +81,11 @@ bar_build_latency_seconds = Histogram(
     buckets=(0.000001, 0.000005, 0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.01),
 )
 bar_emit_sink_errors_total = Counter(
-    "bar_emit_sink_errors_total", "Bar emissions a sink failed to accept.", labelnames=("reason",)
+    "bar_emit_sink_errors_total",
+    "Bar emissions a sink (questdb, ws) failed to accept, by sink or <sink>_timeout; ws also counts"
+    " generation swaps (ws_generation_swap) and binary groups sent structured (ws_no_scales,"
+    " ws_binary_refused).",
+    labelnames=("reason",),
 )
 
 # --- E12-T05 (#398) `/market/klines` + `/market/bars` endpoint series -----------------------
