@@ -241,6 +241,7 @@ class _ProblemRoute(APIRoute):
                 return p.response()
             except (AuditUnavailable, AuditWriterStopped) as exc:  # fails closed: logged apart
                 _log().error("drawings_audit_unavailable", error=type(exc).__name__)
+                return _Problem("store_unavailable", "The audit store is unavailable.").response()
             except Exception as exc:
                 if not is_storage_outage(exc):
                     raise

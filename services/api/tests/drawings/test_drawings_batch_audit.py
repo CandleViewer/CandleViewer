@@ -185,6 +185,19 @@ def test_a_failed_audit_write_still_counts_and_logs_the_batch_conflict(
     assert conflicts == [("drawings_batch_conflict", "target_unavailable")]
 
 
+def test_an_audit_refusal_is_told_apart_from_a_store_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same registered code, its own detail: a refused audit write is not a Postgres outage."""
+    env = Env()
+    mine = env.create()
+    env.user = USER_B
+    monkeypatch.setattr(env.audit, "emit", _refusing_emit(AuditUnavailable("audit store down")))
+    body = _post(env, _target("delete", mine)).json()
+    assert body["code"] == "store_unavailable"  # the registered 503 code, as for an outage
+    assert body["detail"] == "The audit store is unavailable."  # but not the store's detail
+
+
 def test_an_unexpected_audit_failure_never_chains_the_internal_rule(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
