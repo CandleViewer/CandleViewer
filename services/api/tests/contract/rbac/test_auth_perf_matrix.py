@@ -3,22 +3,25 @@
 The pack's shared world runs with `CV_AUTH_PERF_ENABLED` off, so the route's matrix row is
 `not_mounted` there. This module builds the same real-app world on a testnet with no exchange
 key and the switch on, and runs every cell of that row with a real bearer token per actor
-(SR-018): the owner gets the parameters, both managers and the viewer get 403, no session gets
-401. The expected outcomes are read from `matrix.yaml`, never restated here. Cross-account
-(IDOR) has no object here: the scope is `none` and the route takes no id, so the manager who
-holds an account grant is refused exactly like the one who does not.
+(SR-018): the owner gets the parameters a fresh hash embeds, both managers and the viewer get
+403, no session gets 401. The expected outcomes are read from `matrix.yaml`, never restated here.
+Cross-account (IDOR) has no object here: the scope is `none` and the route takes no id, so the
+manager who holds an account grant is refused exactly like the one who does not.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Iterator
 from typing import Any
 
 import pytest
 import yaml
+from argon2 import extract_parameters
 
 from candleviewer.api._generated.openapi_models import Argon2Params
+from candleviewer.auth.hashing import Hasher
 from tests.contract.rbac.rbac_harness import (
     ACTORS,
     MATRIX_PATH,
@@ -64,8 +67,10 @@ def test_perf_params_cell_matches_the_matrix_with_the_switch_on(
         assert observed == _outcomes()[actor], f"{actor}: got {resp.status_code}"
         if observed == "allow":
             assert resp.status_code == 200
-            body = Argon2Params.model_validate(resp.json())
-            assert body.model_dump() == {"m": 65536, "t": 3, "p": 4}
+            body = Argon2Params.model_validate(resp.json()).model_dump()
+            assert body == {"m": 65536, "t": 3, "p": 4}
+            fresh = extract_parameters(asyncio.run(Hasher().hash("fresh")))
+            assert body == {"m": fresh.memory_cost, "t": fresh.time_cost, "p": fresh.parallelism}
         else:
             assert "m" not in resp.json(), "a refusal never reveals the parameters"
     except AssertionError:

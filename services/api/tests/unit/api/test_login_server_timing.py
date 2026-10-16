@@ -2,67 +2,39 @@
 challenge, and only while the perf switch is on.
 
 No refusal (401, 403, 423, 501, 503 and the throttled 401) ever carries it, so the header
-cannot separate an unknown user from a wrong password (SR-014). The real `LoginService` and
-`Hasher` run here; only the user store, the clocks and the perf counter are fakes.
+cannot separate an unknown user from a wrong password (SR-014). The real `create_app()`,
+`LoginService` and `Hasher` run; only the user store, the clocks and the perf counter are fakes.
 """
 
 from __future__ import annotations
 
 import asyncio
 import itertools
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from httpx import Response
 
-from candleviewer.api.auth import MfaServiceLike, SessionMinterLike, make_auth_router
-from candleviewer.auth.csrf import CsrfCodec
+from candleviewer.app import create_app
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LoginService
-from candleviewer.auth.models import UserRecord, UserStatus
+from candleviewer.auth.models import LoginRequest, MfaChallengeResult, MfaMethodKind, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.settings import Environment, Settings
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 
-_CSRF_CODEC = CsrfCodec(b"\x05" * 32)
 _PASSWORD = "correct horse battery staple"  # noqa: S105 -- throwaway fixture password
 _T0 = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
-#: TestClient's peer address, which the route hands to the per-IP throttle.
-_CLIENT_IP = "testclient"
+_LOOPBACK = ("127.0.0.1", 50000)  # MeshOnlyMiddleware admits loopback; the throttle keys on it
+_SWITCH_ENV = ("CV_ENVIRONMENT", "CV_AUTH_PERF_ENABLED", "CV_BYBIT_API_KEY", "CV_BYBIT_API_SECRET")
 
 
-class _Auth:
-    """`AuthServiceLike` for the login route only; no other auth surface is reachable."""
-
-    def __init__(self, login: LoginService | None) -> None:
-        self._login = login
-
-    @property
-    def is_active(self) -> bool:
-        return self._login is not None
-
-    @property
-    def login(self) -> LoginService:
-        assert self._login is not None
-        return self._login
-
-    @property
-    def sessions_is_active(self) -> bool:
-        return False
-
-    @property
-    def sessions(self) -> SessionMinterLike:
-        raise AssertionError("POST /auth/login never mints a session")
-
-    @property
-    def mfa_is_active(self) -> bool:
-        return False
-
-    @property
-    def mfa(self) -> MfaServiceLike:
-        raise AssertionError("POST /auth/login never runs the MFA step")
+@pytest.fixture(autouse=True)
+def _clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in _SWITCH_ENV:
+        monkeypatch.delenv(name, raising=False)
 
 
 class _Ticks:
@@ -78,124 +50,97 @@ class _Ticks:
         return next(self._values)
 
 
+class _ChallengeWithoutVerify(LoginService):
+    """Issues the challenge without any Argon2id verify, so this request has no time to report."""
+
+    async def login(self, request: LoginRequest, *, source_ip: str) -> MfaChallengeResult:
+        token = "opaque-fixture-token"  # noqa: S105 -- inert fixture value, never a credential
+        return MfaChallengeResult(mfa_token=token, methods=(MfaMethodKind.TOTP,))
+
+
 @pytest.fixture(scope="module")
 def password_hash() -> str:
     return asyncio.run(Hasher().hash(_PASSWORD))
 
 
 def _service(
-    user: UserRecord | None, ticks: _Ticks, throttle: PerIpLoginThrottle | None = None
+    password_hash: str, ticks: _Ticks, user: dict[str, Any] | None, *, throttled: bool = False
 ) -> LoginService:
+    """*user* holds `make_user` overrides; None leaves the store empty (an unknown user)."""
     repo = FakeUserRepository()
     if user is not None:
-        repo.add(user)
+        repo.add(make_user(password_hash=password_hash, **user))
+    throttle = PerIpLoginThrottle(max_attempts=1, clock=lambda: 0.0)
+    if throttled:
+        throttle.record_failure(_LOOPBACK[0])
     return LoginService(
-        repo,
-        Hasher(perf_counter=ticks),
-        per_ip_throttle=throttle or PerIpLoginThrottle(clock=lambda: 0.0),
-        clock=lambda: _T0,
+        repo, Hasher(perf_counter=ticks), per_ip_throttle=throttle, clock=lambda: _T0
     )
 
 
-def _post_login(
-    login: LoginService | None,
-    *,
-    server_timing: bool,
-    identifier: str = "basiltt",
-    password: str = _PASSWORD,
-) -> Response:
-    app = FastAPI()
-    app.include_router(
-        make_auth_router(_Auth(login), csrf=_CSRF_CODEC, server_timing=server_timing)
-    )
-    client = TestClient(app, raise_server_exceptions=False)
+def _keyless_testnet() -> Settings:
+    return Settings(environment=Environment.TESTNET, auth_perf_enabled=True)
+
+
+def _login(service: LoginService | None, *, switch_on: bool, password: str = _PASSWORD) -> Response:
+    """POST /auth/login on the real app: the switch on a keyless testnet, or default settings."""
+    app = create_app(_keyless_testnet() if switch_on else Settings())
+    app.state.app_context.auth._login = service  # the fake backend wires no login service
+    client = TestClient(app, client=_LOOPBACK, raise_server_exceptions=False)
     resp: Response = client.post(
-        "/auth/login", json={"identifier": identifier, "password": password}
+        "/auth/login", json={"identifier": "basiltt", "password": password}
     )
     return resp
 
 
-def test_login_challenge_carries_the_measured_argon2_time_when_the_switch_is_on(
-    password_hash: str,
+@pytest.mark.parametrize(
+    ("switch_on", "header"), [(True, "argon2;dur=212.5"), (False, None)], ids=["on", "off"]
+)
+def test_login_challenge_carries_the_measured_argon2_time_only_with_the_switch_on(
+    password_hash: str, switch_on: bool, header: str | None
 ) -> None:
     ticks = _Ticks()
-    resp = _post_login(_service(make_user(password_hash=password_hash), ticks), server_timing=True)
+    resp = _login(_service(password_hash, ticks, {}), switch_on=switch_on)
     assert resp.status_code == 200
     assert resp.json()["status"] == "mfa_required"
-    assert resp.headers["server-timing"] == "argon2;dur=212.5"
+    assert resp.headers.get("server-timing") == header
     assert ticks.reads == 2, "exactly one Argon2id verify is timed per login"
 
 
-def test_login_challenge_carries_no_server_timing_when_the_switch_is_off(
-    password_hash: str,
-) -> None:
-    resp = _post_login(
-        _service(make_user(password_hash=password_hash), _Ticks()), server_timing=False
-    )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "mfa_required"
-    assert "server-timing" not in resp.headers
-
-
-def _blocked_throttle() -> PerIpLoginThrottle:
-    throttle = PerIpLoginThrottle(max_attempts=1, clock=lambda: 0.0)
-    throttle.record_failure(_CLIENT_IP)
-    return throttle
-
-
-#: (case, user builder, identifier, password, throttle, expected status). Every case runs
-#: with the switch ON; none may carry the header.
-_REFUSALS: list[tuple[str, Callable[[str], UserRecord | None], str, str, bool, int]] = [
-    ("unknown_user", lambda h: make_user(password_hash=h), "nobody", _PASSWORD, False, 401),
-    ("wrong_password", lambda h: make_user(password_hash=h), "basiltt", "wrong pw", False, 401),
-    ("throttled", lambda h: make_user(password_hash=h), "basiltt", _PASSWORD, True, 401),
-    (
-        "disabled",
-        lambda h: make_user(password_hash=h, status=UserStatus.DISABLED),
-        "basiltt",
-        _PASSWORD,
-        False,
-        403,
-    ),
-    (
-        "locked",
-        lambda h: make_user(password_hash=h, locked_until=_T0 + timedelta(minutes=10)),
-        "basiltt",
-        _PASSWORD,
-        False,
-        423,
-    ),
-    (
-        "no_mfa_method",
-        lambda h: make_user(password_hash=h, mfa_required=False, mfa_methods=()),
-        "basiltt",
-        _PASSWORD,
-        False,
-        501,
-    ),
-]
-
-
 @pytest.mark.parametrize(
-    ("build_user", "identifier", "password", "throttled", "status"),
-    [pytest.param(*case[1:], id=case[0]) for case in _REFUSALS],
+    ("user", "password", "throttled", "status"),
+    [
+        pytest.param(None, _PASSWORD, False, 401, id="unknown_user"),
+        pytest.param({}, "wrong password", False, 401, id="wrong_password"),
+        pytest.param({}, _PASSWORD, True, 401, id="throttled"),
+        pytest.param({"status": UserStatus.DISABLED}, _PASSWORD, False, 403, id="disabled"),
+        pytest.param(
+            {"locked_until": _T0 + timedelta(minutes=10)}, _PASSWORD, False, 423, id="locked"
+        ),
+        pytest.param(
+            {"mfa_required": False, "mfa_methods": ()}, _PASSWORD, False, 501, id="no_mfa"
+        ),
+    ],
 )
 def test_login_refusals_never_carry_server_timing_even_with_the_switch_on(
-    password_hash: str,
-    build_user: Callable[[str], UserRecord | None],
-    identifier: str,
-    password: str,
-    throttled: bool,
-    status: int,
+    password_hash: str, user: dict[str, Any] | None, password: str, throttled: bool, status: int
 ) -> None:
-    throttle = _blocked_throttle() if throttled else None
-    service = _service(build_user(password_hash), _Ticks(), throttle)
-    resp = _post_login(service, server_timing=True, identifier=identifier, password=password)
+    service = _service(password_hash, _Ticks(), user, throttled=throttled)
+    resp = _login(service, switch_on=True, password=password)
     assert resp.status_code == status
     assert "server-timing" not in resp.headers
 
 
 def test_login_with_no_auth_backend_answers_503_without_server_timing() -> None:
-    resp = _post_login(None, server_timing=True)
+    resp = _login(None, switch_on=True)
     assert resp.status_code == 503
+    assert "server-timing" not in resp.headers
+
+
+def test_login_challenge_without_an_argon2_verify_carries_no_server_timing() -> None:
+    """No verify ran in this request, so there is no time to report: the challenge goes out
+    without the header instead of failing to format a missing value."""
+    resp = _login(_ChallengeWithoutVerify(FakeUserRepository(), Hasher()), switch_on=True)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "mfa_required"
     assert "server-timing" not in resp.headers

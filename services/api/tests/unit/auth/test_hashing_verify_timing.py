@@ -64,10 +64,14 @@ async def test_verify_reads_the_clock_in_the_worker_thread_only() -> None:
 
 
 async def test_concurrent_verifies_each_keep_their_own_time() -> None:
-    """Two requests in flight at once never see each other's value (one context per task)."""
+    """Two requests in flight at once never see each other's value (one context per task).
+    Both verifies finish before either reads, so a value shared across tasks would hand the
+    later of the two to both readers."""
+    both_verified = asyncio.Barrier(2)
 
     async def one_request(hasher: Hasher) -> float | None:
         await hasher.verify_dummy("x")
+        await both_verified.wait()
         return last_verify_ms()
 
     fast, _ = _hasher(0.0, 0.1)
