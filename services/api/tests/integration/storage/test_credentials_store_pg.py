@@ -107,9 +107,12 @@ def _activate(dsn: str, ids: list[UUID], status: str = "active") -> None:
 
 
 async def _borrow(b: CredentialBroker, key_id: UUID) -> str:
-    """Sign through the exchange-adapter handle (#2339); returns the key id M2 hands back."""
+    """Sign through the exchange-adapter handle (#2339); returns the key id M2 hands back. The
+    signing only starts its `last_used_at` write (#2776), so await it here: the row is read after
+    it lands, and no write outlives the test or races `rel.dispose()`."""
     h = b.borrow_handle("exchange_adapter")
     out = await h.sign(key_id, (KEY_ID_SLOT,), purpose="sign_rest")
+    await asyncio.gather(*b._touches.values())
     return out.api_key.reveal()
 
 
