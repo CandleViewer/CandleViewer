@@ -14,15 +14,15 @@ import inspect
 import re
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import uvicorn
 import yaml
-from pydantic import SecretStr, ValidationError
+from pydantic import ValidationError
 
 from candleviewer import ws_wiring
-from candleviewer.app import Supervisor
+from candleviewer.app import AppContext, Supervisor
 from candleviewer.settings import (
     CLOSE_AUDIT_TIMEOUT_S,
     CLOSE_FLUSH_TIMEOUT_S,
@@ -167,11 +167,16 @@ def test_a_drain_below_the_floor_is_refused_from_the_environment_too(
         ("api_stop_budget_s", 121),
         ("uvicorn_drain_timeout_s", 0),
         ("uvicorn_drain_timeout_s", 31),
+        ("uvicorn_drain_timeout_s", "abc"),  # not a number: the field's own check refuses it
+        ("uvicorn_drain_timeout_s", float("inf")),  # `int(inf)` is an OverflowError, not a refusal
+        ("ws_shutdown_grace_ms", 60_001),  # the budget check skips a term whose own check failed
     ],
 )
-def test_the_budget_and_the_drain_timeout_are_range_checked(field: str, value: int) -> None:
-    with pytest.raises(ValidationError, match=field):
+def test_the_budget_and_the_drain_timeout_are_range_checked(field: str, value: object) -> None:
+    with pytest.raises(ValidationError, match=field) as exc_info:
         Settings.model_validate({field: value})
+    # that setting's own error and nothing on top: a term that failed is never summed
+    assert [e["loc"] for e in exc_info.value.errors()] == [(field,)]
 
 
 def test_the_declared_ranges_are_the_ones_that_can_validate() -> None:
@@ -247,9 +252,11 @@ async def test_the_supervisor_cuts_a_hung_stop_at_its_grace_plus_the_shared_slac
 
     loop = asyncio.get_running_loop()
     started = loop.time()
-    supervisor = Supervisor(SimpleNamespace(audit=_Hung()))  # type: ignore[arg-type]
+    supervisor = Supervisor(cast(AppContext, SimpleNamespace(audit=_Hung())))
     await supervisor._stop_each(["audit"], 0.05)
-    assert 0.15 <= loop.time() - started < 0.6  # the grace plus the patched slack, not 1 s
+    # The grace plus the patched slack. The ceiling is generous (0.8 s of scheduling slack) and
+    # still excludes a literal 1 s slack in `_stop_each`, which would end no earlier than 1.05 s.
+    assert 0.15 <= loop.time() - started < 0.95
 
 
 def test_the_two_uvicorn_ticks_the_budget_counts_are_still_in_uvicorn() -> None:
@@ -375,9 +382,18 @@ def test_the_guard_accepts_every_compose_spelling_of_a_matching_budget(
     assert stop_budget_problems(api, budget_s) == []
 
 
-def test_a_refused_setting_never_echoes_a_secret_input() -> None:
-    """C-12.6: the validator's error must not trail the env as `input_value=...`."""
+def test_a_refused_setting_never_echoes_a_secret_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-12.6: the key reaches the process as an environment string, and a refusal must carry it
+    in none of `str()`, `errors()` and `json()`. The check is a field validator on the drain
+    (#2728's precedent), so its error's input is that one value and not every setting; #2778
+    tracks the model validators that still echo them all."""
     probe = "NOT-A-REAL-KEY-ECHO-PROBE"
+    monkeypatch.setenv("CV_BYBIT_API_KEY", probe)
+    monkeypatch.setenv("CV_WS_SHUTDOWN_GRACE_MS", "60000")
     with pytest.raises(ValidationError) as err:
-        Settings(ws_shutdown_grace_ms=60_000, bybit_api_key=SecretStr(probe))
-    assert probe[:6] not in str(err.value) and "input_value" not in str(err.value)
+        Settings()
+    assert "CV_API_STOP_BUDGET_S" in str(err.value)  # the probed refusal is the budget check
+    for rendered in (str(err.value), repr(err.value.errors()), err.value.json()):
+        assert probe[:6] not in rendered
+    assert "input_value" not in str(err.value)
+    assert [e["input"] for e in err.value.errors()] == [5]  # the drain timeout, and nothing else

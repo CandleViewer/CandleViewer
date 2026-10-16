@@ -36,8 +36,8 @@ QUESTDB_PG_DEFAULT_PORT = 8812
 # #2565: timings of the planned shutdown that are code constants, not settings. They live in M1
 # because `Settings` checks them against the configured terms (`_refuse_unfittable_stop_budget` sums
 # them; the declared ranges of the drain and the budget are derived from them) and M1 may not import
-# `ws` or `app`. The code that spends them imports them from here, so the check and the shutdown
-# share one value.
+# `ws` (its import contract) or `app` (a cycle). The code that spends them imports them from here,
+# so the check and the shutdown share one value.
 #: The grace `Supervisor.stop_all` gives each module's `stop()`.
 TEARDOWN_BUDGET_S: Final = 15.0
 #: What `Supervisor._stop_each` adds to that grace before it cuts a module's stop off. One hung
@@ -58,7 +58,8 @@ SHUTDOWN_TICKS_S: Final = 0.2
 #: The shortest uvicorn drain `Settings` accepts: what one close can need after `WsRuntime.stop()`
 #: stopped waiting. A writer stalled on a peer that stopped reading frees its handler only when
 #: uvicorn's `connection.shutdown()` runs, after `stop()`'s flush wait. The handler then spends its
-#: own flush wait and then the audit write. The 0.1 s settle sleep before the drain is the margin.
+#: own flush wait and then the audit write. At the floor only the 0.1 s settle sleep before the
+#: drain is the margin (the 5 s default leaves 1.1 s).
 MIN_DRAIN_TIMEOUT_S: Final = math.ceil(CLOSE_FLUSH_TIMEOUT_S + CLOSE_AUDIT_TIMEOUT_S)
 #: The smallest stop budget `Settings` accepts: no grace, the shortest drain, one module cut at its
 #: hard bound, and the ticks.
@@ -341,8 +342,9 @@ class Settings(BaseSettings):
     # #2565: the api container's SIGTERM -> SIGKILL budget (`CV_API_STOP_BUDGET_S`; the compose
     # files set `stop_grace_period` to the same value) and the bound on uvicorn's drain of open
     # connections (`timeout_graceful_shutdown`). With the WS grace they are the terms
-    # `_refuse_unfittable_stop_budget` sums. The declared minimums are the smallest values that can
-    # ever validate (`MIN_STOP_BUDGET_S`, `MIN_DRAIN_TIMEOUT_S`).
+    # `_refuse_unfittable_stop_budget` sums; it is a field validator on the drain, so the drain is
+    # declared last. The declared minimums are the smallest values that can ever validate
+    # (`MIN_STOP_BUDGET_S`, `MIN_DRAIN_TIMEOUT_S`).
     api_stop_budget_s: int = Field(default=30, ge=MIN_STOP_BUDGET_S, le=120)
     uvicorn_drain_timeout_s: int = Field(default=5, ge=MIN_DRAIN_TIMEOUT_S, le=30)
     # E12 #2031: run the BarBuilderSet + BarWriter in the app (C-4.13: off by default; removal
@@ -523,7 +525,7 @@ class Settings(BaseSettings):
         `ws.connection.closed` row. Names and numbers only in the message."""
         try:
             seconds = int(value)  # an environment value arrives as a str
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):  # OverflowError: `int(float("inf"))`
             return value  # not a number: the field's own check refuses it
         if seconds < MIN_DRAIN_TIMEOUT_S:
             raise ValueError(
@@ -534,8 +536,9 @@ class Settings(BaseSettings):
             )
         return value
 
-    @model_validator(mode="after")
-    def _refuse_unfittable_stop_budget(self) -> Settings:
+    @field_validator("uvicorn_drain_timeout_s")
+    @classmethod
+    def _refuse_unfittable_stop_budget(cls, drain_s: int, info: ValidationInfo) -> int:
         """#2565: refuse a config whose planned shutdown cannot finish inside the container's stop
         budget. `candleviewer.server.PlannedShutdownServer` runs the WS grace, the close flush,
         uvicorn's drain and then the lifespan teardown one after another; a sum above
@@ -543,28 +546,39 @@ class Settings(BaseSettings):
         secrets zeroing never run. Only names and numbers go into the message, never a value that
         could be a secret.
 
+        A field validator on the last of the three terms, not a model one (#2728 did the same
+        for the test clock): a refusal's `errors()` and `json()` carry only this field's input,
+        never every setting, `CV_BYBIT_API_KEY` included (C-12.6). `info.data` holds the other two
+        terms; one whose own check failed is absent, and its error is the one to report.
+
         The sum is the worst case of ONE hung module: `Supervisor._stop_each` cuts a stop off at
         its grace plus `STOP_SLACK_S` (`TEARDOWN_STOP_CAP_S`), and the two fixed ticks of the exit
         path add `SHUTDOWN_TICKS_S`. Several modules that each hang to their own bound would still
-        outrun any budget, and the lifespan's own stops before `Supervisor.stop_all` (metrics,
-        health, the pools, the background tasks, the CSRF-audit drain) are outside it. A sum
-        exactly at the budget passes. Integer milliseconds, so a boundary is not a float error."""
-        grace_ms = self.ws_shutdown_grace_ms
+        outrun any budget, and the lifespan's own stops before `Supervisor.stop_all` are outside
+        it: most are short, but `BarsRuntime.stop` (up to 30 s with bars on) and the metrics
+        listener's unbounded drain can use the whole budget alone (#2878). A sum exactly at the
+        budget passes and leaves the other modules' normal stop time nothing, so the largest
+        grace is a limit, not a recommendation. Integer milliseconds, so a boundary is not a
+        float error."""
+        grace_ms = info.data.get("ws_shutdown_grace_ms")
+        budget_s = info.data.get("api_stop_budget_s")
+        if grace_ms is None or budget_s is None:
+            return drain_s  # that term's own check failed: its error is the one to report
         fixed_s = CLOSE_FLUSH_TIMEOUT_S + TEARDOWN_STOP_CAP_S + SHUTDOWN_TICKS_S
-        needed_ms = grace_ms + self.uvicorn_drain_timeout_s * 1000 + round(fixed_s * 1000)
-        if needed_ms > self.api_stop_budget_s * 1000:
+        needed_ms = grace_ms + drain_s * 1000 + round(fixed_s * 1000)
+        if needed_ms > budget_s * 1000:
             raise ValueError(
                 f"the planned shutdown needs {needed_ms / 1000:g} s but "
-                f"CV_API_STOP_BUDGET_S={self.api_stop_budget_s}: "
+                f"CV_API_STOP_BUDGET_S={budget_s}: "
                 f"CV_WS_SHUTDOWN_GRACE_MS={grace_ms} ({grace_ms / 1000:g} s) "
                 f"+ WS close flush CLOSE_FLUSH_TIMEOUT_S ({CLOSE_FLUSH_TIMEOUT_S:g} s) "
-                f"+ CV_UVICORN_DRAIN_TIMEOUT_S={self.uvicorn_drain_timeout_s} "
+                f"+ CV_UVICORN_DRAIN_TIMEOUT_S={drain_s} "
                 f"+ one module's hard stop bound TEARDOWN_BUDGET_S + STOP_SLACK_S "
                 f"({TEARDOWN_STOP_CAP_S:g} s) + SHUTDOWN_TICKS_S ({SHUTDOWN_TICKS_S:g} s). "
                 "Lower the grace or the drain timeout, or raise CV_API_STOP_BUDGET_S together "
                 "with the api service's stop_grace_period (infra/compose)"
             )
-        return self
+        return drain_s
 
     @field_validator("bind_host")
     @classmethod
