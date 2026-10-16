@@ -9,7 +9,10 @@ sending signed requests to an arbitrary host").
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
+from types import MappingProxyType
+from typing import Final
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -29,6 +32,16 @@ ALLOWED_REST_HOSTS: frozenset[str] = frozenset(
         "api.bytick.com",
         "api-demo.bybit.com",
         "api-testnet.bybit.com",
+    }
+)
+
+#: The signed REST host of each environment (`20-architecture.md` §7.1, US-ACCT-007, C-2.11). A
+#: key is signed for and sent to its own environment's host only; nothing falls back to another.
+SIGNED_REST_BASES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "live": "https://api.bybit.com",
+        "demo": "https://api-demo.bybit.com",
+        "testnet": "https://api-testnet.bybit.com",
     }
 )
 

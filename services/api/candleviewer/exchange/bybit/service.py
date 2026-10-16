@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from candleviewer.exchange.bybit.archive import (
     DEFAULT_ARCHIVE_BASE,
@@ -19,6 +20,12 @@ from candleviewer.exchange.bybit.archive import (
 from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.funding import BybitFundingFetcher
 from candleviewer.exchange.bybit.instruments import make_instruments_info_fetcher
+from candleviewer.exchange.bybit.key_info import refusal
+from candleviewer.exchange.bybit.key_verify import (
+    KeyVerificationCalls,
+    key_verification_calls,
+    verification_governor,
+)
 from candleviewer.exchange.bybit.klines import BybitKlineFetcher, TickSizeFor
 from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
 from candleviewer.exchange.bybit.public_ws import (
@@ -50,6 +57,7 @@ class ExchangeBybitService:
         #: M2 computes the request MAC (`credentials.sign(...)`) and returns the key id,
         #: never the secret (C-2.7, #2339). Never minted here.
         self._credentials = credentials
+        self._verify_governor = verification_governor()
 
     #: E08-T06: venue name for the `exchange` metric label (owned here, C-2.2).
     venue = "bybit"
@@ -115,6 +123,28 @@ class ExchangeBybitService:
         client (`MARKET_DATA` bucket) plus the closer for that client."""
         client = cls.public_rest_client(env)
         return BybitFundingFetcher(client), client.aclose
+
+    #: E27-T03: `(reason, code)` when a key-verification refusal is a verdict about the key.
+    key_refusal = staticmethod(refusal)
+
+    def key_verification_calls(
+        self,
+        env: str,
+        credential_id: UUID,
+        *,
+        uid: str,
+        recv_window_ms: int,
+        clock_offset_ms: Callable[[], int] | None = None,
+    ) -> KeyVerificationCalls:
+        """E27-T03: key info and the probe for one stored key, signed by M2 under `key_verify`
+        on `env`'s own host only (US-ACCT-007, C-2.11), on the shared verification budget,
+        stamped on the exchange's clock when `clock_offset_ms` gives the measured offset."""
+        if self._credentials is None:
+            raise RuntimeError("no signing capability is wired")
+        return key_verification_calls(
+            self._credentials, env, credential_id, uid=uid, recv_window_ms=recv_window_ms,
+            governor=self._verify_governor, clock_offset_ms=clock_offset_ms,
+        )  # fmt: skip
 
     async def start(self, ctx: AppContext) -> None:
         """Start the module. No-op until the owning epic implements it."""
