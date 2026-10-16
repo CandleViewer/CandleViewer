@@ -719,7 +719,7 @@ the 30-minute canary meanwhile.
 
 - **Description** — Introduced by E17-X01 (`docs/security/threat-models/E17-ws-gateway.md`, WS-S03, WS-D07, WS-D08). Also the E17 "R3 Real-time cost" tag of the ticket (an epic-internal tag, not the §1.2 `Risk` value). Pre-auth sockets are bounded only by the 10 s auth timeout until a global pre-auth cap lands, the ASGI server's WebSocket limits are not yet explicitly configured (#2176), and one authenticated user at the caps (8 sockets x 40 symbols of deep book and heatmap) costs real fan-out CPU that is not yet measured. Reachability is tailnet-only, so the actor is a device already on the tailnet.
 - **Mitigation** — Auth timeout/attempts, inbound rate limit and frame cap before auth (merged); global pre-auth cap and auth-await timeouts (#2155); explicit server WS limits (#2176, SR-191); outbound budget, throttles and coalescing (E17-T03); k6 profile (E17-Q03). Every limit is also a performance budget and is never relaxed in isolation (model §6).
-- **Trigger** — #2155 still open at the R1 gate; E17-Q03 shows fan-out add-on above budget #6 at the per-user caps; sustained `client_rate_limited` or `auth_timeout` closes outside tests.
+- **Trigger** — #2155 still open at the R1 gate; E17-Q03 shows fan-out add-on above budget #6 at the per-user caps; sustained `client_rate_limited` (inbound frame rate), `cv_ws_connect_rate_limited_total` (per-user connect rate) or `auth_timeout` closes outside tests.
 - **Contingency** — Lower per-user caps via config; restrict heatmap/deep-book families; Owner review of tailnet device list.
 
 ### RSK-064 · A WS subscription outlives the grant that authorised it (continuous authorisation)

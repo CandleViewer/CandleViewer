@@ -121,6 +121,7 @@ from candleviewer.ws.metrics import (
     cv_ws_auth_failures_total,
     cv_ws_clock_skew_ms,
     cv_ws_closes_total,
+    cv_ws_connect_rate_limited_total,
     cv_ws_connections_in_use,
     cv_ws_handshake_seconds,
 )
@@ -687,16 +688,20 @@ def make_ws_router(
         instead of `auth_ok`, so the socket never authenticates: `conn.user_id` and the session
         stay unset, no revocation hook is registered and `audit_close` writes no row, which is
         the point of the limit. The permission registration this `auth` made for the SR-189
-        re-check is undone by the handler's teardown, as for any closing socket. `close_with`
-        counts it in `cv_ws_closes_total`; the warning names the user for operators (no audit
-        row, no token)."""
-        _log().warning(
-            "ws connect rate limited",
-            connection_id=conn.connection_id,
-            user_id=str(user_id),
-            limit=gateway_hub.connect_rate.limit,
-            retry_after_ms=retry_after_ms,
-        )
+        re-check is undone by the handler's teardown, as for any closing socket. Every refusal
+        is counted in `cv_ws_connect_rate_limited_total` (and, as a close, in
+        `cv_ws_closes_total`). A user's first refusal in a window is logged as a warning that
+        names the user and the peer address, never the token; the rest are only counted."""
+        cv_ws_connect_rate_limited_total.inc()
+        if gateway_hub.connect_rate.first_refusal(user_id, conn.clock()):
+            _log().warning(
+                "ws connect rate limited",
+                connection_id=conn.connection_id,
+                user_id=str(user_id),
+                source_ip=_source_ip(conn.ws.scope),
+                limit=gateway_hub.connect_rate.limit,
+                retry_after_ms=retry_after_ms,
+            )
         bye = lifecycle_bye(
             "client_rate_limited",
             now_ms=conn.wall_ms(),
@@ -792,8 +797,9 @@ def make_ws_router(
             # Only a new socket's first SUCCESSFUL auth is counted (failures have their own 3
             # strikes, a re-auth is a token refresh), and only here: no await separates the count
             # from `auth_ok`, so concurrent sockets of one user cannot overshoot the limit. It
-            # precedes `enforce_cap`, so a refused socket never evicts a live one.
-            retry_after_ms = gateway_hub.admit_connect(user_id, now)
+            # precedes `enforce_cap`, so a refused socket never evicts a live one. The clock is
+            # read here, after the awaits above: `now` predates them and would age the stamp.
+            retry_after_ms = gateway_hub.admit_connect(user_id, conn.clock())
             if retry_after_ms is not None:
                 refuse_connect(conn, user_id, retry_after_ms)
                 return

@@ -359,7 +359,8 @@ class ConnectRateLimiter:
     `MIN_CONNECT_RETRY_AFTER_MS`. A stamp leaves the window once it is a full window old (the same
     exclusive edge as `InboundRateLimiter`). The caller offers only a new socket's first
     successful `auth`: a failed `auth` and an in-place re-`auth` never get here, and a refusal
-    leaves no trace, so a refused client cannot lengthen its own wait.
+    leaves no trace, so a refused client cannot lengthen its own wait. `first_refusal` tells the
+    caller whether to log a refusal: once per user per window, the rest are only counted.
 
     Bounded (C-2.18): a user holds at most `limit` timestamps, and users are kept in the order of
     their newest stamp, so each `admit` first drops, from the front, every user whose newest stamp
@@ -372,6 +373,7 @@ class ConnectRateLimiter:
             raise ValueError(f"limit must be at least 1, got {limit}")
         self._limit = limit
         self._stamps: OrderedDict[uuid.UUID, deque[float]] = OrderedDict()
+        self._logged: OrderedDict[uuid.UUID, float] = OrderedDict()  # user -> last logged refusal
 
     @property
     def limit(self) -> int:
@@ -396,6 +398,17 @@ class ConnectRateLimiter:
         stamps.append(now)
         self._stamps.move_to_end(user_id)
         return None
+
+    def first_refusal(self, user_id: uuid.UUID, now: float) -> bool:
+        """True for a user's first refusal in the last window: the caller logs that one and only
+        counts the rest, like `RefusalLogLimiter` for refused upgrades. Bounded (C-2.18): one entry
+        per user refused in the last window, in logging order, aged out from the front."""
+        while self._logged and now - next(iter(self._logged.values())) >= AUTH_RATE_WINDOW_S:
+            self._logged.popitem(last=False)
+        if user_id in self._logged:
+            return False
+        self._logged[user_id] = now
+        return True
 
     def _drop_idle(self, now: float) -> None:
         """Forget every user whose newest stamp has left the window (the front is the stalest)."""

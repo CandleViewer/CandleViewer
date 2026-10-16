@@ -238,8 +238,9 @@ The argument is that the window is **bounded and cheap**:
   decoding.
 - **Small, fixed allocation.** Before `auth_ok` a socket holds the connection object, one writer task, a
   bounded outbound queue and a rate-limiter deque capped at 301 timestamps. No subscription state, upstream
-  reference, bar lease or registry entry is created until `auth_ok`. This is not literally "nothing beyond the
-  socket", but it is constant-size per connection and independent of attacker input.
+  reference or bar lease is created until `auth_ok`, and a registry entry only after a successful `authenticate`
+  (SR-189; the teardown removes it). This is not literally "nothing beyond the socket", but it is
+  constant-size per connection and independent of attacker input.
 - **Not unique to an identity.** The 8-connections-per-user cap applies only after auth, because before auth
   there is no user. That is why a global pre-auth cap is needed.
 
@@ -352,7 +353,7 @@ read-only role; "O" is the Owner. Expected = frame/close code plus the named met
 | AC-12 | Stop reading the socket for 60 s while subscribed to the reference workspace                                                               | Memory stays within budget; ladder then 4429; audit + metric                                                                                            | D01             |
 | AC-13 | M1 subscribed to `positions` [A]; O withdraws A                                                                                            | `revoked` within 1 s naming A; no further A frame; audit `ws.subscription.revoked`                                                                      | E02, R02        |
 | AC-14 | Withdraw A while M1 is mid-`auth` on a new socket, and while M1 re-auths on a live socket (reconnect race)                                 | Final state reflects the withdrawal on every socket                                                                                                     | E02 (SR-E17-07) |
-| AC-15 | Open 9 sockets as M1                                                                                                                       | Oldest idle closed `too_many_connections`                                                                                                               | D07             |
+| AC-15 | Open 9 sockets as M1; then open 21 sockets inside a minute as one user (#2558)                                                             | Oldest idle closed `too_many_connections`; 21st: `bye client_rate_limited` + 4429, no `auth_ok`, no close row, `cv_ws_connect_rate_limited_total` +1    | D07             |
 | AC-16 | Open many sockets and never send `auth`                                                                                                    | Each closed at 10 s; after #2155, excess refused at the global pre-auth cap                                                                             | S03, D07        |
 | AC-17 | 6 client `resync` requests on one topic within a minute                                                                                    | `resync_rate_limited`, subscription revoked                                                                                                             | D03             |
 | AC-18 | Fuzz CVWB decoders (Python + TS) with header-only, wrong magic, unknown kind/flags, `record_count` near 2^32, truncated and trailing bytes | Typed decode error only; no allocation sized from the wire count before the length check                                                                | T01, D10        |
@@ -371,28 +372,29 @@ read-only role; "O" is the Owner. Expected = frame/close code plus the named met
 
 ## 8. Observability: threats that must be detectable
 
-Prevention is not enough; these must be visible as abuse, each with an audit action **and** a metric:
+Prevention is not enough; these must be visible as abuse, each with an audit action **and** a metric (or, where an audit row would be the attack's amplifier, a capped log line and a metric, with the reason in the row):
 
-| Signal                              | Audit action                         | Metric (no user-id label; per-identity in audit)   | Rows     | Status                                   |
-| ----------------------------------- | ------------------------------------ | -------------------------------------------------- | -------- | ---------------------------------------- |
-| Repeated `auth_failed` per identity | auth-failure `warning` (3rd failure) | `cv_ws_errors_total{code="auth_failed"}`           | S03, R03 | merged; per-source aggregation SR-E17-05 |
-| Slow-consumer closes per identity   | slow-consumer `warning` (epic AC)    | `cv_ws_overflow_total{reason}`                     | D01      | planned E17-T03/T06                      |
-| Resync-rate-limit revocations       | `ws.subscription.revoked`            | `ws_revoked_total{reason="resync_rate_limited"}`   | D03      | planned E17-S03                          |
-| Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                    | E01, I03 | merged                                   |
-| Revocation close failures           | —                                    | `ws_revocation_close_failures_total` (alerts)      | E02      | merged                                   |
-| Audit write failures on the WS path | —                                    | counter required (SR-E17-04)                       | R04      | requested E17-T06                        |
-| Refused WS upgrades (Origin check)  | `auth.ws_origin_refused` (#2269)     | `cv_ws_closes_total{reason="origin_forbidden"}`    | S06      | #2239; audit pending #2269               |
-| User connect/close churn (#2322)    | `ws.connection.closed` (#2486)       | `cv_ws_handshake_seconds_count`                    | D07      | merged (#2486); capped by #2558          |
-| Per-user connect-rate refusals      | none, by design (log line only)      | `cv_ws_closes_total{reason="client_rate_limited"}` | D07      | merged (#2558)                           |
+| Signal                              | Audit action                         | Metric (no user-id label; per-identity in audit) | Rows     | Status                                   |
+| ----------------------------------- | ------------------------------------ | ------------------------------------------------ | -------- | ---------------------------------------- |
+| Repeated `auth_failed` per identity | auth-failure `warning` (3rd failure) | `cv_ws_errors_total{code="auth_failed"}`         | S03, R03 | merged; per-source aggregation SR-E17-05 |
+| Slow-consumer closes per identity   | slow-consumer `warning` (epic AC)    | `cv_ws_overflow_total{reason}`                   | D01      | planned E17-T03/T06                      |
+| Resync-rate-limit revocations       | `ws.subscription.revoked`            | `ws_revoked_total{reason="resync_rate_limited"}` | D03      | planned E17-S03                          |
+| Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                  | E01, I03 | merged                                   |
+| Revocation close failures           | —                                    | `ws_revocation_close_failures_total` (alerts)    | E02      | merged                                   |
+| Audit write failures on the WS path | —                                    | counter required (SR-E17-04)                     | R04      | requested E17-T06                        |
+| Refused WS upgrades (Origin check)  | `auth.ws_origin_refused` (#2269)     | `cv_ws_closes_total{reason="origin_forbidden"}`  | S06      | #2239; audit pending #2269               |
+| User connect/close churn (#2322)    | `ws.connection.closed` (#2486)       | `cv_ws_handshake_seconds_count`                  | D07      | merged (#2486); capped by #2558          |
+| Per-user connect-rate refusals      | none, by design; capped log line     | `cv_ws_connect_rate_limited_total`               | D07      | merged (#2558)                           |
 
 The connect-rate limit (`CV_WS_MAX_AUTHS_PER_USER_PER_MIN`, 20 per user per sliding minute; `23-ws-protocol.md`
 §4.3) is the control behind the last two rows. A `ws.connection.closed` row needs a counted `auth` first, so
 connect/close churn adds at most that many rows per user per minute instead of one per loop iteration, and what
 remains is visible as that audit action's rate per identity (the metrics carry no user label). A refused
 connect writes **no** audit row on purpose: it never authenticates, and a row per refusal would bring back the
-growth the limit stops. Its per-identity record is the `ws connect rate limited` warning log line (user, limit
-and `retry_after_ms`, never the token). `cv_ws_closes_total{reason="client_rate_limited"}` is shared with the
-inbound frame limiter's `4429` close (D05), so the log line, not the metric, tells the two apart.
+growth the limit stops. Its per-identity record is the `ws connect rate limited` warning (user, peer address, limit
+and `retry_after_ms`, never the token), logged for a user's first refusal in a window; every refusal is counted in
+`cv_ws_connect_rate_limited_total`. `cv_ws_closes_total{reason="client_rate_limited"}` still ticks for each, and is
+shared with the inbound frame limiter's `4429` close (D05), so RSK-063's trigger reads the dedicated counter.
 
 ## 9. Control-to-ticket map
 
@@ -487,3 +489,4 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
 | 2026-10-16 | amendment author (agent)                          | Fable findings addressed at cef393ba: WS-D15 rated High, RR-08 recorded (owner sign-off pending), review rows and dates added                |
 | 2026-10-16 | author (agent; PR for #2735)                      | WS-R04 as built (#2735): a host-cancelled handler attempts its close row; the shutdown label is best effort in the window (§10)              |
 | 2026-10-16 | author (agent; PR for #2565)                      | WS-D17 added (#2565): the planned shutdown against the stop budget and uvicorn's drain; WS-R04 as built gains the drain floor (#2827)        |
+| 2026-10-16 | author (agent; PR for #2558)                      | WS-D07: per-user connect rate; §8 carve-out and its dedicated counter; AC-15 extended (§7, §8)                                               |

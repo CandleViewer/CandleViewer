@@ -1178,6 +1178,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_connect_rate_limited_total",
+        "counter",
+        "refusals",
+        (),
+        "Client WS sockets refused by the per-user connect rate (#2558, RSK-063).",
+        "sustained: a stolen token or a client with no backoff",
+        _L,
+        "E17",
+        exported=True,
+    ),
+    _s(
         "cv_ws_clock_skew_ms",
         "histogram",
         "ms",

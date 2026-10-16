@@ -33,7 +33,7 @@ from candleviewer.ws.lifecycle import (
     ConnectRateLimiter,
     bye_frame,
 )
-from candleviewer.ws.metrics import cv_ws_closes_total
+from candleviewer.ws.metrics import cv_ws_closes_total, cv_ws_connect_rate_limited_total
 from tests.unit.ws.test_app_wiring import ORIGIN, _Kill, _settings
 from tests.unit.ws.test_app_wiring import _authenticate as _wiring_authenticate
 from tests.unit.ws.test_lifecycle_contract import _validate
@@ -138,6 +138,15 @@ def test_limiter_never_holds_more_than_the_limit_per_user() -> None:
     assert len(limiter._stamps[A]) == 4
 
 
+def test_limiter_reports_a_users_first_refusal_once_per_window_and_ages_the_record_out() -> None:
+    limiter = ConnectRateLimiter(1)
+    assert limiter.first_refusal(A, 1.0) is True  # the first in the window: the caller logs it
+    assert limiter.first_refusal(A, 30.0) is False and limiter.first_refusal(B, 30.0) is True
+    assert limiter.first_refusal(A, 61.0) is True  # a full window after A's line: logged again
+    limiter.first_refusal(uuid.UUID(int=3), 200.0)
+    assert list(limiter._logged) == [uuid.UUID(int=3)]  # C-2.18: aged-out records are dropped
+
+
 @pytest.mark.parametrize("limit", [0, -1])
 def test_limiter_refuses_a_limit_below_one(limit: int) -> None:
     with pytest.raises(ValueError, match="limit"):
@@ -221,6 +230,11 @@ def _closes(reason: str) -> float:
             if sample.name == "cv_ws_closes_total" and sample.labels.get("reason") == reason:
                 return float(sample.value)
     return 0.0
+
+
+def _limited() -> float:
+    (family,) = cv_ws_connect_rate_limited_total.collect()
+    return next(s.value for s in family.samples if s.name == "cv_ws_connect_rate_limited_total")
 
 
 def _closed_rows(world: _World) -> list[dict[str, Any]]:
@@ -388,17 +402,50 @@ def test_a_refused_connect_never_evicts_a_live_socket() -> None:
         assert _recv(live)["t"] == "pong"  # not closed `too_many_connections`
 
 
-def test_the_refusal_is_logged_with_the_user_and_never_the_token() -> None:
+def test_a_users_first_refusal_in_a_window_is_logged_and_every_refusal_is_counted() -> None:
     w = _World(max_auths_per_min=1)
     with w.client:
-        _admit_one(w)
-        w.clock.now = 5.0
+        _admit_one(w)  # t=0 fills the window
+        counted = _limited()
         with capture_logs() as logs:
+            for t in (5.0, 6.0):  # two refusals in one window: one line, two counts
+                w.clock.now = t
+                _refused(w, "good-probe-7")
+            w.clock.now = 61.0
+            _admit_one(w)  # t=0 has left the window, t=61 fills it again
+            w.clock.now = 66.0  # a full window after the first line (t=5)
             _refused(w, "good-probe-7")
-    (entry,) = [e for e in logs if e["event"] == "ws connect rate limited"]
-    assert entry["user_id"] == str(USER) and entry["limit"] == 1
-    assert entry["retry_after_ms"] == 55_000 and entry["connection_id"].startswith("ws_")
-    assert "good-probe-7" not in repr(logs)
+        assert _limited() == counted + 3  # the metric counts every refusal, logged or not
+    lines = [e for e in logs if e["event"] == "ws connect rate limited"]
+    assert [e["retry_after_ms"] for e in lines] == [55_000, 55_000]
+    entry = lines[0]
+    assert entry["user_id"] == str(USER) and entry["limit"] == 1 and "source_ip" in entry
+    assert entry["connection_id"].startswith("ws_")
+    assert "good-probe-7" not in repr(logs)  # never the token
+
+
+def test_the_count_reads_the_clock_when_the_handshake_ends_not_when_it_began(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A handshake whose SR-189 re-check outlasts part of the window (a store read) is counted at
+    the reading taken when it ends. One from before the await would age its stamp early. The window
+    is shortened to 5 s so the stall stays inside the 10 s auth timeout."""
+    monkeypatch.setattr("candleviewer.ws.lifecycle.AUTH_RATE_WINDOW_S", 5.0)
+    w = _World(max_auths_per_min=1)
+    real, stalled = w.registry.recheck, [True]
+
+    async def recheck(authz: Any) -> None:
+        if stalled[0]:
+            w.clock.now += 6.0  # a re-check that outlasts the window
+        await real(authz)
+
+    monkeypatch.setattr(w.registry, "recheck", recheck)
+    with w.client:
+        _admit_one(w)  # begins at t=0, counted at t=6
+        stalled[0] = False
+        w.clock.now = 7.0  # 1 s after it was counted: inside the window
+        bye, code, _ = _refused(w)
+    assert (code, bye["p"]["retry_after_ms"]) == (4429, 4000)
 
 
 # -- wiring -----------------------------------------------------------------------------------
