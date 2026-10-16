@@ -73,7 +73,9 @@ jobs:
       - name: mypy --strict
         # #1964: explicit gate-module paths only; the research scripts under
         # docs/research/xstate/gate/issues/** stay out of the lint lane.
-        run: uv run mypy --strict candleviewer ../../docs/research/xstate/gate/_paths.py ../../docs/research/xstate/gate/run_gate.py ../../tools/statechart/nightly_gate.py
+        # #2893: cvdev is the dev-only sibling package (never packaged, never in an image); it is
+        # held to the same strict typing as the app it plugs into.
+        run: uv run mypy --strict candleviewer cvdev ../../docs/research/xstate/gate/_paths.py ../../docs/research/xstate/gate/run_gate.py ../../tools/statechart/nightly_gate.py
 
       # E35-T01 follow-up: the committed rule IR JSON Schema
       # (candleviewer/rules/ir/rule-ir.json) is generated from the pydantic
