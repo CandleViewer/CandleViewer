@@ -202,6 +202,7 @@ from candleviewer.storage.cold.scrub import ScrubTask
 from candleviewer.storage.cold.watermarks import FileWatermarkStore
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.questdb.wiring import QuestDbRowSink
+from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
 from candleviewer.storage.repositories.alert_deliveries_sqlalchemy import (
     SqlAlchemyAlertDeliveryRepository,
 )
@@ -512,6 +513,16 @@ def build_user_role_store(settings: Settings) -> SqlAlchemyUserRoleStore | None:
         owner_floor=lambda current, new, owners: assert_owner_floor(
             current_roles=current, new_roles=new, active_owner_count=owners
         ),
+    )
+
+
+def _build_accounts_counts(settings: Settings) -> SqlAlchemyAccountsStore | None:
+    """#2314: the M13 row-gauge source (aggregate counts, never a row); `None` on the fake
+    backend. No I/O at construction: the engine connects lazily."""
+    if settings.storage_backend != "real":
+        return None
+    return SqlAlchemyAccountsStore(
+        SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "accounts")
     )
 
 
@@ -1262,6 +1273,16 @@ def create_app(
     ctx.ingestion.attach_latency(
         StageRecorder(metrics_facade.get("ingest_stage_seconds"), resolved.telemetry_sample_n)
     )
+    # #2314: M13 row gauges (catalogue entries registered just above), refreshed by the
+    # supervisor-started `AccountsService`. Fake backend: no store, so the gauges stay unset.
+    accounts_counts = _build_accounts_counts(resolved)
+    if accounts_counts is not None:
+        ctx.accounts.attach_row_gauges(
+            accounts_counts,
+            metrics_facade.get("cv_accounts_rows"),
+            metrics_facade.get("cv_api_keys_rows"),
+            env=resolved.environment.value,
+        )
     app.include_router(
         make_telemetry_router(
             TelemetrySink(metrics_facade),

@@ -177,3 +177,12 @@ def test_lint_flags_unknown_recording_rule(tmp_path: Path) -> None:
 def test_dashboards_do_not_depend_on_recording_rules() -> None:
     for f in (G / "dashboards").glob("*.json"):
         assert "cv:" not in f.read_text("utf-8"), f.name
+
+
+def test_trading_board_shows_the_account_and_api_key_row_gauges() -> None:
+    """#2314 (E27-T01 DoD): both M13 row gauges are on a provisioned board, env-filtered."""
+    d = json.loads((G / "dashboards" / "trading.json").read_text("utf-8"))
+    exprs = [t["expr"] for p in d["panels"] for t in p.get("targets", [])]
+    for metric in ("cv_accounts_rows", "cv_api_keys_rows"):
+        assert any(metric in e and 'env="$env"' in e for e in exprs), metric
+        assert metric in lint.catalogue_names()
