@@ -9,7 +9,8 @@ Real sources on the real storage backend:
 - the storage snapshot, whenever `app.state.disk_budget` exists (the real backend, #2370):
   `DiskBudgetAdapter` maps the recorder's `DiskBudget` to the `StorageSnapshot` behind the overview
   `storage` tile and the capacity `storage` section. It serves the last sample and never measures,
-  fails closed once that sample is older than three sample intervals, takes growth from
+  fails closed once that sample or its byte breakdown is older than three sample intervals (or
+  the breakdown never succeeded), takes growth from
   `measured_growth()` (so "not measured yet" is `None`, never the `0` of `report()`), and takes the
   cap from the budget's `BudgetConfig`.
 
@@ -21,8 +22,8 @@ yet" in the contract), never a made-up figure:
   ingestion exports only cumulative counters and instantaneous gauges and keeps no rolling sample,
   so both would be invented (a counter since process start is not "the last hour"; the delta
   between two admin reads is not a per-second rate), and "queue depth" has three candidates (the
-  WS frame queue, the dispatch lanes, the write-behind buffers). No ticket owns an in-process
-  sampler yet; E16-T08's `recorder` topic (`ingest_rate_msgs_per_sec`) is the nearest;
+  WS frame queue, the dispatch lanes, the write-behind buffers). The in-process sampler is #2950;
+  E16-T08's `recorder` topic (`ingest_rate_msgs_per_sec`) is the nearest source today;
 - the per-UID rate-budget peak: the governor keeps no per-minute peak (E34-T02, #859);
 - the OMS kill switch, live flag and positions (E39-S03 #956, E44-T04 #1247, E29-T05 #848 and
   E29-T07 #915).
@@ -48,7 +49,7 @@ from candleviewer.admin.overview.ports import (
     UserCounts,
 )
 from candleviewer.admin.overview.service import AdminOverviewService
-from candleviewer.recorder.budget import DiskBudget
+from candleviewer.recorder.budget import RECORDED_TIERS, DiskBudget
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import SqlAlchemyAdminCounts
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -97,22 +98,23 @@ class SettingsTierReader:
 #: (`BudgetConfig.hole_us`: one series step plus three intervals), so a sample that old means at
 #: least two passes were missed. A live sampler replaces its report every interval plus a pass,
 #: and a pass is bounded by its own timeouts (about a minute at worst): two slow passes in a row
-#: still keep the age under three default intervals, so a healthy budget is shown.
+#: still keep the age under three default intervals, so a healthy budget is shown. That holds
+#: from an interval of about 15 s up; below it a slow but healthy pass can outlast the bound, and
+#: the slice then fails closed (`unavailable`), the safe side. The same bound applies to the
+#: breakdown's age, since `report()` keeps the last sizes while the breakdown fails.
 MAX_SAMPLE_AGE_INTERVALS: Final = 3
-#: The tiers the budget counts against its cap: QuestDB and Parquet, never Postgres
-#: (`24-internal-schemas.md` 13.4.1, "`used` = recorded bytes").
-_RECORDED_TIERS: Final = frozenset({"questdb", "parquet"})
 
 
 class DiskBudgetAdapter:
     """The admin `RecorderPort` over the recorder's `DiskBudget`: the storage snapshot only.
 
     A request reads the last sample and never measures (SCR-142). Fail closed (SR-096): no sample
-    yet is `None`, a sample older than `MAX_SAMPLE_AGE_INTERVALS` of the budget's own sample
-    interval, or one stamped in the future of the admin clock, raises `SourceUnavailable`, so a
-    stuck sampler never shows a stale headroom. Growth is the fit's (`measured_growth()`): `None`
-    until measured, never the `0` `report()` folds it into. The cap, the interval and the
-    retention come from the budget's own `BudgetConfig`.
+    yet is `None`; a breakdown that never succeeded (no recorded tier: not measured is never `0`
+    used), or a sample or breakdown older than `MAX_SAMPLE_AGE_INTERVALS` of the budget's own
+    sample interval, or stamped in the future of the admin clock, raises `SourceUnavailable`, so
+    a stuck sampler or a failing breakdown never shows a stale headroom. Growth is the fit's
+    (`measured_growth()`): `None` until measured, never the `0` `report()` folds it into. The
+    cap, the interval and the retention come from the budget's own `BudgetConfig`.
 
     Two fields are not known to the budget, so they are stated as what is safe, not measured:
     `recording` is `True` for every symbol with bytes on disk (the recorder service knows no set
@@ -138,13 +140,16 @@ class DiskBudgetAdapter:
         report = budget.report()
         if report is None:
             return None  # before the first sample; the services say "no disk sample yet"
-        config = budget.config
-        age_s = (self._now() - report.generated_at).total_seconds()
-        if not 0 <= age_s <= MAX_SAMPLE_AGE_INTERVALS * config.sample_interval_s:
-            raise SourceUnavailable("storage: disk sample is stale")
+        config, now = budget.config, self._now()
+        if not any(t.tier in RECORDED_TIERS for t in report.tiers):
+            raise SourceUnavailable("storage: no disk breakdown yet")  # never `0` used
+        bound_s = MAX_SAMPLE_AGE_INTERVALS * config.sample_interval_s
+        for at in (report.generated_at, budget.breakdown_fresh_at):  # the pass and its sizes
+            if not 0 <= (now - at).total_seconds() <= bound_s:
+                raise SourceUnavailable("storage: disk sample is stale")
         total, rates = budget.measured_growth()  # one synchronous step with `report()` above
         snapshot = StorageSnapshot(
-            used_bytes=sum(t.used_bytes for t in report.tiers if t.tier in _RECORDED_TIERS),
+            used_bytes=sum(t.used_bytes for t in report.tiers if t.tier in RECORDED_TIERS),
             free_bytes=report.disk_free_bytes,
             daily_growth_bytes=total,
             days_until_full=None,

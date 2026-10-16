@@ -57,6 +57,8 @@ _LADDER: Final = (DiskPressureLevel.WARN, DiskPressureLevel.AUTOSTOP, DiskPressu
 #: Suggested actions named by every ladder event: codes only, never host paths.
 SUGGESTED_ACTIONS: Final = "reduce_depth,shorten_retention,unpin"
 _RECORDED: Final[tuple[TierName, ...]] = ("questdb", "parquet")
+#: The tiers the cap is measured against, for readers of `report()` (never Postgres).
+RECORDED_TIERS: Final = frozenset(_RECORDED)
 _TIERS: Final[tuple[TierName, ...]] = ("questdb", "parquet", "postgres")
 _SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{2,20}USDT$")  # OpenAPI `Symbol`
 #: What the series store may raise when its volume or file is unavailable.
@@ -379,6 +381,13 @@ class DiskBudget:
         """The frozen config this budget runs with. Readers (the admin read model, E42-T01) take
         the cap, the sample interval and the retention from it, not from the settings."""
         return self._cfg
+
+    @property
+    def breakdown_fresh_at(self) -> datetime:
+        """When the tier and symbol sizes were last measured (construction until the first
+        breakdown). `report()` keeps the last sizes while the breakdown fails, so a reader that
+        must never show stale bytes checks this as well as the report's `generated_at`."""
+        return _utc(self._fresh_at)
 
     @property
     def level(self) -> DiskPressureLevel:

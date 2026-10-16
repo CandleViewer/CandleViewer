@@ -1,33 +1,38 @@
 """E42-T01: `DiskBudgetAdapter`, the admin `RecorderPort` over the recorder's `DiskBudget`.
 
 The storage snapshot is the budget's last sample, mapped and never measured per request. The
-adapter fails closed (no sample, or one older than three sample intervals, never yields a
-headroom), takes growth from `measured_growth()` so "not measured yet" stays `None` (never the
-`0` that `report()` folds it into), reads the cap from the budget's `BudgetConfig`, and says
-zero headroom is 0 days. The recorder status stays unwired. Budgets here are real `DiskBudget`s
-over a fake meter and clock (`_disk_fakes`), sampled by `sample_once()`."""
+adapter fails closed (no sample, a breakdown never measured, or a sample or breakdown older than
+three sample intervals, never yields a headroom), takes growth from `measured_growth()` so
+"not measured yet" stays `None` (never the `0` that `report()` folds it into), reads the cap from
+the budget's `BudgetConfig`, and says zero headroom is 0 days. The recorder status stays
+unwired. Budgets here are real `DiskBudget`s over a fake meter and clock (`_disk_fakes`), sampled
+by `sample_once()`."""
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 import pytest
 
 import candleviewer.admin_wiring as wiring
-import candleviewer.recorder.budget as budget_module
-from candleviewer.admin.overview.capacity import ESTIMATED_DAILY_GROWTH_BYTES, project
+from candleviewer.admin.overview.capacity import (
+    ESTIMATED_DAILY_GROWTH_BYTES,
+    CapacitySnapshot,
+    project,
+)
 from candleviewer.admin.overview.fanout import SourceUnavailable
 from candleviewer.admin.overview.metrics import export_overview_metrics
 from candleviewer.admin.overview.ports import StorageSnapshot, SymbolStorage
+from candleviewer.admin.overview.service import OverviewSnapshot
 from candleviewer.observability.metrics import CollectorRegistry
-from candleviewer.recorder.budget import BudgetConfig, DiskBudget
+from candleviewer.recorder.budget import US_PER_S, BudgetConfig, DiskBudget
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.admin_readmodel_sqlalchemy import AccountTotals, UserTotals
 from tests.unit.admin._disk_fakes import BTC, ETH, SIZE, clock, sampled, unsampled
-from tests.unit.recorder._budget_fakes import CAP, GB, TOTAL, FakeMeter, make_budget
+from tests.unit.recorder._budget_fakes import CAP, GB, NOW, TOTAL, FakeMeter, make_budget
 
 _STALE = "storage: disk sample is stale"
+_NO_BREAKDOWN = "storage: no disk breakdown yet"
 
 
 async def _snapshot(budget: DiskBudget, age_s: float = 0.0) -> StorageSnapshot:
@@ -85,16 +90,36 @@ async def test_a_sampler_that_keeps_failing_leaves_a_report_that_ages_out() -> N
     meter.fail = True  # statvfs fails: every later pass raises and the last report stays
     with pytest.raises(OSError):
         await budget.sample_once()
-    assert await _snapshot(budget, 180.0)  # three intervals on, it is still the last sample
+    await _snapshot(budget, 180.0)  # three intervals on, it is still the last sample
     with pytest.raises(SourceUnavailable):
         await _snapshot(budget, 181.0)  # past them, its headroom is no longer shown
 
 
 async def test_the_staleness_bound_is_the_budgets_own_interval_not_a_constant() -> None:
     budget = await sampled(config=BudgetConfig(cap_bytes=CAP, sample_interval_s=1.0))
-    assert await _snapshot(budget, 3.0)  # three intervals of 1 s
+    await _snapshot(budget, 3.0)  # three intervals of 1 s
     with pytest.raises(SourceUnavailable):
         await _snapshot(budget, 3.5)  # a fixed 180 s bound (three default intervals) would show it
+
+
+async def test_a_breakdown_that_never_succeeded_fails_closed_never_zero_bytes_used() -> None:
+    budget, _, _ = make_budget(FakeMeter(used=450 * GB, symbols={BTC: GB}, breakdown_fail=True))
+    await budget.sample_once()  # free space is sampled, the sizes never were: tiers stay empty
+    with pytest.raises(SourceUnavailable) as refused:
+        await _snapshot(budget)
+    assert refused.value.detail == _NO_BREAKDOWN
+
+
+async def test_a_breakdown_failing_after_a_success_ages_out_like_the_sample() -> None:
+    at, meter = [NOW], FakeMeter(used=450 * GB, symbols={BTC: 450 * GB})
+    budget, _, _ = make_budget(meter, clock=lambda: at[0])
+    await budget.sample_once()
+    meter.breakdown_fail, at[0] = True, NOW + 180 * US_PER_S
+    await budget.sample_once()  # a fresh pass over sizes three intervals old: still shown
+    assert (await _snapshot(budget, 180.0)).used_bytes == 450 * GB
+    with pytest.raises(SourceUnavailable) as refused:  # past them, the old bytes are not shown
+        await _snapshot(budget, 180.5)
+    assert refused.value.detail == _STALE
 
 
 # -- growth: measured, or None -----------------------------------------------------------------
@@ -133,10 +158,6 @@ async def test_a_pinned_symbol_is_kept_forever_the_others_for_the_budgets_retent
     )
 
 
-def test_the_recorded_tiers_are_the_ones_the_budget_counts_against_its_cap() -> None:
-    assert wiring._RECORDED_TIERS == frozenset(budget_module._RECORDED)
-
-
 async def test_the_cap_is_the_budgets_config_never_the_volume() -> None:
     snap = await _snapshot(await sampled(config=BudgetConfig(cap_bytes=123 * GB)))
     assert snap.cap_bytes == 123 * GB != TOTAL
@@ -159,12 +180,15 @@ async def test_zero_headroom_is_zero_days_even_with_no_growth_measured(
 # -- days until full follows the capacity projection ----------------------------------------------
 
 
-async def test_days_until_full_is_the_capacity_projections_when_growth_is_measured() -> None:
-    budget = await sampled(measured=True, pinned=frozenset({BTC}))  # pinned: unbounded growth
-    snap = await _snapshot(budget)
+@pytest.mark.parametrize("free_gb", [500, 333], ids=["whole-days", "fractional-days"])
+async def test_days_until_full_is_the_capacity_projections_when_growth_is_measured(
+    free_gb: int,
+) -> None:
+    budget = await sampled(measured=True, pinned=frozenset({BTC}), free=free_gb * GB)
+    snap = await _snapshot(budget)  # pinned: unbounded growth
     _, rates = budget.measured_growth()
     days = round(snap.headroom_bytes / rates[BTC], 2)
-    assert snap.headroom_bytes == TOTAL // 2 and 49.9 < days < 50.1
+    assert snap.headroom_bytes == free_gb * GB and abs(days - free_gb / 10) < 0.1
     assert snap.days_until_full == days == project(snap).days_until_full
 
 
@@ -199,7 +223,9 @@ async def test_the_recorder_status_is_not_served_it_stays_unwired() -> None:
 # -- composition-root wiring --------------------------------------------------------------------
 
 
-async def _read_models(budget: DiskBudget | None, age_s: float = 0.0) -> tuple[Any, Any]:
+async def _read_models(
+    budget: DiskBudget | None, age_s: float = 0.0
+) -> tuple[OverviewSnapshot, CapacitySnapshot]:
     overview, capacity = wiring.build_admin_read_models(
         Settings(storage_backend="fake"), now=clock(age_s), disk_budget=budget
     )
@@ -223,6 +249,14 @@ async def test_a_sampled_disk_budget_serves_both_storage_slices_and_nothing_else
     }
     assert {k: v.status for k, v in unwired.items()} == dict.fromkeys(unwired, "unavailable")
     assert overview.recorder.detail == "recorder: no provider wired"
+
+
+async def test_a_breakdown_never_measured_leaves_both_storage_slices_unavailable() -> None:
+    budget, _, _ = make_budget(FakeMeter(used=450 * GB, breakdown_fail=True))
+    await budget.sample_once()
+    overview, capacity = await _read_models(budget)
+    for part in (overview.storage, capacity.storage):
+        assert (part.status, part.detail, part.value) == ("unavailable", _NO_BREAKDOWN, None)
 
 
 class _Counts:
