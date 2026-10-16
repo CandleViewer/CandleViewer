@@ -17,6 +17,7 @@ from structlog.testing import capture_logs
 from candleviewer.admin.flags import (
     MAINTENANCE_MODE,
     FlagService,
+    FlagValue,
     FlagWriter,
     StoredFlag,
     default_registry,
@@ -24,7 +25,7 @@ from candleviewer.admin.flags import (
 from candleviewer.admin.flags.metrics import flag_push_latency_seconds
 from candleviewer.admin.flags.push import FlagPush, Session
 from candleviewer.audit.access import AuditPrincipal
-from tests.unit.admin.flag_fakes import T0, Clock, FakeAudit, FakeFlagStore, FakeStepUp
+from tests.unit.admin.flag_fakes import T0, Clock, FakeAudit, FakeFlagStore, FakeStepUp, FakeUsers
 
 _OWNER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001")
 _MANAGER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002")
@@ -104,7 +105,7 @@ async def test_a_manager_and_a_viewer_never_learn_an_owner_only_key(key: str) ->
     ],
 )
 async def test_only_a_real_stored_maintenance_transition_notifies_every_session(
-    was: object, now: bool, notices: list[tuple[str, str]]
+    was: FlagValue, now: bool, notices: list[tuple[str, str]]
 ) -> None:
     _, push, store, sessions = await _rig()
     before = replace(store.rows[MAINTENANCE_MODE], value=was)
@@ -151,7 +152,9 @@ async def test_the_push_is_timed() -> None:
 @pytest.mark.perf
 async def test_a_write_reaches_all_three_sessions_within_2_s() -> None:
     service, push, store, sessions = await _rig()
-    writer = FlagWriter(service, FakeAudit(), FakeStepUp(), on_change=push.flag_changed)
+    writer = FlagWriter(
+        service, FakeAudit(), FakeStepUp(), FakeUsers(), on_change=push.flag_changed
+    )
     start = time.monotonic()
     await writer.set(
         "rules.graph_editor",

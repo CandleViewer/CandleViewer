@@ -21,6 +21,7 @@ from candleviewer.admin.flags import (
     MAINTENANCE_KEEP_RECORDER,
     MAINTENANCE_MODE,
     FlagService,
+    FlagValue,
     FlagWriter,
     MaintenanceController,
     MaintenanceGate,
@@ -33,7 +34,7 @@ from candleviewer.admin.flags.metrics import EXPORTED_NAMES, maintenance_mode_ga
 from candleviewer.admin.flags.push import FlagPush, Session
 from candleviewer.api.order_entry_gate import order_entry_refusal
 from candleviewer.audit.access import AuditPrincipal
-from tests.unit.admin.flag_fakes import Clock, FakeAudit, FakeFlagStore, FakeStepUp
+from tests.unit.admin.flag_fakes import Clock, FakeAudit, FakeFlagStore, FakeStepUp, FakeUsers
 
 _OWNER = AuditPrincipal(user_id=UUID(int=1), username="owner", permissions=frozenset({"*"}))
 
@@ -90,7 +91,9 @@ class _Rig:
         hook = chain_hooks(
             self.controller.gate_hook, push.flag_changed, self.controller.effects_hook
         )
-        self.writer = FlagWriter(self.service, FakeAudit(), FakeStepUp(), on_change=hook)
+        self.writer = FlagWriter(
+            self.service, FakeAudit(), FakeStepUp(), FakeUsers(), on_change=hook
+        )
         self.stop_after = 1
 
     async def _sleep(self, seconds: float) -> None:
@@ -113,7 +116,7 @@ class _Rig:
             expected_updated_at=self.store.rows[key].updated_at,
         )
 
-    def db(self, key: str, value: object) -> None:
+    def db(self, key: str, value: FlagValue) -> None:
         self.store.rows[key] = replace(self.store.rows[key], value=value)
 
 
