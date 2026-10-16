@@ -151,6 +151,17 @@ offset in `CV_TEST_CLOCK_FILE`, which the helper rewrites; there is no HTTP rout
 refused unless `CV_ENVIRONMENT=testnet` with no exchange key, so staging (demo) never has it (#2086).
 No case in this plan waits on wall-clock time.
 
+- **Where they run.** The cases that need the server clock (A08 once automated, A10, C02, C03, C04
+  and the server half of C06) run only on the seeded e2e stack (#2490), never on staging. The SPA
+  halves of C04-C06 already run in `stepup.spec.ts`, which moves the browser clock (`page.clock`)
+  over a stubbed API (`e09-q02-automation-status.md`).
+- **Time keeps flowing.** `freeze_at(t)` sets the offset to `t` minus now. The server clock does not
+  stop, so it keeps advancing after the call: assert each expiry with a margin past the limit, as C02,
+  C03 and C06 do (1 min), never at the exact boundary.
+- **Own database.** The test-clock stack owns its Postgres database and QuestDB namespace and never
+  shares them with a demo or live process (C-2.11): rows written under a far-future offset (sessions,
+  lockouts, invites) would outlive the run (#2728).
+
 ---
 
 ## 7. Traceability table (US-ONB-001..010 × cases × automation)

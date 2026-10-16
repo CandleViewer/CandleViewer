@@ -17,13 +17,14 @@ accident.
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _QUESTDB_DEV_PASSWORD = "quest"  # noqa: S105 - the QuestDB OSS default, refused on live
@@ -102,6 +103,21 @@ def is_serialised_origin(entry: str) -> bool:
     return entry == f"{parts.scheme}://{netloc}" + ("" if port is None else f":{port}")
 
 
+def _keyless_testnet_refusal(
+    environment: Environment | None,
+    bybit_api_key: SecretStr | None,
+    bybit_api_secret: SecretStr | None,
+) -> str | None:
+    """#2086 Q1: why `CV_TEST_CLOCK` may not be on, or None on testnet with no exchange key
+    (`CV_BYBIT_API_KEY` and `CV_BYBIT_API_SECRET` both unset). The message names the switch and
+    the rule only."""
+    if environment is not Environment.TESTNET:
+        return "CV_TEST_CLOCK is refused unless CV_ENVIRONMENT=testnet"
+    if bybit_api_key is not None or bybit_api_secret is not None:
+        return "CV_TEST_CLOCK is refused while an exchange key (CV_BYBIT_API_*) is configured"
+    return None
+
+
 class Settings(BaseSettings):
     """Root application settings, populated from the environment only.
 
@@ -116,7 +132,10 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="forbid",
         frozen=True,
-        # #2086: a refused setting never echoes the raw input (it holds CV_BYBIT_API_KEY when set).
+        # #2086: hides the input from a refusal's message (`str()`) only. `errors()` and `json()`
+        # still carry it, and a model validator's input is every setting, CV_BYBIT_API_KEY
+        # included, so the test-clock gate is a field validator (#2728). The other model
+        # validators still echo every setting there; #2778 tracks that.
         hide_input_in_errors=True,
     )
 
@@ -205,9 +224,11 @@ class Settings(BaseSettings):
     auth_csrf_previous_key_hex: SecretStr | None = None
     # #2086: server test clock for the seeded e2e stack (`candleviewer.auth.testnet_clock`).
     # Auth time = UTC + the offset in `CV_TEST_CLOCK_FILE`. Both are set together, and only on
-    # testnet with no exchange key; anything else refuses startup (E16-FR-11).
+    # testnet with no exchange key; anything else refuses startup (E16-FR-11). #2728: the file
+    # path is absolute, without `..`, and no component of it is a symlink.
     test_clock: bool = False
-    test_clock_file: str | None = None
+    # Explicit validate_default: the gate must also run on the default (CV_TEST_CLOCK alone).
+    test_clock_file: str | None = Field(default=None, validate_default=True)
 
     # E03-T10: bounds `pg_advisory_lock` acquisition in the boot-time
     # migration runner (`candleviewer.migrations.boot`). A deadlocked
@@ -413,24 +434,43 @@ class Settings(BaseSettings):
 
     def test_clock_refusal(self) -> str | None:
         """#2086: why the server test clock may not run here, or None on a keyless testnet."""
-        if self.environment is not Environment.TESTNET:
-            return "CV_TEST_CLOCK is refused unless CV_ENVIRONMENT=testnet"
-        if self.bybit_api_key is not None or self.bybit_api_secret is not None:
-            return "CV_TEST_CLOCK is refused while an exchange key (CV_BYBIT_API_*) is configured"
-        return None
+        return _keyless_testnet_refusal(self.environment, self.bybit_api_key, self.bybit_api_secret)
 
-    @model_validator(mode="after")
-    def _refuse_test_clock_outside_keyless_testnet(self) -> Settings:
+    @field_validator("test_clock_file")
+    @classmethod
+    def _refuse_test_clock_outside_keyless_testnet(
+        cls, value: str | None, info: ValidationInfo
+    ) -> str | None:
         """#2086 Q1 (E16-FR-11, E49 T-E1): the test clock moves auth time, so live, demo or a
-        configured exchange key refuses startup before any module starts."""
-        if not self.test_clock and not self.test_clock_file:
-            return self
-        refusal = self.test_clock_refusal()
+        configured exchange key refuses startup before any module starts. #2728: the file path
+        is absolute, without `..`, and neither it nor a directory above it is a symlink.
+
+        A field validator, not a model one (#2728): a refusal's `errors()` and `json()` carry
+        only this field's input, never another setting such as `CV_BYBIT_API_KEY` (C-12.6). It
+        also runs on the default, so `CV_TEST_CLOCK` alone is refused; `info.data` holds the
+        fields declared above."""
+        enabled = info.data.get("test_clock", False)
+        if not enabled and not value:
+            return value
+        refusal = _keyless_testnet_refusal(
+            info.data.get("environment"),
+            info.data.get("bybit_api_key"),
+            info.data.get("bybit_api_secret"),
+        )
         if refusal is not None:
             raise ValueError(refusal)
-        if not (self.test_clock and self.test_clock_file):
+        if not (enabled and value):
             raise ValueError("CV_TEST_CLOCK and CV_TEST_CLOCK_FILE must be set together")
-        return self
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValueError("CV_TEST_CLOCK_FILE must be an absolute path")
+        if ".." in path.parts:
+            raise ValueError("CV_TEST_CLOCK_FILE must not contain '..'")
+        if path.is_symlink():
+            raise ValueError("CV_TEST_CLOCK_FILE must not be a symlink")
+        if os.path.realpath(path) != str(path):
+            raise ValueError("CV_TEST_CLOCK_FILE must not be under a symlinked directory")
+        return value
 
     @field_validator("bind_host")
     @classmethod

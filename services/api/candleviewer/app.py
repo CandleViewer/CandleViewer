@@ -100,7 +100,7 @@ from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, access_token_expires_at
-from candleviewer.auth.testnet_clock import build_test_clock
+from candleviewer.auth.testnet_clock import audit_test_clock_enabled, build_test_clock
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import export_bars_metrics
 from candleviewer.bars.reader import BarReader, tape_time_bar_reader
@@ -886,6 +886,13 @@ class _RuleCompileTelemetry:
         structlog.get_logger("candleviewer.rules").error(
             "rule_roundtrip_divergence", editor=editor, diffs=n_diffs, severity="high"
         )
+
+
+async def audit_test_clock_boot(ctx: AppContext) -> None:
+    """#2728: the lifespan writes the test clock's boot audit record before the app serves. The
+    fake backend has no audit store, so there the boot warning is the only record."""
+    if ctx.settings.test_clock and ctx.audit.is_active:
+        await audit_test_clock_enabled(ctx.settings, _LazyAuditEmitter(ctx.audit))
 
 
 def create_app(

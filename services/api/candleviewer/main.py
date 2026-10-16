@@ -21,7 +21,7 @@ from typing import Any
 import structlog
 from fastapi import FastAPI
 
-from candleviewer.app import AppContext, Supervisor, create_app
+from candleviewer.app import AppContext, Supervisor, audit_test_clock_boot, create_app
 from candleviewer.observability.logging import configure_logging
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_server import MetricsRuntime
@@ -49,6 +49,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ctx: AppContext = app.state.app_context
     supervisor = Supervisor(ctx)
     await supervisor.start_all()
+    try:
+        await audit_test_clock_boot(ctx)  # #2728: before serving; a failed write fails boot
+    except BaseException:
+        await supervisor.stop_all(1.0)  # as `start_all` does: never leave modules running
+        raise
 
     # Boot self-check (AC1 "safe binding passes", AC3 "public binding
     # degrades"): run once, synchronously, before serving so `net_binding_safe`

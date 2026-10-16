@@ -111,7 +111,7 @@ class _SelfCheck(_Task):
 def _app(stops: _Stops) -> FastAPI:
     app = FastAPI()
     app.state.app_context = SimpleNamespace(
-        settings=SimpleNamespace(metrics_enabled=False),
+        settings=SimpleNamespace(metrics_enabled=False, test_clock=False),
         mesh_self_check=_SelfCheck("mesh_self_check", stops),
         oms_read_only_gate=SimpleNamespace(is_read_only=False, reason_code=None, reason_text=None),
         **{name: _Module(name, stops) for name in _MODULES},

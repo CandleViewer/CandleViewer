@@ -167,6 +167,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "security.credential_store_failed",
         # #2339 security review: closes a write-ahead `credential_borrowed` when signing fails.
         "security.credential_sign_failed",
+        # #2728 (E16 R-E3 "config audit"): the keyless-testnet test clock is on at boot
+        # (system actor `system:test-clock`, `auth/testnet_clock.py`).
+        "system.config.test_clock_enabled",
     }
 )
 
