@@ -279,12 +279,6 @@ async def test_a_failing_push_never_undoes_a_committed_write() -> None:
     assert logs[-1]["event"] == "feature_flag_push_failed"
 
 
-async def test_a_writer_without_a_push_hook_still_commits() -> None:
-    writer, store, _ = await _writer(None)
-    await _set(writer, "rules.form_editor", False)
-    assert store.rows["rules.form_editor"].value is False
-
-
 async def test_omitted_overrides_are_kept_and_an_empty_list_clears_them() -> None:
     writer, store, _ = await _writer(_Hook())
     key = "rules.form_editor"
@@ -317,9 +311,7 @@ async def test_a_failed_maintenance_record_never_blocks_the_gate_hook() -> None:
 @pytest.mark.parametrize(
     ("key", "stored", "value", "expected"),
     [
-        (MAINTENANCE_MODE, True, False, "killswitch"),  # a release
-        (MAINTENANCE_MODE, "on", False, "killswitch"),  # an unreadable row counts as engaged
-        ("killswitch.ingestion", 0, False, "killswitch"),  # whatever its fail-closed value
+        ("killswitch.ingestion", 0, False, "killswitch"),  # unreadable counts as engaged
         (MAINTENANCE_MODE, False, True, "flags"),  # engaging: the console is not the emergency stop
         (MAINTENANCE_MODE, True, True, "flags"),
         (LIVE_ENABLED, False, True, "live_enablement"),
@@ -335,17 +327,20 @@ def test_one_step_up_class_from_the_key_and_the_row_as_stored(
     assert step_up_class(spec, StoredFlag(stored), value) == expected  # type: ignore[arg-type]
 
 
-async def test_each_write_demands_one_elevation_and_a_refused_one_records_nothing() -> None:
+async def test_validation_then_one_elevation_per_write_and_a_refused_one_records_nothing() -> None:
     step_up = FakeStepUp(missing=frozenset({"killswitch"}))
     writer, store, audit = await _writer(_Hook(), step_up=step_up)
     store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
-    with pytest.raises(NoStepUp):
+    with pytest.raises(FlagValidationError):  # validation precedes the gate; its 422 is audited
+        await _set(writer, MAINTENANCE_MODE, False, reason=" ")
+    with pytest.raises(NoStepUp):  # a release refused at the gate records nothing
         await _set(writer, MAINTENANCE_MODE, False)
-    assert (step_up.demanded, store.writes, audit.records) == (["killswitch"], [], [])
-    with pytest.raises(UnknownFlagError):
+    assert (step_up.demanded, store.writes) == (["killswitch"], [])
+    assert [r["reason"] for _, r in audit.records] == ["required"]
+    with pytest.raises(UnknownFlagError):  # a 404 comes before the gate
         await _set(writer, "ui.nonexistent", True)
     await _set(writer, "rules.form_editor", False)
-    assert step_up.demanded == ["killswitch", "flags", "flags"] and len(audit.records) == 3
+    assert step_up.demanded == ["killswitch", "flags"] and len(audit.records) == 4
 
 
 async def test_a_release_is_judged_on_the_locked_row_not_a_cached_or_earlier_read() -> None:
@@ -370,8 +365,12 @@ async def test_a_release_is_judged_on_the_locked_row_not_a_cached_or_earlier_rea
         ("https:///issues/412", "https_required"),
         ("https://github.com/a b", "https_required"),
         ("https://[::1/issues", "https_required"),
-        ("https://user:secret@github.com/x", "userinfo_not_allowed"),
-        ("https://user@github.com/x", "userinfo_not_allowed"),
+        ("https://user:secret@github.com/x", "credential_in_url"),
+        ("https://user@github.com/x", "credential_in_url"),
+        ("https://github.com/x?tab=1&access_token=secret", "credential_in_url"),
+        ("https://bucket.s3.amazonaws.com/pt.pdf?X-Amz-Signature=secret", "credential_in_url"),
+        ("https://acct.blob.core.windows.net/c/pt.pdf?sv=1&sig=secret", "credential_in_url"),
+        ("https://github.com/x#token=secret", "credential_in_url"),
         ("https://github.com/" + "a" * 2030, "string_too_long"),
     ],
 )
@@ -383,11 +382,11 @@ async def test_evidence_is_an_https_url_without_userinfo_of_at_most_2048_chars(
         await _set(writer, LIVE_ENABLED, True, evidence_url=url)
     assert (exc.value.rule, exc.value.field) == (rule, "evidence_url") and store.writes == []
     ((_, record),) = audit.records
-    assert record["reason"] == rule and "secret" not in str(record)
+    assert record["reason"] == rule and ("secret" in str(record)) is False
 
 
-async def test_evidence_of_exactly_2048_chars_is_recorded() -> None:
-    writer, store, audit = await _writer(_Hook())
+async def test_evidence_of_exactly_2048_chars_is_recorded_without_a_push_hook() -> None:
+    writer, store, audit = await _writer()
     url = "https://github.com/" + "a" * 2029  # 2048 characters
     await _set(writer, LIVE_ENABLED, True, evidence_url=url)
     assert store.rows[LIVE_ENABLED].value is True
@@ -406,4 +405,5 @@ async def test_a_valid_write_repairs_an_unreadable_row(
     store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=1)  # 1 == True
     await _set(writer, MAINTENANCE_MODE, value)  # its updated_at (T0) is still the precondition
     assert store.rows[MAINTENANCE_MODE].value is value and step_up.demanded == [elevation]
+    assert audit.records[0][1]["before_state"] == {"unreadable": True}  # never the raw value
     assert [a for a, _ in audit.records if a.startswith("maintenance.")] == toggles

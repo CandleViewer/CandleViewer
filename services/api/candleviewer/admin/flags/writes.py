@@ -1,28 +1,29 @@
 """Feature-flag service, write path (E42-T03, module M21).
 
-A write locks the flag's row and decides from the row as stored under that lock, never from a
-cached or resolved value (D3b). It demands exactly one step-up elevation, `step_up_class` (an
-unreadable row counts as engaged; this console is never the emergency control), then validates:
-`reason` and `expected_updated_at` are required, values fit the kind, safety flags take no
-overrides (D2a), and an `evidence_url` is an `https` URL without userinfo of at most 2048
-characters, never dereferenced, that enabling `trading.live_enabled` requires. The store then
-compares `updated_at`: a stale write is a conflict carrying the row as it stands now.
+Request validation precedes the step-up gate; the gate, the `expected_updated_at` precondition and
+the write then run under the flag's row lock, from the row as stored there, never a cached value
+(D3b). Validation: `reason` and `expected_updated_at` are required, values fit the kind, safety
+flags take no overrides (D2a), and `evidence_url` is an `https` URL of at most 2048 characters
+with no credential (userinfo, a query token), never dereferenced, required to enable
+`trading.live_enabled`. The gate is one elevation from `step_up_class`; an unreadable row counts as
+engaged, and this console is never the emergency control. A stale write is a conflict.
 
-Audit (C-2.9): every attempt past RBAC and step-up is one `flags.change` failure record, or a
-write-ahead intent record (if it cannot be recorded, nothing is written) and its outcome. A store
-outage (`503 store_unavailable`) is logged and counted instead, as the audit shares the store
-(SR-125). A real transition of the stored `maintenance.mode` adds `maintenance.enabled|disabled`
-(D1c). A committed write drops the cache and runs the change hook with the locked and committed
-rows; a hook failure is logged and never undoes the write.
+Audit (C-2.9): every attempt past authentication and RBAC is a `flags.change` failure record (the
+422s included), or a write-ahead intent (unrecorded, nothing is written) and its outcome; the auth
+module audits a step-up challenge. A store outage (`503 store_unavailable`) is logged and counted
+instead (SR-125). An unreadable row is recorded as `unreadable`. A real transition of the stored
+`maintenance.mode` adds `maintenance.enabled|disabled` (D1c). A committed write drops the cache and
+runs the change hook with the locked and committed rows; a hook failure never undoes the write.
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Final, Literal, Protocol, cast
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 import structlog
 
@@ -35,6 +36,7 @@ from candleviewer.admin.flags.service import FlagService
 from candleviewer.admin.flags.store import FlagWrite, StaleWriteError, StoreUnavailableError
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, ExchangeEnv, Severity
+from candleviewer.audit.redact import REDACTION_MARKER, redact
 
 #: Change hook: `(key, before, after)` with the locked and the committed rows (the `system` push).
 ChangeHook = Callable[[str, StoredFlag | None, StoredFlag], Awaitable[None]]
@@ -146,24 +148,23 @@ class FlagWriter:
             "reason": reason,
             "evidence_url": _audited_url(evidence_url),
         }
-        audit = _Audit(self._audit, key, principal, request)
         spec = self._service.registry.get(key)
+        audit = _Audit(self._audit, key, principal, request, spec)
         if spec is None:
-            await self._step_up(principal, "flags")
             await audit.refused(None, "not_found", counted=False)
             raise UnknownFlagError(key)
         locked: list[StoredFlag] = []
 
         async def prepare(row: StoredFlag) -> FlagWrite:
             locked.append(row)
-            await self._step_up(principal, step_up_class(spec, row, value))
             refusal = _refusal(
                 spec, value, user_overrides, reason, expected_updated_at, evidence_url
             )
-            if refusal is not None or expected_updated_at is None:
+            if refusal is not None or expected_updated_at is None:  # validation precedes the gate
                 refusal = refusal or FlagValidationError("required", "expected_updated_at")
                 await audit.refused(row, refusal.rule)
                 raise refusal
+            await self._step_up(principal, step_up_class(spec, row, value))
             # Omitted overrides keep the stored ones; a list replaces them (an empty one clears).
             kept = row.user_overrides if user_overrides is None else user_overrides
             await audit.intent(row)  # write-ahead: raises, and nothing is written, if unrecorded
@@ -222,48 +223,47 @@ def _refusal(
 
 
 def _evidence_rule(url: str) -> str | None:
-    """An `https` URL with a host, no userinfo and at most 2048 characters (never fetched)."""
-    if len(url) > EVIDENCE_URL_MAX:
-        return "string_too_long"
+    """`credential_in_url` for userinfo or a query or fragment parameter that the audit would
+    redact as a secret; `https_required` unless an `https` URL with a host; then the length."""
     try:
         parts = urlsplit(url)
         host = parts.hostname
     except ValueError:  # e.g. an unbalanced IPv6 bracket
+        return "credential_in_url" if "@" in url else "https_required"
+    params = dict.fromkeys(
+        [n for q in (parts.query, parts.fragment) for n, _ in parse_qsl(q.replace(";", "&"))], ""
+    )
+    secret = REDACTION_MARKER in (redact(params) or {}).values() or "sig" in params  # SAS `sig`
+    if "@" in parts.netloc or secret:
+        return "credential_in_url"
+    if parts.scheme.lower() != "https" or not host or not url.isprintable() or " " in url:
         return "https_required"
-    if (
-        parts.scheme.lower() != "https"
-        or not host
-        or any(c.isspace() or not c.isprintable() for c in url)
-    ):
-        return "https_required"
-    return "userinfo_not_allowed" if "@" in parts.netloc else None
+    return "string_too_long" if len(url) > EVIDENCE_URL_MAX else None
 
 
 def _audited_url(url: str | None) -> str | None:
-    """`evidence_url` as audited: credentials in its userinfo never reach the record."""
-    try:
-        has_userinfo = url is not None and "@" in urlsplit(url).netloc
-    except ValueError:
-        has_userinfo = url is not None and "@" in url
-    return "<redacted:userinfo>" if has_userinfo else url
+    """`evidence_url` as audited: a refused credential never reaches the record."""
+    return "<redacted:credential>" if url and _evidence_rule(url) == "credential_in_url" else url
 
 
 def _overrides(overrides: Mapping[uuid.UUID, object] | None) -> dict[str, object] | None:
     return None if overrides is None else {str(k): v for k, v in overrides.items()}
 
 
-def _state(stored: StoredFlag | None) -> dict[str, Any] | None:
-    if stored is None:
-        return None
-    return {"value": stored.value, "overrides": _overrides(stored.user_overrides)}
-
-
+@dataclass(frozen=True, slots=True)
 class _Audit:
-    def __init__(
-        self, emitter: AuditEmitter, key: str, who: AuditPrincipal, request: dict[str, Any]
-    ) -> None:
-        self._emitter, self._key, self._request = emitter, key, request
-        self._who = who
+    _emitter: AuditEmitter
+    _key: str
+    _who: AuditPrincipal
+    _request: dict[str, Any]
+    _spec: FlagSpec | None
+
+    def _state(self, stored: StoredFlag | None) -> dict[str, Any] | None:
+        if stored is None or self._spec is None:
+            return None
+        if readable(self._spec, stored) is None:  # never an unreadable row's raw value
+            return {"unreadable": True}
+        return {"value": stored.value, "overrides": _overrides(stored.user_overrides)}
 
     async def _emit(self, action: str, **kwargs: Any) -> None:
         who = self._who
@@ -289,7 +289,7 @@ class _Audit:
             "flags.change",
             outcome=AuditOutcome.FAILURE,
             reason=result,
-            before_state=_state(before),
+            before_state=self._state(before),
             after_state={**self._request, "result": result},
         )
 
@@ -298,7 +298,7 @@ class _Audit:
             "flags.change",
             outcome=AuditOutcome.SUCCESS,
             reason=self._request["reason"],
-            before_state=_state(before),
+            before_state=self._state(before),
             after_state={**self._request, "phase": "intent"},
         )
 
@@ -309,8 +309,8 @@ class _Audit:
                 "flags.change",
                 outcome=AuditOutcome.SUCCESS if after is not None else AuditOutcome.FAILURE,
                 reason=result,
-                before_state=_state(before),
-                after_state={**(_state(after) or self._request), "phase": "outcome"},
+                before_state=self._state(before),
+                after_state={**(self._state(after) or self._request), "phase": "outcome"},
             )
         except Exception:  # the intent record already holds the change; the outcome is logged
             logger().exception("flags_change_outcome_audit_failed", key=self._key, result=result)
@@ -318,6 +318,6 @@ class _Audit:
     async def maintenance(self, after: StoredFlag) -> None:
         action = "maintenance.enabled" if after.value is True else "maintenance.disabled"
         try:
-            await self._emit(action, reason=self._request["reason"], after_state=_state(after))
+            await self._emit(action, reason=self._request["reason"], after_state=self._state(after))
         except Exception:  # never block the gate hook: the intent record holds the toggle
             logger().exception("maintenance_audit_failed", key=self._key)
