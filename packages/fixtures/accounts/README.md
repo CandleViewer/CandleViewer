@@ -247,7 +247,7 @@ it:
   risk limit level" (an unverified recollection from review, 2026-10-16). If so, §8.6 and
   `mapping.py` need a fix of their own, outside this pack.
 - `open_position_btcusdt_5x_sl` and `working_orders_2` answer their three mode-switch calls with
-  `110024` and `110028`: two codes beyond the three the plan's §9.3 lists. §8.6 has no
+  `110024` and `110028`, which the plan's §9.3 also lists as unconfirmed. §8.6 has no
   open-position or active-order refusal of a mode switch, and its one position-mode entry,
   `110025`, is a hard error ("never auto-switch mode; alert and block the account until
   resolved"). So both codes are outside the table, where §8.6's last row reads them as a plain
