@@ -2375,6 +2375,8 @@ Actions that MUST be audited (non-exhaustive, enforced by a Semgrep rule on the 
 
 Operational/health events surfaced in the System Health screen; distinct from `audit_log` (which is about _who did what_).
 
+**Incidents (E42-T05).** `GET /admin/incidents` groups the `error` and `critical` rows into incidents (`listIncidents` in `22-api-openapi.yaml`; table `incidents`, migration `0028_incidents_backups`). SCR-144 shows a duration and a resolution per incident, and neither is stored. The duration is derived from the timestamps: `resolved_at`, or `last_seen_at` while unresolved, minus `first_seen_at`. There is no resolution text because nobody writes one: an incident resolves when every grouped row has `resolved_at`, that is, when its condition has cleared, so `resolved_at` is the resolution record. A written resolution note would need a new optional contract field and a nullable column, both additive. Writers keep `message` to a fixed description of the condition (`24-internal-schemas.md` §15.4).
+
 ```sql
 CREATE TABLE system_events (
   id            bigserial PRIMARY KEY,

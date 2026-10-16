@@ -3002,6 +3002,10 @@
               "detail": {
                 "type": "string"
               },
+              "last_good_at": {
+                "format": "date-time",
+                "type": "string"
+              },
               "name": {
                 "type": "string"
               },

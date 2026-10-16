@@ -1327,6 +1327,7 @@ export interface System {
     name?: string;
     state?: "healthy" | "degraded" | "warning" | "down";
     detail?: string;
+    last_good_at?: string;
   }[];
   kill_switch?: KillSwitch;
   actions?: {
