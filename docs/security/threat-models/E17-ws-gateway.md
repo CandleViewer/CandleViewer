@@ -360,10 +360,12 @@ they stop a misconfiguration from closing every connection at its first large fr
 that one frame fits. `CV_WS_CLASSIFY_INTERVAL_MS` is held to 500-10 000 ms. A closing connection is bound by one
 2 s flush deadline, the close flush the gateway already has and `23-ws-protocol.md` §9.4 already counts once in
 the stop budget: on deadline expiry the flush is abandoned and the transport closes with no `bye` (the S11
-exception of §4.4). The `bye` is always enqueued before the 2 s starts, so the server abandons an undeliverable
-flush, never the attempt, and an expiry is observable: its close audit row carries `trigger` `flush_deadline` and
-the close metric's label the same value (§8). Flag off, as built, the same 2 s starts when the reader returns, so a
-peer that is silent as well as not reading is ended by the transport keepalive alone (15 s ping, 45 s timeout).
+exception of `23-ws-protocol.md` §4.4). The `bye` is always enqueued before the 2 s starts, so the server abandons
+an undeliverable flush, never the attempt. With the flag on an expiry is observable: the close audit row carries
+`flush_abandoned: true` (with the `trigger` that `23-ws-protocol.md` §4.3 defines, `flush_deadline` only when no
+step 3 trigger fired) and `cv_ws_overflow_total{reason="close_flush_deadline"}` counts it (`23-ws-protocol.md`
+§8.4). Flag off, as built, neither is recorded, and the same 2 s starts when the reader returns, so a peer that is
+silent as well as not reading is ended by the transport keepalive alone (15 s ping, 45 s timeout).
 
 ## 7. Abuse-case seeds (handed to E17-X02)
 
@@ -440,17 +442,22 @@ a user's first refusal in a window. Every close also writes the generic `ws clos
 limiter's `4429` close (D05), so RSK-063's trigger reads the dedicated counter.
 
 **Close detail (E17-T03).** A `slow_consumer` close is the one `ws.connection.closed` row at `warning`
-(`23-ws-protocol.md` §4.3). With the backpressure flag on, a close also carries `after_state` `{"trigger": ...}`
-when a trigger fired (flag off: none): `budget` or `redrop` for one of §8.4 step 3, and `flush_deadline` for a
-close of any reason whose `bye` flush missed the 2 s deadline (the S11 exception of §4.4), which is the value when
-both apply, while the step 3 trigger stays in the step 4 metric. The vocabulary is closed (three values, never a
-topic name or a count), so the row stays one fixed-size record, and an identity whose `redrop` closes repeat (a
-client that cannot recover its snapshots) reads differently from one with `budget` closes or `flush_deadline`
-closes (a client that cannot drain at all). The registry's eviction of a connection whose `permission_change` or
-`revoked` send stalled or failed (the fan-out send timeout above) is also a `slow_consumer` close: it carries no
-`after_state`, and with the flag on, like every `slow_consumer` close, it clears both lanes before the `bye`, so
-nothing queued under the old scope follows an identity change (flag off, as built: the `bye` follows the frames
-already queued, `23-ws-protocol.md` §8.4). A non-droppable frame (`orders`, `executions`, control, `system`) that
+(`23-ws-protocol.md` §4.3). With the backpressure flag on, a close also carries an `after_state` of at most two
+bounded fields, as that section states them (flag off: none). `trigger` is `budget` or `redrop` for a close of §8.4
+step 3 (`23-ws-protocol.md`), or `flush_deadline` for a close that had no step 3 trigger and whose `bye` flush missed
+the 2 s deadline (the S11 exception of `23-ws-protocol.md` §4.4); `flush_abandoned: true` is added whenever that
+deadline expired, so a `budget` close whose flush also expires keeps `budget`. The vocabulary is closed (three
+trigger values and one flag, never a topic name or a count), so the row stays one fixed-size record, and the two
+fields keep both facts of a close: an identity whose `redrop` closes repeat (a client that cannot recover its
+snapshots) reads differently from one with `budget` closes (a client that cannot drain at all), and
+`flush_abandoned: true` on either marks a peer that was not reading when the close came. The same expiry counts in
+`cv_ws_overflow_total{reason="close_flush_deadline"}` (`23-ws-protocol.md` §8.4), in addition to the step 3 value.
+The registry's eviction of a connection whose `permission_change` or `revoked` send stalled or failed (the fan-out
+send timeout above) is also a `slow_consumer` close: it carries no step 3 trigger (when its own flush expires it
+carries `trigger` `flush_deadline` and `flush_abandoned: true`), and with the flag on, like every `slow_consumer`
+close, it clears both lanes before the `bye`, so nothing queued under the old scope follows an identity change
+(flag off, as built: the `bye` follows the frames already queued, `23-ws-protocol.md` §8.4). A non-droppable frame
+(`orders`, `executions`, control, `system`) that
 cannot be encoded, or whose emission raises, closes the connection `internal_error`: it fails closed and never
 drops silently, because a client that missed an order transition or a `revoked` would act on a false state. That
 close is audited (`ws.connection.closed`, reason `internal_error`, `warning`) and counted
@@ -551,4 +558,4 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
 | 2026-10-16 | author (agent; PR for #2735)                      | WS-R04 as built (#2735): a host-cancelled handler attempts its close row; the shutdown label is best effort in the window (§10)              |
 | 2026-10-16 | author (agent; PR for #2565)                      | WS-D17 added (#2565): the planned shutdown against the stop budget and uvicorn's drain; WS-R04 as built gains the drain floor (#2827)        |
 | 2026-10-16 | author (agent; PR for #2558)                      | WS-D07: per-user connect rate; §8 carve-out and its dedicated counter; AC-15 extended (§7, §8)                                               |
-| 2026-10-16 | author (agent; PR for #412 contract)              | E17-T03 wiring contract: narrowing rider (§5), flag and lower-only settings (§6), close trigger and fail-closed close (§8), E17-T03 row (§9) |
+| 2026-10-16 | author (agent; PR for #412 contract)              | E17-T03 wiring contract: narrowing rider (§5), flag, floors and S11 flush deadline (§6), close fields and fail-closed close (§8), row (§9)   |
