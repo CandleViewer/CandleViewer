@@ -81,6 +81,24 @@ def _gitleaks_cv_rule_ids() -> list[str]:
     return [r["id"] for r in rules if r["id"].startswith("cv-")]
 
 
+# What the logging module fills in on every record from the clock (`created`, `relativeCreated`),
+# the thread (`thread`, `threadName`), the process (`process`) and the asyncio task (`taskName`).
+# No log call can put a credential there: `Logger.makeRecord` raises KeyError for an `extra` key
+# that is already a record attribute, and none of these is a parameter of the call. Their digits
+# differ on every run (`threadName` is `asyncio-portal-<hex id>` in the anyio thread that serves
+# the TestClient requests, `taskName` is `Task-<n>`), so a random 6-digit TOTP code spells a run
+# of one of them in a small fraction of runs. Scanning them made this test flaky: a false leak
+# of `totp_code_1`. `msecs` (`ddd.0`) and `asctime` (`YYYY-MM-DD hh:mm:ss,mmm`) cannot hold a
+# 6-digit run, so they stay in the scan with every other attribute.
+_STAMPED = frozenset({"created", "relativeCreated", "thread", "threadName", "process", "taskName"})
+
+
+def _record_texts(record: logging.LogRecord) -> list[str]:
+    """A record as the leak check reads it: its message and every attribute but the stamps."""
+    supplied = {k: v for k, v in record.__dict__.items() if k not in _STAMPED}
+    return [record.getMessage(), repr(supplied)]
+
+
 class _Sink(logging.Handler):
     """Own root handler: app start-up may reconfigure logging and detach pytest's caplog one."""
 
@@ -89,7 +107,7 @@ class _Sink(logging.Handler):
         self.lines: list[str] = []
 
     def emit(self, record: logging.LogRecord) -> None:
-        self.lines += [record.getMessage(), repr(record.__dict__)]
+        self.lines += _record_texts(record)
 
 
 def _collect(
@@ -97,8 +115,7 @@ def _collect(
 ) -> list[str]:
     texts = [repr(e) for e in logs]
     for rec in caplog.records:
-        texts.append(rec.getMessage())
-        texts.append(repr(rec.__dict__))
+        texts.extend(_record_texts(rec))
     texts.append(caplog.text)
     texts.extend(sink.lines)
     texts.append(out)
@@ -309,3 +326,73 @@ def test_login_mfa_refresh_stepup_never_log_a_credential(
 @pytest.mark.parametrize("rule_id", _gitleaks_cv_rule_ids())
 def test_leak_check_applies_every_gitleaks_cv_rule(rule_id: str) -> None:
     assert rule_id in _SHAPE_IDS, f"{rule_id} is in .gitleaks.toml but not in _SHAPE_IDS"
+
+
+# A 6-digit TOTP code, as `generate_code` returns it; the stamps below are built to spell it.
+_CODE = "209734"
+_CAPTURES = ("sink", "caplog")  # the two stdlib log captures the real test reads
+
+
+def _record(
+    msg: str = "ok", args: tuple[object, ...] = (), exc_info: Any = None, **extra: object
+) -> logging.LogRecord:
+    """The record `logger.info(msg, *args, exc_info=..., extra=extra)` builds, minus the logger."""
+    record = logging.LogRecord("cv.test", logging.INFO, __file__, 1, msg, args, exc_info)
+    record.__dict__.update(extra)
+    return record
+
+
+def _leaks_in(
+    capture: str, record: logging.LogRecord, caplog: pytest.LogCaptureFixture
+) -> list[str]:
+    """Hand `record` to both stdlib captures, then run the leak check on one of them."""
+    sink = _Sink()
+    sink.handle(record)
+    caplog.handler.handle(record)
+    texts = sink.lines if capture == "sink" else _collect([], caplog, _Sink(), "")
+    return _leaks(texts, {"totp_code_1": _CODE})
+
+
+@pytest.mark.parametrize("capture", _CAPTURES)
+@pytest.mark.parametrize(
+    ("attr", "stamp"),
+    [
+        pytest.param("created", float(f"1792114514.{_CODE}"), id="created"),
+        pytest.param("relativeCreated", float(f"1767.{_CODE}"), id="relative-created"),
+        pytest.param("thread", int(f"1334{_CODE}"), id="thread"),
+        pytest.param("threadName", f"asyncio-portal-7f{_CODE}ab", id="thread-name"),
+        pytest.param("process", int(_CODE), id="process"),
+        pytest.param("taskName", f"Task-{_CODE}", id="task-name"),
+    ],
+)
+def test_leak_check_ignores_a_runtime_stamp_that_happens_to_spell_the_code(
+    attr: str, stamp: object, capture: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    record = _record()
+    setattr(record, attr, stamp)
+    assert _CODE in repr(record.__dict__)  # the stamp really does spell the code
+    assert _leaks_in(capture, record, caplog) == []
+
+
+@pytest.mark.parametrize("capture", _CAPTURES)
+@pytest.mark.parametrize(
+    "carried",
+    [
+        pytest.param({"msg": f"verified {_CODE}"}, id="message"),
+        pytest.param({"msg": "verified %s", "args": (_CODE,)}, id="argument"),
+        pytest.param({"otp": _CODE}, id="extra-attribute"),
+        pytest.param({"exc_info": (ValueError, ValueError(_CODE), None)}, id="exception"),
+    ],
+)
+def test_leak_check_still_flags_the_code_when_the_log_call_carried_it(
+    carried: dict[str, Any], capture: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    assert "totp_code_1" in _leaks_in(capture, _record(**carried), caplog)
+
+
+@pytest.mark.parametrize("attr", sorted(_STAMPED))
+def test_no_log_call_can_write_a_stamped_attribute(attr: str) -> None:
+    logger = logging.getLogger("cv.test")
+
+    with pytest.raises(KeyError, match=attr):
+        logger.makeRecord("cv.test", logging.INFO, __file__, 1, "ok", (), None, extra={attr: "x"})
