@@ -5649,7 +5649,13 @@ class StatechartKindSummary(BaseModel):
 
 class Key(BaseModel):
     exchange_account_id: UUID | None = None
-    key_id_prefix: str | None = None
+    key_id_masked: Annotated[
+        str | None,
+        Field(
+            description="At most the last 4 characters of the key id: `...` plus `key_id_last4` (SR-E27-03), as `ApiKey.key_id_masked`.",
+            pattern="^\\.\\.\\.[A-Za-z0-9]{4}$",
+        ),
+    ] = None
     status: Literal["pending", "active", "rotating", "revoked", "expired", "invalid"] | None = None
     age_days: int | None = None
     expires_at: AwareDatetime | None = None

@@ -1998,7 +1998,8 @@ paths:
           required: false
           description: >
             `flatten_first` is the only choice: deletion never leaves exposure behind, so
-            `leave_positions` is not accepted here.
+            `leave_positions` is not accepted here. The `Idempotency-Key` replay fingerprint
+            covers this value as well as the method, path and body.
           schema: { type: string, enum: [flatten_first] }
       responses:
         "204": { description: "Deactivated." }
@@ -2033,17 +2034,21 @@ paths:
         The same key gate (SR-E27-04) applies to `rotateApiKey` and to every re-check of a
         stored key:
 
-        1. `GET /v5/user/query-api` with the candidate credentials.
+        1. `GET /v5/user/query-api` with the candidate credentials, sent only to the host of the
+           account's environment (`exchange_accounts.env`, US-ACCT-007) and never retried on
+           another environment's host. A key that host does not know is refused with
+           `validation_failed` / `key_wrong_environment`.
         2. **Permission allow-list** (C-2.8, SR-030a, #2270). The only rights a key may hold are
            `ContractTrade` with `Order` and `Position`, and `Derivatives` with `DerivativesTrade`;
-           every other group must be empty or absent. Anything else is refused, fail closed: an
-           unknown group or right, or a name that is not plain ASCII or carries padding. That
-           covers `Withdraw`, `AccountTransfer`, `SubMemberTransfer`, `SubMemberTransferList`
-           and every right in the `FiatP2P`, `FiatBitPay`, `FiatConvertBroker` and `BitCard`
-           groups, whether or not the name says "withdraw" or "transfer" (owner decision #5).
-           A key holding `Withdraw` is rejected with `validation_failed` /
-           `key_withdraw_permission`; any other right outside the allow-list with
-           `validation_failed` / `key_permission_not_allowed`.
+           every other group must be empty or absent, and anything else is refused, fail closed
+           (owner decision #5). Withdrawal and transfer rights are checked first: a right whose
+           name contains `withdraw` or `transfer` in any letter case, such as `Withdraw`,
+           `AccountTransfer`, `SubMemberTransfer` and `SubMemberTransferList`, or a non-empty
+           group so named, is rejected with `validation_failed` / `key_withdraw_permission`, as
+           the credential broker and the account models already do. Every other right outside
+           the allow-list, such as those of the `FiatP2P`, `FiatBitPay`, `FiatConvertBroker` and
+           `BitCard` groups, an unknown group or right, or a name that is not plain ASCII or
+           carries padding, is rejected with `validation_failed` / `key_permission_not_allowed`.
         3. Write access is read from `readOnly`, never from the permission lists (the reference
            pairs `readOnly: 1` with trading rights). A trade key (`read_only: false`) must report
            `readOnly: 0` and hold `ContractTrade` `Order` and `Position` (`key_missing_scopes`);
@@ -2059,12 +2064,12 @@ paths:
         6. Expiry, if set, must be at least 14 days away, else the `key_expiring_soon` warning
            is attached.
         7. A signed no-op probe (`GET /v5/account/wallet-balance`) must return `retCode=0`
-           within the `recv_window`, which also validates clock sync.
+           within the `recv_window`, which also validates clock sync (`key_probe_failed`).
 
         The secret is envelope-encrypted (AES-256-GCM DEK, wrapped by the KEK from the OS
         keyring / age-encrypted file) before it touches disk; the plaintext exists only in
         request-scoped memory. The full verification result is stored as
-        `permission_snapshot` and re-checked nightly.
+        `permission_snapshot` and re-checked at start-up and hourly (C-12.2).
       x-rbac: { permissions: [keys:manage], scope: none }
       x-idempotency: required
       parameters:
@@ -2149,10 +2154,11 @@ paths:
       summary: Revoke a stored API key
       description: |
         Local revocation only — CandleViewer never deletes keys on Bybit. The exchange's delete
-        endpoints need a transfer or withdrawal right, which the key gate refuses (C-2.8), so a
-        compliant key cannot delete itself there: the key stays valid at the exchange until the
-        Owner deletes it in the Bybit dashboard (SR-E27-06). Revoking the last active trade key
-        drops the account to `key_status: missing` and halts its private streams.
+        endpoints need a transfer or withdrawal right (vendor reference, to be confirmed on demo
+        by E27-S04), which the key gate refuses (C-2.8), so a compliant key cannot delete itself
+        there: the key stays valid at the exchange until the Owner deletes it in the Bybit
+        dashboard (SR-E27-06). Revoking the last active trade key drops the account to
+        `key_status: missing` and halts its private streams.
 
         When no other `active` key remains and the account holds open positions, working orders
         or running emulated algos, the request must carry an `open_exposure` choice (SR-E27-07).
@@ -2254,8 +2260,9 @@ paths:
       summary: Re-run the verification pipeline against a stored key
       description: |
         Read-only diagnostics used by the Admin - Accounts screen "Test connection" button and
-        by the nightly job. Runs signed probes for REST (`wallet-balance`, `query-api`) and, if
-        `include_ws` is set, opens a throwaway private WS connection and asserts `auth` succeeds.
+        by the start-up and hourly self-check (C-12.2). Runs signed probes for REST
+        (`wallet-balance`, `query-api`) and, if `include_ws` is set, opens a throwaway private WS
+        connection and asserts `auth` succeeds.
         Never places orders. A failed probe reports a `KeyProbeError` code and the verification
         reports `KeyVerificationWarning` codes: no exchange error text, header, URL or request
         fragment is ever echoed (SR-E27-08).
@@ -11341,13 +11348,19 @@ components:
         The explicit choice SR-E27-07 requires before revoking an account's last active key or
         disabling the account while it holds open positions, working orders or running emulated
         algos. `leave_positions`: act now; positions and orders stay on the exchange untouched,
-        each position still protected by its native stop-loss (C-2.6), while the account's
-        emulated algos stop and its rules are disarmed. `flatten_first`: flatten the account
-        first (cancel its working orders, stop its algos, close its positions reduce-only), then
-        act; if the account is still not flat, the action is not carried out and the answer is
-        `409 open_exposure` with what remains. Without the parameter such a request is
-        `409 open_exposure` with the consequence summary, and nothing changes. Ignored when the
-        account holds no exposure. A query parameter because `DELETE` carries no body.
+        each position keeps the native stop-loss it carries (C-2.6), and
+        `consequences.open_positions[].native_stop_present` shows any that has none, while the
+        account's emulated algos stop and its rules are disarmed. Whether `leave_positions` must
+        be refused, or turned into `flatten_first`, while any open position has no native
+        stop-loss is an open Owner/Security decision recorded on #2417. `flatten_first`: flatten
+        the account first (cancel its working orders, stop its algos, close its positions
+        reduce-only), then act; if the account is still not flat, the action is not carried out
+        and the answer is `409 open_exposure` with what remains. Without the parameter such a
+        request is `409 open_exposure` with the consequence summary, and nothing changes.
+        Ignored when the account holds no exposure. The `Idempotency-Key` replay fingerprint
+        covers this value as well as the method, path and body, so the same key with another
+        choice, or with none, is `409 idempotency_key_reuse`. A query parameter because `DELETE`
+        carries no body.
       schema: { $ref: "#/components/schemas/OpenExposureChoice" }
     ProfileId:
       name: profileId
@@ -11691,7 +11704,7 @@ components:
                 type: "https://candleviewer.local/errors/open_exposure"
                 title: "The account holds open positions, working orders or running algos that the request does not resolve; resend with an open_exposure choice"
                 status: 409
-                detail: "1 open position, 2 working orders and 1 running algo; choose leave_positions or flatten_first."
+                detail: "1 open position, 2 working orders and 1 running algo; resend with an open_exposure choice."
                 instance: "urn:cv:req:0193f2bb-5656"
                 code: open_exposure
                 consequences:
@@ -12823,7 +12836,10 @@ components:
       description: >
         What revoking an account's last active key, disabling the account or deleting it would
         affect (SR-E27-07, SCR-129), read in one server-side query so no partial picture is
-        shown. Confidential: served only under the operation's own permission and scope.
+        shown. Confidential: served only under the operation's own permission and scope. This
+        contract serves it only in the `409 open_exposure` answer. SCR-129 fetches it before the
+        dialog renders, which needs a side-effect-free read: E27-S04 (#898) adds that operation
+        in its own interface-first PR (C-6.1) before it mounts these routes.
       required:
         [
           exchange_account_id,
@@ -12948,8 +12964,9 @@ components:
       enum: [key_expiring_soon, clock_skew]
       description: >
         Closed vocabulary (SR-E27-08). `key_expiring_soon`: the key expires within 14 days
-        (`createApiKey` step 6). `clock_skew`: the probe measured a `clock_offset_ms` above the
-        warning threshold.
+        (`createApiKey` step 6). `clock_skew`: the probe measured a `clock_offset_ms` whose
+        absolute value is above 500 ms, the exchange clock guard's warning threshold
+        (`24-internal-schemas.md` §14.2 item 9).
     KeyProbeError:
       type: string
       enum:
@@ -12970,9 +12987,13 @@ components:
         (`10003`, `10004`) or the private WS refused `auth`. `permission_denied`: `10005`.
         `ip_not_allowed`: `10010` or HTTP 403. `clock_drift`: `10002`. `rate_limited`: `10006`,
         `10018`, `10429` or HTTP 429. `service_unavailable`: `10016`, `10019` or HTTP 5xx.
-        `transport_error`: the connection failed or was reset. `timeout`: no answer before the
-        probe deadline. `exchange_unknown`: any other non-zero `retCode` (the code itself is in
-        `ret_code`). No exchange error text, header, URL or request fragment is echoed.
+        `transport_error`: the connection failed or was reset. `timeout`, which refines §8.6's
+        `TRANSPORT_ERROR`: no answer before the probe deadline. `exchange_unknown`: any other
+        non-zero `retCode` (the code itself is in `ret_code`). The probe has its own translation
+        table, owned and tested by E27-T03 (#836); it does not reuse the adapter's general
+        retCode mapping (`map_ret_code`), which folds `10005` and `10010` into an auth error and
+        `10016` and `10019` into a rate-limit error. No exchange error text, header, URL or
+        request fragment is echoed.
     ApiKeyWithVerification:
       type: object
       properties:
@@ -16987,7 +17008,10 @@ components:
             type: object
             properties:
               exchange_account_id: { type: string, format: uuid }
-              key_id_prefix: { type: string }
+              key_id_masked:
+                type: string
+                pattern: '^\.\.\.[A-Za-z0-9]{4}$'
+                description: "At most the last 4 characters of the key id: `...` plus `key_id_last4` (SR-E27-03), as `ApiKey.key_id_masked`."
               status: { $ref: "#/components/schemas/KeyStatus" }
               age_days: { type: integer }
               expires_at: { type: ["string", "null"], format: date-time }
