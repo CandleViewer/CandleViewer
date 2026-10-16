@@ -24,6 +24,7 @@ from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recov
 from candleviewer.auth.totp import generate_code, time_step_for
 
 from .mfa_fakes import FakeMfaRepository
+from .totp_code_cases import ARABIC_INDIC_CODE
 
 _RC_KEY = b"k" * 32
 _NOW = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
@@ -176,6 +177,39 @@ async def test_confirm_keeps_existing_recovery_codes() -> None:
     seed = svc._encryptor.decrypt(method.secret_enc)
     _, codes = await svc.confirm_enrollment(uid, method_id=str(res.method_id), code=_totp(seed))
     assert codes == ()
+
+
+async def test_confirm_refuses_a_non_ascii_digit_code_like_a_wrong_one() -> None:
+    """#2605: this raised `TypeError` out of `verify_code`. It is `MfaCodeInvalid`, and nothing
+    changes: the method stays pending, no step is recorded, no recovery codes are issued."""
+    repo = FakeMfaRepository()
+    svc = _service(repo)
+    uid = str(uuid.uuid4())
+    res = await svc.enroll(
+        uid, MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="a"
+    )
+    mid = str(res.method_id)
+    with pytest.raises(MfaCodeInvalid, match="invalid TOTP"):
+        await svc.confirm_enrollment(uid, method_id=mid, code=ARABIC_INDIC_CODE)
+    pending = repo.methods[mid]
+    assert pending.confirmed_at is None and pending.last_accepted_time_step is None
+    assert await repo.count_unused_recovery_codes(uid) == 0
+
+
+async def test_verify_counts_a_non_ascii_digit_code_as_a_failed_attempt() -> None:
+    """#2605: `MfaVerifyRequest` refuses such a code at the HTTP edge; the service must not
+    depend on that, so the request is built around the edge's pattern."""
+    repo = FakeMfaRepository()
+    svc = _service(repo)
+    uid = uuid.uuid4()
+    await _enrolled(svc, repo, uid)
+    token = await _challenge(repo, uid)
+    request = MfaVerifyRequest.model_construct(
+        mfa_token=token, method=MfaMethodKind.TOTP, code=ARABIC_INDIC_CODE
+    )
+    with pytest.raises(MfaCodeInvalid, match="invalid TOTP"):
+        await svc.verify(request)
+    assert next(iter(repo.challenges.values())).attempts == 1
 
 
 async def _with_codes(repo: FakeMfaRepository, uid: uuid.UUID) -> list[str]:
