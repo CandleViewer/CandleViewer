@@ -335,7 +335,7 @@ export interface paths {
     post?: never;
     /**
      * Delete a backup artefact
-     * @description Needs a fresh `backups` step-up elevation (E42-T05). `backups` is a no-grace class, so each delete spends one code; without one the route answers `403 step_up_required` with `action_class` set to `backups`. The route slice registers the route in `DANGEROUS_ROUTES`.
+     * @description Needs a fresh `backups` step-up elevation (E42-T05). `backups` is a no-grace class, so each delete spends one code; without one the route answers `403 step_up_required` with `action_class` set to `backups`. Audited as `backup.deleted` (actor, backup id, `before_state.status`) ahead of the `204`; an attempt refused after RBAC and step-up is audited with `outcome: failure`.
      */
     delete: operations["deleteBackup"];
     options?: never;
@@ -9176,9 +9176,15 @@ export interface operations {
     requestBody: {
       content: {
         "application/json": {
-          /** @description Explicit acknowledgement that positions are open while restoring (E42-T05). Absent means `false`. */
+          /**
+           * @description Explicit acknowledgement that positions are open (E42-T05).
+           * @default false
+           */
           acknowledge_open_positions?: boolean;
-          /** @description Explicit acknowledgement that the open-position state could not be read (E42-T05, as on `resetUserMfa`). Absent means `false`. */
+          /**
+           * @description Accepts an unreadable open-position state (as on `resetUserMfa`).
+           * @default false
+           */
           acknowledge_unknown_positions?: boolean;
           components?: ("postgres" | "questdb" | "parquet" | "config")[];
           /** Format: uuid */

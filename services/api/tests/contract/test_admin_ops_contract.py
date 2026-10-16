@@ -164,8 +164,7 @@ def test_restore_body_gains_two_separate_optional_acknowledgements() -> None:
     assert body["required"] == ["confirm_backup_id", "reason"]
     assert body["additionalProperties"] is False
     for name in ("acknowledge_open_positions", "acknowledge_unknown_positions"):
-        assert body["properties"][name]["type"] == "boolean"
-        assert "default" not in body["properties"][name]
+        assert {body["properties"][name][key] for key in ("type", "default")} == {"boolean", False}
     assert "The two flags are separate; neither implies the other" in text(_RESTORE["description"])
 
 
@@ -217,6 +216,7 @@ def test_backup_actions_need_a_usable_backup_and_audit_at_severity_error() -> No
         assert "severity `error`" in desc
         if operation is not _FETCH:
             assert "`ok`, `verified` or `restored`" in desc and "`backup_not_usable`" in desc
+    assert "Audited as `backup.deleted` (actor, backup id," in text(_DELETE["description"])
 
 
 def test_backups_is_a_no_grace_class_for_restore_download_and_delete_only() -> None:
@@ -238,7 +238,9 @@ def test_backups_is_a_no_grace_class_for_restore_download_and_delete_only() -> N
 def test_download_token_rules_are_normative() -> None:
     desc = text(_FETCH["description"])
     for rule in (
-        "record the route template `/admin/backups/{backupId}/download/{token}`, never the token",
+        "access logs, traces, metrics labels and audit fields record the route template "
+        "`/admin/backups/{backupId}/download/{token}`, never the token",
+        "an unknown token or another user's is `404 not_found`, so a token cannot be probed",
         "`Problem.detail` never echoes the path",
         "sends `Referrer-Policy: no-referrer` and `Cache-Control: no-store`",
         "from a CSPRNG with at least 128 bits of entropy, is stored only as a hash",
@@ -255,6 +257,10 @@ def test_download_token_rules_are_normative() -> None:
     assert _json_body(_ISSUE, "200")["required"] == ["download_url", "expires_at"]
     (gone,) = [e for e in SPEC["x-error-codes"] if e["code"] == "gone"]
     assert "a one-time link that expired or was used" in gone["title"]
+    token = _PATHS["/admin/backups/{backupId}/download/{token}"]["parameters"][1]["schema"]
+    assert token["pattern"] == "^[A-Za-z0-9_-]{22,64}$"  # 22 base64url characters = 132 bits
+    assert "used" in _FETCH["responses"]["410"]["content"]["application/problem+json"]["examples"]
+    assert all("/download/" not in str(v.get("detail")) for c, _, v in _EXAMPLES if "{token}" in c)
 
 
 def test_health_components_carry_last_good_at_and_hide_detail_below_owner() -> None:
@@ -267,13 +273,14 @@ def test_health_components_carry_last_good_at_and_hide_detail_below_owner() -> N
     assert "passed through, never dropped" in note
     assert "get each component's `name`, `state` and `last_good_at`, never `detail`" in note
     manager, viewer = capability_rows()["48"][3:5]
-    assert "`name`, `state`; never `detail`" in manager and viewer == "✔(limited, as Manager)"
+    assert "`last_good_at`; never `detail`" in manager and viewer == "✔(limited, as Manager)"
 
 
 @pytest.mark.parametrize(
     ("row", "permissions", "operations"),
     [
         ("48b", {"admin:write"}, {"acknowledgeIncident"}),
+        ("52", {"backups:write"}, {f"{v}Backup" for v in "create restore verify delete".split()}),
         ("52a", {"backups:write", "backups:read"}, {"issueBackupDownload", "downloadBackup"}),
     ],
 )
