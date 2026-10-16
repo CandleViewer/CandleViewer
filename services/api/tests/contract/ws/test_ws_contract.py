@@ -84,7 +84,7 @@ def test_contract_every_server_frame_type_is_produced_and_validated_against_its_
         c.send({"t": "unsub", "id": "u", "p": {"topics": ["trades.BTCUSDT"]}})
         c.next_of("unsub_ok")
         c.send({"t": "bogus"}, conform=False)
-        c.next_of_raw("err")
+        c.recv_err()
         w.clock.now = 20.0
         c.recv(skip_ping=False)  # the unsolicited ping
         w.grants = (AccountGrant(ACC_A, False, False, False),)

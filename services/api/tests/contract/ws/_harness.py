@@ -52,7 +52,7 @@ _BASE = "cv://ws/v1/"
 
 #: §16.1 S5 causal order of private topics for one account event.
 PRIVATE_ORDER = ["executions", "orders", "positions", "trade_groups"]
-#: The private families that hold no accounts (F5, fixed by #2398): `alerts` (Scope.SELF) is
+#: The private families that hold no accounts (F5, #2398, fixed by #2521): `alerts` (Scope.SELF) is
 #: fanned out to its owner's connections, `recorder` (Scope.NONE) to every subscription. `system`
 #: is also `private` but is never a Subscription: the gateway pushes it (`push_system`).
 ACCOUNTLESS_PRIVATE = frozenset({"alerts", "recorder"})
