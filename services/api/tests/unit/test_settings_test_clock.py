@@ -17,6 +17,8 @@ from candleviewer.settings import Environment, Settings
 _FILE = "/run/cv-test-clock/offset"
 _CLOCK_ON = {"CV_TEST_CLOCK": "true", "CV_TEST_CLOCK_FILE": _FILE}
 _TESTNET = "unless CV_ENVIRONMENT=testnet"
+#: An inert marker standing in for a secret value; never a credential.
+_MARKER = "cv-2728-marker-not-a-secret"
 
 
 @pytest.fixture(autouse=True)
@@ -67,18 +69,32 @@ def test_settings_test_clock_on_a_keyless_testnet_is_accepted(
     assert settings.test_clock_refusal() is None
 
 
-def test_settings_test_clock_refusal_never_echoes_the_key(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("secret", "env"),
+    [
+        ("CV_BYBIT_API_KEY", {"CV_ENVIRONMENT": "live", **_CLOCK_ON}),
+        ("CV_BYBIT_API_KEY", {"CV_ENVIRONMENT": "testnet", **_CLOCK_ON}),
+        ("CV_AUTH_PEPPER", {"CV_ENVIRONMENT": "testnet", "CV_TEST_CLOCK": "true"}),
+        (
+            "CV_AUTH_PEPPER",
+            {"CV_ENVIRONMENT": "testnet", "CV_TEST_CLOCK": "1", "CV_TEST_CLOCK_FILE": "x"},
+        ),
+    ],
+    ids=["environment", "exchange-key", "set-together", "path"],
+)
+def test_settings_test_clock_refusal_never_echoes_another_setting(
+    monkeypatch: pytest.MonkeyPatch, secret: str, env: dict[str, str]
 ) -> None:
-    canary = "canary-exchange-key-must-never-be-echoed"
+    """#2728: `hide_input_in_errors` hides input from `str()` only, and a model validator's
+    `errors()` and `json()` carry every setting. The gate is a field validator (C-12.6)."""
+    with pytest.raises(ValidationError, match="CV_TEST_CLOCK") as refused:
+        _settings(monkeypatch, **{secret: _MARKER}, **env)
 
-    with pytest.raises(ValidationError) as exc_info:
-        _settings(monkeypatch, CV_ENVIRONMENT="testnet", CV_BYBIT_API_KEY=canary, **_CLOCK_ON)
-
-    message = str(exc_info.value)
-    assert "exchange key" in message
-    assert "input_value" not in message
-    assert canary[-12:] not in message
+    error = refused.value
+    assert "input_value" not in str(error)
+    assert _MARKER not in str(error)
+    assert _MARKER not in repr(error.errors())
+    assert _MARKER not in error.json()
 
 
 @pytest.mark.parametrize(
@@ -89,7 +105,7 @@ def test_settings_test_clock_refusal_never_echoes_the_key(
 def test_settings_test_clock_file_must_be_absolute_without_dot_dot(
     monkeypatch: pytest.MonkeyPatch, path: str, reason: str
 ) -> None:
-    """#2728: checked like `CV_BARS_STATE_ROOT`, at load, before any module starts."""
+    """#2728: checked at load, before any module starts."""
     env = {"CV_ENVIRONMENT": "testnet", "CV_TEST_CLOCK": "true", "CV_TEST_CLOCK_FILE": path}
 
     with pytest.raises(ValidationError, match=reason):
@@ -104,4 +120,18 @@ def test_settings_test_clock_file_must_not_be_a_symlink(
     env = {"CV_ENVIRONMENT": "testnet", "CV_TEST_CLOCK": "true", "CV_TEST_CLOCK_FILE": str(link)}
 
     with pytest.raises(ValidationError, match="must not be a symlink"):
+        _settings(monkeypatch, **env)
+
+
+def test_settings_test_clock_file_must_not_be_under_a_symlinked_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#2728: each read refuses only a last-component symlink (`O_NOFOLLOW`), so the load
+    check covers the directories above it too."""
+    (tmp_path / "real").mkdir()
+    (tmp_path / "linked").symlink_to(tmp_path / "real")
+    path = str(tmp_path / "linked" / "offset")
+    env = {"CV_ENVIRONMENT": "testnet", "CV_TEST_CLOCK": "true", "CV_TEST_CLOCK_FILE": path}
+
+    with pytest.raises(ValidationError, match="must not be under a symlinked directory"):
         _settings(monkeypatch, **env)

@@ -11,6 +11,7 @@ never wired in) reappears silently.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -58,7 +59,7 @@ class _FakeModule:
 class _FakeAudit(_FakeModule):
     """The audit module with a writer (real backend): `is_active`, then `writer.emit`."""
 
-    def __init__(self, failure: Exception | None = None) -> None:
+    def __init__(self, failure: BaseException | None = None) -> None:
         super().__init__()
         self.is_active = True
         self.writer = self
@@ -177,3 +178,16 @@ async def test_lifespan_stops_every_module_when_the_test_clock_audit_fails() -> 
 
     assert (ctx.storage.stopped, ctx.audit.stopped, ctx.ws.stopped) == (True, True, True)
     assert ctx.mesh_self_check.run_once_calls == 0
+
+
+async def test_lifespan_stops_every_module_when_the_test_clock_audit_is_cancelled() -> None:
+    """#2728: `except BaseException`, as `Supervisor.start_all` does: a cancellation during the
+    boot record also stops every started module before it propagates."""
+    app = FastAPI()
+    ctx = _test_clock_ctx(_FakeAudit(failure=asyncio.CancelledError()))
+    app.state.app_context = ctx
+
+    with pytest.raises(asyncio.CancelledError):
+        await _lifespan(app).__aenter__()
+
+    assert (ctx.storage.stopped, ctx.audit.stopped, ctx.ws.stopped) == (True, True, True)

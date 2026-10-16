@@ -158,6 +158,73 @@ def test_offset_clock_refuses_a_directory(clock: OffsetFileClock, offset_file: P
         clock()
 
 
+def test_offset_clock_refuses_a_character_device() -> None:
+    """#2728: a device node is refused by the `S_ISREG` check, never read (`/dev/null`)."""
+    clock = OffsetFileClock(Path(os.devnull), now=lambda: _T0)
+
+    with pytest.raises(OffsetFileError, match="regular file"):
+        clock()
+
+
+def _track_fds(monkeypatch: pytest.MonkeyPatch) -> tuple[list[int], list[int]]:
+    """The fds `os.open` returns and the fds passed to `os.close`, in call order."""
+    opened: list[int] = []
+    closed: list[int] = []
+    real_open, real_close = os.open, os.close
+
+    def _open(path: Path, flags: int, *args: int) -> int:
+        opened.append(real_open(path, flags, *args))
+        return opened[-1]
+
+    def _close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(os, "open", _open)
+    monkeypatch.setattr(os, "close", _close)
+    return opened, closed
+
+
+def test_offset_clock_closes_its_fd_after_a_read(
+    clock: OffsetFileClock, offset_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2728: the clock runs on every auth decision, so a leaked fd per call would exhaust the
+    stack's descriptors."""
+    _set_offset(offset_file, "301")
+    opened, closed = _track_fds(monkeypatch)
+
+    clock()
+
+    assert (len(opened), closed) == (1, opened)
+
+
+def _directory(offset_file: Path) -> Path:
+    offset_file.mkdir()
+    return offset_file
+
+
+def _bad_content(offset_file: Path) -> Path:
+    _set_offset(offset_file, "abc")
+    return offset_file
+
+
+@pytest.mark.parametrize(
+    "make_path",
+    [_directory, lambda _: Path(os.devnull), _bad_content],
+    ids=["directory", "character-device", "bad-content"],
+)
+def test_offset_clock_closes_its_fd_when_it_refuses_the_file(
+    offset_file: Path, monkeypatch: pytest.MonkeyPatch, make_path: Callable[[Path], Path]
+) -> None:
+    clock = OffsetFileClock(make_path(offset_file), now=lambda: _T0)
+    opened, closed = _track_fds(monkeypatch)
+
+    with pytest.raises(OffsetFileError):
+        clock()
+
+    assert (len(opened), closed) == (1, opened)
+
+
 def test_offset_clock_opens_without_blocking_or_following_a_symlink(
     clock: OffsetFileClock, offset_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

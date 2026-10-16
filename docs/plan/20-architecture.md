@@ -852,13 +852,14 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_IMPORT_MAX_UNCOMPRESSED_MB`  | int    | `2048`                    | process | per-file decompressed cap (zip-bomb guard)                                                                          |
 | `CV_BYBIT_ARCHIVE_BASE`          | str    | adapter default           | process | https origin, host allow-listed in adapter                                                                          |
 | `CV_TEST_CLOCK`                  | bool   | `false`                   | process | auth server test clock (#2086), no HTTP route; refused unless testnet with no exchange key (E16-FR-11)              |
-| `CV_TEST_CLOCK_FILE`             | path   | unset                     | process | offset in signed decimal seconds, read per auth decision; absolute, no `..`, not a symlink; own DB (see below)      |
+| `CV_TEST_CLOCK_FILE`             | path   | unset                     | process | offset in signed decimal seconds, read per auth decision; absolute, no `..`, no symlink in it; own DB (see below)   |
 
 The two test-clock keys are set together. The stack that sets them owns its Postgres database and
 QuestDB namespace and never shares them with a demo or live process (C-2.11): rows written under a
-far-future offset (sessions, lockouts, invites) would outlive the run (#2728). Each read of
-`CV_TEST_CLOCK_FILE` opens it non-blocking, never through a symlink, and refuses anything but a
-regular file of at most 32 bytes.
+far-future offset (sessions, lockouts, invites) would outlive the run (#2728). Settings refuses a
+symlink anywhere in the `CV_TEST_CLOCK_FILE` path at load. Each read opens the file non-blocking,
+fails on a symlink as its last component (`O_NOFOLLOW`; a directory swapped for a symlink after
+boot is not caught), and refuses anything but a regular file of at most 32 bytes.
 
 ### 7.3 Environment parity for developers
 

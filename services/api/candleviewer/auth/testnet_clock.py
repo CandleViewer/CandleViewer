@@ -9,7 +9,8 @@ E16-FR-11) and `build_test_clock` re-checks that. It does not move the per-IP lo
 file is read on every call and a rewrite applies to the very next decision, with no wait.
 
 #2728 bounds that read on the event loop: the open never blocks (a FIFO or device node cannot
-stall it) and never follows a symlink, only a regular file is read, and at most 33 bytes of it.
+stall it) and never follows a symlink as the last path component (`Settings` refuses a symlink
+anywhere in the path at load), only a regular file is read, and at most 33 bytes of it.
 The offset is not cached: a rename can land inside the filesystem's timestamp granularity, so an
 `st_mtime_ns` key could hand the next decision a stale offset. Boot also writes a system-actor
 audit record (`audit_test_clock_enabled`), next to the warning log line.
@@ -35,7 +36,7 @@ Clock = Callable[[], datetime]
 #: Signed decimal seconds, at most 9 integer digits (about 31 years) and microsecond precision.
 _OFFSET_RE = re.compile(r"[+-]?[0-9]{1,9}(?:\.[0-9]{1,6})?")
 _MAX_FILE_BYTES = 32
-#: #2728: a FIFO or device node never blocks the open, and a symlink is never followed.
+#: #2728: a FIFO or device node never blocks the open; a symlink as the last component fails it.
 _OPEN_FLAGS = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
 #: #2728 (E16 R-E3 detection is a config audit): one record per boot while the clock is on.
 TEST_CLOCK_AUDIT_ACTION = "system.config.test_clock_enabled"
@@ -82,8 +83,9 @@ class OffsetFileClock:
 def build_test_clock(settings: Settings) -> Clock | None:
     """The auth clock for `create_app()`: None (real UTC) unless `CV_TEST_CLOCK` is on.
 
-    Fails closed on a `Settings` that skipped validation. When on, it writes a boot log line,
-    so the clock never runs silently (C-2.11). It never reads the file here."""
+    On a `Settings` that skipped validation it re-checks the environment and key gate and that
+    a file is set; the path rules run at load only. When on, it writes a boot log line, so the
+    clock never runs silently (C-2.11). It never reads the file here."""
     if not settings.test_clock:
         return None
     refusal = settings.test_clock_refusal()
