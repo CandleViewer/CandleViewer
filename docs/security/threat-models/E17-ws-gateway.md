@@ -353,7 +353,7 @@ read-only role; "O" is the Owner. Expected = frame/close code plus the named met
 | AC-12 | Stop reading the socket for 60 s while subscribed to the reference workspace                                                               | Memory stays within budget; ladder then 4429; audit + metric                                                                                            | D01             |
 | AC-13 | M1 subscribed to `positions` [A]; O withdraws A                                                                                            | `revoked` within 1 s naming A; no further A frame; audit `ws.subscription.revoked`                                                                      | E02, R02        |
 | AC-14 | Withdraw A while M1 is mid-`auth` on a new socket, and while M1 re-auths on a live socket (reconnect race)                                 | Final state reflects the withdrawal on every socket                                                                                                     | E02 (SR-E17-07) |
-| AC-15 | Open 9 sockets as M1; then open 21 sockets inside a minute as one user (#2558)                                                             | Oldest idle closed `too_many_connections`; 21st: `bye client_rate_limited` + 4429, no `auth_ok`, no close row, `cv_ws_connect_rate_limited_total` +1    | D07             |
+| AC-15 | Open 9 sockets as M1; then, in a fresh 60 s window, open 21 sockets as one user (#2558)                                                    | Oldest idle closed `too_many_connections`; 21st: `bye client_rate_limited` + 4429, no `auth_ok`, no close row, `cv_ws_connect_rate_limited_total` +1    | D07             |
 | AC-16 | Open many sockets and never send `auth`                                                                                                    | Each closed at 10 s; after #2155, excess refused at the global pre-auth cap                                                                             | S03, D07        |
 | AC-17 | 6 client `resync` requests on one topic within a minute                                                                                    | `resync_rate_limited`, subscription revoked                                                                                                             | D03             |
 | AC-18 | Fuzz CVWB decoders (Python + TS) with header-only, wrong magic, unknown kind/flags, `record_count` near 2^32, truncated and trailing bytes | Typed decode error only; no allocation sized from the wire count before the length check                                                                | T01, D10        |
@@ -372,7 +372,7 @@ read-only role; "O" is the Owner. Expected = frame/close code plus the named met
 
 ## 8. Observability: threats that must be detectable
 
-Prevention is not enough; these must be visible as abuse, each with an audit action **and** a metric (or, where an audit row would be the attack's amplifier, a capped log line and a metric, with the reason in the row):
+Prevention is not enough; these must be visible as abuse, each with an audit action **and** a metric (or, where an audit row would be the attack's amplifier, a capped log line and a metric, with the reason below the table):
 
 | Signal                              | Audit action                         | Metric (no user-id label; per-identity in audit) | Rows     | Status                                   |
 | ----------------------------------- | ------------------------------------ | ------------------------------------------------ | -------- | ---------------------------------------- |
@@ -389,12 +389,22 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 The connect-rate limit (`CV_WS_MAX_AUTHS_PER_USER_PER_MIN`, 20 per user per sliding minute; `23-ws-protocol.md`
 §4.3) is the control behind the last two rows. A `ws.connection.closed` row needs a counted `auth` first, so
 connect/close churn adds at most that many rows per user per minute instead of one per loop iteration, and what
-remains is visible as that audit action's rate per identity (the metrics carry no user label). A refused
-connect writes **no** audit row on purpose: it never authenticates, and a row per refusal would bring back the
-growth the limit stops. Its per-identity record is the `ws connect rate limited` warning (user, peer address, limit
-and `retry_after_ms`, never the token), logged for a user's first refusal in a window; every refusal is counted in
-`cv_ws_connect_rate_limited_total`. `cv_ws_closes_total{reason="client_rate_limited"}` still ticks for each, and is
-shared with the inbound frame limiter's `4429` close (D05), so RSK-063's trigger reads the dedicated counter.
+remains is visible as that audit action's rate per identity (the metrics carry no user label).
+
+A refused connect writes **no** audit row. That narrows `04-security-program.md` §8.3 rule 5 (every denial,
+`ratelimit.rejected`, is logged; no code emits that event yet) and, if a refused connect is an "auth event", C-2.9.
+#2558 asks for refusals that add no audit rows, and a row per refusal would bring back the growth the limit stops.
+The repo has precedent both ways (C-2.9 vs C-2.18): `/auth/refresh` 429s write no row, but the CSRF guard and the
+session-fixation refusal write budgeted rows (up to 20 a minute per source) and count the rest as `audit_throttled`.
+That budget is not taken here: per user it would add up to 20 refusal rows a minute to the 20 close rows the limit
+allows. A row capped at one per user per window (gated by `first_refusal`) would be bounded and cheap, and would put a
+refusal in the retained audit chain (C-12.8) instead of a log line. It is deferred, not rejected: it needs a new audit
+action and an awaited append on the refusal path, so it is its own ticket if the Owner wants refusals in audit
+retention. Until then the record is `cv_ws_connect_rate_limited_total` (every refusal) and the
+`ws connect rate limited` warning (user, peer address, limit and `retry_after_ms`, never the token), which is capped at
+a user's first refusal in a window. Every close also writes the generic `ws close` line, with no user.
+`cv_ws_closes_total{reason="client_rate_limited"}` ticks for each refusal too, and is shared with the inbound frame
+limiter's `4429` close (D05), so RSK-063's trigger reads the dedicated counter.
 
 ## 9. Control-to-ticket map
 

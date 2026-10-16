@@ -690,8 +690,9 @@ def make_ws_router(
         the point of the limit. The permission registration this `auth` made for the SR-189
         re-check is undone by the handler's teardown, as for any closing socket. Every refusal
         is counted in `cv_ws_connect_rate_limited_total` (and, as a close, in
-        `cv_ws_closes_total`). A user's first refusal in a window is logged as a warning that
-        names the user and the peer address, never the token; the rest are only counted."""
+        `cv_ws_closes_total`). The user-attributed warning is capped: it is logged for a user's
+        first refusal in a window and names the user and the peer address, never the token. Every
+        close still writes the generic `ws close` line, which names no user."""
         cv_ws_connect_rate_limited_total.inc()
         if gateway_hub.connect_rate.first_refusal(user_id, conn.clock()):
             _log().warning(
@@ -795,10 +796,12 @@ def make_ws_router(
             return
         if not reauth:
             # Only a new socket's first SUCCESSFUL auth is counted (failures have their own 3
-            # strikes, a re-auth is a token refresh), and only here: no await separates the count
-            # from `auth_ok`, so concurrent sockets of one user cannot overshoot the limit. It
-            # precedes `enforce_cap`, so a refused socket never evicts a live one. The clock is
-            # read here, after the awaits above: `now` predates them and would age the stamp.
+            # strikes, a re-auth is a token refresh), and only here. `admit_connect` checks and
+            # records in one synchronous step, so concurrent sockets of one user cannot overshoot
+            # the limit. Nothing awaits between it and `auth_ok`, so no other task can close or
+            # cancel a counted socket before it is answered. It precedes `enforce_cap`, so a
+            # refused socket never evicts a live one. The clock is read here, after the awaits
+            # above: `now` predates them and would age the stamp.
             retry_after_ms = gateway_hub.admit_connect(user_id, conn.clock())
             if retry_after_ms is not None:
                 refuse_connect(conn, user_id, retry_after_ms)

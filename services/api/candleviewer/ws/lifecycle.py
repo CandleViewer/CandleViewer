@@ -360,7 +360,8 @@ class ConnectRateLimiter:
     exclusive edge as `InboundRateLimiter`). The caller offers only a new socket's first
     successful `auth`: a failed `auth` and an in-place re-`auth` never get here, and a refusal
     leaves no trace, so a refused client cannot lengthen its own wait. `first_refusal` tells the
-    caller whether to log a refusal: once per user per window, the rest are only counted.
+    caller whether to log the user-attributed warning: once per user per window (the caller still
+    counts every refusal).
 
     Bounded (C-2.18): a user holds at most `limit` timestamps, and users are kept in the order of
     their newest stamp, so each `admit` first drops, from the front, every user whose newest stamp
@@ -400,9 +401,10 @@ class ConnectRateLimiter:
         return None
 
     def first_refusal(self, user_id: uuid.UUID, now: float) -> bool:
-        """True for a user's first refusal in the last window: the caller logs that one and only
-        counts the rest, like `RefusalLogLimiter` for refused upgrades. Bounded (C-2.18): one entry
-        per user refused in the last window, in logging order, aged out from the front."""
+        """True for a user's first refusal in the last window: the caller logs the user-attributed
+        warning for that one only and counts every refusal, like `RefusalLogLimiter` for refused
+        upgrades. Bounded (C-2.18): one entry per user refused in the last window, in logging
+        order, aged out from the front."""
         while self._logged and now - next(iter(self._logged.values())) >= AUTH_RATE_WINDOW_S:
             self._logged.popitem(last=False)
         if user_id in self._logged:
