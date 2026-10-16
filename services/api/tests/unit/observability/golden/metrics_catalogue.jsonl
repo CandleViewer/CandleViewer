@@ -97,6 +97,8 @@
 ["cv_ws_connect_rate_limited_total", "counter", [], "live", "E17"]
 ["cv_ws_connections_in_use", "gauge", [], "live", "E17"]
 ["cv_ws_fanout_seconds", "histogram", [], "live", "E17"]
+["cv_ws_frame_bytes", "histogram", ["kind"], "live", "E17"]
+["cv_ws_frame_encode_seconds", "histogram", ["kind"], "live", "E17"]
 ["cv_ws_handshake_seconds", "histogram", [], "live", "E17"]
 ["cv_ws_malformed_updates_total", "counter", ["topic"], "live", "E17"]
 ["cv_ws_overflow_total", "counter", ["reason"], "live", "E17"]

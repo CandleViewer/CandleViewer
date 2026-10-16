@@ -50,7 +50,7 @@ from candleviewer.ws.binary import (
     encode_b64,
 )
 from candleviewer.ws.errors import build_ws_error
-from candleviewer.ws.metrics import SAMPLE_MASK
+from candleviewer.ws.metrics import SAMPLE_EVERY, SAMPLE_MASK
 from candleviewer.ws.topics import is_topic_name, machine_refusal
 
 if TYPE_CHECKING:
@@ -246,8 +246,8 @@ def render(sub: Subscription, body: SnapshotBody, max_part_bytes: int) -> Render
         )
         frames.extend(split_frame(scaled, max_part_bytes))
     last = len(frames) - 1
-    out = tuple(
-        encode_b64(f if i == last else replace(f, flags=f.flags | FLAG_PARTIAL))
+    out = tuple(  # weight 1: a snapshot is rare, so every chunk is timed and sized
+        encode_b64(f if i == last else replace(f, flags=f.flags | FLAG_PARTIAL), 1)
         for i, f in enumerate(frames)
     )
     return Rendered(None, out, body.stale, body.meta)
@@ -438,9 +438,12 @@ class TopicEmitter:
 
     One data frame of a subscription in `SAMPLE_EVERY` (the one whose `s` is a multiple of it)
     leaves with the `clock` reading at which the hub took it (`push_data`), so the writer can
-    observe `cv_ws_fanout_seconds` (budget #6, weighted) once the socket has it. The others leave
-    with none, and the hub reads no clock for them. `clock` must be the clock the writer reads;
-    the gateway passes the connection's own."""
+    observe `cv_ws_fanout_seconds` (budget #6, weighted) once the socket has it. That stamp also
+    picks the frames the cost series observe: the encoder times and sizes a stamped binary delta
+    (`cv_ws_frame_*{kind}`, weighted; a snapshot chunk is observed exactly) and the writer the
+    stamped frame it encodes (`kind` `json` / `msgpack`). The others leave with none, and the hub
+    reads no clock for them. `clock` must be the clock the writer reads; the gateway passes the
+    connection's own."""
 
     def __init__(
         self,
@@ -557,8 +560,10 @@ class TopicEmitter:
         """Emit one `d` consuming exactly one sequence number. Suppressed (False) while the
         subscription awaits its `snap` or is paused, so no delta crosses a gap (§7.1). A frame whose
         `s` is a multiple of `SAMPLE_EVERY` is stamped with the clock now (a paced frame at its
-        release, not at its source update); the others read no clock. `meta` rides on the
-        envelope (bars: the §6.1 `include_delta` echo) and may not name a key the server owns."""
+        release, not at its source update), and a stamped binary delta is also encoded with that
+        weight (timed and sized by `cv_ws_frame_*`); the others read no clock and no timer. `meta`
+        rides on the envelope (bars: the §6.1 `include_delta` echo) and may not name a key the
+        server owns."""
         if meta and SERVER_META_KEYS.intersection(meta):  # a programming error, as for a snap
             raise ValueError("delta meta may not name a server-owned key")
         if sub.snapshot_pending or sub.effective.get("paused") is True:
@@ -577,7 +582,8 @@ class TopicEmitter:
             flags = part.flags | (FLAG_REPLAY if sub.replay_session_id is not None else 0)
             if coalesced_count > 1:
                 flags |= FLAG_COALESCED
-            frame |= {"e": "b64", "p": encode_b64(replace(part, flags=flags))}
+            weight = 0 if received is None else SAMPLE_EVERY  # the stamped delta is timed too
+            frame |= {"e": "b64", "p": encode_b64(replace(part, flags=flags), weight)}
         else:
             p = dict(body or {})  # a fresh dict per subscription: no shared private buffers
             if fam in COALESCE_FIELDS:
