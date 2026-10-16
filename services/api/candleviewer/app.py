@@ -80,6 +80,7 @@ from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
+from candleviewer.api.me import make_me_router
 from candleviewer.api.onboarding import make_onboarding_router
 from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restriction
 from candleviewer.api.openapi_publish import install_contract_openapi
@@ -1139,6 +1140,13 @@ def create_app(
             allowed_origins=resolved.allowed_origin_set,
             csrf=csrf_codec,
             audit_tracker=csrf_audits,  # one in-flight cap + shutdown drain for refusal audits
+        )
+    )
+    # #2713: the shell bootstrap (`/me`, `/me/preferences`, `/me/keymap`), self only. Without an
+    # identity provider (fake backend) it answers 503/501 after authenticating, never unchecked.
+    app.include_router(
+        make_me_router(
+            ctx.auth, identity=identity, environment=resolved.environment, clock=auth_clock
         )
     )
     # QA #1648 d1: live WS gateway. Role changes (`PUT /users/{id}/roles`)

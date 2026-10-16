@@ -1,9 +1,10 @@
-"""SQL identity read path for `/auth/session` and `/auth/mfa/verify` (QA #1658).
+"""SQL identity read path for `/auth/session`, `/auth/mfa/verify` (QA #1658) and `/me` (#2713).
 
 Implements the `IdentityProvider` shape `api/sessions.py` expects: the
 OpenAPI `User` object plus `SessionInfo.permissions`/`account_scope`, read
 from the E09-T01 tables (`users`, `user_roles`, `roles`, `role_permissions`,
-`permissions`, `user_account_access`). Static, parameterised SQL only.
+`permissions`, `user_account_access`), and the `Me.accounts` the caller may
+read or trade, joined to `exchange_accounts`. Static, parameterised SQL only.
 Never selects `password_hash` or any SECRET-classified column.
 """
 
@@ -42,6 +43,25 @@ _SCOPE_SQL = sa.text(
     "SELECT exchange_account_id::text FROM user_account_access "
     "WHERE user_id = CAST(:id AS uuid) AND can_view ORDER BY 1"
 )
+# `Me.accounts`, scoped at construction (SR-051) as `auth.scopes.account_scope` does: an owner
+# (a live `owner` role of an active, undeleted user, the account store's `_OWNER_PRED`) reaches
+# every live account with `trade`; anyone else only the live accounts of their own unfrozen view
+# grants, `trade` only where `can_trade`. No key column.
+_ACCOUNTS_SQL = sa.text("""
+    SELECT ea.id::text AS exchange_account_id, ea.label, ea.env::text AS environment,
+           CASE WHEN o.is_owner OR COALESCE(uaa.can_trade, false) THEN 'trade' ELSE 'read' END
+               AS mode
+    FROM (SELECT EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+                         JOIN users u ON u.id = ur.user_id
+                         WHERE ur.user_id = CAST(:id AS uuid) AND r.name::text = 'owner'
+                           AND u.deleted_at IS NULL AND u.status = 'active'
+                           AND (ur.expires_at IS NULL OR ur.expires_at > now())) AS is_owner) o
+    CROSS JOIN exchange_accounts ea
+    LEFT JOIN user_account_access uaa
+           ON uaa.exchange_account_id = ea.id AND uaa.user_id = CAST(:id AS uuid)
+    WHERE ea.deleted_at IS NULL AND (o.is_owner OR (uaa.can_view AND NOT uaa.frozen))
+    ORDER BY ea.created_at, ea.id
+    """)
 
 
 def _iso(value: Any) -> str | None:
@@ -80,3 +100,20 @@ class SqlAlchemyIdentityProvider:
             "permissions": [str(r[0]) for r in perms],
             "account_scope": [str(r[0]) for r in scope],
         }
+
+    async def accounts(self, user_id: str) -> list[dict[str, Any]]:
+        """The accounts `user_id` may read or trade, oldest first (`Me.accounts`).
+
+        An owner is a live `owner` role of an active, undeleted user, as in the account store's
+        `_OWNER_PRED` (SR-051), so a disabled or deleted owner reaches nothing through the role."""
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_ACCOUNTS_SQL, {"id": user_id})).all()
+        return [
+            {
+                "exchange_account_id": m["exchange_account_id"],
+                "label": m["label"],
+                "environment": m["environment"],
+                "mode": m["mode"],
+            }
+            for m in (row._mapping for row in rows)
+        ]
