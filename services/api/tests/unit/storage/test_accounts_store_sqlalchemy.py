@@ -134,7 +134,8 @@ def _sql(s: sa.TextClause) -> str:
 
 def test_statement_inventory_is_fully_classified() -> None:
     allst = _all_statements()
-    assert allst == set(mod.OWNER_STATEMENTS) | set(mod.GRANT_STATEMENTS) | {mod._OWNER_GATE}
+    scoped = set(mod.OWNER_STATEMENTS) | set(mod.GRANT_STATEMENTS) | {mod._OWNER_GATE}
+    assert allst == scoped | set(mod.TELEMETRY_STATEMENTS)
 
 
 def test_statements_are_static_and_have_no_forbidden_shapes() -> None:
@@ -173,7 +174,7 @@ _COLUMN_COPIES = {
     "_ROT_COLS": ("_GET_ROT", "_LIST_ROTS", "_STEP_VALIDATED", "_STEP_CUTOVER",
                   "_STEP_COMPLETED", "_STEP_FAILED"),
 }  # fmt: skip
-_NO_COLUMN_COPY = {"_OWNER_GATE", "_SOFT_DELETE", "_START_ROT"}
+_NO_COLUMN_COPY = {"_OWNER_GATE", "_SOFT_DELETE", "_START_ROT", "_COUNT_ACCOUNTS", "_COUNT_KEYS"}
 
 
 def test_every_statement_has_at_most_one_pinned_column_list() -> None:
@@ -236,6 +237,41 @@ def test_key_and_rotation_statements_are_scoped_to_the_live_path_account(
 def test_rotation_steps_update_only_the_named_open_rotation(step: str) -> None:
     text = str(mod._STEPS[step])
     assert "r.id = CAST(:rot AS uuid) AND r.completed_at IS NULL AND r.failed_at IS NULL" in text
+
+
+def test_telemetry_statements_are_env_bound_aggregates_without_row_identity() -> None:
+    """#2314: counts for the M13 row gauges; the env is the only bound parameter (no caller, no
+    id), so nothing a route could scope leaves these statements."""
+    for s in mod.TELEMETRY_STATEMENTS:
+        text = _sql(s)
+        assert "count(*) AS n" in text and "GROUP BY" in text
+        assert "ea.env::text = CAST(:env AS text)" in text
+        assert set(s.compile().params) == {"env"}
+        assert ".id::text" not in text and " AS id" not in text
+    assert "ea.deleted_at IS NULL" in _sql(mod._COUNT_ACCOUNTS)
+    assert "deleted_at" not in _sql(mod._COUNT_KEYS)  # 21 §3.2: every api_keys row counts
+
+
+async def test_row_counts_map_rows_and_run_no_gate_and_no_commit() -> None:
+    rel = _Rel(
+        _Result([{"kind": "main", "n": 2}, {"kind": "sub", "n": 1}]),
+        _Result([{"status": "active", "n": 3}]),
+    )
+    store = _store(rel)
+    assert await store.count_accounts_by_kind("live") == {"main": 2, "sub": 1}
+    assert await store.count_api_keys_by_status("live") == {"active": 3}
+    assert [c[0] for c in rel.calls] == [mod._COUNT_ACCOUNTS, mod._COUNT_KEYS]
+    assert [c[1] for c in rel.calls] == [{"env": "live"}, {"env": "live"}] and rel.commits == 0
+
+
+@pytest.mark.parametrize("env", ["", "prod", "LIVE"])
+async def test_row_counts_refuse_an_unknown_env_before_any_sql(env: str) -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError):
+        await _store(rel).count_accounts_by_kind(env)
+    with pytest.raises(ValueError):
+        await _store(rel).count_api_keys_by_status(env)
+    assert rel.calls == []
 
 
 def test_grant_statements_require_snapshot_and_live_grant() -> None:

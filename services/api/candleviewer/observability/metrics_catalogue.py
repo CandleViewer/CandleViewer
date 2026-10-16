@@ -454,6 +454,30 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=8,
         exported=True,
     ),
+    # --- Accounts (M13, #2314 / E27-T01); AccountsService refresh loop, real backend only ----
+    # `env` is the facade's process environment, which also scopes the counted rows (20 §7.1).
+    _s(
+        "cv_accounts_rows",
+        "gauge",
+        "rows",
+        ("kind",),
+        "Non-deleted exchange accounts of the process environment, by account_kind.",
+        "dashboard only",
+        _L,
+        "E27",
+        max_series=2,
+    ),
+    _s(
+        "cv_api_keys_rows",
+        "gauge",
+        "rows",
+        ("state",),
+        "API key rows of the process environment's accounts, by key_status.",
+        "dashboard only",
+        _L,
+        "E27",
+        max_series=6,
+    ),
     # --- Bar builder set (E12-T03); served by bars.metrics.export_bars_metrics ------
     _s(
         "bar_builder_specs_in_use",

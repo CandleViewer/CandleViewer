@@ -9,7 +9,8 @@ first checks the live owner role, so a non-owner holding one gets
 `AccountsStoreScopeDeniedError` (a uniform 403 that depends only on the caller). A `GrantScope`
 narrows silently in SQL. Not-found, not-yours, soft-deleted and path-mismatched all return
 `None`, so there is no existence oracle. No method names or returns an envelope column
-(C-3.2): key writes (insert, revoke, touch) belong to M2's credential store.
+(C-3.2): key writes (insert, revoke, touch) belong to M2's credential store. The one unscoped
+surface is `AccountsRowCounts`: aggregate counts for the M13 gauges, never a row (#2314).
 """
 
 from __future__ import annotations
@@ -170,7 +171,24 @@ class AccountsStoreStaleError(AccountsStoreError):
     """If-Match token no longer matches a live row."""
 
 
-class AccountsStore(Protocol):
+class AccountsRowCounts(Protocol):
+    """System telemetry for the M13 row gauges (#2314): counts for one environment, no row data
+    and no account id, so these reads take no principal scope. They are never reachable from a
+    route: `accounts.service.AccountsService` is the only caller (pinned by
+    `tests/unit/architecture/test_accounts_row_counts_callers.py`). An unknown `env` raises
+    `ValueError` instead of counting nothing."""
+
+    async def count_accounts_by_kind(self, env: str) -> dict[str, int]:
+        """Non-deleted `exchange_accounts` of `env` per `kind`; absent kinds are omitted."""
+        ...
+
+    async def count_api_keys_by_status(self, env: str) -> dict[str, int]:
+        """Every `api_keys` row of `env`'s accounts per `status` (21 §3.2 excludes none: keys have
+        no soft delete, and keys of soft-deleted accounts still exist)."""
+        ...
+
+
+class AccountsStore(AccountsRowCounts, Protocol):
     async def create_account(
         self, scope: OwnerScope, new: NewExchangeAccount
     ) -> ExchangeAccountRow: ...

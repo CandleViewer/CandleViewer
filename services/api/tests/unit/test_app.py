@@ -211,3 +211,40 @@ def test_create_app_mounts_the_admin_audit_router() -> None:
     assert "/admin/audit" in paths
     assert "/admin/audit/verify" in paths
     assert "/admin/audit/export" in paths
+
+
+def test_accounts_row_counts_store_exists_only_on_the_real_backend() -> None:
+    # #2314: the fake backend has no Postgres, so the row gauges stay unset there.
+    from candleviewer.app import _build_accounts_counts
+    from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
+
+    assert _build_accounts_counts(_fake_settings()) is None
+    real = Settings(environment=Environment.DEMO, storage_backend="real")
+    assert isinstance(_build_accounts_counts(real), SqlAlchemyAccountsStore)
+
+
+async def test_create_app_wires_the_accounts_row_gauges_to_the_scraped_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # #2314: the catalogue gauges on `ctx.metrics` (what /metrics serves), env-scoped reads.
+    import candleviewer.app as appmod
+
+    envs: list[str] = []
+
+    class _Counts:
+        async def count_accounts_by_kind(self, env: str) -> dict[str, int]:
+            envs.append(env)
+            return {"sub": 2}
+
+        async def count_api_keys_by_status(self, env: str) -> dict[str, int]:
+            envs.append(env)
+            return {"invalid": 1}
+
+    monkeypatch.setattr(appmod, "_build_accounts_counts", lambda _settings: _Counts())
+    ctx = create_app(_fake_settings()).state.app_context
+    assert await ctx.accounts.refresh_once() is True
+    sample = ctx.metrics.get_sample_value
+    assert sample("cv_accounts_rows", {"env": "demo", "kind": "sub"}) == 2
+    assert sample("cv_accounts_rows", {"env": "demo", "kind": "main"}) == 0
+    assert sample("cv_api_keys_rows", {"env": "demo", "state": "invalid"}) == 1
+    assert envs == ["demo", "demo"]

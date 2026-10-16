@@ -384,3 +384,40 @@ async def test_rotation_lifecycle_and_scoping(
         await store.start_rotation(owner, NewKeyRotation(uuid.uuid4(), a.id, old, old))
     assert e2.value.rule == "akr_distinct"
     assert isinstance(r.started_at, datetime)
+
+
+def _delta(after: dict[str, int], before: dict[str, int]) -> dict[str, int]:
+    return {
+        k: after.get(k, 0) - before.get(k, 0)
+        for k in after.keys() | before.keys()
+        if after.get(k, 0) != before.get(k, 0)
+    }
+
+
+async def test_row_counts_are_env_scoped_live_accounts_and_every_key_row(
+    store: SqlAlchemyAccountsStore, creds: SqlAlchemyCredentialStore, pg_dsn: str
+) -> None:
+    """#2314: the M13 row-gauge reads. Deltas, because the module shares one database."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    demo_a = await store.count_accounts_by_kind("demo")
+    test_a = await store.count_accounts_by_kind("testnet")
+    demo_k = await store.count_api_keys_by_status("demo")
+    test_k = await store.count_api_keys_by_status("testnet")
+    main = await store.create_account(owner, _new(exch))
+    await store.create_account(owner, _new(exch, parent=main.id))
+    gone = await store.create_account(owner, _new(exch))
+    await store.create_account(owner, _new(exch, env="testnet"))
+    active, revoked = await _seed_key(creds, main.id), await _seed_key(creds, main.id)
+    await _seed_key(creds, gone.id)  # stays `pending` on an account soft-deleted below
+    await store.transition_key_status(owner, main.id, active, expected="pending", new="active")
+    await creds.mark_revoked(revoked)
+    await store.soft_delete_account(owner, gone.id)
+    assert _delta(await store.count_accounts_by_kind("demo"), demo_a) == {"main": 1, "sub": 1}
+    assert _delta(await store.count_accounts_by_kind("testnet"), test_a) == {"main": 1}
+    # every key row of the env's accounts counts, soft-deleted accounts included (21 §3.2)
+    assert _delta(await store.count_api_keys_by_status("demo"), demo_k) == {
+        "active": 1, "revoked": 1, "pending": 1,
+    }  # fmt: skip
+    assert _delta(await store.count_api_keys_by_status("testnet"), test_k) == {}
+    with pytest.raises(ValueError):
+        await store.count_accounts_by_kind("prod")

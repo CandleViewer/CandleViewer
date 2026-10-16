@@ -317,6 +317,21 @@ def trading() -> Board:
         1,
         1,
     )
+    # #2314 (E27-T01): M13 row gauges, scoped to $env. `max`, not `sum`: replicas report the
+    # same database, so summing would multiply the counts.
+    b.row("Accounts and API keys")
+    b.ts(
+        "Exchange accounts by kind",
+        f"max by (kind) (cv_accounts_rows{{{E}}})",
+        "short",
+        legend="{{kind}}",
+    )
+    b.ts(
+        "API keys by state",
+        f"max by (state) (cv_api_keys_rows{{{E}}})",
+        "short",
+        legend="{{state}}",
+    )
     b.flush()
     return b
 

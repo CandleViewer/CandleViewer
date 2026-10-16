@@ -41,7 +41,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "8a6c3f1d04afec81155b8689210f452da12e3f611a6db728376bcad3da071e32"
+GOLDEN_CATALOGUE_SHA256 = "e494417d78e3bc9f014b7ac96a85f712a82042108288ccedca4e70c493ae737c"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -112,6 +112,8 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["fe_dropped_frames_total"].labels("R-100").inc()
     r["fe_gpu_memory_mb"].labels("R-100").set(64)
     r["support_bundle_generations_total"].labels("ok").inc()
+    r["cv_accounts_rows"].labels("main").set(1)
+    r["cv_api_keys_rows"].labels("active").set(1)
     text = generate_latest(m.registry).decode()
     families = {f.name: f for f in text_string_to_metric_families(text)}
     for spec in registered_specs():
@@ -120,6 +122,17 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
         assert fam.documentation, spec.name
         assert fam.samples and all(s.labels["env"] == "demo" for s in fam.samples), spec.name
         assert f"# HELP {spec.name} " in text
+
+
+def test_account_row_gauges_are_live_and_bounded_by_their_enums() -> None:
+    """#2314: one series per closed-enum value; `env` is the facade's process environment."""
+    from candleviewer.accounts.models import AccountKind, KeyStatus
+
+    specs = {s.name: s for s in registered_specs()}
+    rows, keys = specs["cv_accounts_rows"], specs["cv_api_keys_rows"]
+    assert (rows.kind, rows.labels, rows.max_series) == ("gauge", ("kind",), len(AccountKind))
+    assert (keys.kind, keys.labels, keys.max_series) == ("gauge", ("state",), len(KeyStatus))
+    assert rows.owner_epic == keys.owner_epic == "E27"
 
 
 def test_labels_exercised_contain_no_personal_data() -> None:

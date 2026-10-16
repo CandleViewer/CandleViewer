@@ -14,6 +14,8 @@ Every `OwnerScope` call, reads included, runs the gate first and raises
 `AccountsStoreScopeDeniedError` for a caller who is not a live owner (a uniform 403 that depends
 only on the caller). The owner read statements also carry the owner predicate inline, so they
 stay scoped by `:caller` even on a path that skipped the gate.
+The `count_*` reads (M13 row gauges, #2314) are the one principal-free surface: env-bound
+aggregate counts that return no row, id or label, and that no route reaches.
 No hard DELETE exists. Mapped errors are raised `from None`: IntegrityError text carries P1
 parameters (exchange_uid, label).
 """
@@ -383,6 +385,17 @@ _STEPS = {
     "completed": _STEP_COMPLETED,
     "failed": _STEP_FAILED,
 }
+#: M13 row-gauge aggregates (#2314): counts for the process environment only (20 §7.1), never a
+#: row, an id or a label. No principal scope; `AccountsService` is the only caller (unit-pinned).
+_COUNT_ACCOUNTS = sa.text(
+    "SELECT ea.kind::text AS kind, count(*) AS n FROM exchange_accounts ea "
+    "WHERE ea.deleted_at IS NULL AND ea.env::text = CAST(:env AS text) GROUP BY ea.kind"
+)
+_COUNT_KEYS = sa.text(
+    "SELECT k.status::text AS status, count(*) AS n FROM api_keys k "
+    "JOIN exchange_accounts ea ON ea.id = k.exchange_account_id "
+    "WHERE ea.env::text = CAST(:env AS text) GROUP BY k.status"
+)
 
 OWNER_STATEMENTS = frozenset(
     {
@@ -391,6 +404,7 @@ OWNER_STATEMENTS = frozenset(
     }
 )  # fmt: skip
 GRANT_STATEMENTS = frozenset({_GET_GRANT, _LIST_GRANT})
+TELEMETRY_STATEMENTS = frozenset({_COUNT_ACCOUNTS, _COUNT_KEYS})
 
 _CONFLICT_CONSTRAINTS = frozenset(
     {"exchange_accounts_pkey", "ux_ea_uid", "ux_ea_label", "ux_api_keys_active",
@@ -764,3 +778,17 @@ class SqlAlchemyAccountsStore:
                 raise AccountsStoreConflictError("rotation_state")
             await uow.commit()
         return _rotation(row)
+
+    # -- system telemetry (#2314) -----------------------------------------------------------
+    async def count_accounts_by_kind(self, env: str) -> dict[str, int]:
+        return await self._counts(_COUNT_ACCOUNTS, env, "kind")
+
+    async def count_api_keys_by_status(self, env: str) -> dict[str, int]:
+        return await self._counts(_COUNT_KEYS, env, "status")
+
+    async def _counts(self, stmt: sa.TextClause, env: str, key: str) -> dict[str, int]:
+        if env not in _ENVS:  # a typo'd env would silently count nothing
+            raise ValueError("unknown env")
+        async with self._relational.unit_of_work() as uow:  # read-only: no commit
+            res = await uow.session.execute(stmt, {"env": env})
+            return {str(r[key]): int(r["n"]) for r in res.mappings()}
