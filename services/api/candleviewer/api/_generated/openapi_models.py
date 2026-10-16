@@ -4371,15 +4371,30 @@ class FeatureFlag(BaseModel):
     kind: Literal["boolean", "percentage", "variant"] | None = None
     description: str | None = None
     value: Annotated[Any | None, Field(description="Resolved value for the caller.")] = None
-    default_value: Annotated[Any | None, Field(description="Deployment default.")] = None
+    default_value: Annotated[
+        Any | None,
+        Field(
+            description="Deployment default: the deployment-wide stored value that `PUT` writes and that resolution falls back to (`feature_flags.default_value`, E42-T03). Omitted when the flag is `unreadable`.\n"
+        ),
+    ] = None
     overrides: list[Override] | None = None
     updated_by: Annotated[
         UUID | None,
-        Field(description="Omitted when the list's `resolution` is `fail_closed` (E42-T03)."),
+        Field(
+            description="Omitted when the list's `resolution` is `fail_closed` or the flag is `unreadable` (E42-T03).\n"
+        ),
     ] = None
     updated_at: Annotated[
         AwareDatetime | None,
-        Field(description="Omitted when the list's `resolution` is `fail_closed` (E42-T03)."),
+        Field(
+            description="Omitted when the list's `resolution` is `fail_closed` (E42-T03). An `unreadable` flag keeps it: it is the `expected_updated_at` of the write that repairs the flag.\n"
+        ),
+    ] = None
+    unreadable: Annotated[
+        bool | None,
+        Field(
+            description="`true` when this flag's stored row is unreadable (malformed, or a kind mismatch): the flag alone resolves to its fail-closed value, and a `PUT` with a valid value repairs it (E42-T03). Sent only as `true`.\n"
+        ),
     ] = None
 
 
@@ -4387,7 +4402,7 @@ class FeatureFlagResolution(RootModel[Literal["stored", "fail_closed"]]):
     root: Annotated[
         Literal["stored", "fail_closed"],
         Field(
-            description="How `GET /admin/feature-flags` resolved its list (E42-T03), a closed set. `stored`: from the flag store. `fail_closed`: the store was unreachable (its read failed, exceeded its read budget or returned an unreadable value), so every flag shows its fail-closed value and omits `updated_at` and `updated_by`.\n"
+            description="How `GET /admin/feature-flags` resolved its list (E42-T03), a closed set. `stored`: from the flag store. `fail_closed`: the store was unreachable (its read failed or exceeded its read budget), so every flag shows its fail-closed value and omits `updated_at` and `updated_by`. A single unreadable row is not an outage: the list stays `stored` and that flag is marked `unreadable`.\n"
         ),
     ]
 
