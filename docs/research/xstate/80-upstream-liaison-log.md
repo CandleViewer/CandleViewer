@@ -69,6 +69,7 @@ applies (dependency manifest). For 0.11.0 specifically, the snapshot v4 rolling-
 
 ## Log
 
-| Date       | Entry                                                                                                            |
-| ---------- | ---------------------------------------------------------------------------------------------------------------- |
-| 2026-10-14 | Initial entry: state above. 0.11.0 flagged as needing re-verification; R14-01 appears unfixed by source reading. |
+| Date       | Entry                                                                                                                                                                                    |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-10-14 | Initial entry: state above. 0.11.0 flagged as needing re-verification; R14-01 appears unfixed by source reading.                                                                         |
+| 2026-10-16 | Pinned nightly triaged (#579): red on 12/12 nights from harness/env gaps, a Windows no-bench baseline and BENCH-1 runner variance; no 0.9.1 regression. See `81-nightly-gate-triage.md`. |
