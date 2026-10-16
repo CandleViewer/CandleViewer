@@ -5494,7 +5494,9 @@ class StatechartKindSummary(BaseModel):
         Field(description="Live machines per published `state`; a state with none is left out."),
     ]
     chain_trips: Annotated[int, Field(description="Sum over the machines.", ge=0)]
-    degraded: Annotated[int, Field(description="Machines whose latch is set.", ge=0)]
+    degraded_machines: Annotated[
+        int, Field(description="Machines whose `chain_trips` latch is set.", ge=0)
+    ]
     dropped_receipts: Annotated[
         int | None,
         Field(

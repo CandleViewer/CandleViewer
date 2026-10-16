@@ -10115,8 +10115,9 @@ paths:
         self-scoped for every role, so only the caller's own appear. A row the caller may not see
         is omitted, never redacted. `kinds` adds one counters-only summary per kind and
         environment with no entity id, every live machine counted, so a latched machine without a
-        row (a B8 `position_protection`, another user's `session`) still shows; it is the same on
-        every page.
+        row (a B8 `position_protection`, another user's `session`) still shows. `kinds` is the same
+        on every page, and `kind` and `environment` narrow it as they narrow `items` (`degraded`
+        does not).
         Machines are per environment (`machine_snapshots` is keyed by kind, entity and `env`): the
         singletons `kill_switch` and `live_gate` run once per environment, and a `machine_key` is
         unique within one environment. `environment` filters; each row carries its own. Rows are
@@ -10124,8 +10125,10 @@ paths:
         Each snapshot's HMAC envelope is verified (`persistence.open_sealed`, CV-C53) before its
         `state`, `chain_trips` or `degraded` is shown. A snapshot that fails is left out of `items`
         and `kinds`, and `snapshots` is `error` with the fixed reason "snapshot seal did not
-        verify". When the snapshot store cannot be read, `items` and `kinds` are empty and
-        `snapshots` says why (`AdminSliceStatus`); the response is still `200`.
+        verify". A failed seal also writes a `system_events` row (component `statechart`, severity
+        `critical`, a fixed message), so it shows in `listIncidents`. When the snapshot store
+        cannot be read, `items` and `kinds` are empty and `snapshots` says why (`AdminSliceStatus`);
+        the response is still `200`.
       x-rbac: { permissions: [admin:read], scope: none }
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -10189,21 +10192,21 @@ paths:
                         machines: 1
                         by_state: { clear: 1 }
                         chain_trips: 0
-                        degraded: 0
+                        degraded_machines: 0
                         dropped_receipts: null
                       - machine_kind: order
                         environment: demo
                         machines: 1
                         by_state: { submitted: 1 }
                         chain_trips: 1
-                        degraded: 1
+                        degraded_machines: 1
                         dropped_receipts: null
                       - machine_kind: position_protection
                         environment: demo
                         machines: 2
                         by_state: { protected: 2 }
                         chain_trips: 0
-                        degraded: 0
+                        degraded_machines: 0
                         dropped_receipts: null
                     meta: { next_cursor: null, has_more: false, count: 2 }
                     snapshots: { status: ok, generated_at: "2026-10-15T18:00:05Z" }
@@ -10233,7 +10236,8 @@ paths:
         same `404 not_found`. `environment` is required, because a `machineKey` is unique only
         within one environment. When the snapshot store cannot be read, or the machine's HMAC
         envelope does not verify (`persistence.open_sealed`, CV-C53), the answer is `200` with
-        `snapshots` `error` and a fixed reason, and no machine fields.
+        `snapshots` `error` and a fixed reason, and no machine fields; a failed seal also writes
+        the `system_events` row described on `listStatecharts`.
       x-rbac: { permissions: [admin:read], scope: none }
       parameters:
         - name: environment
@@ -10296,8 +10300,8 @@ paths:
         so the answer is the same for any id of a registered kind. An `algo:{id}` key is
         `404 not_found`, because without reading the instance the export cannot tell which of
         the four algo charts it is; export by the bare kind (`oco`, `iceberg`, `twap` or
-        `chase`) instead. A key outside the grammar (a singleton with an id, an empty id) or a
-        kind that is not registered is `404 not_found` too.
+        `chase`) instead. A key outside the grammar (a singleton with an id) or a kind that is
+        not registered is `404 not_found` too.
       x-rbac: { permissions: [admin:read], scope: none }
       responses:
         "200":
@@ -15969,7 +15973,15 @@ components:
         machine of the kind is counted, including the kinds without a public id (B8, B9, B13,
         B15) and the machines no row is shown for.
       required:
-        [machine_kind, environment, machines, by_state, chain_trips, degraded, dropped_receipts]
+        [
+          machine_kind,
+          environment,
+          machines,
+          by_state,
+          chain_trips,
+          degraded_machines,
+          dropped_receipts,
+        ]
       properties:
         machine_kind: { type: string }
         environment: { $ref: "#/components/schemas/Environment" }
@@ -15979,7 +15991,8 @@ components:
           additionalProperties: { type: integer }
           description: Live machines per published `state`; a state with none is left out.
         chain_trips: { type: integer, minimum: 0, description: "Sum over the machines." }
-        degraded: { type: integer, minimum: 0, description: "Machines whose latch is set." }
+        degraded_machines:
+          { type: integer, minimum: 0, description: "Machines whose `chain_trips` latch is set." }
         dropped_receipts:
           type: ["integer", "null"]
           minimum: 0

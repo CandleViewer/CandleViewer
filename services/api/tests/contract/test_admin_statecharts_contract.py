@@ -126,6 +126,11 @@ def test_schema_required_sets_and_environment() -> None:
     assert {"lock_matches", "updated_at"} <= set(machine["required"])
     assert "dropped_receipts" not in machine["properties"]
     assert kinds["properties"]["dropped_receipts"]["type"] == ["integer", "null"]
+    assert (kinds["properties"]["machines"]["minimum"], "degraded" in kinds["properties"]) == (
+        1,
+        False,
+    )
+    assert kinds["properties"]["degraded_machines"]["type"] == "integer"
     assert _SCHEMAS["StatechartMachineDetail"]["required"] == ["snapshots"]
     assert _SCHEMAS["StatechartExport"]["required"] == ["machine_kind", "machine_hash", "stately"]
     for schema in (machine, kinds):
@@ -162,7 +167,15 @@ def test_read_path_rules() -> None:
     seal = "HMAC envelope"
     assert seal in listing and seal in detail and "`persistence.open_sealed`, CV-C53" in detail
     assert "is shown. A snapshot that fails is left out of `items` and `kinds`" in listing
-    assert "`snapshots` is `error` with the fixed reason" in listing
+    assert '`snapshots` is `error` with the fixed reason "snapshot seal did not verify"' in listing
+    assert "`snapshots` `error` and a fixed reason, and no machine fields" in detail
+    event = "a `system_events` row (component `statechart`, severity `critical`, a fixed message)"
+    assert event in listing and "so it shows in `listIncidents`" in listing
+    assert "`kind` and `environment` narrow it as they narrow `items` (`degraded`" in listing
+    assert (
+        "An unknown machine and one the caller may not see are the same `404 not_found`" in detail
+    )
+    assert "An `algo:{id}` key is `404 not_found`" in _text(_EXPORT)
 
 
 @pytest.mark.parametrize(
@@ -228,6 +241,8 @@ def test_scope_and_public_id_claims_match_ws_6_4() -> None:
     assert user_scoped == {"alert", "replay", "session"}
     assert "`alert`, `replay` and `session` stay self-scoped for every role" in _text(_LIST)
     assert "Owner included" in section
+    owner = "every entity of an account-scoped or unscoped kind"
+    assert f"The Owner may watch {owner}" in section and f"the Owner sees {owner}" in _text(_LIST)
     listed = {int(n) for b in rows for n in re.findall(r"\d+", b)}
     assert listed | set(range(4, 8)) | {8, 9, 13, 15} == set(range(1, 21))
     assert not listed & {8, 9, 13, 15}
