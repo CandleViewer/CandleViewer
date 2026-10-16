@@ -53,9 +53,57 @@ proxy its own address where the deployment allows it. Regression tests:
 `candleviewer.server` passes `log_config=None`, so uvicorn installs no handlers of its own. Its
 `uvicorn`, `uvicorn.error` and `uvicorn.access` loggers propagate to the root handler that
 `configure_logging()` sets up: JSON lines on stdout, through the handler-level redaction filter
-(SR-121), at `CV_LOG_LEVEL`. uvicorn's startup, error and access lines are therefore JSON like the
-rest of the log, not uvicorn's text format. The access line is off whenever the `/metrics` listener
-runs (`CV_METRICS_ENABLED`, on by default): the listener's `access_log=False` clears the shared
-`uvicorn.access` logger. The bare `uvicorn` CLI applies uvicorn's own logging config instead, which
-is one more reason not to start a deployment with it. Regression test:
-`tests/unit/observability/test_uvicorn_log_routing.py`.
+(SR-121), at `CV_LOG_LEVEL`. The same records reach the support bundle's log buffer
+(`LogRingBuffer`), which applies the redaction filter on its own. What that looks like:
+
+- **Fields.** uvicorn's lines carry `event`, `level` and `ts` only: no `env` and no logger name, as
+  for every stdlib logger.
+- **Access lines.** The HTTP access line is off whenever the `/metrics` listener runs
+  (`CV_METRICS_ENABLED`, on by default): the listener's `access_log=False` clears the shared
+  `uvicorn.access` logger. WebSocket handshake lines (`"WebSocket /ws" [accepted]`) are logged on
+  `uvicorn.error` at INFO and stay on.
+- **Process ids.** A six-digit process id turns `Started server process [N]` and
+  `Finished server process [N]` into a single `[redacted:totp-shape]` marker, because six digits
+  is the shape of a TOTP code. PID 1, as in the container, avoids it.
+- **Dev `--reload`.** The reloader's supervisor process never loads the app, so its INFO banners
+  (`Will watch for changes...`, `Uvicorn running on...`) are not printed, and its warnings come out
+  as plain text on stderr. The served child process logs JSON.
+- **Exit.** The log queue is written out when the interpreter exits, so the last line of a failed
+  start is not lost. Outside a container's PID 1, a process that uvicorn ends by re-raising SIGTERM
+  after its graceful shutdown is killed by the signal: no `atexit` hook runs, and its final line
+  can be missing.
+- The bare `uvicorn` CLI applies uvicorn's own logging config instead, which is one more reason
+  not to start a deployment with it.
+
+Regression tests: `tests/unit/observability/test_uvicorn_log_routing.py` and
+`tests/unit/observability/test_logging_exit_flush.py`.
+
+### A failed start (exit code 3)
+
+A start that fails inside the lifespan exits with code 3. stderr stays empty, the last line is
+`Application startup failed. Exiting.`, and the line before it, the cause, is one marker:
+`{"event":"[redacted:key-shape]","level":"error",...}`. uvicorn logs the whole traceback as a single
+text, and the redaction filter replaces a text by one marker when any token in it has the shape of
+a secret. An exception class name such as `ConnectionRefusedError` is enough. Keep redaction on and
+find the cause from what the lifespan depends on. `candleviewer/app.py` starts the modules in
+`_SUPERVISOR_ORDER` (`storage`, `audit`, `secrets`, `auth`, ..., `rules`, ...) and the first one
+that raises ends the start. Check, in this order:
+
+1. **The stores answer.** Postgres at `CV_PG_DSN` (the first module to read it at start, such as
+   `rules`, fails if it cannot connect) and, with `CV_STORAGE_BACKEND=real`, QuestDB at
+   `CV_QUESTDB_PG` and `CV_QUESTDB_ILP`. In the compose stack `docker compose ps -a` shows the
+   `api` container as `Exited (3)` and whether `postgres` and `questdb` are `healthy`, which `api`
+   waits for. `pg_isready -h <host> -p <port>` checks Postgres alone.
+2. **The schema is at head.** From `services/api`, with `CV_PG_DSN` set to the same database,
+   `alembic current` should print the revision that `alembic heads` prints, and
+   `alembic upgrade head` applies the rest (AGENTS.md section 4). An older schema makes the first
+   query that needs a newer table or column fail.
+3. **The KEK settings are accepted.** `CV_KEK_SOURCE`, `CV_KEK_HANDLE`, `CV_KEK_ACK_PATH` and
+   `CV_KEK_VERSION`: the start refuses a live read-once FIFO handle with no `CV_KEK_ACK_PATH`
+   (`kek_source_not_permitted`). Any other KEK problem does not fail the start: the app comes up
+   read-only and logs `secrets.kek_unavailable` with a reason, see
+   `docs/ops/runbooks/kek-custody.md`.
+
+An exit code of 1 with a Python traceback on stderr is a different failure: a setting was refused
+before the lifespan began, for example `CV_KEK_SOURCE=file` in live (`kek_source_not_permitted`).
+The message names the setting.
