@@ -16,7 +16,6 @@ S4 must close that window.
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime
 
@@ -42,6 +41,7 @@ from candleviewer.storage.repositories.user_lifecycle import (
     UserSelfTargetError,
     UserStatusChange,
 )
+from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_write_ahead
 
 #: Bounds the audit hook, during which the user row and every owner grant stay locked.
 AUDIT_TIMEOUT_S = 2.0
@@ -122,8 +122,7 @@ class SqlAlchemyUserLifecycleStore:
                 await s.execute(_REVOKE_GRANTS, {"id": uid, "revoked": revoked})
                 change = UserStatusChange(user_id, before, "disabled", roles, sessions, grants)
                 await s.execute(CONSTRAINTS_NOW)  # the floor trigger fires before the audit
-                async with asyncio.timeout(self._audit_timeout_s):
-                    await audit(change)
+                await bounded_write_ahead(audit(change), self._audit_timeout_s)
                 await uow.commit()
         except IntegrityError as exc:
             refuse_floor_violation(exc, self._owner_floor, counted, _NO_ROLES)

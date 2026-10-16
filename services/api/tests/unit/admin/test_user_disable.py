@@ -8,10 +8,11 @@ import uuid
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.exc import IntegrityError
+from structlog.testing import capture_logs
 
 from candleviewer.admin import errors
 from candleviewer.admin.user_disable import DisableResult, UserDisableService
@@ -19,6 +20,7 @@ from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import InviteNotFound
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
+from candleviewer.auth.invite_repository import InviteAudit
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_chart import SessionChart
@@ -114,10 +116,11 @@ class _World:
     async def record(self, record: SessionRecord, now: object, reason: str) -> None:
         self.mark(f"b16:{reason}")
 
-    async def revoke_invite(self, user_id: uuid.UUID) -> None:
-        self.mark("invite")
+    async def revoke_invite(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None:
+        self.mark("invite")  # as `InviteService.revoke`: the hook runs only for an open invite
         if self.invite is not None:
             raise self.invite
+        await audit(user_id, "viewer")
 
     async def disable(self, actor: PrincipalSnapshot = _OWNER, **kw: Any) -> DisableResult:
         return await self.svc.disable(_TARGET, actor=actor, **kw)
@@ -132,11 +135,12 @@ async def test_step_order() -> None:
     assert await w.disable() == DisableResult(changed=True)
     assert w.log == [
         *("positions", "orders", "users.disable", "socket:user_disabled", "socket:user_disabled"),
-        *("sweep:user_disabled", "b16:user_disabled", "b16:user_disabled", "users.invite_revoked"),
-        "invite",
+        *("sweep:user_disabled", "b16:user_disabled", "b16:user_disabled", "invite"),
+        "users.invite_revoked",
     ]
     (invite,) = w.of("users.invite_revoked")
     assert (invite["actor_user_id"], invite["object_id"]) == (_OWNER.user_id, str(_TARGET))
+    assert (invite["reason"], invite["after_state"]) == ("user_disabled", {"role": "viewer"})
 
 
 async def test_b16_revoke_per_session(b16_audit: RecordingAuditSink) -> None:
@@ -186,7 +190,7 @@ async def test_store_failure_no_post_commit(
 
 async def _commit_fails(*_: Any, audit: Any, **__: Any) -> UserStatusChange:
     await audit(UserStatusChange(_TARGET, "active", "disabled", frozenset({"manager"}), (_S1,)))
-    raise ConnectionError("commit lost")
+    raise TimeoutError("commit lost")  # a driver timeout: not `WriteAheadTimeout`, so no 503
 
 
 @pytest.mark.parametrize(
@@ -194,7 +198,7 @@ async def _commit_fails(*_: Any, audit: Any, **__: Any) -> UserStatusChange:
     [
         ([TimeoutError()], None, _AUDIT_DOWN, [_CLOSE]),
         ([TimeoutError(), AuditUnavailable("down")], None, _AUDIT_DOWN, []),
-        ([], SimpleNamespace(disable=_commit_fails), ConnectionError, [_OPEN, _CLOSE]),
+        ([], SimpleNamespace(disable=_commit_fails), TimeoutError, [_OPEN, _CLOSE]),
     ],
     ids=["hook_timeout", "closing_failed", "commit_failed"],
 )
@@ -241,10 +245,14 @@ async def test_store_self_target_is_the_audited_403() -> None:
     assert [(c["action"], c["reason"]) for c in w.calls] == [("rbac.denied", "self_target")]
 
 
-async def test_refusal_with_audit_down_is_503() -> None:
+@pytest.mark.parametrize(
+    ("actor", "target"), [(_OWNER, _OWNER.user_id), (_MANAGER, _TARGET)], ids=["self", "role"]
+)
+async def test_refusal_with_audit_down_is_503(actor: PrincipalSnapshot, target: uuid.UUID) -> None:
+    """AC8: a refusal (self-target or role) whose record cannot be written is a 503."""
     w = _World(fail={"rbac.denied": [AuditUnavailable("down")]})
     with pytest.raises(errors.LifecycleAuditUnavailableError):
-        await w.svc.disable(_OWNER.user_id, actor=_OWNER)
+        await w.svc.disable(target, actor=actor)
     assert w.rel.ran == []
 
 
@@ -288,22 +296,22 @@ async def test_positions_decision_never_flattens() -> None:
 @pytest.mark.parametrize(
     ("status", "kw", "records", "failed"),
     [
-        ("invited", {}, ["success"], ()),
-        ("invited", {"invite": InviteNotFound("none open")}, ["success", "failure"], ()),
-        ("invited", {"invite": OSError("invites down")}, ["success", "failure"], _INVITE),
-        ("invited", {"fail": {"users.invite_revoked": [AuditUnavailable("down")]}}, [], _INVITE),
-        ("active", {}, [], ()),
+        ("invited", {}, 1, ()),
+        ("invited", {"invite": InviteNotFound("none open")}, 0, ()),
+        ("invited", {"invite": OSError("invites down")}, 0, _INVITE),
+        ("invited", {"fail": {"users.invite_revoked": [AuditUnavailable("down")]}}, 0, _INVITE),
+        ("active", {}, 0, ()),
     ],
     ids=["invited", "invite_already_gone", "revoke_failed", "record_refused", "active"],
 )
 async def test_invited_revokes_invite(
-    status: str, kw: dict[str, Any], records: list[str], failed: tuple[str, ...]
+    status: str, kw: dict[str, Any], records: int, failed: tuple[str, ...]
 ) -> None:
-    """R6, UL1-E4, C-2.9: the invite is revoked after its record and closed if not applied."""
+    """R6, UL1-E4, C-2.9: the invite store writes one record ahead, only if one is open."""
     w = _World(_Rel(status=status), **kw)
     assert await w.disable() == DisableResult(True, failed)
-    assert [c.get("outcome", "success") for c in w.of("users.invite_revoked")] == records
-    assert ("invite" in w.log) == bool(records)  # the revoke runs once its record is written
+    assert len(w.of("users.invite_revoked")) == records
+    assert ("invite" in w.log) == (status == "invited")
 
 
 async def test_already_disabled_is_a_noop_that_sweeps_again() -> None:
@@ -330,6 +338,40 @@ async def test_cancelled_caller_leaves_the_steps_to_finish() -> None:
     assert w.post_commit() == ["sweep:user_disabled", "b16:user_disabled", "invite"]
 
 
+async def test_cancelled_steps_are_failed_then_reraised() -> None:
+    """R7: steps that a cancellation of their task (shutdown) cuts off are failed, not skipped;
+    the cancellation then reaches the caller, and `drain` returns."""
+
+    async def publish(*_: Any) -> None:  # the steps' task is cancelled while a step runs
+        (steps,) = [t for t in asyncio.all_tasks() if t.get_name() == "user-disable-steps"]
+        steps.cancel()
+        await asyncio.Event().wait()
+
+    w = _World(_Rel(status="invited", sessions=(_S1,)), publish=publish)
+    with capture_logs() as logs, pytest.raises(asyncio.CancelledError):
+        await w.disable()
+    await w.svc.drain()
+    lines = [(e["step"], e["outcome"], e["error"]) for e in logs if "step" in e]
+    assert lines == [(step, "failed", "CancelledError") for step in _STEPS]
+
+
+async def test_steps_raise_after_the_caller_left_is_logged() -> None:
+    """R7: a raise out of the steps' task is logged at error, though no caller awaits it."""
+
+    async def publish(*_: Any) -> None:  # the request goes away while the first step runs
+        call.cancel()
+
+    sweep = SimpleNamespace(revoke_all=Mock(side_effect=LookupError))  # raises outside a step
+    w = _World(_Rel(sessions=(_S1,)), publish=publish, sessions=sweep)
+    call = asyncio.create_task(w.disable())
+    with capture_logs() as logs:
+        with pytest.raises(asyncio.CancelledError):
+            await call
+        await w.svc.drain()
+    lines = [(e["log_level"], e["error"]) for e in logs if e["event"].endswith("steps_failed")]
+    assert lines == [("error", "LookupError")]
+
+
 async def _hang(*_: Any, **__: Any) -> Any:
     await asyncio.Event().wait()
 
@@ -342,10 +384,13 @@ async def _hang(*_: Any, **__: Any) -> Any:
         ({"chart": SimpleNamespace(revoke=_hang), "step_timeout_s": 0}, _STEPS[2:3]),
         ({"invites": SimpleNamespace(revoke=_hang), "step_timeout_s": 0}, _STEPS[3:]),
         ({"publish": _hang, "deadline_s": 0}, _STEPS),
+        ({"publish": _hang, "deadline_s": 0, "status": "active"}, _STEPS[:3]),
+        ({"rows": SimpleNamespace(find_by_id=AsyncMock(return_value=None))}, _STEPS[2:3]),
     ],
-    ids=[*_STEPS, "deadline"],
+    ids=[*_STEPS, "deadline", "deadline_active", "b16_row_missing"],
 )
 async def test_hung_step_fails_never_raises(ports: dict[str, Any], failed: tuple[str, ...]) -> None:
-    """R7: each await after the commit and all of them are bounded; hung or unreached, it fails."""
-    w = _World(_Rel(status="invited", sessions=(_S1,)), **ports)
+    """R7: each await after the commit and all of them are bounded; hung, unreached or broken, a
+    step fails alone (an `active` user has no invite step to fail)."""
+    w = _World(_Rel(status=ports.get("status", "invited"), sessions=(_S1,)), **ports)
     assert await w.disable() == DisableResult(True, failed)

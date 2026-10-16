@@ -2,14 +2,16 @@
 (E42-T04 S4, #965, SR-029). In order (R7): `users:write`, then a self-target (SR-055), each refusal
 audited before any read (U25); the open-position and -order counts (O2: read only); the store's
 transaction (S3), whose hook refuses an unacknowledged unknown count (AC7) and writes
-`users.disable` ahead (O6), closed by a `failure` record if nothing committed. Then, after a no-op
-(AC5) too, in a shielded tracked task, never rolled back: socket close (`bye user_disabled`, 4403),
-a sweep for a successor minted after the snapshot, one B16 REVOKE per session (R5), an `invited`
-user's invite, write-ahead (R6); each await bounded, all by a deadline. S5 adds the rule disarm."""
+`users.disable` ahead (O6), closed by a `failure` record if nothing committed. Then, in a shielded
+tracked task, never rolled back: socket close (`bye user_disabled`, 4403), a sweep for a successor
+minted after the snapshot, one B16 REVOKE per session (R5), an `invited` user's open invite (R6; the
+invite store writes its record ahead); each await bounded, all by a deadline. A repeat (AC5's no-op)
+re-runs only the sweep (and B16 for swept sessions). S5 adds the rule disarm."""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -31,12 +33,14 @@ from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import InviteNotFound
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.invite_repository import InviteAudit
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.owner_floor import OwnerFloorError
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.session_service import RevocationSink, publish_revoked
 from candleviewer.auth.step_up import PositionStateProvider
 from candleviewer.observability.context import current_request_id, spawn
+from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.user_lifecycle import (
     REVOKED_REASON,
     LifecycleAuditHook,
@@ -76,8 +80,8 @@ class SessionRevokeRecorder(Protocol):  # the process's B16 charts: `StepUpServi
     async def revoke(self, record: SessionRecord, now: datetime, reason: str) -> None: ...
 
 
-class InviteRevoker(Protocol):  # `InviteService`: `InviteNotFound` when none is open
-    async def revoke(self, user_id: uuid.UUID) -> None: ...
+class InviteRevoker(Protocol):  # `InviteService`: `audit` runs only if one is open (#2793)
+    async def revoke(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,8 +208,15 @@ class UserDisableService:
         user_lifecycle_total.labels(action="disable", result=result).inc()
         task = spawn(self._cascade(change, actor.user_id, rid, now), name="user-disable-steps")
         self._cascades.add(task)
-        task.add_done_callback(self._cascades.discard)
+        task.add_done_callback(self._untrack)
         return DisableResult(change.changed, await asyncio.shield(task))
+
+    def _untrack(self, task: asyncio.Task[tuple[str, ...]]) -> None:
+        """A raise is logged here too: once the caller is cancelled, no one awaits the task."""
+        self._cascades.discard(task)
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            with contextlib.suppress(Exception):  # a log sink must not raise out of a callback
+                _log().error("users.disable.steps_failed", error=type(exc).__name__, exc_info=exc)
 
     async def drain(self) -> None:
         """Shutdown: wait for the steps still in flight; each run ends by its deadline."""
@@ -249,10 +260,8 @@ class UserDisableService:
         unknown: bool,
     ) -> UserStatusChange | None:
         handed: list[UserStatusChange] = []  # the change the hook got, once it started
-        written = False
 
         async def write_ahead(change: UserStatusChange) -> None:
-            nonlocal written
             if unknown:  # AC7, under the lock, rolled back; a no-op never gets here (AC5)
                 refusal = PositionsUnknownError(self._positions.source)
                 raise self._refused("positions_unknown", refusal)
@@ -272,7 +281,6 @@ class UserDisableService:
                 )
             except _AUDIT_DOWN as exc:
                 raise _AuditRefusedError from exc
-            written = True
 
         try:
             return await self._store.disable(user_id, actor=actor, now=now, audit=write_ahead)
@@ -285,18 +293,18 @@ class UserDisableService:
         except BaseException as exc:
             if handed:  # the record may be durable for a change that did not commit
                 unchanged = {"status": handed[0].before, "roles": sorted(handed[0].roles)}
-                await self._close("users.disable", _who(actor, user_id, rid), unchanged)
-            if isinstance(exc, TimeoutError) and handed and not written:  # the hook timed out
+                await self._close(_who(actor, user_id, rid), unchanged)
+            if isinstance(exc, WriteAheadTimeout):  # the hook outlived its bound: rolled back
                 raise self._refused("audit_unavailable", LifecycleAuditUnavailableError()) from exc
             if isinstance(exc, Exception) and not isinstance(exc, UserLifecycleError):
                 user_lifecycle_total.labels(action="disable", result="error").inc()
             raise
 
-    async def _close(self, action: str, who: dict[str, Any], state: Any = None) -> None:
-        """Close a write-ahead record whose change was not applied (C-2.9)."""
+    async def _close(self, who: dict[str, Any], state: dict[str, Any]) -> None:
+        """Close a write-ahead `users.disable` whose change did not commit (C-2.9)."""
         tally = _Tally(self._closing_timeout_s)
         record = self._audit.emit(
-            action,
+            "users.disable",
             **who,
             outcome=AuditOutcome.FAILURE,
             severity=Severity.ERROR,
@@ -357,17 +365,14 @@ class UserDisableService:
     async def _revoke_invite(
         self, user_id: uuid.UUID, actor: uuid.UUID, rid: uuid.UUID | None
     ) -> None:
-        """R6, write-ahead (C-2.9), closed if not applied; none open (consumed) is no failure."""
-        who, written = _who(actor, user_id, rid), False
-        try:
-            await self._audit.emit("users.invite_revoked", **who, reason=REVOKED_REASON)
-            written = True
-            await self._invites.revoke(user_id)
-        except BaseException as exc:
-            if written or not isinstance(exc, _AUDIT_DOWN):  # the record may be durable
-                await self._close("users.invite_revoked", who)
-            if not isinstance(exc, InviteNotFound):
-                raise
+        """R6: the invite store writes the record ahead (C-2.9), only for an open invite."""
+
+        async def write_ahead(_: uuid.UUID, role: str) -> None:
+            fields = {"after_state": {"role": role}, "reason": REVOKED_REASON}
+            await self._audit.emit("users.invite_revoked", **_who(actor, user_id, rid), **fields)
+
+        with contextlib.suppress(InviteNotFound):
+            await self._invites.revoke(user_id, audit=write_ahead)
 
     def _refused(self, result: str, error: UserLifecycleError) -> UserLifecycleError:
         user_lifecycle_total.labels(action="disable", result=result).inc()
