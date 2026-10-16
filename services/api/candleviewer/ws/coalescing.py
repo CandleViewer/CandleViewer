@@ -19,11 +19,12 @@ nothing new is discarded as the client would discard it: an entity older than th
 `pending_bytes` estimates the JSON size of what `take()` would emit, so the connection budget
 (§8.4) counts pending state as well as queued frames; every buffer is also bounded by count, and
 the queue as a whole by `max_bytes` (defence in depth). A queue that hits a bound (`refusal`
-`full`), or meets an update it cannot merge or size (`malformed`: a non-finite price, a missing
-key, or anything else a producer's payload raises, `RecursionError` included), refuses it, reports
-`overflowed` and drops every buffer at once: its pending state no longer equals the applied stream,
-so the caller re-snapshots the topic (§8.4) and `clear()`s the queue to accept updates again.
-Nothing raises out of `offer`, `set_coalesce` or `take` (fail closed).
+`full`), meets a valid update its merge cannot represent (`unmergeable`: footprint bars sharing
+an open time, until #2529), or one it cannot merge or size (`malformed`: a non-finite price, a
+missing key, or anything else a producer's payload raises, `RecursionError` included), refuses it,
+reports `overflowed` and drops every buffer at once: its pending state no longer equals the
+applied stream, so the caller re-snapshots the topic (§8.4) and `clear()`s the queue to accept
+updates again. Nothing raises out of `offer`, `set_coalesce` or `take` (fail closed).
 
 A queue belongs to one connection and never mutates its input. It copies the top level of what it
 keeps and every merged entity; nested values of a public family's verbatim update are shared, as
@@ -43,12 +44,13 @@ from decimal import Context, Decimal, Inexact
 from typing import Any, Final, Literal
 
 from candleviewer.ws.bar_coalescer import BarCoalescer, BarKey, bar_key
-from candleviewer.ws.binary import BOOK_DELTA, Frame
+from candleviewer.ws.binary import BOOK_DELTA, FLAG_ESTIMATED, Frame
 from candleviewer.ws.topics import FAMILIES
 
 Payload = Mapping[str, Any]
-#: Why a queue refused an update: a bound, or a producer bug (counted apart, never as overflow).
-Refusal = Literal["full", "malformed"]
+#: Why a queue refused an update: a bound, an update a merge cannot represent (both re-snapshot
+#: the topic), or a producer bug (counted apart, never as an overflow).
+Refusal = Literal["full", "unmergeable", "malformed"]
 
 #: §8.2: append, never merge; throttling batches them into arrays.
 APPENDED_FAMILIES: Final = frozenset({"trades", "liquidations"})
@@ -72,7 +74,18 @@ _SUMMED_COUNTS: Final = ("trades",)
 
 
 class _BufferFullError(Exception):
-    """A bound was hit; the update was refused (`full`). Anything else raised is `malformed`."""
+    """A bound was hit; the update was refused (`full`)."""
+
+
+class _UnmergeableError(Exception):
+    """A valid update the merge cannot represent (`unmergeable`): the topic is re-snapshotted, as
+    for a bound. Anything else raised is `malformed`."""
+
+
+_CAUSES: Final[Mapping[type[Exception], Refusal]] = {
+    _BufferFullError: "full",
+    _UnmergeableError: "unmergeable",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,11 +412,11 @@ class _FootprintMerge(_Merge):
         for bar in bars:
             t_ms = int(bar["t_ms"])
             if t_ms in opened:
-                raise ValueError("two bars share an open time in one update")
+                raise _UnmergeableError("two bars share an open time in one update")
             opened.add(t_ms)
             entry = self.bars.get(t_ms)
             if entry is not None and entry[0].get("confirm") is True:
-                raise ValueError("an update to a bar already confirmed in this window")
+                raise _UnmergeableError("an update to a bar already confirmed in this window")
             if entry is None:
                 self._grow()
                 entry = self.bars[t_ms] = ({}, {})
@@ -560,7 +573,8 @@ class CoalescingQueue:
         self._ts_ms: int | None = None
         self._frames: list[Emission] = []
         self._frame_bytes = 0
-        #: The window's latest CVWB book delta, while every update of it carried one at one scale.
+        #: The window's latest CVWB book delta while every update carried one at one scale,
+        #: `estimated` if any of them was.
         self._delta: Frame | None = None
         #: Why the queue refused an update, until `clear()`; None while it accepts updates.
         self.refusal: Refusal | None = None
@@ -653,7 +667,7 @@ class CoalescingQueue:
                 self._first = Emission(_own(body), part, 1, ts_ms)
                 self._delta = part if part is not None and part.body_kind == BOOK_DELTA else None
             elif self._delta is not None:
-                self._delta = part if _same_scales(self._delta, part) else None
+                self._delta = _next_delta(self._delta, part)
         self._bound()
 
     def _bound(self) -> None:
@@ -665,7 +679,7 @@ class CoalescingQueue:
         if self._rule is not None:
             self._merge = self._rule(*self._bounds)
         self.clear()
-        self.refusal = "full" if isinstance(exc, _BufferFullError) else "malformed"
+        self.refusal = _CAUSES.get(type(exc), "malformed")
 
     def take(self) -> list[Emission]:
         """The frames to emit now (none after a refusal), resetting the pending state. They count
@@ -715,15 +729,22 @@ class CoalescingQueue:
         self.refusal = None
 
 
-def _same_scales(delta: Frame, part: Frame | None) -> bool:
+def _next_delta(delta: Frame, part: Frame | None) -> Frame | None:
+    """`part` as the window's latest book delta, `estimated` (§3.4 bit0) if an earlier one was;
+    None when it is not a book delta at the window's scales."""
     if part is None or part.body_kind != BOOK_DELTA:
-        return False
-    return (part.price_scale, part.qty_scale) == (delta.price_scale, delta.qty_scale)
+        return None
+    if (part.price_scale, part.qty_scale) != (delta.price_scale, delta.qty_scale):
+        return None
+    if delta.flags & ~part.flags & FLAG_ESTIMATED:
+        return replace(part, flags=part.flags | FLAG_ESTIMATED)
+    return part
 
 
 def _book_delta(body: Payload, like: Frame) -> Frame | None:
-    """The merged levels as one book delta at `like`'s scales; None (structured only) when a
-    level is not exact at those scales or does not fit its `i64` / `u64` field."""
+    """The merged levels as one book delta at `like`'s scales and `estimated` bit (the emitter adds
+    `coalesced` and `replay`); None (structured only) when a level is not exact at those scales
+    or does not fit its `i64` / `u64` field."""
     records = []
     for side, levels in ((0, body["bids"]), (1, body["asks"])):
         for price, size in levels:
@@ -731,7 +752,7 @@ def _book_delta(body: Payload, like: Frame) -> Frame | None:
             if p is None or q is None or not (-(2**63) <= p < 2**63 and 0 <= q < 2**64):
                 return None
             records.append((side, p, q))
-    return replace(like, records=tuple(records), flags=0)
+    return replace(like, records=tuple(records), flags=like.flags & FLAG_ESTIMATED)
 
 
 def _scaled(value: Any, scale: int) -> int | None:

@@ -10,7 +10,7 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from candleviewer.ws.binary import BOOK_DELTA, HEATMAP_COLUMN, Frame
+from candleviewer.ws.binary import BOOK_DELTA, FLAG_ESTIMATED, HEATMAP_COLUMN, Frame
 from candleviewer.ws.coalescing import (
     MAX_PENDING_FRAMES,
     MERGED_FAMILIES,
@@ -913,7 +913,7 @@ def test_coalescer_footprint_refuses_two_bars_with_one_open_time() -> None:
     queue = CoalescingQueue("footprint")
     bar = {"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1"}]}
     assert not queue.offer({"bars": [bar, dict(bar)]})
-    assert queue.overflowed
+    assert queue.refusal == "unmergeable"  # re-snapshotted, not a producer bug (#2529)
 
 
 def test_coalescer_footprint_refuses_an_update_to_a_bar_confirmed_in_the_window() -> None:
@@ -921,7 +921,7 @@ def test_coalescer_footprint_refuses_an_update_to_a_bar_confirmed_in_the_window(
     cells = [{"price": "1", "bid_volume": "1"}]
     assert queue.offer({"bars": [{"t_ms": 0, "confirm": True, "cells": cells}]})
     assert not queue.offer({"bars": [{"t_ms": 0, "confirm": False, "cells": cells}]})
-    assert queue.overflowed
+    assert queue.refusal == "unmergeable"
 
 
 def test_coalescer_footprint_sums_exactly_or_refuses() -> None:
@@ -1035,8 +1035,16 @@ def test_coalescer_metrics_params_key_is_canonical_json_for_any_params() -> None
     assert [s["v"] for s in frame.body["series"]] == ["2", "3"]
 
 
-def _delta(*records: tuple[int, int, int], scale: int = 1) -> Frame:
-    return Frame(BOOK_DELTA, records, price_scale=scale, qty_scale=3)
+def _delta(*records: tuple[int, int, int], scale: int = 1, flags: int = 0) -> Frame:
+    return Frame(BOOK_DELTA, records, flags, price_scale=scale, qty_scale=3)
+
+
+def test_coalescer_merged_book_delta_is_estimated_if_any_merged_part_was() -> None:
+    queue = CoalescingQueue("book")
+    queue.offer({"bids": [["100", "1"]], "asks": []}, _delta((0, 1000, 1000), flags=FLAG_ESTIMATED))
+    queue.offer({"bids": [["101", "1"]], "asks": []}, _delta((0, 1010, 1000)))
+    [frame] = queue.take()
+    assert frame.part == _delta((0, 1010, 1000), (0, 1000, 1000), flags=FLAG_ESTIMATED)
 
 
 @pytest.mark.parametrize(

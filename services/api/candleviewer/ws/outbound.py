@@ -22,11 +22,12 @@ market-data frames (`d` / `snap` of a throttled topic) can be dropped; control f
 
 Every step counts in `cv_ws_overflow_total{reason}` (step 4, `LadderEvent.reason`) and comes back
 as a `LadderEvent`; the caller writes the warning audit entry when step 3 fires (with the close's
-`trigger`) and performs the close. The bound holds only if the caller runs `check` after every
-push and every pacer update; recovery needs `drain` after every send and after every `check` that
-dropped. `drain` queues one snapshot per call; a `check` from its pushes runs once it is whole,
-its events returned by `drain` (a drop is whole, and a redrop).
-`drain` is the only sender of `backpressure` snapshots: the wiring must keep
+`trigger`) and performs the close. A close fires and counts once: `check` and `drain` return
+nothing after it, so the `bye` push that runs `check` again is harmless. The bound holds only if
+the caller runs `check` after every push and every pacer update; recovery needs `drain` after
+every send and after every `check` that dropped. `drain` queues one snapshot per call; a `check`
+from its pushes runs once it is whole, its events returned by `drain` (a drop is whole, and a
+redrop). `drain` is the only sender of `backpressure` snapshots: the wiring must keep
 `TopicEmitter.flush_pending` and `SequencingHub.resnapshot` off them.
 """
 
@@ -215,6 +216,8 @@ class Backpressure:
         #: While `drain` queues a snapshot, a `check` from its pushes is held here (module doc).
         self._draining = False
         self._deferred: list[Subscription] | None = None
+        #: Step 3 fired: the connection is going away, so nothing fires (or counts) again.
+        self._closed = False
 
     def over_budget(self) -> bool:
         return self.queue.over_budget(self.pacer.pending_bytes)
@@ -225,7 +228,7 @@ class Backpressure:
         if self._draining:
             self._deferred = list(subs)
             return []
-        if not self.over_budget():
+        if self._closed or not self.over_budget():
             return []
         subs = list(subs)
         self._settle()
@@ -260,6 +263,7 @@ class Backpressure:
             events.append(LadderEvent("close", hint, "budget"))
         elif self._looping(offending):
             events.append(LadderEvent("close", hint, "redrop"))
+        self._closed = any(event.action == "close" for event in events)
         return _record(events)
 
     def _pending(self, sub: Subscription) -> bool:
@@ -298,6 +302,8 @@ class Backpressure:
 
     def drain(self) -> list[LadderEvent]:
         """Step 2: below `DRAIN_PCT`, one `backpressure` snap per call (module docstring)."""
+        if self._closed:
+            return []
         self._settle()  # before a new snapshot replaces the record of a sent one
         sent: list[str] = []
         held: list[LadderEvent] = []

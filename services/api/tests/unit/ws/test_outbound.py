@@ -335,8 +335,11 @@ def test_backpressure_nothing_droppable_over_budget_closes_without_a_drop() -> N
     for _ in range(2):
         queue.push(encode(_frame("err")))
     closes = _overflow("close_budget")
-    assert Backpressure(queue, pacer).check([book]) == [LadderEvent("close", (), "budget")]
+    ladder = Backpressure(queue, pacer)
+    assert ladder.check([book]) == [LadderEvent("close", (), "budget")]
     assert not book.snapshot_pending
+    queue.push(encode(_frame("bye")))  # the wiring's `bye` push runs `check` again
+    assert ladder.check([book]) == ladder.drain() == []
     assert _overflow("close_budget") == closes + 1  # one per close, whatever the hint names
 
 
@@ -530,5 +533,6 @@ def test_backpressure_records_each_step_with_the_close_trigger_as_its_reason() -
     for _ in range(MAX_REDROPS):
         ladder.drain()
         ladder.check([book])
+    assert ladder.drain() == ladder.check([book]) == []  # the close fired: nothing more
     assert [_overflow(r) - b for r, b in zip(reasons, before, strict=True)] == [3, 3, 0, 1]
     assert [LadderEvent("close", (), t).reason for t in ("budget", "redrop")] == list(reasons[2:])

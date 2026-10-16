@@ -26,6 +26,7 @@ HEALTHY, LAGGING = ConnectionClass.HEALTHY, ConnectionClass.LAGGING
 _RS = "8f3a2c1e-0000-4000-8000-000000000001"  # a replay session id (uuid)
 SATURATED, OVERFLOWING = ConnectionClass.SATURATED, ConnectionClass.OVERFLOWING
 _COLUMN = {"t_ms": 0, "price_min": "1", "price_step": "1", "bids": [], "asks": [], "complete": True}
+_FOOTPRINT = {"symbol": "BTCUSDT", "bar_type": "tick", "param": "1000"}
 
 
 def _conn() -> tuple[Conn, Pacer]:
@@ -35,6 +36,7 @@ def _conn() -> tuple[Conn, Pacer]:
     source.bodies["heatmap"] = SnapshotBody(
         {"symbol": "BTCUSDT", "time_bucket_ms": 500, "columns": []}
     )
+    source.bodies["footprint"] = SnapshotBody({**_FOOTPRINT, "bars": []})
     conn = Conn(source, ACC_A)
     conn.clock.now = 100.0
     return conn, Pacer(conn.emitter)
@@ -98,6 +100,7 @@ def test_rtt_probe_one_outstanding_and_its_age_counts() -> None:
     assert probe.rtt_ms(10.6) == pytest.approx(600)
     assert not probe.pong("c-hb-1", 10.7)
     assert probe.pong(first, 10.04)
+    assert not probe.pong(first, 10.05)  # answered already: ignored, nothing kept for it
     assert probe.rtt_ms(11.0) == pytest.approx(40)
     assert probe.ping_id(11.0) is None  # not due before the interval
     second = probe.ping_id(12.0)
@@ -432,17 +435,37 @@ class _GetRaises(dict[str, Any]):
         raise RuntimeError("producer bug")
 
 
-def test_pacer_forced_coalescing_past_the_key_bound_drops_the_topic() -> None:
+def _refusals(family: str) -> tuple[float, float]:
+    """(`cv_ws_malformed_updates_total{topic=family}`, `cv_ws_overflow_total{reason="drop"}`)"""
+    malformed = _count(cv_ws_malformed_updates_total, topic=family)
+    return malformed, _count(cv_ws_overflow_total, reason="drop")
+
+
+@pytest.mark.parametrize(
+    "stale", ["", "re-pended", "paused", "re-snapshotted"], ids=lambda s: s or "live"
+)
+def test_pacer_forced_coalescing_past_the_key_bound(stale: str) -> None:
     """`apply()` folds the frames queued under `coalesce: false` into one merge, which can
-    overflow: the topic is dropped for a snapshot, never lost silently."""
+    overflow: a live topic is dropped for a snapshot, never lost silently; a dead window (held
+    deltas, or a `snap` sent since) is shed, never folded nor counted (§8.4)."""
     conn, pacer = _conn()
     sub = _sub(conn, "book.BTCUSDT.50", coalesce=False)
     pacer.offer(sub, _bid("1"))  # leaves at once; the next two wait for the window
     for base in (10_000, 20_000):
         levels = [[str(base + i), "1"] for i in range(MAX_PENDING_KEYS // 2 + 1)]
         assert pacer.offer(sub, {"bids": levels, "asks": []})
+    if stale == "re-pended":  # by another sender
+        sub.snapshot_pending, sub.pending_reason = True, "client_resync"
+    elif stale == "paused":
+        sub.effective["paused"] = True
+    elif stale:
+        assert conn.emitter.snapshot(sub, "client_resync")
+    before = _refusals("book")
     assert pacer.classify(30.0, [sub]) is not None  # lagging forces coalescing
-    assert pacer.resnapshot_required == {sub.sub_id: sub}
+    dropped = not stale
+    assert (pacer.resnapshot_required == {sub.sub_id: sub}) is dropped
+    assert (sub.pending_reason == "backpressure") is dropped
+    assert _refusals("book") == (before[0], before[1] + dropped)
     assert pacer.pending_bytes == 0
 
 
@@ -451,23 +474,29 @@ def test_pacer_malformed_update_is_counted_and_logged_apart_from_overflow() -> N
     family and topic; a refusal by `take` is caught at the flush."""
     conn, pacer = _conn()
     heatmap = _sub(conn, "heatmap.BTCUSDT", coalesce=False)
-    before = (
-        _count(cv_ws_malformed_updates_total, topic="heatmap"),
-        _count(cv_ws_overflow_total, reason="drop"),
-    )
+    before = _refusals("heatmap")
     body = {"symbol": "BTCUSDT", "time_bucket_ms": 500, "columns": [_GetRaises(_COLUMN)]}
     with capture_logs() as logs:
         pacer.offer(heatmap, body)
     assert conn.take() == [] and pacer.resnapshot_required == {heatmap.sub_id: heatmap}
-    after = (
-        _count(cv_ws_malformed_updates_total, topic="heatmap"),
-        _count(cv_ws_overflow_total, reason="drop"),
-    )
-    assert after == (before[0] + 1, before[1])
+    assert _refusals("heatmap") == (before[0] + 1, before[1])
     event = "ws producer update malformed"
     assert logs == [
         {"event": event, "family": "heatmap", "topic": heatmap.ch, "log_level": "warning"}
     ]
+
+
+def test_pacer_unmergeable_footprint_update_is_a_drop_not_a_producer_bug() -> None:
+    """Non-time bars may share an open time until §14.4 carries the bar key (#2529): such an
+    update re-snapshots the topic and counts as a drop, never as a malformed update."""
+    conn, pacer = _conn()
+    sub = _sub(conn, "footprint.BTCUSDT.tick.1000")
+    bar = {"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1", "ask_volume": "0"}]}
+    before = _refusals("footprint")
+    with capture_logs() as logs:
+        assert not pacer.offer(sub, {**_FOOTPRINT, "bars": [bar, dict(bar)]})
+    assert (_refusals("footprint"), logs) == ((before[0], before[1] + 1), [])
+    assert pacer.resnapshot_required == {sub.sub_id: sub}
 
 
 def test_pacer_one_missed_pong_does_not_pin_the_connection_saturated() -> None:
@@ -485,6 +514,14 @@ def test_pacer_one_missed_pong_does_not_pin_the_connection_saturated() -> None:
     assert pacer.classify(0.0, [book], now=110.5) is None
     notice = pacer.classify(0.0, [book], now=112.5)
     assert notice is not None and notice["class"] == "healthy"
+
+
+def test_rtt_probe_ignores_a_pong_that_comes_after_the_pong_window() -> None:
+    """§9.1: even when nothing retired the probe first, its late `pong` is not a sample."""
+    probe = RttProbe(nonce="n")
+    late = probe.ping_id(100.0)
+    assert late is not None and not probe.pong(late, 100.0 + PONG_TIMEOUT_S + 0.5)
+    assert probe.rtt_ms(111.0) == pytest.approx((PONG_TIMEOUT_S + 0.5) * 1000)
 
 
 @pytest.mark.parametrize("family", ["orders", "executions"])

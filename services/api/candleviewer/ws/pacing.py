@@ -7,8 +7,9 @@ effective `throttle_ms` leaves through `TopicEmitter.delta`, so a coalesced fram
 exactly one sequence number. The first update after a quiet window leaves at once; later ones
 leave when the window closes (`tick`). `orders` and `executions` bypass the pacer, frame by frame
 (S4). A queue that refuses an update is dropped and its topic marked for a `backpressure` snapshot
-(§8.4 step 1); the outbound budget decides when that snapshot may go (step 2). A full queue counts
-as `cv_ws_overflow_total{reason="drop"}`; a malformed update is a producer bug, counted in
+(§8.4 step 1); the outbound budget decides when that snapshot may go (step 2). A full queue, or an
+update its merge cannot represent (footprint bars sharing an open time, #2529), counts as
+`cv_ws_overflow_total{reason="drop"}`; a malformed update is a producer bug, counted in
 `cv_ws_malformed_updates_total` and logged (family and topic only), never as an overflow.
 
 `Classifier` turns the outbound queue depth and the RTT (`RttProbe`, §9.1) into a class every
@@ -139,8 +140,9 @@ class RttProbe:
         return probe
 
     def pong(self, probe: str, now: float) -> bool:
-        """Record the answer to `probe`; False for any other id (a heartbeat `pong`, a retired
-        probe's late one)."""
+        """Record the answer to `probe`; False for any other id (a heartbeat `pong`, an answered
+        or retired probe's): one comparison, no state kept for it."""
+        self._retire(now)
         if self._outstanding is None or self._outstanding[0] != probe:
             return False
         self.sample_ms = (now - self._outstanding[1]) * 1000
@@ -221,7 +223,7 @@ class Pacer:
         topic needs the structured `body`; the CVWB `part` is optional."""
         if sub.topic.family.never_throttled:
             return self.emitter.delta(sub, body, part=part, ts_ms=ts_ms)
-        if sub.snapshot_pending or sub.effective.get("paused") is True:
+        if _held(sub):
             lane = self.lanes.get(sub.sub_id)
             if lane is not None and lane.queue.pending:
                 self._restart(lane)  # stale: the pending `snap` carries this state
@@ -354,6 +356,9 @@ class Pacer:
         """Re-pace every lane under the current class; returns the notice's `applied` block."""
         now = self.emitter.clock() if now is None else now
         for lane in self.lanes.values():
+            if _held(lane.sub) or lane.seq != lane.sub.seq:
+                self._restart(lane)  # a dead window is shed (§8.4), never folded nor counted
+                continue
             lane.queue.set_coalesce(self._coalesce(lane.sub))
             if lane.queue.overflowed:  # forced coalescing folded past a bound
                 self._refused(lane)
@@ -364,6 +369,11 @@ class Pacer:
             "forced_coalesce": self.cls is not ConnectionClass.HEALTHY,
             "degraded_topics": sorted(sub.ch for sub in subs if self._degrades(sub)),
         }
+
+
+def _held(sub: Subscription) -> bool:
+    """Its deltas are held: it awaits a `snap` (another sender's or the ladder's) or is paused."""
+    return sub.snapshot_pending or sub.effective.get("paused") is True
 
 
 def _queue(sub: Subscription) -> CoalescingQueue:

@@ -312,8 +312,11 @@ security review in the same PR.
 | Heartbeat interval / timeout           | 15 s / 45 s                     | Dead-socket reclamation      | Disconnect detection           | merged                                         |
 
 Memory outside the outbound budget (WS-D01, #2552): each `heatmap` subscription remembers up to 2 000
-complete buckets it sent (`SENT_COLUMNS_MEMORY`), about 150 to 210 KB measured (the review estimated 168 KB),
-bounded by count but not counted in `pending_bytes`. At 40 symbols that is up to about 8 MiB per connection.
+complete buckets it sent (`SENT_COLUMNS_MEMORY`), about 150 to 210 KB measured (the review estimated 168 KB).
+It is bounded by count, fills only as complete columns are emitted (one per time bucket), and is not counted in
+`pending_bytes`. Heatmap subscriptions are per channel and replay session, so the bound is the 200-subscription
+cap, not the 40-symbol one: up to about 42 MB per connection (200 x 210 KB) and about 336 MB per user (8
+connections), on top of the 8 MiB outbound budget.
 
 Amplification (WS-D08): one authenticated user can hold 8 x 40 symbols with 200-depth books and 2 000-column
 heatmaps. Encode-once-send-many keeps CPU flat in client count, but per-user cost is real and unmeasured until
