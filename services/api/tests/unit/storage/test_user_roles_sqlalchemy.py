@@ -3,6 +3,7 @@ concurrent-demotion race: tests/integration/auth/test_user_roles_pg.py)."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -121,3 +122,17 @@ async def test_apply_roles_trigger_check_before_audit_maps_only_the_floor(
     with pytest.raises(raised):
         await _apply(rel)
     assert "AUDIT" not in rel.order() and not rel.committed
+
+
+async def test_apply_roles_hung_audit_is_bounded_and_rolls_back() -> None:
+    """#2510: a hung WAL append under the user and owner locks times out; nothing commits."""
+    rel = _Rel(owners=2)
+
+    async def hang(before: frozenset[str]) -> None:
+        await asyncio.Event().wait()
+
+    fake: Any = rel  # a fake unit of work, not a SqlAlchemyRelationalRepository
+    store = m.SqlAlchemyUserRoleStore(fake, owner_floor=_floor, audit_timeout_s=0.01)
+    with pytest.raises(TimeoutError):
+        await store.apply_roles(_UID, frozenset({"viewer"}), actor=_ACTOR, audit=hang)
+    assert not rel.committed and 0 < m.WRITE_AHEAD_TIMEOUT_S <= 5

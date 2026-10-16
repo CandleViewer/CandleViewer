@@ -40,7 +40,7 @@ from candleviewer.auth.errors import (
     PasswordPolicyViolation,
 )
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, Hasher
-from candleviewer.auth.invite_repository import InviteRepository
+from candleviewer.auth.invite_repository import InviteAudit, InviteRepository
 from candleviewer.auth.metrics import (
     users_invites_created_total,
     users_invites_pending,
@@ -143,8 +143,10 @@ class InviteService:
 
     # -- owner side --------------------------------------------------------
 
-    async def create(self, request: InviteCreateRequest, *, invited_by: uuid.UUID) -> CreatedInvite:
-        """`POST /users`. Raises `InviteConflict` for a taken email/username."""
+    async def create(
+        self, request: InviteCreateRequest, *, invited_by: uuid.UUID, audit: InviteAudit
+    ) -> CreatedInvite:
+        """`POST /users`. Raises `InviteConflict` (email/username taken) or what `audit` raises."""
         now = self._clock()
         token = secrets.token_urlsafe(32)
         user_id = uuid.uuid4()
@@ -161,6 +163,7 @@ class InviteService:
             invited_by=invited_by,
             token_hash=hash_token(token),
             expires_at=expires_at,
+            audit=audit,
         )
         if not created:
             raise InviteConflict("email or username already in use")
@@ -177,9 +180,11 @@ class InviteService:
             created_at=now,
         )
 
-    async def reissue(self, user_id: uuid.UUID, *, invited_by: uuid.UUID) -> CreatedInvite:
+    async def reissue(
+        self, user_id: uuid.UUID, *, invited_by: uuid.UUID, audit: InviteAudit
+    ) -> CreatedInvite:
         """Revokes every open invite of a still-`invited` user and mints a new
-        one (same bound role). Raises `InviteNotFound`."""
+        one (same bound role). Raises `InviteNotFound`, and what `audit` raises."""
         now = self._clock()
         token = secrets.token_urlsafe(32)
         record = await self._repo.reissue(
@@ -189,6 +194,7 @@ class InviteService:
             invited_by=invited_by,
             expires_at=now + INVITE_TTL,
             now=now,
+            audit=audit,
         )
         if record is None:
             raise InviteNotFound("no invited user with this id")
@@ -204,8 +210,8 @@ class InviteService:
             created_at=record.created_at,
         )
 
-    async def revoke(self, user_id: uuid.UUID) -> None:
-        if not await self._repo.revoke_open(user_id, now=self._clock()):
+    async def revoke(self, user_id: uuid.UUID, *, audit: InviteAudit) -> None:
+        if not await self._repo.revoke_open(user_id, now=self._clock(), audit=audit):
             raise InviteNotFound("no pending invite for this user")
         users_invites_pending.dec()
 

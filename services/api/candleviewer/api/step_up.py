@@ -432,25 +432,36 @@ def make_step_up_router(
                 )
         if not audit_ready():
             return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
+
+        class _Refused(Exception):
+            """The write-ahead record was not written; nothing was changed."""
+
+        async def write_ahead(methods: int, sessions: int, /) -> None:
+            """C-2.9 (#2510): awaited by `reset_totp` before its first revoke, with the
+            counts it is about to revoke (the reset cannot be undone)."""
+            try:
+                await _audit(
+                    "auth.mfa_reset_by_owner",
+                    record,
+                    severity=Severity.CRITICAL,
+                    object_kind="user",
+                    object_id=str(user_id),
+                    after_state={"methods_revoked": methods, "sessions_revoked": sessions},
+                )
+            except Exception as exc:  # any failed write refuses the reset: nothing changed yet
+                raise _Refused from exc
+
         try:
             result = await auth.step_up.reset_totp(
                 actor_session_id=str(record.id),
                 actor_user_id=str(record.user_id),
                 target_user_id=str(user_id),
+                audit=write_ahead,
             )
         except StepUpRequired as exc:  # self-reset refused
             return required_problem(exc)
-        await _audit(
-            "auth.mfa_reset_by_owner",
-            record,
-            severity=Severity.CRITICAL,
-            object_kind="user",
-            object_id=str(user_id),
-            after_state={
-                "methods_revoked": result.methods_revoked,
-                "sessions_revoked": result.sessions_revoked,
-            },
-        )
+        except _Refused:
+            return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
         # Reveals nothing: no secret, recovery code or position data.
         return JSONResponse(
             {

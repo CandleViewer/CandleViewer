@@ -25,6 +25,12 @@ WAL cannot be written at all (`OSError`), `emit()` raises
 `AuditUnavailable` and fires `on_alarm`. Callers MUST treat that as "refuse
 the audited action". No record that `emit()` accepted is ever discarded.
 
+Append-failure latch (#2510), recoverable unlike a flusher death: such a refusal
+sets `append_failure` (its `clock` time) until an append succeeds; within
+`APPEND_FAILURE_COOLDOWN` of it `app._audit_ready()` answers the audited owner
+routes 503 up front. It never refuses `emit()`, so after the cooldown the next
+write-ahead record re-probes the WAL (success clears it, failure re-arms it).
+
 Flusher death (PR #1561 N2) — fail closed, no in-process restart: if the
 flusher task raises (mid-WAL `AuditWalCorrupt`, an unexpected bug, or an
 insert that exhausted `max_insert_attempts`), `_running` goes False,
@@ -55,7 +61,7 @@ import json
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Concatenate
 
@@ -124,6 +130,9 @@ async def _uninterruptible[T](op: _WalOp, fn: Callable[..., T], /, *args: Any) -
 
 #: Upper bound on the `on_alarm` callback (a slow pager must not stall a WAL op).
 _ALARM_TIMEOUT_S = 2.0
+#: How long a failed WAL append keeps `append_failure_active` true (#2510): long enough
+#: to turn a burst of owner actions away up front, short enough to re-probe a fixed disk.
+APPEND_FAILURE_COOLDOWN = timedelta(seconds=5)
 
 
 class AuditWriter:
@@ -174,6 +183,7 @@ class AuditWriter:
         self._inflight = False
         self._max_insert_attempts = max_insert_attempts
         self._failure: BaseException | None = None
+        self._append_failed_at: datetime | None = None
 
     @property
     def written_total(self) -> int:
@@ -202,6 +212,21 @@ class AuditWriter:
     def failure(self) -> BaseException | None:
         """Why the flusher died (None while healthy)."""
         return self._failure
+
+    @property
+    def append_failure(self) -> datetime | None:
+        """When the last WAL append failed (`AuditWalFull`/`OSError`); None once a later
+        append succeeded. Never refuses `emit()` (see the module docstring, #2510)."""
+        return self._append_failed_at
+
+    @property
+    def append_failure_active(self) -> bool:
+        """True within `APPEND_FAILURE_COOLDOWN` of an unrecovered append failure. A clock
+        stepped back past the failure reads as expired: a re-probe, never a stuck refusal."""
+        failed = self._append_failed_at
+        if failed is None:
+            return False
+        return timedelta(0) <= self._clock() - failed < APPEND_FAILURE_COOLDOWN
 
     async def start(self) -> None:
         """Start the flusher. It replays WAL backlog from a previous run
@@ -352,10 +377,12 @@ class AuditWriter:
                 self._idle.clear()
         except (AuditWalFull, OSError) as exc:
             self._refused_total += 1
+            self._append_failed_at = self._clock()  # the latch; the next append clears it
             reason_text = f"audit WAL unavailable: {type(exc).__name__}"
             logger().critical(reason_text)
             await self._alarm(reason_text)
             raise AuditUnavailable(reason_text) from exc
+        self._append_failed_at = None
         self._wake.set()
         op.raise_if_cancelled()
 

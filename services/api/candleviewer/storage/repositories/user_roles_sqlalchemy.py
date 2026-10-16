@@ -8,11 +8,15 @@ queue), lock every active-owner grant in key order (concurrent demotions queue,
 never deadlock), re-check the floor on that locked count, replace the set, fire
 the deferred owner-floor trigger (SQLSTATE 23514 maps onto the same check), then
 hand the locked before-set to the caller's write-ahead audit hook before commit
-(C-2.9): a refused audit write rolls the change back.
+(C-2.9): a refused audit write rolls the change back. Held under those locks, the
+hook is bounded (`WRITE_AHEAD_TIMEOUT_S`, #2510): a timeout rolls back and frees
+them. A timed-out append may still land (`AuditWriter.emit` is cancellation-safe):
+the trail may over-report an attempt (as a failed commit can), never under-report.
 """
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 
@@ -27,6 +31,8 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 OwnerFloorCheck = Callable[[frozenset[str], frozenset[str], int], None]
 #: Write-ahead audit of the change, given the role set read under lock.
 AuditHook = Callable[[frozenset[str]], Awaitable[None]]
+#: Default bound (s) on a write-ahead audit hook awaited under row locks (#2510; invites too).
+WRITE_AHEAD_TIMEOUT_S = 5.0
 
 _CHECK_VIOLATION = "23514"  # `trg_owner_floor_fn` raises this at commit
 _ROLES = sa.text(
@@ -66,11 +72,16 @@ class SqlAlchemyUserRoleStore:
     """Postgres `UserRoleStore`: reads and replaces a user's effective role set."""
 
     def __init__(
-        self, relational: SqlAlchemyRelationalRepository, *, owner_floor: OwnerFloorCheck
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        *,
+        owner_floor: OwnerFloorCheck,
+        audit_timeout_s: float = WRITE_AHEAD_TIMEOUT_S,
     ) -> None:
         """`owner_floor` is the M18 rule, injected by the composition root (`app.py`)."""
         self._relational = relational
         self._owner_floor = owner_floor
+        self._audit_timeout_s = audit_timeout_s
 
     async def get_roles(self, user_id: uuid.UUID) -> frozenset[str] | None:
         """Effective role names; `None` when the user does not exist (or is deleted)."""
@@ -87,8 +98,9 @@ class SqlAlchemyUserRoleStore:
         self, user_id: uuid.UUID, roles: frozenset[str], *, actor: uuid.UUID, audit: AuditHook
     ) -> bool:
         """Replace the role set atomically (new grants record `actor`); False if the user
-        does not exist. Raises what the owner-floor check or `audit` raises; either one
-        rolls the transaction back, so nothing changes without its audit record."""
+        does not exist. Raises what the owner-floor check or `audit` raises, or
+        `TimeoutError` when `audit` outlives its bound; each rolls the transaction back,
+        so nothing changes without its audit record."""
         uid, wanted = str(user_id), sorted(roles)
         current: frozenset[str] = frozenset()
         try:
@@ -103,7 +115,8 @@ class SqlAlchemyUserRoleStore:
                 await s.execute(_DROP, {"id": uid, "roles": wanted})
                 await s.execute(_GRANT, {"id": uid, "roles": wanted, "by": str(actor)})
                 await s.execute(_CONSTRAINTS_NOW)  # the floor trigger fires before the audit
-                await audit(current)
+                async with asyncio.timeout(self._audit_timeout_s):
+                    await audit(current)
                 await uow.commit()
         except IntegrityError as exc:
             if getattr(exc.orig, "sqlstate", None) == _CHECK_VIOLATION:

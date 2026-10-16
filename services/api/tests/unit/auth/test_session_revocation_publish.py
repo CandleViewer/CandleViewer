@@ -39,6 +39,7 @@ from candleviewer.auth.step_up import GRACE_WINDOW, StepUpService
 from .auth_fakes import FakeUserRepository
 from .mfa_fakes import FakeMfaRepository
 from .session_fakes import FakeSessionRepository
+from .test_step_up import _noop
 
 _T0 = datetime(2026, 10, 15, 12, 0, 0, tzinfo=UTC)
 _PKG = Path(candleviewer.__file__).resolve().parent
@@ -171,7 +172,9 @@ async def _owner_totp_reset(w: _World) -> Calls:
         actor, elevations={"users": w.clock.now + GRACE_WINDOW}, failures=0, readonly_until=None
     )
     targets = {await w.mint(), await w.mint()}
-    await w.step_up.reset_totp(actor_session_id=actor, actor_user_id=owner, target_user_id=w.user)
+    await w.step_up.reset_totp(
+        actor_session_id=actor, actor_user_id=owner, target_user_id=w.user, audit=_noop
+    )
     return {(sid, "mfa_reset_by_owner") for sid in targets}
 
 
@@ -325,7 +328,7 @@ async def test_auth_service_publishes_through_the_sink_attached_after_start() ->
 
     await auth.sessions.revoke(session, reason="user_revoked")
     await auth.step_up.reset_totp(
-        actor_session_id=actor, actor_user_id=owner, target_user_id=target
+        actor_session_id=actor, actor_user_id=owner, target_user_id=target, audit=_noop
     )
     await auth.stop(grace_s=1.0)
 

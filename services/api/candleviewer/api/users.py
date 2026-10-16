@@ -58,7 +58,7 @@ class UserRoleStore(Protocol):
         floor via `assert_owner_floor`, write `roles` granted by `actor`, then
         await `audit(roles read under lock)` before committing (C-2.9
         write-ahead). Raises `OwnerFloorError` or what `audit` raises, with
-        nothing changed; returns False if the user does not exist."""
+        nothing changed (or `TimeoutError`, #2510); False if no such user."""
         ...
 
 
@@ -242,7 +242,7 @@ def make_users_router(
                 after=new_roles,
             )
             return _problem(409, "conflict", "Conflict", "the last active owner cannot be demoted")
-        except _AuditRefused:
+        except (_AuditRefused, TimeoutError):  # TimeoutError: the store bounds the hook
             return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
         if not found:
             return _problem(404, "not_found", "Not found", "user not found")

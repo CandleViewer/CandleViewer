@@ -328,8 +328,13 @@ class _LazyAuditEmitter:
 
 def _audit_ready(audit: AuditHandle) -> Callable[[], bool]:
     """#2492 (C-2.9): an owner action whose audit record cannot be written is refused
-    before it changes anything: the writer is started and its flusher has not died."""
-    return lambda: audit.is_active and getattr(audit.writer, "failure", None) is None
+    before it changes anything: the writer is started, its flusher has not died and
+    (#2510) no WAL append failed within `APPEND_FAILURE_COOLDOWN` (it then re-probes)."""
+    return lambda: (
+        audit.is_active
+        and getattr(audit.writer, "failure", None) is None
+        and not getattr(audit.writer, "append_failure_active", False)
+    )
 
 
 def _decode_key(name: str, secret: Any) -> bytes | None:

@@ -433,3 +433,17 @@ def test_put_roles_audit_unavailable_rolls_back_with_503() -> None:
         f"/users/{TARGET}/roles", json={"roles": ["manager"]}
     )
     assert r.status_code == 503 and store.roles == {"viewer"} and n.users == []
+
+
+def test_put_roles_write_ahead_timeout_answers_503_with_nothing_changed() -> None:
+    """#2510: the store bounds its write-ahead hook under the locks; a timeout rolled back."""
+
+    class _Hung(_Store):
+        async def apply_roles(self, *_a: Any, **_k: Any) -> bool:
+            raise TimeoutError
+
+    store, n = _Hung({"viewer"}, 2), _Notifier()
+    r = _client(store, _admin(), _Emitter(), n).put(
+        f"/users/{TARGET}/roles", json={"roles": ["manager"]}
+    )
+    assert r.status_code == 503 and store.roles == {"viewer"} and n.users == []

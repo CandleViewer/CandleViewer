@@ -29,6 +29,7 @@ from .test_step_up import (
     PASSWORD,
     _Clock,
     _code,
+    _noop,
     _Positions,
     _pw_hash,
     _session,
@@ -130,7 +131,9 @@ async def test_owner_reset_revokes_target_charts_and_audits_revocation(
     assert chart is not None
     await svc.step_up(str(user), "o1", "users", _code(seed, clock), PASSWORD)
     await svc.preview_reset(str(target), _Positions(0))
-    await svc.reset_totp(actor_session_id="o1", actor_user_id=str(user), target_user_id=str(target))
+    await svc.reset_totp(
+        actor_session_id="o1", actor_user_id=str(user), target_user_id=str(target), audit=_noop
+    )
     assert svc.chart.interpreter(target_sid) is None  # dropped after REVOKE
     revoked = [c for c in b16_audit.calls if c["action"] == "auth.session_revoked"]
     assert [c["session_id"] for c in revoked] == [target_sid]

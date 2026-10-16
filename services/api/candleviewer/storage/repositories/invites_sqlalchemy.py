@@ -5,13 +5,17 @@ Static, parameterised SQL only. Single-use consumption and activation are
 conditional UPDATE ... RETURNING statements, so concurrent redemptions cannot
 both win. `user_account_access` is never written (a new user starts with zero
 bindings; E27/E39 grant them). The raw token never reaches this layer.
+Owner actions (create, reissue, revoke) await the caller's write-ahead audit hook
+in their transaction, after staging and before commit (C-2.9, #2510), bounded as
+in `user_roles_sqlalchemy`: a raise or a timeout rolls every row back.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -21,6 +25,10 @@ from sqlalchemy.exc import IntegrityError
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from candleviewer.storage.repositories.user_roles_sqlalchemy import WRITE_AHEAD_TIMEOUT_S
+
+#: Write-ahead audit of an owner invite action, `(user_id, role)`; raises to refuse it.
+AuditHook = Callable[[uuid.UUID, str], Awaitable[None]]
 
 _COLS = (
     "i.id::text AS id, i.user_id::text AS user_id, i.role::text AS role, "
@@ -72,7 +80,7 @@ _CLEAR_PENDING = sa.text(
 )
 _REVOKE = sa.text(
     "UPDATE user_invites SET revoked_at = :now WHERE user_id = CAST(:id AS uuid) "
-    "AND consumed_at IS NULL AND revoked_at IS NULL RETURNING 1"
+    "AND consumed_at IS NULL AND revoked_at IS NULL RETURNING role::text AS role"
 )
 _IS_INVITED = sa.text(
     "SELECT role::text AS role FROM user_invites i JOIN users u ON u.id = i.user_id "
@@ -100,10 +108,20 @@ _DOWNGRADE_ROLE = sa.text(
 
 class SqlAlchemyInviteRepository:
     def __init__(
-        self, relational: SqlAlchemyRelationalRepository, record_factory: Callable[..., Any]
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        record_factory: Callable[..., Any],
+        *,
+        audit_timeout_s: float = WRITE_AHEAD_TIMEOUT_S,
     ) -> None:
         self._relational = relational
         self._record = record_factory
+        self._audit_timeout_s = audit_timeout_s
+
+    async def _write_ahead(self, audit: AuditHook, user_id: uuid.UUID, role: str) -> None:
+        """Bounded: the open transaction holds row locks (see `user_roles_sqlalchemy`)."""
+        async with asyncio.timeout(self._audit_timeout_s):
+            await audit(user_id, role)
 
     async def create_user_with_invite(
         self,
@@ -118,6 +136,7 @@ class SqlAlchemyInviteRepository:
         invited_by: uuid.UUID,
         token_hash: str,
         expires_at: datetime,
+        audit: AuditHook,
     ) -> bool:
         try:
             async with self._relational.unit_of_work() as uow:
@@ -147,6 +166,7 @@ class SqlAlchemyInviteRepository:
                         "exp": expires_at,
                     },
                 )
+                await self._write_ahead(audit, user_id, role)
                 await uow.commit()
         except IntegrityError:
             return False
@@ -219,6 +239,7 @@ class SqlAlchemyInviteRepository:
         invited_by: uuid.UUID,
         expires_at: datetime,
         now: datetime,
+        audit: AuditHook,
     ) -> Any:
         async with self._relational.unit_of_work() as uow:
             s = uow.session
@@ -246,12 +267,18 @@ class SqlAlchemyInviteRepository:
                 },
             )
             fresh = (await s.execute(_FIND_BY_ID, {"iid": str(invite_id)})).first()
+            await self._write_ahead(audit, user_id, row.role)
             await uow.commit()
         return self._make(fresh) if fresh is not None else None
 
-    async def revoke_open(self, user_id: uuid.UUID, *, now: datetime) -> bool:
-        rows = await self._rows(_REVOKE, {"id": str(user_id), "now": now})
-        return bool(rows)
+    async def revoke_open(self, user_id: uuid.UUID, *, now: datetime, audit: AuditHook) -> bool:
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_REVOKE, {"id": str(user_id), "now": now})).all()
+            if not rows:
+                return False
+            await self._write_ahead(audit, user_id, rows[0].role)
+            await uow.commit()
+        return True
 
     async def list_pending(self, *, now: datetime) -> tuple[Any, ...]:
         rows = await self._rows(_PENDING, {})
