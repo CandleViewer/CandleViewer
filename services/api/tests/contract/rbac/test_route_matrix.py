@@ -325,6 +325,7 @@ _STUB_STATUS: dict[str, int] = {
     "POST /auth/mfa/recovery": 422,
     "POST /auth/mfa/verify": 422,
     "POST /auth/refresh": 401,
+    "POST /auth/unlock": 503,  # mounted dark until #2300 slice 2f wires the step-up authority
     "GET /market/bars": 422,
     "GET /market/data-coverage": 422,  # required query params are validated before the 501/503
     "GET /onboarding/checklist": 501,

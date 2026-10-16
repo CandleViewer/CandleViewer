@@ -1,6 +1,7 @@
 """`POST /auth/refresh`, `GET /auth/session`, `GET /auth/sessions`,
 `POST /auth/logout` and `DELETE /me/sessions/{sessionId}` (E09-S03,
-US-ONB-004/009; QA defect #1634).
+US-ONB-004/009; QA defect #1634), and the idle-lock route `POST /auth/unlock`
+(#2300).
 
 Thin HTTP adapter over `candleviewer.auth.session_service.SessionService`,
 same shape as `api/auth.py`: structural Protocols, RFC 7807 problems, audit
@@ -52,24 +53,25 @@ after the one `auth.logout` intent record that names the targets (#2914). The re
 is the time-boxed exception EX-07 (§16.2).
 
 Idle lock (#2300, contract info "Idle lock"): `GET /auth/session` never re-stamps
-`last_seen_at`. `GET /auth/session` and `POST /auth/logout` serve a locked session,
-identified by an access token inside its lifetime or else the current `cv_refresh`
-cookie (a cookie-identified logout gets the SR-042 Origin and SR-041 checks here);
-every other operation of a locked session is refused by `api.idle_lock`, and a
-locked or cookie-identified logout ends only its own session.
+`last_seen_at`. `GET /auth/session`, `POST /auth/unlock` and `POST /auth/logout`
+serve a locked session, identified by an access token inside its lifetime or else
+the current `cv_refresh` cookie (a cookie-identified write gets the SR-042 Origin
+and SR-041 checks here); every other operation of a locked session is refused by
+`api.idle_lock`, and a locked or cookie-identified logout ends only its own session.
 """
 
 from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Annotated, Any, Protocol
 
 import structlog
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from candleviewer.api import idle_lock
 from candleviewer.api.csrf import (
@@ -92,7 +94,9 @@ from candleviewer.auth.errors import (
     RefreshReuseDetected,
     SessionIdleLocked,
     SessionNotFound,
+    SessionNotLocked,
     SessionRevoked,
+    UnlockPasswordInvalid,
     UserDisabled,
 )
 from candleviewer.auth.metrics import (
@@ -108,8 +112,14 @@ from candleviewer.auth.models import (
     SessionRecord,
     SessionView,
 )
-from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
-from candleviewer.auth.step_up import grace_expires_at
+from candleviewer.auth.session_chart import SessionChart, SessionChartError, to_us
+from candleviewer.auth.session_service import (
+    ACCESS_TOKEN_TTL,
+    PasswordCheck,
+    UnlockOutcome,
+    UnlockWriteAhead,
+)
+from candleviewer.auth.step_up import PasswordVerdict, grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
 
 REFRESH_COOKIE_PATH = "/api/v1/auth"
@@ -121,6 +131,20 @@ MAX_PAGE = 100
 #: user's session count, and one the writer refuses is a 503 that keeps the user signed in. The
 #: rest are the user's `sessions` rows revoked by that call (auth-rbac.md section 10).
 LOGOUT_INTENT_SESSION_IDS_MAX = 50
+#: `POST /auth/unlock` `x-rate-limit`: 10 requests / minute / source IP (throttled like
+#: login). Every attempt counts, so a throttled one checks no password.
+UNLOCK_MAX_PER_WINDOW = 10
+UNLOCK_WINDOW_S = 60.0
+
+
+class UnlockBody(BaseModel):
+    """`UnlockRequest` (22-api-openapi.yaml): the password only, never a TOTP code
+    (US-ONB-004). A `SecretStr` keeps it out of reprs; a `ValidationError` echoes its
+    input, so the route never logs or returns one."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    password: SecretStr = Field(min_length=1, max_length=512)
 
 
 class SessionServiceLike(Protocol):
@@ -148,6 +172,15 @@ class SessionServiceLike(Protocol):
 
     def now(self) -> datetime: ...
 
+    async def unlock(
+        self,
+        session_id: str,
+        *,
+        password: str,
+        check: PasswordCheck | None = None,
+        write_ahead: UnlockWriteAhead | None = None,
+    ) -> SessionRecord: ...
+
     async def revoke(self, session_id: str, *, reason: str) -> SessionRecord | None: ...
 
     async def revoke_all(
@@ -157,6 +190,17 @@ class SessionServiceLike(Protocol):
     async def list_sessions(
         self, user_id: str, *, current_session_id: str | None = None
     ) -> tuple[SessionView, ...]: ...
+
+
+class UnlockAuthority(Protocol):
+    """What `POST /auth/unlock` needs besides the session service (#2300): the B16
+    chart the lock and the unlock are recorded on (B16.7), and the password check on
+    login's Argon2id path and lockout counters (SR-015, SR-016). `StepUpService`."""
+
+    @property
+    def chart(self) -> SessionChart: ...
+
+    async def verify_password(self, user_id: str, password: str) -> PasswordVerdict: ...
 
 
 class AuthServiceLike(Protocol):
@@ -227,10 +271,12 @@ def _unauthorized(detail: str = "authentication required") -> JSONResponse:
 #: query parameters its contract operation declares; anything else is refused by
 #: `api.query_allowlist`, never silently ignored (#2573, #2632). Declared query parameters
 #: (22-api-openapi.yaml): `authGetSession` has none; `authListSessions` has `Cursor` and `Limit`;
-#: `authLogout` and `revokeMySession` have none (`CsrfToken` is a header, `sessionId` a path one).
+#: `authLogout`, `authUnlock` and `revokeMySession` have none (`CsrfToken` is a header,
+#: `sessionId` a path one).
 GET_SESSION_QUERY: frozenset[str] = frozenset()
 LIST_SESSIONS_QUERY = frozenset({"cursor", "limit"})
 LOGOUT_QUERY: frozenset[str] = frozenset()
+UNLOCK_QUERY: frozenset[str] = frozenset()
 REVOKE_MY_SESSION_QUERY: frozenset[str] = frozenset()
 
 
@@ -380,15 +426,21 @@ def make_session_router(
     probe_global_throttle: PerIpLoginThrottle | None = None,
     audit_tracker: RefusalAuditTracker | None = None,
     audit_timeout_s: float = AUDIT_TIMEOUT_S,
+    unlock_authority: Callable[[], UnlockAuthority | None] | None = None,
+    unlock_throttle: PerIpLoginThrottle | None = None,
 ) -> APIRouter:
     """*audit_tracker*: pass the app's CSRF refusal tracker so both guards share one
-    in-flight cap and one shutdown drain."""
+    in-flight cap and one shutdown drain. *unlock_authority* is a thunk (step-up exists
+    only after `AuthService.start()`); without one `POST /auth/unlock` answers 503."""
     router = APIRouter(tags=["auth"])
 
     def now() -> datetime:
         """Lock state and `server_time` come from the session service's own clock."""
         return auth_service.sessions.now()
 
+    by_unlock_ip = unlock_throttle or PerIpLoginThrottle(
+        max_attempts=UNLOCK_MAX_PER_WINDOW, window_s=UNLOCK_WINDOW_S
+    )
     by_ip = ip_throttle or PerIpLoginThrottle(
         max_attempts=REFRESH_MAX_PER_WINDOW, window_s=REFRESH_WINDOW_S
     )
@@ -639,8 +691,8 @@ def make_session_router(
         # Write-ahead audit failed: nothing has been mutated yet (C-2.9).
         return _problem(503, "Service unavailable", "audit sink not active")
 
-    def _throttled(retry_after: int) -> JSONResponse:
-        response = _problem(429, "Too many requests", "refresh rate limit exceeded")
+    def _throttled(retry_after: int, what: str = "refresh") -> JSONResponse:
+        response = _problem(429, "Too many requests", f"{what} rate limit exceeded")
         response.headers["Retry-After"] = str(retry_after)
         return response
 
@@ -764,6 +816,26 @@ def make_session_router(
             ),
             "session": idle_lock.session_state(record, now=at),
         }
+
+    async def _unlock_password(request: Request) -> str | None:
+        """The `UnlockRequest` password, or `None` for any other body (422). The
+        `ValidationError` (a `ValueError`) echoes its input, so it is dropped here."""
+        try:
+            body = UnlockBody.model_validate(await request.json())
+        except ValueError:
+            return None
+        return body.password.get_secret_value()
+
+    async def _chart_step(event: str, step: Awaitable[None]) -> JSONResponse | None:
+        """Await an unlock step on B16 (*event* names it), against the row as read while
+        locked (B16.7). A failed record answers 503: the edge never reports a step it
+        could not record."""
+        try:
+            await step
+        except SessionChartError as exc:
+            _log().error("auth.unlock.chart_failed", b16_event=event, error=type(exc).__name__)
+            return _problem(503, "Service unavailable", "session record unavailable")
+        return None
 
     @router.post("/auth/refresh")
     async def refresh(request: Request) -> Response:
@@ -914,6 +986,135 @@ def make_session_router(
         if not present or csrf.verify(present, str(record.id)) is not CsrfVerdict.OK:
             set_csrf_cookie(response, csrf.issue(str(record.id)), max_age=REFRESH_EXPIRES_IN_S)
         return response
+
+    @router.post("/auth/unlock")
+    async def unlock(request: Request) -> Response:
+        """SCR-005: lift the idle lock with the password only (contract `authUnlock`)."""
+        authority = unlock_authority() if unlock_authority is not None else None
+        if not auth_service.sessions_is_active or authority is None:
+            return _problem(503, "Service unavailable", "session backend is not wired")
+        if identity is None:
+            return _problem(
+                501, "Not implemented", "identity provider not wired (E09-T03); unlock disabled"
+            )
+        ip = _source_ip(request)
+        ip_key = ip or "(unknown)"
+        if by_unlock_ip.is_blocked(ip_key):
+            return _throttled(by_unlock_ip.retry_after_s(ip_key), "unlock")
+        by_unlock_ip.record_failure(ip_key)  # every attempt: a throttled one checks no password
+        caller = await _identify(request)
+        if caller is None:
+            return _unauthorized()
+        record, by_cookie = caller
+        if by_cookie and not _origin_ok(request, allowed_origins):
+            return _problem(403, "Forbidden", "cross-origin unlock refused")  # SR-042
+        if (refusal := await _csrf_refusal(request, record, ip)) is not None:
+            return refusal
+        at = now()
+        if record.is_revoked:
+            return idle_lock.session_revoked_problem(record.revoked_reason or "revoked")
+        if record.is_absolute_expired(now=at):
+            return idle_lock.session_revoked_problem("expired")
+        try:  # #2911's on-use backstop, as on `GET /auth/session`: before any password check
+            record = await auth_service.sessions.require_active(str(record.id), allow_locked=True)
+        except SessionRevoked as exc:  # e.g. a disabled user's session, now `user_disabled`
+            return idle_lock.session_revoked_problem(exc.reason)
+        except SessionNotFound:
+            return _unauthorized()
+        if (refusal := undeclared_query_refusal(request, UNLOCK_QUERY)) is not None:
+            return refusal  # SR-026: before the lock state is told or a password checked
+        if not record.is_idle_locked(now=at):
+            # No password check, no failure counted, no activity, nothing audited.
+            return idle_lock.not_locked_problem()
+        password = await _unlock_password(request)
+        if password is None:
+            return _problem(422, "Unprocessable", "body must be exactly {password}")
+        if not _audit_ready():
+            return _audit_down()  # no password is checked
+        chart = authority.chart
+        # B16.7: the lock is recorded (`auth.idle_locked`) before `unlock()` runs, so a
+        # failed record answers 503 with the row still locked. `observe` sends no event
+        # but the lock the row shows: the route never sends `REQUEST`.
+        if (down := await _chart_step("IDLE_DEADLINE", chart.observe(record, at))) is not None:
+            return down
+        decided: list[UnlockOutcome] = []
+        locked_account: list[datetime] = []
+        verify, user_id = authority.verify_password, str(record.user_id)
+
+        async def check(candidate: str) -> bool:
+            """The password on login's path (SR-015, SR-016); notes a lockout it applied."""
+            verdict = await verify(user_id, candidate)
+            if verdict.locked_until is not None:
+                locked_account.append(verdict.locked_until)
+            return verdict.ok
+
+        async def write_ahead(outcome: UnlockOutcome) -> None:
+            """C-2.9: each record precedes the change it describes (B16.7: the chart
+            writes none of them); a failed write leaves the row as it was."""
+            decided.append(outcome)
+            if outcome is UnlockOutcome.UNLOCKED:
+                await _audit("auth.session_unlocked", record=record, ip=ip)
+                return
+            await _audit(
+                "auth.unlock_failed",
+                record=record,
+                ip=ip,
+                outcome=AuditOutcome.FAILURE,
+                severity=Severity.WARNING,
+                reason="invalid_password",
+            )
+            if locked_account:
+                # SR-016: this wrong password locked the account (the check's own write,
+                # as on login); recorded before the answer, like login's lockout.
+                await _audit(
+                    "auth.account_locked",
+                    record=record,
+                    ip=ip,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason="unlock_failed",
+                )
+            if outcome is UnlockOutcome.REVOKED:
+                await _audit(
+                    "auth.session_revoked",
+                    record=record,
+                    ip=ip,
+                    severity=Severity.WARNING,
+                    reason="unlock_attempts_exceeded",
+                )
+
+        try:
+            unlocked = await auth_service.sessions.unlock(
+                str(record.id), password=password, check=check, write_ahead=write_ahead
+            )
+        except AuditUnavailableError as exc:
+            _log().error("auth.unlock.audit_unavailable", error=type(exc).__name__)
+            return _audit_down()  # the lock stays and nothing was revoked
+        except UnlockPasswordInvalid:
+            failed = await _chart_step("UNLOCK_FAILED", chart.record(record, at, "UNLOCK_FAILED"))
+            return failed or idle_lock.unlock_invalid_problem()
+        except SessionNotLocked:  # lifted by another request since the check above
+            return idle_lock.not_locked_problem()
+        except SessionRevoked as exc:
+            if UnlockOutcome.REVOKED not in decided:  # revoked by something else meanwhile
+                return idle_lock.session_revoked_problem(exc.reason)
+            # The service already published the revocation: sockets close with 4401 (#2272).
+            # B16.7: `revoked` carries this decision to the chart's guard; `replay` keeps the
+            # chart from writing a second `auth.session_revoked`.
+            failed = await _chart_step(
+                "UNLOCK_FAILED",
+                chart.record(record, at, "UNLOCK_FAILED", revoked=True, replay=True),
+            )
+            return failed or idle_lock.session_revoked_problem("unlock_attempts_exceeded")
+        except SessionNotFound:
+            return _unauthorized()
+        lifted = await _chart_step(
+            "UNLOCK_OK",
+            chart.record(
+                record, at, "UNLOCK_OK", idle_expires_at_us=to_us(unlocked.idle_deadline())
+            ),
+        )
+        return lifted or JSONResponse(await _session_info(identity, unlocked, now()))
 
     @router.get("/auth/sessions")
     async def list_sessions(
