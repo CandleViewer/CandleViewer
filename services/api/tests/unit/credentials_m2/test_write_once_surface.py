@@ -10,9 +10,10 @@ honest regression, not a deliberate bypass: the trigger is the enforcement.
 The SQL tripwire reads every string constant under `candleviewer/`, migrations included. A second
 tripwire reads every Python reference to the `api_keys` Table outside `db/models.py` (which defines
 it) and the migrations (DDL), so a SQLAlchemy Core or ORM write, which names the table with no SQL
-string, is caught as well. Neither reads SQL assembled from parts (f-string fragments, `+`):
-AGENTS.md §5.2 forbids string-built SQL and the `cv-raw-sql-string-interpolation` Semgrep rule
-rejects it in `text()` and `execute()` calls.
+string, is caught as well. The same SQL scan also pins the single writer of the non-protected
+`last_used_at` column: the broker's debounced touch (21 §3.2.2, #2580). Neither reads SQL
+assembled from parts (f-string fragments, `+`): AGENTS.md §5.2 forbids string-built SQL and the
+`cv-raw-sql-string-interpolation` Semgrep rule rejects it in `text()` and `execute()` calls.
 """
 
 from __future__ import annotations
@@ -333,6 +334,73 @@ def test_no_candleviewer_sql_updates_a_protected_api_keys_column() -> None:
     updates, risks = _sql_scan()
     assert updates >= 3  # the scan reaches the adapter's three UPDATEs
     assert risks == {}
+
+
+def _uses_of(name: str, root: Path = _PKG) -> list[tuple[str, tuple[str, ...]]]:
+    """`(module, class/function nesting)` of every reference to `name` under `root`: an attribute
+    read (a call, a bound-method callback, a `functools.partial` argument), an import of it, or the
+    exact string `name` (a `getattr`). A `def name` is a definition, not a reference."""
+    found: list[tuple[str, tuple[str, ...]]] = []
+
+    def walk(node: ast.AST, rel: str, scope: tuple[str, ...]) -> None:
+        if isinstance(node, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            scope += (node.name,)
+        match node:
+            case ast.Attribute(attr=attr) | ast.alias(name=attr) | ast.Constant(value=attr) if (
+                attr == name
+            ):
+                found.append((rel, scope))
+        for child in ast.iter_child_nodes(node):
+            walk(child, rel, scope)
+
+    for path in sorted(root.rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if name in source:
+            walk(ast.parse(source), path.relative_to(root).as_posix(), ())
+    return found
+
+
+def test_only_the_debounced_touch_sets_api_keys_last_used_at() -> None:
+    """#2580 (21 §3.2.2): one debouncer owns the write-amplification guard. The only SQL that
+    updates `last_used_at` is the adapter's `_TOUCH`, run only by `touch_last_used`, which only the
+    broker's debounced `_touch` reaches (INSERT column lists are not read: #2777)."""
+    setting = [
+        sql for _, sql in _api_keys_sql() for w in _writes(sql) if "last_used_at" in w.targets
+    ]
+    tree = ast.parse(Path(adapter.__file__).read_text(encoding="utf-8"))
+    assert setting == [adapter._TOUCH.text]
+    assert _scopes_using(tree, "_TOUCH") == [("SqlAlchemyCredentialStore", "touch_last_used")]
+    assert _uses_of("touch_last_used") == [("secrets/broker.py", ("CredentialBroker", "_touch"))]
+    adapter_module = "storage/repositories/credentials_sqlalchemy.py"
+    assert [where for where in _uses_of("_TOUCH") if where[0] != adapter_module] == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "async def f(store, k):\n    await store.touch_last_used(k)",  # a direct call
+        "def f(store):\n    return store.touch_last_used",  # a bound-method callback
+        (
+            "from functools import partial\n"
+            "def f(store, k):\n    return partial(store.touch_last_used, k)"
+        ),
+        'def f(store, k):\n    return getattr(store, "touch_last_used")(k)',
+    ],
+)
+def test_uses_of_sees_every_way_to_reach_the_touch(tmp_path: Path, source: str) -> None:
+    assert _uses_of("touch_last_used", _tree(tmp_path, {"m.py": source})) == [("m.py", ("f",))]
+
+
+def test_uses_of_ignores_a_definition_and_sees_an_import(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            "store.py": "class S:\n    async def touch_last_used(self, k): ...",
+            "other.py": "from repo import _TOUCH",
+        },
+    )
+    assert _uses_of("touch_last_used", root) == []
+    assert _uses_of("_TOUCH", root) == [("other.py", ())]
 
 
 def _api_keys_line(node: ast.AST) -> int | None:

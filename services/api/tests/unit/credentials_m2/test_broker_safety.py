@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -71,6 +72,44 @@ async def test_last_used_touch_is_debounced(store: Any, audit: AuditLog, clock: 
         clock.t = t
         await _borrow(b, meta.key_id)
     assert len(touched) == 2
+
+
+async def test_last_used_touch_debounce_boundary_is_per_key(
+    store: Any, audit: AuditLog, clock: FakeClock
+) -> None:
+    """#2580: the broker is the only `last_used_at` writer (21 §3.2.2), so the boundary cases
+    live here: no write just inside the 60 s window, one at exactly 60 s, a window per key."""
+    touched: list[tuple[float, UUID]] = []
+
+    async def touch(key_id: UUID) -> None:
+        touched.append((clock.t, key_id))
+
+    store.touch_last_used = touch
+    b = CredentialBroker(store, audit, kek(), clock=clock)
+    one, two = uuid4(), uuid4()
+    for t, key in ((0.0, one), (0.0, two), (59.999999, one), (60.0, one), (60.0, two)):
+        clock.t = t
+        await b._touch(key)
+    assert touched == [(0.0, one), (0.0, two), (60.0, one), (60.0, two)]
+
+
+async def test_last_used_touch_rearms_each_window(
+    store: Any, audit: AuditLog, clock: FakeClock
+) -> None:
+    """#2580: every write starts a new 60 s window, so a key signing once a second writes
+    `last_used_at` once a minute, not once ever and not on every signing."""
+    touched: list[float] = []
+
+    async def touch(key_id: UUID) -> None:
+        touched.append(clock.t)
+
+    store.touch_last_used = touch
+    b = CredentialBroker(store, audit, kek(), clock=clock)
+    key = uuid4()
+    for second in range(181):
+        clock.t = float(second)
+        await b._touch(key)
+    assert touched == [0.0, 60.0, 120.0, 180.0]
 
 
 @pytest.mark.parametrize("status", ["pending", "invalid", "expired", "revoked"])

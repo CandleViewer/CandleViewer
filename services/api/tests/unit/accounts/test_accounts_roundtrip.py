@@ -1,13 +1,14 @@
-"""E27-T01 QA gap: per-table model round-trip and debounce boundaries.
+"""E27-T01 QA gap: per-table model round-trip.
 
-There is no table repository in `accounts/` yet (`repository.py` holds only the debouncer), so
-the per-table round-trip is asserted at the model boundary: dump to JSON and validate back.
+The per-table round-trip is asserted at the model boundary: dump to JSON and validate back. The
+`last_used_at` debounce boundaries moved with its only writer, the M2 credential broker
+(`tests/unit/credentials_m2/test_broker_safety.py`, #2580).
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 
@@ -21,7 +22,6 @@ from candleviewer.accounts.models import (
     PermissionSet,
     PermissionSnapshot,
 )
-from candleviewer.accounts.repository import LastUsedDebouncer
 
 _T0 = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 
@@ -84,36 +84,3 @@ def test_naive_timestamp_is_rejected_on_every_table() -> None:
     naive = datetime(2026, 10, 1)
     with pytest.raises(ValueError, match="timezone"):
         ApiKeyRotation(id=uuid4(), old_api_key_id=uuid4(), new_api_key_id=uuid4(), started_at=naive)
-
-
-async def test_debounce_one_write_per_window_with_fake_clock() -> None:
-    writes: list[tuple[UUID, datetime]] = []
-
-    async def writer(key: UUID, at: datetime) -> None:
-        writes.append((key, at))
-
-    deb = LastUsedDebouncer(writer, interval=timedelta(seconds=10))
-    key = uuid4()
-    clock = _T0
-    results = []
-    for _ in range(25):  # one touch per second for 25 s
-        results.append(await deb.touch(key, clock))
-        clock += timedelta(seconds=1)
-    assert [i for i, ok in enumerate(results) if ok] == [0, 10, 20]
-    assert [t for _, t in writes] == [_T0 + timedelta(seconds=s) for s in (0, 10, 20)]
-
-
-async def test_debounce_boundary_just_inside_and_at_window() -> None:
-    count = 0
-
-    async def writer(key: UUID, at: datetime) -> None:
-        nonlocal count
-        count += 1
-
-    deb = LastUsedDebouncer(writer, interval=timedelta(seconds=60))
-    key = uuid4()
-    assert await deb.touch(key, _T0)
-    assert not await deb.touch(key, _T0 + timedelta(seconds=60) - timedelta(microseconds=1))
-    assert count == 1
-    assert await deb.touch(key, _T0 + timedelta(seconds=60))
-    assert count == 2

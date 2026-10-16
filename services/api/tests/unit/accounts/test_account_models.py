@@ -1,12 +1,12 @@
-"""E27-T01 domain models and debounce."""
+"""E27-T01 domain models."""
 
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -17,7 +17,6 @@ from candleviewer.accounts.models import (
     ExchangeAccount,
     PermissionSnapshot,
 )
-from candleviewer.accounts.repository import LastUsedDebouncer
 
 _FX = Path(__file__).resolve().parents[5] / "packages/fixtures/accounts/accounts.json"
 _NOW = datetime(2026, 9, 14, tzinfo=UTC)
@@ -136,20 +135,3 @@ def test_rotation_validators() -> None:
             completed_at=_NOW,
             failed_at=_NOW,
         )
-
-
-async def test_last_used_debounce_window() -> None:
-    writes: list[tuple[UUID, datetime]] = []
-
-    async def writer(k: UUID, t: datetime) -> None:
-        writes.append((k, t))
-
-    deb = LastUsedDebouncer(writer)
-    k = uuid4()
-    assert await deb.touch(k, _NOW)
-    assert not await deb.touch(k, _NOW + timedelta(seconds=59))
-    assert await deb.touch(k, _NOW + timedelta(seconds=60))
-    assert await deb.touch(uuid4(), _NOW)
-    assert len(writes) == 3
-    with pytest.raises(ValueError, match="timezone"):
-        await deb.touch(k, datetime(2026, 1, 1))
