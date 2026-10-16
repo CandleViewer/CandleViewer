@@ -95,6 +95,12 @@ def test_a_stored_value_of_the_wrong_kind_is_ignored_and_fails_closed() -> None:
     assert resolve(_VAR, StoredFlag("zzz"), user_id=_U1) == "a"
 
 
+def test_an_unreadable_row_ignores_its_overrides_too() -> None:
+    """D1b: that flag alone resolves to its fail-closed value, for every caller."""
+    stored = StoredFlag("zzz", {_U1: "c"}, {"owner": "b"})
+    assert resolve(_VAR, stored, user_id=_U1, roles=_OWNER) == "a"
+
+
 def test_overrides_of_the_wrong_kind_are_skipped() -> None:
     stored = StoredFlag(False, {_U1: "yes"}, {"owner": 1})
     assert resolve(_BOOL, stored, user_id=_U1, roles=_OWNER) is False
