@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Final, Protocol
+from typing import ClassVar, Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
@@ -54,6 +54,10 @@ def logger() -> structlog.stdlib.BoundLogger:
 
 class MaintenanceGate:
     """Synchronous and lock-free: one boolean, read on every order acceptance."""
+
+    #: Marks the global check: `OrderEntryGate` requires it on its first argument, so an account
+    #: check cannot take the maintenance slot.
+    scope: ClassVar[Literal["global"]] = "global"
 
     def __init__(self) -> None:
         self._engaged = True  # engaged until both flags have been read (fail closed)

@@ -1,13 +1,14 @@
 """#837 Q5: the shared synchronous order-entry gate. A frozen composed gate puts the maintenance
 check first and never runs dry; every call names the account; the first refusal wins; a refusal
 uses the closed reason set and renders as the 403 `trading_disabled` problem with its `reason`,
-logged and counted only when it refuses; nothing fails open (no maintenance check, a non-check,
-a missing or mistyped account id, a raising check)."""
+logged and counted only when it refuses; nothing fails open (no maintenance check, an account
+check in the maintenance slot, a non-check, a missing or mistyped account id, a raising check)."""
 
 from __future__ import annotations
 
 import dataclasses
 import json
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -100,6 +101,8 @@ def test_a_refusal_is_frozen() -> None:
         "x" * 201,
         "Account a1000000-0000-4000-8000-000000000001 refused",
         "deadbeefcafe0123babe",
+        "Account ABCDEF01-ABCD-4BCD-8BCD-ABCDEF012345 refused",
+        "DEADBEEFCAFEBABEFACE",
     ],
 )
 def test_a_refusal_detail_is_short_text_without_ids(detail: str) -> None:
@@ -122,6 +125,25 @@ def test_a_gate_cannot_be_built_without_its_maintenance_check() -> None:
 def test_the_maintenance_check_is_a_required_argument() -> None:
     with pytest.raises(TypeError, match="maintenance"):
         OrderEntryGate()  # type: ignore[call-arg]  # mypy rejects the call too, so this is pinned
+
+
+@pytest.mark.parametrize(
+    "bad", [_Check(), SimpleNamespace(scope="account", refusal=lambda account_id: None), object()]
+)
+def test_only_the_global_maintenance_check_takes_the_maintenance_slot(bad: object) -> None:
+    with pytest.raises(TypeError, match="global maintenance check"):
+        OrderEntryGate(bad)  # type: ignore[arg-type]  # the runtime guard
+
+
+def test_the_maintenance_slot_is_validated_like_every_other_check() -> None:
+    with pytest.raises(TypeError, match="not an order-entry check"):
+        OrderEntryGate(SimpleNamespace(scope="global"))
+
+
+def test_a_check_whose_refusal_is_not_callable_is_rejected() -> None:
+    not_callable = SimpleNamespace(refusal="no")
+    with pytest.raises(TypeError, match="not an order-entry check"):
+        OrderEntryGate(_maintenance(False), not_callable)
 
 
 @pytest.mark.parametrize("bad", [{1, 2}, (c for c in [_Check()]), None])
