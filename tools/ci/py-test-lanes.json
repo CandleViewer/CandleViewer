@@ -1,0 +1,8 @@
+{
+  "_comment": "#2424 (ADR-0013 p90 <= 15 min): the services/api pytest lanes that .github/workflows/_job-py.yml runs in parallel. Paths are relative to services/api. Every lane runs the same marker expression, flags and --cov as the single job did, restricted to its paths; the rest lane runs tests/ minus every path listed below, so a new test directory always runs somewhere. Rebalance by moving paths between lanes, and keep the workflow's matrix in step: scripts/tests/test_py_test_lanes.py fails when a test file would run in no lane or in two, when a listed path no longer exists, or when the matrix and this file name different lanes.",
+  "rest_lane": "rest",
+  "lanes": {
+    "unit-heavy": ["tests/unit/bars", "tests/unit/orderflow", "tests/unit/ws", "tests/unit/api"],
+    "db-chaos-contract": ["tests/integration", "tests/chaos", "tests/contract"]
+  }
+}
