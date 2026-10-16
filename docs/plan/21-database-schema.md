@@ -2237,6 +2237,10 @@ CREATE UNIQUE INDEX ux_ffo_role ON feature_flag_overrides (feature_flag_id, role
 
 Resolution order: user override → role override → percentage rollout (hash of `user_id||flag_key`) → default value. Kill-switch flags (`is_killswitch`) bypass caching and are re-read every 5 s.
 
+`trading.live_enabled` and every kill-switch-class flag (`is_killswitch`, `maintenance.mode` included) resolve from the deployment value only: user and role overrides for them are ignored at resolution, not merely refused on write, so an override row that reaches this table another way (a seed, a migration, a direct change) changes nothing (E42-T03).
+
+> **Writes-slice follow-up (E42-T03).** `feature_flags` has no `updated_by` and no current-value column distinct from `default_value`, yet `PUT /admin/feature-flags/{flagKey}` writes a value and `FeatureFlag` returns `updated_by`. The E42-T03 writes slice adds both, in its own migration.
+
 ### 3.10 Audit log (hash chain), system events, backups
 
 #### 3.10.1 `audit_log`
