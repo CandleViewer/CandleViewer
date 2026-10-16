@@ -6,12 +6,18 @@ keyed by session id; the session router's `publish_revocation` calls
 reason `user_disabled` (the SR-029 disable cascade) gets the §9.5 `bye` and
 4403 instead, so the client returns to login and does not reconnect (#2493).
 Latency is observed on `auth_revocation_latency_seconds` (alert > 5 s).
+
+The hub also remembers each revoked session id, with its reason, for one access-token
+lifetime (#2739), so an `auth` that was already in flight when the revocation was published
+can still be refused: `revoked_reason` / `was_revoked`. The memory is bounded (C-2.18):
+entries expire after `remember_s`, and past `max_remembered` the oldest is forgotten first,
+which reopens the in-flight window for that one session only.
 """
 
 from __future__ import annotations
 
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from collections.abc import Awaitable, Callable
 from typing import Any, Final, Literal
 
@@ -121,11 +127,63 @@ def _wall_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
+#: Seconds a revoked session id is remembered: one access-token lifetime (ADR-0020,
+#: `auth.session_service.ACCESS_TOKEN_TTL`, which the composition root passes). A revoked
+#: session cannot mint new tokens, so after that no `auth` for it can succeed anyway.
+REVOKED_MEMORY_S: Final = 720.0
+#: At most this many revoked ids are remembered (C-2.18); the oldest is forgotten first.
+MAX_REVOKED_IDS: Final = 4096
+
+
 class RevocationHub:
-    def __init__(self, *, wall_ms: Callable[[], int] = _wall_ms) -> None:
+    def __init__(
+        self,
+        *,
+        wall_ms: Callable[[], int] = _wall_ms,
+        remember_s: float = REVOKED_MEMORY_S,
+        max_remembered: int = MAX_REVOKED_IDS,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if remember_s <= 0 or max_remembered < 1:
+            raise ValueError("remember_s must be > 0 and max_remembered >= 1")
         self._sockets: dict[str, list[Closer]] = defaultdict(list)
         #: Stamps the `user_disabled` bye's `ts`; injectable so tests read a fixed clock.
         self._wall_ms = wall_ms
+        self._remember_s = remember_s
+        self._max_remembered = max_remembered
+        self._monotonic = monotonic
+        #: session id -> (monotonic expiry, reason), oldest first. Every entry lives the same
+        #: `remember_s` from a non-decreasing clock, so insertion order is expiry order.
+        self._revoked: OrderedDict[str, tuple[float, str]] = OrderedDict()
+
+    @property
+    def remember_s(self) -> float:
+        """Seconds a revoked session id is remembered."""
+        return self._remember_s
+
+    def _prune(self, now: float) -> None:
+        while self._revoked:
+            session_id, (expires_at, _) = next(iter(self._revoked.items()))
+            if expires_at > now:
+                return
+            del self._revoked[session_id]
+
+    def _remember(self, session_id: str, reason: str) -> None:
+        now = self._monotonic()
+        self._prune(now)
+        self._revoked.pop(session_id, None)  # a repeat revocation renews the entry
+        self._revoked[session_id] = (now + self._remember_s, reason)
+        while len(self._revoked) > self._max_remembered:
+            self._revoked.popitem(last=False)
+
+    def revoked_reason(self, session_id: str) -> str | None:
+        """The reason `session_id` was revoked within the last `remember_s`, else `None`."""
+        self._prune(self._monotonic())
+        entry = self._revoked.get(session_id)
+        return None if entry is None else entry[1]
+
+    def was_revoked(self, session_id: str) -> bool:
+        return self.revoked_reason(session_id) is not None
 
     def register(self, session_id: str, closer: Closer) -> None:
         self._sockets[session_id].append(closer)
@@ -144,7 +202,9 @@ class RevocationHub:
         return bye_frame(reason), CLOSE_TOKEN_EXPIRED
 
     async def revoke(self, session_id: str, reason: str = "session_revoked") -> int:
-        """Close every socket of `session_id`; returns how many were closed."""
+        """Remember `session_id` as revoked, then close every socket of it; returns how many
+        were closed. Remembered first, so an `auth` checking during the closes sees it."""
+        self._remember(session_id, reason)
         closers = self._sockets.pop(session_id, [])
         started = time.monotonic()
         for closer in closers:

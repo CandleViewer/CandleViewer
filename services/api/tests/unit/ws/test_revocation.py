@@ -6,10 +6,14 @@ from __future__ import annotations
 from typing import Any, get_args
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
+from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.ws.revocation import (
     CLOSE_TOKEN_EXPIRED,
     CLOSE_USER_DISABLED,
+    REVOKED_MEMORY_S,
     RevocationHub,
     RevokedReason,
     bye_frame,
@@ -88,3 +92,106 @@ async def test_a_failing_socket_does_not_block_the_rest() -> None:
 
 async def test_unregistered_session_is_a_noop() -> None:
     assert await RevocationHub().revoke("nope") == 0
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+async def test_revoke_remembers_the_session_and_its_reason_with_no_socket_open() -> None:
+    """#2739: a revocation that closes nothing is still remembered for an in-flight `auth`."""
+    hub = RevocationHub()
+    assert await hub.revoke("s1") == 0
+    await hub.revoke("s2", "user_disabled")
+    assert (hub.revoked_reason("s1"), hub.revoked_reason("s2")) == (
+        "session_revoked",
+        "user_disabled",
+    )
+    assert (hub.was_revoked("s1"), hub.was_revoked("other")) == (True, False)
+
+
+async def test_a_revoked_id_is_remembered_until_remember_s_has_passed() -> None:
+    clock = _Clock()
+    hub = RevocationHub(remember_s=720.0, monotonic=clock)
+    await hub.revoke("s1")
+    clock.now += 719.999
+    assert hub.was_revoked("s1")
+    clock.now += 0.001  # exactly remember_s after the revocation
+    assert not hub.was_revoked("s1")
+
+
+async def test_a_repeat_revocation_renews_the_entry_and_its_reason() -> None:
+    clock = _Clock()
+    hub = RevocationHub(remember_s=10.0, max_remembered=2, monotonic=clock)
+    await hub.revoke("a")
+    await hub.revoke("b")
+    clock.now += 5
+    await hub.revoke("a", "user_disabled")  # now the newest entry
+    await hub.revoke("c")  # over the cap: "b" is the oldest
+    assert (hub.was_revoked("b"), hub.revoked_reason("a"), hub.was_revoked("c")) == (
+        False,
+        "user_disabled",
+        True,
+    )
+    clock.now += 9.5  # 14.5 s after the first "a", 9.5 s after its renewal
+    assert hub.was_revoked("a")
+
+
+async def test_the_memory_forgets_the_oldest_past_its_cap() -> None:
+    hub = RevocationHub(max_remembered=3, monotonic=_Clock())
+    for session_id in ("a", "b", "c", "d"):
+        await hub.revoke(session_id)
+    assert [hub.was_revoked(s) for s in ("a", "b", "c", "d")] == [False, True, True, True]
+
+
+async def test_revoke_remembers_before_it_closes_the_sockets() -> None:
+    hub = RevocationHub()
+    seen: list[bool] = []
+
+    async def closer(frame: dict[str, Any], code: int) -> None:
+        seen.append(hub.was_revoked("s1"))
+
+    hub.register("s1", closer)
+    assert await hub.revoke("s1") == 1
+    assert seen == [True]
+
+
+def test_the_default_memory_is_one_access_token_lifetime() -> None:
+    assert REVOKED_MEMORY_S == ACCESS_TOKEN_TTL.total_seconds()
+
+
+@pytest.mark.parametrize("kwargs", [{"remember_s": 0.0}, {"max_remembered": 0}])
+def test_the_memory_bounds_must_be_positive(kwargs: dict[str, float]) -> None:
+    with pytest.raises(ValueError, match="remember_s must be > 0"):
+        RevocationHub(**kwargs)  # type: ignore[arg-type]  # float/int kwargs by name
+
+
+@settings(max_examples=200, deadline=None)
+@given(
+    steps=st.lists(
+        st.tuples(st.sampled_from("abcdef"), st.integers(0, 6)), min_size=1, max_size=40
+    ),
+    cap=st.integers(1, 4),
+)
+async def test_the_memory_matches_a_bounded_ttl_model(
+    steps: list[tuple[str, int]], cap: int
+) -> None:
+    """Never more than `cap` ids; an id is remembered exactly while its newest revocation is
+    younger than `remember_s` and fewer than `cap` other ids were revoked after it."""
+    clock = _Clock()
+    hub = RevocationHub(remember_s=5.0, max_remembered=cap, monotonic=clock)
+    model: dict[str, float] = {}  # id -> time of its newest revocation, oldest first
+    for session_id, advance in steps:
+        clock.now += advance
+        await hub.revoke(session_id)
+        model.pop(session_id, None)
+        model[session_id] = clock.now
+        model = {s: at for s, at in model.items() if at + 5.0 > clock.now}
+        while len(model) > cap:
+            model.pop(next(iter(model)))
+        assert len(hub._revoked) <= cap
+        assert {s for s in "abcdef" if hub.was_revoked(s)} == set(model)

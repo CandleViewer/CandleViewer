@@ -98,7 +98,7 @@ from candleviewer.auth.models import (
 from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
-from candleviewer.auth.session_service import access_token_expires_at
+from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, access_token_expires_at
 from candleviewer.auth.testnet_clock import build_test_clock
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import export_bars_metrics
@@ -1013,7 +1013,7 @@ def create_app(
     # E09-S03: session routes; revocation is pushed to sockets via the hub
     # (4401). Identity provider is E09-T03, so refresh/session return 501 and
     # every route answers 503 until a session repository is wired.
-    revocation_hub = RevocationHub()
+    revocation_hub = RevocationHub(remember_s=ACCESS_TOKEN_TTL.total_seconds())
     app.state.revocation_hub = revocation_hub
     ctx.auth.attach_revocation_sink(_hub_publisher(revocation_hub))  # every revoke path (#2272)
     app.include_router(
