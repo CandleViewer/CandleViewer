@@ -347,7 +347,7 @@ the source of truth for ticket _content_.
 | Unit tests                                     | `pytest -m "not integration" --cov=. --cov-fail-under=85`                |
 | Integration tests (needs docker compose stack) | `pytest -m integration`                                                  |
 | Architecture contracts                         | `lint-imports`                                                           |
-| Regenerate protocol pydantic models            | `python scripts/generate_protocol_models.py`                             |
+| Regenerate protocol models + contract subset   | `python scripts/generate_protocol_models.py`                             |
 | Protocol-model staleness gate (what CI runs)   | `python scripts/generate_protocol_models.py --check`                     |
 | New migration                                  | `alembic revision -m "<summary>"` (autogenerate then **review by hand**) |
 | Apply / roll back migration                    | `alembic upgrade head` / `alembic downgrade -1`                          |

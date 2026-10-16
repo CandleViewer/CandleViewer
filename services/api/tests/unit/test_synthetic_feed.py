@@ -102,3 +102,22 @@ async def test_generator_stop_is_idempotent_and_honours_cancellation() -> None:
     await generator.start()
     await generator.stop()
     await generator.stop()  # second stop is a no-op, not an error
+
+
+def test_checkout_root_is_none_at_the_image_layout() -> None:
+    """#2555: the image installs this module at `/app/candleviewer/ingestion/`, four parents
+    deep. `main` indexed `parents[4]` at import there, which raised `IndexError` and stopped
+    `candleviewer.app` from loading."""
+    from candleviewer.ingestion.synthetic_feed import _checkout_root
+
+    assert _checkout_root(Path("/app/candleviewer/ingestion/synthetic_feed.py")) is None
+    checkout = Path("/repo/services/api/candleviewer/ingestion/synthetic_feed.py")
+    assert _checkout_root(checkout) == Path("/repo")
+
+
+def test_relative_sample_path_is_kept_outside_a_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    import candleviewer.ingestion.synthetic_feed as feed
+
+    monkeypatch.setattr(feed, "_checkout_root", lambda module: None)
+    absent = Path("packages/fixtures/raw/absent.jsonl")
+    assert feed._resolve_sample_path(absent) == absent
