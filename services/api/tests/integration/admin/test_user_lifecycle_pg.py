@@ -329,17 +329,21 @@ async def test_concurrent_demote_and_disable_keep_owner(db: Any) -> None:
         assert await _active_owners(engine) == [survivor], i
 
 
-async def test_disable_already_disabled_user_is_noop(db: Any) -> None:
-    """AC5: a second disable writes nothing and calls no audit hook."""
+async def test_disable_twice_one_audit_for_a_manager_without_sessions(db: Any) -> None:
+    """AC5: a manager with no session or grant is disabled with one audit call (the grant
+    revoke binds an empty array); a second disable writes nothing and calls no audit hook."""
     rel, engine = db
-    actor, user, _, _ = await _member(engine)
-    first = await _store(rel).disable(user, actor=actor, now=_NOW, audit=_Hook())
-    disabled, hook = await _snapshot(engine, user), _Hook()
+    actor, user = await _user(engine, "owner"), await _user(engine, "manager")
+    hook, again_hook = _Hook(), _Hook()
+    first = await _store(rel).disable(user, actor=actor, now=_NOW, audit=hook)
+    disabled = await _snapshot(engine, user)
     later = _NOW + timedelta(seconds=5)
-    again = await _store(rel).disable(user, actor=actor, now=later, audit=hook)
-    assert first is not None and first.changed
+    again = await _store(rel).disable(user, actor=actor, now=later, audit=again_hook)
+    expected = UserStatusChange(user, "active", "disabled", frozenset({"manager"}))
+    assert first == expected and hook.calls == [expected]
+    assert disabled[0][0] == "disabled" and disabled[1:] == ({}, {})
     assert again == UserStatusChange(user, "disabled", "disabled", frozenset({"manager"}))
-    assert hook.calls == [] and await _snapshot(engine, user) == disabled
+    assert again_hook.calls == [] and await _snapshot(engine, user) == disabled
 
 
 async def test_revoked_grants_keep_freeze_and_loss_cap_columns(db: Any) -> None:

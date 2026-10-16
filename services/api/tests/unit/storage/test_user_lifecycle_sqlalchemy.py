@@ -130,6 +130,16 @@ async def test_disable_statement_order_lock_user_lock_owners_dml_constraints_aud
     assert rel.ran[7][1] == {"id": str(_UID), "revoked": [str(_A), str(_B)]}
 
 
+async def test_disable_with_no_session_or_grant_revokes_none_and_audits_once() -> None:
+    """AC5's first disable: nothing to revoke, so the grant revoke binds an empty array."""
+    rel = _Rel(sessions=(), grants=())
+    change = await _disable(rel)
+    assert rel.order() == [*_LOCKED, *_CASCADE, f.CONSTRAINTS_NOW, "AUDIT"] and rel.committed
+    assert change is not None and change.changed and change == rel.ran[-1][1]
+    assert (change.revoked_session_ids, change.revoked_grants) == ((), {})
+    assert rel.ran[7][1] == {"id": str(_UID), "revoked": []}
+
+
 async def test_disable_self_target_refused_before_any_statement() -> None:
     rel = _Rel()
     with pytest.raises(UserSelfTargetError):
