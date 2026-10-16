@@ -73,6 +73,7 @@ from candleviewer.api.deny_by_default import (
     make_deny_undeclared_dependency,
 )
 from candleviewer.api.drawings import make_drawings_router
+from candleviewer.api.enrolment_guard import make_enrolment_only_guard
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.invites import make_invites_router
@@ -110,7 +111,11 @@ from candleviewer.auth.models import (
 from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.service import AuthService
-from candleviewer.auth.session_service import ACCESS_TOKEN_TTL, access_token_expires_at
+from candleviewer.auth.session_service import (
+    ACCESS_TOKEN_TTL,
+    SessionClass,
+    access_token_expires_at,
+)
 from candleviewer.auth.testnet_clock import audit_test_clock_enabled, build_test_clock
 from candleviewer.bars.limits import QUERY_TIMEOUT_S
 from candleviewer.bars.metrics import export_bars_metrics
@@ -272,7 +277,7 @@ from candleviewer.storage.retention.policy import RetentionPolicy, RetentionRule
 from candleviewer.storage.retention.rule_prune import RulePruneTask
 from candleviewer.storage.retention.schedule import RetentionSchedule
 from candleviewer.storage.service import StorageService
-from candleviewer.ws.gateway import Authenticate, GatewayHub, make_ws_router
+from candleviewer.ws.gateway import Authenticate, AuthRefused, GatewayHub, make_ws_router
 from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
@@ -751,10 +756,16 @@ def _session_authenticator(ctx: AppContext) -> Authenticate:
     """Opaque bearer token -> (session_id, user_id, token expiry) via the session
     service. The expiry is the first instant the service refuses the token on
     time grounds; the gateway ends the socket's identity there (#2259). Raises
-    (fail closed) while no session repository is wired."""
+    (fail closed) while no session repository is wired. An enrolment-only session
+    is refused with `AuthRefused` (`bye mfa_enrollment_required`, 4403; #2295); a
+    classification that fails raises like any failed `auth`."""
 
     async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
         record = await ctx.auth.sessions.authenticate_access_token(token)
+        if ctx.auth.enrolment_gate_is_active and (
+            await ctx.auth.classify(record) is not SessionClass.FULL
+        ):
+            raise AuthRefused("mfa_enrollment_required")
         return str(record.id), record.user_id, access_token_expires_at(record)
 
     return _authenticate
@@ -1202,6 +1213,9 @@ def create_app(
     # B16 audit actions write through the M19 emitter (PR #1674 finding 3).
     set_b16_audit_sink(_LazyAuditEmitter(ctx.audit))
     app.middleware("http")(make_read_only_guard(ctx.auth, _LazyAuditEmitter(ctx.audit)))
+    # #2295: the enrolment-only session reaches five operations; added after (so outside) the
+    # read-only/step-up guard, so a refused request never records a step-up challenge.
+    app.middleware("http")(make_enrolment_only_guard(ctx.auth))
     # Audit emitter + notifier are mandatory; store/resolver `None` -> 501.
     app.include_router(
         make_users_router(
@@ -1594,7 +1608,8 @@ def create_app(
         make_orderbook_router(lambda: ctx.ingestion.books, principal_resolver=audit_resolver)
     )
     # Middleware order, outermost first (Starlette: last added = outermost):
-    #   Correlation -> MeshOnly -> Csrf -> read-only/step-up guard -> routes.
+    #   Correlation -> MeshOnly -> Csrf -> enrolment-only guard -> read-only/step-up guard
+    #   -> routes.
     # #2090 (SR-041/SR-042): CSRF runs inside MeshOnly, so off-mesh traffic never
     # reaches a session lookup or an audit write, and outside every route-level
     # guard (read-only/step-up, RBAC): no write reaches them without a valid token.

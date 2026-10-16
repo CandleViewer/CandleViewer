@@ -22,6 +22,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   any failed `auth`. Revocation is pushed through the `RevocationHub`; the
   idle lock intentionally does not end the socket (E09-S03; #2259).
   Three failures -> `bye auth_failed` + `4401` + a `warning` audit entry.
+  An `AuthRefused` from `authenticate` (an enrolment-only session, #2295) closes
+  at once with its own `bye` (`4403`): not a failure, and nothing is registered.
 - **In-place re-auth** (§4.1): a later `auth` re-validates and swaps the
   principal without touching subscriptions. The old session stays registered
   with the hub until the new one is accepted.
@@ -141,6 +143,17 @@ class AuthenticatorContractError(RuntimeError):
     """The injected `authenticate` returned no timezone-aware token expiry. That
     is a server fault, not a client auth failure: the socket closes `1011` and
     nothing is served (fail closed, #2259)."""
+
+
+class AuthRefused(Exception):
+    """Raised by the injected `authenticate` for a live token whose session may not use the
+    socket: an enrolment-only session (#2295, §4.3). The socket closes at once with a `bye`
+    carrying `reason` (a `CLOSE_REASONS` key); it is not a failed `auth`, and the socket is
+    never registered."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _token_expiry_ms(result: AuthResult) -> int:
@@ -685,6 +698,11 @@ def make_ws_router(
                 revoked = [f for f in frames if f["t"] == "revoked"]
         except AuthenticatorContractError:
             raise  # a server fault, not a failed auth: the handler closes 1011
+        except AuthRefused as refused:
+            # §4.3: refused at once, never `auth_ok`, not counted as a failure, nothing
+            # registered; a re-auth ends the earlier identity too (#2295).
+            conn.close_with(refused.reason, seal=True)
+            return
         except Exception:
             if not reauth and conn.authz is not None:  # the SR-189 re-check failed: undo
                 registry.unregister(conn.authz)

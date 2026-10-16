@@ -75,6 +75,7 @@ def deployed() -> Iterator[SimpleNamespace]:
         ctx = app.state.app_context
         ctx.audit._writer = rbac._AuditSink()  # `ws.subscribe.denied` is audited
         ctx.auth._sessions = rbac._Sessions()
+        ctx.auth._repository = rbac._Users()  # the WS refuses enrolment-only sessions (#2295)
         yield SimpleNamespace(app=app, grants=grants)
 
 

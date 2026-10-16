@@ -96,6 +96,8 @@ CLOSE_REASONS: Final[dict[str, tuple[CloseCode, bool]]] = {
     "token_expired": (CloseCode.UNAUTHENTICATED, True),
     "session_revoked": (CloseCode.UNAUTHENTICATED, True),
     "user_disabled": (CloseCode.FORBIDDEN, False),
+    # §4.3 (#2295): enrolment-only session; enrol over REST, then connect again.
+    "mfa_enrollment_required": (CloseCode.FORBIDDEN, False),
     "client_rate_limited": (CloseCode.RATE_LIMITED, True),
     "slow_consumer": (CloseCode.RATE_LIMITED, True),
     "too_many_connections": (CloseCode.RATE_LIMITED, True),
@@ -112,6 +114,7 @@ _MESSAGES: Final[dict[str, str]] = {
     "client_rate_limited": "Inbound frame rate exceeded.",
     "heartbeat_timeout": "No traffic within the heartbeat timeout.",
     "too_many_connections": "Connection limit per user exceeded; oldest idle closed.",
+    "mfa_enrollment_required": "Enrol and confirm a TOTP method, then connect again.",
 }
 
 
