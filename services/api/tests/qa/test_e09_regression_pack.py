@@ -49,10 +49,6 @@ _SPAN = re.compile(r"`([^`\n]+)`")
 _CITATION = re.compile(r"^(tests/\S+?\.py)(?::\d+)?(?:::(\w+)(?:\[.*\])?)?$")
 _CONTINUATION = re.compile(r"^::(\w+)(?:\[.*\])?$")
 _NODE_ID = re.compile(r"^tests/\S+\.py::\S")
-# Two parameter ids of tests/security/auth/test_csrf_double_submit.py embed a fresh uuid4 per
-# process, so node ids from separate runs only compare once it is masked.
-# TODO(#2717): drop the mask once those ids are stable.
-_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 def _cited_tests(markdown: str) -> list[tuple[str, str | None]]:
@@ -157,9 +153,7 @@ def _collect(expression: str | None, *targets: str) -> frozenset[str]:
     )
     output = result.stdout + result.stderr
     assert result.returncode in (0, 5), "\n".join(output.splitlines()[-40:])
-    return frozenset(
-        _UUID.sub("<uuid>", line) for line in result.stdout.splitlines() if _NODE_ID.match(line)
-    )
+    return frozenset(line for line in result.stdout.splitlines() if _NODE_ID.match(line))
 
 
 @pytest.fixture(scope="module")
