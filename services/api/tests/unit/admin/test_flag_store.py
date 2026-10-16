@@ -4,6 +4,7 @@ adapters: the row lock, the no-row outage, role overrides kept, and the user dir
 from __future__ import annotations
 
 import asyncio
+from dataclasses import FrozenInstanceError
 from datetime import timedelta
 from uuid import UUID
 
@@ -43,6 +44,11 @@ def test_the_changes_counter_is_exported() -> None:
         assert "cv_feature_flag_changes_total" in names
     finally:
         collector.close()
+
+
+def test_a_change_cannot_be_altered_after_prepare_returns_it() -> None:
+    with pytest.raises(FrozenInstanceError):
+        _CHANGE.__setattr__("value", True)
 
 
 def test_a_stale_write_carries_the_row_as_it_stands() -> None:

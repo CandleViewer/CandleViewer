@@ -2,11 +2,12 @@
 
 `PUT /admin/feature-flags/{flagKey}` (`22-api-openapi.yaml` `setFeatureFlag`) records
 `evidence_url` in the `flags.change` audit, so a URL that may carry a credential is refused as
-`credential_in_url`: userinfo, or a query or fragment parameter (a query nested in the fragment,
-as in `#/cb?code=...`, included) whose name the audit redactor treats as a secret or
-`TOKEN_PARAMS` lists; a path token is the contract's accepted residual. Otherwise the URL must
-be `https` with a host, printable and without a space (`https_required`), and at most
-`EVIDENCE_URL_MAX` characters (`string_too_long`). It is never dereferenced.
+`credential_in_url`: userinfo, or a parameter of any `?`- or `#`-separated part of the query or
+the fragment (a single-page route's `#/cb?code=...` or `#/cb#code=...` included) whose name the
+audit redactor treats as a secret or `TOKEN_PARAMS` lists; a path token is the contract's
+accepted residual. Otherwise the URL must be `https` with a host, printable and without a space
+(`https_required`), and at most `EVIDENCE_URL_MAX` characters (`string_too_long`). It is never
+dereferenced.
 
 Only the first `EVIDENCE_URL_MAX + 1` characters are parsed, so a huge URL costs no more than a
 long one. A URL that cannot be parsed cannot be inspected: it is `credential_in_url` when it
@@ -16,6 +17,7 @@ credential or an unparseable string, and never longer than `EVIDENCE_URL_MAX` ch
 
 from __future__ import annotations
 
+import re
 from typing import Final, Literal
 from urllib.parse import SplitResult, parse_qsl, urlsplit
 
@@ -56,10 +58,10 @@ def check_evidence_url(url: str | None) -> tuple[EvidenceRule | None, str | None
 
 
 def _secret_param(parts: SplitResult) -> bool:
-    """A parameter of the query, of the fragment or of a query nested in the fragment whose
-    name the audit redactor treats as a secret or `TOKEN_PARAMS` lists (any case); `;`
-    separates parameters as `&` does."""
-    queries = (parts.query, parts.fragment, parts.fragment.partition("?")[2])
+    """A parameter of any `?`- or `#`-separated part of the query or the fragment whose name the
+    audit redactor treats as a secret or `TOKEN_PARAMS` lists (any case); `;` separates
+    parameters as `&` does."""
+    queries = re.split(r"[?#]", f"{parts.query}#{parts.fragment}")
     params = dict.fromkeys((n for q in queries for n, _ in parse_qsl(q.replace(";", "&"))), "")
     redacted = redact(params) or {}
     return REDACTION_MARKER in redacted.values() or not TOKEN_PARAMS.isdisjoint(

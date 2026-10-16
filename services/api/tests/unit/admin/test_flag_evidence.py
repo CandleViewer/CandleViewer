@@ -46,6 +46,8 @@ def test_a_url_that_is_not_printable_https_with_a_host_is_refused(url: str) -> N
         "https://github.com/x?a=1;token=secret",  # `;` separates parameters too
         "https://idp.example/#/cb?code=secret",  # a query nested in the fragment
         "https://idp.example/#!/cb?pwd=secret",
+        "https://idp.example/#/cb#code=secret",  # a second `#`
+        "https://github.com/x?a=1?sig=secret",  # a second `?`
         "http://user:secret@github.com/" + "a" * 3000,  # before the scheme and the length
     ],
 )
