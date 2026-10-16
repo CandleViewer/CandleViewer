@@ -130,6 +130,13 @@ def test_only_three_statements_are_unscoped() -> None:
     assert set(mod.UNSCOPED) <= set(_STATEMENTS)
 
 
+def test_purge_deletes_only_soft_deleted_rows_past_the_bounded_cutoff() -> None:
+    """The one DELETE no owner filter scopes: these two guards are all that protects live rows."""
+    text = str(_STATEMENTS["_PURGE"])
+    assert "deleted_at IS NOT NULL" in text
+    assert "deleted_at < now() - make_interval(days => CAST(:days AS integer))" in text
+
+
 def test_snapshot_locks_rows_in_a_deterministic_order() -> None:
     assert "ORDER BY id FOR UPDATE" in str(_STATEMENTS["_SNAPSHOT"])
 
