@@ -3853,7 +3853,7 @@ export interface paths {
     get: operations["listUserAccountAccess"];
     /**
      * Replace a user's account-access grants
-     * @description This is the isolation boundary between managers. Requires step-up `users`. Changes take effect on the next request. A removed account is soft-revoked, so its freeze state and risk caps survive a later re-grant. Within 2 seconds every live WS subscription that depended on a removed account ends with a `revoked` frame (`reason: account_scope_changed`, 23-ws-protocol.md section 9.5), and resubscribing is refused with `account_scope_denied`. Removing an account never flattens positions or cancels orders; while the user's open-position state is unavailable the request must carry `acknowledge_unknown_positions=true`, otherwise `409 positions_unknown`. The caller's own grants cannot be changed (`403 forbidden`), and a user that is not `active` answers `409 conflict`. An `exchange_account_id` that does not exist is `404 not_found`. Audited write-ahead as `users.access_change`; when the audit record cannot be written nothing changes (`503 audit_unavailable`). A call refused for a forbidden role or a self-target is audited too.
+     * @description This is the isolation boundary between managers. Requires step-up `users`. Changes take effect on the next request. A removed account is soft-revoked, so its freeze state and risk caps survive a later re-grant. Within 2 seconds every live WS subscription that depended on a removed account ends with a `revoked` frame (`reason: account_scope_changed`, 23-ws-protocol.md section 9.5), and resubscribing is refused with `account_scope_denied`. Removing an account never flattens positions or cancels orders. While the user's open-position state is unavailable, every request that removes a live grant (omits an account the user holds today), not only the last one, must carry `acknowledge_unknown_positions=true`, otherwise `409 positions_unknown`. The caller's own grants cannot be changed (`403 forbidden`), and a user that is not `active` answers `409 conflict`. An `exchange_account_id` that does not exist is `404 not_found`. Audited write-ahead as `users.access_change`; when the audit record cannot be written nothing changes (`503 audit_unavailable`). A call refused for a forbidden role or a self-target is audited too.
      */
     put: operations["setUserAccountAccess"];
     post?: never;
@@ -3957,7 +3957,7 @@ export interface paths {
     };
     /**
      * List a user's active sessions (the owner's view of `/me/sessions`)
-     * @description Same items as `listMySessions`; no token material is ever returned.
+     * @description Same items as `listMySessions`; no token material is ever returned. Read-only: unlike revoking a session, listing needs no step-up (04-security-program.md section 7.2.2, row 40a).
      */
     get: operations["listUserSessions"];
     put?: never;
@@ -4246,13 +4246,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
-    AccountAccessGrant: components["schemas"]["AccountAccessGrantInput"] & {
+    AccountAccessGrant: {
       account_label?: string;
       environment?: components["schemas"]["Environment"];
+      /** Format: uuid */
+      exchange_account_id: string;
       /** Format: date-time */
       granted_at?: string;
       /** Format: uuid */
       granted_by?: string;
+      /**
+       * @description `trade` implies `read`.
+       * @enum {string}
+       */
+      level: "read" | "trade";
     };
     AccountAccessGrantInput: {
       /** Format: uuid */
@@ -8288,7 +8295,7 @@ export interface components {
     AccountId: string;
     /** @description Restrict to these accounts. Omit for every account in the caller's scope. */
     AccountIdsQuery: string[];
-    /** @description Must be `true` when the request disables the user or removes one of their account grants while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decision O2 on #965). */
+    /** @description Must be `true` when the request disables the user, or removes any live account grant (every removal, not only the last one), while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decisions O2 on #965 and Q2 on #2648). */
     AcknowledgeUnknownPositions: boolean;
     AlertId: string;
     BackupId: string;
@@ -15328,7 +15335,7 @@ export interface operations {
   deleteUser: {
     parameters: {
       query?: {
-        /** @description Must be `true` when the request disables the user or removes one of their account grants while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decision O2 on #965). */
+        /** @description Must be `true` when the request disables the user, or removes any live account grant (every removal, not only the last one), while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decisions O2 on #965 and Q2 on #2648). */
         acknowledge_unknown_positions?: components["parameters"]["AcknowledgeUnknownPositions"];
         purge?: boolean;
       };
@@ -15367,7 +15374,7 @@ export interface operations {
   updateUser: {
     parameters: {
       query?: {
-        /** @description Must be `true` when the request disables the user or removes one of their account grants while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decision O2 on #965). */
+        /** @description Must be `true` when the request disables the user, or removes any live account grant (every removal, not only the last one), while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decisions O2 on #965 and Q2 on #2648). */
         acknowledge_unknown_positions?: components["parameters"]["AcknowledgeUnknownPositions"];
       };
       header: {
@@ -15434,13 +15441,15 @@ export interface operations {
           };
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      404: components["responses"]["NotFound"];
     };
   };
   setUserAccountAccess: {
     parameters: {
       query?: {
-        /** @description Must be `true` when the request disables the user or removes one of their account grants while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decision O2 on #965). */
+        /** @description Must be `true` when the request disables the user, or removes any live account grant (every removal, not only the last one), while the user's open-position state is unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes share one parameter (decisions O2 on #965 and Q2 on #2648). */
         acknowledge_unknown_positions?: components["parameters"]["AcknowledgeUnknownPositions"];
       };
       header: {

@@ -498,7 +498,7 @@ CREATE INDEX ix_uaa_frozen  ON user_account_access (exchange_account_id) WHERE f
 | `last_seen_at`       | timestamptz | no   | `now()` | Idle timeout 15 min default (per-session `idle_timeout_s`, 5–60 min, §3.1 `0007`) |
 | `expires_at`         | timestamptz | no   | —       | Absolute 12 h                                                                  |
 | `revoked_at`         | timestamptz | yes  | NULL    |                                                                                |
-| `revoked_reason`     | text        | yes  | NULL    | logout / rotated / password_change / admin_revoke / mfa_reset / rotation_reuse / break_glass |
+| `revoked_reason`     | text        | yes  | NULL    | logout / rotated / password_change / admin_revoke / mfa_reset / rotation_reuse / break_glass / user_disabled |
 | `ip`                 | inet        | yes  | NULL    | **PII**                                                                        |
 | `user_agent`         | text        | yes  | NULL    | **PII**                                                                        |
 | `device_label`       | text        | yes  | NULL    | User-named device                                                              |
@@ -3514,7 +3514,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | ------------------------------------------------------ | --------------------------------------- | ---------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `users`                                                | `email`                                 | P1         | plaintext                                       | Redacted to `u***@d***` in logs; purged on erase                                                                                                |
 | `users`                                                | `display_name`                          | P1         | plaintext                                       | Same                                                                                                                                            |
-| `users`                                                | `username`                              | P1         | plaintext                                       | Verbatim in append-only `audit_log.actor_label` (C-5.7); pseudonymised to `deleted-user-<id8>` on read/export by joining `users`, not rewritten |
+| `users`                                                | `username`                              | P1         | plaintext                                       | Verbatim in append-only `audit_log.actor_label` (C-5.7); pseudonymised to `deleted-user-<12 hex>` on read/export via `users`, not rewritten     |
 | `users`                                                | `password_hash`                         | S          | Argon2id                                        | Never selected outside the auth module; excluded from `SELECT *` via explicit column lists                                                      |
 | `users`                                                | `last_login_ip`                         | P2         | plaintext                                       | Purged at 90 d by the reaper                                                                                                                    |
 | `sessions`                                             | `refresh_token_hash`                    | S          | SHA-256 of token                                | Raw token exists only in the response body and the client                                                                                       |
@@ -3549,7 +3549,7 @@ Enforcement:
 - A Semgrep rule forbids `SELECT *` on `users`, `api_keys`, `mfa_methods`, `sessions`, `alerts` in application code.
 - The structured logger has a deny-list of field names; a unit test asserts that logging a model instance containing a secret field emits `[redacted]`.
 - Parquet exports of OMS tables exclude every S-class column by explicit projection, and the exporter test asserts the written schema contains none of them.
-- Erasing a user never rewrites audit rows. `audit_log.actor_label` is retained verbatim in the append-only `audit_log` (C-5.7): `trg_audit_append` refuses `UPDATE`/`DELETE` and the label is hashed into `entry_hash`. An erased user's label is pseudonymised to `deleted-user-<id8>` at read and export time by joining `users` on `actor_user_id`.
+- Erasing a user never rewrites audit rows. `audit_log.actor_label` is retained verbatim in the append-only `audit_log` (C-5.7): `trg_audit_append` refuses `UPDATE`/`DELETE` and the label is hashed into `entry_hash`. An erased user's label is pseudonymised to the erase surrogate (decision O6: `deleted-user-` plus the first 12 hex of SHA-256(`cv-user-surrogate:` + user id)) at read and export time by joining `users` on `actor_user_id`.
 
 ### 12.1 Envelope encryption detail
 

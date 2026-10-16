@@ -4387,6 +4387,26 @@
         }
       }
     },
+    "/users/{userId}/sessions": {
+      "get": {
+        "x-rbac": {
+          "permissions": [
+            "users:read"
+          ],
+          "scope": "none"
+        }
+      }
+    },
+    "/users/{userId}/sessions/{sessionId}": {
+      "delete": {
+        "x-rbac": {
+          "permissions": [
+            "users:write"
+          ],
+          "scope": "none"
+        }
+      }
+    },
     "/watchlists": {
       "get": {
         "x-rbac": {

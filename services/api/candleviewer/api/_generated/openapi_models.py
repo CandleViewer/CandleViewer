@@ -364,11 +364,16 @@ class Role(BaseModel):
 
 
 class AccountAccessGrantInput(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
     exchange_account_id: UUID
     level: Annotated[Literal["read", "trade"], Field(description="`trade` implies `read`.")]
 
 
-class AccountAccessGrant(AccountAccessGrantInput):
+class AccountAccessGrant(BaseModel):
+    exchange_account_id: UUID
+    level: Annotated[Literal["read", "trade"], Field(description="`trade` implies `read`.")]
     account_label: str | None = None
     environment: Annotated[
         Literal["live", "demo", "testnet"] | None,

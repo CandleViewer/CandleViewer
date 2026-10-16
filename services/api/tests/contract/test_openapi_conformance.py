@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import jsonschema
 import pytest
 
 from candleviewer.api.contract_conformance import (
@@ -272,3 +273,103 @@ def test_update_user_refuses_mfa_opt_out_and_non_lifecycle_status(spec: dict[str
     props = spec["components"]["schemas"]["UpdateUserRequest"]["properties"]
     assert props["mfa_required"]["enum"] == [True]
     assert props["status"]["enum"] == ["active", "disabled"]
+
+
+# -- E42-T04 S1 (#965), Q4 ruling on #2648: contract amendments for account access ----------------
+
+_GRANT = {"exchange_account_id": "a1000000-0000-4000-8000-000000000002", "level": "trade"}
+_GRANT_READ_ONLY = {
+    "account_label": "Main",
+    "environment": "demo",
+    "granted_at": "2026-10-16T12:00:00Z",
+    "granted_by": "a1000000-0000-4000-8000-000000000001",
+}
+# The freeze and the cap have their own routes (E39); the grantor is the caller, the user the path.
+_UNDECLARED_GRANT_FIELDS = ("frozen", "frozen_at", "max_daily_loss_usd", "granted_by", "user_id")
+_EVERY_REMOVAL_ACK = re.compile(
+    r"every request that removes a live grant[^.]*, not only the last one, must carry "
+    r"`acknowledge_unknown_positions=true`, otherwise `409 positions_unknown`"
+)
+
+
+def _flat(text: str) -> str:
+    """Collapse YAML line wrapping so a prose pin survives a re-wrap."""
+    return " ".join(text.split())
+
+
+def _schema_errors(spec: dict[str, Any], name: str, body: dict[str, Any]) -> list[str]:
+    root = {"$ref": f"#/components/schemas/{name}", "components": spec["components"]}
+    return [e.message for e in jsonschema.Draft202012Validator(root).iter_errors(body)]
+
+
+def test_audit_unavailable_is_registered_exactly_once(spec: dict[str, Any]) -> None:
+    codes = [entry["code"] for entry in spec["x-error-codes"]]
+    assert codes.count("audit_unavailable") == 1
+
+
+def test_list_user_account_access_declares_its_auth_and_lookup_failures(
+    spec: dict[str, Any],
+) -> None:
+    responses = spec["paths"]["/users/{userId}/account-access"]["get"]["responses"]
+    assert set(responses) == {"200", "401", "403", "404"}
+    assert responses["401"] == {"$ref": "#/components/responses/Unauthorized"}
+    assert responses["404"] == {"$ref": "#/components/responses/NotFound"}
+
+
+def test_account_access_grant_input_declares_only_the_account_and_the_level(
+    spec: dict[str, Any],
+) -> None:
+    schema = spec["components"]["schemas"]["AccountAccessGrantInput"]
+    assert schema["additionalProperties"] is False
+    assert set(schema["properties"]) == {"exchange_account_id", "level"}
+    assert schema["required"] == ["exchange_account_id", "level"]
+
+
+@pytest.mark.parametrize("extra", _UNDECLARED_GRANT_FIELDS)
+def test_account_access_grant_input_refuses_an_undeclared_field(
+    spec: dict[str, Any], extra: str
+) -> None:
+    assert _schema_errors(spec, "AccountAccessGrantInput", _GRANT) == []
+    assert _schema_errors(spec, "AccountAccessGrantInput", {**_GRANT, extra: True})
+
+
+def test_account_access_grant_response_accepts_its_read_only_fields(spec: dict[str, Any]) -> None:
+    assert _schema_errors(spec, "AccountAccessGrant", {**_GRANT, **_GRANT_READ_ONLY}) == []
+
+
+def test_account_access_put_requires_the_acknowledgement_for_every_removal(
+    spec: dict[str, Any],
+) -> None:
+    text = _flat(spec["paths"]["/users/{userId}/account-access"]["put"]["description"])
+    assert _EVERY_REMOVAL_ACK.search(text), text
+
+
+def test_unknown_positions_acknowledgement_is_an_optional_boolean_query_parameter(
+    spec: dict[str, Any],
+) -> None:
+    param = spec["components"]["parameters"]["AcknowledgeUnknownPositions"]
+    assert (param["in"], param["required"]) == ("query", False)
+    assert param["schema"] == {"type": "boolean", "default": False}
+
+
+def test_unknown_positions_acknowledgement_parameter_covers_every_removal(
+    spec: dict[str, Any],
+) -> None:
+    text = _flat(spec["components"]["parameters"]["AcknowledgeUnknownPositions"]["description"])
+    assert "removes any live account grant (every removal, not only the last one)" in text
+
+
+def test_admin_user_session_listing_declares_its_auth_and_lookup_failures(
+    spec: dict[str, Any],
+) -> None:
+    responses = spec["paths"]["/users/{userId}/sessions"]["get"]["responses"]
+    assert set(responses) == {"200", "401", "403", "404"}
+
+
+def test_admin_user_session_listing_needs_no_step_up_but_revoking_does(
+    spec: dict[str, Any],
+) -> None:
+    listing = spec["paths"]["/users/{userId}/sessions"]["get"]["description"]
+    revoke = spec["paths"]["/users/{userId}/sessions/{sessionId}"]["delete"]["description"]
+    assert "listing needs no step-up" in _flat(listing)
+    assert _flat(revoke).startswith("Requires step-up `users`.")

@@ -1253,7 +1253,9 @@ paths:
                 type: object
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/AccountAccessGrant" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
     put:
       tags: [users]
       operationId: setUserAccountAccess
@@ -1265,7 +1267,8 @@ paths:
         depended on a removed account ends with a `revoked` frame (`reason:
         account_scope_changed`, 23-ws-protocol.md section 9.5), and resubscribing is refused
         with `account_scope_denied`. Removing an account never flattens positions or cancels
-        orders; while the user's open-position state is unavailable the request must carry
+        orders. While the user's open-position state is unavailable, every request that removes
+        a live grant (omits an account the user holds today), not only the last one, must carry
         `acknowledge_unknown_positions=true`, otherwise `409 positions_unknown`. The caller's
         own grants cannot be changed (`403 forbidden`), and a user that is not `active` answers
         `409 conflict`. An `exchange_account_id` that does not exist is `404 not_found`.
@@ -1317,7 +1320,10 @@ paths:
       tags: [users]
       operationId: listUserSessions
       summary: List a user's active sessions (the owner's view of `/me/sessions`)
-      description: "Same items as `listMySessions`; no token material is ever returned."
+      description: >
+        Same items as `listMySessions`; no token material is ever returned. Read-only: unlike
+        revoking a session, listing needs no step-up (04-security-program.md section 7.2.2,
+        row 40a).
       x-rbac: { permissions: [users:read], scope: none }
       responses:
         "200":
@@ -9949,11 +9955,12 @@ components:
       in: query
       required: false
       description: >
-        Must be `true` when the request disables the user or removes one of their account
-        grants while the user's open-position state is unavailable: the owner accepts that
-        positions stay open, uncounted (US-ADMIN-002). Otherwise `409 positions_unknown`. It is
-        a query parameter on purpose, unlike the body field of `resetUserMfa`: `DELETE` carries
-        no body, and the disable and unbind routes share one parameter (decision O2 on #965).
+        Must be `true` when the request disables the user, or removes any live account grant
+        (every removal, not only the last one), while the user's open-position state is
+        unavailable: the owner accepts that positions stay open, uncounted (US-ADMIN-002).
+        Otherwise `409 positions_unknown`. It is a query parameter on purpose, unlike the body
+        field of `resetUserMfa`: `DELETE` carries no body, and the disable and unbind routes
+        share one parameter (decisions O2 on #965 and Q2 on #2648).
       schema: { type: boolean, default: false }
     MethodId:
       name: methodId
@@ -10438,17 +10445,6 @@ components:
                   detail: "The relational store is unavailable.",
                   instance: "urn:cv:req:0193f2bb-ffff",
                   code: store_unavailable,
-                  retry_after_seconds: 5,
-                }
-            auditUnavailable:
-              value:
-                {
-                  type: "https://candleviewer.local/errors/audit_unavailable",
-                  title: "Audit log unavailable; the write-ahead audited change was not applied",
-                  status: 503,
-                  detail: "The audit record could not be written; nothing was changed.",
-                  instance: "urn:cv:req:0193f2bb-fffe",
-                  code: audit_unavailable,
                   retry_after_seconds: 5,
                 }
             stale:
@@ -11112,19 +11108,22 @@ components:
         user_count: { type: integer }
     AccountAccessGrantInput:
       type: object
+      additionalProperties: false
       required: [exchange_account_id, level]
       properties:
         exchange_account_id: { type: string, format: uuid }
         level: { type: string, enum: [read, trade], description: "`trade` implies `read`." }
+    # Not an `allOf` over the closed input above: a closed branch rejects the read-only fields.
     AccountAccessGrant:
-      allOf:
-        - $ref: "#/components/schemas/AccountAccessGrantInput"
-        - type: object
-          properties:
-            account_label: { type: string }
-            environment: { $ref: "#/components/schemas/Environment" }
-            granted_at: { type: string, format: date-time }
-            granted_by: { type: string, format: uuid }
+      type: object
+      required: [exchange_account_id, level]
+      properties:
+        exchange_account_id: { type: string, format: uuid }
+        level: { type: string, enum: [read, trade], description: "`trade` implies `read`." }
+        account_label: { type: string }
+        environment: { $ref: "#/components/schemas/Environment" }
+        granted_at: { type: string, format: date-time }
+        granted_by: { type: string, format: uuid }
 
     # === Exchange accounts / keys / profiles ================================
     ExchangeAccount:
