@@ -297,14 +297,20 @@ def test_idle_locked_session_logout_still_works_with_its_token(stack: _Stack) ->
     assert out.status_code == 204, out.text
 
 
+# A parametrize value is part of the pytest node id, so these ids are fixed: a `uuid.uuid4()` here
+# changed two node ids on every collection (#2717). Any well-formed id gives the same refusal.
+_SESSION_ID = uuid.UUID("00000000-0000-4000-8000-0000000000c1")
+_RULE_ID = uuid.UUID("00000000-0000-4000-8000-0000000000c2")
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [
         ("POST", "/auth/step-up"),
         ("PUT", "/auth/password"),
-        ("DELETE", f"/me/sessions/{uuid.uuid4()}"),
+        ("DELETE", f"/me/sessions/{_SESSION_ID}"),
         ("POST", "/users"),
-        ("PATCH", f"/rules/{uuid.uuid4()}"),
+        ("PATCH", f"/rules/{_RULE_ID}"),
         ("POST", "/api/v1/auth/logout"),
     ],
 )
