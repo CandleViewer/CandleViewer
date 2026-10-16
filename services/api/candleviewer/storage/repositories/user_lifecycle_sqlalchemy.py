@@ -9,7 +9,9 @@ the last active owner; set `disabled`; revoke every live session; soft-revoke ev
 deferred constraints (23514 maps onto the floor refusal); await the caller's audit hook, bounded
 by `audit_timeout_s` (C-2.9); commit. Anything that raises rolls everything back; if the hook
 had started, its record may be durable, and the caller closes it. The post-commit steps (B16
-REVOKE, sockets, rule disarm, invite revoke) are slice S4's.
+REVOKE, sockets, rule disarm, invite revoke) are slice S4's. The session revoke sees only its
+statement's snapshot, so a successor that an in-flight refresh mints after it stays live: slice
+S4 must close that window.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     CONSTRAINTS_NOW,
     LOCK_USER,
     OwnerFloorCheck,
+    counted_roles,
     effective_roles,
     lock_active_owners,
     refuse_floor_violation,
@@ -105,7 +108,7 @@ class SqlAlchemyUserLifecycleStore:
                 before, roles = str(row[0]), await effective_roles(s, uid) or _NO_ROLES
                 if before == "disabled":
                     return UserStatusChange(user_id, before, before, roles)
-                counted = roles if before == "active" else _NO_ROLES
+                counted = counted_roles(before, roles)
                 self._owner_floor(counted, _NO_ROLES, await lock_active_owners(s))
                 await s.execute(_DISABLE, {"id": uid})
                 params = {"id": uid, "now": now, "reason": REVOKED_REASON}
