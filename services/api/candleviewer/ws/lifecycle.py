@@ -101,6 +101,9 @@ CLOSE_REASONS: Final[dict[str, tuple[CloseCode, bool]]] = {
     "heartbeat_timeout": (CloseCode.GOING_AWAY, True),
     "bad_client": (CloseCode.BAD_CLIENT, False),
 }
+#: The `cv_ws_closes_total{reason}` label of a `bye` reason that is not a key of `CLOSE_REASONS`.
+#: The one name for that bucket, for the label a close counts under and the series bound at import.
+OTHER_CLOSE_REASON: Final = "other"
 
 _MESSAGES: Final[dict[str, str]] = {
     "shutdown": "Server restarting.",

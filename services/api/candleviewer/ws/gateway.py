@@ -78,6 +78,7 @@ from candleviewer.ws.lifecycle import (
     MAX_PROTOCOL_VIOLATIONS,
     MAX_UNAUTHENTICATED_FRAMES,
     ORIGIN_FORBIDDEN,
+    OTHER_CLOSE_REASON,
     REFUSAL_LOG_LIMIT,
     REFUSAL_LOG_WINDOW_S,
     SHUTDOWN_GRACE_MS,
@@ -268,15 +269,9 @@ class GatewayHub:
 
 
 def close_reason_label(reason: str) -> str:
-    """Bounded `reason` label: a known §13.6 close/bye reason, else "other"."""
-    return reason if reason in CLOSE_REASONS else "other"
-
-
-# Bind every `reason` now: a series created by its first close gives `increase()` nothing to
-# subtract, so the first `slow_consumer` (or `origin_forbidden`) close after every restart would
-# never alert (#2264). `infra/prometheus/alerts/ws_gateway.yml` and `ws_origin.yml` read them.
-for _close_reason in (*CLOSE_REASONS, "other"):
-    cv_ws_closes_total.labels(reason=_close_reason)
+    """Bounded `reason` label: a known §13.6 close/bye reason, else `OTHER_CLOSE_REASON`.
+    `ws/metrics.py` binds every one of them at import."""
+    return reason if reason in CLOSE_REASONS else OTHER_CLOSE_REASON
 
 
 def closed_reason(
@@ -953,6 +948,9 @@ def make_ws_router(
         # §4.3: a token in the URL query string is never read; it is ignored.
         encoding = negotiate_subprotocol(ws.scope.get("subprotocols") or ())
         if encoding is None:
+            # Closed before `accept`, so not through `close_with`: it counts itself, as the origin
+            # refusal above does.
+            cv_ws_closes_total.labels(reason="unsupported_protocol").inc()
             await ws.close(code=int(CLOSE_REASONS["unsupported_protocol"][0]))
             return
         await ws.accept(subprotocol=encoding)
@@ -998,6 +996,8 @@ def make_ws_router(
                 if fault is None:
                     fault = await _join_writer(write_task)
                 if fault is not None:
+                    # The handler's own `bye` and 1011 do not go through `close_with`: count here.
+                    cv_ws_closes_total.labels(reason="internal_error").inc()
                     _log().error(
                         "ws connection fault", connection_id=conn.connection_id, exc_info=fault
                     )
