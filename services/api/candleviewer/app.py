@@ -989,14 +989,12 @@ def create_app(
     csrf_audits = RefusalAuditTracker()
     app.state.csrf_refusal_audits = csrf_audits
     app.include_router(make_auth_router(ctx.auth, ctx.audit, identity=identity, csrf=csrf_codec))
-    # E09-S03: session routes. Identity provider is E09-T03, so refresh/session
-    # return 501 and every route answers 503 until a session repository is wired.
-    # #2272: every session the auth module revokes (logout, revoke, sign-out
-    # everywhere, refresh reuse, failed unlock, absolute expiry, owner TOTP
-    # reset) closes its sockets through the hub (`bye` + 4401).
+    # E09-S03: session routes; revocation is pushed to sockets via the hub
+    # (4401). Identity provider is E09-T03, so refresh/session return 501 and
+    # every route answers 503 until a session repository is wired.
     revocation_hub = RevocationHub()
     app.state.revocation_hub = revocation_hub
-    ctx.auth.attach_revocation_sink(_hub_publisher(revocation_hub))
+    ctx.auth.attach_revocation_sink(_hub_publisher(revocation_hub))  # every revoke path (#2272)
     app.include_router(
         make_session_router(
             ctx.auth,

@@ -1,9 +1,9 @@
 """#2272 through the real `create_app()` wiring (23-ws-protocol.md §4.1, §9.5; E09-S03).
 
 An owner TOTP reset closes every open socket of the target user with `bye session_revoked`
-+ `4401`, with no injected time passing (the 5 s bound is asserted on the injected clock). A
-refused reset closes nothing, another user's socket stays open, and a refresh-token rotation
-leaves the socket open for its in-place re-`auth`.
++ `4401` within 5 s: a receive deadline on the monotonic clock. No injected time passes, so no
+token deadline closed them. A refused reset closes nothing, another user's socket stays open,
+and a refresh-token rotation leaves the socket open for its in-place re-`auth`.
 
 The composition root wires the auth module only with a real database, so `build_auth_service`
 returns the same `AuthService` over in-memory fakes here. Its `start()` builds the session and
@@ -13,6 +13,7 @@ step-up services as in production, so they publish to the sink `create_app()` at
 from __future__ import annotations
 
 import functools
+import time
 import uuid
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -33,7 +34,7 @@ from candleviewer.auth.service import AuthService
 from candleviewer.auth.step_up import GRACE_WINDOW
 from candleviewer.settings import Settings
 from candleviewer.ws.gateway import make_ws_router
-from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, RevocationHub
+from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, CLOSE_USER_DISABLED, RevocationHub
 from tests.csrf_helpers import arm_csrf
 from tests.unit.auth.auth_fakes import FakeUserRepository
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
@@ -162,13 +163,14 @@ def env(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Env]:
         e.run(e.auth.stop, 1.0)
 
 
-def _recv(ws: Any) -> dict[str, Any]:
-    """`receive_json` with a hard deadline, so a missing frame fails instead of hanging."""
+def _recv(ws: Any, *, deadline: float | None = None) -> dict[str, Any]:
+    """`receive_json` failing after `_WS_TIMEOUT_S`, or at monotonic *deadline*, not hanging."""
+    timeout = _WS_TIMEOUT_S if deadline is None else max(0.0, deadline - time.monotonic())
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        frame: dict[str, Any] = pool.submit(ws.receive_json).result(timeout=_WS_TIMEOUT_S)
+        frame: dict[str, Any] = pool.submit(ws.receive_json).result(timeout=timeout)
     except FutureTimeout:
-        pytest.fail(f"no WS frame within {_WS_TIMEOUT_S}s (expected frame never arrived)")
+        pytest.fail(f"no WS frame within {timeout:.1f}s (expected frame never arrived)")
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
     return frame
@@ -200,24 +202,24 @@ def test_owner_totp_reset_closes_every_socket_of_the_target_within_the_bound(env
         for ws, minted in ((ws_phone, phone), (ws_desktop, desktop), (ws_owner, owner)):
             assert _authenticate(ws, minted.access_token)["t"] == "auth_ok"
         action_at = env.clock.now
+        deadline = time.monotonic() + _CLOSE_BOUND.total_seconds()  # E09-S03, from the reset
 
         response = env.reset(owner, _TARGET)
 
         assert response.status_code == 200, response.text
         assert response.json()["sessions_revoked"] == 2
         for ws in (ws_phone, ws_desktop):
-            bye = _recv(ws)
+            bye = _recv(ws, deadline=deadline)
             assert bye["t"] == "bye"
             assert bye["p"]["code"] == CLOSE_TOKEN_EXPIRED
             assert bye["p"]["reason"] == "session_revoked"
             assert bye["p"]["reconnect"] is False
         assert _still_open(ws_owner), "the reset must not close another user's socket"
-    # Revoked at the action instant and closed with no injected time passing: no timer path.
+    assert env.clock.now == action_at, "no injected time passed, so no token deadline fired"
     for minted in (phone, desktop):
         row = env.repo.sessions[str(minted.session_id)]
         assert row.revoked_reason == "mfa_reset_by_owner"
         assert row.revoked_at == action_at
-        assert env.clock.now - action_at <= _CLOSE_BOUND
     assert "auth.mfa_reset_by_owner" in [e["action"] for e in env.audit]
 
 
@@ -250,24 +252,25 @@ def test_refresh_rotation_keeps_the_socket_open_for_its_in_place_reauth(env: _En
 
 
 @pytest.mark.parametrize(
-    ("revoke_reason", "bye_reason"),
+    ("revoke_reason", "bye_reason", "close_code"),
     [
-        ("mfa_reset_by_owner", "session_revoked"),
-        ("unlock_attempts_exceeded", "session_revoked"),
-        ("user_disabled", "user_disabled"),  # the SR-029 cascade keeps its own §9.5 reason
+        ("mfa_reset_by_owner", "session_revoked", CLOSE_TOKEN_EXPIRED),
+        ("unlock_attempts_exceeded", "session_revoked", CLOSE_TOKEN_EXPIRED),
+        # The SR-029 cascade keeps its own §9.5 `bye`, and 4403 so the client does not reconnect.
+        ("user_disabled", "user_disabled", CLOSE_USER_DISABLED),
     ],
 )
 async def test_hub_publisher_sends_the_client_only_a_closed_set_reason(
-    revoke_reason: str, bye_reason: str
+    revoke_reason: str, bye_reason: str, close_code: int
 ) -> None:
     hub = RevocationHub()
-    frames: list[dict[str, Any]] = []
+    closes: list[tuple[str, int, int]] = []
 
     async def closer(frame: dict[str, Any], code: int) -> None:
-        frames.append(frame)
+        closes.append((frame["p"]["reason"], frame["p"]["code"], code))
 
     hub.register("sid", closer)
 
     await app_module._hub_publisher(hub)("sid", revoke_reason)
 
-    assert [f["p"]["reason"] for f in frames] == [bye_reason]
+    assert closes == [(bye_reason, close_code, close_code)]

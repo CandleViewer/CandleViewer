@@ -2,13 +2,16 @@
 revocation sink, after the row update (23-ws-protocol.md §9.5). A refresh-token rotation
 publishes nothing: the client re-`auth`s its socket in place (§4.1).
 
-The call-site scan enumerates every `SessionRepository` revoke in production code. A new
-revoke path without a driver below fails it, so no path can skip the publish unnoticed.
+The call-site scan finds every revoking `SessionRepository` call in production code by its
+`now=` keyword; a new one without a driver below fails it. Two tests pin that premise to the
+Protocol: every revoking method is listed, and takes `reason` and `now` keyword-only, so a call
+that type-checks or runs names `now=`. A `**kwargs` splat or `getattr` is missed (call sites only).
 """
 
 from __future__ import annotations
 
 import ast
+import inspect
 import os
 import uuid
 import warnings
@@ -25,6 +28,7 @@ from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import RefreshReuseDetected, SessionRevoked, UnlockPasswordInvalid
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.service import AuthService
+from candleviewer.auth.session_repository import SessionRepository
 from candleviewer.auth.session_service import (
     ABSOLUTE_LIFETIME,
     MAX_UNLOCK_ATTEMPTS,
@@ -184,10 +188,18 @@ _PATHS: dict[tuple[str, str], Callable[[_World], Awaitable[Calls]]] = {
 }
 
 
+#: The `SessionRepository` methods that revoke a row: the scan looks for their calls.
+_REVOKING = frozenset({"revoke", "revoke_all_for_user"})
+#: Every other `SessionRepository` method. None of them revokes a row.
+_NON_REVOKING = frozenset(
+    "create_session find_by_id find_by_refresh_hash find_by_access_token_jti find_live_by_user "
+    "touch_last_seen save_step_up_state link_rotation walk_rotation_family".split()
+)
+
+
 class _RevokeSites(ast.NodeVisitor):
-    """Collects `(Class.method, reason)` for every `<repo>.revoke(...)` or
-    `<repo>.revoke_all_for_user(...)` call. Only the repository takes `now=`, which tells
-    these apart from the services' own `revoke(...)` and the B16 chart's `revoke(...)`."""
+    """Collects `(Class.method, reason)` for every `_REVOKING` call passing `now=`: only the
+    repository takes `now`, unlike the services' and the B16 chart's own `revoke(...)`."""
 
     def __init__(self) -> None:
         self.scope: list[str] = []
@@ -202,11 +214,7 @@ class _RevokeSites(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         func, kwargs = node.func, {k.arg: k.value for k in node.keywords if k.arg}
-        if (
-            isinstance(func, ast.Attribute)
-            and func.attr in {"revoke", "revoke_all_for_user"}
-            and "now" in kwargs
-        ):
+        if isinstance(func, ast.Attribute) and func.attr in _REVOKING and "now" in kwargs:
             reason = kwargs.get("reason")
             label = reason.value if isinstance(reason, ast.Constant) else _CALLER
             self.sites.add((".".join(self.scope), str(label)))
@@ -232,6 +240,26 @@ def test_every_session_revoke_call_site_has_a_publish_driver() -> None:
     )
 
 
+def test_every_session_repository_method_is_classified_for_the_revoke_scan() -> None:
+    methods = {n for n, m in vars(SessionRepository).items() if callable(m) and n[0] != "_"}
+
+    assert methods == _REVOKING | _NON_REVOKING, (
+        "classify each new SessionRepository method: _REVOKING if it revokes a row (#2272), else "
+        f"_NON_REVOKING. New: {sorted(methods - _REVOKING - _NON_REVOKING)}; "
+        f"gone: {sorted((_REVOKING | _NON_REVOKING) - methods)}"
+    )
+
+
+@pytest.mark.parametrize("method", sorted(_REVOKING))
+def test_revoking_repository_methods_take_reason_and_now_keyword_only(method: str) -> None:
+    """So every call that type-checks against the Protocol, or runs, passes `now=` by name."""
+    params = inspect.signature(getattr(SessionRepository, method)).parameters
+
+    assert [(params[a].kind, params[a].default) for a in ("reason", "now")] == [
+        (inspect.Parameter.KEYWORD_ONLY, inspect.Parameter.empty)
+    ] * 2
+
+
 @pytest.mark.parametrize("path", sorted(_PATHS), ids=lambda p: f"{p[0]}:{p[1]}")
 async def test_revoke_path_publishes_each_revoked_session_after_the_row_update(
     world: _World, path: tuple[str, str]
@@ -242,9 +270,7 @@ async def test_revoke_path_publishes_each_revoked_session_after_the_row_update(
     assert all(world.sink.row_revoked_first), "published before the row was revoked"
 
 
-async def test_revoke_of_an_already_revoked_session_publishes_nothing_again(
-    world: _World,
-) -> None:
+async def test_revoke_of_an_already_revoked_session_publishes_nothing_again(world: _World) -> None:
     sid = await world.mint()
     await world.sessions.revoke(sid, reason="logout")
 
