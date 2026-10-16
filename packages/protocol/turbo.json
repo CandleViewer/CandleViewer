@@ -18,6 +18,7 @@
         "$TURBO_ROOT$/tools/gen/export_instrument_policy_rules.py"
       ],
       "outputs": [
+        ".cache/generated-manifest.json",
         "src/generated/**",
         "$TURBO_ROOT$/docs/plan/ws-schema.json",
         "$TURBO_ROOT$/packages/fixtures/golden/policy/corpus.json",

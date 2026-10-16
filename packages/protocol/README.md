@@ -15,9 +15,13 @@ decoders and sequence/resync helpers.
 - `src/generated/index.ts` — barrel re-exporting both surfaces as `rest` and
   `ws` namespaces.
 - All of `src/generated/` is marked `linguist-generated` in `.gitattributes`;
-  `pnpm generate` regenerates it and updates `src/generated/.manifest.json`.
-  `scripts/check-generated-guard.mjs` fails the build if a file's header or
-  hash no longer matches the manifest (i.e. someone hand-edited it).
+  `pnpm generate` regenerates it and records every file's sha256 in
+  `.cache/generated-manifest.json`, which is git-ignored and never committed
+  (#2743: every contract PR conflicted on a committed manifest).
+  `scripts/check-generated-guard.mjs` fails if a file lacks its header or no
+  longer matches what the last `pnpm generate` recorded (a hand edit since
+  then); with no recorded manifest it checks the headers only. A committed hand
+  edit fails CI's `gen / gen-freshness` check, which regenerates and diffs.
 - `src/runtime/` — sequence-gap classification (`checkSequence`) and binary
   frame decoders for the six §3.4 `body_kind`s (book snapshot/delta, trades,
   bars, footprint, heatmap column) over untrusted WS input; a fuzz target for
@@ -34,13 +38,14 @@ The Python side of this same contract pair (pydantic v2 models under
   `extract-ws-schema.mjs` (markdown → `docs/plan/ws-schema.json`),
   `generate-rest-types.mjs` (OpenAPI → `src/generated/rest/`),
   `generate-ws-types.mjs` (ws-schema.json → `src/generated/ws/`),
-  `update-manifest.mjs` (recomputes `.manifest.json`), then
+  `update-manifest.mjs` (records `.cache/generated-manifest.json`), then
   `check-generated-guard.mjs`.
-- `pnpm --filter @candleviewer/protocol generate:check` — the staleness gate:
-  re-extracts the WS schema and diffs it against the committed
-  `docs/plan/ws-schema.json`, then runs the header-guard check. CI additionally
-  runs `pnpm generate && git diff --exit-code` to catch drift in the TS output
-  itself (`AGENTS.md` §4).
+- `pnpm --filter @candleviewer/protocol generate:check` — the local staleness
+  check: re-extracts the WS schema and diffs it against the committed
+  `docs/plan/ws-schema.json`, then runs the generated-file guard. `pnpm verify`
+  runs the guard first, before anything regenerates. CI's
+  `tools/ci/check_gen_freshness.py` regenerates and runs `git diff --exit-code`,
+  which catches drift or a hand edit in the TS output itself (`AGENTS.md` §4).
 - `pnpm --filter @candleviewer/protocol build` / `test` / `test:cov`.
 
 ## WS schema bundle (E17-T01) - the one rule

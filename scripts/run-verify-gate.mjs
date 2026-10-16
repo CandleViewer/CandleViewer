@@ -75,6 +75,13 @@ function printSummary() {
   }
 }
 
+// #2743: the local hand-edit guard compares packages/protocol/src/generated with what the last
+// `pnpm generate` recorded in the git-ignored packages/protocol/.cache/. It runs first: gate #2's
+// typecheck regenerates, which would overwrite a hand edit without a word. Gate #19 is the
+// required check (regenerate + diff); CI has no cache, so this guard is local only.
+gate("pre", "generated-guard", () =>
+  run("node", ["packages/protocol/scripts/check-generated-guard.mjs"]),
+);
 gate(1, "lint", () => run("pnpm", ["lint"]));
 gate(2, "typecheck", () => run("pnpm", ["typecheck"]));
 // Mirrors CI's py lane (.github/workflows/_job-py.yml) from services/api, so the
