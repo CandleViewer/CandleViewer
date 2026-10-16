@@ -409,12 +409,15 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
 
 - **Accepted (owner-accepted per #1778 2026-10-12, orchestrator review, 2026-10-13):** WS-I04 (build and connection identifiers visible pre-auth on a
   tailnet-only service); WS-R04 (best-effort audit on the WS path: the denial still happens). Review date for both: 2027-01-15 (C-12.1).
-- **WS-R04 as built (#2735, 2026-10-16):** the close row `ws.connection.closed` is attempted whenever a handler ends,
-  including when its host cancels it (uvicorn's graceful timeout, which used to skip the whole teardown). The loss
-  window that remains is within the acceptance: a write that has not started is abandoned if the handler is cancelled
-  again while waiting for it (`AuditWriter.emit` finishes one that has). The reason `shutdown` is attributed only
-  while the server marks itself shutting down (`GatewayHub.shutting_down`), so a client's own `1012` cannot read as
-  the server's.
+- **WS-R04 as built (#2735, 2026-10-16):** the close row `ws.connection.closed` is attempted whenever an authenticated
+  handler ends, including when its host cancels it (uvicorn's graceful timeout, which used to skip the whole teardown).
+  The loss window that remains is within the acceptance: a write that has not started is abandoned if the handler is
+  cancelled again while waiting for it (`AuditWriter.emit` finishes one that has). The reason `shutdown` is attributed
+  only while the server marks itself shutting down (`GatewayHub.shutting_down`): while the server runs, a client's own
+  `1012` cannot read as the server's; while it is shutting down it can (23-ws-protocol.md §4.3). There the label is
+  best effort both ways: a client's own `1012`, or a drop just before the host cancels the handler, reads `shutdown`; a
+  send that fails as the host closes the socket can read `client_closed`. Only the row's `reason` is affected (both are
+  `info`), and no decision reads it.
 - **Residual High (open, not accepted; release blocker until #2292 merges):** WS-D15 (audit-store flooding). Inherent
   High (L M x I H scores High in the `04-security-program.md` §5 template) and, with SR-192 unbuilt, the residual is
   High. Recorded as RR-08 in `04-security-program.md` §16.1 under the §5.11 release-blocker rule: mitigation ticket
@@ -446,4 +449,4 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
 | 2026-10-13 | security-reviewer (sonnet, independent; PR #2307) | APPROVE; ratings, SR-192/193 numbering, code refs and WG3 edits verified; WS-D15/D16 residuals Open, not accepted                            |
 | 2026-10-15 | security-reviewer (Fable, independent; PR #2307)  | REQUEST_CHANGES at 027e7666: WS-D15 rated Medium where the template gives High (Medium), plus three Lows (log, review date, 32 §10.1.1 hunk) |
 | 2026-10-16 | amendment author (agent)                          | Fable findings addressed at cef393ba: WS-D15 rated High, RR-08 recorded (owner sign-off pending), review rows and dates added                |
-| 2026-10-16 | author (agent; PR for #2735)                      | WS-R04 as built (#2735): a host-cancelled handler now attempts its close row; a cancel inside the emit still loses it (§10)                  |
+| 2026-10-16 | author (agent; PR for #2735)                      | WS-R04 as built (#2735): a host-cancelled handler attempts its close row; the shutdown label is best effort in the window (§10)              |

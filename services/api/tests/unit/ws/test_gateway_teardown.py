@@ -226,15 +226,27 @@ async def test_a_cancel_while_the_handler_joins_a_stubborn_writer_is_honoured() 
     rig.assert_clean(conn, "client_closed")
 
 
-async def test_a_real_cancel_in_the_turn_the_writer_ends_is_not_absorbed() -> None:
+@pytest.mark.parametrize(
+    "real_cancel_first", [True, False], ids=["real_first", "writer_done_first"]
+)
+async def test_a_real_cancel_in_the_turn_the_writer_ends_is_not_absorbed(
+    real_cancel_first: bool,
+) -> None:
     """The writer's end cancels the read too (`_WRITER_DONE`); a real cancel racing it is the
-    handler's own and must be honoured: only `uncancel() == 0` tells them apart."""
+    handler's own and must be honoured, whichever lands first. Real first, the read ends with the
+    real cancel's message. Writer's done-callback first, one wakeup carries both cancels and the
+    benign message: only `uncancel() == 0` tells the handler the real one is still pending."""
     rig, sock = _Rig(), _Socket()
     loop = asyncio.get_running_loop()
     async with asyncio.timeout(_DEADLINE_S):
         handler = await rig.authenticated(sock)
         (conn,) = rig.hub.of_user(USER)
-        sock.on_close = lambda: loop.call_soon(handler.cancel, _UVICORN_CANCEL)
+        if real_cancel_first:
+            sock.on_close = lambda: loop.call_soon(handler.cancel, _UVICORN_CANCEL)
+        else:  # one more loop turn: behind the writer's done-callback, queued as `close` returns
+            sock.on_close = lambda: loop.call_soon(
+                lambda: loop.call_soon(handler.cancel, _UVICORN_CANCEL)
+            )
         conn.close_with("slow_consumer")  # the writer sends `bye`, closes, and ends
         with pytest.raises(asyncio.CancelledError):
             await handler

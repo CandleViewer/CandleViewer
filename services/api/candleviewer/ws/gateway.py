@@ -265,9 +265,12 @@ def closed_reason(
 
     The host ends it with uvicorn's own `1012`, or by cancelling the handler when its graceful
     timeout expires (no close code at all). Any other code is the client's: a close it sent, or
-    a drop the reader saw (`websocket.disconnect`) or the writer saw (a send that failed). Two
-    cases cannot be told from the host's: a client's own `1012` while the server is already
-    shutting down, and a client that drops unseen just before the host cancels the handler."""
+    a drop the reader saw (`websocket.disconnect`) or the writer saw (a send that failed). While
+    the server is shutting down three cases cannot be told apart. Two read `shutdown` though the
+    client did it: its own `1012`, and a drop it makes unseen just before the host cancels the
+    handler. The third reads `client_closed` though the host did it: a send that fails in that
+    window looks the same whether the client left or the host already closed the socket, and the
+    writer's end stops a busy reader (a re-auth that hangs) before it reads the host's `1012`."""
     if conn.bye_frame is not None:
         body = conn.bye_frame.get("p")
         return close_reason_label(str(body.get("reason", "")) if isinstance(body, dict) else "")

@@ -8,10 +8,11 @@ import uuid
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
-from candleviewer.bars.errors import BarSpecError, SpecCapExceeded
+from candleviewer.bars.errors import BarsError, BarSpecError, SpecCapExceeded
 from candleviewer.bars.models import BarSpec
 from candleviewer.ws._generated.error_codes import WS_ERROR_CODES
 from candleviewer.ws.permissions import (
@@ -695,6 +696,33 @@ def test_replay_bars_never_take_a_live_lease() -> None:
     conn = ConnectionAuthz(_mgr(A), _services(bars=bars))
     _sub(conn, "bars.BTCUSDT.time.5", replay_session_id=RS)
     assert bars.registered == []
+
+
+def test_release_all_logs_a_raising_release_and_still_releases_the_other_leases() -> None:
+    """#2735: `BarBuilderSet.release` raises `BarsError` for a lease another connection's failed
+    `register` dropped along with the shared series. One such release must not strand the upstream
+    refs and bar leases of the subscriptions after it."""
+
+    class _FirstReleaseRaises(_Bars):
+        def release(self, spec_hash: str, symbol: str, consumer: str) -> None:
+            super().release(spec_hash, symbol, consumer)
+            if len(self.released) == 1:
+                raise BarsError("the series was dropped")
+
+    bars = _FirstReleaseRaises()
+    services = _services(bars=bars)
+    conn = ConnectionAuthz(_mgr(A), services, connection_id="c-x")
+    results = _sub(conn, "bars.BTCUSDT.time.5", "bars.ETHUSDT.time.5", "bars.SOLUSDT.time.5")
+    consumers = [f"c-x/{r['sub_id']}" for r in results]
+
+    with capture_logs() as logs:
+        conn.release_all()  # does not raise
+
+    assert [consumer for _hash, _symbol, consumer in bars.released] == consumers
+    assert [services.upstream.consumers(key) for key in services.upstream.active()] == [0, 0, 0]
+    assert conn.by_id == {} and conn.topics == set()
+    (failed,) = [e for e in logs if e["event"] == "ws subscription release failed"]
+    assert (failed["consumer"], bool(failed["exc_info"])) == (consumers[0], True)
 
 
 # -- audit ---------------------------------------------------------------------------------------
