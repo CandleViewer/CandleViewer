@@ -103,3 +103,89 @@ def test_leaky_job_output_fails_log_scan_and_ci_wires_it(tmp_path: Path) -> None
     )
     assert "check_secrets_hygiene.py logs" in wf
     assert "check_secrets_hygiene.py all" in wf
+
+
+# E27-Q01 (#833): the bare key-shape rule over the accounts fault-injection pack. Tokens are
+# built at run time, so no key-shaped literal sits in this file.
+PACK = "packages/fixtures/accounts"
+
+
+def _alnum(n: int) -> str:
+    return "".join("aB3"[i % 3] for i in range(n))
+
+
+def _capitals_then_small(capitals: int, n: int) -> str:
+    return "Q" * capitals + "q" * (n - capitals)
+
+
+@pytest.mark.parametrize(
+    ("token", "shape"),
+    [
+        (_alnum(18), "api-key"),
+        (_alnum(19), "api-key"),
+        (_alnum(20), "api-key"),
+        (_alnum(36), "api-secret"),
+        ("".join("aB"[i % 2] for i in range(20)), "api-key"),
+        (_capitals_then_small(h._MIXED_CASE_MIN, 18), "api-key"),
+    ],
+    ids=["18", "19", "20", "36", "letters_alternating", "letters_at_threshold"],
+)
+def test_bare_key_shape_in_the_accounts_pack_fails_without_echoing_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], token: str, shape: str
+) -> None:
+    _write(tmp_path, f"{PACK}/x/manifest.json", f'{{"description": "pasted {token} here"}}')
+    errors = h.check_fixtures(tmp_path)
+    assert errors == [
+        (
+            f"{PACK}/x/manifest.json: bare {shape}-shaped token ({len(token)} chars at offset 24);"
+            " the token is never printed (E27-Q01)"
+        )
+    ]
+    assert h.main(["fixtures", "--root", str(tmp_path)]) == 1
+    assert token not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "00000000-0000-4000-8000-000000000001",  # a UUID
+        "ab" * 32,  # a sha256 digest
+        "1792141200000",  # epoch milliseconds
+        "1700000000123456789",  # epoch nanoseconds, digits only
+        "fixture-withdraw_enabled-0003",  # a fixture key id
+        "fixture-withdraw_enabled-secret-not-real",  # a fixture secret
+        h.DUMMY_PREFIX + _alnum(18),  # a dummy-prefixed id
+        _alnum(10) + "-" + _alnum(9),  # a hyphen-joined token
+        "unifiedMarginStatus",  # camelCase field names
+        "availableToWithdraw",
+        "SubMemberTransferLis",  # PascalCase, four capitals
+        _capitals_then_small(h._MIXED_CASE_MIN - 1, 18),
+        _capitals_then_small(18 - h._MIXED_CASE_MIN + 1, 18),
+        _alnum(17),
+        _alnum(21),
+        _alnum(35),
+        _alnum(37),
+    ],
+)
+def test_scan_key_shapes_passes_benign_tokens(text: str) -> None:
+    assert h.scan_key_shapes(f'"{text}"') == []
+
+
+def test_key_shape_rule_scans_every_pack_file_even_test_named_ones(tmp_path: Path) -> None:
+    _write(tmp_path, f"{PACK}/test/test_x.txt", _alnum(20))
+    _write(tmp_path, f"{PACK}/notes.bin", _alnum(36))
+    assert len(h.check_fixtures(tmp_path)) == 2
+
+
+def test_key_shape_rule_is_scoped_to_the_accounts_pack(tmp_path: Path) -> None:
+    _write(tmp_path, "packages/fixtures/bybit/x.json", f'{{"note": "{_alnum(20)}"}}')
+    assert h.check_fixtures(tmp_path) == []
+
+
+def test_the_rule_matches_the_pack_checks_in_the_js_lane() -> None:
+    """The JS twin (accounts-pack.mjs) must carry the same threshold."""
+    js = (
+        Path(__file__).resolve().parents[2] / "packages/fixtures/scripts/accounts-pack.mjs"
+    ).read_text(encoding="utf-8")
+    assert f"export const MIXED_CASE_MIN = {h._MIXED_CASE_MIN};" in js
+    assert "const TOKEN = /[A-Za-z0-9_-]+/g;" in js

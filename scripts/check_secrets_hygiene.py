@@ -2,7 +2,8 @@
 
 Subcommands (all offline, deterministic, exit 1 on violation):
 
-* ``fixtures``  - no fixture holds a real-looking exchange key without ``DUMMY_PREFIX`` (SR-145)
+* ``fixtures``  - no fixture holds a real-looking exchange key without ``DUMMY_PREFIX`` (SR-145),
+  and no file of the accounts fault-injection pack holds a bare key-shaped token (E27-Q01)
 * ``dev-env``   - ``.env`` gitignored, ``.env.example`` free of secret values (SR-144)
 * ``workflows`` - no ``set -x`` / environment dump in workflows (SR-146)
 * ``inventory`` - a secret-name list (JSON array) holds no live key / KEK (SR-140)
@@ -34,6 +35,18 @@ _TOKEN = re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9]{20,})\b")
 _REDACTED_MARKERS = ("REDACTED", "<redacted", "[redacted")
 
 _FIXTURE_DIRS = ("services/api/tests/fixtures", "packages/fixtures", "tests/fixtures")
+
+#: E27-Q01 (#833): an exchange API key is a bare 18-20 character alphanumeric token, a secret one of
+#: 36. The accounts pack hyphenates every id by rule (``fixture-<scenario>-NNNN``), so in the pack
+#: a bare token of that shape is a paste, whatever field or prose it sits in. The same rule as
+#: ``packages/fixtures/scripts/accounts-pack.mjs`` (``findKeyShapedTokens``): a maximal run of
+#: ``[A-Za-z0-9_-]`` that is purely alphanumeric counts when it holds a digit, or, letters only,
+#: when it mixes at least ``_MIXED_CASE_MIN`` capitals and as many small letters. A tripwire for
+#: accidental pastes, not a complete control.
+_KEY_SHAPE_DIRS = ("packages/fixtures/accounts",)
+_BARE_RUN = re.compile(r"[A-Za-z0-9_-]+")
+_ALNUM = re.compile(r"[A-Za-z0-9]+")
+_MIXED_CASE_MIN = 6
 _TEXT_SUFFIXES = {
     ".json",
     ".jsonl",
@@ -74,8 +87,51 @@ def scan_text(text: str) -> list[str]:
     return hits
 
 
-def check_fixtures(root: Path) -> list[str]:
+def _key_shape(length: int) -> str | None:
+    if 18 <= length <= 20:
+        return "api-key"
+    if length == 36:
+        return "api-secret"
+    return None
+
+
+def _looks_like_key(token: str) -> bool:
+    if not _ALNUM.fullmatch(token) or not any(c.isalpha() for c in token):
+        return False
+    if any(c.isdigit() for c in token):
+        return True
+    capitals = sum(c.isupper() for c in token)
+    return capitals >= _MIXED_CASE_MIN and len(token) - capitals >= _MIXED_CASE_MIN
+
+
+def scan_key_shapes(text: str) -> list[str]:
+    """Bare key- or secret-shaped tokens in ``text``: shape, length and offset, never the token."""
+    hits: list[str] = []
+    for m in _BARE_RUN.finditer(text):
+        token = m.group(0)
+        shape = _key_shape(len(token))
+        if shape is not None and _looks_like_key(token):
+            hits.append(f"bare {shape}-shaped token ({len(token)} chars at offset {m.start()})")
+    return hits
+
+
+def _check_key_shapes(root: Path) -> list[str]:
+    """Every file of the accounts pack, whatever its suffix or name (plants live in tmp copies)."""
     errors: list[str] = []
+    for d in _KEY_SHAPE_DIRS:
+        base = root / d
+        for path in sorted(base.rglob("*")) if base.is_dir() else []:
+            if not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            rel = path.relative_to(root).as_posix()
+            for hit in scan_key_shapes(text):
+                errors.append(f"{rel}: {hit}; the token is never printed (E27-Q01)")
+    return errors
+
+
+def check_fixtures(root: Path) -> list[str]:
+    errors: list[str] = _check_key_shapes(root)
     for d in _FIXTURE_DIRS:
         base = root / d
         if not base.is_dir():

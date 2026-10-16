@@ -1,16 +1,26 @@
 // Redaction gate for packages/fixtures (E02-T03 placeholder; real fixtures
-// land in E08). Fails if any file under raw/ or golden/ looks like it
-// contains a credential (API key, signature, PEM block, bearer token).
-// This is the control named in the ticket's Security notes for the
+// land in E08). Fails if any file under raw/, golden/, bybit/ or accounts/
+// looks like it contains a credential (API key, signature, PEM block, bearer
+// token); accounts/ also gets the bare key-shape check and the pack checks
+// (E27-Q01). This is the control named in the ticket's Security notes for the
 // "recorded fixture leaks credentials" threat (E02-X01).
+// CI runs it through the package `lint` script (ESLint, this script, then the Vitest suite):
+// the js lane's lint job schedules this package whenever a file in it changes.
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import { PLAN_SCENARIOS, checkPack, findKeyShapedTokens } from "./accounts-pack.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(__dirname, "..");
 // E08-T05: `bybit/` is the shared recorded corpus (packages/fixtures/bybit/<date>/).
-const scanDirs = ["raw", "golden", "bybit"].map((d) => join(packageRoot, d));
+// E27-Q01: `accounts/` is the accounts and key-vault fault-injection pack.
+const DATA_DIRS = ["raw", "golden", "bybit", "accounts"];
+const PACK_DIR = "accounts";
+export const SCAN_DIRS = DATA_DIRS.map((d) => join(packageRoot, d));
+// E27-Q01: a real Bybit key or secret is a bare 18-20 or 36 character alphanumeric token. The
+// pack's ids are hyphenated by rule, so this extra shape check runs where the rule holds.
+export const KEY_SHAPE_DIRS = [join(packageRoot, PACK_DIR)];
 
 const SECRET_PATTERNS = [
   { name: "PEM private key block", re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
@@ -65,34 +75,72 @@ export function scanForSecrets(files, readFile = (f) => readFileSync(f, "utf8"))
   return findings;
 }
 
+/** Bare key- or secret-shaped tokens; the finding names the shape and position, never the token. */
+export function scanForKeyShapes(files, readFile = (f) => readFileSync(f, "utf8")) {
+  const findings = [];
+  for (const file of files) {
+    for (const hit of findKeyShapedTokens(readFile(file))) {
+      findings.push({ file, pattern: `bare ${hit.shape}-shaped token at offset ${hit.index}` });
+    }
+  }
+  return findings;
+}
+
 /**
- * Scans the given directories for secret-shaped content and returns the
- * findings without exiting the process (used by both the CLI and tests).
+ * Scans the given directories for secret-shaped content, plus the bare key-shape check over
+ * `keyShapeDirs`, and returns the findings without exiting the process (CLI and tests).
  */
-export function verifyDirectories(dirs) {
+export function verifyDirectories(dirs, keyShapeDirs = []) {
   const files = dirs.flatMap(listFiles);
-  const findings = scanForSecrets(files);
+  const findings = [...scanForSecrets(files), ...scanForKeyShapes(keyShapeDirs.flatMap(listFiles))];
   return { files, findings };
 }
 
-function main() {
-  const { files, findings } = verifyDirectories(scanDirs);
-  if (findings.length > 0) {
+function packProblems(dir) {
+  try {
+    return checkPack(dir, { expectedScenarios: PLAN_SCENARIOS });
+  } catch (error) {
+    return [`the pack cannot be read (${error.code ?? error.name})`];
+  }
+}
+
+/**
+ * Every finding for the package at `root`: the redaction gate over the data directories, the
+ * bare key-shape rule and the pack checks over accounts/. Returns instead of exiting (tests).
+ */
+export function runVerify(root = packageRoot) {
+  const pack = join(root, PACK_DIR);
+  const { files, findings } = verifyDirectories(
+    DATA_DIRS.map((d) => join(root, d)),
+    [pack],
+  );
+  return { files, findings, packProblems: packProblems(pack) };
+}
+
+function main(root) {
+  const { files, findings, packProblems: problems } = runVerify(root);
+  const lines = [
+    ...findings.map((f) => `  - ${relative(root, f.file)}: matched "${f.pattern}"`),
+    ...problems.map((p) => `  - ${PACK_DIR}/${p}`),
+  ];
+  if (lines.length > 0) {
     console.error(
-      "[fixtures-verify] FAILED — possible credential leak(s):\n" +
-        findings
-          .map((f) => `  - ${relative(packageRoot, f.file)}: matched "${f.pattern}"`)
-          .join("\n"),
+      "[fixtures-verify] FAILED — possible credential leak(s) or accounts pack problem(s):\n" +
+        lines.join("\n"),
     );
     process.exit(1);
   }
-  console.log(`[fixtures-verify] OK (${files.length} file(s) scanned, no matches).`);
+  console.log(
+    `[fixtures-verify] OK (${files.length} file(s) scanned, no matches; ` +
+      `accounts pack sound, ${PLAN_SCENARIOS.length} scenarios).`,
+  );
 }
 
 // Only run when executed directly (not when imported by tests importing
 // `scanForSecrets`), so the test suite can exercise the pure function
-// without triggering `process.exit`.
+// without triggering `process.exit`. An optional argument names another
+// package root (the tests' planted copies); the default is this package.
 const isMain = process.argv[1] && import.meta.url === new URL(process.argv[1], "file://").href;
 if (isMain) {
-  main();
+  main(process.argv[2] ? resolve(process.argv[2]) : packageRoot);
 }

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "lint": {
+      "inputs": ["**/*.{ts,tsx,js,mjs,cjs,json}", "raw/**", "golden/**", "bybit/**", "accounts/**"]
+    },
+    "test": {
+      "inputs": [
+        "src/**",
+        "test/**",
+        "scripts/**",
+        "raw/**",
+        "golden/**",
+        "bybit/**",
+        "accounts/**"
+      ]
+    },
+    "test:cov": {
+      "inputs": [
+        "src/**",
+        "test/**",
+        "scripts/**",
+        "raw/**",
+        "golden/**",
+        "bybit/**",
+        "accounts/**"
+      ],
+      "outputs": ["coverage/**"]
+    }
+  }
+}
