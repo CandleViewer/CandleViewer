@@ -58,6 +58,15 @@ def overview_payload(snap: OverviewSnapshot) -> dict[str, Any]:
     return api.AdminOverview.model_validate(body).model_dump(mode="json", exclude_unset=True)
 
 
+def subaccounts_payload(result: SliceResult[Any]) -> dict[str, Any]:
+    """The `SubaccountCapacity` block, shared by the report and `PUT .../subaccount-tier`."""
+    sub = _value(result)
+    tier = {k: sub.pop(k, None) for k in _TIER_FIELDS}
+    return _slice(result, sub) | (
+        tier if tier["tier_source"] is not None else {}  # unread: omitted; unrecorded: nulls
+    )
+
+
 def capacity_payload(snap: CapacitySnapshot) -> dict[str, Any]:
     body: dict[str, Any] = {"generated_at": snap.generated_at}
     storage = _value(snap.storage)  # `projected_bytes` is not a contract field: the model drops it
@@ -68,11 +77,7 @@ def capacity_payload(snap: CapacitySnapshot) -> dict[str, Any]:
     body["rate_budget_status"] = _slice(snap.rate_budget)
     if snap.rate_budget.value is not None:
         body["rate_budget"] = [asdict(row) for row in snap.rate_budget.value]
-    sub = _value(snap.subaccounts)
-    tier = {k: sub.pop(k, None) for k in _TIER_FIELDS}
-    body["subaccounts"] = _slice(snap.subaccounts, sub) | (
-        tier if tier["tier_source"] is not None else {}  # unread: omitted; unrecorded: nulls
-    )
+    body["subaccounts"] = subaccounts_payload(snap.subaccounts)
     return api.CapacityReport.model_validate(body).model_dump(mode="json", exclude_unset=True)
 
 
