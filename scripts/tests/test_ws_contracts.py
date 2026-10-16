@@ -38,7 +38,8 @@ def _doc(*blocks: str) -> str:
 def test_extract_bundle_has_one_entry_per_fence() -> None:
     bundle = ext.build_bundle(MD_TEXT)
     section = ext.schema_section(MD_TEXT)
-    assert bundle["schemaCount"] == len(ext.FENCE.findall(section)) == 34
+    # #2438 (E17-T08) adds one more fence; whichever of #2569/#2438 merges second bumps this to 36.
+    assert bundle["schemaCount"] == len(ext.FENCE.findall(section)) == 35
     assert list(bundle["schemas"]) == sorted(bundle["schemas"])
 
 

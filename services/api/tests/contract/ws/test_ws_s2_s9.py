@@ -343,7 +343,7 @@ def test_s7_grant_withdrawal_emits_revoked_within_1s_and_other_topics_continue()
         w.grants = (AccountGrant(ACC_A, True, False, False),)
         t0 = w.clock.now
         w.call(w.registry.grants_changed, USER)
-        revoked = c.next_validated("revoked")  # no assumption about other frames before it (F3)
+        revoked = c.next_validated("revoked")  # no assumption about other frames before it
         assert w.clock.now - t0 < 1.0  # injected clock: no real time passed, none was needed
         assert (revoked["ch"], revoked["p"]["reason"]) == ("positions", "account_scope_changed")
         assert revoked["p"]["removed_accounts"] == [str(ACC_B)]
@@ -409,13 +409,13 @@ def test_s7_kill_switch_transition_reevaluates_every_connected_user() -> None:
         }
 
 
-@pytest.mark.xfail(strict=True, reason="#2397: permission_change is not in the §13.1 envelope enum")
-def test_s7_xfail_f3_permission_change_frame_validates_against_the_envelope() -> None:
+def test_s7_f3_permission_change_frame_validates_against_the_envelope() -> None:
     w = World()
     with connect(w) as c:
         w.grants = ()
         w.call(w.registry.grants_changed, USER)
-        c.recv()  # validated: `t: permission_change` must be a legal envelope type
+        frame = c.recv_permission_change()  # validated against §13.4, not just the envelope
+        assert frame["t"] == "permission_change"
 
 
 # -- S8 ----------------------------------------------------------------------------------------

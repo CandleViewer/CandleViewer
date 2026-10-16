@@ -144,26 +144,27 @@ Every frame in both directions is a single map with this shape. Field order is i
 }
 ```
 
-| `t`        | Name                 | Direction | Purpose                                                                      |
-| ---------- | -------------------- | --------- | ---------------------------------------------------------------------------- |
-| `hello`    | hello                | C→S       | First frame; declares client identity and capabilities.                      |
-| `welcome`  | welcome              | S→C       | Server capabilities, limits, negotiated encoding, heartbeat policy.          |
-| `auth`     | auth                 | C→S       | Presents the bearer access token.                                            |
-| `auth_ok`  | auth accepted        | S→C       | Identity, permissions, account scope, environments.                          |
-| `sub`      | subscribe            | C→S       | Subscribe to one or more topics.                                             |
-| `sub_ok`   | subscribe result     | S→C       | Per-topic accept/reject.                                                     |
-| `unsub`    | unsubscribe          | C→S       | Unsubscribe from topics.                                                     |
-| `unsub_ok` | unsubscribe result   | S→C       | Confirmation.                                                                |
-| `snap`     | snapshot             | S→C       | Full state for a topic; resets the sequence baseline.                        |
-| `d`        | delta                | S→C       | Incremental update; requires an unbroken sequence.                           |
-| `resync`   | resync request       | C→S       | Client asks for a fresh snapshot on a topic.                                 |
-| `revoked`  | subscription revoked | S→C       | Server terminated a subscription (permission/scope/kill).                    |
-| `ping`     | ping                 | both      | Liveness probe.                                                              |
-| `pong`     | pong                 | both      | Liveness reply, echoes `id`.                                                 |
-| `err`      | error                | S→C       | Request-scoped or topic-scoped error.                                        |
-| `ctl`      | control              | C→S       | Runtime tuning of an existing subscription (throttle, depth, filters).       |
-| `ctl_ok`   | control result       | S→C       | Confirmation of `ctl`.                                                       |
-| `bye`      | goodbye              | S→C       | Server is closing the connection; carries the reason before the close frame. |
+| `t`                 | Name                  | Direction | Purpose                                                                          |
+| ------------------- | --------------------- | --------- | -------------------------------------------------------------------------------- |
+| `hello`             | hello                 | C→S       | First frame; declares client identity and capabilities.                          |
+| `welcome`           | welcome               | S→C       | Server capabilities, limits, negotiated encoding, heartbeat policy.              |
+| `auth`              | auth                  | C→S       | Presents the bearer access token.                                                |
+| `auth_ok`           | auth accepted         | S→C       | Identity, permissions, account scope, environments.                              |
+| `sub`               | subscribe             | C→S       | Subscribe to one or more topics.                                                 |
+| `sub_ok`            | subscribe result      | S→C       | Per-topic accept/reject.                                                         |
+| `unsub`             | unsubscribe           | C→S       | Unsubscribe from topics.                                                         |
+| `unsub_ok`          | unsubscribe result    | S→C       | Confirmation.                                                                    |
+| `snap`              | snapshot              | S→C       | Full state for a topic; resets the sequence baseline.                            |
+| `d`                 | delta                 | S→C       | Incremental update; requires an unbroken sequence.                               |
+| `resync`            | resync request        | C→S       | Client asks for a fresh snapshot on a topic.                                     |
+| `revoked`           | subscription revoked  | S→C       | Server terminated a subscription (permission/scope/kill).                        |
+| `permission_change` | authorisation changed | S→C       | Live re-resolved identity, permissions and scope; precedes any `revoked` (§9.5). |
+| `ping`              | ping                  | both      | Liveness probe.                                                                  |
+| `pong`              | pong                  | both      | Liveness reply, echoes `id`.                                                     |
+| `err`               | error                 | S→C       | Request-scoped or topic-scoped error.                                            |
+| `ctl`               | control               | C→S       | Runtime tuning of an existing subscription (throttle, depth, filters).           |
+| `ctl_ok`            | control result        | S→C       | Confirmation of `ctl`.                                                           |
+| `bye`               | goodbye               | S→C       | Server is closing the connection; carries the reason before the close frame.     |
 
 ### 3.2 Encoding field `e`
 
@@ -366,10 +367,7 @@ The client sends `hello` immediately on open. The server replies `welcome` with 
       "positions:write",
       "audit:read",
     ],
-    "account_scope": [
-      "a1000000-0000-4000-8000-000000000001",
-      "a1000000-0000-4000-8000-000000000002",
-    ],
+    "account_scope": [],
     "allowed_environments": ["live", "demo"],
     "session_id": "5e1a0c33-2b44-4f10-9a22-77aa11bb22cc",
     "token_expires_at_ms": 1789132862110,
@@ -388,6 +386,7 @@ Rules:
 
 **As built (E17-S01, #2132; wired by #377).** These details are binding:
 
+- `account_scope` lists the caller's granted accounts for a Manager or Viewer; for an Owner it is `[]`, meaning **all** accounts (the example above is an Owner). The same rule applies to the `permission_change` frame (§9.5).
 - Failed `auth` attempts 1 and 2 each get `err` `auth_failed` and the socket stays open. The 3rd closes with `bye auth_failed` + `4401`. A `warning` audit entry (`auth.login_failed`, `reason: ws_auth_failed`, never the token) is written.
 - A failed re-`auth` keeps the prior identity until its token expires. A re-`auth` that resolves to a different user is refused.
 - `token_expires_at_ms` is the presented token's real expiry: the first instant the session service refuses it on time grounds (`issued_at` + the ADR-0020 access-token TTL, capped by the session's absolute expiry). There is no gateway-side default, and a re-`auth` takes the new token's expiry. The gateway checks the expiry before every frame it dequeues or sends, on both its monotonic and its wall clock, whichever reaches it first. At the expiry it drops everything still queued, and the next frame is the `bye`: `token_expired` + `4401`, or the `bye` of a close already under way. A token that is already expired when its `auth` is processed is refused like any failed `auth`. An authenticator that reports no timezone-aware expiry is a server fault: `bye internal_error` + `1011`, and nothing is served (#2259).
@@ -1087,6 +1086,23 @@ The grace and downtime come from `CV_WS_SHUTDOWN_GRACE_MS` and `CV_WS_SHUTDOWN_E
 
 Authorisation is re-evaluated on every change to the user's roles, permissions or account grants, and on kill-switch transitions. Affected subscriptions are terminated with `revoked` — never silently emptied, which would look like a flat book or a closed position.
 
+Before any `revoked` frames, the server sends one `permission_change` frame carrying the connection's re-resolved identity, so the client can refresh its permission-gated UI without a reconnect. It is sent on registry-driven re-evaluations (role, permission and grant changes, and kill-switch transitions, applied through `ConnectionRegistry`), even when no subscription is affected. The in-place re-`auth` path (§4.3) does not send it: it answers with `auth_ok` and forwards only the `revoked` frames. The payload is the identity subset of `auth_ok` (`user_id`, `roles`, `permissions`, `account_scope`), so it carries no `session_id`, `token_expires_at_ms`, `kill_switch`, `username` or `allowed_environments`; the session itself is unchanged. `account_scope` is built as in `auth_ok`: for an **owner** it is `[]`, meaning **all** accounts (an owner holds no per-account grants), while for a manager or viewer it lists the accounts they hold a view grant on, so `[]` there means none. Schema: §13.4.
+
+```jsonc
+{
+  "t": "permission_change",
+  "ts": 1789133600000,
+  "p": {
+    "user_id": "9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001",
+    "roles": ["manager"],
+    "permissions": ["marketdata:read", "orders:read"],
+    "account_scope": ["a1000000-0000-4000-8000-000000000001"],
+  },
+}
+```
+
+Then one `revoked` frame per affected subscription:
+
 ```jsonc
 {
   "t": "revoked",
@@ -1493,6 +1509,7 @@ Shared definitions used throughout:
         "d",
         "resync",
         "revoked",
+        "permission_change",
         "ping",
         "pong",
         "err",
@@ -1636,7 +1653,7 @@ Shared definitions used throughout:
 }
 ```
 
-### 13.4 `auth` and `auth_ok`
+### 13.4 `auth`, `auth_ok`, `permission_change`
 
 ```json
 {
@@ -1672,7 +1689,14 @@ Shared definitions used throughout:
   "properties": {
     "user_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
     "username": { "type": "string" },
-    "roles": { "type": "array", "items": { "enum": ["owner", "manager", "viewer"] } },
+    "roles": {
+      "type": "array",
+      "items": {
+        "enum": ["owner", "manager", "viewer"],
+        "x-db-enum": "role_name",
+        "description": "Closed set: OpenAPI RoleName / role_name enum (22-api-openapi.yaml) and CONSTITUTION C-12.4 (Owner, Manager, Viewer); custom roles are out of scope for v1."
+      }
+    },
     "permissions": { "type": "array", "items": { "type": "string" } },
     "account_scope": {
       "type": "array",
@@ -1685,6 +1709,34 @@ Shared definitions used throughout:
     "session_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
     "token_expires_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
     "kill_switch": { "$ref": "cv://ws/v1/system.schema.json#/$defs/killSwitch" }
+  },
+  "additionalProperties": false
+}
+```
+
+`permission_change` (S→C, §9.5) carries a dedicated payload schema:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "cv://ws/v1/permission_change.schema.json",
+  "type": "object",
+  "required": ["user_id", "roles", "permissions", "account_scope"],
+  "properties": {
+    "user_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
+    "roles": {
+      "type": "array",
+      "items": {
+        "enum": ["owner", "manager", "viewer"],
+        "x-db-enum": "role_name",
+        "description": "Closed set: OpenAPI RoleName / role_name enum (22-api-openapi.yaml) and CONSTITUTION C-12.4 (Owner, Manager, Viewer); custom roles are out of scope for v1."
+      }
+    },
+    "permissions": { "type": "array", "items": { "type": "string" } },
+    "account_scope": {
+      "type": "array",
+      "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" }
+    }
   },
   "additionalProperties": false
 }

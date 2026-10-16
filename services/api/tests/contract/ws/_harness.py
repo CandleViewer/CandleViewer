@@ -114,6 +114,7 @@ _CONTROL_SCHEMA = {
     "ctl_ok": "ctl_ok",
     "resync": "resync",
     "revoked": "revoked",
+    "permission_change": "permission_change",
     "ping": "heartbeat",
     "pong": "heartbeat",
     "bye": "bye",
@@ -359,7 +360,7 @@ class Client:
         return frame
 
     def next_of_raw(self, t: str) -> dict[str, Any]:
-        """Next frame of type `t`, skipping others WITHOUT schema validation (see F1/F3)."""
+        """Next frame of type `t`, skipping others WITHOUT schema validation (see F1)."""
         for _ in range(2000):
             frame = self.recv(validate=False)
             if frame["t"] == t:
@@ -368,20 +369,19 @@ class Client:
 
     def next_validated(self, t: str) -> dict[str, Any]:
         """Next frame of type `t`, fully schema-validated; frames before it are skipped WITHOUT
-        validation. Used where the build emits an undocumented frame first (`permission_change`,
-        F3/#2397) that a test must not depend on."""
+        validation, so a test does not depend on which other frames precede it (a grant change
+        pushes a `permission_change` ahead of its `revoked` frames, §9.5)."""
         frame = self.next_of_raw(t)
         validate_frame(frame)
         return frame
 
     def recv_permission_change(self) -> dict[str, Any]:
-        """Next frame, which must be `permission_change`, envelope-unvalidated.
+        """Next frame, which must be `permission_change`, validated like every other frame.
 
-        FINDING F3: the gateway emits `t: "permission_change"` (§9.5 behaviour, E09 grant path) but
-        that value is absent from the §13.1 envelope `t` enum and from §13 entirely, so it cannot
-        validate.
+        `permission_change` is in the §13.1 envelope `t` enum and has its own §13.4 payload
+        schema (#2297, closes FINDING F3 / #2397), so `recv` checks both the envelope and `p`.
         """
-        frame = self.recv(validate=False)
+        frame = self.recv()
         assert frame["t"] == "permission_change", frame
         return frame
 

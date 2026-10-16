@@ -130,7 +130,7 @@ Reconnect policy by close code (C7): do not auto-reconnect on `1002`, `4400`, `4
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | F1  | **Every server `err` frame omits `p.message`**, which `common.schema.json#/$defs/error` requires.                                                                                                                                                                         | any `err`, e.g. `{"t":"err","p":{"code":"frame_malformed","retryable":false,"close":false}}` | Open; defect to file. Tests validate the envelope and `code` only on `err` (`Client.recv_err`). |
 | F2  | **`sub_ok` echoes a malformed topic string in `results[].ch`**, which then fails `common.schema.json#/$defs/topic` (`^[a-z_]+(\.…)*$`, max 120). Repro: `sub ["Bad Topic"]`, or 130-char name.                                                                            | `permissions._fail`                                                                          | Open; defect to file. Tests avoid malformed names in `ch`.                                      |
-| F3  | **`permission_change` is emitted (§9.5 path) but is not in the §13.1 envelope `t` enum and has no §13 schema.**                                                                                                                                                           | `ConnectionAuthz.apply_snapshot`                                                             | Open; spec or server. `Client.recv_permission_change` skips validation.                         |
+| F3  | **`permission_change` is emitted (§9.5 path) but is not in the §13.1 envelope `t` enum and has no §13 schema.**                                                                                                                                                           | `ConnectionAuthz.apply_snapshot`                                                             | Closed by #2569 (#2297, #2397): §13.1 enum + §13.4 schema; `recv_permission_change` validates.  |
 | F4  | Spec says a `sub` entry that is not a string/object is an error result; the server **silently drops** it, so `results` has fewer entries than `topics` (S1 "exactly one result per requested topic"). Repro: `topics:[123,{"opts":{}},null,"ticker.BTCUSDT"]` → 1 result. | `permissions.handle_sub` (`continue`)                                                        | Open; S1 deviation for non-string `ch`. Not asserted.                                           |
 | F5  | **`alerts` and `recorder` deltas can never be delivered** through `SequencingHub.publish`: `account_matches` requires an account for every private family, but these hold no accounts.                                                                                    | `sequencing.account_matches`                                                                 | Open; snapshot is asserted, delta is not.                                                       |
 | F6  | `sub` with an unknown key in `p` (e.g. `bogus`) is accepted and ignored (S12 covers _option_ keys; §13.5 `sub` has `additionalProperties:false`).                                                                                                                         | `permissions.handle_sub`                                                                     | Open; clarify in spec. Not asserted.                                                            |
@@ -176,12 +176,12 @@ F1-F6 are pinned by one `xfail(strict=True)` test each (`test_*_xfail_fN_*`); th
 
 ## 11. Delivery in stacked parts
 
-| Part      | Files                                                        | Requirements                       |
-| --------- | ------------------------------------------------------------ | ---------------------------------- |
-| 1 (#2393) | `_support.py`, `_harness.py`, `conftest.py`, `test_ws_s1.py` | S1; xfails F2, F4, F6              |
-| 2 (#2401) | `test_ws_s2_s9.py`                                           | S2-S9; xfails F5, F3, #2409, #2410 |
-| 3 (#2402) | `test_ws_s10_s13.py`                                         | S10-S13; xfails F1, F7             |
-| 4 (#2403) | `test_ws_contract.py`                                        | §16.4 rows                         |
+| Part      | Files                                                        | Requirements                                       |
+| --------- | ------------------------------------------------------------ | -------------------------------------------------- |
+| 1 (#2393) | `_support.py`, `_harness.py`, `conftest.py`, `test_ws_s1.py` | S1; xfails F2, F4, F6                              |
+| 2 (#2401) | `test_ws_s2_s9.py`                                           | S2-S9; xfails F5, #2409, #2410; F3 closed by #2569 |
+| 3 (#2402) | `test_ws_s10_s13.py`                                         | S10-S13; xfails F1, F7                             |
+| 4 (#2403) | `test_ws_contract.py`                                        | §16.4 rows                                         |
 
 Sections 1-5 and 9 describe the suite once all parts have landed.
 

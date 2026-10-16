@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
+
+import pytest
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
 
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, Allow, Deny, DenyReason, PrincipalSnapshot
@@ -146,3 +153,117 @@ def test_registry_without_connections_is_noop() -> None:
         raise AssertionError("must not resolve")
 
     asyncio.run(ConnectionRegistry(resolve, lambda: 0).roles_changed(uuid.uuid4()))
+
+
+_REPO = Path(__file__).resolve().parents[4]
+#: Both copies of the §13 schemas: the docs bundle the extractor writes and the packages/protocol
+#: copy the TypeScript consumers read. They must accept and refuse exactly the same frames.
+_BUNDLES = (
+    pytest.param(_REPO / "docs" / "plan" / "ws-schema.json", id="docs-bundle"),
+    pytest.param(_REPO / "packages" / "protocol" / "ws-schemas.json", id="protocol-bundle"),
+)
+_ENVELOPE = "cv://ws/v1/envelope.schema.json"
+_PAYLOAD = "cv://ws/v1/permission_change.schema.json"
+_REQUIRED_KEYS = ("user_id", "roles", "permissions", "account_scope")
+
+_OWNER = PrincipalSnapshot(uuid.UUID(int=3), frozenset({"owner"}), ALL)
+_VIEWER = PrincipalSnapshot(uuid.UUID(int=1), frozenset({"viewer"}), VIEWER, ())
+_MANAGER = PrincipalSnapshot(
+    uuid.UUID(int=2),
+    frozenset({"manager"}),
+    MGR,
+    (AccountGrant(ACC, True, True, False), AccountGrant(OTHER, True, False, False)),
+)
+
+
+def _violations(bundle: Path, schema_id: str, doc: Any) -> list[tuple[str, str, str]]:
+    """`(keyword, path, message)` for each way `doc` violates `schema_id` in `bundle`.
+
+    Validated as the bundle declares (Draft 2020-12) with `format` ENFORCED: §13 only annotates
+    `uuid` ids with `format`, so without a format checker `user_id: "bob"` would pass.
+    """
+    schemas: dict[str, Any] = json.loads(bundle.read_text(encoding="utf-8"))["schemas"]
+    assert schemas[schema_id]["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    registry: Registry[Any] = Registry().with_resources(
+        (sid, Resource.from_contents(body)) for sid, body in schemas.items()
+    )
+    validator = Draft202012Validator(
+        schemas[schema_id], registry=registry, format_checker=Draft202012Validator.FORMAT_CHECKER
+    )
+    return sorted(
+        (str(e.validator), "/".join(str(part) for part in e.absolute_path), e.message)
+        for e in validator.iter_errors(doc)
+    )
+
+
+def _emitted_permission_change(new: PrincipalSnapshot) -> dict[str, Any]:
+    """The frame `ConnectionAuthz.apply_snapshot` really emits when `new` replaces a snapshot."""
+    frame = ConnectionAuthz(_snap("viewer", VIEWER)).apply_snapshot(new, 1)[0]
+    assert frame["t"] == "permission_change", frame
+    return frame
+
+
+@pytest.mark.parametrize("bundle", _BUNDLES)
+@pytest.mark.parametrize(
+    ("principal", "roles", "account_scope"),
+    [
+        # An owner holds no grant rows: `account_scope == []` means ALL accounts (23 §9.5).
+        pytest.param(_OWNER, ["owner"], [], id="owner"),
+        pytest.param(_VIEWER, ["viewer"], [], id="viewer-without-grants"),
+        pytest.param(_MANAGER, ["manager"], sorted([str(ACC), str(OTHER)]), id="manager-two"),
+    ],
+)
+def test_permission_change_frame_validates_against_section_13_schema(
+    bundle: Path, principal: PrincipalSnapshot, roles: list[str], account_scope: list[str]
+) -> None:
+    """#2297: the `apply_snapshot` frame is documented (23-ws-protocol §9.5/§13.4).
+
+    Both the docs bundle and the packages/protocol bundle must accept the emitted frame, envelope
+    and payload, for an owner (empty scope), a viewer (empty scope) and a manager (two accounts).
+    """
+    frame = _emitted_permission_change(principal)
+    assert (frame["p"]["roles"], frame["p"]["account_scope"]) == (roles, account_scope)
+    for schema_id, doc in ((_ENVELOPE, frame), (_PAYLOAD, frame["p"])):
+        errors = _violations(bundle, schema_id, doc)
+        assert errors == [], f"{bundle.name} rejects the emitted frame ({schema_id}): {errors}"
+
+
+def _with(**changes: Any) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    return lambda payload: {**payload, **changes}
+
+
+def _without(key: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    return lambda payload: {k: v for k, v in payload.items() if k != key}
+
+
+@pytest.mark.parametrize("bundle", _BUNDLES)
+@pytest.mark.parametrize(
+    ("break_payload", "expected"),
+    [
+        # `session_id` is an `auth_ok` field: this frame is the identity subset, never the session.
+        pytest.param(
+            _with(session_id=str(uuid.UUID(int=9))), ("additionalProperties", ""), id="extra-key"
+        ),
+        pytest.param(_with(roles=["admin"]), ("enum", "roles/0"), id="role-outside-closed-set"),
+        pytest.param(_with(account_scope=None), ("type", "account_scope"), id="null-scope"),
+        *(
+            pytest.param(_without(key), ("required", ""), id=f"missing-{key}")
+            for key in _REQUIRED_KEYS
+        ),
+        pytest.param(_with(user_id="bob"), ("format", "user_id"), id="user-id-not-a-uuid"),
+    ],
+)
+def test_permission_change_payload_defect_is_rejected_by_section_13_schema(
+    bundle: Path,
+    break_payload: Callable[[dict[str, Any]], dict[str, Any]],
+    expected: tuple[str, str],
+) -> None:
+    """Each defect is refused by BOTH bundles, for the intended reason and nothing else (#2297).
+
+    Starts from a frame the emitter really produced and checks it is valid first, so the single
+    change is what the schema rejects; `format` is enforced (see `_violations`).
+    """
+    payload = _emitted_permission_change(_MANAGER)["p"]
+    assert _violations(bundle, _PAYLOAD, payload) == []
+    violations = _violations(bundle, _PAYLOAD, break_payload(payload))
+    assert [(keyword, path) for keyword, path, _ in violations] == [expected], violations
