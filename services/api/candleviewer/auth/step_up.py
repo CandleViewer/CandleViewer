@@ -62,7 +62,8 @@ GRACE_WINDOW = timedelta(minutes=5)
 FAILURE_CAP = 3
 #: Ticket: read-only downgrade lasts 5 minutes.
 READONLY_WINDOW = timedelta(minutes=5)
-#: `recorder`: irreversible recorded-data purge (permission 51, E16-T06); a grace class.
+#: `recorder` (04 §7.2.2 rows 9 and 9a): retention and pin changes (#2738) and the
+#: irreversible recorded-data purge (E16-T06); a grace class.
 #: #2751 (SR-025): `audit` gates the audit-log export, `backups` a backup restore.
 ACTION_CLASSES = frozenset(
     {"keys", "users", "live_enablement", "killswitch", "risk_caps", "recorder", "audit", "backups"}
