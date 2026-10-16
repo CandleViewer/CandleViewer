@@ -175,6 +175,10 @@ def test_read_path_rules() -> None:
     assert "(`degraded` does not)" in listing
     assert "once per machine, environment and snapshot `updated_at`, not once per read" in listing
     assert "seal also writes the `system_events` row described on `listStatecharts`" in detail
+    check = "`statechart` is not yet in the `se_component` CHECK (migration 0008"
+    assert check in listing and "widens it in a new migration before it writes that row" in listing
+    visible = "The visibility check precedes the seal check, so a seal failure on a machine "
+    assert visible + "the caller may not see is still `404`" in detail
     assert (
         "An unknown machine and one the caller may not see are the same `404 not_found`" in detail
     )

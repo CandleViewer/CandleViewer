@@ -10127,9 +10127,11 @@ paths:
         and `kinds`, and `snapshots` is `error` with the fixed reason "snapshot seal did not
         verify". A failed seal also writes a `system_events` row (component `statechart`, severity
         `critical`, a fixed message), once per machine, environment and snapshot `updated_at`, not
-        once per read, so it shows in `listIncidents`. When the snapshot store
-        cannot be read, `items` and `kinds` are empty and `snapshots` says why (`AdminSliceStatus`);
-        the response is still `200`.
+        once per read, so it shows in `listIncidents`. `statechart` is not yet in the `se_component`
+        CHECK (migration 0008, `21-database-schema.md` §3.10.2), so the route slice widens it in a
+        new migration before it writes that row. When the snapshot store cannot be read, `items` and
+        `kinds` are empty and `snapshots` says why (`AdminSliceStatus`); the response is still
+        `200`.
       x-rbac: { permissions: [admin:read], scope: none }
       parameters:
         - $ref: "#/components/parameters/Limit"
@@ -10233,12 +10235,13 @@ paths:
         the kind; never secrets, user ids, free text, deadlines, exchange ids, prices,
         quantities, balances or limits), the full active `configuration` (ancestors included,
         from the snapshot), the registered chart (`config`), and the latest `machine_events`
-        rows without their payloads. An unknown machine and one the caller may not see are the
-        same `404 not_found`. `environment` is required, because a `machineKey` is unique only
-        within one environment. When the snapshot store cannot be read, or the machine's HMAC
-        envelope does not verify (`persistence.open_sealed`, CV-C53), the answer is `200` with
-        `snapshots` `error` and a fixed reason, and no machine fields; a failed seal also writes
-        the `system_events` row described on `listStatecharts`.
+        rows without their payloads. An unknown machine and one the caller may not see are the same
+        `404 not_found`. The visibility check precedes the seal check, so a seal failure on a
+        machine the caller may not see is still `404`. `environment` is required, because a
+        `machineKey` is unique only within one environment. When the snapshot store cannot be read,
+        or the machine's HMAC envelope does not verify (`persistence.open_sealed`, CV-C53), the
+        answer is `200` with `snapshots` `error` and a fixed reason, and no machine fields; a failed
+        seal also writes the `system_events` row described on `listStatecharts`.
       x-rbac: { permissions: [admin:read], scope: none }
       parameters:
         - name: environment
