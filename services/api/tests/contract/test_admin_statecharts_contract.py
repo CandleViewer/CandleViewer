@@ -2,7 +2,7 @@
 operations (`admin:read`) keyed by the `machines.{entity}.state` entity grammar of E17-T08 and
 answered from verified snapshots, `machine_events` and `cv_machine_*` metrics, never from a live
 interpreter. The claims taken from `23-ws-protocol.md` §6.4 are pinned against that table, so the
-three `..._ws_6_4` tests fail until E17-T08's contract (#2438) is on the base. Additive (C-6.3)."""
+three `..._ws_6_4` tests fail if E17-T08's §6.4 (#2438) changes under them. Additive (C-6.3)."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def _ws_6_4() -> tuple[dict[str, list[str]], str]:
     context_summary keys]` and the section text."""
     doc = (ROOT / "docs/plan/23-ws-protocol.md").read_text(encoding="utf-8")
     head = re.search(r"^### 6\.4 .*`machines\.\{entity\}\.state`.*$", doc, re.MULTILINE)
-    assert head, "23-ws-protocol.md has no §6.4 `machines.{entity}.state` yet: merge #2438 first"
+    assert head, "23-ws-protocol.md lost its §6.4 `machines.{entity}.state` table (#2438)"
     section = doc[head.end() :].split("\n## ", 1)[0]
     rows: dict[str, list[str]] = {}
     for line in section.splitlines():
