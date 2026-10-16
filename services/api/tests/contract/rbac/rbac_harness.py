@@ -123,6 +123,13 @@ class _Sessions:
         except SessionNotFound:
             return None
 
+    def now(self) -> datetime:  # the session routes judge deadlines by it (#2300)
+        return datetime.now(UTC)
+
+    async def touch(self, session_id: str) -> Any:  # `POST /auth/session/extend` (#2300)
+        actor = next(a for a, u in _USER_IDS.items() if str(uuid.uuid5(u, "session")) == session_id)
+        return await self.authenticate_access_token(token_of(actor))
+
     async def authenticate_access_token(
         self, token: str, *, touch: bool = False, allow_locked: bool = False
     ) -> Any:

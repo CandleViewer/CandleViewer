@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 
 class AuthError(Exception):
     """Base exception for the M18 `auth` module."""
@@ -116,7 +118,12 @@ class SessionIdleLocked(AuthError):
     """The session's idle deadline has passed but its absolute lifetime has
     not — ticket "Order entry is refused while locked": the server refuses
     order-entry/refresh-like actions on this session id regardless of what
-    the client believes, without tearing the session down."""
+    the client believes, without tearing the session down. `idle_locked_at`
+    is the moment it locked (the `session_idle_locked` problem field, #2300)."""
+
+    def __init__(self, message: str, *, idle_locked_at: datetime | None = None) -> None:
+        super().__init__(message)
+        self.idle_locked_at = idle_locked_at
 
 
 class UnlockPasswordInvalid(AuthError):

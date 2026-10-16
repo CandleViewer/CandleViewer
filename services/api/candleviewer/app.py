@@ -70,6 +70,7 @@ from candleviewer.api.deny_by_default import (
 )
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
+from candleviewer.api.idle_lock import IdleLockMiddleware, ungated_operations
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
@@ -998,6 +999,8 @@ def create_app(
             allowed_origins=resolved.allowed_origin_set,
             csrf=csrf_codec,
             audit_tracker=csrf_audits,  # one in-flight cap + shutdown drain for refusal audits
+            # #2300: unlock records on B16 and checks the password on login's path (step-up).
+            unlock_authority=lambda: ctx.auth.step_up if ctx.auth.step_up_is_active else None,
         )
     )
     # QA #1648 d1: live WS gateway. Role changes (`PUT /users/{id}/roles`)
@@ -1066,6 +1069,14 @@ def create_app(
     # B16 audit actions write through the M19 emitter (PR #1674 finding 3).
     set_b16_audit_sink(_LazyAuditEmitter(ctx.audit))
     app.middleware("http")(make_read_only_guard(ctx.auth, _LazyAuditEmitter(ctx.audit)))
+    # #2300: an idle-locked session gets `401 session_idle_locked` from every route but the
+    # three allowed while locked. Added after the read-only guard and before `CsrfMiddleware`,
+    # so it runs inside the CSRF guard and outside every route-level guard.
+    app.add_middleware(
+        IdleLockMiddleware,
+        sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
+        ungated=ungated_operations(spec),
+    )
     # Audit emitter + notifier are mandatory; store/resolver `None` -> 501.
     app.include_router(
         make_users_router(

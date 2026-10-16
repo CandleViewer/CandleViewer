@@ -50,7 +50,8 @@ async def test_resolve_active_owner_maps_roles_and_known_permissions_only() -> N
     snap = await SessionSnapshotResolver(lambda: sessions, _Identity()).resolve(_request())
     assert snap is not None and snap.user_id == _UID and snap.is_owner
     assert snap.permissions == frozenset({Permission.USERS_WRITE})  # unknown code dropped
-    assert snap.account_grants == () and sessions.touched == [True]
+    # #2300: resolving a principal is never activity (only extend and unlock are).
+    assert snap.account_grants == () and sessions.touched == [False]
 
 
 @pytest.mark.parametrize(

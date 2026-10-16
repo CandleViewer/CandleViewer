@@ -37,7 +37,7 @@ class SessionSnapshotResolver:
         if scheme.lower() != "bearer" or not token:
             return None
         try:
-            record = await self._sessions().authenticate_access_token(token, touch=True)
+            record = await self._sessions().authenticate_access_token(token)  # never activity
             user = await self._identity.user(str(record.user_id))
             info = await self._identity.session_info(str(record.user_id))
         except (AuthError, RuntimeError, LookupError):

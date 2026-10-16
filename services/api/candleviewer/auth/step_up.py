@@ -290,6 +290,14 @@ class StepUpService:
                 return key[len(_PENDING) :]
         return None
 
+    async def verify_password(self, user_id: str, password: str) -> bool:
+        """The account password on login's Argon2id path and lockout counters
+        (SR-015, SR-016), as step-up checks it: a wrong password counts toward
+        the account lockout, and a locked or unknown account fails like a wrong
+        password. `POST /auth/unlock` (#2300) re-authenticates with it."""
+        user = await self._users.find_by_id(user_id)
+        return await self._password_ok(user, password, self._clock())
+
     async def _verify_both(self, user_id: str, code: str, password: str, now: datetime) -> bool:
         """Password first (login's hasher + lockout counters), then TOTP.
 

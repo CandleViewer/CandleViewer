@@ -7,9 +7,12 @@ Every Gherkin scenario in the ticket maps to a method here:
 - `mint()` — first-login session creation (called after `LoginService`/
   `MfaService` complete the two-legged login, per those modules' own
   `NotImplementedError`/`MfaVerifiedResult` "E09-S03 scope" notes).
-- `refresh()` — "Refresh-token reuse kills the family".
+- `refresh()` — "Refresh-token reuse kills the family". Not activity: the
+  successor inherits `last_seen_at` (#2300).
 - `touch()` — "Idle lock preserves the data feed" (re-stamps
-  `last_seen_at`, i.e. the `REQUEST` event on B16).
+  `last_seen_at`, i.e. the `REQUEST` event on B16). Activity is explicit
+  (#2300): only `POST /auth/session/extend` calls it, and authenticating a
+  request never does.
 - `require_active()` — "Order entry is refused while locked": the
   per-request/per-WS-frame revocation + idle-lock check every caller in
   the OMS/WS path must run before honouring a session id.
@@ -29,8 +32,9 @@ import hashlib
 import hmac
 import secrets
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 
 from candleviewer.auth.errors import (
     RefreshReuseDetected,
@@ -79,6 +83,24 @@ MAX_UNLOCK_ATTEMPTS = 5
 
 Clock = Callable[[], datetime]
 
+#: `unlock(check=...)`: verifies the account password. `POST /auth/unlock` (#2300)
+#: passes login's Argon2id path and lockout counters (SR-015, SR-016).
+PasswordCheck = Callable[[str], Awaitable[bool]]
+
+
+class UnlockOutcome(StrEnum):
+    """What a password check decided, handed to `unlock(write_ahead=...)` before any
+    row changes (C-2.9): the lock lifts, a wrong password is refused, or a wrong
+    password reached `MAX_UNLOCK_ATTEMPTS` and revokes the session."""
+
+    UNLOCKED = "unlocked"
+    FAILED = "failed"
+    REVOKED = "revoked"
+
+
+#: `unlock(write_ahead=...)`: awaited with the decided outcome before the row changes.
+UnlockWriteAhead = Callable[[UnlockOutcome], Awaitable[None]]
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -111,6 +133,19 @@ def is_live_session(session: SessionRecord, *, now: datetime) -> bool:
     )
 
 
+def is_idle_locked_session(session: SessionRecord, *, now: datetime) -> bool:
+    """The idle-lock twin of `is_live_session` (#2300): a session that
+    `authenticate_access_token` would accept but for the idle lock (not revoked,
+    inside its absolute lifetime, access handle within `ACCESS_TOKEN_TTL`) and
+    past its `idle_deadline`. Such a request answers `401 session_idle_locked`
+    instead of `unauthenticated`. No state change."""
+    return (
+        session.is_idle_locked(now=now)
+        and not session.is_absolute_expired(now=now)
+        and now < session.issued_at + ACCESS_TOKEN_TTL
+    )
+
+
 def clamp_idle_timeout_s(idle_timeout_s: int) -> int:
     """Ticket "5-60 min idle lock" — the API edge and this service both
     clamp so a stored/requested value outside the documented range can
@@ -128,6 +163,11 @@ def access_token_expires_at(session: SessionRecord) -> datetime:
     socket: E09-S03 keeps the data feed alive while locked, and REST refuses
     the locked session through `require_active`."""
     return min(session.issued_at + ACCESS_TOKEN_TTL, session.expires_at)
+
+
+async def _write_ahead(hook: UnlockWriteAhead | None, outcome: UnlockOutcome) -> None:
+    if hook is not None:
+        await hook(outcome)
 
 
 class SessionService:
@@ -153,6 +193,11 @@ class SessionService:
 
     _MAX_TRACKED_UNLOCK_SESSIONS = 10_000
 
+    def now(self) -> datetime:
+        """The clock every session deadline is judged by: the HTTP edge reports lock
+        state and `server_time` from it (#2300, server truth, never a client clock)."""
+        return self._clock()
+
     # -- minting -------------------------------------------------------
 
     async def mint(
@@ -166,6 +211,7 @@ class SessionService:
         idle_timeout_s: int = DEFAULT_IDLE_TIMEOUT_S,
         mfa_satisfied: bool = True,
         expires_at: datetime | None = None,
+        last_seen_at: datetime | None = None,
     ) -> MintedSession:
         """Issue a brand-new session — session fixation is prevented by
         always minting a fresh `session_id`/refresh token here, never
@@ -176,7 +222,8 @@ class SessionService:
         absolute deadline to its successor (review finding, PR #1628,
         high: rotation must not reset the 12 h absolute lifetime). First-
         login callers never pass it, so a brand-new session still gets
-        `now + ABSOLUTE_LIFETIME`.
+        `now + ABSOLUTE_LIFETIME`. *last_seen_at* does the same for the idle
+        deadline (#2300: a refresh is not activity).
         """
         now = self._clock()
         raw_token = self._refresh_token_factory()
@@ -187,7 +234,7 @@ class SessionService:
             refresh_token_hash=_hash_refresh_token(raw_token),
             access_token_jti=hash_access_token(raw_access),
             issued_at=now,
-            last_seen_at=now,
+            last_seen_at=last_seen_at if last_seen_at is not None else now,
             expires_at=expires_at if expires_at is not None else now + ABSOLUTE_LIFETIME,
             revoked_at=None,
             revoked_reason=None,
@@ -266,7 +313,10 @@ class SessionService:
             # a refresh attempt against an idle-locked session is refused
             # without revoking it — unlocking is `unlock()`'s job, not a
             # side effect of a stray refresh call.
-            raise SessionIdleLocked("session is idle-locked; unlock before refreshing")
+            raise SessionIdleLocked(
+                "session is idle-locked; unlock before refreshing",
+                idle_locked_at=presented.idle_deadline(),
+            )
 
         # Review finding (PR #1628, medium): claim the presented session by
         # revoking it *first* and checking the result, instead of minting
@@ -301,6 +351,9 @@ class SessionService:
             # never be able to extend a session past its original 12 h
             # absolute lifetime (ticket "Scope / Deliverables").
             expires_at=presented.expires_at,
+            # #2300: a refresh is not activity. The successor keeps the presented
+            # session's idle deadline, so a client refreshing on schedule still locks.
+            last_seen_at=presented.last_seen_at,
         )
         await self._repository.link_rotation(
             prev_session_id=str(presented.id), next_session_id=str(minted.session_id)
@@ -336,7 +389,9 @@ class SessionService:
 
         if session.is_idle_locked(now=now):
             auth_idle_locks_total.inc()
-            raise SessionIdleLocked("session is idle-locked")
+            raise SessionIdleLocked(
+                "session is idle-locked", idle_locked_at=session.idle_deadline()
+            )
 
         return session
 
@@ -354,12 +409,13 @@ class SessionService:
         return found
 
     async def authenticate_access_token(
-        self, raw_access_token: str, *, touch: bool = False, allow_locked: bool = False
+        self, raw_access_token: str, *, allow_locked: bool = False
     ) -> SessionRecord:
         """Per-request authentication (ADR-0020): resolve the opaque bearer
         handle to its session, refusing unknown, expired-token, revoked and
         idle-locked sessions. Raises `SessionNotFound`, `SessionRevoked`,
-        `SessionIdleLocked`. *touch* re-stamps `last_seen_at` (activity)."""
+        `SessionIdleLocked`. Never activity (#2300): it never re-stamps
+        `last_seen_at`; `touch()` and `unlock()` are the only writers."""
         jti = hash_access_token(raw_access_token)
         found = await self._repository.find_by_access_token_jti(str(jti))
         if found is None or not hmac.compare_digest(
@@ -374,8 +430,6 @@ class SessionService:
             if found.is_revoked:
                 raise SessionRevoked(found.revoked_reason or "revoked")
             return found
-        if touch:
-            return await self.touch(str(found.id))
         return await self.require_active(str(found.id))
 
     async def touch(self, session_id: str) -> SessionRecord:
@@ -391,12 +445,27 @@ class SessionService:
 
     # -- unlock -------------------------------------------------------------
 
-    async def unlock(self, session_id: str, *, password: str, password_hash: str) -> SessionRecord:
+    async def unlock(
+        self,
+        session_id: str,
+        *,
+        password: str,
+        password_hash: str | None = None,
+        check: PasswordCheck | None = None,
+        write_ahead: UnlockWriteAhead | None = None,
+    ) -> SessionRecord:
         """Ticket "Unlock restores context": password only, no TOTP, while
         still inside the absolute lifetime. `password_hash` is the caller's
         already-looked-up `users.password_hash` — this service never reads
         the `users` table itself (M18 boundary: `session_service` composes
-        with a `Hasher`, not a second repository).
+        with a `Hasher`, not a second repository). *check* replaces that
+        comparison: `POST /auth/unlock` (#2300) passes login's Argon2id path
+        and lockout counters (SR-015, SR-016).
+
+        *write_ahead* (C-2.9) is awaited with the decided `UnlockOutcome`
+        after the password check and before the row changes. If it raises, the
+        lock stays and nothing is revoked, but a wrong password stays counted
+        (#2300: a failure counts even if its audit record cannot be written).
 
         Raises `SessionNotFound`/`SessionRevoked` if the session died while
         locked (ticket "if the absolute lifetime elapses while locked,
@@ -413,24 +482,25 @@ class SessionService:
         if session.is_revoked or session.is_absolute_expired(now=now):
             raise SessionRevoked(session.revoked_reason or "expired")
 
-        password_ok = await self._hasher.verify(password_hash, password)
+        if check is not None:
+            password_ok = await check(password)
+        elif password_hash is not None:
+            password_ok = await self._hasher.verify(password_hash, password)
+        else:
+            raise TypeError("unlock() needs password_hash or check")
         if not password_ok:
-            failures = self._unlock_failures.get(session_id, 0) + 1
+            failures = self._count_unlock_failure(session_id)
             if failures >= MAX_UNLOCK_ATTEMPTS:
+                await _write_ahead(write_ahead, UnlockOutcome.REVOKED)
                 self._unlock_failures.pop(session_id, None)
                 await self._repository.revoke(
                     session_id, reason="unlock_attempts_exceeded", now=now
                 )
                 raise SessionRevoked("unlock_attempts_exceeded")
-            if session_id not in self._unlock_failures and (
-                len(self._unlock_failures) >= self._MAX_TRACKED_UNLOCK_SESSIONS
-            ):
-                # Bounded map (C-2.18), same rationale as PerIpLoginThrottle.
-                oldest = next(iter(self._unlock_failures))
-                del self._unlock_failures[oldest]
-            self._unlock_failures[session_id] = failures
+            await _write_ahead(write_ahead, UnlockOutcome.FAILED)
             raise UnlockPasswordInvalid("invalid_password")
 
+        await _write_ahead(write_ahead, UnlockOutcome.UNLOCKED)
         self._unlock_failures.pop(session_id, None)
         if session.is_idle_locked(now=now):
             # B16.7 (C-2.12, C-2.21; PR #2290 ruling rule 4d): lifting the lock
@@ -443,6 +513,18 @@ class SessionService:
         if touched is None:
             raise SessionNotFound("session disappeared during unlock")
         return touched
+
+    def _count_unlock_failure(self, session_id: str) -> int:
+        """Count one wrong unlock password; returns the consecutive count."""
+        failures = self._unlock_failures.get(session_id, 0) + 1
+        if session_id not in self._unlock_failures and (
+            len(self._unlock_failures) >= self._MAX_TRACKED_UNLOCK_SESSIONS
+        ):
+            # Bounded map (C-2.18), same rationale as PerIpLoginThrottle.
+            oldest = next(iter(self._unlock_failures))
+            del self._unlock_failures[oldest]
+        self._unlock_failures[session_id] = failures
+        return failures
 
     # -- revocation ----------------------------------------------------------
 
