@@ -5,14 +5,16 @@ composition root, not imported (C-3.1). Static, parameterised SQL over effective
 (unexpired) grants, with the predicate of `trg_owner_floor_fn` (migration 0001).
 `apply_roles` is one transaction: lock the target user (changes to one user
 queue), lock every active-owner grant in key order (concurrent demotions queue,
-never deadlock), re-check the floor on that locked count, replace the set. The
-deferred trigger stays the backstop; its SQLSTATE 23514 maps onto the same check.
+never deadlock), re-check the floor on that locked count, replace the set, fire
+the deferred owner-floor trigger (SQLSTATE 23514 maps onto the same check), then
+hand the locked before-set to the caller's write-ahead audit hook before commit
+(C-2.9): a refused audit write rolls the change back.
 """
 
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +25,8 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 
 #: `(current_roles, new_roles, active_owner_count)`; raises to refuse the change.
 OwnerFloorCheck = Callable[[frozenset[str], frozenset[str], int], None]
+#: Write-ahead audit of the change, given the role set read under lock.
+AuditHook = Callable[[frozenset[str]], Awaitable[None]]
 
 _CHECK_VIOLATION = "23514"  # `trg_owner_floor_fn` raises this at commit
 _ROLES = sa.text(
@@ -51,9 +55,11 @@ _DROP = sa.text(
     "OR (ur.expires_at IS NOT NULL AND ur.expires_at <= now()))"
 )
 _GRANT = sa.text(
-    "INSERT INTO user_roles (user_id, role_id) SELECT CAST(:id AS uuid), r.id FROM roles r "
-    "WHERE r.name::text = ANY(CAST(:roles AS text[])) ON CONFLICT (user_id, role_id) DO NOTHING"
+    "INSERT INTO user_roles (user_id, role_id, granted_by) SELECT CAST(:id AS uuid), r.id, "
+    "CAST(:by AS uuid) FROM roles r WHERE r.name::text = ANY(CAST(:roles AS text[])) "
+    "ON CONFLICT (user_id, role_id) DO NOTHING"
 )
+_CONSTRAINTS_NOW = sa.text("SET CONSTRAINTS ALL IMMEDIATE")
 
 
 class SqlAlchemyUserRoleStore:
@@ -77,9 +83,12 @@ class SqlAlchemyUserRoleStore:
         async with self._relational.unit_of_work() as uow:
             return int((await uow.session.execute(_COUNT_OWNERS)).scalar_one())
 
-    async def apply_roles(self, user_id: uuid.UUID, roles: frozenset[str]) -> bool:
-        """Replace the role set atomically; False if the user does not exist. Raises
-        whatever the injected owner-floor check raises (`OwnerFloorError`)."""
+    async def apply_roles(
+        self, user_id: uuid.UUID, roles: frozenset[str], *, actor: uuid.UUID, audit: AuditHook
+    ) -> bool:
+        """Replace the role set atomically (new grants record `actor`); False if the user
+        does not exist. Raises what the owner-floor check or `audit` raises; either one
+        rolls the transaction back, so nothing changes without its audit record."""
         uid, wanted = str(user_id), sorted(roles)
         current: frozenset[str] = frozenset()
         try:
@@ -92,7 +101,9 @@ class SqlAlchemyUserRoleStore:
                 current = frozenset(row._mapping["roles"] or ()) if row is not None else current
                 self._owner_floor(current, roles, len(owners))
                 await s.execute(_DROP, {"id": uid, "roles": wanted})
-                await s.execute(_GRANT, {"id": uid, "roles": wanted})
+                await s.execute(_GRANT, {"id": uid, "roles": wanted, "by": str(actor)})
+                await s.execute(_CONSTRAINTS_NOW)  # the floor trigger fires before the audit
+                await audit(current)
                 await uow.commit()
         except IntegrityError as exc:
             if getattr(exc.orig, "sqlstate", None) == _CHECK_VIOLATION:

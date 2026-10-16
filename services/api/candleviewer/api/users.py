@@ -1,23 +1,26 @@
 """`PUT /users/{userId}/roles` (E09-T03, QA #1648 defects 1-2).
 
-Enforces `users:write`, the owner-floor guard at API level, audits the
-change, and notifies the WS layer so a downgrade takes effect on live
-sockets. `principal_resolver=None` / `store=None` fail closed with 501
-(the fake backend; the real backend wires both, #2492); the audit emitter and
-notifier are required (TypeError at wiring time).
+Enforces `users:write`, SR-055 (never the acting user), the owner-floor guard at
+API level, audits the change write-ahead inside the store's transaction (C-2.9),
+and notifies the WS layer so a downgrade takes effect on live sockets.
+`principal_resolver=None` / `store=None` fail closed with 501 (the fake backend;
+the real backend wires both, #2492); the audit emitter and notifier are
+required (TypeError at wiring time).
 """
 
 from __future__ import annotations
 
 import inspect
 import uuid
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse
 
 from candleviewer.api.step_up import _AuthLike, _bearer, require_elevation_for
+from candleviewer.audit.errors import AuditError
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import AuthError
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
@@ -43,15 +46,42 @@ class UserRoleStore(Protocol):
 
     async def count_active_owners(self) -> int: ...
 
-    async def apply_roles(self, user_id: uuid.UUID, roles: frozenset[str]) -> bool:
+    async def apply_roles(
+        self,
+        user_id: uuid.UUID,
+        roles: frozenset[str],
+        *,
+        actor: uuid.UUID,
+        audit: Callable[[frozenset[str]], Awaitable[None]],
+    ) -> bool:
         """Atomically (one transaction, owner rows locked) enforce the owner
-        floor via `assert_owner_floor` and write `roles`. Raises
-        `OwnerFloorError`; returns False if the user does not exist."""
+        floor via `assert_owner_floor`, write `roles` granted by `actor`, then
+        await `audit(roles read under lock)` before committing (C-2.9
+        write-ahead). Raises `OwnerFloorError` or what `audit` raises, with
+        nothing changed; returns False if the user does not exist."""
         ...
 
 
 class PermissionChangeNotifier(Protocol):
     async def roles_changed(self, user_id: uuid.UUID) -> None: ...
+
+
+class _AuditRefused(Exception):
+    """The write-ahead audit record could not be written; the change rolled back."""
+
+
+def _forbidden(reason: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=403,
+        content={
+            "type": "about:blank",
+            "title": "Forbidden",
+            "status": 403,
+            "code": "forbidden",
+            "reason": reason,
+        },
+        media_type="application/problem+json",
+    )
 
 
 def _problem(status: int, code: str, title: str, detail: str) -> JSONResponse:
@@ -124,17 +154,19 @@ def make_users_router(
         try:
             await enforce(principal, Permission.USERS_WRITE, scope=Scope.NONE, emitter=emitter)
         except ForbiddenError as exc:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "type": "about:blank",
-                    "title": "Forbidden",
-                    "status": 403,
-                    "code": "forbidden",
-                    "reason": exc.deny.reason.value,
-                },
-                media_type="application/problem+json",
+            return _forbidden(exc.deny.reason.value)
+        if user_id == principal.user_id:  # SR-055: never the acting user, step-up or not
+            await emitter.emit(
+                "rbac.denied",
+                actor_label=str(principal.user_id),
+                actor_user_id=principal.user_id,
+                object_kind="user",
+                object_id=str(user_id),
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason="self_target",
             )
+            return _forbidden("self_target")
         # SR-025: step-up after authn + RBAC, before any mutation. Fail closed
         # when the step-up service is not wired. Denial is audited by B16.
         if auth is None or not auth.step_up_is_active or not auth.sessions_is_active:
@@ -166,6 +198,28 @@ def make_users_router(
         current = await store.get_roles(user_id)
         if current is None:
             return _problem(404, "not_found", "Not found", "user not found")
+
+        async def write_ahead(before: frozenset[str]) -> None:
+            """C-2.9: written inside the store's transaction, before commit, with the
+            role set read under lock; a failed write rolls the change back."""
+            try:
+                for action, changed in (
+                    ("roles.grant", sorted(new_roles - before)),
+                    ("roles.revoke", sorted(before - new_roles)),
+                ):
+                    if changed:
+                        await _audit(
+                            emitter,
+                            action,
+                            principal,
+                            user_id,
+                            ",".join(changed),
+                            before=before,
+                            after=new_roles,
+                        )
+            except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
+                raise _AuditRefused from exc
+
         # Endpoint-level owner floor (defence in depth; `apply_roles` re-checks
         # atomically under lock, so a concurrent demotion still cannot slip by).
         try:
@@ -174,7 +228,9 @@ def make_users_router(
                 new_roles=new_roles,
                 active_owner_count=await store.count_active_owners(),
             )
-            found = await store.apply_roles(user_id, new_roles)
+            found = await store.apply_roles(
+                user_id, new_roles, actor=principal.user_id, audit=write_ahead
+            )
         except OwnerFloorError:
             await _audit(
                 emitter,
@@ -186,24 +242,10 @@ def make_users_router(
                 after=new_roles,
             )
             return _problem(409, "conflict", "Conflict", "the last active owner cannot be demoted")
+        except _AuditRefused:
+            return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
         if not found:
             return _problem(404, "not_found", "Not found", "user not found")
-        # Audited only once the change is durable, so the log never shows a
-        # role change that did not happen; failures above are audited as denials.
-        for action, changed in (
-            ("roles.grant", sorted(new_roles - current)),
-            ("roles.revoke", sorted(current - new_roles)),
-        ):
-            if changed:
-                await _audit(
-                    emitter,
-                    action,
-                    principal,
-                    user_id,
-                    ",".join(changed),
-                    before=current,
-                    after=new_roles,
-                )
         await notifier.roles_changed(user_id)
         return JSONResponse(
             status_code=200, content={"id": str(user_id), "roles": sorted(new_roles)}

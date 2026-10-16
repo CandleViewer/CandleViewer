@@ -13,6 +13,7 @@ import re
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -261,7 +262,15 @@ class UserStore:
     async def count_active_owners(self) -> int:
         return sum("owner" in r for r in self.roles.values())
 
-    async def apply_roles(self, user_id: uuid.UUID, roles: frozenset[str]) -> bool:
+    async def apply_roles(
+        self,
+        user_id: uuid.UUID,
+        roles: frozenset[str],
+        *,
+        actor: uuid.UUID,
+        audit: Callable[[frozenset[str]], Awaitable[None]],
+    ) -> bool:
+        await audit(self.roles[user_id])  # write-ahead, as the Postgres store does (C-2.9)
         self.roles[user_id] = roles
         return True
 

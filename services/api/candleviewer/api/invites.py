@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import inspect
 import uuid
+from collections.abc import Callable
 from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Path, Request
@@ -108,14 +109,22 @@ def make_invites_router(
     emitter: _Emitter,
     principal_resolver: SnapshotResolver | None,
     *,
+    audit_ready: Callable[[], bool],
     now: Any = None,
 ) -> APIRouter:
     """`emitter` is mandatory: an invite action without an audit record
-    (C-2.9) is refused at wiring time. `principal_resolver=None` fails the
-    owner routes closed with 501 (as `/users/{id}/roles`)."""
+    (C-2.9) is refused at wiring time, and while `audit_ready()` is false
+    every invite action answers 503 before changing anything (#2492).
+    `principal_resolver=None` fails the owner routes closed with 501 (as
+    `/users/{id}/roles`)."""
     if emitter is None:
         raise TypeError("make_invites_router: audit emitter is required")
     router = APIRouter(tags=["users"])
+
+    def _audit_down() -> JSONResponse | None:
+        if audit_ready():
+            return None
+        return _problem(503, "Service unavailable", "audit unavailable; nothing was changed")
 
     async def _owner(request: Request) -> PrincipalSnapshot | JSONResponse:
         if principal_resolver is None:
@@ -171,6 +180,8 @@ def make_invites_router(
         got = await _owner(request)
         if isinstance(got, JSONResponse):
             return got
+        if (down := _audit_down()) is not None:
+            return down
         body = await _json_body(request)
         if body is None:
             return _problem(400, "Bad request", "body must be a JSON object")
@@ -215,6 +226,8 @@ def make_invites_router(
         got = await _owner(request)
         if isinstance(got, JSONResponse):
             return got
+        if (down := _audit_down()) is not None:
+            return down
         try:
             invite = await auth.invites.reissue(user_id, invited_by=got.user_id)
         except InviteNotFound:
@@ -229,6 +242,8 @@ def make_invites_router(
         got = await _owner(request)
         if isinstance(got, JSONResponse):
             return got
+        if (down := _audit_down()) is not None:
+            return down
         try:
             await auth.invites.revoke(user_id)
         except InviteNotFound:
@@ -241,6 +256,8 @@ def make_invites_router(
     async def _gate(request: Request) -> JSONResponse | None:
         if not auth.invites_is_active:
             return _problem(503, "Service unavailable", "invites not wired")
+        if (down := _audit_down()) is not None:
+            return down
         if auth.invites.is_blocked(_client_ip(request)):
             return _problem(429, "Too many requests", "too many invalid attempts; try later")
         return None

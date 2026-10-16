@@ -5,6 +5,7 @@ permission_change pushed and the now-forbidden subscription dropped."""
 from __future__ import annotations
 
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -57,12 +58,20 @@ class _World:
     async def count_active_owners(self) -> int:
         return sum("owner" in r for r in self.roles.values())
 
-    async def apply_roles(self, uid: uuid.UUID, roles: frozenset[str]) -> bool:
+    async def apply_roles(
+        self,
+        uid: uuid.UUID,
+        roles: frozenset[str],
+        *,
+        actor: uuid.UUID,
+        audit: Callable[[frozenset[str]], Awaitable[None]],
+    ) -> bool:
         assert_owner_floor(
             current_roles=self.roles[uid],
             new_roles=roles,
             active_owner_count=await self.count_active_owners(),
         )
+        await audit(self.roles[uid])
         self.roles[uid] = roles
         return True
 
@@ -218,15 +227,15 @@ def test_ws_e2e_roles_change_without_step_up_is_403_step_up_required(
     assert w.roles[MGR] == frozenset({"manager"})
 
 
-def test_ws_e2e_last_owner_demotion_409_is_audited(env: tuple[TestClient, _World]) -> None:
+def test_ws_e2e_self_demotion_is_refused_and_audited(env: tuple[TestClient, _World]) -> None:
+    """SR-055 refuses an owner's change to their own roles before the owner floor (409,
+    covered in test_users_router) is ever consulted."""
     client, w = env
     _elevate(client)
     r = client.put(f"/users/{ADMIN}/roles", json={"roles": ["viewer"]})
-    assert r.status_code == 409
-    assert [a["action"] for a in w.audit] == ["rbac.denied"]
-    assert w.audit[0]["reason"] == "owner_floor"
-    assert w.audit[0]["before_state"] == {"roles": ["owner"]}
-    assert w.audit[0]["after_state"] == {"roles": ["viewer"]}
+    assert r.status_code == 403 and r.json()["reason"] == "self_target"
+    assert [(a["action"], a["reason"]) for a in w.audit] == [("rbac.denied", "self_target")]
+    assert w.roles[ADMIN] == frozenset({"owner"})
 
 
 def test_ws_e2e_session_revocation_closes_socket(env: tuple[TestClient, _World]) -> None:

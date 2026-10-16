@@ -100,7 +100,7 @@ def test_invites_router_write_routes_are_gated() -> None:
     class _Auth:  # route registration only; never called
         invites_is_active = False
 
-    router = make_invites_router(_Auth(), object(), lambda *_a, **_k: None)  # type: ignore[arg-type]  # registration-only stub
+    router = make_invites_router(_Auth(), object(), lambda *_a, **_k: None, audit_ready=bool)  # type: ignore[arg-type]  # registration-only stub
     missing = [
         (m, r.path)
         for r in router.routes

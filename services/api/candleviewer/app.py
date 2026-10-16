@@ -325,6 +325,12 @@ class _LazyAuditEmitter:
         await self._audit.writer.emit(action, **kwargs)
 
 
+def _audit_ready(audit: AuditHandle) -> Callable[[], bool]:
+    """#2492 (C-2.9): an owner action whose audit record cannot be written is refused
+    before it changes anything: the writer is started and its flusher has not died."""
+    return lambda: audit.is_active and getattr(audit.writer, "failure", None) is None
+
+
 def _decode_key(name: str, secret: Any) -> bytes | None:
     if secret is None:
         return None
@@ -1078,6 +1084,7 @@ def create_app(
             principal_resolver=owner_resolver,
             positions=_NoPositionStore(),
             users=user_role_store,
+            audit_ready=_audit_ready(ctx.audit),
         )
     )
     # B16 audit actions write through the M19 emitter (PR #1674 finding 3).
@@ -1093,7 +1100,14 @@ def create_app(
             auth=ctx.auth,
         )
     )
-    app.include_router(make_invites_router(ctx.auth, _LazyAuditEmitter(ctx.audit), owner_resolver))
+    app.include_router(
+        make_invites_router(
+            ctx.auth,
+            _LazyAuditEmitter(ctx.audit),
+            owner_resolver,
+            audit_ready=_audit_ready(ctx.audit),
+        )
+    )
     # QA #1596: real session-backed resolver; without an identity provider
     # (fake backend) it stays `None` and every call fails closed with 501.
     audit_resolver = (
