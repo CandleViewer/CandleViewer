@@ -826,9 +826,10 @@ export interface paths {
      *     target user (SR-026). An enrolment-only session may call it (see "Enrolment-only
      *     session") with `method: totp` only; any other method answers `422` and nothing changes.
      *     If the caller's user already has a confirmed MFA method the answer is `409 conflict` and
-     *     nothing changes: voluntary re-enrolment is not specified yet. `Idempotency-Key` is
-     *     ignored: the response carries the TOTP provisioning secret, which is never stored for a
-     *     replay.
+     *     nothing changes: voluntary re-enrolment is not specified yet. A `503` means the audit
+     *     record could not be written (C-2.9) or a backend is not wired, and nothing changed.
+     *     `Idempotency-Key` is ignored: the response carries the TOTP provisioning secret, which
+     *     is never stored for a replay.
      */
     post: operations["authMfaEnroll"];
     delete?: never;
@@ -870,8 +871,11 @@ export interface paths {
      *
      *     Every role may confirm its own enrolment: no permission is needed, and the route takes
      *     no target user (SR-026). If the caller's user already has a confirmed MFA method the
-     *     answer is `409 conflict` and nothing changes. `Idempotency-Key` is ignored: the response
-     *     holds tokens and recovery codes, which are never stored for a replay.
+     *     answer is `409 conflict` and nothing changes. After a `503` the client signs in again:
+     *     either nothing changed (an audit record could not be written, C-2.9, or a backend is not
+     *     wired), or the enrolment completed but the session could not be rotated, so the new
+     *     TOTP signs in and its 10 recovery codes were never shown. `Idempotency-Key` is ignored:
+     *     the response holds tokens and recovery codes, which are never stored for a replay.
      */
     post: operations["authMfaEnrollConfirm"];
     delete?: never;
@@ -9716,6 +9720,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   authMfaEnrollConfirm: {
@@ -9755,6 +9760,7 @@ export interface operations {
       403: components["responses"]["CsrfTokenInvalid"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   authMfaDeleteMethod: {

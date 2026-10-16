@@ -295,6 +295,39 @@ def test_confirm_returns_the_rotated_session_and_exactly_ten_codes(spec: dict[st
     assert (codes["minItems"], codes["maxItems"]) == (10, 10)
 
 
+@pytest.mark.parametrize("path", ["/auth/mfa/enroll", "/auth/mfa/enroll/confirm"])
+def test_enrolment_routes_declare_the_503_they_fail_closed_with(
+    spec: dict[str, Any], path: str
+) -> None:
+    """Both refuse with 503 when an audit record cannot be written or a backend is not wired
+    (C-2.9); confirm also after a committed enrolment whose session could not be rotated."""
+    responses = _op(spec, "post", path)["responses"]
+    assert responses["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
+
+
+@pytest.mark.parametrize(
+    ("path", "rule"),
+    [
+        (
+            "/auth/mfa/enroll",
+            "A `503` means the audit record could not be written (C-2.9) or a backend is not "
+            "wired, and nothing changed.",
+        ),
+        (
+            "/auth/mfa/enroll/confirm",
+            "After a `503` the client signs in again: either nothing changed (an audit record "
+            "could not be written, C-2.9, or a backend is not wired), or the enrolment completed "
+            "but the session could not be rotated, so the new TOTP signs in and its 10 recovery "
+            "codes were never shown.",
+        ),
+    ],
+)
+def test_enrolment_routes_describe_what_a_503_leaves_behind(
+    spec: dict[str, Any], path: str, rule: str
+) -> None:
+    assert rule in _described(spec, "post", path)
+
+
 def test_confirm_example_conforms_and_a_short_code_set_does_not(spec: dict[str, Any]) -> None:
     pointer = "/components/schemas/MfaEnrollConfirmResponse"
     body = _confirm_example(spec)
