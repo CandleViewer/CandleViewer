@@ -135,7 +135,7 @@ def make_admin_capacity_router(
 
     @router.put("/capacity/subaccount-tier")
     async def set_subaccount_tier(request: Request) -> JSONResponse:
-        # The handler itself writes the audit (write-ahead, below): C-2.9 / SR-112.
+        # The handler itself writes the audit record (write-ahead, below): C-2.9.
         try:
             principal: AuditPrincipal = request.state.admin_principal  # left there by the guard
             wanted = await _body(request)
