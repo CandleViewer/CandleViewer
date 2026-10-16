@@ -40,6 +40,7 @@ from candleviewer.bars.spec import check_param_bounds, from_wire
 from candleviewer.observability.metrics import Counter, Histogram
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.limits import (
+    FANOUT_AUDIT_MAX_FAILURES,
     FANOUT_AUDIT_TIMEOUT_S,
     FANOUT_SEND_TIMEOUT_S,
     MAX_BARS_SUBSCRIPTIONS,
@@ -721,6 +722,25 @@ class _AuditRow:
     fields: dict[str, Any]
 
 
+def _log_abandoned(
+    rows: list[_AuditRow],
+    tried: int,
+    cause: Literal["cancelled", "writer_down"],
+    in_flight: _AuditRow | None = None,
+) -> None:
+    """`ws audit rows abandoned`: `rows` counts the rows after the first `tried` that never reach
+    the writer; `in_flight` names the row a cancellation interrupted, which still lands if it
+    already held the writer's lock. Nothing may replace the cancellation, so a failing logger
+    is ignored."""
+    with contextlib.suppress(Exception):
+        _log().warning(
+            "ws audit rows abandoned",
+            rows=len(rows) - tried,
+            cause=cause,
+            in_flight=None if in_flight is None else in_flight.fields.get("object_id"),
+        )
+
+
 class ConnectionRegistry:
     """Live authenticated sockets; implements `PermissionChangeNotifier`.
 
@@ -741,6 +761,7 @@ class ConnectionRegistry:
         self._closers: dict[int, Closer] = {}
         self.send_timeout_s = FANOUT_SEND_TIMEOUT_S
         self.audit_timeout_s = FANOUT_AUDIT_TIMEOUT_S
+        self.audit_max_failures = FANOUT_AUDIT_MAX_FAILURES
         #: SR-189: one version source for every snapshot; `_changed_at`: the latest change's.
         self._versions = itertools.count(1)
         self._changed_at = 0
@@ -812,22 +833,29 @@ class ConnectionRegistry:
     async def roles_changed(self, user_id: uuid.UUID) -> None:
         """Role / permission / account-grant change: push `permission_change` and the `revoked`
         frames to every live socket of `user_id`, then write their audit rows."""
-        await self._write_rows(await self._fan_out(user_id))
+        rows: list[_AuditRow] = []
+        try:
+            await self._fan_out(user_id, rows)
+        finally:  # also when the fan-out raised or was cancelled (see `_write_rows`)
+            await self._write_rows(rows)
 
-    async def _fan_out(self, user_id: uuid.UUID) -> list[_AuditRow]:
-        """Swap `user_id`'s new snapshot into every live socket, then send each its frames.
-        Returns the audit rows for the caller to write after that, so socket k's revocation
-        never waits for the audit writes of sockets 1..k-1 (#2824)."""
+    async def _fan_out(self, user_id: uuid.UUID, rows: list[_AuditRow]) -> None:
+        """Swap `user_id`'s new snapshot into every live socket, then send each its frames. Each
+        socket's audit rows join `rows` at its swap, before any I/O, and the caller writes them
+        after the sends, so socket k's revocation never waits for the audit writes of sockets
+        1..k-1 and a later step that raises or is cancelled cannot drop them (#2824)."""
         # SR-189: before the early return, so a mid-handshake socket's `recheck` sees it.
         self._changed_at = version = next(self._versions)
         entries = list(self._conns.get(user_id, ()))
         if not entries:
-            return []
+            return
         snap = VersionedSnapshot(await self._resolve(user_id), version)
         # Every socket's subscriptions are dropped/narrowed synchronously here, before any I/O.
-        swapped = [self._swap(e[0], snap, self._clock_ms(), "grant_change") for e in entries]
-        rows: list[_AuditRow] = []
-        for (authz, send, close), (frames, refused) in zip(entries, swapped, strict=True):
+        swapped = [self._swap_or_evict(e[0], snap, rows) for e in entries]
+        for (authz, send, close), frames in zip(entries, swapped, strict=True):
+            if frames is None:  # its swap raised and it is already out of the registry
+                await self._close_evicted(close)
+                continue
             try:
                 async with asyncio.timeout(self.send_timeout_s):
                     for frame in frames:
@@ -835,40 +863,80 @@ class ConnectionRegistry:
             except (TimeoutError, OSError, RuntimeError):
                 # C-2.18: a stalled/broken client must not block the change or other sockets.
                 self.unregister(authz)
-                if close is not None:
-                    with contextlib.suppress(Exception):
-                        async with asyncio.timeout(self.send_timeout_s):
-                            await close()
-            rows += refused + _revocation_rows(authz, frames)
-        return rows
+                await self._close_evicted(close)
+
+    def _swap_or_evict(
+        self, authz: ConnectionAuthz, snap: VersionedSnapshot, rows: list[_AuditRow]
+    ) -> list[dict[str, Any]] | None:
+        """`_swap` for one socket of a fan-out, appending its audit rows to `rows`.
+
+        A swap that raises (`_drop` -> `BarsError` for a bar lease that another connection's
+        failed build dropped, the case `release_all` guards) leaves the socket half
+        re-evaluated, possibly still holding a withdrawn subscription. So it is evicted the way
+        a stalled socket is: unregistered and released here, then closed with the sends, and
+        its client re-authenticates against the new snapshot. The other sockets still get
+        their frames and rows. Returns the frames, or `None` for an evicted socket."""
+        try:
+            frames, refused = self._swap(authz, snap, self._clock_ms(), "grant_change")
+        except Exception:
+            with contextlib.suppress(Exception):  # a failing logger must not skip the eviction
+                _log().error(
+                    "ws permission swap failed; socket evicted",
+                    connection_id=authz.connection_id,
+                    exc_info=True,
+                )
+            self.unregister(authz)
+            return None
+        rows.extend(refused + _revocation_rows(authz, frames))
+        return frames
+
+    async def _close_evicted(self, close: Any) -> None:
+        """Close a socket already dropped from the registry; bounded, and a failure is ignored."""
+        if close is not None:
+            with contextlib.suppress(Exception):
+                async with asyncio.timeout(self.send_timeout_s):
+                    await close()
 
     async def _write_rows(self, rows: list[_AuditRow]) -> None:
         """Write `rows` in order, one at a time, each under `audit_timeout_s` (#2824).
 
         Best effort, like every WS audit write (threat model WS-R04): a row that raises or times
-        out is logged and the next one is still written, and nothing is raised into the fan-out,
-        whose frames were all sent first. One at a time on purpose: `AuditWriter` appends each
-        row under one lock with an fsync, so concurrent rows would only queue on that lock, where
-        a row's own bound runs out while it waits and a cancelled wait appends nothing. The rows a
-        cancellation abandons are logged, and the cancellation is re-raised."""
-        for done, row in enumerate(rows):
+        out is logged and the next one is still written; only a cancellation leaves here. One at
+        a time on purpose: `AuditWriter` appends each row under one lock with an fsync, so
+        concurrent rows would only queue on that lock, where a row's own bound runs out while it
+        waits and a cancelled wait appends nothing. Bounded as a whole too: once
+        `audit_max_failures` rows in a row have failed, the writer is taken as down and the rest
+        are abandoned, so a stalled WAL costs that many bounds and log lines, not one per row.
+
+        The fan-out calls this in a `finally`: a change that raised or was cancelled still writes
+        the rows of the revocations it already made before that propagates, as the old per-socket
+        writes did for the sockets done before the failure. So a cancellation that lands before
+        the writes is held only for them, never swallowed, and one that lands during them ends
+        them at once. Not a shielded task: it would outlive its caller with no owner to stop or
+        drain it (C-2.18). Abandoned rows are logged with a count."""
+        failed = 0
+        for tried, row in enumerate(rows, 1):
             try:
                 async with asyncio.timeout(self.audit_timeout_s):
                     await row.sink.emit(row.action, **row.fields)
             except asyncio.CancelledError:
-                with contextlib.suppress(Exception):  # nothing may replace the cancellation
-                    _log().warning(
-                        "ws audit rows abandoned", action=row.action, rows=len(rows) - done
-                    )
+                _log_abandoned(rows, tried, "cancelled", in_flight=row)
                 raise
             except Exception:
-                # Not "not written": a row that timed out may still land (the writer shields it).
-                _log().warning(
-                    "ws audit not confirmed",
-                    action=row.action,
-                    object_id=row.fields.get("object_id"),
-                    exc_info=True,
-                )
+                failed += 1
+                with contextlib.suppress(Exception):  # a failing logger must not stop the rows
+                    # "Not confirmed": a timed-out row may still land (the writer shields it).
+                    _log().warning(
+                        "ws audit not confirmed",
+                        action=row.action,
+                        object_id=row.fields.get("object_id"),
+                        exc_info=True,
+                    )
+                if failed >= self.audit_max_failures:
+                    _log_abandoned(rows, tried, "writer_down")
+                    return
+            else:
+                failed = 0
 
     async def grants_changed(self, user_id: uuid.UUID) -> None:
         """Account-grant change: same re-evaluation path as a role change."""
@@ -876,12 +944,14 @@ class ConnectionRegistry:
 
     async def kill_switch_changed(self) -> None:
         """§9.5: kill-switch transitions re-evaluate every connected user. The audit rows wait
-        until every user's sockets have their frames (#2824)."""
+        until every user's sockets have their frames, and are written on any exit (#2824)."""
         self._changed_at = next(self._versions)  # SR-189: also for a socket mid-handshake
         rows: list[_AuditRow] = []
-        for user_id in list(self._conns):
-            rows += await self._fan_out(user_id)
-        await self._write_rows(rows)
+        try:
+            for user_id in list(self._conns):
+                await self._fan_out(user_id, rows)
+        finally:
+            await self._write_rows(rows)
 
     async def user_disabled(self, user_id: uuid.UUID) -> int:
         """§9.5: a disabled user gets `bye user_disabled` + close 4403 on every socket."""

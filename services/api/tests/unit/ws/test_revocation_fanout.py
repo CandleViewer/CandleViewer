@@ -5,7 +5,9 @@ time and await that socket's `ws.subscription.revoked` rows before the next one,
 its withdrawn subscriptions until the rows of sockets 1..k-1 were written: 7 s to the 8th socket of
 8 x 200 at 5 ms per row (QA of E17-S02, #378). Every socket is now swapped and sent its frames
 first; the rows follow one at a time, each bounded, and a failed row never stops the others.
-Pure asyncio with event-gated sinks. The hung-row test waits out a 10 ms per-row bound, and only
+A change that raises or is cancelled part-way still writes the row of every revocation that
+happened, and a swap that raises evicts only its own socket (pre-PR review).
+Pure asyncio with event-gated sinks. The hung-row tests wait out a 10 ms per-row bound, and only
 the `perf` budget test injects real latency.
 """
 
@@ -22,7 +24,8 @@ from structlog.testing import capture_logs
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
-from candleviewer.ws import limits
+from candleviewer.bars.errors import BarsError
+from candleviewer.ws import limits, permissions
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
@@ -101,6 +104,48 @@ class _Sink:
         self.rows.append({"action": action, **kw})
 
 
+class _DroppedSeries:
+    """`BarLeases` whose first release raises `BarsError`, as `BarBuilderSet.release` does for a
+    lease that another connection's failed build dropped with the shared series (#2735)."""
+
+    def __init__(self) -> None:
+        self.released: list[str] = []
+
+    async def register(
+        self, spec: Any, symbol: str, consumer: str, user: str | None = None
+    ) -> None:
+        return None
+
+    def release(self, spec_hash: str, symbol: str, consumer: str) -> None:
+        self.released.append(consumer)
+        if len(self.released) == 1:
+            raise BarsError("the series was dropped")
+
+
+def _stuck(entered: asyncio.Event) -> Send:
+    """A socket send that never returns: only a cancellation (or its 2 s bound) ends it."""
+
+    async def send(_frame: dict[str, Any]) -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    return send
+
+
+async def _poisoned(
+    world: _World, close: Callable[[], Awaitable[None]] | None = None
+) -> tuple[ConnectionAuthz, _DroppedSeries]:
+    """A socket of USER whose three subscriptions each take a bar lease (tick bars start at 100)
+    from a `_DroppedSeries`, so its first release, and with it the socket's swap, raises."""
+    world.registry.services.bars = bars = _DroppedSeries()
+    authz = world.connect(
+        USER, [f"footprint.BTCUSDT.tick.{n}" for n in (100, 101, 102)], None, close
+    )
+    for sub in list(authz.by_id.values()):
+        assert await authz.subscribe_upstream(sub) is None
+    return authz, bars
+
+
 class _World:
     """A registry over one `_Sink`: the principal each user resolves to and every socket's frames.
     `hold`, when set, parks the next read after it captured its principal."""
@@ -124,7 +169,11 @@ class _World:
         return snapshot
 
     def connect(
-        self, uid: uuid.UUID, topics: list[Any], send: Send | None = None
+        self,
+        uid: uuid.UUID,
+        topics: list[Any],
+        send: Send | None = None,
+        close: Callable[[], Awaitable[None]] | None = None,
     ) -> ConnectionAuthz:
         authz = ConnectionAuthz(self.principals[uid], self.registry.services)
         for topic in topics:
@@ -137,7 +186,7 @@ class _World:
                 self.first_revoked[index] = asyncio.get_running_loop().time()
             frames.append(frame)
 
-        self.registry.register(authz, send or record)
+        self.registry.register(authz, send or record, close)
         return authz
 
     def revoked(self) -> list[list[dict[str, Any]]]:
@@ -283,12 +332,146 @@ async def test_cancelling_the_change_mid_audit_is_never_swallowed_and_logs_the_l
             await change
     assert [len(frames) for frames in world.revoked()] == [3, 3]
     assert [len(s.by_id) for s in sockets] == [0, 0] and len(world.sink.rows) == 2
+    # Rows 3-5 never reached the writer; row 2 was in flight (it lands if it held the WAL lock).
     (lost,) = [e for e in logs if e["event"] == "ws audit rows abandoned"]
-    assert (lost["log_level"], lost["rows"]) == ("warning", 4)
+    assert (lost["log_level"], lost["rows"], lost["cause"], lost["in_flight"]) == (
+        "warning",
+        3,
+        "cancelled",
+        "footprint.BTCUSDT.tick.3",
+    )
 
 
-def test_each_fan_out_audit_row_is_bounded_by_2s_by_default() -> None:
-    assert _World(_Sink()).registry.audit_timeout_s == limits.FANOUT_AUDIT_TIMEOUT_S == 2.0
+async def test_after_3_failed_audit_rows_in_a_row_the_rest_are_abandoned_and_counted() -> None:
+    # Row 0 fails, row 1 lands (ending that run), rows 2-4 fail in a row: 5-7 are never tried.
+    world = _World(_Sink(fail=frozenset({0, 3}), hang=frozenset({2, 4})))
+    world.registry.audit_timeout_s = 0.01
+    world.principals[USER] = _principal(USER, READ)
+    world.connect(USER, _topics(8))
+    world.principals[USER] = _principal(USER, NONE)
+    with capture_logs() as logs:
+        async with asyncio.timeout(5):  # fail fast, not hang, if the bound regresses
+            await world.registry.roles_changed(USER)
+    assert world.sink.calls == 5 and [r["object_id"] for r in world.sink.rows] == _topics(8)[1:2]
+    lost = [e["object_id"] for e in logs if e["event"] == "ws audit not confirmed"]
+    assert lost == [_topics(8)[n] for n in (0, 2, 3, 4)]
+    (gone,) = [e for e in logs if e["event"] == "ws audit rows abandoned"]
+    assert (gone["rows"], gone["cause"], gone["in_flight"]) == (3, "writer_down", None)
+
+
+def test_the_fan_out_audit_bounds_default_to_2s_a_row_and_3_failed_rows_in_a_row() -> None:
+    registry = _World(_Sink()).registry
+    assert registry.audit_timeout_s == limits.FANOUT_AUDIT_TIMEOUT_S == 2.0
+    assert registry.audit_max_failures == limits.FANOUT_AUDIT_MAX_FAILURES == 3
+
+
+# -- abnormal exits: a revocation that happened keeps its row --------------------------------------
+
+
+async def test_a_raising_swap_evicts_its_socket_and_the_others_still_get_frames_and_rows() -> None:
+    world = _World(_Sink())
+    world.principals[USER] = _principal(USER, READ)
+    closes = 0
+
+    async def close() -> None:
+        nonlocal closes
+        closes += 1
+
+    sockets = [world.connect(USER, _topics(3))]
+    poisoned, bars = await _poisoned(world, close)
+    sockets += [poisoned, world.connect(USER, _topics(3))]
+    world.principals[USER] = _principal(USER, NONE)
+    with capture_logs() as logs:
+        await world.registry.roles_changed(USER)  # contained: nothing is raised
+    assert [len(frames) for frames in world.revoked()] == [3, 0, 3]
+    assert [s.by_id for s in sockets] == [{}, {}, {}]  # nothing withdrawn stays live anywhere
+    assert [e[0] for e in world.registry._conns[USER]] == [sockets[0], sockets[2]]
+    assert (closes, len(bars.released)) == (1, 3)  # evicted: closed, and every lease released
+    assert world.sink.rows == _revoked_rows(world)  # the other two sockets' rows, in order
+    (failed,) = [e for e in logs if e["event"] == "ws permission swap failed; socket evicted"]
+    assert (failed["log_level"], failed["connection_id"]) == ("error", poisoned.connection_id)
+
+
+async def test_a_raising_logger_stops_neither_an_eviction_nor_the_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _BrokenLogger:
+        def warning(self, *_args: Any, **_kw: Any) -> None:
+            raise ValueError("log sink down")
+
+        error = warning
+
+    world = _World(_Sink(fail=frozenset({0, 2, 3, 4})))
+    world.principals[USER] = _principal(USER, READ)
+    world.connect(USER, _topics(6))
+    poisoned, _bars = await _poisoned(world)
+    world.principals[USER] = _principal(USER, NONE)
+    monkeypatch.setattr(permissions, "_log", _BrokenLogger)
+    await world.registry.roles_changed(USER)  # no failing log line is raised
+    assert (poisoned.by_id, len(world.registry._conns[USER])) == ({}, 1)  # still evicted
+    # Row 1 is still written after row 0 failed, and rows 2-4 failing in a row still end the writes.
+    assert (world.sink.calls, [r["object_id"] for r in world.sink.rows]) == (5, _topics(6)[1:2])
+
+
+async def test_a_send_that_raises_still_writes_every_swapped_sockets_rows_then_propagates() -> None:
+    world = _World(_Sink())
+    world.principals[USER] = _principal(USER, READ)
+
+    async def broken(_frame: dict[str, Any]) -> None:
+        raise ValueError("not a socket failure")  # unlike OSError: ends the change, as on main
+
+    sockets = [world.connect(USER, _topics(3), broken), world.connect(USER, _topics(3))]
+    world.principals[USER] = _principal(USER, NONE)
+    with pytest.raises(ValueError, match="not a socket failure"):
+        await world.registry.roles_changed(USER)
+    assert [len(s.by_id) for s in sockets] == [0, 0]  # both were swapped before any send...
+    assert [r["object_id"] for r in world.sink.rows] == _topics(3) * 2  # ...and keep their rows
+
+
+async def test_cancelling_the_change_mid_send_still_writes_every_swapped_sockets_rows() -> None:
+    world = _World(_Sink())
+    world.principals[USER] = _principal(USER, READ)
+    entered = asyncio.Event()
+    world.connect(USER, _topics(3), _stuck(entered))
+    world.connect(USER, _topics(3))
+    world.principals[USER] = _principal(USER, NONE)
+    change = asyncio.create_task(world.registry.roles_changed(USER))
+    async with asyncio.timeout(5):
+        await entered.wait()  # the first socket's send is stuck and no row is written yet
+    with capture_logs() as logs:
+        change.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await change
+    assert [r["object_id"] for r in world.sink.rows] == _topics(3) * 2  # written, then re-raised
+    assert [e for e in logs if e["event"] == "ws audit rows abandoned"] == []
+
+
+async def test_kill_switch_still_writes_the_earlier_users_rows_when_a_later_read_fails() -> None:
+    world = _World(_Sink())
+    for uid in (USER, PEER):
+        world.principals[uid] = _principal(uid, READ)
+        world.connect(uid, _topics(3))
+    world.principals[USER] = _principal(USER, NONE)
+    del world.principals[PEER]  # PEER's read raises (`StorePrincipalLoader` itself never does)
+    with pytest.raises(KeyError):
+        await world.registry.kill_switch_changed()
+    assert [r["actor_user_id"] for r in world.sink.rows] == [USER] * 3
+
+
+async def test_kill_switch_cancelled_mid_send_still_writes_every_swapped_users_rows() -> None:
+    world = _World(_Sink())
+    entered = asyncio.Event()
+    for uid, send in ((USER, None), (PEER, _stuck(entered))):
+        world.principals[uid] = _principal(uid, READ)
+        world.connect(uid, _topics(3), send)
+        world.principals[uid] = _principal(uid, NONE)
+    change = asyncio.create_task(world.registry.kill_switch_changed())
+    async with asyncio.timeout(5):
+        await entered.wait()  # USER is done; PEER is swapped and its send is stuck
+    change.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await change
+    assert [r["actor_user_id"] for r in world.sink.rows] == [USER] * 3 + [PEER] * 3
 
 
 # -- SR-189: a newer snapshot is never undone ------------------------------------------------------
