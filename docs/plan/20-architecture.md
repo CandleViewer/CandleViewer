@@ -841,8 +841,8 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_ORDER_RATE_PER_UID`          | int    | `8`                       | runtime | below Bybit's 10/s for headroom                                                                                     |
 | `CV_NATIVE_SL_DEADLINE_MS`       | int    | `3000`                    | runtime | NakedPositionAlert threshold                                                                                        |
 | `CV_KILLSWITCH_ON_DISCONNECT_S`  | int    | `30`                      | runtime | watchdog flatten policy (opt-in per account)                                                                        |
-| `CV_ACCOUNT_HEARTBEAT_S`         | float  | `10`                      | runtime | private-WS heartbeat age past which an account is not healthy; max 10 (E27-T04)                                     |
-| `CV_ACCOUNT_DOWN_S`              | float  | `30`                      | runtime | no WS or REST success for this long = account down, order entry refused; max 30                                     |
+| `CV_ACCOUNT_HEARTBEAT_S`         | float  | `10`                      | runtime | max heartbeat age for `healthy` (auth reply, pong or topic message); ping every half; max 10, US-ACCT-010           |
+| `CV_ACCOUNT_DOWN_S`              | float  | `30`                      | runtime | no WS or REST success this long = `down`: order entry refused, dead-man's switch called; max 30, US-ACCT-010        |
 | `CV_KEY_ROTATION_POLICY_DAYS`    | int    | `90`                      | runtime | key age from registration past which `rotation_state` is `overdue`; 2 to 365, never disables a key (E27-T04)        |
 | `CV_KEY_ROTATION_WARN_DAYS`      | int    | `14`                      | runtime | `warn` window before `rotation_due_at`; at least 1 day and shorter than the policy                                  |
 | `CV_FEATURE_FLAGS`               | json   | `{}`                      | runtime | admin-editable                                                                                                      |

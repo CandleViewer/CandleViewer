@@ -181,7 +181,15 @@ class AccountHealthMonitor:
             )
 
     def ws_heartbeat(self, account_id: UUID) -> HealthTransition | None:
-        """An authenticated private-WS heartbeat: auth success, or a pong on an authed socket."""
+        """Evidence that the account's private WS is connected and authenticated: its successful
+        auth reply, then any pong or topic message received on that socket. Nothing sent counts,
+        nor anything from a public or unauthenticated socket.
+
+        Cadence contract for the private-WS client (E08): evidence at least every `heartbeat_s`
+        (`CV_ACCOUNT_HEARTBEAT_S`, capped at US-ACCT-010's 10 s), so it pings every
+        `heartbeat_s / 2` (5 s at the default). Bybit's suggested 20 s ping would degrade every
+        idle account between pongs, flipping `rest_only` and logging two transitions each time.
+        """
         if (acc := self._accounts.get(account_id)) is None:
             return None
         lapse = self._evaluate(account_id, acc)

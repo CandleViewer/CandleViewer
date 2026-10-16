@@ -8,10 +8,12 @@ import asyncio
 import sys
 from collections.abc import Callable
 from datetime import timedelta
+from typing import Any
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from pydantic import ValidationError
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.health import (
@@ -116,6 +118,35 @@ def test_thresholds_come_from_settings_and_must_be_ordered() -> None:
     assert HealthThresholds.from_settings(settings_) == HealthThresholds(5, 20)
     with pytest.raises(ValueError, match="heartbeat_s < down_s"):
         HealthThresholds(10, 10)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"account_heartbeat_s": 10.001},
+        {"account_down_s": 30.001},
+        {"account_heartbeat_s": 0},
+        {"account_down_s": 0},
+    ],
+)
+def test_health_windows_cannot_exceed_the_us_acct_010_nfr(bad: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        Settings(**bad)
+
+
+def test_the_us_acct_010_limits_themselves_are_accepted() -> None:
+    settings_ = Settings(account_heartbeat_s=10, account_down_s=30)
+    assert HealthThresholds.from_settings(settings_) == HealthThresholds(10, 30)
+
+
+@pytest.mark.parametrize("cadence", [5.0, 9.9, 10.0])
+def test_a_heartbeat_at_least_every_window_keeps_an_idle_account_healthy(cadence: float) -> None:
+    monitor, clock, _ = _monitor()
+    monitor.ws_heartbeat(ACC)
+    for _ in range(12):  # two minutes of pongs on an account with no other traffic
+        clock.advance(cadence)
+        assert monitor.tick() == [] and monitor.ws_heartbeat(ACC) is None
+    assert monitor.current(ACC) is HealthState.HEALTHY
 
 
 def test_system_clock_is_tz_aware_and_monotonic_off_linux_too(
