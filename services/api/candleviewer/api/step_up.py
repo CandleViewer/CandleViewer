@@ -2,12 +2,13 @@
 (E09-S04, US-ONB-005/010).
 
 Thin HTTP adapter over `auth.step_up.StepUpService`. `auth` may not import
-`audit`, so every audit record (C-2.9) is emitted here: `auth.step_up_granted`,
-`auth.step_up_failed`, `auth.step_up_required`, `auth.session_readonly_downgrade`
-and `auth.mfa_reset_by_owner`. Elevation state is server-side, keyed by the
+`audit`: the B16 chart writes `auth.step_up_granted`, `auth.step_up_failed`,
+`auth.step_up_required` and `auth.session_readonly_downgrade`; this module
+writes `auth.mfa_reset_by_owner`. Elevation state is server-side, keyed by the
 session id resolved from the bearer token - nothing the client sends can
 forge it. `require_elevation_for` is the `is_dangerous` gate E09-T03 routes
-call; `make_read_only_guard` is the middleware refusing every write during the
+call: every refusal is a challenge for the one request it refused (#2304).
+`make_read_only_guard` is the middleware refusing every write during the
 5-minute downgrade.
 """
 
@@ -31,7 +32,10 @@ from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import Severity
 from candleviewer.auth.errors import (
     AuthError,
+    SelfResetRefused,
     SessionReadOnly,
+    SessionRevoked,
+    StepUpChallengeRefused,
     StepUpCodeInvalid,
     StepUpRequired,
     UnknownActionClass,
@@ -39,9 +43,21 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
-from candleviewer.auth.step_up import ACTION_CLASSES, PositionStateProvider, StepUpService
+from candleviewer.auth.step_up import (
+    ACTION_CLASSES,
+    PositionStateProvider,
+    StepUpChallenge,
+    StepUpService,
+)
 
 _PROBLEM = "application/problem+json"
+#: `400 validation_failed` details for a step-up that cannot answer its challenge (#2304).
+_CHALLENGE_REFUSED = {
+    "challenge_expired": "The step-up challenge cannot be answered.",
+    "challenge_mismatch": "action_class does not match the step-up challenge.",
+    "required": "There is no step-up challenge to answer; send action_class.",
+    "format": "challenge_id must be a UUID.",
+}
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 #: Writes that must keep working in the downgrade (ending the session).
 _WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up"})
@@ -112,13 +128,31 @@ def readonly_problem(exc: SessionReadOnly) -> JSONResponse:
     )
 
 
-def required_problem(exc: StepUpRequired) -> JSONResponse:
+def _unauthenticated() -> JSONResponse:
+    return _problem(401, "unauthorized", "Unauthorized", "authentication required")
+
+
+def _challenge_refused(field: str, rule: str) -> JSONResponse:
+    detail = _CHALLENGE_REFUSED[rule]
+    return _problem(
+        400,
+        "validation_failed",
+        "Request body or parameters failed schema validation",
+        detail,
+        errors=[{"field": field, "rule": rule, "message": detail}],
+    )
+
+
+def required_problem(challenge: StepUpChallenge) -> JSONResponse:
+    """`403 step_up_required`: the challenge issued for the one request it refused (#2304)."""
     return _problem(
         403,
         "step_up_required",
-        "Step-up authentication required",
-        "Re-enter your authenticator code (POST /auth/step-up) to continue.",
-        action_class=exc.action_class,
+        "A dangerous action needs a live step-up elevation for its action class",
+        "Re-enter your password and authenticator code (POST /auth/step-up) to continue.",
+        action_class=challenge.action_class,
+        challenge_id=str(challenge.challenge_id),
+        challenge_expires_at=challenge.expires_at.isoformat(),
     )
 
 
@@ -126,15 +160,21 @@ async def require_elevation_for(
     auth: _AuthLike, session_id: str, action_class: str
 ) -> JSONResponse | None:
     """The `is_dangerous` decision-point hook (E09-T03 routes call this):
-    None when elevated, else the 403 problem to return."""
+    None when elevated, else the problem to return. A refusal issues the
+    challenge for this request. An unregistered class is a server defect,
+    never a challenge (500); a revoked session is a 401."""
+    step_up = auth.step_up
     try:
-        await auth.step_up.require_elevation(session_id, action_class)
+        try:
+            await step_up.require_elevation(session_id, action_class)
+        except StepUpRequired:
+            return required_problem(await step_up.record_pending(session_id, action_class))
     except SessionReadOnly as exc:
         return readonly_problem(exc)
-    except StepUpRequired as exc:
-        # Remember the challenged class server-side so the modal may post `{code}` only.
-        await auth.step_up.record_pending(session_id, action_class)
-        return required_problem(exc)
+    except SessionRevoked:
+        return _unauthenticated()
+    except UnknownActionClass:
+        return _problem(500, "internal_error", "Internal error", "unregistered step-up class")
     return None
 
 
@@ -299,21 +339,26 @@ def make_step_up_router(
             action_class is not None and not isinstance(action_class, str)
         ):
             return _problem(400, "validation_failed", "Bad request", "code is required")
-        # The server decides the class: the one its last 403 challenged. A
-        # client-supplied value is only a cross-check (mismatch -> 400).
-        pending = await auth.step_up.pending_action_class(str(record.id))
-        if action_class is None:
-            action_class = pending
-        elif pending is not None and action_class != pending:
-            return _problem(
-                400, "validation_failed", "Bad request", "action_class does not match challenge"
-            )
-        if action_class is None:
-            return _problem(400, "validation_failed", "Bad request", "no pending step-up challenge")
+        raw_challenge = body.get("challenge_id") if isinstance(body, dict) else None
+        try:
+            challenge_id = None if raw_challenge is None else uuid.UUID(str(raw_challenge))
+        except ValueError:
+            return _challenge_refused("challenge_id", "format")
+        # The server decides the class: the one its live challenge names. A
+        # client-supplied value is only a cross-check (mismatch -> 400, #2304).
         try:
             grant = await auth.step_up.step_up(
-                str(record.user_id), str(record.id), action_class, code, password
+                str(record.user_id),
+                str(record.id),
+                action_class,
+                code,
+                password,
+                challenge_id=challenge_id,
             )
+        except StepUpChallengeRefused as exc:  # decided before any factor is checked
+            return _challenge_refused(exc.field, exc.rule)
+        except SessionRevoked:
+            return _unauthenticated()
         except UnknownActionClass:
             return _problem(
                 400,
@@ -415,6 +460,8 @@ def make_step_up_router(
         missing = await _unknown_user(user_id)
         if missing is not None:
             return missing
+        if user_id == record.user_id:  # no step-up can cure it: a refusal, never a challenge
+            return _problem(403, "forbidden", "Forbidden", "owners cannot reset their own TOTP")
         gate = await require_elevation_for(auth, str(record.id), "users")
         if gate is not None:  # audited by B16 (`ACTION_REQUEST`)
             return gate
@@ -463,8 +510,10 @@ def make_step_up_router(
                 target_user_id=str(user_id),
                 audit=write_ahead,
             )
-        except StepUpRequired as exc:  # self-reset refused
-            return required_problem(exc)
+        except SelfResetRefused:
+            return _problem(403, "forbidden", "Forbidden", "owners cannot reset their own TOTP")
+        except StepUpRequired:  # the grace window lapsed after the gate: a new challenge
+            return required_problem(await auth.step_up.record_pending(str(record.id), "users"))
         except _AuditRefused:
             return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
         # Reveals nothing: no secret, recovery code or position data.

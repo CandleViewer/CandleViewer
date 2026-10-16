@@ -520,8 +520,9 @@ def test_step_up_description_states_the_holding_rule(spec: dict[str, Any], rule:
 @pytest.mark.xfail(
     strict=True,
     raises=AssertionError,
-    reason="#2304 runtime slice: `required_problem()` answers with `action_class` only; remove "
-    "this marker when the 403 carries the challenge fields",
+    reason="#2304 route slice: the path-gated middleware challenges before the route validates "
+    "its request, so the 403 restates nothing (`action_summary`, `target`); remove this marker "
+    "when the route slice moves the gate behind validation and composes them",
 )
 async def test_step_up_required_route_body_carries_the_challenge(spec: dict[str, Any]) -> None:
     """Provider side (C-6.2): a dangerous route's real `403 step_up_required` body.
