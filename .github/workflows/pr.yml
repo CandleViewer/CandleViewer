@@ -41,6 +41,7 @@ jobs:
       e2e: ${{ steps.filter.outputs.e2e }}
       migrations: ${{ steps.filter.outputs.migrations }}
       rules: ${{ steps.filter.outputs.rules }}
+      semgrep: ${{ steps.filter.outputs.semgrep }}
     permissions:
       contents: read
       pull-requests: read
@@ -122,6 +123,14 @@ jobs:
               - 'tools/ci/verify_migration_lockfile.py'
               - 'infra/scripts/pg_bootstrap.sql'
               - '.github/workflows/_job-migrations.yml'
+            semgrep:
+              # What the Semgrep rule-test checker and the product scan read: a PR that edits
+              # only a rule, a fixture or the ignore file must still run `security` (#2915).
+              - '.semgrep/**'
+              - '.semgrep-fixtures/**'
+              - '.semgrepignore'
+              - 'security/semgrep/**'
+              - 'tools/ci/check_semgrep_rule_tests.py'
 
   pin-check:
     name: pin-check (SR-132)
@@ -393,8 +402,10 @@ jobs:
   security:
     name: security
     needs: changed-paths
-    # Security scanning applies to any code/infra change, not just one lane.
-    if: ${{ needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true' || needs.changed-paths.outputs.infra == 'true' }}
+    # Security scanning applies to any code/infra change, not just one lane, and to a change that
+    # touches only the Semgrep rules, fixtures or ignore file the scan reads (#2915). The
+    # `ci-required` resolver below restates this condition: change both together.
+    if: ${{ needs.changed-paths.outputs.js == 'true' || needs.changed-paths.outputs.py == 'true' || needs.changed-paths.outputs.infra == 'true' || needs.changed-paths.outputs.semgrep == 'true' }}
     with:
       image_changed: ${{ needs.changed-paths.outputs.image == 'true' }}
     # A called reusable workflow may only use permissions its caller job grants.
@@ -489,6 +500,7 @@ jobs:
           FILTER_E2E: ${{ needs.changed-paths.outputs.e2e }}
           FILTER_ENGINE: ${{ needs.changed-paths.outputs.engine }}
           FILTER_RULES: ${{ needs.changed-paths.outputs.rules }}
+          FILTER_SEMGREP: ${{ needs.changed-paths.outputs.semgrep }}
           RESULT_CHANGED_PATHS: ${{ needs.changed-paths.result }}
           RESULT_PIN_CHECK: ${{ needs.pin-check.result }}
           RESULT_SPIKE_CONTAINMENT: ${{ needs.spike-containment.result }}
@@ -537,7 +549,7 @@ jobs:
               integration: { applicable: isTrue(process.env.FILTER_PY), result: process.env.RESULT_INTEGRATION },
               migrations: { applicable: isTrue(process.env.FILTER_MIGRATIONS), result: process.env.RESULT_MIGRATIONS },
               security: {
-                applicable: isTrue(process.env.FILTER_JS) || isTrue(process.env.FILTER_PY) || isTrue(process.env.FILTER_INFRA),
+                applicable: isTrue(process.env.FILTER_JS) || isTrue(process.env.FILTER_PY) || isTrue(process.env.FILTER_INFRA) || isTrue(process.env.FILTER_SEMGREP),
                 result: process.env.RESULT_SECURITY,
               },
               e2e: { applicable: isTrue(process.env.FILTER_E2E), result: process.env.RESULT_E2E },
