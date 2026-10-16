@@ -317,6 +317,8 @@ E28-T01 merges; abuse cases AC-01..AC-33 go to E28-X03 and E28-Q01. Status Draft
 | D5  | Elevation of privilege | Owner-only actions reachable through a Manager's "account settings" screen via shared handlers | M   | H   | **High**     | SR-026 distinct endpoints for self-service vs administrative mutation; no `user_id` parameter on self-service routes | Low      |
 | D6  | Denial of service      | Owner deletes the last owner account                                                           | L   | M   | Low          | SR-055 invariant: at least one enabled Owner must always exist                                                       | Low      |
 
+> D1, D4, D5 and D6 are extended for the user lifecycle (disable, grants, roles and sessions, deferred purge) in `docs/security/threat-models/e42-user-lifecycle.md` (#2729), the O1 gate on #965 before E42-T04 slice S6.
+
 ### 5.8 Area 8 — Recorder data & storage (A-10, A-12, A-13)
 
 | T   | STRIDE                 | Threat                                                                    | L   | I   | Risk         | Mitigations                                                                                                                                                          | Residual |
