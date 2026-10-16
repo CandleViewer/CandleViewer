@@ -73,6 +73,7 @@ from candleviewer.api.deny_by_default import (
     make_deny_undeclared_dependency,
 )
 from candleviewer.api.drawings import make_drawings_router
+from candleviewer.api.drawings_models import TOOLS
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
 from candleviewer.api.invites import make_invites_router
@@ -264,6 +265,7 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUs
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserRepository
 from candleviewer.storage.repositories.workspaces_sqlalchemy import SqlAlchemyWorkspaceRepository
 from candleviewer.storage.retention.alert_tasks import AlertDeliveriesPurgeTask, AlertGaugeTask
+from candleviewer.storage.retention.drawings_tasks import DrawingsMetrics, DrawingsPurgeTask
 from candleviewer.storage.retention.kline_boundary import (
     KlineBoundaryRefreshTask,
     KlineHotBoundary,
@@ -1280,6 +1282,36 @@ def create_app(
         metrics_facade.gauge("cv_alert_deliveries_pending", "Queued alert deliveries."),
         enabled=_retention.enabled,
     )
+    # E14-T01: drawings metrics (batch/conflict recorded by the router) + 90-day soft-delete purge.
+    app.state.drawings_metrics = DrawingsMetrics(
+        batch_ops=metrics_facade.histogram(
+            "cv_drawings_batch_ops",
+            "Operations per POST /drawings/batch request.",
+            buckets=(1, 5, 10, 25, 50, 100, 200),
+        ),
+        conflicts=metrics_facade.counter(
+            "cv_drawings_conflicts_total",
+            "Drawing write conflicts by rule.",
+            ("rule",),
+            max_series=4,
+        ),
+        purged=metrics_facade.counter(
+            "cv_drawings_purged_total", "Soft-deleted drawings hard-purged after 90 days."
+        ),
+        rows=metrics_facade.gauge(
+            "cv_drawings_rows", "Live drawings by tool.", ("tool",), max_series=len(TOOLS)
+        ),
+    )
+    # `drawings` has no forbid-delete trigger, so the app DSN may purge.
+    app.state.drawings_purge_task = DrawingsPurgeTask(
+        SqlAlchemyDrawingRepository(
+            SqlAlchemyRelationalRepository(resolved.pg_dsn.get_secret_value(), "drawings-retention")
+        ),
+        _retention,
+        app.state.drawings_metrics.purged,
+        app.state.drawings_metrics.rows,
+        TOOLS,
+    )
     # E09-S06: server-evaluated first-run checklist. Steps whose owning epic
     # has not shipped (E27 api_key/demo, E39 profile limits) have no probe and
     # render `pending` ("coming soon") via the flag table, never a client stub.
@@ -1571,7 +1603,10 @@ def create_app(
     )
     app.include_router(
         make_drawings_router(
-            lambda: app.state.drawings_repository, audit_resolver, _LazyAuditEmitter(ctx.audit)
+            lambda: app.state.drawings_repository,
+            audit_resolver,
+            _LazyAuditEmitter(ctx.audit),
+            metrics=app.state.drawings_metrics,
         )
     )
     # E15-T01: owner-scoped /workspaces; callers from the session (`audit_resolver`, as for

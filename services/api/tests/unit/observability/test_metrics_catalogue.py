@@ -41,7 +41,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "b81471510010c38c792fa9de620342dfb497e9f138dd6b72ea11bf56c1c1c401"
+GOLDEN_CATALOGUE_SHA256 = "6e2661a38b24121be7e7ff0b69133140a37a78fd2e57298a90123778a2a052f0"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 
@@ -277,3 +277,11 @@ def test_exported_secrets_metrics_served_on_app_registry_with_env() -> None:
         assert EXPORTED_NAMES <= catalogued  # every exported M2 series is catalogued
     finally:
         collector.close()
+
+
+def test_drawings_rows_catalogue_cap_equals_the_closed_tool_set() -> None:
+    """`cv_drawings_rows{tool}` is capped at the closed TOOLS set; app.py uses len(TOOLS)."""
+    from candleviewer.api.drawings_models import TOOLS
+
+    spec = next(s for s in CATALOGUE if s.name == "cv_drawings_rows")
+    assert spec.max_series == len(TOOLS)

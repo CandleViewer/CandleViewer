@@ -172,6 +172,8 @@ class DrawingRepository(Protocol):
 
     async def purge_deleted(self, older_than_days: int, limit: int) -> int: ...
 
+    async def count_live_by_tool(self) -> dict[str, int]: ...
+
 
 __all__ = [
     "BATCH_RULES", "BatchOp", "BatchOpFailed", "BatchResult", "CreateOp", "DeleteOp",
