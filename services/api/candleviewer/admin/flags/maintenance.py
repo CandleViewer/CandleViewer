@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import ClassVar, Final, Literal, Protocol
+from typing import TYPE_CHECKING, ClassVar, Final, Literal, Protocol
 from uuid import UUID
 
 import structlog
@@ -36,7 +36,7 @@ from candleviewer.admin.flags.metrics import maintenance_mode_gauge
 from candleviewer.admin.flags.resolver import StoredFlag
 from candleviewer.admin.flags.service import KILLSWITCH_TTL_S, FlagService
 from candleviewer.admin.flags.writes import ChangeHook, readable
-from candleviewer.domain.order_entry import OrderEntryRefusal
+from candleviewer.domain.order_entry import GlobalOrderEntryCheck, OrderEntryRefusal
 
 KILL_ORDER_ENTRY: Final = "killswitch.order_entry"
 GATE_FLAGS: Final = (MAINTENANCE_MODE, KILL_ORDER_ENTRY)
@@ -55,8 +55,8 @@ def logger() -> structlog.stdlib.BoundLogger:
 class MaintenanceGate:
     """Synchronous and lock-free: one boolean, read on every order acceptance."""
 
-    #: Marks the global check: `OrderEntryGate` requires it on its first argument, so an account
-    #: check cannot take the maintenance slot.
+    #: Declares the global scope, so this gate is a `GlobalOrderEntryCheck`: the type of
+    #: `OrderEntryGate`'s first slot, which no account check fits.
     scope: ClassVar[Literal["global"]] = "global"
 
     def __init__(self) -> None:
@@ -75,6 +75,10 @@ class MaintenanceGate:
         """The `OrderEntryCheck` adapter: `reason="maintenance"` while engaged, whichever flag
         engaged it (maintenance mode, the order kill switch, or an unknown state)."""
         return MAINTENANCE_REFUSAL if self._engaged else None
+
+
+if TYPE_CHECKING:  # mypy proves the gate fits the kernel's maintenance slot
+    _MAINTENANCE_SLOT: GlobalOrderEntryCheck = MaintenanceGate()
 
 
 class AlgoCanceller(Protocol):

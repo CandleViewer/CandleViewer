@@ -1,29 +1,31 @@
 """The order-entry gate at the API edge (#837 Q5, E42-T03, M23).
 
 The composition root builds one `OrderEntryGate(maintenance_gate, *account_checks)` (the
-`MaintenanceGate` first, then the E27-T04 account checks) and every order-submit route calls
-`order_entry_refusal(gate, account_id)`. `None` lets the order through; otherwise the route returns
-the problem it gives back. Obligations for every submit route (the E29 wiring):
+`MaintenanceGate`, a `GlobalOrderEntryCheck`, first, then the E27-T04 account checks) and every
+submit route calls `order_entry_refusal(gate, account_id)`. `None` lets the order through;
+otherwise the route returns the problem it gives back. Obligations for every submit route (E29):
 
-1. **Order of operations.** Authenticate, then resolve the target account within the caller's
-   scope (`404 not_found` when it is out of scope, so account health never leaks across scopes,
-   C-12.4), then call the gate, then the OMS. Maintenance is global, but `refusal(account_id)`
-   takes the resolved account, so the route resolves scope first. A trade-group submit consults
-   the gate once per leg's account.
+1. **Order of operations.** Authenticate, check RBAC, then resolve the target account within the
+   caller's scope (`404 not_found` when it is out of scope, so account health never leaks across
+   scopes, C-12.4), then call the gate, then the OMS. Maintenance is global, but
+   `refusal(account_id)` takes the resolved account, so the route resolves scope first. A
+   trade-group submit consults the gate once per leg's account.
 2. **Audit.** The refused submit attempt is audited write-ahead at the submit route, like an
    accepted one (C-2.9, #837 Q6); the gate itself writes no audit.
 3. **Second check.** The OMS intake re-checks the same composed gate synchronously, immediately
    before signing, so a state that changes between the route's check and the exchange call still
    refuses the order (C-2.21).
 
-**Scope.** The gate runs at the OMS submission choke point for every submission that opens or
-increases exposure, including emulated-algo children and rule and paper legs. Risk-increasing
-amends (quantity up, stop loosened, trigger re-armed) are gated the same way. Cancels, closes,
-quantity-reducing amends and stop-tightening amends never are (C-2.6), so they keep working while
-order entry is paused. Attaching a missing native SL, tightening a stop, or re-arming a protective
-trigger is never gated; "trigger re-armed" above means an exposure-increasing (entry) trigger. An
-amend with any risk-increasing component is gated. The gate never inspects the order: the caller
-classifies the operation.
+**Scope** (`24-internal-schemas.md` 8.10 is the single source). The gate runs at the OMS
+submission choke point for every submission that opens or increases exposure: REST order and
+trade-group submits, rule and paper legs, and emulated-algo child orders. Risk-increasing amends
+(quantity up, stop loosened, trigger re-armed) are refused the same way. Cancels, `closePosition`,
+`closeAllPositions`, quantity-reducing and stop-tightening amends never are (C-2.6), so they keep
+working while order entry is paused. Attaching a missing native SL, tightening a stop, or
+re-arming a protective trigger is never gated; "trigger re-armed" above means an
+exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated. A
+`placeOrder` with `reduce_only` is a submission and is gated; closing goes through the close
+routes. The gate never inspects the order: the caller classifies the operation.
 
 A refusal is the existing `403 trading_disabled` problem plus a `reason` extension member from
 the closed `REFUSAL_REASONS` set. Each refusal is logged (`order_entry_refused`, with `reason`
@@ -42,6 +44,7 @@ from fastapi.responses import JSONResponse
 from candleviewer.admin.flags import order_entry_refusals_total
 from candleviewer.domain.order_entry import (
     REFUSAL_REASONS,
+    GlobalOrderEntryCheck,
     OrderEntryCheck,
     OrderEntryGate,
     OrderEntryRefusal,
@@ -50,6 +53,7 @@ from candleviewer.domain.order_entry import (
 
 __all__ = [
     "REFUSAL_REASONS",
+    "GlobalOrderEntryCheck",
     "OrderEntryCheck",
     "OrderEntryGate",
     "OrderEntryRefusal",
