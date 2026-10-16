@@ -196,7 +196,8 @@ _REVOKING = frozenset({"revoke", "revoke_all_for_user"})
 #: Every other `SessionRepository` method. None of them revokes a row.
 _NON_REVOKING = frozenset(
     "create_session find_by_id find_by_refresh_hash find_by_access_token_jti find_live_by_user "
-    "touch_last_seen lift_idle_lock save_step_up_state link_rotation walk_rotation_family".split()
+    "touch_last_seen lift_idle_lock update_step_up_state consume_step_up_key link_rotation "
+    "walk_rotation_family".split()
 )
 
 

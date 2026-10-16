@@ -10,10 +10,16 @@ Protocol without either module importing the other's types.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
 
 from candleviewer.auth.models import SessionRecord
+
+#: #2304: a row's step-up columns, `(step_up_elevations, step_up_failures, readonly_until)`.
+StepUpState = tuple[dict[str, datetime], int, datetime | None]
+#: A pure function from the step-up columns the row holds to the columns to store.
+StepUpChange = Callable[[StepUpState], StepUpState]
 
 
 class SessionRepository(Protocol):
@@ -66,16 +72,25 @@ class SessionRepository(Protocol):
         revoked or does not exist."""
         ...
 
-    async def save_step_up_state(
-        self,
-        session_id: str,
-        *,
-        elevations: dict[str, datetime],
-        failures: int,
-        readonly_until: datetime | None,
+    async def update_step_up_state(
+        self, session_id: str, change: StepUpChange
     ) -> SessionRecord | None:
-        """E09-S04: persist the step-up state on the session row iff it is
-        not revoked. Returns the updated row, or `None` if revoked/absent."""
+        """E09-S04: store `change(<the row's step-up columns>)` iff the row is not
+        revoked. #2304: the read and the write are one transaction under the row
+        lock, so a write never carries a stale read: a concurrent
+        `consume_step_up_key` (or any other write of the row) lands wholly
+        before the read or after the write, and a used one-shot grant is never
+        written back. `change` is pure and never awaits. Returns the updated
+        row, or `None` if revoked/absent (`change` is then not called)."""
+        ...
+
+    async def consume_step_up_key(
+        self, session_id: str, *, key: str, now: datetime
+    ) -> SessionRecord | None:
+        """#2304: remove the one-shot grant `key` from `step_up_elevations` iff
+        the row is live and still holds it unexpired at `now`, in one
+        conditional statement: of two concurrent consumers exactly one gets
+        the updated row, every other caller `None`."""
         ...
 
     async def revoke_all_for_user(
