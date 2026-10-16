@@ -92,6 +92,9 @@ def test_render_contract_subset_ignores_crlf_and_writes_the_header_first() -> No
     assert list(document) == ["x-cv-generated", "components", "paths"]
     assert document["x-cv-generated"]["source"] == "docs/plan/22-api-openapi.yaml"
     assert "DO NOT EDIT BY HAND" in document["x-cv-generated"]["notice"]
+    # #2743: no digest of the YAML. It would change with every contract PR, so any two
+    # would conflict on it; freshness is checked by rendering again instead.
+    assert set(document["x-cv-generated"]) == {"notice", "source"}
 
 
 def test_the_subset_declares_exactly_the_contract_operations(

@@ -45,19 +45,7 @@
       "outputs": []
     },
     "generate": {
-      "inputs": [
-        "**/*.{yaml,json}",
-        "!**/*.md",
-        "$TURBO_ROOT$/docs/plan/22-api-openapi.yaml",
-        "$TURBO_ROOT$/docs/plan/23-ws-protocol.md",
-        "$TURBO_ROOT$/docs/plan/ws-schema.json",
-        "$TURBO_ROOT$/packages/config/prettier.config.mjs",
-        "$TURBO_ROOT$/packages/fixtures/golden/bars/bar-model.schema.json",
-        "$TURBO_ROOT$/packages/fixtures/golden/policy/rules.json",
-        "$TURBO_ROOT$/prettier.config.mjs",
-        "$TURBO_ROOT$/tools/gen/export_instrument_policy_corpus.py",
-        "$TURBO_ROOT$/tools/gen/export_instrument_policy_rules.py"
-      ],
+      "inputs": ["**/*.{yaml,json}", "!**/*.md"],
       "outputs": ["src/generated/**"]
     },
     "verify": {
