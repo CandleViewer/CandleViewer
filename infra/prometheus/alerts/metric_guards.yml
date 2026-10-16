@@ -51,6 +51,17 @@ groups:
         annotations:
           summary: "Expected metric auth_recovery_codes_used_total is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      # #2111: the series behind the AuditVerifyNotPassing page. It reads 0 from boot while no
+      # verify runner is wired, so this stays quiet then; it fires only if the series is unscraped.
+      - alert: ExpectedMetricMissingCvAuditVerifyLastOkTimestampSeconds
+        expr: absent(cv_audit_verify_last_ok_timestamp_seconds)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric cv_audit_verify_last_ok_timestamp_seconds is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingPgUp
         expr: absent(pg_up)
         for: 15m

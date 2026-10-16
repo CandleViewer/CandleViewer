@@ -335,8 +335,8 @@ async def test_a_runner_exception_is_logged_as_a_stopped_run_never_a_success() -
 async def test_a_run_end_logs_what_the_runbook_reads_at_its_level(
     trigger: VerifyTrigger, ended: VerifyOutcome, logged: tuple[str, str, int | None, str | None]
 ) -> None:
-    """The operator reads the stop reason and the `ok` outcome from these lines (rows 5 and 7 of
-    the page runbook the next slice adds), so each outcome is logged at its own level."""
+    """07 runbook, AuditVerifyNotPassing rows 5 and 7: the operator reads the stop reason and
+    the `ok` outcome from these lines."""
     level, outcome, first_bad_id, stop_reason = logged
     job, _, _ = _job(FakeVerifyRunner(ended))
     with structlog.testing.capture_logs() as logs:

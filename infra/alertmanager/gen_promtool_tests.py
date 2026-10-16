@@ -109,6 +109,30 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
     ),
 }
 
+_LAST_OK = 'cv_audit_verify_last_ok_timestamp_seconds{env="live"}'
+_STOPPED = 'cv_audit_verify_runs_total{env="live",result="stopped"}'
+_PASSED = 'cv_audit_verify_runs_total{env="live",result="ok"}'
+# A restart at 24 h re-seeds the gauge and resets the counter; start-up runs stop on each side.
+_RESTART = {_LAST_OK: "60+0x1439 86400+0x245", _STOPPED: "0+0x4 1+0x1434 0+0x4 1+0x240"}
+_PASS_AT_26H = {_LAST_OK: "60+0x1439 86400+0x119 93600+0x125", _PASSED: "0+0x1559 1+0x125"}
+# alert -> cases of (eval_time, fires, {series: values}) over several `env="live"` series.
+MULTI: dict[str, tuple[tuple[str, bool, dict[str, str]], ...]] = {
+    # #2111. Pages: last pass at 5 min; runs that keep stopping across the restart. Healthy: no
+    # runner wired (0); a pass at 26 h, after the restart.
+    # The 26 h threshold is 24 h (the daily run) + 5400 s (the longest deadline it covers; a longer
+    # one needs the threshold raised, 24-internal-schemas.md section 15.4) + 30 min. A pass at 1 h
+    # pins it from both sides: 25 h 30 min old (24 h + 5400 s, a healthy cadence at its slowest)
+    # does not page, 26 h 1 min old does.
+    "AuditVerifyNotPassing": (
+        ("28h", True, {_LAST_OK: "300+0x1700"}),
+        ("28h", True, {**_RESTART, _PASSED: "0+0x1685"}),
+        ("28h", False, {_LAST_OK: "0+0x1700"}),
+        ("28h", False, {**_RESTART, **_PASS_AT_26H}),
+        ("1590m", False, {_LAST_OK: "3600+0x1590"}),
+        ("1621m", True, {_LAST_OK: "3600+0x1621"}),
+    ),
+}
+
 
 def labels_of(name: str) -> dict[str, str]:
     for f in sorted((PROM / "alerts").glob("system_*.yml")):
@@ -154,6 +178,19 @@ def build() -> dict[str, Any]:
                 ],
             }
         )
+    for name, cases in MULTI.items():
+        for at, fires, case_series in cases:
+            labels, notes = {**labels_of(name), "env": "live"}, annotations_of(name)
+            expected = [{"exp_labels": labels, "exp_annotations": notes}] if fires else []
+            tests.append(
+                {
+                    "interval": "1m",
+                    "input_series": [{"series": s, "values": v} for s, v in case_series.items()],
+                    "alert_rule_test": [
+                        {"eval_time": at, "alertname": name, "exp_alerts": expected}
+                    ],
+                }
+            )
     return {
         "rule_files": ["../alerts/system_page.yml", "../alerts/system_ticket.yml"],
         "evaluation_interval": "1m",

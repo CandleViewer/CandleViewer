@@ -58,6 +58,24 @@ groups:
         annotations:
           summary: "Audit chain verification failed"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-auditchainverificationfailed"
+      - alert: AuditVerifyNotPassing
+        # #2111: no verify run passed for 26 h (the daily run + 2 h: a deadline up to 5400 s; a
+        # longer one needs 24 h + deadline + 30 min, see 24-internal-schemas.md section 15.4).
+        # The gauge pages within one process, the counter across restarts. With no runner wired
+        # (gauge 0, no counter series) this rule stays silent: #2966 wires the runner and also
+        # adds a page for "no runner wired in live". Its own component, so this page, which can
+        # stand for days, inhibits none of the audit tickets.
+        expr: >-
+          time() - max by (env) (cv_audit_verify_last_ok_timestamp_seconds > 0) > 26 * 3600
+          or (sum by (env) (increase(cv_audit_verify_runs_total{result!="ok"}[26h])) > 0
+          unless sum by (env) (increase(cv_audit_verify_runs_total{result="ok"}[26h])) > 0)
+        for: 0m
+        labels:
+          severity: page
+          component: audit_verify
+        annotations:
+          summary: "No audit chain verify run has passed for 26 hours"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-auditverifynotpassing"
       - alert: KekUnavailable
         # A state gauge, not increase(): the failure happens at boot before the first scrape,
         # and the latch lasts for the life of the process (E27-T02 review).
