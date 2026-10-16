@@ -34,7 +34,6 @@ WriteAhead = Callable[[StoredSetting | None], Awaitable[None]]
 class SystemSettings(Protocol):
     async def get_string(self, key: str) -> StoredSetting | None:
         """The row of `key`, `None` only when there is none; a failing read raises."""
-        ...
 
     async def put_string(
         self, key: str, value: str, *, updated_by: UUID, write_ahead: WriteAhead
@@ -43,7 +42,6 @@ class SystemSettings(Protocol):
         key queue, so `write_ahead` sees exactly the row it replaces. Returns the committed row.
         `StorageTierUnavailable`, `WriteAheadTimeout` and what the hook raises leave it unchanged.
         """
-        ...
 
 
 __all__ = ["StoredSetting", "SystemSettings", "WriteAhead"]

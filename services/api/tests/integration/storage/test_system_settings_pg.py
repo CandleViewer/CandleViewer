@@ -1,8 +1,7 @@
 """Integration: `SqlAlchemySystemSettings` on real Postgres 16 (E42-T01). The shared contract runs
 here as against the fake, plus what only the database shows: the stored row, scope isolation from
 per-user rows, the advisory lock that queues writers, a timed-out hook freeing it, and an
-unreachable database. CI integration lane (no docker in WSL; also run on a scratch Postgres).
-"""
+unreachable database. Runs in the CI integration lane."""
 
 from __future__ import annotations
 
