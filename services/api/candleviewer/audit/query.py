@@ -26,6 +26,7 @@ from candleviewer.audit.models import (
     VerifyResult,
 )
 from candleviewer.audit.repository import AuditRepository
+from candleviewer.audit.verify_slot import VerifySlot
 
 _GENESIS_HASH = "0" * 64
 
@@ -74,10 +75,11 @@ class AuditQueryService:
     """Backs the three `/admin/audit*` endpoints. Constructed with the same
     `RelationalRepository` the `AuditWriter` uses — read-only queries only,
     never an INSERT/UPDATE/DELETE (the DB grants forbid the latter two
-    anyway)."""
+    anyway). `verify_slot` is verify's single-flight, shared with the scheduled verify job."""
 
     def __init__(self, repository: AuditRepository) -> None:
         self._repository = repository
+        self.verify_slot = VerifySlot()
 
     async def query(
         self,
