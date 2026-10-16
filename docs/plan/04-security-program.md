@@ -232,6 +232,13 @@ Standing assumptions for all areas: no public listener exists; all human actors 
 | O10 | Denial of service      | WS disconnect leaves orders unmanaged and stops unenforced                                  | M   | H   | **High**     | SR-059 Bybit dead-man's-switch where supported + native SL invariant (O4) + reconnect reconciliation                                   | Low      |
 | O11 | Elevation of privilege | XSS payload uses the live session to place orders silently                                  | L   | H   | **High**     | SR-112 CSP, SR-043 arm toggle + per-session live-trading confirmation, SR-025 step-up re-auth                                          | Low      |
 
+**E29 OMS core and order placement** (`docs/security/threat-models/E29-oms.md`, ticket E29-X01, Draft) re-derives
+O1-O11 above for the unbuilt E29 order path, live WS trade included: 47 rows (OM-S01..OM-E06), 6 inherent Critical and
+22 High. Main findings: the client's `intent` decides whether an opening order needs a native stop and which rate
+bucket pays; the shipped REST client resends an order create after a timeout or 5xx with no lookup; the `untracked`
+path and a mismatched duplicate-id lookup have no B1 contract; `order_events.payload` can keep headers or an `auth`
+frame; cancel, background or another UID's traffic can starve a stop. SR-E29-01..17 (model §10); AC-01..AC-31.
+
 ### 5.3 Area 3 — Rule engine (A-07, AC-06)
 
 | T   | STRIDE                 | Threat                                                                                         | L   | I   | Risk         | Mitigations                                                                                                | Residual |
@@ -587,6 +594,8 @@ Medium until E27-Q03 measures it. The open High and Critical residuals of the re
 not in the counts above and are not accepted: they are release blockers for R2 under the rule at the head of this
 paragraph, recorded as RR-09..RR-12 in §16.1 with owner sign-off pending (queued on #2701); RR1 to RR3 are tracked as
 RSK-069..RSK-071 and RR4 through G6 and G7 (`docs/security/threat-models/E26-replay.md` §13).
+The E29 OMS rows (E29-X01, OM-S01..OM-E06) are rated Low contingent on the E29 tickets and gaps in §11 of the E29 model
+(`docs/security/threat-models/E29-oms.md`); OM-D04 is a Medium residual awaiting Owner acceptance (E29 model §12.2).
 
 ---
 
