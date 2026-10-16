@@ -9,7 +9,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from candleviewer.admin.flags import FlagSpec, StoredFlag
-from candleviewer.admin.flags.store import FlagWrite, StaleWriteError, StoreUnavailableError
+from candleviewer.admin.flags.store import (
+    FlagWrite,
+    Prepare,
+    StaleWriteError,
+    StoreUnavailableError,
+)
+from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import validate_action
 
 T0 = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
@@ -26,6 +32,8 @@ class FakeFlagStore:
         self.crash: Exception | None = None
         #: Runs after the snapshot is taken (e.g. a write committing mid-load).
         self.on_load: Callable[[], None] | None = None
+        self.on_lock: Callable[[], None] | None = None
+        self.fail_write = False
 
     async def ensure(self, specs: Iterable[FlagSpec]) -> None:
         for spec in specs:
@@ -44,10 +52,15 @@ class FakeFlagStore:
             raise StoreUnavailableError("down")
         return snapshot
 
-    async def write(self, change: FlagWrite) -> StoredFlag:
+    async def write(self, key: str, prepare: Prepare) -> StoredFlag:
+        if self.on_lock is not None:
+            self.on_lock()  # a commit that lands before this write takes the row lock
         if self.down:
             raise StoreUnavailableError("down")
-        current = self.rows[change.key]
+        current = self.rows[key]
+        change = await prepare(current)  # under the (simulated) row lock
+        if self.fail_write:
+            raise StoreUnavailableError("down mid-write")
         if current.updated_at != change.expected_updated_at:
             raise StaleWriteError(current)
         assert current.updated_at is not None
@@ -61,6 +74,23 @@ class FakeFlagStore:
         self.rows[change.key] = row
         self.writes.append(change)
         return row
+
+
+class NoStepUp(Exception):
+    """The fake's refusal: the session holds no fresh elevation of `args[0]`."""
+
+
+class FakeStepUp:
+    """Records every class a write demands; refuses the classes in `missing`."""
+
+    def __init__(self, missing: frozenset[str] = frozenset()) -> None:
+        self.demanded: list[str] = []
+        self.missing = missing
+
+    async def __call__(self, principal: AuditPrincipal, action_class: str) -> None:
+        self.demanded.append(action_class)
+        if action_class in self.missing:
+            raise NoStepUp(action_class)
 
 
 class FakeAudit:

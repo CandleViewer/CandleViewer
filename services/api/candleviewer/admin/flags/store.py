@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -42,8 +42,16 @@ class FlagStore(Protocol):
     async def load(self) -> Mapping[str, StoredFlag]:
         """Every stored flag; raises `StoreUnavailableError`."""
 
-    async def write(self, change: FlagWrite) -> StoredFlag:
-        """Lock the row, compare `updated_at` with `change.expected_updated_at` and write.
-        Raises `StaleWriteError` on a mismatch and `StoreUnavailableError`. The comparison is at
+    async def write(self, key: str, prepare: Prepare) -> StoredFlag:
+        """In one transaction: lock the flag's row (`SELECT ... FOR UPDATE`), `await
+        prepare(row)` with the row as stored, unreadable or not (it decides the step-up and
+        returns the change, or raises and nothing is written), compare `updated_at` with
+        `change.expected_updated_at` and write. Returns the committed row. Raises
+        `StaleWriteError` carrying the locked row on a mismatch, and `StoreUnavailableError`
+        when the store cannot be read within the read budget or written. The comparison is at
         the precision the API serialises `updated_at` with, so a value read back through
         `GET /admin/feature-flags` always matches its row."""
+
+
+#: Called under the row lock with the row as stored; returns the change to write.
+Prepare = Callable[[StoredFlag], Awaitable[FlagWrite]]
