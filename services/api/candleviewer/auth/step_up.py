@@ -17,11 +17,14 @@ step-up audit records (`auth` itself may not import `audit`).
 
 Challenges (#2304; PR #2290 ruling, rule 4): every refusal issues one live
 challenge per session (`record_pending`), stored on the row with its id,
-class and 5-minute expiry; `step_up()` answers the live one.
+class, 5-minute expiry and, for a no-grace class, the SHA-256 fingerprint of
+the refused request. A no-grace step-up must name it, and its one-shot grant
+(60 s) is bound to that fingerprint: only the identical request can use it.
 """
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,6 +37,7 @@ from candleviewer.auth.errors import (
     SessionRevoked,
     StepUpChallengeRefused,
     StepUpCodeInvalid,
+    StepUpMismatch,
     StepUpRequired,
     UnknownActionClass,
 )
@@ -72,11 +76,13 @@ NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch"})
 POSITION_SOURCE_NOT_DEPLOYED = "not_deployed"
 #: Key prefix (in `step_up_elevations`) of the challenge issued by the last 403.
 _PENDING = "pending:"
-#: Key prefix (in `step_up_elevations`) of a one-shot grant: a no-grace class is stored as
-#: `once:<class>` by `step_up()` and removed by `consume_single_use`.
+#: Key prefix of a no-grace class's one-shot grant (#2304: bound to one request).
 _ONCE = "once:"
-#: #2304: a challenge expires 5 minutes after issue.
+#: #2304: a challenge expires 5 minutes after issue; a one-shot grant 60 s after the
+#: step-up, which leaves time only for the immediate re-send.
 CHALLENGE_WINDOW = timedelta(minutes=5)
+SINGLE_USE_WINDOW = timedelta(seconds=60)
+_FINGERPRINT = re.compile(r"[0-9a-f]{64}")
 
 
 def grace_expires_at(elevations: dict[str, datetime], now: datetime) -> datetime | None:
@@ -136,43 +142,51 @@ class StepUpGrant:
     #: True for no-grace classes: no window is opened; the grant authorises
     #: exactly the one action it was obtained for.
     single_use: bool
-    #: #2304: the challenge the step-up answered, if any.
+    #: #2304: the challenge the step-up answered, and (no-grace) the request it binds.
     challenge_id: uuid.UUID | None = None
+    fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
 class StepUpChallenge:
-    """A challenge a `403 step_up_required` issued (#2304), stored on the session row
-    as `pending:<class>:<challenge_id>` -> expiry."""
+    """A challenge a `403 step_up_required` issued (#2304), or the one-shot grant a
+    no-grace step-up made of it. Stored on the session row as
+    `<prefix><class>:<challenge_id>[:<fingerprint>]` -> expiry."""
 
     challenge_id: uuid.UUID
     action_class: str
     expires_at: datetime
+    #: Hex SHA-256 of the refused request; always set for a no-grace class.
+    fingerprint: str | None = None
 
-    def key(self) -> str:
-        return f"{_PENDING}{self.action_class}:{self.challenge_id}"
+    def key(self, prefix: str = _PENDING) -> str:
+        tail = "" if self.fingerprint is None else f":{self.fingerprint}"
+        return f"{prefix}{self.action_class}:{self.challenge_id}{tail}"
 
     @classmethod
-    def parse(cls, key: str, expires_at: datetime) -> StepUpChallenge | None:
-        """The challenge stored under `key`, or None for any other key (including the
-        class-only keys written before #2304)."""
-        parts = key.removeprefix(_PENDING).split(":") if key.startswith(_PENDING) else []
-        if len(parts) != 2 or parts[0] not in ACTION_CLASSES:
+    def parse(cls, key: str, expires_at: datetime, prefix: str) -> StepUpChallenge | None:
+        """The entry stored under `key`, or None for any other key (including the
+        class-only keys written before #2304, which therefore bind nothing)."""
+        parts = key.removeprefix(prefix).split(":") if key.startswith(prefix) else []
+        if len(parts) not in (2, 3) or parts[0] not in ACTION_CLASSES:
+            return None
+        fingerprint = parts[2] if len(parts) == 3 else None
+        if fingerprint is not None and not _FINGERPRINT.fullmatch(fingerprint):
             return None
         try:
-            return cls(uuid.UUID(parts[1]), parts[0], expires_at)
+            return cls(uuid.UUID(parts[1]), parts[0], expires_at, fingerprint)
         except ValueError:
             return None
 
 
-def _live_challenge(record: SessionRecord, now: datetime) -> StepUpChallenge | None:
-    """The session's one live challenge (a newer refusal supersedes it)."""
+def _stored(record: SessionRecord, now: datetime, prefix: str) -> list[StepUpChallenge]:
+    """The unexpired challenges (`pending:`) or one-shot grants (`once:`) on the row."""
     found = (
-        StepUpChallenge.parse(key, until)
+        StepUpChallenge.parse(key, until, prefix)
         for key, until in record.step_up_elevations.items()
         if until > now
     )
-    return next((entry for entry in found if entry is not None), None)
+    return [entry for entry in found if entry is not None]
 
 
 def _answered(
@@ -180,7 +194,7 @@ def _answered(
 ) -> tuple[str, StepUpChallenge | None]:
     """The class a step-up elevates and the live challenge it answers (#2304). Every
     refusal is decided here, before any factor is checked."""
-    live = _live_challenge(record, now)
+    live = next(iter(_stored(record, now, _PENDING)), None)
     if challenge_id is not None and (live is None or live.challenge_id != challenge_id):
         raise StepUpChallengeRefused("challenge_id", "challenge_expired")
     if live is not None and action_class is not None and action_class != live.action_class:
@@ -188,7 +202,19 @@ def _answered(
     resolved = live.action_class if live is not None else action_class
     if resolved is None:
         raise StepUpChallengeRefused("action_class", "required")
+    if resolved in NO_GRACE_ACTION_CLASSES and challenge_id is None:
+        raise StepUpChallengeRefused("challenge_id", "challenge_required")
     return resolved, live
+
+
+def _grant_key(action_class: str, challenge: StepUpChallenge | None) -> str:
+    """Where a step-up's elevation is stored: a grace class's window, or a no-grace class's
+    one-shot grant bound to the challenged request - never a window for a no-grace class."""
+    if action_class not in NO_GRACE_ACTION_CLASSES:
+        return action_class
+    if challenge is None or challenge.fingerprint is None:
+        raise StepUpChallengeRefused("challenge_id", "challenge_required")
+    return challenge.key(_ONCE)
 
 
 @dataclass(frozen=True)
@@ -329,6 +355,7 @@ class StepUpService:
             raise SessionRevoked("step_up")
         now = self._clock()
         action_class, challenge = _answered(record, now, action_class, challenge_id)
+        grant_key = _grant_key(action_class, challenge)
         elevations = {k: v for k, v in record.step_up_elevations.items() if v > now}
         if not await self._verify_both(user_id, code, password, now):
             auth_step_up_failures_total.labels(action_class=action_class).inc()
@@ -351,13 +378,18 @@ class StepUpService:
                 record, now, "STEP_UP_FAILED", action_class=action_class, now_us=to_us(now)
             )
             raise StepUpCodeInvalid(FAILURE_CAP - failures)
-        until = now + GRACE_WINDOW
         single_use = action_class in NO_GRACE_ACTION_CLASSES
-        # No-grace classes store a one-shot grant under "once:<class>" that a
-        # handler consumes via `consume_single_use`; grace classes a window.
-        # The challenge is used up.
-        elevations = {k: v for k, v in elevations.items() if not k.startswith(_PENDING)}
-        elevations[f"{_ONCE}{action_class}" if single_use else action_class] = until
+        until = now + (SINGLE_USE_WINDOW if single_use else GRACE_WINDOW)
+        # The challenge is used up. A no-grace class holds one grant, bound to the
+        # challenged request (a newer step-up replaces it); a grace class a window.
+        once = f"{_ONCE}{action_class}"
+        elevations = {
+            k: v
+            for k, v in elevations.items()
+            if not (k.startswith(_PENDING) or k == once or k.startswith(once + ":"))
+        }
+        elevations[grant_key] = until
+        fingerprint = challenge.fingerprint if single_use and challenge is not None else None
         await self._save(session_id, elevations=elevations, failures=0, readonly_until=None)
         cid = None if challenge is None else challenge.challenge_id
         await self._record(
@@ -367,22 +399,31 @@ class StepUpService:
             action_class=action_class,
             elevated_until_us=to_us(until),
             **({} if cid is None else {"challenge_id": str(cid)}),
+            **({} if fingerprint is None else {"request_sha256": fingerprint}),
         )
         auth_step_up_total.labels(action_class=action_class).inc()
-        return StepUpGrant(action_class, until, single_use=single_use, challenge_id=cid)
+        return StepUpGrant(
+            action_class, until, single_use, challenge_id=cid, fingerprint=fingerprint
+        )
 
-    async def record_pending(self, session_id: str, action_class: str) -> StepUpChallenge:
+    async def record_pending(
+        self, session_id: str, action_class: str, *, fingerprint: str | None = None
+    ) -> StepUpChallenge:
         """Issue the challenge for the request a `403 step_up_required` refuses (#2304): a
         random id scoped to this session, expiring in 5 minutes. It supersedes the session's
-        live challenge, so `POST /auth/step-up` elevates the class the server itself
-        demanded. Server-side only."""
+        live challenge. A no-grace class must bind the refused request's `fingerprint`; a
+        challenge that binds nothing is exactly the gap #2304 closes. Server-side only."""
         if action_class not in ACTION_CLASSES:
             raise UnknownActionClass(action_class)
+        if action_class in NO_GRACE_ACTION_CLASSES and fingerprint is None:
+            raise ValueError(f"a {action_class} challenge must bind the refused request")
+        if fingerprint is not None and not _FINGERPRINT.fullmatch(fingerprint):
+            raise ValueError("fingerprint must be a hex SHA-256")
         record = await self._live(session_id)
         if record is None:
             raise SessionRevoked("step_up")
         now = self._clock()
-        challenge = StepUpChallenge(uuid.uuid4(), action_class, now + CHALLENGE_WINDOW)
+        challenge = StepUpChallenge(uuid.uuid4(), action_class, now + CHALLENGE_WINDOW, fingerprint)
         elevations = {
             k: v
             for k, v in record.step_up_elevations.items()
@@ -411,7 +452,7 @@ class StepUpService:
         record = await self._live(session_id)
         if record is None:
             return None
-        return _live_challenge(record, self._clock())
+        return next(iter(_stored(record, self._clock(), _PENDING)), None)
 
     async def pending_action_class(self, session_id: str) -> str | None:
         challenge = await self.live_challenge(session_id)
@@ -472,16 +513,31 @@ class StepUpService:
             return None
         return until - now
 
-    async def consume_single_use(self, session_id: str, action_class: str) -> None:
-        """Handler-side check for no-grace classes: succeeds once per fresh
-        step-up code, then the one-shot grant is gone."""
+    async def consume_single_use(
+        self, session_id: str, action_class: str, *, fingerprint: str
+    ) -> StepUpChallenge:
+        """Handler-side check for no-grace classes: the one-shot grant is used by the
+        request it is bound to, once, within 60 s of the step-up; then it is gone (#2304).
+        Another request of the class raises `StepUpMismatch` and leaves the grant bound."""
         await self.assert_writable(session_id)
         record = await self._live(session_id)
-        key = f"{_ONCE}{action_class}"
+        if record is None:
+            raise SessionRevoked("step_up")
         now = self._clock()
-        until = record.step_up_elevations.get(key) if record else None
-        if record is None or until is None or until <= now:
+        grant = next(
+            (g for g in _stored(record, now, _ONCE) if g.action_class == action_class), None
+        )
+        if grant is None:
             raise StepUpRequired(action_class)
+        if grant.fingerprint != fingerprint:
+            raise StepUpMismatch(
+                action_class,
+                user_id=str(record.user_id),
+                challenge_id=str(grant.challenge_id),
+                bound=grant.fingerprint or "",
+                refused=fingerprint,
+            )
+        key = grant.key(_ONCE)
         remaining = {k: v for k, v in record.step_up_elevations.items() if k != key and v > now}
         await self._save(
             session_id,
@@ -489,6 +545,7 @@ class StepUpService:
             failures=record.step_up_failures,
             readonly_until=None,
         )
+        return grant
 
     async def require_elevation(self, session_id: str, action_class: str) -> None:
         """Server-side gate for `is_dangerous` routes (the E09-T03 decision

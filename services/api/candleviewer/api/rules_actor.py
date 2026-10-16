@@ -3,8 +3,10 @@
 Everything is re-derived server-side per request (C-12.4): permissions and granted
 accounts from the identity store, the owner flag from the user's roles, and live-arming
 step-up from the session's one-shot `live_enablement` grant (no-grace class, consumed
-exactly once by the transition that uses it). A refusal carries the challenge it issued
-(#2304), so the client answers that challenge by id and re-sends the held request.
+exactly once by the transition that uses it, and only by the request it is bound to:
+#2304, the SHA-256 of the method, raw target and canonical body of `PUT /rules/{id}/mode`).
+A refusal carries the challenge it issued, so the client answers that challenge by id and
+re-sends the held request.
 """
 
 from __future__ import annotations
@@ -16,13 +18,17 @@ from typing import Any
 
 from fastapi import Request
 
+from candleviewer.api.step_up import consume_bound_grant
+from candleviewer.api.step_up_challenge import raw_request_target, request_fingerprint
 from candleviewer.audit.models import AuditOutcome
-from candleviewer.auth.errors import AuthError, SessionReadOnly, SessionRevoked, StepUpRequired
+from candleviewer.auth.errors import AuthError, SessionReadOnly, SessionRevoked
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.step_up import StepUpChallenge
 from candleviewer.rules.manager import Actor, RuleError
 
 STEP_UP_CLASS = "live_enablement"
+#: A body that is not I-JSON (RFC 7493) has no RFC 8785 form, so no grant can be bound to it.
+_UNBINDABLE = "The request body is not I-JSON, so a step-up cannot be bound to it."
 
 #: `RulesManager` audit event -> registered `audit.actions` verb (the closed 3.10.1 list);
 #: the full event name is preserved in `after_state.event`.
@@ -102,9 +108,14 @@ def make_rules_audit(emitter: Any) -> Callable[[str, dict[str, Any]], Any]:
 
 class SessionRulesActorResolver:
     def __init__(
-        self, sessions: Callable[[], Any], step_up: Callable[[], Any], identity: Any
+        self,
+        sessions: Callable[[], Any],
+        step_up: Callable[[], Any],
+        identity: Any,
+        emitter: Any = None,
     ) -> None:
         self._sessions, self._step_up, self._identity = sessions, step_up, identity
+        self._emitter = emitter  # writes `auth.step_up_mismatch` (#2304)
 
     async def resolve(self, request: Request) -> Actor | None:
         scheme, _, token = request.headers.get("authorization", "").partition(" ")
@@ -129,16 +140,19 @@ class SessionRulesActorResolver:
         except ValueError:
             return None
         session_id = str(record.id)
-        step_up = self._step_up
+        step_up, emitter = self._step_up, self._emitter
 
         async def challenge() -> StepUpChallenge | None:
-            # None: this transition used the one-shot grant; else the challenge issued for it.
+            # None: this request used the grant bound to it; else the challenge issued for it.
+            # The body `set_mode` validated: Starlette caches the one parsed object.
             try:
-                await step_up().consume_single_use(session_id, STEP_UP_CLASS)
-            except StepUpRequired:
-                issued: StepUpChallenge = await step_up().record_pending(session_id, STEP_UP_CLASS)
-                return issued
-            return None
+                body = await request.json()
+                fingerprint = request_fingerprint(request.method, raw_request_target(request), body)
+            except (ValueError, TypeError) as exc:  # not I-JSON: never bound, so never armed
+                raise RuleError(400, "validation_failed", _UNBINDABLE) from exc
+            return await consume_bound_grant(
+                step_up(), emitter, session_id, STEP_UP_CLASS, fingerprint
+            )
 
         async def consume() -> bool:
             try:

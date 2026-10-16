@@ -505,7 +505,7 @@ CREATE INDEX ix_uaa_frozen  ON user_account_access (exchange_account_id) WHERE f
 | `is_electron`        | boolean     | no   | `false` | Shell policy & telemetry                                                       |
 | `mfa_satisfied_at`   | timestamptz | yes  | NULL    | Login MFA time (step-up windows: `step_up_elevations`)                         |
 | `tailscale_node`     | text        | yes  | NULL    | Node identity from TS header, **PII-adjacent**                                 |
-| `step_up_elevations` | jsonb       | no   | `'{}'`  | E09-S04: `{action_class: expiry}` step-up window per class (`0009`)            |
+| `step_up_elevations` | jsonb       | no   | `'{}'`  | E09-S04 (`0009`): `{key: expiry}` (ISO-8601 UTC). Keys (#2304): `<class>`, a grace window (5 min); `pending:<class>:<challenge_id>[:<sha256>]`, the session's one live challenge (5 min; `<sha256>` for a no-grace class only); `once:<class>:<challenge_id>:<sha256>`, a no-grace one-shot grant bound to the challenged request (60 s). `<sha256>` is a request fingerprint (method, target, RFC 8785 body), not credential material. Class-only `pending:`/`once:` keys written before #2304 are inert |
 | `step_up_failures`   | smallint    | no   | `0`     | E09-S04: consecutive bad step-up codes, CHECK 0..3 (`0009`)                    |
 | `readonly_until`     | timestamptz | yes  | NULL    | E09-S04: read-only downgrade expiry after 3 strikes (`0009`)                   |
 

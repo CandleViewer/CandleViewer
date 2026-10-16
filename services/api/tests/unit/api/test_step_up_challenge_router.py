@@ -26,7 +26,13 @@ from candleviewer.api.step_up import (
     make_step_up_router,
     require_elevation_for,
 )
-from candleviewer.api.step_up_challenge import ChallengeText, account_reference, typed_target
+from candleviewer.api.step_up_challenge import (
+    ChallengeText,
+    account_reference,
+    raw_request_target,
+    request_fingerprint,
+    typed_target,
+)
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.mfa_service import MfaService
@@ -146,12 +152,14 @@ async def _world() -> _World:
     @app.post("/trading/kill-switch")
     async def kill_switch(request: Request) -> Any:
         body = _KillSwitch.model_validate(await request.json()).model_dump(mode="json")
-        if not body["engaged"]:  # release needs a no-grace step-up
+        if not body["engaged"]:  # release: a no-grace step-up bound to this request
             denied = await require_elevation_for(
                 auth,
                 _sid(request),
                 "killswitch",
                 text=ChallengeText(f"Release kill switch, scope {body['scope']}"),
+                fingerprint=request_fingerprint(request.method, raw_request_target(request), body),
+                emitter=audit,
             )
             if denied is not None:
                 return denied

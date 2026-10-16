@@ -4,12 +4,13 @@
 Thin HTTP adapter over `auth.step_up.StepUpService`. `auth` may not import
 `audit`: the B16 chart writes `auth.step_up_granted`, `auth.step_up_failed`,
 `auth.step_up_required` and `auth.session_readonly_downgrade`; this module
-writes `auth.mfa_reset_by_owner`. Elevation state is server-side, keyed by the
-session id resolved from the bearer token - nothing the client sends can
-forge it. `require_elevation_for` is the `is_dangerous` gate E09-T03 routes
-call: every refusal is a challenge for the one request it refused (#2304).
-`make_read_only_guard` is the middleware refusing every write during the
-5-minute downgrade.
+writes `auth.mfa_reset_by_owner` and `auth.step_up_mismatch`. Elevation state
+is server-side, keyed by the session id resolved from the bearer token -
+nothing the client sends can forge it. `require_elevation_for` is the
+`is_dangerous` gate E09-T03 routes call: every refusal is a challenge for the
+one request it refused, and a no-grace class passes only with the one-shot
+grant bound to that request (#2304). `make_read_only_guard` is the middleware
+refusing every write during the 5-minute downgrade.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ from starlette._utils import get_route_path
 
 from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.errors import AuditError
-from candleviewer.audit.models import Severity
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import (
     AuthError,
     SelfResetRefused,
@@ -38,6 +39,7 @@ from candleviewer.auth.errors import (
     SessionRevoked,
     StepUpChallengeRefused,
     StepUpCodeInvalid,
+    StepUpMismatch,
     StepUpRequired,
     UnknownActionClass,
 )
@@ -46,6 +48,7 @@ from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.auth.step_up import (
     ACTION_CLASSES,
+    NO_GRACE_ACTION_CLASSES,
     PositionStateProvider,
     StepUpChallenge,
     StepUpService,
@@ -54,6 +57,7 @@ from candleviewer.auth.step_up import (
 _PROBLEM = "application/problem+json"
 #: `400 validation_failed` details for a step-up that cannot answer its challenge (#2304).
 _CHALLENGE_REFUSED = {
+    "challenge_required": "A step-up for this action class must send the challenge_id.",
     "challenge_expired": "The step-up challenge cannot be answered.",
     "challenge_mismatch": "action_class does not match the step-up challenge.",
     "required": "There is no step-up challenge to answer; send action_class.",
@@ -162,16 +166,66 @@ def required_problem(challenge: StepUpChallenge, text: ChallengeText | None = No
     )
 
 
+async def consume_bound_grant(
+    step_up: StepUpService,
+    emitter: _Emitter | None,
+    session_id: str,
+    action_class: str,
+    fingerprint: str,
+) -> StepUpChallenge | None:
+    """No-grace gate (#2304): None when the grant bound to `fingerprint` was used, else the
+    challenge issued for this request. A grant bound to another request is left in place and
+    the mismatch is audited first (write-ahead, C-2.9): no emitter means no answer."""
+    try:
+        await step_up.consume_single_use(session_id, action_class, fingerprint=fingerprint)
+    except StepUpMismatch as exc:
+        if emitter is None:
+            raise RuntimeError("auth.step_up_mismatch: no audit emitter wired") from exc
+        await emitter.emit(
+            "auth.step_up_mismatch",
+            actor_label=exc.user_id,
+            actor_user_id=exc.user_id,
+            session_id=session_id,
+            object_kind="step_up_challenge",
+            object_id=exc.challenge_id,
+            outcome=AuditOutcome.DENIED,
+            severity=Severity.WARNING,
+            reason=action_class,
+            after_state={"bound_request_sha256": exc.bound, "refused_request_sha256": fingerprint},
+        )
+    except StepUpRequired:
+        pass
+    else:
+        return None
+    return await step_up.record_pending(session_id, action_class, fingerprint=fingerprint)
+
+
 async def require_elevation_for(
-    auth: _AuthLike, session_id: str, action_class: str, *, text: ChallengeText | None = None
+    auth: _AuthLike,
+    session_id: str,
+    action_class: str,
+    *,
+    text: ChallengeText | None = None,
+    fingerprint: str | None = None,
+    emitter: _Emitter | None = None,
 ) -> JSONResponse | None:
     """The `is_dangerous` decision-point hook (E09-T03 routes call this):
     None when elevated, else the problem to return. A refusal issues the
     challenge for this request, restated by `text` when the route validated
-    it. An unregistered class is a server defect, never a challenge (500); a
-    revoked session is a 401."""
+    it. A no-grace class passes only with the grant bound to `fingerprint`,
+    the SHA-256 of the request the route validated
+    (`api.step_up_challenge.request_fingerprint`); a route that cannot bind
+    its request fails closed. An unregistered class is a server defect, never
+    a challenge (500); a revoked session is a 401."""
     step_up = auth.step_up
     try:
+        if action_class in NO_GRACE_ACTION_CLASSES:
+            if fingerprint is None:
+                raise TypeError(f"{action_class} gate needs the request fingerprint")
+            challenge = await consume_bound_grant(
+                step_up, emitter, session_id, action_class, fingerprint
+            )
+            return None if challenge is None else required_problem(challenge, text)
         try:
             await step_up.require_elevation(session_id, action_class)
         except StepUpRequired:

@@ -122,13 +122,17 @@ async def test_grace_never_applies_to_no_grace_classes(cls: str) -> None:
     with pytest.raises(StepUpRequired):
         await svc.require_elevation("s1", cls)
     clock.now += timedelta(minutes=1)
-    grant = await svc.step_up(str(user), "s1", cls, _code(seed, clock), PASSWORD)
+    bound = "f" * 64  # #2304: the grant is bound to the challenged request
+    challenge = await svc.record_pending("s1", cls, fingerprint=bound)
+    grant = await svc.step_up(
+        str(user), "s1", cls, _code(seed, clock), PASSWORD, challenge_id=challenge.challenge_id
+    )
     assert grant.single_use
     with pytest.raises(StepUpRequired):
         await svc.require_elevation("s1", cls)
-    await svc.consume_single_use("s1", cls)  # one-shot grant honoured once
+    await svc.consume_single_use("s1", cls, fingerprint=bound)  # one-shot grant honoured once
     with pytest.raises(StepUpRequired):
-        await svc.consume_single_use("s1", cls)
+        await svc.consume_single_use("s1", cls, fingerprint=bound)
 
 
 async def test_three_failures_downgrade_to_readonly_for_five_minutes() -> None:

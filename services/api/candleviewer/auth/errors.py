@@ -175,11 +175,29 @@ class UnknownActionClass(AuthError):
     """Step-up requested for an action class outside the closed set."""
 
 
+class StepUpMismatch(StepUpRequired):
+    """A no-grace grant exists, but it is bound to another request (#2304).
+
+    The grant stays bound to the challenged request; the HTTP edge audits
+    `auth.step_up_mismatch` with both fingerprints, then issues a challenge
+    for this request. Carries no request body, only the two SHA-256 hex
+    fingerprints."""
+
+    def __init__(
+        self, action_class: str, *, user_id: str, challenge_id: str, bound: str, refused: str
+    ) -> None:
+        super().__init__(action_class)
+        self.user_id = user_id
+        self.challenge_id = challenge_id
+        self.bound = bound
+        self.refused = refused
+
+
 class StepUpChallengeRefused(AuthError):
     """`POST /auth/step-up` cannot answer the challenge (#2304): `rule` is
-    `challenge_expired`, `challenge_mismatch` or `required` for `field`.
-    Decided before any factor is checked, so no failure is counted and
-    nothing is elevated."""
+    `challenge_required`, `challenge_expired`, `challenge_mismatch` or
+    `required` for `field`. Decided before any factor is checked, so no
+    failure is counted and nothing is elevated."""
 
     def __init__(self, field: str, rule: str) -> None:
         super().__init__(f"step-up challenge refused: {field} {rule}")

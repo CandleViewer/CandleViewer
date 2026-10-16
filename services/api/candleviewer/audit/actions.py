@@ -45,6 +45,8 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.mfa_reset",
         "auth.step_up_granted",
         "auth.step_up_failed",
+        # #2304: a no-grace grant bound to one request, presented by another (`api/step_up.py`).
+        "auth.step_up_mismatch",
         "auth.step_up_required",
         "auth.step_up_grace_used",
         "auth.session_readonly_downgrade",
