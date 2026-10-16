@@ -218,7 +218,8 @@ class Subscription:
     #: re-checks it without a lookup.
     entity: EntityScope | None = None
     #: #2831: whether its `sub_ok` is queued; no `snap` goes out before it (§7.1). `_admit`
-    #: records it False and `handle_sub` sets it once that reply is queued.
+    #: records it False and `handle_sub` sets it once that reply is queued. It holds the `snap`
+    #: only: a `d` for a §7.6 continuity attach can still precede `sub_ok` (#2909).
     announced: bool = True
     #: §7.5 client-resync times (monotonic s); bounded to the 5-per-minute window.
     resyncs: collections.deque[float] = field(
@@ -895,7 +896,8 @@ async def handle_sub(
     #2831: the new subscriptions are announced only once the `sub_ok` is queued, so no hub
     flush or resnapshot during the awaits below can send a `snap` ahead of it; the gateway's
     flush then sends it. A refused topic is dropped unannounced. One left unannounced by a
-    raise or a cancellation never gets a `snap`; the gateway closes the socket and releases it."""
+    raise or a cancellation never gets a `snap`: the connection ends (a raise closes it 1011)
+    and its teardown releases the subscription."""
     body: Any = frame.get("p")  # a dict once `sub_shape_error` passes it
     fid = _frame_id(frame)
     shape = sub_shape_error(body)

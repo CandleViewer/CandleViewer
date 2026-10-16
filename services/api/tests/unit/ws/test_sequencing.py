@@ -298,13 +298,15 @@ def test_upstream_guard_classifies_gap_out_of_order_and_duplicate(
 # -- Scenario: no `snap` before `sub_ok`; only the ladder sends `backpressure` (#2831) ---------
 
 
-def _hub_book(*, unavailable: bool = False) -> tuple[SequencingHub, Conn, Subscription, Source]:
+def _hub_book(
+    *, unavailable: bool = False, replay: bool = False
+) -> tuple[SequencingHub, Conn, Subscription, Source]:
     src = _book_source()
     if unavailable:
         src.unavailable.add("BTCUSDT")
     hub, conn = SequencingHub(), Conn(src)
     hub.register(conn.authz, conn.emitter)
-    _, sub = conn.sub("book.BTCUSDT.50")
+    _, sub = conn.sub("book.BTCUSDT.50", replay_session_id=RS if replay else None)
     conn.take()
     return hub, conn, sub, src
 
@@ -313,19 +315,30 @@ def _hold(sub: Subscription) -> None:
     sub.snapshot_pending, sub.pending_reason = True, "backpressure"  # as the ladder drops it
 
 
-@pytest.mark.parametrize("first", ["initial", "upstream_desync"])
-def test_resnapshot_keeps_an_already_pending_reason(first: str) -> None:
-    hub, conn, sub, src = _hub_book(unavailable=first == "initial")
-    if first == "upstream_desync":
+@pytest.mark.parametrize(
+    ("first", "second", "kept"),
+    [
+        ("initial", "upstream_reconnect", "initial"),
+        ("upstream_desync", "upstream_reconnect", "upstream_desync"),
+        ("initial", "upstream_desync", "initial"),  # an attach is never counted as a resync
+        ("client_resync", "upstream_desync", "upstream_desync"),  # an incident is never hidden
+        ("reconfigure", "replay_seek", "reconfigure"),
+    ],
+)
+def test_resnapshot_keeps_an_already_pending_reason(first: str, second: str, kept: str) -> None:
+    hub, conn, sub, src = _hub_book(unavailable=first == "initial", replay=second == "replay_seek")
+    if first != "initial":  # settled: `first` pends it, as nothing can be built yet
         src.unavailable.add("BTCUSDT")
-        assert hub.upstream_desync("BTCUSDT") == 0
-    assert hub.upstream_reconnect("BTCUSDT") == 0 and sub.pending_reason == first
+        assert hub.resnapshot(lambda s: s is sub, first) == 0
+    trigger = getattr(hub, second)  # the hub trigger named for the reason
+    assert trigger(RS if second == "replay_seek" else "BTCUSDT") == 0
+    assert sub.pending_reason == kept
     src.unavailable.clear()
     incidents = _resync_count("upstream_desync")
     assert hub.flush_pending() == 1
     (snap,) = conn.take()
-    assert snap["meta"]["reason"] == first  # the incident is still counted, `initial` never
-    assert _resync_count("upstream_desync") == incidents + (first == "upstream_desync")
+    assert snap["meta"]["reason"] == kept
+    assert _resync_count("upstream_desync") == incidents + (kept == "upstream_desync")
 
 
 def test_resnapshot_never_sends_a_backpressure_pended_snapshot() -> None:
@@ -338,6 +351,13 @@ def test_resnapshot_never_sends_a_backpressure_pended_snapshot() -> None:
     builds = src.builds
     assert conn.emitter.snapshot(sub, "backpressure")  # what the ladder's `drain` sends
     assert (src.builds, conn.take()[0]["meta"]["reason"]) == (builds + 1, "backpressure")
+
+
+def test_resnapshot_upstream_desync_never_displaces_a_backpressure_hold() -> None:
+    hub, conn, sub, _ = _hub_book()
+    _hold(sub)
+    assert hub.upstream_desync("BTCUSDT") == 0  # an incident, yet the ladder still owns the hold
+    assert (conn.take(), sub.pending_reason) == ([], "backpressure")
 
 
 def test_emitter_flush_pending_skips_backpressure() -> None:

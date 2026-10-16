@@ -645,6 +645,11 @@ class TopicEmitter:
         return n
 
 
+#: Pending reasons that `resnapshot` never replaces, not even with `upstream_desync` (#2831): an
+#: attach is no resync, and the overflow ladder owns its `backpressure` hold.
+_NEVER_REPLACED: Final = frozenset({"initial", "backpressure"})
+
+
 def _held(sub: Subscription) -> bool:
     """Pending its `backpressure` snapshot. The overflow ladder pends it and only its `drain`
     sends it (`ws/outbound.py`, §8.4 step 2), so every other path leaves it pending (#2831)."""
@@ -749,9 +754,11 @@ class SequencingHub:
 
     def resnapshot(self, match: Callable[[Subscription], bool], reason: SnapReason) -> int:
         """Server-initiated resync (§7.4): mark every matching subscription pending FIRST (so no
-        delta can slip across the gap), then emit the snapshots. A reason already pending
-        (`initial`, an incident) says more and stays, as under `ctl`. One held for its
-        `backpressure` snapshot (`_held`) is only invalidated: the ladder sends it (#2831)."""
+        delta can slip across the gap), then emit the snapshots. A reason already pending stays,
+        as under `ctl`, with one exception: `upstream_desync`, an incident, replaces any but
+        `initial` (an attach is no resync) and `backpressure` (the ladder's hold), so a mundane
+        reason never hides it. One held for its `backpressure` snapshot (`_held`) is only
+        invalidated: the ladder sends it (#2831)."""
         if reason not in SNAP_REASONS:
             raise ValueError(f"unknown snap reason {reason!r}")
         if reason == "backpressure":  # the ladder pends these, so its `drain` knows them all
@@ -760,7 +767,9 @@ class SequencingHub:
         for authz, emitter in list(self._conns.values()):
             for sub in list(authz.by_id.values()):
                 if match(sub):
-                    if not sub.snapshot_pending:
+                    if not sub.snapshot_pending or (
+                        reason == "upstream_desync" and sub.pending_reason not in _NEVER_REPLACED
+                    ):
                         sub.pending_reason = reason
                     sub.snapshot_pending = True
                     hits.append((emitter, sub))

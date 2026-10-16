@@ -15,8 +15,9 @@
   snapshotted, unpaused subscriptions are re-snapshotted (`swap_reason`), with no delta; a pending
   one keeps its reason, as under ctl. One the swap leaves pending (no snapshot yet) is retried on
   each later emission, one `build` per such subscription, so `build` must be cheap; no other
-  flow's pending one is (`_left_pending`). So no `snap` precedes an `initial` subscription's
-  `sub_ok`, but a §7.6 continuity attach is settled at admit and a swap can reach it first (#2831).
+  flow's pending one is (`_left_pending`). `Subscription.announced` holds a swap's `snap` until
+  the subscription's `sub_ok` is queued (#2831); only a `d` for a §7.6 continuity attach, which is
+  settled at admit, can still go out before it (#2909).
   Swaps are counted; over `SWAP_STORM` per `SWAP_WINDOW_S` on a channel warns once per window with
   the real count, as one live builder per series (E12-S12) never swaps that often. Residual: a
   series with no baseline (not seen or seeded since start, or evicted) adopts the first
@@ -255,8 +256,8 @@ class BarsPublisher:
 
     def _left_pending(self, sub: Subscription) -> bool:
         """The retry's match: live, unpaused and pending with this publisher's swap reason. A
-        hub-level match must never accept `initial` (a `sub` in flight, whose `snap` would precede
-        `sub_ok`) or `backpressure` (E17's hold), so `__init__` refuses both as `swap_reason`."""
+        hub-level match must never accept `initial` (the subscribe flow's hold) or `backpressure`
+        (E17's hold), so `__init__` refuses both as `swap_reason` (`_FOREIGN_REASONS`)."""
         pending = sub.snapshot_pending and sub.pending_reason == self._swap
         return pending and _live(sub) and not _paused(sub)
 
