@@ -300,6 +300,7 @@ def test_docs_share_the_audit_vocabulary_and_the_backups_step_up() -> None:
         assert all(name in doc for name in names) and "`incident.acknowledged`" in doc
         assert "`backup.created`" not in doc and "`backup.restored`" not in doc
     assert "and restoring, downloading or deleting a backup (one fresh code each)" in sec
+    assert "✔(restore+delete step-up)" in sec and "✔(step-up: restore, delete, link)" in sec
     assert "(`live_enablement`/`killswitch`/`backups`: none, fresh code each time)" in internal
     assert "never embeds `str(exc)` or raw probe output" in internal
     assert "There is no resolution text because nobody writes one" in _doc("21-database-schema.md")

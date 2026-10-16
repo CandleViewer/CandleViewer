@@ -1004,7 +1004,7 @@ x-rbac: { permissions: [orders:write], scope: granted_accounts }
 | `audit:read`                                       |           ✔ (all, raw)            |              ✔(own events, redacted)               |        ✖        |
 | `audit:export`                                     |            ✔(step-up)             |                         ✖                          |        ✖        |
 | `flags:read`, `flags:write`                        |       ✔(step-up for write)        |                         ✖                          |        ✖        |
-| `backups:read`, `backups:write`                    |    ✔(step-up: restore, delete)    |                         ✖                          |        ✖        |
+| `backups:read`, `backups:write`                    | ✔(step-up: restore, delete, link) |                         ✖                          |        ✖        |
 
 #### 7.2.2 Capability matrix
 
