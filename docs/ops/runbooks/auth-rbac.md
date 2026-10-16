@@ -293,8 +293,17 @@ contract test `services/api/tests/contract/rbac/test_rbac_generator.py::test_che
 
 To answer a denial:
 
-1. Find the denial in the audit log: `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=rbac.denied"` (add `&actor_user_id=<id>`).
-   The entry names the permission and scope (`auth/scopes.py`, `enforce`).
+1. Find the denial in the audit log. The `permission` label of `authz_denied_total` (below) says
+   which decider counted it, and the audit action differs:
+   - `enforce` routes (`users:write` today): action `rbac.denied`,
+     `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=rbac.denied"` (add
+     `&actor_user_id=<id>`). The entry names the permission and scope (`auth/scopes.py`, `enforce`).
+   - Admin-area routes on the E42 guard (`admin/http.py`; `permission="admin:read"` today): action
+     `admin.area_entered`, not `rbac.denied`. The same action is written for every allowed entry,
+     so filter on the outcome:
+     `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=admin.area_entered&outcome=denied"`
+     (add `&actor_user_id=<id>`). The entry's `subject_id` is the route template, such as
+     `/admin/overview`.
 2. Look up the permission on the route in `22-api-openapi.yaml` (`x-rbac`), then check whether the
    user's role holds it in `rbac_seed.json`.
 3. For account-scoped routes, a Manager also needs the account grant: scope decisions are in
@@ -305,12 +314,21 @@ To answer a denial:
    `docs/qa/charters/E09-charter-2-rbac-boundaries.md`.
 
 **`authz_denied_total{permission}`** (the catalogue name; there is no `cv_` prefix) counts each
-denial decided by `auth/scopes.py::enforce`. It moves before the `rbac.denied` audit row is written,
-so an audit failure never hides a denial. `permission` is the permission code from a closed set (the
-generated vocabulary plus `other`). Only routes that call `enforce` are counted, and today those are
-all `users:write` routes: `PUT /users/{userId}/roles`, the invite routes (`POST /users`,
-`GET /users/invites`, `POST` and `DELETE /users/{userId}/invite`) and the TOTP reset routes. Not
-counted:
+permission denial decided by one of two deciders. It moves before the audit row is written, so an
+audit failure never hides a denial. `permission` is the permission code from a closed set (the
+generated vocabulary plus `other`).
+
+- `auth/scopes.py::enforce` (audit row `rbac.denied`). Only routes that call `enforce` count this
+  way, and today those are all `users:write` routes: `PUT /users/{userId}/roles`, the invite routes
+  (`POST /users`, `GET /users/invites`, `POST` and `DELETE /users/{userId}/invite`) and the TOTP
+  reset routes.
+- The admin-area guard, `admin/http.py` (audit row `admin.area_entered` with outcome `denied`, not
+  `rbac.denied`). Every route on an `admin_router` counts, under the router's permission:
+  `admin:read` for `GET /admin/overview` and `GET /admin/capacity` today, and a later router on the
+  guard counts under its own `admin:*` code. Only a decided denial counts: not a `401`, a `501` or a
+  `503` for a missing audit writer, and not an allowed caller whose audit write fails (a `503`).
+
+Not counted:
 
 - permission checks written inline in other route modules (market data, instruments, and so on),
   which write no `rbac.denied` row either: their only trace is the `403` response itself;
@@ -322,7 +340,9 @@ counted:
 Read it on the metrics listener, for example
 `curl -s http://127.0.0.1:9108/metrics | grep '^authz_denied_total'` (every permission is listed at 0
 from process start). The `AuthzDeniedSpike` rule fires above 20 denials in 10 minutes
-(`sum by (permission) (increase(authz_denied_total[10m]))` shows which permission).
+(`sum by (permission) (increase(authz_denied_total[10m]))` shows which permission). Today a spike on
+`admin:read` comes from the admin-area guard and one on `users:write` from `enforce`; use the
+matching query in step 1.
 
 **`auth_stepup_failures_total`** (no labels) counts each failed step-up verification: wrong password,
 locked account, wrong or replayed code. The audit row is `auth.step_up_failed` (names the action
