@@ -217,10 +217,9 @@ export interface paths {
      *     are booleans that pin a user in (`true`) or out (`false`) of the rollout.
      *
      *     The flag store is unreachable when its read fails or exceeds its read budget, the system
-     *     setting `flags.read_budget_ms` (default 500 ms, tunable from 50 to 2000 ms so it stays
-     *     inside the 2 s push and 5 s re-read bounds; a write outside that range is `422
-     *     validation_failed`, and an out-of-range configured value refuses startup). Every flag then
-     *     resolves to its fail-closed value: the restrictive one for the safety-relevant flags
+     *     setting `flags.read_budget_ms` (default 500 ms, tunable from 50 to 2000 ms, so never more
+     *     than the 2 s push bound; an out-of-range configured value refuses startup). Every flag
+     *     then resolves to its fail-closed value: the restrictive one for the safety-relevant flags
      *     (`maintenance.mode` and `killswitch.order_entry` engaged, so an unknown state refuses new
      *     orders through the shared order-entry gate; `trading.live_enabled` off) and the registry
      *     default for every other flag. `killswitch.ingestion` is outside that restrictive set: it
@@ -275,20 +274,20 @@ export interface paths {
      *     - An omitted `overrides` keeps the flag's existing overrides; `overrides: []` clears
      *       them. An `overrides[].user_id` that names no user is `422 validation_failed` (rule
      *       `unknown_user`).
-     *     - Decision order: authentication, request validation, RBAC and scope come before the
-     *       step-up gate; the gate, the `expected_updated_at` precondition and the write then run
-     *       under the flag's row lock.
+     *     - Decision order: authentication; RBAC and scope, before any validation that needs a
+     *       lookup, so a caller without `flags:write` learns nothing from a `422`; request
+     *       validation; then, under the row lock, the step-up gate, the precondition and the write.
      *     - `flags:write` is a dangerous permission. Every write needs exactly one fresh step-up
-     *       elevation, chosen by key and by the stored value read under the write's row lock: the
-     *       row `expected_updated_at` is compared against, never the cached value, which can be up
-     *       to 5 s old. An unreadable row or a fail-closed engagement counts as engaged (`true`):
-     *       releasing a kill-switch-class flag (`true` to `false`) needs `killswitch`, enabling
-     *       `trading.live_enabled` needs `live_enablement` (both no-grace, single use), and every
-     *       other write needs `flags` (5-minute grace). Repairing an `unreadable` kill-switch-class
-     *       flag to `false` is therefore a release: it needs a fresh `killswitch` code, not `flags`
-     *       with its 5-minute grace. Without that elevation the call is `403 step_up_required`. This
-     *       console is not the emergency control: engaging a kill switch here needs only `flags`,
-     *       and the code-free emergency engage stays `POST /trading/kill-switch`.
+     *       elevation, chosen by key and by the stored value read under the row lock that
+     *       `expected_updated_at` is checked against, never the cached value. An unreadable row
+     *       counts as its fail-closed value (engaged for a kill-switch-class flag, off for
+     *       `trading.live_enabled`): releasing a kill-switch-class flag (`true` to `false`) needs
+     *       `killswitch`, writing `true` to `trading.live_enabled` needs `live_enablement` whatever
+     *       is stored (both no-grace, single use), and every other write needs `flags` (5-minute
+     *       grace). So repairing an `unreadable` kill-switch-class flag to `false` is a release
+     *       (`killswitch`). Without that elevation the call is `403 step_up_required`. This console
+     *       is not the emergency control: engaging a kill switch here needs only `flags`, and the
+     *       code-free emergency engage stays `POST /trading/kill-switch`.
      *     - `trading.live_enabled` and the kill-switch-class flags take no overrides: any override
      *       on them is `422 validation_failed` (rule `overrides_not_allowed`), and resolution
      *       ignores any override row they hold (`GET /admin/feature-flags`).
@@ -298,23 +297,23 @@ export interface paths {
      *       a retry safe, so a `409` here is always `conflict` with `current`.
      *     - `trading.live_enabled: true` without `evidence_url` is `422` (rule
      *       `gate_evidence_required`) and nothing is written. `evidence_url` must be an `https` URL
-     *       (rule `https_required`) of at most 2048 characters. The audit records it, so it must
-     *       carry no credential or signed token: the write rejects userinfo and a token in the query
-     *       string (rule `credential_in_url`). The server never dereferences it, and it validates
-     *       the URL itself, because the generated model checks only the URI format. This service
-     *       only enforces the precondition; the evidence binding belongs to the live gate (E44-T04).
+     *       (rule `https_required`) of at most 2048 characters (rule `string_too_long`). The audit
+     *       records it, so the write rejects userinfo and any query or fragment parameter named on a
+     *       token deny-list (rule `credential_in_url`); a path token is an accepted residual. The
+     *       service validates it (the generated model checks only the URI format), never
+     *       dereferences it and only enforces the precondition; E44-T04 owns the evidence binding.
      *     - If the flag store is unreachable (as `GET /admin/feature-flags` defines it), the write
      *       is `503 store_unavailable` and nothing is written. An unreadable stored row is not an
      *       outage: a write with a valid value repairs it.
      *     - Every attempt past authentication and RBAC is audited as `flags.change` with the key,
      *       before, after, `reason` and `evidence_url`, including refused and conflicting ones and
      *       every `422` (such as `gate_evidence_required`, `kind_mismatch`, `unknown_user` and
-     *       `overrides_not_allowed`); a `step_up_required` challenge is audited as
-     *       `auth.step_up_required`. The one exception is `503 store_unavailable`: the audit lives
-     *       in the same store, so that refusal cannot be audited and is logged with a metric instead
-     *       (SR-125). For an unreadable row, `before` records `unreadable`, never the raw value.
-     *       Toggling `maintenance.mode` is also audited as `maintenance.enabled` or
-     *       `maintenance.disabled`.
+     *       `overrides_not_allowed`); a `step_up_required` challenge writes only
+     *       `auth.step_up_required`. The `flags.change` record and the flag write commit together
+     *       (write-ahead, C-2.9). The one exception is `503 store_unavailable`, whose audit store is
+     *       down: it is logged with only the key and correlation id, plus a metric (SR-125). For an
+     *       unreadable row, `before` records `unreadable`, never the raw value. Toggling
+     *       `maintenance.mode` is also audited as `maintenance.enabled` or `maintenance.disabled`.
      *     - A successful write pushes a `SystemUpdate` of kind `feature_flags`, carrying only the
      *       changed key, to every session the flag's `visibility` admits (`23-ws-protocol.md` 15.9).
      *
