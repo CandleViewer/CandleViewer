@@ -244,6 +244,7 @@ def test_a_snapshot_is_stamped_before_it_is_built() -> None:
     clock.now = 100.0
     _, sub = conn.authz.admit(ENTRY)
     assert sub is not None
+    sub.announced = True  # the gateway's `sub_ok` is queued (#2831)
     sub.seq = N - 1  # the snapshot is the subscription's `N`th frame: sampled
     conn.emitter.flush_pending([sub])
     assert stamps == {(CH, N): 100.0} and clock.now == pytest.approx(100.3) and clock.reads == 1
@@ -256,6 +257,7 @@ def test_a_sampled_chunked_snapshot_is_stamped_on_the_chunk_that_carries_s_only(
     stamps = _stamped(conn)
     _, sub = conn.authz.admit({"ch": ch, "opts": {"encoding": "structured"}})
     assert sub is not None
+    sub.announced = True  # the gateway's `sub_ok` is queued (#2831)
     sub.seq = N - 1  # the snapshot is the subscription's `N`th frame: sampled
     conn.emitter.flush_pending([sub])
     assert len(conn.take()) > 1 and set(stamps) == {(ch, N)}  # one stamp, not one per chunk
