@@ -129,7 +129,7 @@ def _orders_app(gate: MaintenanceGate, oms_calls: list[str]) -> FastAPI:
 
     @app.post("/orders")
     async def accept() -> JSONResponse:
-        refused = order_entry_refusal(gate)
+        refused = order_entry_refusal((gate,), None)
         if refused is not None:
             return refused
         oms_calls.append("submit")

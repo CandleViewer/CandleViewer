@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Final, Protocol
+from uuid import UUID
 
 import structlog
 
@@ -34,11 +35,16 @@ from candleviewer.admin.flags.metrics import maintenance_mode_gauge
 from candleviewer.admin.flags.resolver import StoredFlag
 from candleviewer.admin.flags.service import KILLSWITCH_TTL_S, FlagService
 from candleviewer.admin.flags.writes import ChangeHook, readable
+from candleviewer.domain.order_entry import OrderEntryRefusal
 
 KILL_ORDER_ENTRY: Final = "killswitch.order_entry"
 GATE_FLAGS: Final = (MAINTENANCE_MODE, KILL_ORDER_ENTRY)
 REFRESH_S: Final = KILLSWITCH_TTL_S
 EFFECT_TIMEOUT_S: Final = 1.0  # each; two fit the hook bound if the store and lock are prompt
+#: The refusal the gate hands the shared order-entry gate while it is engaged (#837 Q5).
+MAINTENANCE_REFUSAL: Final = OrderEntryRefusal(
+    "maintenance", "Maintenance mode is on; order entry is paused."
+)
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -68,6 +74,11 @@ class MaintenanceGate:
     def check(self) -> None:
         if self._engaged:
             raise OrderEntryPausedError("order entry is paused")
+
+    def refusal(self, account_id: UUID | None = None) -> OrderEntryRefusal | None:
+        """The `OrderEntryCheck` adapter: `reason="maintenance"` while engaged, whichever flag
+        engaged it (maintenance mode, the order kill switch, or an unknown state)."""
+        return MAINTENANCE_REFUSAL if self._engaged else None
 
 
 class AlgoCanceller(Protocol):
