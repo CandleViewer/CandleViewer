@@ -319,6 +319,10 @@ x-error-codes:
     title: "Unhandled server error (correlation id in `instance`)"
     retryable: true
     surface: [rest, ws] # same slug, same meaning on the WS (23-ws-protocol.md §10.2)
+  - code: not_implemented
+    status: 501
+    title: Operation declared but its backing provider is not wired yet; nothing was done
+    retryable: false
   - code: exchange_error
     status: 502
     title: Bybit returned a non-zero retCode
@@ -331,6 +335,10 @@ x-error-codes:
   - code: store_unavailable
     status: 503
     title: QuestDB / Postgres / Parquet tier unavailable
+    retryable: true
+  - code: audit_unavailable
+    status: 503
+    title: Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)
     retryable: true
   - code: degraded_data
     status: 503
@@ -14208,7 +14216,7 @@ components:
         Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact (setting
         `accounts.subaccount_tier`, `21-database-schema.md` §3.9), never inferred from counts or
         `max_sub_accounts_hint`; `tier` and `cap` are `null` iff `tier_source` is `unrecorded`.
-        If the tier read itself fails, the slice reports `status: error` and the four tier fields
+        If the tier read itself fails, the slice status is not `ok` and the four tier fields
         (`tier`, `cap`, `tier_source`, `recorded_at`) are omitted, never defaulted.
       allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
       properties:
