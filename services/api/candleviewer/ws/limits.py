@@ -6,6 +6,8 @@ Single home for every bound the gateway enforces. Overflow policy:
   raw text/bytes BEFORE JSON parsing, so an oversized frame is never decoded).
 - `sub` with > `MAX_TOPICS_PER_SUB` topics -> the excess topics are rejected
   per-topic with `too_many_topics`; the rest are processed.
+- `unsub` with > `MAX_TOPICS_PER_SUB` topics -> the whole frame is refused with
+  `invalid_options` (`field: topics`) before any entry is read; nothing is unsubscribed (#2875).
 - A subscription that would grow a connection past `MAX_SUBSCRIPTIONS` ->
   rejected per-topic with `subscription_limit`; the set never grows past it.
 - No successful `auth` within `AUTH_TIMEOUT_S` -> `bye auth_timeout` + close `4401`.
@@ -26,6 +28,7 @@ ENVELOPE_ID_MAX_LEN = 64
 #: client frame (`sub`/`ctl` envelope -> p -> options -> list -> object) is ~6
 #: levels in ws-schema.json; 32 leaves headroom. Checked BEFORE `json.loads`.
 MAX_JSON_DEPTH = 32
+#: §13.5 `maxItems` of `sub.topics` and `unsub.topics`, and `welcome.limits.max_topics_per_request`.
 MAX_TOPICS_PER_SUB = 50
 MAX_SUBSCRIPTIONS = 200
 #: §16.2 / welcome `limits.max_symbols_per_connection`; excess -> `subscription_limit`.

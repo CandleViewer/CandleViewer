@@ -1,5 +1,6 @@
 """#2572: `unsub`, `ctl` and `resync` read their shape as §13 does, and no reply echoes a value the
-envelope schema constrains: a `ch` that is not a topic name, or an `id` over 64 characters.
+envelope schema constrains: a `ch` that is not a topic name, or an `id` over 64 characters. #2875:
+an `unsub` holds at most the 50 entries §13.5 allows, and a longer one is refused whole.
 
 The other control frames' analogue of the `sub` refusals (#2567, `test_ws_s1.py`). Every frame the
 client receives is validated against §13 by the harness, so an echoed value fails on receipt."""
@@ -11,12 +12,14 @@ from typing import Any
 
 import pytest
 
-from candleviewer.ws.limits import ENVELOPE_ID_MAX_LEN
+from candleviewer.ws.limits import ENVELOPE_ID_MAX_LEN, MAX_INBOUND_FRAME_BYTES, MAX_TOPICS_PER_SUB
 from candleviewer.ws.permissions import UNSUB_KEYS
 from tests.contract.ws._harness import SCHEMAS, World, connect
 
 LONG = "t" * 10_000  # the issue's repro: a 10 000-character name
 LONG_ID = "i" * (ENVELOPE_ID_MAX_LEN + 1)
+#: §13.5 `unsub.topics.maxItems`: the most entries one `unsub` may hold (50).
+CAP: int = SCHEMAS["cv://ws/v1/unsub.schema.json"]["properties"]["topics"]["maxItems"]
 #: Envelope `ch` values that are not a topic name (`common.schema.json#/$defs/topic`).
 BAD_CH = [
     pytest.param("Bad Topic", id="bad-name"),
@@ -29,9 +32,19 @@ CTL = {"throttle_ms": 100}
 RESYNC = {"reason": "manual"}
 
 
+def _names(n: int) -> list[str]:
+    """`n` distinct, well-formed topic names, none of them subscribed."""
+    return [f"trades.S{i}" for i in range(n)]
+
+
 def test_contract_unsub_payload_keys_equal_the_schema() -> None:
     """A key §13.5 adds to `unsub.p` must not be refused as unknown."""
     assert UNSUB_KEYS == set(SCHEMAS["cv://ws/v1/unsub.schema.json"]["properties"])
+
+
+def test_contract_unsub_topics_bound_equals_the_schema() -> None:
+    """The cap `unsub` enforces, and `welcome` advertises, is §13.5's `maxItems`."""
+    assert MAX_TOPICS_PER_SUB == CAP
 
 
 def test_contract_envelope_id_bound_equals_the_schema() -> None:
@@ -47,6 +60,8 @@ def test_contract_envelope_id_bound_equals_the_schema() -> None:
         pytest.param({"topics": [{"ch": "trades.BTCUSDT"}]}, "topics[0]", id="object-entry"),
         pytest.param({"topics": ["trades.BTCUSDT"], "bogus": 1}, "p", id="unknown-key"),
         pytest.param({"topics": []}, "topics", id="topics-empty"),
+        # #2875: one entry over §13.5's `maxItems`, the first of them the live subscription
+        pytest.param({"topics": ["trades.BTCUSDT", *_names(CAP)]}, "topics", id="over-the-cap"),
     ],
 )
 def test_contract_unsub_with_a_malformed_shape_is_refused_whole(p: Any, field: str) -> None:
@@ -58,6 +73,39 @@ def test_contract_unsub_with_a_malformed_shape_is_refused_whole(p: Any, field: s
         assert "ch" not in f and len(json.dumps(f)) < 400  # no `unsub_ok`, nothing reflected
         c.send({"t": "ctl", "id": "k", "ch": "trades.BTCUSDT", "p": CTL})
         assert c.next_validated("ctl_ok")["id"] == "k"  # the subscription the frame named stays
+
+
+def test_contract_unsub_of_exactly_the_cap_welcome_advertises_is_answered_entry_by_entry() -> None:
+    """#2875: the limit `welcome` advertises is the one `unsub` enforces: `max_topics_per_request`
+    entries are processed (the frame is schema-valid, so the harness validates it on send)."""
+    with connect(World()) as c:
+        welcome = next(f for f in c.seen if f["t"] == "welcome")
+        assert welcome["p"]["limits"]["max_topics_per_request"] == CAP
+        c.sub("trades.BTCUSDT")
+        names = ["trades.BTCUSDT", *_names(CAP - 1)]
+        c.send({"t": "unsub", "id": "u", "p": {"topics": names}})
+        results = c.next_validated("unsub_ok")["p"]["results"]
+        assert [r["ch"] for r in results] == names
+        assert results[0] == {"ch": "trades.BTCUSDT", "ok": True}  # the live subscription
+        assert all(r.get("noop") is True for r in results[1:])
+
+
+def test_contract_the_largest_unsub_the_frame_cap_allows_gets_one_small_err() -> None:
+    """#2875's repro: 65 526 one-character names fill the 256 KiB inbound cap (262 143 bytes). The
+    reply was one `unsub_ok` of about 2.1 MB (65 526 results); it is one `err` of a few hundred
+    bytes, and the socket is still served."""
+    frame = {"t": "unsub", "id": "u", "p": {"topics": ["a"] * 65_526}}
+    text = json.dumps(frame, separators=(",", ":"))  # the very text that is sent below
+    assert len(text.encode()) <= MAX_INBOUND_FRAME_BYTES
+    with connect(World()) as c:
+        c.send_text(text)
+        f = c.recv()
+        assert (f["t"], f["id"], f["p"]["code"], f["p"]["field"]) == (
+            ("err", "u", "invalid_options", "topics")
+        )
+        assert "ch" not in f and len(json.dumps(f)) < 400
+        c.send({"t": "ping", "id": "k"})
+        assert c.next_of("pong")["id"] == "k"
 
 
 @pytest.mark.parametrize("ch", BAD_CH)
@@ -75,6 +123,7 @@ def test_contract_a_non_topic_ch_is_refused_without_being_echoed(t: str, p: Any,
 def test_contract_refused_control_frames_are_not_protocol_strikes() -> None:
     refused: list[dict[str, Any]] = [
         {"t": "unsub", "id": "u", "p": {"topics": ["Bad Topic"]}},
+        {"t": "unsub", "id": "o", "p": {"topics": _names(CAP + 1)}},  # #2875: over the cap
         {"t": "ctl", "id": "k", "ch": "Bad Topic", "p": CTL},
         {"t": "resync", "id": "r", "ch": "Bad Topic", "p": RESYNC},
     ]

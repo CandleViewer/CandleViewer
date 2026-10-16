@@ -66,8 +66,9 @@ MAX_MSGPACK_DEPTH: Final = MAX_JSON_DEPTH
 #: SR-185: entries one array may claim. The longest option list a topic accepts is a `rules`
 #: sub's 100 `rule_ids` (`topics.py`), and a test keeps every `topics.py` list limit under this
 #: cap. A longer list is malformed here, where JSON would answer per option or per topic: a
-#: `sub` or `unsub` naming more than 128 topics, or a `hello` / `auth` array the schema leaves
-#: unbounded. No conforming client sends one.
+#: `sub` naming more than 128 topics, or a `hello` / `auth` array the schema leaves unbounded.
+#: No conforming client sends one. An `unsub` naming more than 50 topics is refused whole on both
+#: paths (`invalid_options`, `field: topics`, §5.3); past 128 this decoder refuses it first.
 MAX_MSGPACK_ARRAY_LEN: Final = 128
 #: SR-185: entries one map may claim: the widest client object in `ws-schema.json`, a topic's
 #: `opts` (32 properties, `additionalProperties: false`). The server accepts fewer keys in any
