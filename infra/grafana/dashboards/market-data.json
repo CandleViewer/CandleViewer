@@ -271,12 +271,12 @@
             "type": "prometheus",
             "uid": "cv-prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(ws_fanout_latency_seconds_bucket{env=\"$env\"}[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cv_ws_fanout_seconds_bucket{env=\"$env\"}[$__rate_interval])))",
           "legendFormat": "",
           "refId": "A"
         }
       ],
-      "title": "WS fan-out latency p99 (budget 20 ms)",
+      "title": "WS fan-out latency p95 (budget 20 ms)",
       "type": "timeseries"
     },
     {

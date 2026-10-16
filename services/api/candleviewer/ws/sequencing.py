@@ -50,6 +50,7 @@ from candleviewer.ws.binary import (
     encode_b64,
 )
 from candleviewer.ws.errors import build_ws_error
+from candleviewer.ws.metrics import SAMPLE_MASK
 
 if TYPE_CHECKING:
     from candleviewer.ws.permissions import ConnectionAuthz, Subscription
@@ -423,7 +424,13 @@ class UpstreamBookGuard:
 
 class TopicEmitter:
     """Emits `snap` / `d` for one connection, allocating sequence numbers on the event loop (the
-    connection's single writer drains the queue in order)."""
+    connection's single writer drains the queue in order).
+
+    One data frame of a subscription in `SAMPLE_EVERY` (the one whose `s` is a multiple of it)
+    leaves with the `clock` reading at which the hub took it (`push_data`), so the writer can
+    observe `cv_ws_fanout_seconds` (budget #6, weighted) once the socket has it. The others leave
+    with none, and the hub reads no clock for them. `clock` must be the clock the writer reads;
+    the gateway passes the connection's own."""
 
     def __init__(
         self,
@@ -435,8 +442,12 @@ class TopicEmitter:
         source: SnapshotSource | None = None,
         cache: SnapshotCache | None = None,
         max_frame_bytes: int = MAX_OUTBOUND_FRAME_BYTES,
+        push_data: Callable[[dict[str, Any], float | None], None] | None = None,
     ) -> None:
         self.push = push
+        #: Where a sampled data frame goes, with its receipt time. None: through `push`, without
+        #: it, like every other frame.
+        self.push_data = push_data
         self.connection_id = connection_id
         self.wall_ms = wall_ms
         self.clock = clock
@@ -454,6 +465,8 @@ class TopicEmitter:
             return False
         previous = sub.seq
         seq = previous + 1
+        # The fan-out span starts before the build; a sampled `s` is stamped on its chunk only.
+        received = None if seq & SAMPLE_MASK else self.clock()
         meta: dict[str, Any] = {
             "reason": reason,
             "source": "live" if sub.replay_session_id is None else "replay",
@@ -480,7 +493,10 @@ class TopicEmitter:
         total = 0
         for frame in frames:
             total += len(_dumps(frame))
-            self.push(frame)
+            if received is None or self.push_data is None or frame["s"] is None:
+                self.push(frame)
+            else:
+                self.push_data(frame, received)
         fam = sub.topic.family.family
         cv_ws_snapshot_bytes.labels(topic=fam).observe(total)
         if reason != "initial":
@@ -528,14 +544,16 @@ class TopicEmitter:
         meta: Mapping[str, Any] | None = None,
     ) -> bool:
         """Emit one `d` consuming exactly one sequence number. Suppressed (False) while the
-        subscription awaits its `snap` or is paused, so no delta crosses a gap (§7.1). `meta`
-        rides on the envelope (bars: the §6.1 `include_delta` echo) and may not name a key
-        the server owns."""
+        subscription awaits its `snap` or is paused, so no delta crosses a gap (§7.1). A frame whose
+        `s` is a multiple of `SAMPLE_EVERY` is stamped with the clock now (a paced frame at its
+        release, not at its source update); the others read no clock. `meta` rides on the
+        envelope (bars: the §6.1 `include_delta` echo) and may not name a key the server owns."""
         if meta and SERVER_META_KEYS.intersection(meta):  # a programming error, as for a snap
             raise ValueError("delta meta may not name a server-owned key")
         if sub.snapshot_pending or sub.effective.get("paused") is True:
             return False
         sub.seq += 1
+        received = None if sub.seq & SAMPLE_MASK else self.clock()
         now = self.wall_ms()
         frame: dict[str, Any] = {"t": "d", "ch": sub.ch, "s": sub.seq}
         frame["ts"] = ts_ms if ts_ms is not None and sub.replay_session_id is not None else now
@@ -556,7 +574,10 @@ class TopicEmitter:
                 if coalesced_count > 1:
                     p["coalesced_count"] = coalesced_count
             frame |= {"e": "j", "p": p}
-        self.push(frame)
+        if received is None or self.push_data is None:
+            self.push(frame)
+        else:
+            self.push_data(frame, received)
         return True
 
     # -- client resync (§7.5) --

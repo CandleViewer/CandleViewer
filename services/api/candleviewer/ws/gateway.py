@@ -34,6 +34,12 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
 - Every server-initiated close goes through `_Connection.close_with`, which
   queues `bye` ahead of the close frame (requirement S11). Token expiry and
   revocation seal the close: anything still queued is dropped, `bye` next.
+- **Fan-out span** (the gateway segment of budget #6, from the subscription's hub turn, not bus
+  receipt): `TopicEmitter` queues one data frame (`snap` / `d`) of a subscription in
+  `SAMPLE_EVERY` with the clock reading at which the hub took it, and the writer observes
+  `cv_ws_fanout_seconds` for it, weighted, once `send_text` has returned. Unsampled frames
+  carry no stamp and read no clock. Control frames and dropped frames are not observed; a
+  client's drain wait, a slow consumer's backlog and replay frames are inside the span.
 
 Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
 close), rate-limiter window, `MAX_CONNECTIONS_PER_USER` per user (oldest idle
@@ -88,6 +94,8 @@ from candleviewer.ws.limits import (
     json_depth_exceeds,
 )
 from candleviewer.ws.metrics import (
+    FANOUT_SECONDS,
+    SAMPLE_EVERY,
     cv_ws_auth_failures_total,
     cv_ws_clock_skew_ms,
     cv_ws_closes_total,
@@ -356,14 +364,18 @@ class _Connection:
 
     # -- outbound -----------------------------------------------------------
 
-    def push(self, frame: dict[str, Any]) -> None:
-        """Queue one frame; a full queue is a slow consumer (C-2.18 policy)."""
+    def push(self, frame: dict[str, Any], received: float | None = None) -> None:
+        """Queue one frame; a full queue is a slow consumer (C-2.18 policy). A sampled data frame
+        comes with `received`, the `clock` reading at which the hub took it, and is queued with it
+        as `(received, frame)`: the writer observes `cv_ws_fanout_seconds` from that pair once the
+        socket has the frame. It never reaches the wire, and a frame dropped from the queue (a
+        seal, a full queue) is never observed. Any other frame is queued bare."""
         if self.closing:
             return
         if self.outbound.qsize() >= OUTBOUND_QUEUE_MAX:
             self.close_with("slow_consumer")
             return
-        self.outbound.put_nowait(frame)
+        self.outbound.put_nowait(frame if received is None else (received, frame))
 
     async def send(self, frame: dict[str, Any]) -> None:
         """Registry / `handle_sub` adapter; silent before the first `auth_ok` (SR-189)."""
@@ -723,6 +735,7 @@ def make_ws_router(
                 clock=conn.clock,
                 source=svc.snapshots,
                 cache=svc.snapshot_cache,
+                push_data=conn.push,
             )
             if svc.sequencing is not None:
                 svc.sequencing.register(conn.authz, conn.emitter)
@@ -878,11 +891,18 @@ def make_ws_router(
             if conn.sealed and item is not conn.bye_frame:
                 continue  # the identity ended while this frame was queued: never send it
             try:
-                await conn.ws.send_text(json.dumps(item, separators=(",", ":")))
+                if type(item) is tuple:  # the hub's sampled data frame, queued with its stamp
+                    received, item = item
+                    await conn.ws.send_text(json.dumps(item, separators=(",", ":")))
+                    now = conn.clock()  # the watchdog's send time, which this frame also observes
+                    conn.watchdog.last_outbound = now
+                    FANOUT_SECONDS.observe(now - received, SAMPLE_EVERY)
+                else:  # every other frame: sent as ever, no stamp, no observation
+                    await conn.ws.send_text(json.dumps(item, separators=(",", ":")))
+                    conn.watchdog.last_outbound = conn.clock()
             except WebSocketDisconnect as exc:
                 conn.disconnect_code = exc.code  # the client left mid-send; the reader saw nothing
                 raise
-            conn.watchdog.last_outbound = conn.clock()
 
     @router.websocket(WS_PATH)
     async def ws_endpoint(ws: WebSocket) -> None:

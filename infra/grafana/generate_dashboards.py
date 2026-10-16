@@ -267,8 +267,8 @@ def market() -> Board:
         "{{engine}}",
     )
     b.ts(
-        "WS fan-out latency p99 (budget 20 ms)",
-        q("ws_fanout_latency_seconds", pct="0.99"),
+        "WS fan-out latency p95 (budget 20 ms)",
+        q("cv_ws_fanout_seconds", pct="0.95"),
         "s",
         0.02,
         0.05,
