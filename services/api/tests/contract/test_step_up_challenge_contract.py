@@ -6,12 +6,17 @@ Pins the contract:
   `challenge_id`, `challenge_expires_at`, `action_class` and the server-composed `action_summary`
   and `target`, which come from a fixed per-route template, never from free text or credential
   material;
+* a challenge is issued only after authentication, CSRF, session state, request validation, RBAC
+  and account scope admit the caller, so it never names an object the caller may not read;
+* a label never identifies an account or a rule alone: an account is followed by its environment
+  and UID, a rule by its environments, and every label is escaped before it is quoted;
 * `POST /auth/step-up` takes `challenge_id`: required for a no-grace class (`400
-  validation_failed`, rule `challenge_required`, without it) and optional for a grace class; a
-  stale one is `400 validation_failed` with rule `challenge_expired`; both are decided before any
-  factor is checked;
-* a no-grace grant is bound to the challenged request by a stated SHA-256 fingerprint; another
-  request of the class is refused `403 step_up_required` and audited `auth.step_up_mismatch`;
+  validation_failed`, rule `challenge_required`, without it) and optional, for now, for a grace
+  class; a stale one is `400 validation_failed` with rule `challenge_expired`; both are decided
+  before any factor is checked;
+* a no-grace grant is bound to the challenged request by a stated SHA-256 fingerprint and lives
+  60 seconds; another request of the class is refused `403 step_up_required` and audited
+  `auth.step_up_mismatch`;
 * an operation that requires `Idempotency-Key` records it only after authentication, CSRF,
   session state and authorisation pass, so the re-sent held request is a first submission;
 * provider side (C-6.2): a dangerous route's real `403 step_up_required` body validates against
@@ -20,6 +25,7 @@ Pins the contract:
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
@@ -88,6 +94,19 @@ def _challenge_id_text(spec: dict[str, Any]) -> str:
 
 def _problem_text(spec: dict[str, Any], field: str) -> str:
     return _flat(spec["components"]["schemas"]["Problem"]["properties"][field]["description"])
+
+
+#: A label as `Problem.action_summary` quotes it: printable ASCII other than `'` and `\`, an
+#: escaped `\'` or `\\`, or a `\u{XXXX}` code-point escape, between apostrophes.
+_QUOTED_LABEL = r"'(?:[ -&(-\[\]-~]|\\['\\]|\\u\{[0-9A-F]{1,6}\})*'"
+
+
+def _account_reference(spec: dict[str, Any]) -> re.Pattern[str]:
+    """`'<label>' (<environment>, UID <exchange_uid>)`, with both taken from the spec."""
+    schemas = spec["components"]["schemas"]
+    environments = "|".join(schemas["Environment"]["enum"])
+    uid = schemas["CreateExchangeAccountRequest"]["properties"]["exchange_uid"]["pattern"]
+    return re.compile(rf"{_QUOTED_LABEL} \((?:{environments}), UID {uid.strip('^$')}\)")
 
 
 def _idempotency_required_operations() -> list[tuple[str, str]]:
@@ -160,9 +179,43 @@ def test_problem_declares_the_step_up_challenge_field(
             "redaction deny-list names (C-12.6)",
         ),
         (
+            "action_summary",
+            "A label alone never identifies an account or a rule, because labels can be renamed "
+            "and need not be unique",
+        ),
+        (
+            "action_summary",
+            "each account named in it is followed by its `environment` and `exchange_uid` and "
+            "each rule by the environments its scope includes, rendered bare",
+        ),
+        ("action_summary", "Release kill switch, accounts 'demo-1' (demo, UID 1001234)"),
+        ("action_summary", "Arm rule 'Break-even' (live)"),
+        (
+            "action_summary",
+            "an account's `environment` and `exchange_uid` never change after it is registered",
+        ),
+        (
+            "action_summary",
+            "Before a label is quoted, an apostrophe or a backslash in it is preceded by a "
+            "backslash, and every character outside printable ASCII (U+0020 to U+007E) is written "
+            "as `\\u{`, its code point in upper-case hex and `}` (U+202E becomes `\\u{202E}`)",
+        ),
+        (
+            "action_summary",
+            "That covers line breaks and other control characters, bidi embedding, override and "
+            "isolate marks and look-alike quotation marks, so the quotes bound the label",
+        ),
+        ("action_summary", "the label `demo-1' (demo)` is quoted as `'demo-1\\' (demo)'`"),
+        (
             "target",
             "it is an identifier or a server-resolved label of the validated request, never free "
             "text or credential material",
+        ),
+        (
+            "target",
+            "It is a label only when no other object of its kind that the caller can see has that "
+            "label, compared case-insensitively, and the label is printable ASCII; otherwise it is "
+            "the object's identifier",
         ),
     ],
 )
@@ -186,6 +239,26 @@ def test_typed_confirmation_challenge_names_its_target(spec: dict[str, Any]) -> 
     _validator(spec, _STEP_UP_REQUIRED_BODY).validate(body)
     assert body["target"] == "sub_002"
     assert f"'{body['target']}'" in body["action_summary"]
+
+
+def test_typed_confirmation_challenge_identifies_the_account_beyond_its_label(
+    spec: dict[str, Any],
+) -> None:
+    """A label can be renamed, so the account is also named by its environment and UID."""
+    summary = _forbidden_example(spec, "stepUpRequiredTypedConfirmation")["action_summary"]
+    account = summary.removeprefix("Rotate API key for account ")
+    assert account != summary
+    assert _account_reference(spec).fullmatch(account)
+
+
+def test_escaped_label_example_is_bounded_by_its_quotes(spec: dict[str, Any]) -> None:
+    example = re.search(
+        r"the label `(?P<label>.+?)` is quoted as `(?P<quoted>.+?)`",
+        _problem_text(spec, "action_summary"),
+    )
+    assert example is not None
+    assert re.fullmatch(_QUOTED_LABEL, example["quoted"])
+    assert not re.fullmatch(_QUOTED_LABEL, f"'{example['label']}'")
 
 
 @pytest.mark.parametrize(
@@ -246,6 +319,9 @@ def test_step_up_request_refuses_a_malformed_challenge_id(spec: dict[str, Any]) 
         "omitting it is `400 validation_failed` with "
         "`errors: [{field: challenge_id, rule: challenge_required}]`",
         "Optional for a grace class: without it the server uses the session's live challenge",
+        "This grace-class optionality is transitional and ends with #2725 (the web client sends "
+        "`challenge_id` on every step-up); from then on it is required whenever the session has a "
+        "live challenge",
         "A value that does not name the live challenge (expired, superseded, already used or "
         "unknown), or that is sent when there is none, gets `400 validation_failed` with "
         "`errors: [{field: challenge_id, rule: challenge_expired}]`",
@@ -277,12 +353,20 @@ def test_refused_challenge_answer_is_a_conforming_400(spec: dict[str, Any], rule
     "rule",
     [
         "Every `403 step_up_required` is a challenge for the one request it refused",
+        "A challenge is issued only to a caller the operation would otherwise admit: "
+        "authentication, CSRF, session state, request validation, RBAC permission and account "
+        "scope are all decided before the step-up gate",
+        "a caller refused by any of them gets that refusal",
+        "never a challenge, so `action_summary` never resolves a label the caller may not read",
         "The server composes `action_summary` from the validated request with a fixed per-route "
         "template",
         "Request values appear in it only as validated enum values or as identifiers and "
         "server-resolved labels, never as free text such as a `reason` and never as credential "
         "material",
         "the client shows it verbatim and never composes its own",
+        "A label never identifies an account or a rule on its own: each account named in it is "
+        "followed by its `environment` and `exchange_uid` and each rule by the environments its "
+        "scope includes, rendered bare, and every label is escaped before it is quoted",
         "A session has at most one live challenge",
         "when the session turns read-only and when it idle-locks (#2301)",
         "`challenge_id`, when sent, must name it",
@@ -293,6 +377,23 @@ def test_refused_challenge_answer_is_a_conforming_400(spec: dict[str, Any], rule
 )
 def test_step_up_description_states_the_challenge_rule(spec: dict[str, Any], rule: str) -> None:
     assert rule in _flat(_step_up(spec)["description"])
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [
+        ("unauthenticated", 401),
+        ("forbidden", 403),
+        ("account_scope_denied", 403),
+        ("not_found", 404),
+    ],
+)
+def test_refusal_that_precedes_the_challenge_is_catalogued(
+    spec: dict[str, Any], code: str, status: int
+) -> None:
+    """Each refusal the challenge rule names instead of a challenge exists with that status."""
+    assert f"`{status} {code}`" in _flat(_step_up(spec)["description"])
+    assert {entry["code"]: entry["status"] for entry in spec["x-error-codes"]}[code] == status
 
 
 @pytest.mark.parametrize(
@@ -312,7 +413,12 @@ def test_step_up_description_states_the_challenge_rule(spec: dict[str, Any], rul
         "Any other request of the class is refused with `403 step_up_required`",
         "audited as `auth.step_up_mismatch`",
         "The refusal does not use up the grant",
+        "it stays bound to the challenged request until that request uses it or a newer step-up "
+        "for the class replaces it",
         "a newer step-up for the class replaces it",
+        "The grant expires 60 seconds after the step-up, which leaves time only for the immediate "
+        "re-send",
+        "it also ends when the session turns read-only, when it idle-locks (#2301) and at logout",
         "A session holds at most one grant per no-grace class",
         "Grace classes keep the unbound 5-minute window",
     ],
@@ -343,6 +449,10 @@ def test_step_up_description_states_the_audit_rule(spec: dict[str, Any], rule: s
         "re-sends it as is after a successful step-up",
         "the re-send is a first submission and executes once",
         "drops the request without sending it",
+        "If the re-send gets no answer after a successful step-up (a network error or a timeout), "
+        "the action may have executed: the client never reports it as not sent and never re-sends "
+        "it on its own",
+        "reads the affected state back to learn the outcome",
     ],
 )
 def test_step_up_description_states_the_holding_rule(spec: dict[str, Any], rule: str) -> None:
