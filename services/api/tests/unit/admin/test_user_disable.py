@@ -11,9 +11,12 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from prometheus_client import REGISTRY, generate_latest
 from sqlalchemy.exc import IntegrityError
+from structlog.testing import capture_logs
 
 from candleviewer.admin import errors
+from candleviewer.admin.lifecycle_metrics import export_user_lifecycle_metrics
 from candleviewer.admin.user_disable import DisableResult, UserDisableService
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import InviteNotFound
@@ -21,9 +24,10 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import PrincipalSnapshot
-from candleviewer.auth.session_chart import SessionChart
+from candleviewer.auth.session_chart import SessionChart, SessionChartError
 from candleviewer.auth.session_service import SessionService
 from candleviewer.observability.context import bind_context
+from candleviewer.observability.metrics import CollectorRegistry
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW
 from candleviewer.storage.repositories.user_lifecycle import UserSelfTargetError, UserStatusChange
 from candleviewer.ws.revocation import CLOSE_USER_DISABLED, RevocationHub
@@ -40,6 +44,11 @@ _POST_COMMIT = ("socket", "sweep", "b16", "invite")
 _STEPS = ("socket_close", "session_sweep", "b16_revoke", "invite_revoke")
 _AUDIT_DOWN, _INVITE = errors.LifecycleAuditUnavailableError, ("invite_revoke",)
 _OPEN, _CLOSE = ("success", None, "disabled"), ("failure", "not_applied", "active")
+_TOTAL, _STEP = "cv_user_lifecycle_total", "cv_user_lifecycle_steps_total"
+
+
+def _sample(name: str, **labels: str) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
 
 
 def _revoked(record: SessionRecord) -> SessionRecord:
@@ -47,7 +56,8 @@ def _revoked(record: SessionRecord) -> SessionRecord:
 
 
 class _World:
-    """Every port but the S3 store (exposure: reads only, O2); `fail[action]` and `invite` raise."""
+    """Every port but the S3 store (exposure: reads only, O2); `fail[action]` audit errors,
+    `fails` keys and `invite` raise."""
 
     source = "not_deployed"  # the position provider's
 
@@ -58,12 +68,13 @@ class _World:
         fail: dict[str, list[BaseException]] | None = None,
         positions: int | Exception | None = 0,
         orders: int | None = 0,
+        fails: frozenset[object] = frozenset(),
         invite: Exception | None = None,
         store: Any = None,
         **ports: Any,
     ) -> None:
         self.log, self.calls = list[str](), list[dict[str, Any]]()
-        self.rel, self.fail, self.invite = rel or _Rel(), fail or {}, invite
+        self.rel, self.fail, self.fails, self.invite = rel or _Rel(), fail or {}, fails, invite
         self.positions, self.orders = positions, orders
         self.svc = UserDisableService(
             store or _store(self.rel),
@@ -98,24 +109,26 @@ class _World:
         self.log.append("orders")
         return self.orders
 
-    def mark(self, entry: str) -> None:
+    def mark(self, entry: str, key: object) -> None:
         self.log.append(entry if self.rel.committed else f"{entry}!open")
+        if key in self.fails:
+            raise (SessionChartError if entry.startswith("b16") else OSError)(entry)
 
     async def publish(self, session_id: str, reason: str) -> None:
-        self.mark(f"socket:{reason}")
+        self.mark(f"socket:{reason}", uuid.UUID(session_id))
 
     async def revoke_all(self, user_id: str, *, reason: str) -> tuple[SessionRecord, ...]:
-        self.mark(f"sweep:{reason}")
+        self.mark(f"sweep:{reason}", "sweep")
         return ()
 
     async def find_by_id(self, session_id: str) -> SessionRecord | None:
         return _revoked(_session(_TARGET)).model_copy(update={"id": uuid.UUID(session_id)})
 
     async def record(self, record: SessionRecord, now: object, reason: str) -> None:
-        self.mark(f"b16:{reason}")
+        self.mark(f"b16:{reason}", record.id)
 
     async def revoke_invite(self, user_id: uuid.UUID) -> None:
-        self.mark("invite")
+        self.mark("invite", None)
         if self.invite is not None:
             raise self.invite
 
@@ -190,22 +203,24 @@ async def _commit_fails(*_: Any, audit: Any, **__: Any) -> UserStatusChange:
 
 
 @pytest.mark.parametrize(
-    ("fail", "store", "error", "records"),
+    ("fail", "store", "error", "records", "failed"),
     [
-        ([TimeoutError()], None, _AUDIT_DOWN, [_CLOSE]),
-        ([TimeoutError(), AuditUnavailable("down")], None, _AUDIT_DOWN, []),
-        ([], SimpleNamespace(disable=_commit_fails), ConnectionError, [_OPEN, _CLOSE]),
+        ([TimeoutError()], None, _AUDIT_DOWN, [_CLOSE], 0),
+        ([TimeoutError(), AuditUnavailable("down")], None, _AUDIT_DOWN, [], 1),
+        ([], SimpleNamespace(disable=_commit_fails), ConnectionError, [_OPEN, _CLOSE], 0),
     ],
     ids=["hook_timeout", "closing_failed", "commit_failed"],
 )
 async def test_unapplied_record_is_closed(
-    fail: list[BaseException], store: Any, error: type[Exception], records: list[Any]
+    fail: list[BaseException], store: Any, error: type[Exception], records: list[Any], failed: int
 ) -> None:
     """AC8, S3: a timed-out hook (503) or failed commit is closed by a `not_applied` record."""
+    before = _sample(_STEP, step="closing_record", outcome="failed")
     w = _World(fail={"users.disable": list(fail)}, store=store)
     with pytest.raises(error):
         await w.disable()
     assert [(c["outcome"], c.get("reason"), c["after_state"]["status"]) for c in w.calls] == records
+    assert _sample(_STEP, step="closing_record", outcome="failed") == before + failed
     assert w.post_commit() == [] and not w.rel.committed
 
 
@@ -235,10 +250,13 @@ async def test_forbidden_role_refused_before_lookup_audited(target: uuid.UUID) -
 
 async def test_store_self_target_is_the_audited_403() -> None:
     """SR-055: the store's own self-target refusal is the same audited 403, not an error."""
+    counted = [_sample(_TOTAL, action="disable", result=r) for r in ("self_target", "error")]
     w = _World(store=SimpleNamespace(disable=AsyncMock(side_effect=UserSelfTargetError("self"))))
     with pytest.raises(errors.LifecycleForbiddenError, match="self_target"):
         await w.disable()
     assert [(c["action"], c["reason"]) for c in w.calls] == [("rbac.denied", "self_target")]
+    after = [_sample(_TOTAL, action="disable", result=r) for r in ("self_target", "error")]
+    assert after == [counted[0] + 1, counted[1]]
 
 
 async def test_refusal_with_audit_down_is_503() -> None:
@@ -308,9 +326,11 @@ async def test_invited_revokes_invite(
 
 async def test_already_disabled_is_a_noop_that_sweeps_again() -> None:
     """AC5: a repeat needs no acknowledgement, commits nothing (`!open`), sweeps again (SR-029)."""
+    noops = _sample(_TOTAL, action="disable", result="noop")
     w = _World(_Rel(status="disabled"), positions=None)
     assert await w.disable() == DisableResult(changed=False)
     assert w.calls == [] and w.log == ["positions", "orders", "sweep:user_disabled!open"]
+    assert _sample(_TOTAL, action="disable", result="noop") == noops + 1
 
 
 async def test_cancelled_caller_leaves_the_steps_to_finish() -> None:
@@ -346,6 +366,53 @@ async def _hang(*_: Any, **__: Any) -> Any:
     ids=[*_STEPS, "deadline"],
 )
 async def test_hung_step_fails_never_raises(ports: dict[str, Any], failed: tuple[str, ...]) -> None:
-    """R7: each await after the commit and all of them are bounded; hung or unreached, it fails."""
+    """R7: each await after the commit and all of them are bounded; hung or unreached, it fails,
+    and is counted and logged as failed."""
+    before = [_sample(_STEP, step=s, outcome="failed") for s in _STEPS]
     w = _World(_Rel(status="invited", sessions=(_S1,)), **ports)
-    assert await w.disable() == DisableResult(True, failed)
+    with capture_logs() as logs:
+        assert await w.disable() == DisableResult(True, failed)
+    after = [_sample(_STEP, step=s, outcome="failed") for s in _STEPS]
+    assert tuple(s for s, b, a in zip(_STEPS, before, after, strict=True) if a == b + 1) == failed
+    assert {e["error"] for e in logs if e.get("outcome") == "failed"} == {"TimeoutError"}
+
+
+async def test_cancelled_steps_are_counted_failed() -> None:
+    """R7: steps a cancellation of their task cuts off (shutdown) are counted failed first."""
+    before = [_sample(_STEP, step=s, outcome="failed") for s in _STEPS]
+    w = _World(_Rel(status="invited"), publish=AsyncMock(side_effect=asyncio.CancelledError))
+    with pytest.raises(asyncio.CancelledError):
+        await w.disable()
+    assert [_sample(_STEP, step=s, outcome="failed") for s in _STEPS] == [n + 1 for n in before]
+
+
+async def test_post_commit_failure_alerts() -> None:
+    """R7: each failed step is counted and logged at error; nothing else stops or rolls back."""
+    failed = [_sample(_STEP, step=s, outcome="failed") for s in _STEPS]
+    rel = _Rel(status="invited", sessions=(_S1, _S2))
+    w = _World(rel, fails=frozenset({_S1, "sweep"}), invite=OSError("invites down"))
+    with capture_logs() as logs:
+        assert await w.disable() == DisableResult(changed=True, failed_steps=_STEPS)
+    assert rel.committed and w.log.count("b16:user_disabled") == 2
+    assert w.log.count("socket:user_disabled") == 2
+    assert [_sample(_STEP, step=s, outcome="failed") for s in _STEPS] == [n + 1 for n in failed]
+    lines = [(e["step"], e["error"], e["log_level"]) for e in logs if e.get("step") in _STEPS]
+    kinds = ("OSError", "OSError", "SessionChartError", "OSError")
+    assert lines == list(zip(_STEPS, kinds, ["error"] * 4, strict=True))
+
+
+async def test_log_and_metrics_per_step() -> None:
+    """One line and one count per step, the call counted, and the series served with `env`."""
+    ok = [_sample(_STEP, step=s, outcome="ok") for s in _STEPS]
+    disabled = _sample(_TOTAL, action="disable", result="disabled")
+    with bind_context(request_id=str(_RID)), capture_logs() as logs:
+        await _World(_Rel(status="invited")).disable()
+    lines = [(e["step"], e["outcome"], e["request_id"]) for e in logs if "step" in e]
+    assert lines == [(s, "ok", str(_RID)) for s in _STEPS]
+    assert [_sample(_STEP, step=s, outcome="ok") for s in _STEPS] == [n + 1 for n in ok]
+    assert _sample(_TOTAL, action="disable", result="disabled") == disabled + 1
+    registry = CollectorRegistry()
+    collector = export_user_lifecycle_metrics(registry, env="demo")
+    text = generate_latest(registry).decode()
+    collector.close()
+    assert 'cv_user_lifecycle_total{action="disable",env="demo",result="disabled"}' in text
