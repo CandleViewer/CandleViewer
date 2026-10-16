@@ -533,6 +533,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "bar_state_write_failed_total",
+        "counter",
+        "writes",
+        ("stage",),
+        "Builder state blob writes that failed (stage: cold_start, periodic, final).",
+        "cold_start > 0 = generation floor not durable; any stage rising = state root unwritable",
+        _L,
+        "E12",
+        max_series=3,
+        exported=True,
+    ),
+    _s(
         "bars_blob_discarded_total",
         "counter",
         "blobs",

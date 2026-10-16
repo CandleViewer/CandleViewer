@@ -33,6 +33,11 @@ bar_builder_fanout_latency_seconds = Histogram(
 bar_state_snapshots_written_total = Counter(
     "bar_state_snapshots_written_total", "Builder state blobs written."
 )
+bar_state_write_failed_total = Counter(
+    "bar_state_write_failed_total",
+    "Builder state blob writes that failed.",
+    labelnames=("stage",),
+)
 bars_blob_discarded_total = Counter(
     "bars_blob_discarded_total",
     "State blobs discarded on restore.",
@@ -147,6 +152,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bar_builder_specs_in_use",
         "bar_builder_fanout_latency_seconds",
         "bar_state_snapshots_written_total",
+        "bar_state_write_failed_total",
         "bars_blob_discarded_total",
         "bar_builder_cold_starts_total",
         "bar_builder_cold_start_seconds",

@@ -10,6 +10,7 @@ from pathlib import Path
 from candleviewer.bars.builder_set import BarBuilderSet
 from candleviewer.bars.emit import BarEmission, EmitRouter, WriterSink
 from candleviewer.bars.leases import DEFAULT_CAPS, SpecCaps
+from candleviewer.bars.metrics import bar_state_write_failed_total, bars_blob_discarded_total
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.state_store import StateStore
 from candleviewer.bus.bus import Bus
@@ -24,6 +25,16 @@ M1 = BarSpec(kind="time", interval_ms=60_000)
 H1 = BarSpec(kind="time", interval_ms=3_600_000)
 T3 = BarSpec(kind="tick", tick_count=3)
 V5 = BarSpec(kind="volume", volume_threshold=Decimal(5))
+
+
+def write_failures(stage: str) -> float:
+    """Failed state-blob writes counted so far for `stage` (`cold_start`, `periodic`, `final`)."""
+    return float(bar_state_write_failed_total.labels(stage=stage)._value.get())
+
+
+def blob_discards(reason: str) -> float:
+    """Blobs (or floors read from one) discarded so far for `reason`."""
+    return float(bars_blob_discarded_total.labels(reason=reason)._value.get())
 
 
 class Clock:
@@ -118,4 +129,13 @@ async def settle(bus: Bus, s: BarBuilderSet | None = None) -> None:
     raise AssertionError("lanes did not settle")
 
 
-__all__ = ["FakeTape", "FakeWriter", "RecordingSink", "WriterSink", "make_set", "settle"]
+__all__ = [
+    "FakeTape",
+    "FakeWriter",
+    "RecordingSink",
+    "WriterSink",
+    "blob_discards",
+    "make_set",
+    "settle",
+    "write_failures",
+]

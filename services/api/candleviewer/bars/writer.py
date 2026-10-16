@@ -33,6 +33,7 @@ from candleviewer.bars.rows import (
     BarPersistError,
     bar_param_for,
     bar_row,
+    check_generation,
     table_for,
 )
 from candleviewer.observability.context import spawn
@@ -213,6 +214,8 @@ class BarWriter:
         same precedence, capacity and backpressure path as `submit`."""
         if source not in SOURCE_RANK or any(r.get("source") != source for r in rows):
             raise BarPersistError(f"Every row must carry source '{source}'.")
+        for r in rows:
+            check_generation(r.get("generation"), source=source)
         table = table_for(spec)
         self._check_precedence(table, spec, rows, source)
         self._admit_param(table, spec)

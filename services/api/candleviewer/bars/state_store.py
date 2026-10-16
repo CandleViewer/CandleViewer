@@ -33,14 +33,12 @@ import orjson
 
 from candleviewer.bars.errors import BarsError
 from candleviewer.bars.models import BuilderState
+from candleviewer.bars.rows import MAX_GENERATION
 from candleviewer.observability.context import run_in_thread
 
 ENVELOPE_VERSION: Final = 2
 #: The envelope before `generation` was recorded (#2662); `load` reads it as generation 0.
 LEGACY_ENVELOPE_VERSION: Final = 1
-#: Largest generation a blob may record. Below 2**53, so it stays a safe JSON integer on the WS
-#: wire (the TS converter rejects larger values), with headroom for the `floor + 1` step.
-MAX_GENERATION: Final = 2**52
 MAX_BLOB_BYTES: Final = 8 * 1024 * 1024
 _SYMBOL: Final = re.compile(r"^[A-Z0-9]{4,20}$")
 _HASH: Final = re.compile(r"^[0-9a-f]{64}$")
@@ -62,9 +60,10 @@ class Watermark:
 class StoredState:
     state: BuilderState
     watermark: Watermark | None
-    #: The series' bar generation (epoch); 0 for a v1 envelope. A claim read from an unauthenticated
-    #: file: bounded to `MAX_GENERATION`, and from a discarded blob it only raises the floor.
-    generation: int = 0
+    #: The series' bar generation (epoch); a v1 envelope reads as 0. A claim read from an
+    #: unauthenticated file: bounded to `MAX_GENERATION`, and from a discarded blob it only raises
+    #: the floor. Required: a defaulted 0 would silently move a series back to the legacy epoch.
+    generation: int
 
 
 class StateStore:

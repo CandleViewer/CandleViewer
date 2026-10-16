@@ -150,7 +150,7 @@ async def write_checkpoint(src: Source, store: StateStore, ckpt_us: int) -> int:
     b = TimeBarBuilder(SPEC, SYMBOL)
     for t in _trades(src.range(StreamKind.TRADES, SPAN0_US, ckpt_us)):
         b.on_trade(t)
-    await store.save(StoredState(b.snapshot(), None))
+    await store.save(StoredState(b.snapshot(), None, 0))
     return store.path(SYMBOL, SPEC.spec_hash).stat().st_size
 
 

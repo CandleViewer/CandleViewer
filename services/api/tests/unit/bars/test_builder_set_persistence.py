@@ -20,7 +20,19 @@ from candleviewer.bars.state_store import StateStore, StoredState, Watermark
 from candleviewer.bus.bus import Bus
 from candleviewer.exchange.base.models import TradeEvent
 
-from ._set_harness import H1, M1, T3, TOPIC, V5, Clock, FakeTape, RecordingSink, make_set, settle
+from ._set_harness import (
+    H1,
+    M1,
+    T3,
+    TOPIC,
+    V5,
+    Clock,
+    FakeTape,
+    RecordingSink,
+    make_set,
+    settle,
+    write_failures,
+)
 from ._trades import SYM, trade, us
 
 T0 = us("10:00:00")
@@ -163,7 +175,7 @@ async def test_crash_between_write_and_rename_keeps_old_blob(
         raise OSError("power cut")
 
     monkeypatch.setattr("candleviewer.bars.state_store.os.replace", crash)
-    await s._save(good)  # logged + swallowed, never raises
+    await s._save(good, "periodic")  # logged + swallowed, never raises
     assert store.path(SYM, T3.spec_hash).read_bytes() == before
     loaded, reason = await store.load(SYM, T3.spec_hash)
     assert reason == "ok" and loaded is not None and loaded.state == good.state
@@ -247,6 +259,9 @@ async def test_disk_full_on_save_is_logged_not_raised(
         raise OSError(28, os.strerror(28))
 
     monkeypatch.setattr(s._store, "save", full)
+    periodic, final = write_failures("periodic"), write_failures("final")
     clock.t += 60_000_000
     await s.tick()
+    assert write_failures("periodic") == periodic + 1  # counted, by phase
     await s.stop()
+    assert write_failures("final") == final + 1

@@ -19,22 +19,30 @@ no catalogue lifecycle (B1-B20), so lease state is plain bookkeeping in `leases.
   restores (keeping the generation the blob recorded), then replays from the tape only the
   trades after the watermark, then goes live. Live trades the watermark covers are skipped once,
   so nothing is applied twice (BI-5). A missing or refused blob cold-starts the series (fresh
-  builder, partial first bar, new generation). A refused blob is also deleted, counted and
-  logged with its `spec_hash`, and it sets `health_reasons()`. A refused blob never raises. A
-  blob with no watermark has no replay point, so bars emitted after it could not be reproduced:
-  it cold-starts the series too (quietly) and only sets the generation floor.
+  builder, partial first bar, new generation). A refused blob is also counted and logged with
+  its `spec_hash`, and it sets `health_reasons()`; it is not deleted, the cold start's floor
+  record (below) overwrites it, so if that write fails the refused blob stays and keeps its
+  floor. A refused blob never raises. A blob with no watermark has no replay point, so bars
+  emitted after it could not be reproduced: it cold-starts the series too (quietly) and only
+  sets the generation floor.
 - **Generation (#2662).** A fresh builder restarts `index` at 0, so a cold start begins a new
   generation (epoch): `max(now_ms, floor + 1)`. `now_ms` is the set's injected UTC wall clock
   (`now_us // 1000`). `floor` is the highest generation known for the series: the one a blob
   that still parsed recorded (a refused or watermark-less blob), or the last one this process
   issued or restored for it (a bounded LRU, so a teardown followed by a re-register after a
-  failed final save cannot fall back); else -1. A cold start writes its blob at once, so the
-  floor survives a crash before the first 60 s persist. The new value is never below the
-  cold-start time nor at or below a generation the process or a readable blob knew, so no two
+  failed final save cannot fall back); else -1. A floor at or above `MAX_GENERATION` has no room
+  above it in the range the state loader accepts, so it is refused as corrupt and the clock
+  decides. A cold start writes a floor record at once: the new generation with a fresh snapshot
+  and no watermark, so a restart never restores it (even on a busy lane, where a watermark
+  would make it a restore point that reuses `index` 0 in the same generation) and always begins
+  a new generation; periodic and final blobs stay restorable. The new value is never below the
+  cold-start time nor at or below a generation the process or a readable floor knew, so no two
   bars of a series share `(generation, index)`. Residual, accepted: a crash with no readable
-  blob and a wall clock that stepped back can give a generation at or below an earlier one. The
-  failure is a lower generation, so a consumer treats any change of generation, in either
-  direction, as a swap and compares it for equality only, never as a time.
+  floor (no blob, or a failed floor write, counted in
+  `bar_state_write_failed_total{stage="cold_start"}`) and a wall clock that stepped back can
+  give a generation at or below an earlier one. The failure is a lower generation, so a
+  consumer treats any change of generation, in either direction, as a swap and compares it for
+  equality only, never as a time.
 - **Emit.** Live and replayed emissions both go through `EmitRouter` (`emit.py`), stamped with
   the series' generation (`_Entry.generation`), which `WriterSink` stores on every row. An
   ADR-0033 rebuild (E12-S12, not implemented) would write under a generation of its own and
@@ -65,11 +73,13 @@ from candleviewer.bars.metrics import (
     bar_builder_quarantined_total,
     bar_builder_specs_in_use,
     bar_state_snapshots_written_total,
+    bar_state_write_failed_total,
     bars_blob_discarded_total,
     bars_restore_gap_total,
 )
 from candleviewer.bars.models import BarBuilder, BarSpec, BarUpdate
 from candleviewer.bars.renko_builder import RenkoBarBuilder
+from candleviewer.bars.rows import MAX_GENERATION
 from candleviewer.bars.state_store import StateStore, StoredState, Watermark
 from candleviewer.bars.threshold_builders import DeltaBarBuilder, RangeBarBuilder
 from candleviewer.bars.time_builder import TimeBarBuilder
@@ -293,7 +303,7 @@ class BarBuilderSet:
                         await asyncio.sleep(0)
                 saves = [self._stored(lane, e) for e in lane.entries]
             for stored in saves:
-                await self._save(stored)
+                await self._save(stored, "final")
             bar_builder_specs_in_use.labels(symbol=symbol).set(0)
 
     async def _maybe_close_lane(self, symbol: str) -> None:
@@ -430,10 +440,9 @@ class BarBuilderSet:
             except _RESTORE_ERRORS:
                 stored, reason, builder = None, "restore_failed", self._factory(spec, symbol)
         if reason not in _QUIET_REASONS:
-            bars_blob_discarded_total.labels(reason=reason).inc()
-            _log().warning("bars_state_blob_discarded", symbol=symbol, spec_hash=h, reason=reason)
-            await self._store.delete(symbol, h)
-            self._reasons.add(STATE_COLD_STARTED)
+            # Not deleted: the cold start's floor record overwrites it below, and if that write
+            # fails the refused blob stays on disk and keeps supplying its floor.
+            self._discarded(symbol, h, reason)
         now = self._now()
         if stored is not None:
             generation = stored.generation  # a restored series keeps its epoch
@@ -443,6 +452,11 @@ class BarBuilderSet:
             # stepped back cannot reuse one: the blob that parsed (`recorded`) and the last one
             # this process issued or restored for it.
             floor = max(recorded, self._issued.get(key, -1))
+            if floor >= MAX_GENERATION:
+                # Nothing above it fits the range the state loader accepts: not an honest
+                # epoch, so it is ignored like a corrupt blob and the clock decides.
+                self._discarded(symbol, h, "corrupt")
+                floor = -1
             generation = max(now // 1000, floor + 1)
         self._remember(key, generation)
         entry = _Entry(spec, builder, saved_at=now, generation=generation)
@@ -456,8 +470,11 @@ class BarBuilderSet:
                 generation=generation,
             )
             # Write the new epoch now: the next periodic persist is a minute away, and a crash
-            # plus a clock step-back before it would let the generation fall below this one.
-            await self._save(self._stored(lane, entry))
+            # plus a clock step-back before it would let the generation fall below this one. A
+            # floor record only: no watermark, so a restart never restores it (not even on a busy
+            # lane, where a fresh state plus the lane's watermark would be a restore point that
+            # reuses index 0 inside this generation) and always begins a new one.
+            await self._save(StoredState(entry.builder.snapshot(), None, generation), "cold_start")
         elif wm is not None:
             entry.skip = skip = _Mark(wm.ts_us, wm.ids)
             if self._tape is not None:
@@ -485,6 +502,14 @@ class BarBuilderSet:
                 await self._catch_up(entry, skip, t)
         bar_builder_cold_start_seconds.observe(time.perf_counter() - t0)
         return entry
+
+    def _discarded(self, symbol: str, spec_hash: str, reason: str) -> None:
+        """A blob (or a floor read from one) that could not be used: counted, logged, flagged."""
+        bars_blob_discarded_total.labels(reason=reason).inc()
+        _log().warning(
+            "bars_state_blob_discarded", symbol=symbol, spec_hash=spec_hash, reason=reason
+        )
+        self._reasons.add(STATE_COLD_STARTED)
 
     def _remember(self, key: tuple[str, str], generation: int) -> None:
         """Note the newest generation issued for a series; evict the least recently used."""
@@ -570,24 +595,30 @@ class BarBuilderSet:
                 gone = [e for e in lane.entries if e.spec.spec_hash == h]
                 lane.entries = tuple(e for e in lane.entries if e.spec.spec_hash != h)
                 for e in gone:  # final blob, written before a re-register can read it
-                    await self._save(self._stored(lane, e))
+                    await self._save(self._stored(lane, e), "final")
             bar_builder_specs_in_use.labels(symbol=symbol).set(len(lane.entries))
             await self._maybe_close_lane(symbol)
         for stored in saves:
-            await self._save(stored)
+            await self._save(stored, "periodic")
 
     def _stored(self, lane: _Lane, e: _Entry) -> StoredState:
         mark = e.skip if e.skip is not None and e.skip.ts > lane.mark.ts else lane.mark
         wm = None if mark.ts == _Mark().ts else mark.frozen()
         return StoredState(e.builder.snapshot(), wm, e.generation)
 
-    async def _save(self, stored: StoredState) -> None:
+    async def _save(self, stored: StoredState, stage: str) -> None:
+        """Write one blob. A failure is counted and logged, never raised. `stage` is `cold_start`
+        (the generation floor record: if it fails, the floor is not durable), `periodic` or
+        `final`."""
         try:
             await self._store.save(stored)
         except (OSError, BarsError) as exc:
+            bar_state_write_failed_total.labels(stage=stage).inc()
             _log().warning(
                 "bars_state_write_failed",
                 spec_hash=stored.state.spec_hash,
+                stage=stage,
+                generation=stored.generation,
                 error_type=type(exc).__name__,
             )
             return

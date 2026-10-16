@@ -105,6 +105,20 @@ def table_for(spec: BarSpec) -> str:
 #: Generation of a kline-sourced row: an exchange kline has no builder epoch (`kline_rows`). Every
 #: other row carries its series' epoch (`BarBuilderSet`, #2662), so `bar_row` has no default.
 KLINE_GENERATION: Final = 0
+#: Largest generation a row or a state blob may carry. Below 2**53, so it stays a safe JSON integer
+#: on the WS wire (the TS converter rejects larger values), with headroom for the `floor + 1` step.
+MAX_GENERATION: Final = 2**52
+
+
+def check_generation(generation: object, *, source: str) -> None:
+    """Refuse a generation outside 0..`MAX_GENERATION`, or a kline row's that is not the kline one.
+
+    The write boundary: a float or a bool would break the LONG column, and a runaway value would
+    outgrow what the wire and the state loader accept."""
+    if type(generation) is not int or not 0 <= generation <= MAX_GENERATION:
+        raise BarPersistError(f"A bar generation must be an integer in 0..{MAX_GENERATION}.")
+    if source == "kline" and generation != KLINE_GENERATION:
+        raise BarPersistError("A kline row carries the kline generation: it has no builder epoch.")
 
 
 def bar_row(bar: Bar, spec: BarSpec, *, source: str = "tape", generation: int) -> dict[str, object]:
@@ -112,6 +126,7 @@ def bar_row(bar: Bar, spec: BarSpec, *, source: str = "tape", generation: int) -
     assert_persistable(bar)
     if source not in SOURCES:
         raise BarPersistError(f"The source '{source}' is not one of {', '.join(SOURCES)}.")
+    check_generation(generation, source=source)
     delta_pct = to_double(bar.delta / bar.volume * 100) if bar.volume else 0.0
     row: dict[str, object] = {
         "ts": bar.open_time,
