@@ -206,7 +206,10 @@ def _iso(value: datetime | None) -> str | None:
 def _row_json(
     op_id: str, fields: DrawingFields, if_match: datetime | None = None
 ) -> dict[str, Any]:
-    # `jsonb_to_recordset` would coerce "yes" -> true or "7" -> 7; refuse instead (SR-040).
+    # `jsonb_to_recordset` would coerce "yes" -> true or "7" -> 7, so `locked`, `visible`,
+    # `z_index`, `label`, `symbol` and `tool` are refused here instead (SR-040). Not checked:
+    # `layout_id` (a mistyped value fails the uuid cast), `geometry` (CHECK `dr_geom`) and
+    # `style` (jsonb with no CHECK: stored as given, so it relies on the API building a dict).
     if not (
         isinstance(fields.locked, bool)
         and isinstance(fields.visible, bool)
