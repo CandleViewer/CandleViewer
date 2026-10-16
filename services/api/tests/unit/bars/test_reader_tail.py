@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import time
 from collections.abc import Mapping
 from decimal import Decimal
@@ -96,7 +97,8 @@ def test_tail_query_takes_a_limit_from_one_to_max_tail(limit: int) -> None:
 
 
 def test_the_tail_cap_is_the_ws_history_maximum() -> None:
-    """SR-E12-07: `history` 0..1000 on the wire (0 is skipped by the caller, never read)."""
+    """The wire range is 0..1000 (`23-ws-protocol.md` §6.1, §13; the caller skips a 0), and
+    SR-E12-07 caps it at 1000: the one read never exceeds what a snapshot may ask for."""
     assert FAMILIES["bars"].options["history"].hi == MAX_TAIL == 1_000
 
 
@@ -142,6 +144,24 @@ async def test_read_tail_binds_its_window_back_from_the_injected_clock() -> None
     (sql, params), *_ = conn.calls
     assert sql.endswith(" LIMIT 4") and params == (SYM, "1m", ts_param(NOW - 8 * MIN))
     assert tail == BarTail([], since_us=NOW - 8 * MIN)  # a series with no tape yet: fetched 0
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [BarSpec(kind="tick", tick_count=500), BarSpec(kind="time", interval_ms=86_400_000)],
+    ids=["tick", "1d"],
+)
+async def test_read_tail_reads_the_clock_once_so_a_window_at_its_cap_is_never_refused(
+    spec: BarSpec,
+) -> None:
+    """These windows equal the SR-E12-02 cap, which `build_tail_query` checks against the
+    caller's `now_us`: that holds only while the window and the check share one reading. A clock
+    that moves 1 us a read would otherwise turn every such read into a refusal."""
+    clock = itertools.count(NOW)
+    reader = BarReader(_Conn([]), _sched, now_us=lambda: next(clock))
+    tail = await reader.read_tail(SYM, spec, MAX_TAIL)
+    assert tail.since_us == NOW - tail_window_us(spec, MAX_TAIL)  # the first reading
+    assert next(clock) == NOW + 1  # and the only one
 
 
 async def test_read_tail_measures_back_from_the_wall_clock_by_default(
