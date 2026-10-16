@@ -166,6 +166,33 @@ async def test_stop_zeroes_and_fails_closed() -> None:
         await _borrow(svc, meta.key_id)
 
 
+async def test_stop_zeroes_then_cancels_the_brokers_in_flight_touch() -> None:
+    """#2776: the service owns the broker, so its stop cancels and awaits the broker's in-flight
+    `last_used_at` write, after the KEK is already zeroed; no task is left pending."""
+    store: Any = InMemoryCredentialStore()
+    entered = asyncio.Event()
+    kek_gone_at_cancel: list[bool] = []
+    svc = _svc(_Src(KEK_V1, 1), store=store)
+    await svc.start(_ctx())
+    broker = svc._require()
+
+    async def stall(key_id: Any) -> None:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            kek_gone_at_cancel.append(broker._kek is None)
+
+    meta = await _store_one(svc)
+    store.touch_last_used = stall
+    await _borrow(svc, meta.key_id)
+    await entered.wait()
+    (write,) = broker._touches.values()
+    await svc.stop(0.1)
+    assert write.cancelled() and kek_gone_at_cancel == [True] and not broker._touches
+    assert asyncio.all_tasks() == {asyncio.current_task()}
+
+
 def test_health_before_start_is_stopped() -> None:
     assert SecretsService().health().status is HealthStatus.STOPPED
 

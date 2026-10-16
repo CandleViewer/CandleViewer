@@ -404,10 +404,11 @@ class SecretsService:
         return await self._require().rewrap_all(to_version, actor=actor)
 
     async def stop(self, grace_s: float) -> None:
-        if self._broker is not None:
-            self._broker.drop_kek()
-        self._broker = None
+        broker, self._broker = self._broker, None
         self._started = False
+        if broker is not None:
+            broker.drop_kek()  # zeroed first, so a slow drain below can never delay it
+            await broker.aclose()  # #2776: cancel and await its in-flight `last_used_at` writes
 
     def health(self) -> HealthReport:
         if not self._started:
