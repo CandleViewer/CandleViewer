@@ -195,7 +195,7 @@ async def test_read_tail_is_oldest_first_and_closed_only() -> None:
 
 async def test_read_tail_maps_each_stored_row_back_to_its_bar() -> None:
     bars = [_bar(i) for i in range(3)]
-    tail = await _read([bar_row(b, SPEC) for b in reversed(bars)])
+    tail = await _read([bar_row(b, SPEC, generation=0) for b in reversed(bars)])
     assert [b for _, b in tail.bars] == bars  # every field, symbol and spec_hash included
 
 
