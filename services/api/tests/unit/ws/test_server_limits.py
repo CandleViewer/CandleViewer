@@ -21,7 +21,8 @@ def test_server_config_matches_limits() -> None:
     assert cfg.limit_concurrency == limits.SERVER_LIMIT_CONCURRENCY
     assert cfg.ws_ping_interval == HEARTBEAT_INTERVAL_S
     assert cfg.ws_ping_timeout == HEARTBEAT_TIMEOUT_S
-    assert cfg.proxy_headers is True
+    # #2275: uvicorn never reads `X-Forwarded-For`; MeshOnly's trusted proxy is the only reader.
+    assert cfg.proxy_headers is False
 
 
 def test_server_limits_are_not_library_defaults() -> None:

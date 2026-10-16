@@ -2,9 +2,9 @@
 
 Builds the uvicorn configuration from `candleviewer.ws.limits` and
 `candleviewer.ws.lifecycle` so server-level WebSocket limits cannot drift from
-the protocol (`23-ws-protocol.md` §16.2). Proxy-header handling keeps uvicorn's
-defaults. The server runs the §9.4 planned WebSocket shutdown before uvicorn's own
-(`PlannedShutdownServer`).
+the protocol (`23-ws-protocol.md` §16.2). uvicorn's proxy-header handling is off
+(#2275): `MeshOnlyMiddleware` is the only reader of forwarded headers. The server runs the
+§9.4 planned WebSocket shutdown before uvicorn's own (`PlannedShutdownServer`).
 """
 
 from __future__ import annotations
@@ -33,11 +33,17 @@ def uvicorn_kwargs(settings: Settings | None = None) -> dict[str, Any]:
 
     Host/port come from `Settings` (`CV_BIND_HOST` is validated against the wildcard
     address, C-12.9); WS limits from `ws/limits.py` (single source).
+
+    `proxy_headers=False` (#2275): uvicorn never rewrites `scope["client"]` or the scheme
+    from forwarded headers, whatever `FORWARDED_ALLOW_IPS` says, so `scope["client"]` is the
+    TCP peer. The only forwarded-header setting is MeshOnly's trusted proxy
+    (`CV_MESH_TRUSTED_PROXY_HEADER` and `CV_MESH_TRUSTED_PROXY_ADDRESS`).
     """
     cfg = settings if settings is not None else get_settings()
     return {
         "host": cfg.bind_host,
         "port": cfg.bind_port,
+        "proxy_headers": False,
         "ws_max_size": limits.SERVER_WS_MAX_SIZE,
         "ws_per_message_deflate": limits.SERVER_WS_PER_MESSAGE_DEFLATE,
         "ws_max_queue": limits.SERVER_WS_MAX_QUEUE,

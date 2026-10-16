@@ -45,7 +45,8 @@ leg). This PR closes E09-S02 exactly as scoped ("second factor,
 enrolment and recovery codes"); the end-to-end scenario is completed by
 E09-S03, which is already `blocked_by` this story and picks this up next.
 
-Audit `actor_ip` is `api.csrf.source_ip`: the address `MeshOnlyMiddleware`
+Audit `actor_ip`, the SR-015 per-address sign-in throttle key and the minted
+session's `ip` are `api.csrf.source_ip`: the address `MeshOnlyMiddleware`
 admitted (trusted-proxy aware), else the socket peer, the same value the
 session router and the CSRF guard record. `X-Forwarded-For` is never read here.
 """
@@ -207,7 +208,8 @@ def _problem(status_code: int, title: str, detail: str) -> JSONResponse:
 def _client_ip(request: Request) -> str | None:
     """Peer address for `audit_log.actor_ip` (an `inet` column): `None`, never
     a placeholder string, when unknown (QA #1658: "unknown" broke the real sink).
-    The address MeshOnly admitted, else the socket peer (as the session router)."""
+    The address MeshOnly admitted, else the socket peer (as the session router).
+    Behind the configured trusted proxy it is the client's hop, never the proxy (#2275)."""
     return admitted_source_ip(request.scope)
 
 
@@ -290,10 +292,11 @@ def make_auth_router(
         if not auth_service.is_active:
             return _problem(503, "Service unavailable", "auth backend is not wired")
 
-        source_ip = request.client.host if request.client is not None else "unknown"
         audit_ip = _client_ip(request)
         try:
-            result = await auth_service.login.login(body, source_ip=source_ip)
+            # SR-015: keyed on the audited address, so each client behind the configured
+            # trusted proxy has its own bucket instead of sharing the proxy's (#2275).
+            result = await auth_service.login.login(body, source_ip=audit_ip or "unknown")
         except InvalidCredentials as exc:
             await _audit(
                 audit_service,
@@ -392,9 +395,10 @@ def make_auth_router(
             # Fail closed (C-2.9 write-ahead): the attempt could not be recorded, so nothing is
             # minted. 401 is this operation's documented refusal (no 503 in its contract).
             return _problem(401, "MFA verification failed", "audit sink not active")
-        source_ip = request.client.host if request.client is not None else None
         minted = await auth_service.sessions.mint(
-            str(result.user_id), ip=source_ip, user_agent=request.headers.get("user-agent")
+            str(result.user_id),
+            ip=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
         )
         if audit_service is not None and audit_service.is_active:
             await audit_service.writer.emit(

@@ -27,6 +27,7 @@ from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from candleviewer.api.csrf import source_ip
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import (
@@ -75,7 +76,14 @@ def _uniform_not_found() -> JSONResponse:
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client is not None else "unknown"
+    """Per-address throttle key: the address MeshOnly admitted, so each client behind the
+    configured trusted proxy is counted on its own (#2275); `"unknown"` when there is none."""
+    return source_ip(request.scope) or "unknown"
+
+
+def _actor_ip(request: Request) -> str | None:
+    """Audit `actor_ip` (an `inet` column): the same address, `None` when unknown."""
+    return source_ip(request.scope)
 
 
 def _invite_json(invite: CreatedInvite) -> dict[str, Any]:
@@ -150,7 +158,7 @@ def make_invites_router(
             action,
             actor_label=str(principal.user_id),
             actor_user_id=principal.user_id,
-            actor_ip=request.client.host if request.client else None,
+            actor_ip=_actor_ip(request),
             object_kind="user",
             object_id=str(target),
             after_state={"role": role},
@@ -160,7 +168,7 @@ def make_invites_router(
         await emitter.emit(
             "users.invite_rejected",
             actor_label="anonymous",
-            actor_ip=request.client.host if request.client else None,
+            actor_ip=_actor_ip(request),
             outcome=AuditOutcome.DENIED,
             severity=Severity.WARNING if reason in {"redeemed", "role_tamper"} else Severity.INFO,
             reason=reason,
@@ -193,7 +201,7 @@ def make_invites_router(
                 "users.invite_refused",
                 actor_label=str(got.user_id),
                 actor_user_id=got.user_id,
-                actor_ip=request.client.host if request.client else None,
+                actor_ip=_actor_ip(request),
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="invalid_invite_request",
@@ -348,7 +356,7 @@ def make_invites_router(
                 "users.invite_role_downgraded",
                 actor_label=rec.username,
                 actor_user_id=rec.user_id,
-                actor_ip=request.client.host if request.client else None,
+                actor_ip=_actor_ip(request),
                 object_kind="user",
                 object_id=str(rec.user_id),
                 severity=Severity.WARNING,
@@ -373,7 +381,7 @@ def make_invites_router(
             "users.invite_redeemed",
             actor_label=record.username,
             actor_user_id=record.user_id,
-            actor_ip=request.client.host if request.client else None,
+            actor_ip=_actor_ip(request),
             object_kind="user",
             object_id=str(record.user_id),
             after_state={"role": record.role},
