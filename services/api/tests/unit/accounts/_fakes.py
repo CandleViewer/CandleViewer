@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from candleviewer.accounts.health import HealthTransition
 from candleviewer.accounts.order_gate import KeyStanding
 
 T0 = datetime(2026, 10, 15, 12, tzinfo=UTC)
@@ -32,11 +34,26 @@ ACC_B = UUID("a1000000-0000-4000-8000-000000000002")
 
 
 class Dms:
-    def __init__(self) -> None:
-        self.calls: list[tuple[UUID, str]] = []
+    """Dead-man's-switch hook: records every call, raises for the `failing` accounts, and while
+    `hold` is set keeps each call waiting until the test sets it (a slow hook)."""
 
-    def account_down(self, account_id: UUID, reason: str) -> None:
-        self.calls.append((account_id, reason))
+    def __init__(self, *failing: UUID) -> None:
+        self.transitions: list[HealthTransition] = []
+        self.failing = set(failing)
+        self.hold: asyncio.Event | None = None
+        self.entered = asyncio.Event()
+
+    @property
+    def calls(self) -> list[tuple[UUID, str]]:
+        return [(t.account_id, t.reason) for t in self.transitions]
+
+    async def account_down(self, transition: HealthTransition) -> None:
+        self.transitions.append(transition)
+        self.entered.set()
+        if self.hold is not None:
+            await self.hold.wait()
+        if transition.account_id in self.failing:
+            raise RuntimeError("policy store said: retMsg=invalid api_key")
 
 
 class Standings(dict[UUID, KeyStanding]):

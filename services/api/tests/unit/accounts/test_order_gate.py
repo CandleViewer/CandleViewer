@@ -40,11 +40,12 @@ def test_a_healthy_or_degraded_account_with_an_active_key_accepts_orders(evidenc
 
 
 @pytest.mark.parametrize("untrack", [False, True])
-def test_a_down_or_unmonitored_account_refuses_order_entry(untrack: bool) -> None:
+async def test_a_down_or_unmonitored_account_refuses_order_entry(untrack: bool) -> None:
     gate, health, clock = _gate()
     health.ws_heartbeat(ACC)
     clock.advance(30)
     health.tick()
+    await health.drain()
     if untrack:
         health.untrack(ACC)
     refusal = gate.refusal(ACC)

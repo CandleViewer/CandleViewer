@@ -4,9 +4,10 @@ notes: health is never asserted optimistically)."""
 
 from __future__ import annotations
 
+import asyncio
 import sys
+from collections.abc import Callable
 from datetime import timedelta
-from uuid import UUID
 
 import pytest
 from hypothesis import given, settings
@@ -73,27 +74,32 @@ def test_late_heartbeat_without_rest_is_degraded_ws_silent() -> None:
     assert (transition.to_state, transition.reason) == (HealthState.DEGRADED, "ws_silent")
 
 
-def test_down_exactly_at_the_down_window_invokes_the_dead_mans_switch_once() -> None:
+async def test_down_exactly_at_the_down_window_invokes_the_dead_mans_switch_once() -> None:
     monitor, clock, dms = _monitor()
     monitor.rest_ok(ACC)
     clock.advance(29.999)
     monitor.tick()
+    await monitor.drain()
     assert monitor.current(ACC) is HealthState.DEGRADED and dms.calls == []
     clock.advance(0.001)
     with capture_logs() as logs:
         (transition,) = monitor.tick()
+        await monitor.drain()
     assert (transition.from_state, transition.to_state) == (HealthState.DEGRADED, HealthState.DOWN)
-    assert transition.at == clock.wall and dms.calls == [(ACC, "no_success")]
+    assert transition.at == clock.wall and dms.transitions == [transition]
     assert logs[0]["event"] == "account.health_changed" and logs[0]["to_state"] == "down"
     clock.advance(5)
-    assert monitor.tick() == [] and len(dms.calls) == 1
+    assert monitor.tick() == []
+    await monitor.drain()
+    assert len(dms.calls) == 1
 
 
-def test_suspend_past_the_down_window_resumes_down_not_healthy() -> None:
+async def test_suspend_past_the_down_window_resumes_down_not_healthy() -> None:
     monitor, clock, dms = _monitor()
     monitor.ws_heartbeat(ACC)
     clock.mono += 600  # the boot-time clock counted the suspend; no event ran meanwhile
     (transition,) = monitor.tick()
+    await monitor.drain()
     assert transition.to_state is HealthState.DOWN and dms.calls == [(ACC, "no_success")]
 
 
@@ -131,30 +137,20 @@ def test_a_read_before_tick_and_the_commit_after_it_agree() -> None:
     assert view.changed_at == transition.at == T0 + timedelta(seconds=10)
 
 
-def test_evidence_after_an_unticked_lapse_still_records_the_down_episode() -> None:
+async def test_evidence_after_an_unticked_lapse_still_records_the_down_episode() -> None:
     monitor, clock, dms = _monitor()
     monitor.ws_heartbeat(ACC)
     clock.advance(600)  # resumed from suspend; the socket re-authenticates before any tick
     with capture_logs() as logs:
         transition = monitor.ws_heartbeat(ACC)
+        await monitor.drain()
     assert transition is not None and transition.to_state is HealthState.HEALTHY
     assert [e["to_state"] for e in logs] == ["down", "healthy"]
     assert dms.calls == [(ACC, "no_success")]
 
 
-class _FailsFor(Dms):
-    def __init__(self, failing: UUID) -> None:
-        super().__init__()
-        self.failing = failing
-
-    def account_down(self, account_id: UUID, reason: str) -> None:
-        super().account_down(account_id, reason)
-        if account_id == self.failing:
-            raise RuntimeError("policy store said: retMsg=invalid api_key")
-
-
-def test_a_failing_dead_mans_switch_hook_does_not_stop_the_other_accounts() -> None:
-    clock, dms = FakeClock(), _FailsFor(ACC)
+async def test_a_raising_hook_is_logged_per_account_and_stops_no_other_account() -> None:
+    clock, dms = FakeClock(), Dms(ACC)
     monitor = AccountHealthMonitor(clock, dms)
     for account in (ACC, ACC_B):
         monitor.track(account)
@@ -162,6 +158,7 @@ def test_a_failing_dead_mans_switch_hook_does_not_stop_the_other_accounts() -> N
     clock.advance(31)
     with capture_logs() as logs:
         moved = monitor.tick()
+        await monitor.drain()
     assert [(t.account_id, t.to_state) for t in moved] == [
         (ACC, HealthState.DOWN),
         (ACC_B, HealthState.DOWN),
@@ -178,6 +175,112 @@ def test_a_failing_dead_mans_switch_hook_does_not_stop_the_other_accounts() -> N
         }
     ]
     assert "retMsg" not in repr(logs)
+
+
+_EVALUATIONS: dict[str, Callable[[AccountHealthMonitor], object]] = {
+    "tick": lambda monitor: monitor.tick(),
+    "ws_heartbeat": lambda monitor: monitor.ws_heartbeat(ACC),
+    "ws_dropped": lambda monitor: monitor.ws_dropped(ACC),
+    "rest_ok": lambda monitor: monitor.rest_ok(ACC),
+}
+
+
+@pytest.mark.parametrize("evaluate", list(_EVALUATIONS.values()), ids=list(_EVALUATIONS))
+async def test_a_failed_hook_call_is_made_again_at_the_next_evaluation_until_it_returns(
+    evaluate: Callable[[AccountHealthMonitor], object],
+) -> None:
+    clock, dms = FakeClock(), Dms(ACC)
+    monitor = AccountHealthMonitor(clock, dms)
+    monitor.track(ACC)
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    (down,) = monitor.tick()
+    await monitor.drain()
+    dms.failing.clear()
+    evaluate(monitor)
+    await monitor.drain()
+    evaluate(monitor)
+    await monitor.drain()
+    assert dms.transitions == [down, down]
+
+
+async def test_a_slow_hook_blocks_neither_evidence_nor_tick_and_is_never_doubled() -> None:
+    monitor, clock, dms = _monitor()
+    dms.hold = asyncio.Event()
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    (down,) = monitor.tick()
+    await dms.entered.wait()  # the hook is now mid-call, and stays there
+    recovered = monitor.ws_heartbeat(ACC)
+    clock.advance(1)
+    assert monitor.tick() == [] and dms.transitions == [down]
+    assert recovered is not None and recovered.to_state is HealthState.HEALTHY
+    dms.hold.set()
+    await monitor.drain()
+    monitor.tick()
+    await monitor.drain()
+    assert dms.transitions == [down]
+
+
+async def test_a_hook_call_that_outlives_its_timeout_is_logged_and_made_again() -> None:
+    clock, dms = FakeClock(), Dms()
+    monitor = AccountHealthMonitor(clock, dms, dms_timeout_s=0.001)
+    monitor.track(ACC)
+    dms.hold = asyncio.Event()  # never set: the call hangs until its timeout cancels it
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    with capture_logs() as logs:
+        (down,) = monitor.tick()
+        async with asyncio.timeout(5):  # fails fast, not hangs, if the hook timeout is lost
+            await monitor.drain()
+    errors = [(e["event"], e["error"]) for e in logs if e["log_level"] == "error"]
+    assert errors == [("account.dms_hook_failed", "TimeoutError")]
+    dms.hold = None
+    for _ in range(2):
+        monitor.tick()
+        await monitor.drain()
+    assert dms.transitions == [down, down]
+
+
+async def test_a_down_episode_during_a_call_in_flight_is_delivered_after_it() -> None:
+    monitor, clock, dms = _monitor()
+    dms.hold = asyncio.Event()
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    (first,) = monitor.tick()
+    await dms.entered.wait()
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    (second,) = monitor.tick()  # down again while the first call is still in flight
+    dms.hold.set()
+    await monitor.drain()
+    monitor.tick()
+    await monitor.drain()
+    assert dms.transitions == [first, second]
+
+
+async def test_untracking_an_account_that_is_owed_a_call_logs_the_drop() -> None:
+    clock, dms = FakeClock(), Dms(ACC)
+    monitor = AccountHealthMonitor(clock, dms)
+    monitor.track(ACC)
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    monitor.tick()
+    await monitor.drain()
+    with capture_logs() as logs:
+        monitor.untrack(ACC)
+        monitor.untrack(ACC)
+    monitor.tick()
+    await monitor.drain()
+    assert logs == [
+        {
+            "event": "account.dms_hook_dropped",
+            "log_level": "warning",
+            "account_id": str(ACC),
+            "reason": "no_success",
+        }
+    ]
+    assert len(dms.calls) == 1
 
 
 @pytest.mark.parametrize("evidence", ["ws_heartbeat", "ws_dropped", "rest_ok"])
@@ -203,7 +306,7 @@ _EVENTS = st.lists(st.tuples(_STEP, st.sampled_from(["hb", "drop", "rest", "tick
 
 @settings(max_examples=200, deadline=None, derandomize=True)
 @given(_EVENTS)
-def test_health_never_outlives_its_evidence(events: list[tuple[float, str]]) -> None:
+async def test_health_never_outlives_its_evidence(events: list[tuple[float, str]]) -> None:
     monitor, clock, dms = _monitor()
     gate = AccountHealthCheck(monitor, Standings({ACC: KeyStanding(True)}), Sizing({ACC: True}))
     act = {"hb": monitor.ws_heartbeat, "drop": monitor.ws_dropped, "rest": monitor.rest_ok}
@@ -217,6 +320,7 @@ def test_health_never_outlives_its_evidence(events: list[tuple[float, str]]) -> 
                 act[kind](ACC)
             elif kind == "tick":
                 monitor.tick()
+            await monitor.drain()
             state, view, refusal = monitor.current(ACC), monitor.view(ACC), gate.refusal(ACC)
             last = max(seen.get(k, -1e9) for k in ("hb", "rest"))
             if state is HealthState.HEALTHY:

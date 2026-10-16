@@ -4,13 +4,15 @@
 success is inside the down window, `down` after it. Only positive evidence counts and it decays
 on silence. Plain synchronous code, not a statechart: the order-entry gate needs an answer, not a
 recorded fact (C-2.21). A read derives the state from the evidence in a few float comparisons, so
-the gate never depends on `tick()` having run; `tick()` commits transitions, logs them and calls
-the dead-man's switch. Ages run on a clock that counts through suspend (`CLOCK_BOOTTIME`), so a
-laptop that slept past the window resumes `down`.
+the gate never depends on `tick()` having run; `tick()` and the evidence calls commit transitions
+and log them, and a transition into `down` owes the dead-man's switch a call that runs as its own
+task. Ages run on a clock that counts through suspend (`CLOCK_BOOTTIME`), so a laptop that slept
+past the window resumes `down`.
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import time
 from collections.abc import Mapping
@@ -42,6 +44,9 @@ CONNECTION_STATE: Final[Mapping[HealthState, str]] = {
     HealthState.DEGRADED: "degraded",
     HealthState.DOWN: "disconnected",
 }
+
+#: How long one dead-man's-switch hook call may run before it counts as failed and is retried.
+DMS_HOOK_TIMEOUT_S: Final = 5.0
 
 
 def epoch_ms(value: datetime) -> int:
@@ -109,9 +114,15 @@ class HealthTransition:
 
 
 class DeadMansSwitch(Protocol):
-    """The dead-man's-switch policy hook, called once per transition into `down` (E39 owns it)."""
+    """The dead-man's-switch policy hook (E39 owns the policy), owed a call for every transition
+    into `down`. The monitor makes each call as its own task under `DMS_HOOK_TIMEOUT_S`, so the
+    hook can neither block nor abort an evidence call or `tick()`. A call that raises or times
+    out is logged and made again at the account's next evaluation until one returns, so the hook
+    must be idempotent, and a retry may land after the account recovered (`transition.at` dates
+    the episode). An account has at most one call in flight and one owed: a newer transition into
+    `down` replaces an older one whose call never succeeded."""
 
-    def account_down(self, account_id: UUID, reason: HealthReason) -> None: ...
+    async def account_down(self, transition: HealthTransition) -> None: ...
 
 
 @dataclass(slots=True)
@@ -123,6 +134,8 @@ class _Account:
     ws_at: float | None = None
     ws_live: bool = False
     rest_at: float | None = None
+    dms_owed: HealthTransition | None = None  # no hook call for it has returned yet
+    dms_call: asyncio.Task[None] | None = None
 
     def last_success(self) -> float | None:
         return max((t for t in (self.ws_at, self.rest_at) if t is not None), default=None)
@@ -130,7 +143,9 @@ class _Account:
 
 class AccountHealthMonitor:
     """Health for every tracked account. Feed it evidence as it arrives and call `tick()` at
-    least once a second to commit transitions; `current()` and `view()` derive on every read.
+    least once a second to commit transitions and retry owed dead-man's-switch calls; `current()`
+    and `view()` derive on every read. Evidence and `tick()` run on the event loop, which runs
+    the hook calls; `drain()` waits for them at shutdown.
 
     An evidence call first commits any lapse the old evidence reached, so a down window that
     passed between two ticks is still a transition and a dead-man's-switch call, and returns the
@@ -138,12 +153,19 @@ class AccountHealthMonitor:
     """
 
     def __init__(
-        self, clock: Clock, dms: DeadMansSwitch, thresholds: HealthThresholds | None = None
+        self,
+        clock: Clock,
+        dms: DeadMansSwitch,
+        thresholds: HealthThresholds | None = None,
+        *,
+        dms_timeout_s: float = DMS_HOOK_TIMEOUT_S,
     ) -> None:
         self._clock = clock
         self._dms = dms
         self._th = thresholds or HealthThresholds()
+        self._dms_timeout_s = dms_timeout_s
         self._accounts: dict[UUID, _Account] = {}
+        self._dms_calls: set[asyncio.Task[None]] = set()
 
     def track(self, account_id: UUID) -> None:
         """Start monitoring an account; it is `down` until the first success."""
@@ -151,7 +173,12 @@ class AccountHealthMonitor:
             self._accounts[account_id] = _Account(self._clock.now(), self._clock.monotonic())
 
     def untrack(self, account_id: UUID) -> None:
-        self._accounts.pop(account_id, None)
+        """Stop monitoring an account. A call in flight finishes; an owed one is not retried."""
+        acc = self._accounts.pop(account_id, None)
+        if acc is not None and acc.dms_owed is not None:
+            structlog.get_logger(__name__).warning(
+                "account.dms_hook_dropped", account_id=str(account_id), reason=acc.dms_owed.reason
+            )
 
     def ws_heartbeat(self, account_id: UUID) -> HealthTransition | None:
         """An authenticated private-WS heartbeat: auth success, or a pong on an authed socket."""
@@ -178,6 +205,12 @@ class AccountHealthMonitor:
     def tick(self) -> list[HealthTransition]:
         moved = (self._evaluate(aid, acc) for aid, acc in list(self._accounts.items()))
         return [t for t in moved if t is not None]
+
+    async def drain(self) -> None:
+        """Wait until no dead-man's-switch call is in flight (shutdown). Each ends within the hook
+        timeout; a call still owed afterwards stays owed in memory only."""
+        while self._dms_calls:
+            await asyncio.wait(set(self._dms_calls))
 
     def current(self, account_id: UUID) -> HealthState | None:
         """The state the evidence supports now, without side effects; `None` if untracked."""
@@ -230,6 +263,19 @@ class AccountHealthMonitor:
         return state, reason, began, acc.changed_at + timedelta(seconds=began - acc.since)
 
     def _evaluate(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
+        """Commit the account's transition, if any, then start the owed hook call unless one is
+        in flight. The call is a task: nothing here waits for the hook or sees it raise."""
+        moved = self._commit(account_id, acc)
+        if moved is not None and moved.to_state is HealthState.DOWN:
+            acc.dms_owed = moved
+        if acc.dms_owed is not None and (acc.dms_call is None or acc.dms_call.done()):
+            call = asyncio.get_running_loop().create_task(self._call_dms(acc, acc.dms_owed))
+            acc.dms_call = call
+            self._dms_calls.add(call)
+            call.add_done_callback(self._dms_calls.discard)
+        return moved
+
+    def _commit(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
         state, acc.reason, began, at = self._project(acc, self._clock.monotonic())
         if state is acc.state:
             return None
@@ -237,11 +283,22 @@ class AccountHealthMonitor:
         acc.state, acc.since, acc.changed_at = state, began, at
         log = structlog.get_logger(__name__).bind(account_id=str(account_id), reason=acc.reason)
         log.info("account.health_changed", from_state=moved.from_state.value, to_state=state.value)
-        if state is HealthState.DOWN:
-            try:
-                self._dms.account_down(account_id, acc.reason)
-            except Exception as exc:
-                # E39's hook must not stop the other accounts' evaluation. Log the type only: a
-                # message may echo an exchange response (C-12.6).
-                log.error("account.dms_hook_failed", error=type(exc).__name__)
         return moved
+
+    async def _call_dms(self, acc: _Account, owed: HealthTransition) -> None:
+        try:
+            async with asyncio.timeout(self._dms_timeout_s):
+                await self._dms.account_down(owed)
+        except Exception as exc:  # incl. TimeoutError; CancelledError still propagates
+            # The call stays owed and the next evaluation makes it again. Log the type only: a
+            # message may echo an exchange response (C-12.6).
+            log = structlog.get_logger(__name__)
+            log.error(
+                "account.dms_hook_failed",
+                account_id=str(owed.account_id),
+                reason=owed.reason,
+                error=type(exc).__name__,
+            )
+        else:
+            if acc.dms_owed is owed:
+                acc.dms_owed = None
