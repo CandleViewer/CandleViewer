@@ -280,6 +280,17 @@ async def test_allow_locked_authentication_refuses_a_session_past_its_lifetime()
     assert expired.value.reason == "expired"
 
 
+async def test_require_active_allowing_the_lock_still_refuses_a_revoked_session() -> None:
+    """`allow_locked` waives the idle lock and nothing else: `GET /auth/session` re-reads its
+    session through it, so a session revoked after the route's own check is refused."""
+    svc, _repo, clock = _svc()
+    sid = await _locked(svc, clock)
+    await svc.revoke(sid, reason="logout")
+    with pytest.raises(SessionRevoked) as revoked:
+        await svc.require_active(sid, allow_locked=True)
+    assert revoked.value.reason == "logout"
+
+
 async def test_step_up_grants_of_an_idle_locked_row_authorise_nothing() -> None:
     """#2300 / #2290 rule 4d: void from the lock itself, enforced from the row (C-2.21)."""
     repo, clock = FakeSessionRepository(), _Clock()

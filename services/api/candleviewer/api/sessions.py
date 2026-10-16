@@ -50,6 +50,10 @@ nothing changed. A record written after the service has acted is an outcome reco
 user's refusal (#2911) and, on `/auth/logout`, one `auth.session_revoked` per session revoked,
 after the one `auth.logout` intent record that names the targets (#2914). The retry half of rule 2
 is the time-boxed exception EX-07 (§16.2).
+
+Idle lock (#2300, contract info "Idle lock"): `GET /auth/session` never re-stamps
+`last_seen_at` and serves a locked session, identified by an access token inside its
+lifetime or else the current `cv_refresh` cookie.
 """
 
 from __future__ import annotations
@@ -57,13 +61,14 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Annotated, Any, Protocol
 
 import structlog
 from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from candleviewer.api import idle_lock
 from candleviewer.api.csrf import (
     AUDIT_TIMEOUT_S,
     LostWrite,
@@ -98,6 +103,7 @@ from candleviewer.auth.models import (
     SessionRecord,
     SessionView,
 )
+from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from candleviewer.auth.step_up import grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
 
@@ -131,6 +137,12 @@ class SessionServiceLike(Protocol):
     ) -> SessionRecord: ...
 
     async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None: ...
+
+    async def require_active(
+        self, session_id: str, *, allow_locked: bool = False
+    ) -> SessionRecord: ...
+
+    def now(self) -> datetime: ...
 
     async def revoke(self, session_id: str, *, reason: str) -> SessionRecord | None: ...
 
@@ -228,9 +240,9 @@ def _log() -> Any:
     return structlog.get_logger(__name__)
 
 
-#: Log lines of a write that failed after its route stopped waiting for it (the tracker's too).
+#: Log lines of a write that failed after its route stopped waiting for it (the tracker's too);
+#: `_fixation_attempt` names its own after the action it writes (`<action>.audit_failed_late`).
 _PROBE_LATE_FAILURE = "auth.session_revoke_denied.audit_failed_late"
-_FIXATION_LATE_FAILURE = "auth.session_fixation_attempt.audit_failed_late"
 
 
 def _probe_audit_failed(error: str) -> None:
@@ -243,10 +255,11 @@ def _count_fixation_audit_lost() -> None:
     auth_session_fixation_attempts_total.labels(reason="audit_unavailable").inc()
 
 
-def _fixation_audit_failed(error: str) -> None:
-    """The fixation row was not written; the 401 stands, so the count and the log are the trace."""
+def _fixation_audit_failed(error: str, action: str) -> None:
+    """The fixation (or rotated-cookie probe, #2300) row *action* was not written; the 401
+    stands, so the count and the log are the trace."""
     _count_fixation_audit_lost()
-    _log().error("auth.session_fixation_attempt.audit_unavailable", error=error)
+    _log().error(f"{action}.audit_unavailable", error=error)
 
 
 def _cancelled_while_writing(
@@ -386,6 +399,11 @@ def make_session_router(
     """*audit_tracker*: pass the app's CSRF refusal tracker so both guards share one
     in-flight cap and one shutdown drain."""
     router = APIRouter(tags=["auth"])
+
+    def now() -> datetime:
+        """Lock state and `server_time` come from the session service's own clock."""
+        return auth_service.sessions.now()
+
     by_ip = ip_throttle or PerIpLoginThrottle(
         max_attempts=REFRESH_MAX_PER_WINDOW, window_s=REFRESH_WINDOW_S
     )
@@ -550,15 +568,19 @@ def make_session_router(
         except Exception as exc:
             _probe_audit_failed(type(exc).__name__)
 
-    async def _fixation_attempt(request: Request, vector: str) -> None:
+    async def _fixation_attempt(
+        request: Request, vector: str, *, rotated: SessionRecord | None = None
+    ) -> None:
         """U6/SR-013 (E09-X02 AC2): a session credential this server never issued was
-        presented. The uniform 401 is unchanged (no oracle). The attempt is counted, and
-        audited within the per-IP and global budgets and the tracker's in-flight cap; the
-        write runs shielded, so a cancelled request never cuts it short (as the CSRF
-        guard). The token itself is never recorded; a slow or failed write never changes
-        the answer."""
+        presented, or, with *rotated*, the `cv_refresh` cookie of a session a refresh
+        rotated away was presented outside `/auth/refresh` (a reuse probe: it is not
+        revoked here, contract "Idle lock"). The uniform 401 is unchanged (no oracle).
+        The attempt is counted, and audited within the per-IP and global budgets and the
+        tracker's in-flight cap; the write runs shielded, so a cancelled request never
+        cuts it short (as the CSRF guard). The token itself is never recorded; a slow or
+        failed write never changes the answer."""
         fixation = auth_session_fixation_attempts_total
-        fixation.labels(reason="unknown_token").inc()
+        fixation.labels(reason="unknown_token" if rotated is None else "rotated").inc()
         ip = _source_ip(request)
         key = ip or "(unknown)"
         if (
@@ -570,40 +592,51 @@ def make_session_router(
             return
         by_fixation_ip.record_failure(key)
         by_fixation_all.record_failure(_ALL_SOURCES)
+        action = "auth.refresh_reuse_detected" if rotated else "auth.session_fixation_attempt"
+        late = f"{action}.audit_failed_late"
         if audit_service is None or not audit_service.is_active:
-            _fixation_audit_failed("inactive")
+            _fixation_audit_failed("inactive", action)
             return
-        task = tracker.track(
-            audit_service.writer.emit(
-                "auth.session_fixation_attempt",
+        where = {"vector": vector, "path": _route_path(request)}
+        if rotated is None:
+            emitted = audit_service.writer.emit(
+                action,
                 actor_label="(unknown)",
                 actor_ip=ip,
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="unknown_token",
-                after_state={"vector": vector, "path": _route_path(request)},
-            ),
-            on_lost=_count_fixation_audit_lost,
-            late_failure_event=_FIXATION_LATE_FAILURE,
-        )
+                after_state=where,
+            )
+        else:
+            emitted = audit_service.writer.emit(
+                action,
+                actor_label=str(rotated.user_id),
+                actor_user_id=rotated.user_id,
+                actor_ip=ip,
+                session_id=rotated.id,
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason="rotation_reuse",
+                after_state={**where, "family_revoked": False},
+            )
+        task = tracker.track(emitted, on_lost=_count_fixation_audit_lost, late_failure_event=late)
         try:
             await asyncio.wait_for(asyncio.shield(task), audit_timeout_s)
         except TimeoutError:
             # The clock, unless the writer raised `TimeoutError` itself: the task's outcome decides.
             failure = task.exception() if task.done() and not task.cancelled() else None
             if failure is not None:
-                _fixation_audit_failed(type(failure).__name__)
+                _fixation_audit_failed(type(failure).__name__, action)
                 return
             tracker.mark_timed_out(task)  # left to finish; never cancelled mid-append
             fixation.labels(reason="audit_slow").inc()
-            _log().warning("auth.session_fixation_attempt.audit_slow")
+            _log().warning(f"{action}.audit_slow")
         except asyncio.CancelledError:
-            _cancelled_while_writing(
-                tracker, task, _FIXATION_LATE_FAILURE, _count_fixation_audit_lost
-            )
+            _cancelled_while_writing(tracker, task, late, _count_fixation_audit_lost)
             raise
         except Exception as exc:
-            _fixation_audit_failed(type(exc).__name__)
+            _fixation_audit_failed(type(exc).__name__, action)
 
     def _audit_down() -> JSONResponse:
         # Write-ahead audit failed: nothing has been mutated yet (C-2.9).
@@ -632,6 +665,70 @@ def make_session_router(
             return None
         except (SessionRevoked, SessionIdleLocked):
             return None
+
+    async def _identify(request: Request) -> tuple[SessionRecord, bool] | None:
+        """The session of an operation allowed while idle-locked (contract "Idle lock"):
+        an access token inside its lifetime identifies it, else the `cv_refresh` cookie
+        does, while it is that session's current refresh token. Revoked, expired and
+        locked sessions come back as they are: the operation decides. `None` is the
+        uniform 401: no credential, a rotated-away one (reuse detection stays with
+        `/auth/refresh`) or one never issued (a fixation attempt). A rotated-away cookie
+        is counted and audited as a reuse probe; a rotated-away access token is not (a tab
+        still holding it after another tab refreshed is normal). The flag is True when
+        the cookie identified the session."""
+        sessions = auth_service.sessions
+        token = _bearer(request)
+        if token is not None:
+            found = await sessions.peek_access_token(token)
+            if found is None:
+                await _fixation_attempt(request, "bearer")
+                return None
+            if now() < found.issued_at + ACCESS_TOKEN_TTL:
+                return None if found.revoked_reason == "rotated" else (found, False)
+        cookie = request.cookies.get(REFRESH_COOKIE)
+        if cookie is None:
+            return None
+        found = await sessions.peek_refresh(cookie)
+        if found is None:
+            await _fixation_attempt(request, "refresh_cookie")
+            return None
+        if found.revoked_reason == "rotated":
+            await _fixation_attempt(request, "refresh_cookie", rotated=found)
+            return None
+        return found, True
+
+    async def _introspected(request: Request) -> SessionRecord | None:
+        """`GET /auth/session`'s session, locked or not; a revoked or expired one gets
+        the uniform 401, as it would to its access token. Never activity. The session
+        service's on-use backstop still applies (#2911): a disabled user's session is
+        revoked as `user_disabled` and refused."""
+        caller = await _identify(request)
+        if caller is None:
+            return None
+        record = caller[0]
+        if record.is_revoked or record.is_absolute_expired(now=now()):
+            return None
+        try:
+            return await auth_service.sessions.require_active(str(record.id), allow_locked=True)
+        except (SessionNotFound, SessionRevoked):
+            return None
+
+    async def _session_info(
+        provider: IdentityProvider, record: SessionRecord, at: datetime
+    ) -> dict[str, Any]:
+        """`SessionInfo`. No step-up elevation survives the lock (contract "Idle lock"),
+        so a locked session reports `step_up_expires_at: null`."""
+        locked = record.is_idle_locked(now=at)
+        info = await provider.session_info(str(record.user_id))
+        return {
+            **info,
+            "user": await provider.user(str(record.user_id)),
+            "server_time": at.isoformat(),
+            "step_up_expires_at": (
+                None if locked else _iso(grace_expires_at(record.step_up_elevations, at))
+            ),
+            "session": idle_lock.session_state(record, now=at),
+        }
 
     @router.post("/auth/refresh")
     async def refresh(request: Request) -> Response:
@@ -776,7 +873,7 @@ def make_session_router(
     async def get_session(request: Request) -> Response:
         if not auth_service.sessions_is_active:
             return _problem(503, "Service unavailable", "session backend is not wired")
-        record = await _authenticate(request)
+        record = await _introspected(request)
         if record is None:
             return _unauthorized()
         if (refusal := undeclared_query_refusal(request, GET_SESSION_QUERY)) is not None:
@@ -785,24 +882,7 @@ def make_session_router(
             return _problem(
                 501, "Not implemented", "identity provider not wired (E09-T03); disabled"
             )
-        info = await identity.session_info(str(record.user_id))
-
-        response = JSONResponse(
-            {
-                **info,
-                "user": await identity.user(str(record.user_id)),
-                "server_time": datetime.now(UTC).isoformat(),
-                "step_up_expires_at": _iso(
-                    grace_expires_at(record.step_up_elevations, datetime.now(UTC))
-                ),
-                "session": {
-                    "id": str(record.id),
-                    "issued_at": record.issued_at.isoformat(),
-                    "expires_at": record.expires_at.isoformat(),
-                    "idle_deadline": record.idle_deadline().isoformat(),
-                },
-            }
-        )
+        response = JSONResponse(await _session_info(identity, record, now()))
         # SR-041 recovery path: re-issue when absent or not verifying.
         present = request.cookies.get(CSRF_COOKIE)
         if not present or csrf.verify(present, str(record.id)) is not CsrfVerdict.OK:

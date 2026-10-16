@@ -164,6 +164,14 @@ class _Sessions:
         except SessionNotFound:
             return None
 
+    async def require_active(self, session_id: str, *, allow_locked: bool = False) -> Any:
+        """`GET /auth/session` re-reads the session it identified (#2300, #2911)."""
+        actor = next(a for a, u in _USER_IDS.items() if str(uuid.uuid5(u, "session")) == session_id)
+        return await self.authenticate_access_token(token_of(actor))
+
+    def now(self) -> datetime:  # the session routes judge deadlines by it (#2300)
+        return datetime.now(UTC)
+
     async def authenticate_access_token(
         self, token: str, *, touch: bool = False, allow_locked: bool = False
     ) -> Any:
