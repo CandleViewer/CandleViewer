@@ -220,15 +220,21 @@ def test_schema_matches_the_plan_doc_but_the_deferred_leg_fks(pg_dsn: str) -> No
         )
         assert len(indexes) == 22 and {row[0] for row in found} == indexes
         tagged = c.execute(
-            "SELECT attrelid::regclass::text, count(*), min(d), max(d) FROM ("
+            "SELECT attrelid::regclass::text, d, count(*) FROM ("
             "SELECT attrelid, col_description(attrelid, attnum) AS d FROM pg_attribute "
             "WHERE attrelid = ANY(%s::regclass[]) AND attnum > 0) s "
-            "WHERE d IS NOT NULL GROUP BY 1",
+            "WHERE d IS NOT NULL GROUP BY 1, 2",
             (list(_TABLES),),
         ).fetchall()
         p1 = "PII: financial personal data (21 Sec.12, class P1); never sent to third parties"
-        counts = {"orders": 10, "executions": 7, "positions": 14, "position_snapshots": 7}
-        assert {row[0]: row[1:] for row in tagged} == {t: (n, p1, p1) for t, n in counts.items()}
+        text = (
+            "PII: exchange answer text that can repeat order values (21 Sec.12, class P1); "
+            "redacted before insert; never logged"
+        )
+        assert {(row[0], row[1]): row[2] for row in tagged} == {
+            ("orders", p1): 10, ("orders", text): 2, ("order_events", text): 3,
+            ("executions", p1): 7, ("positions", p1): 14, ("position_snapshots", p1): 7,
+        }  # fmt: skip
 
 
 @pytest.mark.parametrize("seeded", [False, True], ids=["empty", "seeded"])

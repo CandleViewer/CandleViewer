@@ -1853,7 +1853,15 @@ order_event_kind = ENUM(
 OMS_MONEY_COMMENT = (
     "PII: financial personal data (21 Sec.12, class P1); never sent to third parties"
 )
+#: C-5.9 / Sec.12 class P1 on the columns that keep the exchange's answer to an order
+#: (`orders.reject_code`, `reject_message`; `order_events.payload`, `ret_code`, `ret_msg`): it can
+#: repeat the order's money values. Byte-identical to the 0029 COMMENT statements, like the above.
+OMS_EXCHANGE_TEXT_COMMENT = (
+    "PII: exchange answer text that can repeat order values (21 Sec.12, class P1); "
+    "redacted before insert; never logged"
+)
 _P1 = OMS_MONEY_COMMENT
+_P1_TEXT = OMS_EXCHANGE_TEXT_COMMENT
 _MONEY = Numeric(38, 18)
 
 orders = Table(
@@ -1892,8 +1900,8 @@ orders = Table(
     Column("avg_price", _MONEY, comment=_P1),
     Column("leaves_qty", _MONEY, Computed("qty - cum_exec_qty", persisted=True), comment=_P1),
     Column("fee_paid", _MONEY, nullable=False, server_default=text("0"), comment=_P1),
-    Column("reject_code", Text),
-    Column("reject_message", Text),
+    Column("reject_code", Text, comment=_P1_TEXT),
+    Column("reject_message", Text, comment=_P1_TEXT),
     Column("submit_attempts", SmallInteger, nullable=False, server_default=text("0")),
     Column("idempotency_state", Text, nullable=False, server_default=text("'unsent'")),
     Column("created_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
@@ -1968,9 +1976,15 @@ order_events = Table(
     Column("from_state", order_state),
     Column("to_state", order_state),
     Column("source", Text, nullable=False),
-    Column("payload", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
-    Column("ret_code", Text),
-    Column("ret_msg", Text),
+    Column(
+        "payload",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+        comment=_P1_TEXT,
+    ),
+    Column("ret_code", Text, comment=_P1_TEXT),
+    Column("ret_msg", Text, comment=_P1_TEXT),
     Column("latency_ms", Integer),
     Column("event_ts", TIMESTAMP(timezone=True), nullable=False),
     Column("recv_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),

@@ -125,7 +125,8 @@ def test_upgrade_ships_only_these_objects() -> None:
     sql = _up()
     assert sql.count("CREATE TABLE ") == 5 and sql.count("CREATE TYPE ") == 3
     assert sql.count("CREATE UNIQUE INDEX ") == 3 and sql.count("CREATE INDEX ") == 19
-    assert sql.count("CREATE TRIGGER ") == 4 and sql.count("COMMENT ON COLUMN ") == 38
+    assert sql.count("CREATE TRIGGER ") == 4
+    assert sql.count("COMMENT ON COLUMN ") == 38 + 5  # money columns, exchange answer columns
     for absent in ("CREATE FUNCTION", "INSERT INTO", "GRANT ", "audit_log", "IF NOT EXISTS"):
         assert absent not in sql
 
@@ -308,21 +309,32 @@ def test_every_numeric_column_reads_back_as_decimal() -> None:
     assert all(n.asdecimal and n.python_type is Decimal for n in numeric)
 
 
-def test_money_columns_carry_the_p1_classification_comment() -> None:
+#: C-5.9 / Sec.12: the columns that keep the exchange's answer to an order, class P1 as well.
+_EXCHANGE_TEXT = {
+    "orders": {"reject_code", "reject_message"},
+    "order_events": {"payload", "ret_code", "ret_msg"},
+}
+
+
+def test_money_and_exchange_text_columns_carry_the_p1_classification_comment() -> None:
     """C-5.9 / Sec.12: every numeric(38,18) column of an OMS table is P1, `position_snapshots`
-    (the history of `positions`) included; nothing else carries a comment."""
+    (the history of `positions`) included, and so are the columns that keep the exchange's answer
+    (it can repeat those values); nothing else carries a comment."""
     assert models.OMS_MONEY_COMMENT.startswith("PII: ")
+    assert models.OMS_EXCHANGE_TEXT_COMMENT.startswith("PII: ")
+    assert "class P1" in models.OMS_EXCHANGE_TEXT_COMMENT
+    assert "'" not in models.OMS_EXCHANGE_TEXT_COMMENT  # it sits in a SQL string literal
     for name, table in _TABLES.items():
         money = {
             c.name
             for c in table.columns
             if isinstance(c.type, Numeric) and (c.type.precision, c.type.scale) == (38, 18)
         }
-        tagged = {c.name for c in table.columns if c.comment}
-        assert tagged == money, name
-        for column in tagged:
-            assert table.c[column].comment == models.OMS_MONEY_COMMENT
-            assert f"COMMENT ON COLUMN {name}.{column} IS '{models.OMS_MONEY_COMMENT}';" in _up()
+        want = dict.fromkeys(money, models.OMS_MONEY_COMMENT)
+        want |= dict.fromkeys(_EXCHANGE_TEXT.get(name, ()), models.OMS_EXCHANGE_TEXT_COMMENT)
+        assert {c.name: c.comment for c in table.columns if c.comment} == want, name
+        for column, comment in want.items():
+            assert f"COMMENT ON COLUMN {name}.{column} IS '{comment}';" in _up()
 
 
 @pytest.mark.parametrize("table", list(_TABLES))

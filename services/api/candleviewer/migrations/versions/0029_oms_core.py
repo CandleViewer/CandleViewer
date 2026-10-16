@@ -24,8 +24,10 @@ created them. `symbol_code` (0004), `forbid_mutation()` and `audit_refuse_trunca
   (`audit_refuse_truncate()`) and `REVOKE UPDATE, DELETE, TRUNCATE` from `cv_app` and `cv_ro`,
   skipped where a role does not exist (a migration-only test cluster; `pg_bootstrap.sql` order).
 * C-5.9 / Sec.12: the monetary columns of `orders`, `executions`, `positions` and
-  `position_snapshots` (class P1, every `numeric(38,18)` column) carry a `PII:` comment, mirrored
-  byte-for-byte by `db.models`.
+  `position_snapshots` (class P1, every `numeric(38,18)` column) carry a `PII:` comment, and so
+  do the columns that keep the exchange's answer to an order (`orders.reject_code`,
+  `reject_message`; `order_events.payload`, `ret_code`, `ret_msg`; class P1, as they can repeat
+  the order's money values). `db.models` mirrors both texts byte-for-byte.
 * `SET LOCAL lock_timeout = '5s'` brackets both directions (0028 pattern, C-5.6): the FKs lock
   `exchange_accounts` on the way in and the drops wait on readers on the way out.
 * Downgrade locks the five tables and refuses while any holds rows: order history is append-only
@@ -314,9 +316,23 @@ _MONEY_COLUMNS = {
         "equity_usd",
     ),
 }  # fmt: skip
+# C-5.9 / Sec.12: the exchange's answer to an order is P1 too (it can repeat the money values).
+# Byte-identical to `db.models.OMS_EXCHANGE_TEXT_COMMENT`; no quote, as it sits in a SQL literal.
+_EXCHANGE_TEXT_COMMENT = (
+    "PII: exchange answer text that can repeat order values (21 Sec.12, class P1); "
+    "redacted before insert; never logged"
+)
+_EXCHANGE_TEXT_COLUMNS = {
+    "orders": ("reject_code", "reject_message"),
+    "order_events": ("payload", "ret_code", "ret_msg"),
+}
 _COMMENT_SQL = "\n".join(
-    f"COMMENT ON COLUMN {table}.{column} IS '{_MONEY_COMMENT}';"
-    for table, columns in _MONEY_COLUMNS.items()
+    f"COMMENT ON COLUMN {table}.{column} IS '{comment}';"
+    for comment, groups in (
+        (_MONEY_COMMENT, _MONEY_COLUMNS),
+        (_EXCHANGE_TEXT_COMMENT, _EXCHANGE_TEXT_COLUMNS),
+    )
+    for table, columns in groups.items()
     for column in columns
 )
 
