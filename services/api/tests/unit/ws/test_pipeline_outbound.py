@@ -238,7 +238,7 @@ def _normalised(payload: str | bytes, connection_id: str) -> str:
 @_ENCODINGS
 async def test_flag_off_wire_transcript_is_unchanged(encoding: str) -> None:
     """Flag off is byte-for-byte the gateway before #412 S2a: the transcript's digest was recorded
-    on 731f4820f, the commit this slice starts from."""
+    on 731f4820f, before S2a touched the gateway."""
     transcript = await _flag_off_session(encoding)
     digest = hashlib.sha256(json.dumps(transcript, sort_keys=True).encode()).hexdigest()
     kinds = {kind for _, sends, _, _ in transcript for kind, _ in sends}
@@ -342,10 +342,14 @@ async def test_a_close_before_the_writer_starts_still_gets_its_deadline(order: s
         before = loop.time()
         pipe.close(slow_consumer_bye(BASE_MS), 4429, flush=True)
         after = loop.time()
+        if order == "armed_first":  # the close itself reschedules a scope that is armed
+            early = scope.when()
+            assert early is not None and before + 0.5 <= early <= after + 0.5
         await pipe.queue.ready.wait()  # the close wakes the writer, with nothing queued
         pipe.arm(scope)
         when = scope.when()
         assert when is not None and before + 0.5 <= when <= after + 0.5
+        assert pipe.deadline == when
         pipe.seal()
         assert pipe.close(slow_consumer_bye(BASE_MS), 4429, flush=True) == 0  # the first stays
         assert scope.when() == when and pipe.terminal is not None and not pipe.terminal.flush
@@ -398,6 +402,44 @@ def test_an_unencodable_frame_fails_closed(frame: dict[str, Any]) -> None:
     pipe.push(frame)
     assert asked == [("internal_error", None)]
     assert len(pipe.queue) == 0
+
+
+@_ENCODINGS
+def test_the_byte_budget_alone_closes_slow_consumer(encoding: str) -> None:
+    """C-2.18, WS-D01: the byte half of the budget binds on its own, at the configured
+    `max_bytes`. Frames that fill it exactly stay queued; the push that leaves it, far under
+    `max_frames`, asks for the step 3 close."""
+    frame = _d(_BOOK, pad="x" * 1000)
+    probe, _ = _pipe(encoding)
+    probe.push(frame)
+    size = probe.queue.bytes
+    pipe, asked = _pipe(encoding, max_bytes=5 * size)
+    for _ in range(5):
+        pipe.push(frame)
+    assert (asked, pipe.queue.bytes) == ([], pipe.queue.max_bytes)
+    pipe.push(frame)
+    assert asked == [("slow_consumer", slow_consumer_bye(BASE_MS))]
+    assert len(pipe.queue) == 6 and pipe.queue.max_frames == BackpressureConfig().max_frames
+
+
+def test_the_budget_charges_each_codec_its_own_wire_bytes() -> None:
+    """#2887: the budget counts the bytes the socket is sent. A CVWB part is base64 text on JSON
+    and raw bytes on MessagePack, so a budget that one MessagePack frame fills exactly closes the
+    JSON connection and not the MessagePack one."""
+    part = dict(vector_frames())["trades"]
+    frame = {"t": "d", "ch": "trades.BTCUSDT", "s": 2, "ts": 1, "e": "b64", "p": encode_b64(part)}
+    sizes = {}
+    for encoding in (_JSON, _MSGPACK):
+        probe, _ = _pipe(encoding)
+        probe.push(frame)
+        sizes[encoding] = probe.queue.bytes
+    assert sizes[_MSGPACK] < sizes[_JSON]
+    closed = {}
+    for encoding in (_JSON, _MSGPACK):
+        pipe, asked = _pipe(encoding, max_bytes=sizes[_MSGPACK])
+        pipe.push(frame)
+        closed[encoding] = [reason for reason, _ in asked]
+    assert closed == {_JSON: ["slow_consumer"], _MSGPACK: []}
 
 
 # -- flag on: through the socket -----------------------------------------------------------------
@@ -501,6 +543,29 @@ async def test_a_priority_backlog_over_budget_closes_slow_consumer(family: str) 
         (bye,) = await sock.next()
         await handler
     assert (bye["t"], bye["p"]["reason"], sock.closed_with) == ("bye", "slow_consumer", 4429)
+
+
+@_ENCODINGS
+async def test_the_default_8_mib_byte_budget_alone_closes_slow_consumer(encoding: str) -> None:
+    """WS-D01 at the defaults: seven `system` frames of 1 MiB and a bit stay under the 8 MiB
+    budget; the eighth leaves it, 1 992 frames under the frame budget, and closes the connection
+    `slow_consumer` 4429. Both lanes are cleared, so the `bye` is next."""
+    rig, sock = _Rig(BackpressureConfig()), _Wire(encoding)
+    mib = 1024 * 1024
+    async with asyncio.timeout(_DEADLINE_S):
+        handler, conn = await rig.open(sock)
+        assert conn.pipeline is not None
+        queue = conn.pipeline.queue
+        assert (queue.max_bytes, queue.max_frames) == (8 * mib, 2000)
+        for i in range(7):  # in one turn: the writer drains nothing meanwhile
+            rig.hub.broadcast_system({"kind": "big", "n": i, "pad": "x" * mib})
+        assert 7 * mib < queue.bytes <= 8 * mib and len(queue) == 7 and not conn.closing
+        rig.hub.broadcast_system({"kind": "big", "n": 7, "pad": "x" * mib})
+        assert conn.closing
+        (bye,) = await sock.next()
+        await handler
+    assert (bye["t"], bye["p"]) == ("bye", slow_consumer_bye(BASE_MS)["p"])
+    assert sock.closed_with == 4429 and sock.sent.empty()
 
 
 @pytest.mark.parametrize("ending", ["token_expired", "session_revoked"])
