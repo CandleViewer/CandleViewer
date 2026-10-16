@@ -24,9 +24,7 @@ from tests.unit.storage.fakes_system_settings import FakeSystemSettings
 _SPEC: Any = load_openapi_spec()
 _OP: dict[str, Any] = _SPEC["paths"]["/admin/capacity/subaccount-tier"]["put"]
 _PATH = "/admin/capacity/subaccount-tier"
-_ONCE = (
-    "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b"  # a client-generated UUIDv4, as the header would carry
-)
+_ONCE = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b"  # a client-generated UUIDv4
 
 
 def _schema(name: str) -> dict[str, Any]:
