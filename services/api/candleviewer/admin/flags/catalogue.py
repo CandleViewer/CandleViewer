@@ -5,6 +5,8 @@ third-party production chart library is out of scope (C-1.2)."""
 
 from __future__ import annotations
 
+from candleviewer.admin.flags.registry import LIVE_ENABLED as LIVE_ENABLED
+from candleviewer.admin.flags.registry import MAINTENANCE_MODE as MAINTENANCE_MODE
 from candleviewer.admin.flags.registry import (
     Category,
     FlagKind,
@@ -18,8 +20,6 @@ _UI, _ROLLOUT = Category.UI_SURFACE, Category.FEATURE_ROLLOUT
 _OPS, _KILL = Category.OPERATIONS, Category.KILL_SWITCH
 _ALL, _OWNER = Visibility.ALL_ROLES, Visibility.OWNER_ONLY
 
-LIVE_ENABLED = "trading.live_enabled"
-MAINTENANCE_MODE = "maintenance.mode"
 MAINTENANCE_KEEP_RECORDER = "maintenance.keep_recorder"
 
 FLAGS: tuple[FlagSpec, ...] = (
