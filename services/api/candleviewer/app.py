@@ -29,6 +29,7 @@ import structlog
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.account_fixture_wiring import build_account_fixture
 from candleviewer.accounts.service import AccountsService
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
 from candleviewer.admin.overview.metrics import export_overview_metrics
@@ -963,6 +964,10 @@ def create_app(
     resolved = settings or get_settings()
     # #2086: the keyless-testnet server test clock; None (real UTC) unless CV_TEST_CLOCK is on.
     auth_clock = auth_clock or build_test_clock(resolved)
+    # #2893: the dev-only account fixture transport; None unless CV_ACCOUNT_FIXTURE is set. A build
+    # without the dev package refuses boot here, before any module is built. Kept on `app.state`
+    # until S4 threads it into the exchange adapter.
+    account_fixture = build_account_fixture(resolved)
     spec = _cached_spec()
     app = FastAPI(
         title="CandleViewer API",
@@ -974,6 +979,7 @@ def create_app(
     install_error_redaction(app)  # E43-T06: no secret echo via 422/500 bodies
     ctx = build_app_context(resolved, auth_clock=auth_clock, secrets_bundle=secrets_bundle)
     app.state.app_context = ctx
+    app.state.account_fixture = account_fixture
     # #2060: klines hot/cold boundary from the DB-seeded retention policy; the lifespan loads it
     # (`load_kline_policy`), until then (and on failure) the 90 d fallback applies.
     kline_boundary = KlineHotBoundary()

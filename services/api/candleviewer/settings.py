@@ -153,6 +153,47 @@ def _keyless_testnet_refusal(
     return None
 
 
+#: #2893: a fixture scenario name: lowercase letters, digits and `_`, at most 64 characters.
+_ACCOUNT_FIXTURE_SCENARIO_RE = re.compile(r"[a-z0-9_]{1,64}")
+#: #2893 ruling 2's rider: every variable of this family counts, declared or not.
+_EXCHANGE_KEY_VARIABLE_PREFIX = "CV_BYBIT_API_"
+
+
+def _account_fixture_refusal(
+    scenario: str | None,
+    environment: Environment | None,
+    feed: FeedMode | None,
+    test_clock: bool,
+    bybit_api_key: SecretStr | None,
+    bybit_api_secret: SecretStr | None,
+) -> str | None:
+    """#2893 rulings 2 and 10: why `CV_ACCOUNT_FIXTURE` may not be on, or None in dev/test: demo,
+    the synthetic feed, no test clock (it needs testnet) and no `CV_BYBIT_API_*` variable at all.
+    The rider: a set variable refuses, never is ignored, including a name `Settings` does not
+    declare and would otherwise drop; only names are read, never a value. The message names the
+    switch and the rule only."""
+    if test_clock:
+        return (
+            "CV_ACCOUNT_FIXTURE is refused while CV_TEST_CLOCK is on: the fixture needs "
+            "CV_ENVIRONMENT=demo and the test clock needs testnet"
+        )
+    if environment is not Environment.DEMO:
+        return "CV_ACCOUNT_FIXTURE is refused unless CV_ENVIRONMENT=demo"
+    if feed is not FeedMode.SYNTHETIC:
+        return "CV_ACCOUNT_FIXTURE is refused unless CV_FEED=synthetic"
+    if (
+        bybit_api_key is not None
+        or bybit_api_secret is not None
+        or any(name.upper().startswith(_EXCHANGE_KEY_VARIABLE_PREFIX) for name in os.environ)
+    ):
+        return "CV_ACCOUNT_FIXTURE is refused while any CV_BYBIT_API_* variable is set"
+    if scenario is None:
+        return "CV_ACCOUNT_FIXTURE is not set (CV_ACCOUNT_FIXTURE_DIR needs it)"
+    if _ACCOUNT_FIXTURE_SCENARIO_RE.fullmatch(scenario) is None:
+        return "CV_ACCOUNT_FIXTURE must be a scenario token: 1 to 64 of a-z, 0-9 and _"
+    return None
+
+
 class Settings(BaseSettings):
     """Root application settings, populated from the environment only.
 
@@ -264,6 +305,15 @@ class Settings(BaseSettings):
     test_clock: bool = False
     # Explicit validate_default: the gate must also run on the default (CV_TEST_CLOCK alone).
     test_clock_file: str | None = Field(default=None, validate_default=True)
+    # #2893: the dev/test account fixture transport for the E27 fault-injection pack, a scenario
+    # token. Its code is the dev-only `cvdev` package, outside the wheel and the image, reached
+    # only through `candleviewer.account_fixture_wiring`. Allowed only on demo with the synthetic
+    # feed, no test clock and no exchange key variable; anything else refuses startup (rulings 2
+    # and 10). The optional state dir follows the test clock's path rules. Declared after every
+    # setting the gate reads, so its field validator sees them in `info.data`.
+    account_fixture: str | None = None
+    # Explicit validate_default: the gate must also run on the default (CV_ACCOUNT_FIXTURE alone).
+    account_fixture_dir: str | None = Field(default=None, validate_default=True)
 
     # E03-T10: bounds `pg_advisory_lock` acquisition in the boot-time
     # migration runner (`candleviewer.migrations.boot`). A deadlocked
@@ -517,6 +567,58 @@ class Settings(BaseSettings):
             raise ValueError("CV_TEST_CLOCK_FILE must not be a symlink")
         if os.path.realpath(path) != str(path):
             raise ValueError("CV_TEST_CLOCK_FILE must not be under a symlinked directory")
+        return value
+
+    def account_fixture_refusal(self) -> str | None:
+        """#2893: why the account fixture transport may not run here, or None in dev/test. The
+        dev package re-checks it, as `build_test_clock` does; the dir's path rules run at load."""
+        return _account_fixture_refusal(
+            self.account_fixture,
+            self.environment,
+            self.feed,
+            self.test_clock,
+            self.bybit_api_key,
+            self.bybit_api_secret,
+        )
+
+    @field_validator("account_fixture_dir")
+    @classmethod
+    def _refuse_account_fixture_outside_dev_test(
+        cls, value: str | None, info: ValidationInfo
+    ) -> str | None:
+        """#2893 rulings 2 and 10: the fixture transport answers exchange calls for fabricated
+        keys, so outside dev/test it refuses startup before any module starts, and a dir without
+        the switch is refused rather than ignored. The dir is absolute, without `..`, and neither
+        it nor a directory above it is a symlink (the test clock's rules, #2728).
+
+        A field validator, not a model one (#2728): a refusal's `errors()` and `json()` carry only
+        the dir's input, never another setting such as `CV_BYBIT_API_KEY` (C-12.6). It also runs
+        on the default, so `CV_ACCOUNT_FIXTURE` alone is gated; `info.data` holds the fields
+        declared above."""
+        scenario = info.data.get("account_fixture")
+        if scenario is None and value is None:
+            return value
+        refusal = _account_fixture_refusal(
+            scenario,
+            info.data.get("environment"),
+            info.data.get("feed"),
+            info.data.get("test_clock", False),
+            info.data.get("bybit_api_key"),
+            info.data.get("bybit_api_secret"),
+        )
+        if refusal is not None:
+            raise ValueError(refusal)
+        if value is None:
+            return value
+        path = Path(value)
+        if not path.is_absolute():
+            raise ValueError("CV_ACCOUNT_FIXTURE_DIR must be an absolute path")
+        if ".." in path.parts:
+            raise ValueError("CV_ACCOUNT_FIXTURE_DIR must not contain '..'")
+        if path.is_symlink():
+            raise ValueError("CV_ACCOUNT_FIXTURE_DIR must not be a symlink")
+        if Path(os.path.realpath(path)) != path:  # Path equality ignores a trailing `/`
+            raise ValueError("CV_ACCOUNT_FIXTURE_DIR must not be under a symlinked directory")
         return value
 
     @field_validator("uvicorn_drain_timeout_s", mode="before")

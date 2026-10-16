@@ -44,6 +44,8 @@ CONFIG_ALLOW_LIST: Final[frozenset[str]] = frozenset(
         "CV_VERSION",
         "CV_SUPPORT_BUNDLE_ENABLED",
         "CV_RETENTION_DAYS",
+        # #2893: a scenario token, never a secret; a bundle shows the stack is in fixture mode.
+        "CV_ACCOUNT_FIXTURE",
     }
 )
 _FLAG_PREFIX: Final = "CV_FLAG_"
