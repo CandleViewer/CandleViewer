@@ -44,6 +44,23 @@ FANOUT_HELP: Final = (
     "Gateway segment of budget #6: a subscription's turn in the hub loop (a paced frame: its "
     "release) to the writer handing the data frame to the socket; sampled 1 in 32 (weighted)."
 )
+#: Frame encode time, 10 us (a small CVWB delta) to 50 ms (a 4 MiB snapshot).
+FRAME_ENCODE_BUCKETS: Final = (1e-5, 2.5e-5, 5e-5, 1e-4, 2.5e-4, 1e-3, 5e-3, 1e-2, 2.5e-2, 5e-2)
+#: Frame size, 64 B to the 4 MiB frame limit (23 section 3.6), a factor of 4 apart.
+FRAME_BYTES_BUCKETS: Final = (64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304)
+#: The HELP of the two frame series too (`ws/metrics.py` imports them). A data frame is
+#: observed when the hub stamps it: a subscription's 32nd, 64th, ... frame. `json` and `msgpack`
+#: are the frame as its connection's codec sent it (23 section 2.2).
+FRAME_ENCODE_HELP: Final = (
+    "Frame encode time. kind: a CVWB body kind (a delta the hub stamps; every snapshot chunk) "
+    "or json / msgpack (a data frame the hub stamps, in its connection's codec); sampled 1 in "
+    "32 (weighted)."
+)
+FRAME_BYTES_HELP: Final = (
+    "Encoded frame size. kind: a CVWB body kind (header plus body) or json / msgpack (a data "
+    "frame as sent; the same frame counts under both, so do not sum kinds); sampled 1 in 32 "
+    "(weighted) as the encode time."
+)
 #: Per-engine CPU time per batch.
 ENGINE_BUCKETS: Final = (
     0.0001,
@@ -1326,6 +1343,32 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E17",
         FANOUT_BUCKETS,
+        exported=True,
+    ),
+    _s(
+        "cv_ws_frame_encode_seconds",
+        "histogram",
+        "seconds",
+        ("kind",),
+        FRAME_ENCODE_HELP,
+        "cost sizing",
+        _L,
+        "E17",
+        FRAME_ENCODE_BUCKETS,
+        max_series=8,
+        exported=True,
+    ),
+    _s(
+        "cv_ws_frame_bytes",
+        "histogram",
+        "bytes",
+        ("kind",),
+        FRAME_BYTES_HELP,
+        "cost sizing",
+        _L,
+        "E17",
+        FRAME_BYTES_BUCKETS,
+        max_series=8,
         exported=True,
     ),
     _s(

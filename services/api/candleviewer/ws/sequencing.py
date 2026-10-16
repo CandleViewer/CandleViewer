@@ -50,7 +50,7 @@ from candleviewer.ws.binary import (
     encode_b64,
 )
 from candleviewer.ws.errors import build_ws_error
-from candleviewer.ws.metrics import SAMPLE_MASK
+from candleviewer.ws.metrics import SAMPLE_EVERY, SAMPLE_MASK
 from candleviewer.ws.topics import is_topic_name, machine_refusal
 
 if TYPE_CHECKING:
@@ -246,8 +246,8 @@ def render(sub: Subscription, body: SnapshotBody, max_part_bytes: int) -> Render
         )
         frames.extend(split_frame(scaled, max_part_bytes))
     last = len(frames) - 1
-    out = tuple(
-        encode_b64(f if i == last else replace(f, flags=f.flags | FLAG_PARTIAL))
+    out = tuple(  # weight 1: a snapshot is rare, so every chunk is timed and sized
+        encode_b64(f if i == last else replace(f, flags=f.flags | FLAG_PARTIAL), 1)
         for i, f in enumerate(frames)
     )
     return Rendered(None, out, body.stale, body.meta)
@@ -576,7 +576,8 @@ class TopicEmitter:
             flags = part.flags | (FLAG_REPLAY if sub.replay_session_id is not None else 0)
             if coalesced_count > 1:
                 flags |= FLAG_COALESCED
-            frame |= {"e": "b64", "p": encode_b64(replace(part, flags=flags))}
+            weight = 0 if received is None else SAMPLE_EVERY  # the stamped delta is timed too
+            frame |= {"e": "b64", "p": encode_b64(replace(part, flags=flags), weight)}
         else:
             p = dict(body or {})  # a fresh dict per subscription: no shared private buffers
             if fam in COALESCE_FIELDS:

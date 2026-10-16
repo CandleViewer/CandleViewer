@@ -291,7 +291,7 @@ async def test_runtime_stop_cut_short_may_notify_again() -> None:
 def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _Kill]) -> None:
     client, _ = world
     catalogued = {s.name for s in CATALOGUE if s.name.startswith("cv_ws_")}
-    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 19
+    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 21
     with client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         ws.send_json({"t": "auth", "id": "x", "p": {}})  # one failed re-auth
@@ -319,8 +319,11 @@ def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _K
         "cv_ws_subscribe",
         "cv_ws_sequence_gaps_detected",
         "cv_ws_closes",
-        "cv_ws_fanout_seconds",  # a `FastHistogram`, served as a histogram with `env`
+        "cv_ws_fanout_seconds",  # the `FastHistogram`s, served as histograms with `env`
+        "cv_ws_frame_encode_seconds",
+        "cv_ws_frame_bytes",
     ):
         samples = families[name].samples
         assert samples and all(x.labels["env"] == "demo" for x in samples), name
-    assert families["cv_ws_fanout_seconds"].type == "histogram"
+    for name in ("cv_ws_fanout_seconds", "cv_ws_frame_encode_seconds", "cv_ws_frame_bytes"):
+        assert families[name].type == "histogram", name

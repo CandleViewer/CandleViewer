@@ -1,15 +1,16 @@
 """CVWB encode metrics (E17-T02 follow-up, docs/plan/20-architecture.md section 12.1) and the
-fan-out series of the gateway (E17-T06).
+send-path series of the gateway (E17-T06: fan-out span, frame encode time and size).
 
 Module-level series (the encoder is a pure function with no facade); `export_cvwb_metrics()` and
 `export_ws_metrics()` serve them on the scraped registry. ``kind`` is the six-name body-kind enum
-of section 3.4, so children are pre-bound once and the encoder does two dict-free increments per
-frame.
+of section 3.4 (plus ``json`` and ``msgpack``, a data frame as its connection's codec sent it, on
+the E17-T06 series), so children are pre-bound once and the hot path does no label lookup or
+formatting.
 
-The E17-T06 series is a `FastHistogram`: a `prometheus_client` `Histogram.observe` takes a lock
+The E17-T06 series are `FastHistogram`s: a `prometheus_client` `Histogram.observe` takes a lock
 per value and builds an iterator per call (~0.5-1 us), several times what #571's < 2 % overhead
 budget leaves for a frame on the send path. Even the lock-free one costs ~0.25 us in situ, so the
-series observed per frame is also sampled, one frame in `SAMPLE_EVERY`, with that weight.
+three series observed per frame are also sampled, one frame in `SAMPLE_EVERY`, with that weight.
 """
 
 from __future__ import annotations
@@ -28,7 +29,14 @@ from candleviewer.observability.metrics import (
     ReexportCollector,
     check_label_names,
 )
-from candleviewer.observability.metrics_catalogue import FANOUT_BUCKETS, FANOUT_HELP
+from candleviewer.observability.metrics_catalogue import (
+    FANOUT_BUCKETS,
+    FANOUT_HELP,
+    FRAME_BYTES_BUCKETS,
+    FRAME_BYTES_HELP,
+    FRAME_ENCODE_BUCKETS,
+    FRAME_ENCODE_HELP,
+)
 from candleviewer.ws._generated.cvwb_layout import KINDS
 from candleviewer.ws.lifecycle import CLOSE_REASONS, OTHER_CLOSE_REASON
 
@@ -79,14 +87,17 @@ class FastHistogram:
 
     Why the send path samples: #571 caps its instrumentation at 2 % of the fan-out path, and a
     frame there costs 10-55 us. Measured in situ, an `observe` is ~0.25 us and a clock read ~0.07
-    us, so a per-frame series and its stamp cost about 0.5 us, 1-5 % of it. A per-frame series
-    (`cv_ws_fanout_seconds`) therefore observes one frame in `SAMPLE_EVERY`, chosen by a counter
-    and never at random, with `weight=SAMPLE_EVERY`; the clock read that only feeds a skipped
-    observation is skipped too. Rates stay unbiased and each counter is exact to within
-    `SAMPLE_EVERY - 1` frames; the quantiles are those of a systematic sample, unbiased unless
-    the stream a counter walks has a period that divides `SAMPLE_EVERY`. So no counter is shared
-    by connections (eight subscribers fed in turn by one would always sample the same one): the
-    fan-out span counts the subscription's own `s`.
+    us, so observing three series and stamping every frame would cost 1.0-2.5 us, 2-25 % of it.
+    The three per-frame series (`cv_ws_fanout_seconds`, `cv_ws_frame_encode_seconds`,
+    `cv_ws_frame_bytes`) therefore observe one frame in `SAMPLE_EVERY`, chosen by a counter and
+    never at random, with `weight=SAMPLE_EVERY`; the clock reads that only feed a skipped
+    observation are skipped too. Rates are right for a long-lived subscription, and a count is
+    a lower bound within `SAMPLE_EVERY - 1` frames of it (its first 31 frames are never
+    observed); the quantiles are those of a systematic sample, unbiased unless the stream a
+    counter walks has a period that divides `SAMPLE_EVERY`. So no counter is shared by
+    connections or kinds (eight subscribers fed in turn by one would always sample the same
+    one): the counter is the subscription's own `s`, the hub stamps the frame it selects, and
+    the encoder and the writer observe the frames it stamped.
     """
 
     def __init__(
@@ -253,18 +264,40 @@ AUTH_FAILURE_REASONS: Final = frozenset(
     {"missing_token", "rejected", "token_expired", "user_mismatch"}
 )
 
-# -- E17-T06 send path (sequencing.py stamps, gateway.py writer observes) ----------------------
+# -- E17-T06 send path (sequencing.py stamps, gateway.py writer observes, binary.py encodes) ---
 #: The send path observes one frame in `SAMPLE_EVERY`, with that weight (see `FastHistogram`). The
-#: sampled frame is the one whose counter reaches a multiple of it: the 32nd, the 64th, and so on.
-#: The counter is the subscription's `s` for the fan-out span. A power of two, so that a sampler
-#: is `n & SAMPLE_MASK`: no division, no random number, no state beyond the counter.
+#: sampled frame is the one whose subscription counter, its `s`, reaches a multiple of it: the
+#: 32nd, the 64th, and so on. The hub stamps it; the encoder (a CVWB kind) and the writer (`json`
+#: or `msgpack`, by the connection's codec) observe the stamped frame. A power of two, so that the
+#: sampler is `s & SAMPLE_MASK`: no division, no random number, no state beyond the counter.
 SAMPLE_MASK: Final = 31
 SAMPLE_EVERY: Final = SAMPLE_MASK + 1
+
+#: The closed `kind` set: the six body-kind names, and a whole data frame as the writer sent it,
+#: by the codec the connection negotiated (23 section 2.2): the text of a `cv.v1.json` connection
+#: (`json`) or the bytes of a `cv.v1.msgpack` one (`msgpack`).
+JSON_KIND: Final = "json"
+MSGPACK_KIND: Final = "msgpack"
+FRAME_KINDS: Final[tuple[str, ...]] = (*(k.name for k in KINDS.values()), JSON_KIND, MSGPACK_KIND)
 
 #: The gateway segment of budget #6 (06-performance section 2): a subscription's turn in the hub
 #: loop, not bus receipt -> the writer has handed the data frame to the socket. No labels: the
 #: span has one meaning, and no symbol, user, connection or channel may become a series.
 cv_ws_fanout_seconds = FastHistogram("cv_ws_fanout_seconds", FANOUT_HELP, buckets=FANOUT_BUCKETS)
+cv_ws_frame_encode_seconds = FastHistogram(
+    "cv_ws_frame_encode_seconds",
+    FRAME_ENCODE_HELP,
+    buckets=FRAME_ENCODE_BUCKETS,
+    labelnames=("kind",),
+    label_values=[(k,) for k in FRAME_KINDS],
+)
+cv_ws_frame_bytes = FastHistogram(
+    "cv_ws_frame_bytes",
+    FRAME_BYTES_HELP,
+    buckets=FRAME_BYTES_BUCKETS,
+    labelnames=("kind",),
+    label_values=[(k,) for k in FRAME_KINDS],
+)
 
 #: Every `cv_ws_*` series the ws package owns (module-level, re-exported on the app registry).
 CV_WS_NAMES: Final[frozenset[str]] = frozenset(
@@ -286,6 +319,8 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_sequence_gaps_detected_total",
         "cv_ws_stale_topics_in_use",
         "cv_ws_fanout_seconds",
+        "cv_ws_frame_encode_seconds",
+        "cv_ws_frame_bytes",
         "cv_ws_overflow_total",
         "cv_ws_malformed_updates_total",
     }
@@ -303,6 +338,23 @@ ENCODED: Final = {
     )
     for k, v in KINDS.items()
 }
+
+
+#: body_kind -> (seconds, bytes) children of the kind, observed by `binary.encode` for a frame its
+#: caller weights: `SAMPLE_EVERY` for the delta the hub stamped (it encodes once per subscription
+#: per delta), 1 for each chunk of a snapshot (rare, so every one is observed).
+ENCODE_COST: Final = {
+    k: (cv_ws_frame_encode_seconds.labels(v.name), cv_ws_frame_bytes.labels(v.name))
+    for k, v in KINDS.items()
+}
+#: The writer's encode of a data frame: its seconds, and the bytes sent (a JSON text is ASCII:
+#: chars == bytes). The writer observes the pair of the connection's codec for the frame the hub
+#: stamped, one in `SAMPLE_EVERY`: `json.dumps` on `cv.v1.json`, `encode_server_frame` on
+#: `cv.v1.msgpack`.
+JSON_ENCODE_SECONDS: Final = cv_ws_frame_encode_seconds.labels(JSON_KIND)
+JSON_FRAME_BYTES: Final = cv_ws_frame_bytes.labels(JSON_KIND)
+MSGPACK_ENCODE_SECONDS: Final = cv_ws_frame_encode_seconds.labels(MSGPACK_KIND)
+MSGPACK_FRAME_BYTES: Final = cv_ws_frame_bytes.labels(MSGPACK_KIND)
 #: The one fan-out series; the writer observes it for each stamped data frame it sends, and the
 #: hub stamps one data frame of a subscription in `SAMPLE_EVERY`.
 FANOUT_SECONDS: Final = cv_ws_fanout_seconds.labels()
@@ -310,7 +362,7 @@ FANOUT_SECONDS: Final = cv_ws_fanout_seconds.labels()
 
 def export_ws_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
     """Serve every `cv_ws_*` series on `registry` (the scraped one) with `env`."""
-    # The owning modules declare their series at import; import them so all 18 families exist.
+    # The owning modules declare their series at import; import them so all 21 families exist.
     from candleviewer.ws import permissions, revocation, sequencing, upstream  # noqa: F401
 
     return ReexportCollector(registry, names=CV_WS_NAMES, const_labels={"env": env})

@@ -18,11 +18,12 @@ import base64
 import binascii
 import struct
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Final
 
 from candleviewer.ws._generated.cvwb_layout import HEADER, KINDS, MAGIC, Kind, Part
 from candleviewer.ws.errors import WsError
-from candleviewer.ws.metrics import ENCODED
+from candleviewer.ws.metrics import ENCODE_COST, ENCODED
 
 BOOK_SNAPSHOT: Final = 1
 BOOK_DELTA: Final = 2
@@ -135,9 +136,13 @@ def _header_count(frame: Frame, kind: Kind) -> int:
     return len(frame.records)
 
 
-def encode(frame: Frame) -> bytes:
-    """Encodes ``frame`` once; the result is shared by every subscriber (encode-once)."""
+def encode(frame: Frame, weight: int = 0) -> bytes:
+    """Encodes ``frame``. The hub calls it once per subscription per delta, and once per chunk of
+    a snapshot it renders. A ``weight`` above 0 also times the call and sizes the result into
+    ``cv_ws_frame_*{kind}``, observed ``weight`` times: the caller's sampling (the delta the hub
+    stamped carries ``SAMPLE_EVERY``, a snapshot chunk 1); 0 reads no timer and observes nothing."""
     kind = _kind(frame.body_kind)
+    began = perf_counter() if weight else 0.0
     if frame.flags & ~_KNOWN_FLAGS:
         raise FrameEncodeError(f"unknown header flag bits 0x{frame.flags:x}")
     if (kind.trailer is None) != (frame.trailer is None):
@@ -188,10 +193,17 @@ def encode(frame: Frame) -> bytes:
         raise FrameEncodeError(f"{kind.name}: value out of range for section 3.4: {exc}") from exc
     except TypeError as exc:  # a record that is not a tuple: `*record` cannot expand it
         raise FrameEncodeError(f"{kind.name}: a record is not a tuple of ints: {exc}") from exc
-    frames, nbytes = ENCODED[kind.id]  # O(1) per frame; success path only
+    encoded = bytes(out)
+    # Success path only, O(1) per frame, on the loop thread where the hub calls it (the
+    # histograms have a single writer). The timer stops here: the counters are not encode time.
+    if weight:
+        seconds, sizes = ENCODE_COST[kind.id]
+        seconds.observe(perf_counter() - began, weight)
+        sizes.observe(len(encoded), weight)
+    frames, nbytes = ENCODED[kind.id]
     frames.inc()
-    nbytes.inc(len(out))
-    return bytes(out)
+    nbytes.inc(len(encoded))
+    return encoded
 
 
 def _count_at(part: Part) -> int:
@@ -230,9 +242,10 @@ def _check_enums(part: Part, record: Record) -> None:
             raise FrameEncodeError(f"{name}={value} not in {allowed}")
 
 
-def encode_b64(frame: Frame) -> str:
-    """``cv.v1.json`` wrapping (section 3.2): the frame bytes as base64, sent with ``e: "b64"``."""
-    return base64.b64encode(encode(frame)).decode("ascii")
+def encode_b64(frame: Frame, weight: int = 0) -> str:
+    """``cv.v1.json`` wrapping (section 3.2): the frame bytes as base64, sent with ``e: "b64"``.
+    ``weight`` is `encode`'s."""
+    return base64.b64encode(encode(frame, weight)).decode("ascii")
 
 
 def _fits(count: int, stride: int, available: int, what: str) -> None:

@@ -49,9 +49,12 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
 - **Fan-out span** (the gateway segment of budget #6, from the subscription's hub turn, not bus
   receipt): `TopicEmitter` queues one data frame (`snap` / `d`) of a subscription in
   `SAMPLE_EVERY` with the clock reading at which the hub took it, and the writer observes
-  `cv_ws_fanout_seconds` for it, weighted, once `send_text` has returned. Unsampled frames
+  `cv_ws_fanout_seconds` for it, weighted, once the send has returned. Unsampled frames
   carry no stamp and read no clock. Control frames and dropped frames are not observed; a
-  client's drain wait, a slow consumer's backlog and replay frames are inside the span.
+  client's drain wait, a slow consumer's backlog and replay frames are inside the span. The
+  same stamped frame's encode time and size are observed too, in the codec its connection
+  negotiated (`kind="json"` for `json.dumps` text, `kind="msgpack"` for MessagePack bytes; timed
+  with `perf_counter`, not the injected clock), and its CVWB body was timed by the encoder.
 
 Bounds (C-2.18): outbound queue `OUTBOUND_QUEUE_MAX` (full -> `slow_consumer`
 close), rate-limiter window, `MAX_CONNECTIONS_PER_USER` per user (oldest idle
@@ -69,6 +72,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
+from time import perf_counter
 from typing import Any, Final, Protocol
 
 import structlog
@@ -117,6 +121,10 @@ from candleviewer.ws.limits import (
 )
 from candleviewer.ws.metrics import (
     FANOUT_SECONDS,
+    JSON_ENCODE_SECONDS,
+    JSON_FRAME_BYTES,
+    MSGPACK_ENCODE_SECONDS,
+    MSGPACK_FRAME_BYTES,
     SAMPLE_EVERY,
     cv_ws_auth_failures_total,
     cv_ws_clock_skew_ms,
@@ -421,12 +429,23 @@ class _Connection:
             | {"p": body}
         )
 
+    def encode_frame(self, frame: dict[str, Any]) -> str | bytes:
+        """One frame in the negotiated encoding (§2.2, §3.2): MessagePack bytes on
+        `cv.v1.msgpack`, else compact JSON text."""
+        if self.msgpack:
+            return encode_server_frame(frame)
+        return json.dumps(frame, separators=(",", ":"))
+
+    async def send_payload(self, payload: str | bytes) -> None:
+        """Write an encoded frame: a binary WS frame for bytes, a text one for text."""
+        if isinstance(payload, bytes):
+            await self.ws.send_bytes(payload)
+        else:
+            await self.ws.send_text(payload)
+
     async def send_frame(self, frame: dict[str, Any]) -> None:
         """Write one frame in the negotiated encoding (§2.2, §3.2)."""
-        if self.msgpack:
-            await self.ws.send_bytes(encode_server_frame(frame))
-        else:
-            await self.ws.send_text(json.dumps(frame, separators=(",", ":")))
+        await self.send_payload(self.encode_frame(frame))
 
     def close_with(
         self,
@@ -983,7 +1002,17 @@ def make_ws_router(
             try:
                 if type(item) is tuple:  # the hub's sampled data frame, queued with its stamp
                     received, item = item
-                    await conn.send_frame(item)
+                    began = perf_counter()  # its encode time and size too, with the same weight
+                    payload = conn.encode_frame(item)
+                    seconds = perf_counter() - began
+                    # The pair of the connection's codec. A JSON text is ASCII: chars are bytes.
+                    if conn.msgpack:
+                        MSGPACK_ENCODE_SECONDS.observe(seconds, SAMPLE_EVERY)
+                        MSGPACK_FRAME_BYTES.observe(len(payload), SAMPLE_EVERY)
+                    else:
+                        JSON_ENCODE_SECONDS.observe(seconds, SAMPLE_EVERY)
+                        JSON_FRAME_BYTES.observe(len(payload), SAMPLE_EVERY)
+                    await conn.send_payload(payload)
                     now = conn.clock()  # the watchdog's send time, which this frame also observes
                     conn.watchdog.last_outbound = now
                     FANOUT_SECONDS.observe(now - received, SAMPLE_EVERY)
