@@ -10,6 +10,15 @@ around it:
   `rbac_conformance` module) read the checkout's YAML, so no runtime module may import them.
 - `contract_conformance` must load with the stdlib alone: the generator loads it by file path,
   and the boot path must need neither PyYAML nor openapi-spec-validator (#2616).
+
+Limits: these are AST heuristics, so the following are NOT caught.
+- Climbs spelled another way: `os.path.dirname` chains, `/ "../.."` joins, `joinpath("..")`.
+- Non-literal indices, such as `parents[_N]` or `list(p.parents)[N]`.
+- Climbs inside a helper, or an immediately invoked lambda, that runs at import.
+- Chains broken by another method (`Path(__file__).with_name("x").parents[4]`), or split across
+  statements and names (`R = Path(__file__).parent`, then `R.parents[3]`).
+- `import candleviewer.api` followed by `candleviewer.api.rbac_conformance`.
+- Dynamic imports (`importlib.import_module`, `__import__`).
 """
 
 from __future__ import annotations
@@ -26,7 +35,10 @@ import pytest
 import candleviewer
 
 PACKAGE = Path(candleviewer.__file__).resolve().parent
-#: Where `infra/images/Dockerfile.api` installs the package (`WORKDIR /app`).
+#: The image definition, in this checkout (`tests/unit/architecture/` is five levels down).
+DOCKERFILE = Path(__file__).resolve().parents[5] / "infra" / "images" / "Dockerfile.api"
+#: Where `infra/images/Dockerfile.api` installs the package (`WORKDIR /app`); pinned to the
+#: Dockerfile by `test_image_package_is_where_the_dockerfile_installs_the_package`.
 IMAGE_PACKAGE = PurePosixPath("/app/candleviewer")
 CONTRACT_CONFORMANCE = "candleviewer.api.contract_conformance"
 RBAC_CONFORMANCE = "candleviewer.api.rbac_conformance"
@@ -34,6 +46,35 @@ DEV_ONLY_NAMES = frozenset({"OPENAPI_SPEC_PATH", "load_openapi_spec"})
 #: The only modules that may name the dev-only helpers: the one defining them, and the
 #: dev-only module built on them.
 MAY_USE_DEV_ONLY = frozenset({CONTRACT_CONFORMANCE, RBAC_CONFORMANCE})
+
+
+def _image_depth(relative: PurePosixPath) -> int:
+    """Parents a module at `relative` (inside the package) has once installed in the image."""
+    return len((IMAGE_PACKAGE / relative).parents)
+
+
+#: The depth the snippet tests model: a module directly in `api/`, like `contract_conformance`.
+SNIPPET_DEPTH = _image_depth(PurePosixPath("api/snippet.py"))
+
+
+@pytest.mark.parametrize(
+    ("relative", "depth"), [("app.py", 3), ("api/x.py", 4), ("migrations/versions/x.py", 5)]
+)
+def test_image_depth_counts_the_parents_of_the_installed_module(relative: str, depth: int) -> None:
+    """`/app/candleviewer/app.py` has three parents: `/app/candleviewer`, `/app` and `/`."""
+    assert _image_depth(PurePosixPath(relative)) == depth
+
+
+def test_image_package_is_where_the_dockerfile_installs_the_package() -> None:
+    """The runtime stage (the last `FROM`) works in `WORKDIR /app` and copies the package to
+    `/app/candleviewer`; `IMAGE_PACKAGE`, and with it every depth above, must follow both."""
+    runtime = DOCKERFILE.read_text(encoding="utf-8").replace("\\\n", " ").split("\nFROM ")[-1]
+    lines = runtime.splitlines()
+    workdirs = [line.split()[1] for line in lines if line.startswith("WORKDIR ")]
+    destinations = [line.split()[-1] for line in lines if line.startswith("COPY ")]
+    assert workdirs[-1] == "/app"
+    assert IMAGE_PACKAGE == PurePosixPath(workdirs[-1], "candleviewer")
+    assert str(IMAGE_PACKAGE) in destinations
 
 
 class _Module:
@@ -44,10 +85,13 @@ class _Module:
         self.name = ".".join(parts[:-1] if self.is_package else parts)
         self.relative = relative
         #: Parents the module has once installed in the image.
-        self.image_depth = len((IMAGE_PACKAGE / relative.as_posix()).parents)
-        with warnings.catch_warnings():  # an applied migration has an invalid escape (C-5.4)
-            warnings.simplefilter("ignore", SyntaxWarning)
-            self.tree = ast.parse(path.read_text(encoding="utf-8"))
+        self.image_depth = _image_depth(PurePosixPath(relative.as_posix()))
+        with warnings.catch_warnings():
+            # Only applied migrations, which must never be edited (C-5.4), may carry one.
+            warnings.filterwarnings(
+                "ignore", category=SyntaxWarning, module=r".*[/\\]migrations[/\\]versions[/\\]"
+            )
+            self.tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
 @pytest.fixture(scope="module")
@@ -68,7 +112,6 @@ def _levels_up(node: ast.expr) -> int:
             and node.value.attr == "parents"
             and isinstance(node.slice, ast.Constant)
             and isinstance(node.slice.value, int)
-            and node.slice.value >= 0
         ):
             levels, node = levels + node.slice.value + 1, node.value.value
         elif (
@@ -127,7 +170,8 @@ def _climbs(tree: ast.AST, depth: int) -> list[int]:
     [
         "R = Path(__file__).resolve().parents[4]",
         "R = Path(__file__).parent.parent.parent.parent.parent",
-        "R = Path(__file__).resolve().parent.parents[3]",
+        "R = Path(__file__).parent.resolve().parents[3]",
+        "R = Path(__file__).parent.absolute().parents[3]",
         "@register(Path(__file__).parents[4])\ndef f(): ...",
         "def f(p=Path(__file__).parents[4]): ...",
         "def f(*, p=Path(__file__).parent.parent.parent.parent.parent): ...",
@@ -137,13 +181,14 @@ def _climbs(tree: ast.AST, depth: int) -> list[int]:
     ],
 )
 def test_an_import_time_climb_past_the_root_is_found(source: str) -> None:
-    assert _climbs(ast.parse(source), depth=4) != []
+    assert _climbs(ast.parse(source), depth=SNIPPET_DEPTH) != []
 
 
 @pytest.mark.parametrize(
     "source",
     [
         "def f():\n    return Path(__file__).parents[4]",
+        "async def f():\n    return Path(__file__).parents[4]",
         "g = lambda: Path(__file__).parent.parent.parent.parent.parent",
         "R = Path(__file__).resolve().parents[3]",
         "R = Path(__file__).parent.parent.parent.parent",
@@ -151,7 +196,7 @@ def test_an_import_time_climb_past_the_root_is_found(source: str) -> None:
     ],
 )
 def test_a_climb_that_runs_on_call_or_stays_within_the_root_is_allowed(source: str) -> None:
-    assert _climbs(ast.parse(source), depth=4) == []
+    assert _climbs(ast.parse(source), depth=SNIPPET_DEPTH) == []
 
 
 def test_no_module_climbs_past_the_image_root_at_import(modules: list[_Module]) -> None:
@@ -161,7 +206,10 @@ def test_no_module_climbs_past_the_image_root_at_import(modules: list[_Module]) 
         for module in modules
         for line in _climbs(module.tree, module.image_depth)
     ]
-    assert offenders == []
+    assert offenders == [], (
+        f"import-time path climbs past `/` under {IMAGE_PACKAGE}: {offenders}. Move the "
+        "expression into a function, so it runs on call, or resolve the path package-relative."
+    )
 
 
 def _dev_only_uses(name: str, is_package: bool, tree: ast.AST) -> list[str]:
@@ -189,22 +237,28 @@ def _dev_only_uses(name: str, is_package: bool, tree: ast.AST) -> list[str]:
     return uses
 
 
+#: (module name, is a package `__init__`) for the snippets below.
+ROUTER = ("candleviewer.api.some_router", False)
+
+
 @pytest.mark.parametrize(
-    "source",
+    ("source", "module"),
     [
-        "import candleviewer.api.rbac_conformance",
-        "from candleviewer.api.rbac_conformance import assert_vocabulary_single_source",
-        "from candleviewer.api import rbac_conformance",
-        "from . import rbac_conformance",
-        "from .rbac_conformance import find_undeclared_routes",
-        "from candleviewer.api.contract_conformance import load_openapi_spec",
-        "from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH",
-        "from .contract_conformance import *",
-        "from candleviewer.api import contract_conformance as cc\ncc.load_openapi_spec()",
+        ("import candleviewer.api.rbac_conformance", ROUTER),
+        ("from candleviewer.api.rbac_conformance import assert_vocabulary_single_source", ROUTER),
+        ("from candleviewer.api import rbac_conformance", ROUTER),
+        ("from . import rbac_conformance", ROUTER),
+        ("from .rbac_conformance import find_undeclared_routes", ROUTER),
+        ("from ..rbac_conformance import find_undeclared_routes", ("candleviewer.api.v2.x", False)),
+        ("from .rbac_conformance import find_undeclared_routes", ("candleviewer.api", True)),
+        ("from candleviewer.api.contract_conformance import load_openapi_spec", ROUTER),
+        ("from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH", ROUTER),
+        ("from .contract_conformance import *", ROUTER),
+        ("from candleviewer.api import contract_conformance as cc\ncc.load_openapi_spec()", ROUTER),
     ],
 )
-def test_a_dev_only_import_is_found(source: str) -> None:
-    assert _dev_only_uses("candleviewer.api.some_router", False, ast.parse(source)) != []
+def test_a_dev_only_import_is_found(source: str, module: tuple[str, bool]) -> None:
+    assert _dev_only_uses(*module, ast.parse(source)) != []
 
 
 def test_the_runtime_names_of_contract_conformance_are_allowed() -> None:
@@ -222,22 +276,27 @@ def test_no_runtime_module_imports_the_dev_only_contract_helpers(modules: list[_
         if module.name not in MAY_USE_DEV_ONLY
         for use in _dev_only_uses(module.name, module.is_package, module.tree)
     ]
-    assert offenders == []
+    assert offenders == [], (
+        f"runtime modules import dev-only contract helpers: {offenders}. They read the "
+        "checkout's YAML; read the packaged subset instead (`load_contract_subset`)."
+    )
 
 
 def test_contract_conformance_loads_with_the_stdlib_alone() -> None:
     """As the generator loads it, by file path in a fresh isolated interpreter: no package
-    `__init__` runs, and nothing outside the stdlib (PyYAML, openapi-spec-validator) loads."""
+    `__init__` runs, and nothing outside the stdlib (PyYAML, openapi-spec-validator) loads.
+    `_sysconfigdata*` is the platform's stdlib config, absent from `stdlib_module_names`."""
     probe = (
         "import importlib.util, sys; before = set(sys.modules); "
         "spec = importlib.util.spec_from_file_location('probe', sys.argv[1]); "
         "spec.loader.exec_module(importlib.util.module_from_spec(spec)); "
         "loaded = {name.partition('.')[0] for name in set(sys.modules) - before}; "
-        "print(sorted(loaded - set(sys.stdlib_module_names)))"
+        "print(sorted(name for name in loaded - set(sys.stdlib_module_names) "
+        "if not name.startswith('_sysconfigdata')))"
     )
     module = PACKAGE / "api" / "contract_conformance.py"
     result = subprocess.run(  # noqa: S603 — fixed argv: this interpreter, isolated (#2555)
-        [sys.executable, "-I", "-c", probe, str(module)],
+        [sys.executable, "-I", "-B", "-c", probe, str(module)],
         capture_output=True,
         text=True,
         timeout=120,
