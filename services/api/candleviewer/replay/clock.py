@@ -136,6 +136,7 @@ class ReplayClock:
         self._failed: Exception | None = None  # what the source raised: it is done
         self._drained = self._stop = self._closed = self._stepping = False
         self._starting = False  # play() started and `_play` has not anchored yet
+        self._rescale: float | None = None  # when a paced change found nothing pending to carry
         self._pacer: Pacer | None = None
         self._window = RateWindow(self._cfg.rate_window_s)
         self._wake = asyncio.Event()
@@ -168,7 +169,7 @@ class ReplayClock:
         return None if stack is None else await stack.__aexit__(et, exc, tb)
 
     async def aclose(self) -> None:
-        """Destroy: cancel playback, then close the source exactly once, after any old source a
+        """Destroy: cancel playback, close the source exactly once, then wait for any old source a
         reposition is still closing. Every caller awaits the same shielded close, so a caller
         cancelled again meanwhile cannot leave a source open."""
         self._closed = True
@@ -183,9 +184,11 @@ class ReplayClock:
                 task.cancel()
                 await asyncio.wait({task})
         finally:
-            if self._closers:  # old sources a reposition is still closing: wait for them too
-                await asyncio.wait(self._closers)
-            await self._source.aclose()
+            try:  # the live source first: an old source's close may never return
+                await self._source.aclose()
+            finally:
+                if self._closers:  # old sources a reposition is still closing
+                    await asyncio.wait(self._closers)
 
     @property
     def playing(self) -> bool:
@@ -219,9 +222,10 @@ class ReplayClock:
     def set_speed(self, speed: float) -> None:
         """Change speed (B12 `set_speed`); the current speed again is a no-op, and before `play()`
         anchors its schedule the speed is only recorded. While paced, the schedule continues from
-        its own position; behind schedule, from the pending event's due time, so its lateness
-        carries over as is instead of being re-scaled or forgiven. Leaving the schedule (unbounded
-        or `STEP`, which pauses) books that lateness as lost time: it never hides backpressure."""
+        its own position; behind schedule, from the pending (or, if none, next read) event's due
+        time, so lateness carries over as is, never re-scaled or forgiven: a speed-up while behind
+        delivers up to `max_lag_s` times the new speed of replay time at once. Leaving the schedule
+        (unbounded or `STEP`, which pauses) books that lateness as lost time, never hiding it."""
         speed = check_speed(speed)
         if speed == self._speed:
             return
@@ -234,12 +238,13 @@ class ReplayClock:
             return
         now, pacer, pending = self._time.now(), self._pacer, self._pending
         self._cursor = self._position(now)  # the clamped position: what the session reports
-        # behind schedule, a paced change takes effect from the pending event's due time: its
-        # lateness carries over as is, never re-scaled to the new speed (or forgiven)
         at = now
         if pacer is not None and speed > 0:
-            at = now if pending is None else min(now, pacer.due(pending.ts_us))
-            pacer.set_speed(speed, wall=at, position_us=pacer.position(at))
+            if pending is None and not self._drained:  # `_run` carries it once it reads one
+                self._rescale = now if self._rescale is None else self._rescale
+            else:  # drained, nothing can be carried: from now, so `now_us()` never moves back
+                at = now if pending is None else min(now, pacer.due(pending.ts_us))
+                pacer.set_speed(speed, wall=at, position_us=pacer.position(at))
         else:
             if pacer is not None and pending is not None:
                 lost = max(0.0, now - pacer.due(pending.ts_us))
@@ -250,11 +255,11 @@ class ReplayClock:
             self._pacer = (
                 Pacer(speed, wall=now, ts_us=max(here, self._cursor)) if speed > 0 else None
             )
+            self._rescale = None  # it belonged to the schedule just replaced
             _set_ratio(id(self), None)  # unpaced until now, or from now: no achieved ratio
             if speed == STEP:
                 self._stop = True
-        # the window counts what is booked and what is still outstanding, as `_run` does
-        self._window.restart(wall=now, lost_s=self._lost_s + now - at, position_us=self._cursor)
+        self._restart(now, at)
         self._wake.set()
 
     async def step_events(self, count: int = 1) -> StopReason:
@@ -375,6 +380,7 @@ class ReplayClock:
         finally:  # keep the position reached, even on destroy: the cursor never moves back
             self._cursor = self._position(self._time.now())
             self._pacer = None
+            self._starting, self._rescale = False, None  # a change left pending dies with it
             self._flush()
             _set_ratio(id(self), None)
             if self._backpressured:  # backpressure is a state of playback, not of the session
@@ -402,6 +408,8 @@ class ReplayClock:
                 return "paused"
             pacer, now, lag = self._pacer, time.now(), 0.0
             if pacer is not None:
+                if self._rescale is not None:  # a speed change came while nothing was pending
+                    self._carry(pacer, self._rescale, item)
                 lag = now - pacer.due(self._end_us if item is None else item.ts_us)
                 if lag < -min_wait:
                     await time.wait_until(now - lag, self._wake)
@@ -526,6 +534,17 @@ class ReplayClock:
         )
         self._obs.on_gap(gap, stopped=stop)
         return stop
+
+    def _carry(self, pacer: Pacer, changed: float, item: ReplayItem | None) -> None:
+        """Apply the speed change deferred at `changed`: from then, or `item`'s due if earlier."""
+        self._rescale = None
+        at = min(changed, pacer.due(self._end_us if item is None else item.ts_us))
+        pacer.set_speed(self._speed, wall=at, position_us=pacer.position(at))
+        self._restart(changed, at)
+
+    def _restart(self, wall: float, at: float) -> None:
+        """A new rate window from `wall`, counting the lag carried since `at`, as `_run` does."""
+        self._window.restart(wall=wall, lost_s=self._lost_s + wall - at, position_us=self._cursor)
 
     def _slow(self, pacer: Pacer, ts_us: int, now: float) -> float:
         """The event is later than `max_lag_s` behind schedule: re-anchor the clock at it (slow
