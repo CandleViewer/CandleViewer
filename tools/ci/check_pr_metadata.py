@@ -3,7 +3,8 @@
 
 Reads the LIVE PR (title, body, labels, label events, comments) from the GitHub API using
 GH_TOKEN / GITHUB_REPOSITORY / PR_NUMBER from the environment, so edits and label changes are seen
-even on a manual re-run (never the stale event payload). Nothing else touches the network.
+even on a manual re-run (never the stale event payload). For a `Partial:` PR it also reads the PR's
+GraphQL `closingIssuesReferences` (PR-BODY-003). Nothing else touches the network.
 
 Trust model. The workflow runs THIS file from a worktree of current origin/main (`python -I`,
 see .github/workflows/pr-metadata.yml; the event's base.sha is never trusted, it is stale for any
@@ -39,6 +40,18 @@ Rules
          `Fixes #N`. INTERPRETATION pending a C-4.7 amendment (#2261): `Refs #N` is accepted (WARN)
          only with a line `Partial: <reason>` (stack slice, contract-first, scaffold), so partial
          work is not pushed into `Closes` (which auto-closes the issue). Else PR-BODY-001/002.
+         PR-BODY-003 (#2920): a `Partial:` PR must close NOTHING. GitHub closes on close/closes/
+         closed, fix/fixes/fixed, resolve/resolves/resolved (any case, optional colon) + #N,
+         owner/repo#N or an issue URL anywhere in the body, prose and checklists included. The RAW
+         body is scanned (code and comments too, unlike PR-BODY-001: strip_markup only approximates
+         GitHub's parser, and a miss closes a ticket while a false hit costs one rephrase). Online
+         (GH_TOKEN + PR_NUMBER: the CI path) the PR's `closingIssuesReferences` (body keywords AND
+         Development-sidebar links) must also be empty. The workflow grants `issues: read` as a
+         read-only precaution whose need is unverified: the report of that list coming back
+         silently empty without it (cli/cli issue 11841) was for a private repo; this one is
+         public. NOT checked: commit messages. The repo squash-merges with COMMIT_MESSAGES, so a
+         keyword + ref in a slice's commit message still closes the issue when the slice lands
+         (#2358 did that to #1778); keep them clean.
   C-16.4 every `C-x.y` cited in title/body is declared in CONSTITUTION.md. The declaration loader
          is reused from scripts/check_rule_refs.py (GOV-002; scans tracked files, not PR text) -
          C-16.5, no second implementation.
@@ -51,6 +64,7 @@ Exit 0 ok (warnings allowed), 1 violations, 2 internal/config error.
 from __future__ import annotations
 
 import argparse
+import http.client
 import importlib.util
 import json
 import os
@@ -61,6 +75,7 @@ import tempfile
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 WARN_LOC = 400
 FAIL_LOC = 800
@@ -85,7 +100,24 @@ MAX_PAGES = 10
 LINK_RE = re.compile(r"\b(?:Closes|Fixes)\s+#\d+\b", re.IGNORECASE)
 REFS_RE = re.compile(r"\bRefs\s+#\d+\b", re.IGNORECASE)
 PARTIAL_RE = re.compile(r"^[ \t]*Partial:[ \t]*\S", re.MULTILINE)
+# GitHub's nine closing keywords, an optional colon, then #N, owner/repo#N, GH-N or an issue/PR URL
+# (PR-BODY-003). `\s*(?::\s*)?` rather than `\s*:?\s*`: linear on long whitespace runs. Names are
+# bounded ({1,100}; GitHub caps owners at 39 and repos at 100 chars): an unbounded `[\w.-]+` rescans
+# a long `fix-fix-...` run from every keyword inside it (quadratic, 18 s on a 256 KiB body).
+CLOSING_RE = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s*(?::\s*)?"
+    r"(?:(?:[\w.-]{1,100}/[\w.-]{1,100})?#\d+|GH-\d+"
+    r"|(?:https?://)?(?:www\.)?github\.com/[\w.-]{1,100}/[\w.-]{1,100}/(?:issues|pull)/\d+)",
+    re.IGNORECASE,
+)
+CLOSING_QUERY = (
+    "query($owner: String!, $name: String!, $number: Int!) {"
+    " repository(owner: $owner, name: $name) { pullRequest(number: $number) {"
+    " closingIssuesReferences(first: 25) {"
+    " totalCount nodes { number repository { nameWithOwner } } } } } }"
+)
 Fetch = Callable[[str], object]
+GraphQL = Callable[[str, dict[str, object]], Any]
 
 
 class ConfigError(Exception):
@@ -260,6 +292,21 @@ def strip_markup(body: str) -> str:
     return re.sub(r"`[^`\n]*`", "", body)
 
 
+def is_partial(body: str) -> bool:
+    """A `Partial: <reason>` line outside code/comments: a stack slice or contract-first PR."""
+    return bool(PARTIAL_RE.search(strip_markup(body)))
+
+
+def closing_refs(body: str) -> list[str]:
+    """Every closing-keyword reference in the RAW body, whitespace-normalised (PR-BODY-003).
+
+    Deliberately conservative: GitHub skips code spans/blocks and HTML comments, but strip_markup
+    only approximates its CommonMark parser (an indented line inside a list item is text there,
+    not code), and a miss closes a ticket on merge while a false hit costs the author one rephrase.
+    """
+    return [" ".join(hit.group(0).split()) for hit in CLOSING_RE.finditer(body)]
+
+
 def check_label_provenance(events, comments, allowed: set[str]) -> list[str]:
     errs = []
     labelled = [
@@ -306,6 +353,7 @@ def check(
     binary_paths: frozenset[str] = frozenset(),
     force_flag: frozenset[str] = frozenset(),
     merge_base_state: AttrState | None = None,
+    closing_online: list[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     title = pr.get("title") or ""
     body = pr.get("body") or ""
@@ -380,9 +428,22 @@ def check(
             errors.append(f"PR-TITLE-003 C-4.10: scope {m['scope']!r} not an allowed scope")
 
     clean = strip_markup(body)
-    if LINK_RE.search(clean):
+    partial = is_partial(body)
+    closing: list[str] = []
+    if partial:  # a normal PR is meant to close its issue: its body is never scanned
+        closing = closing_refs(body)
+        closing += [f"{r} (closingIssuesReferences)" for r in closing_online or []]
+    if partial and closing:
+        errors.append(
+            "PR-BODY-003 C-4.7: a `Partial:` PR must close nothing, but it carries closing "
+            f'references {closing[:5]}; keep `Refs #N` and write "the closing line is on slice N" '
+            "instead (close/fix/resolve + an issue ref counts anywhere in the body, code and "
+            "comments included; unlink any Development-sidebar issue; keep the commit messages "
+            "clean too: squash merges keep them and they are not checked)"
+        )
+    elif LINK_RE.search(clean):
         pass
-    elif REFS_RE.search(clean) and PARTIAL_RE.search(clean):
+    elif REFS_RE.search(clean) and partial:
         warnings.append("C-4.7: `Refs #N` + `Partial:` accepted as a partial/stacked PR (interpretation)")
     elif REFS_RE.search(clean):
         errors.append("PR-BODY-002 C-4.7: `Refs #N` needs a `Partial: <reason>` line (else use `Closes #N`)")
@@ -433,7 +494,47 @@ def make_api_fetch(repo: str, token: str) -> Fetch:
     return fetch
 
 
-def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
+def make_graphql(token: str) -> GraphQL:
+    def post(query: str, variables: dict[str, object]) -> Any:
+        req = urllib.request.Request(
+            "https://api.github.com/graphql",
+            data=json.dumps({"query": query, "variables": variables}).encode(),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - fixed https host
+                data = json.load(resp)
+        # http.client errors (IncompleteRead, BadStatusLine, ...) are not OSError subclasses
+        except (OSError, ValueError, http.client.HTTPException) as exc:
+            msg = f"GraphQL request failed ({exc}); cannot verify, failing closed"
+            raise ConfigError(msg) from exc
+        result = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(result, dict) or data.get("errors"):
+            raise ConfigError(f"GraphQL answer {str(data)[:300]}; cannot verify, failing closed")
+        return result
+
+    return post
+
+
+def online_closing_refs(graphql: GraphQL, repo: str, num: str) -> list[str]:
+    """Issues GitHub itself closes when this PR merges: `closingIssuesReferences` (body keywords
+    and Development-sidebar links). Nodes the token cannot read still count, via totalCount."""
+    owner, _, name = repo.partition("/")
+    try:
+        data = graphql(CLOSING_QUERY, {"owner": owner, "name": name, "number": int(num)})
+        refs = data["repository"]["pullRequest"]["closingIssuesReferences"]
+        names = [f"{n['repository']['nameWithOwner']}#{n['number']}" for n in refs["nodes"] if n]
+        hidden = int(refs["totalCount"]) - len(names)
+    except (KeyError, TypeError, ValueError) as exc:
+        msg = f"closingIssuesReferences unreadable ({exc!r}); cannot verify, failing closed"
+        raise ConfigError(msg) from exc
+    return names + ([f"+{hidden} more"] if hidden > 0 else [])
+
+
+def main(
+    argv: list[str] | None = None, fetch: Fetch | None = None, graphql: GraphQL | None = None
+) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--repo-root", type=Path, default=Path("."))
     a = ap.parse_args(argv)
@@ -441,13 +542,18 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
     try:
         repo = os.environ.get("GITHUB_REPOSITORY", "")
         num = os.environ.get("PR_NUMBER", "")
+        token = os.environ.get("GH_TOKEN", "")
         if fetch is None:
-            token = os.environ.get("GH_TOKEN", "")
             if not (repo and num and token):
                 raise ConfigError("GITHUB_REPOSITORY, PR_NUMBER and GH_TOKEN are required")
             fetch = make_api_fetch(repo, token)
+            if graphql is None:  # built only on the live path: an injected fetch never goes online
+                graphql = make_graphql(token)
         pr = fetch(f"/pulls/{num}")
         assert isinstance(pr, dict)
+        online = None  # PR-BODY-003 online half: a token and the PR number, Partial PRs only
+        if graphql is not None and token and num and is_partial(pr.get("body") or ""):
+            online = online_closing_refs(graphql, repo, num)
         base, head = pr["base"]["sha"], pr["head"]["sha"]
         merge_base = _git(root, "merge-base", base, head).strip()
         gate = os.environ.get("GATE_SHA") or base  # trusted tip (workflow: origin/main); else base
@@ -504,6 +610,7 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
             binary_paths=binary_paths,
             force_flag=frozenset(force),
             merge_base_state=attr_state(root, merge_base, paths),
+            closing_online=online,
         )
     except ConfigError as exc:
         print(f"::error title=pr-metadata::{exc}", file=sys.stderr)

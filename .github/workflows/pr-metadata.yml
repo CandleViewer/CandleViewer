@@ -17,6 +17,11 @@ name: pr-metadata
 # and never runs PR code. Changing the gate's own files needs `large-pr-approved` (PR-SIZE-006).
 # REMAINING GAP: under `pull_request` this workflow file is itself PR-controlled, so editing
 # pr-metadata.yml is still a bypass; only the C-10.2 workflow security review catches it.
+#
+# `issues: read` (#2920): for a `Partial:` PR the checker reads GraphQL `closingIssuesReferences`
+# (PR-BODY-003). A read-only precaution whose need is UNVERIFIED: the report of that list coming
+# back silently empty without issues access (cli/cli issue 11841) was for a private repo, and
+# this repo is public. The offline body scan does not depend on it.
 
 on:
   pull_request:
@@ -26,6 +31,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  issues: read
 
 concurrency:
   group: metadata-gate-${{ github.event.pull_request.number }}
@@ -39,6 +45,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      issues: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

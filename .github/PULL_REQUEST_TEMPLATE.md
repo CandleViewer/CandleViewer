@@ -22,6 +22,10 @@ Ticket key: <!-- e.g. EP-OMS-014, from the ticket JSON `key` field / issue title
 
 Closes #
 <!-- Exactly one primary issue (C-4.6/C-4.7). Reference related issues below if needed. -->
+<!-- A stacked slice writes `Refs #N` plus a `Partial: <reason>` line and must close nothing: no
+     close/fix/resolve + issue ref anywhere in the body (checklists included) or in its commit
+     messages (squash merges keep them, and they are not checked), no issue linked in the
+     Development sidebar; write "the closing line is on slice N" instead (PR-BODY-003). -->
 
 Related:
 
