@@ -2279,6 +2279,39 @@
                 "type": "boolean",
                 "default": false
               },
+              "stale_since_ms": {
+                "oneOf": [
+                  {
+                    "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "health": {
+                "type": "object",
+                "required": ["state", "reason", "heartbeat_age_ms", "rest_only", "changed_at_ms"],
+                "properties": {
+                  "state": {
+                    "enum": ["healthy", "degraded", "down"]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "heartbeat_age_ms": {
+                    "type": ["integer", "null"],
+                    "minimum": 0
+                  },
+                  "rest_only": {
+                    "type": "boolean"
+                  },
+                  "changed_at_ms": {
+                    "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
+                  }
+                },
+                "additionalProperties": false
+              },
               "updated_at_ms": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
               }

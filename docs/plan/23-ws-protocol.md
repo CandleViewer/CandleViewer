@@ -237,14 +237,14 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 
 ### 3.6 Frame size limits
 
-| Limit                              | Value   | Enforcement                                                                                |
-| ---------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`.                                                              |
+| Limit                              | Value   | Enforcement                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`.                                                                                                                                                                                                                                                                                                                                                 |
 | Max inbound JSON nesting depth     | 32      | As-built (SR-184): pre-scanned before decode; deeper, malformed or non-UTF-8 frames are a `frame_malformed` protocol violation (3 strikes -> `4400`), never `1011`. The deepest legitimate client frame in `ws-schema.json` (`sub`/`ctl`: envelope -> topic entry -> `options` -> list) nests at most 6 levels including the envelope, so 32 is headroom, not a format limit. |
-| Max outbound frame (server→client) | 4 MiB   | Server splits snapshots into `partial` chunks (header flag bit3) rather than exceeding it. |
-| Max topics per `sub` frame         | 50      | Excess rejected per-topic with `too_many_topics`.                                          |
-| Max subscriptions per connection   | 200     | New subscribes rejected with `subscription_limit`.                                         |
-| Max connections per user           | 8       | Oldest idle connection is closed with `bye` when exceeded.                                 |
+| Max outbound frame (server→client) | 4 MiB   | Server splits snapshots into `partial` chunks (header flag bit3) rather than exceeding it.                                                                                                                                                                                                                                                                                    |
+| Max topics per `sub` frame         | 50      | Excess rejected per-topic with `too_many_topics`.                                                                                                                                                                                                                                                                                                                             |
+| Max subscriptions per connection   | 200     | New subscribes rejected with `subscription_limit`.                                                                                                                                                                                                                                                                                                                            |
+| Max connections per user           | 8       | Oldest idle connection is closed with `bye` when exceeded.                                                                                                                                                                                                                                                                                                                    |
 
 Snapshot chunking: a `snap` larger than 4 MiB is sent as N frames sharing one `id`, each with `partial` set, the last one clearing it. All chunks consume **one** sequence number in total, assigned to the final chunk; intermediate chunks carry `s: null`.
 
@@ -406,6 +406,7 @@ Rules:
   - it is best effort, bounded at 2 s.
 
   An unauthenticated close writes no row; its 3rd failed `auth` is already audited.
+
 - Gateway metrics as built: connections in use are `cv_ws_connections_in_use` (the ticket's `cv_ws_clients`), and `cv_ws_closes_total` is labelled by `reason` alone, because each reason has one close code (#2486).
 
 ### 4.4 Close codes
@@ -1059,6 +1060,7 @@ Before a deploy or restart the server broadcasts on `system`, then closes with `
 The UI uses `expected_downtime_ms` to show a countdown instead of a bare "disconnected", and — critically — **disables the order ticket** for the duration, because a restart mid-submission is exactly when a double-send would happen.
 
 **As built (#2546).** The sequence runs when the server is asked to exit (SIGTERM, Ctrl+C), before uvicorn's own shutdown. uvicorn fails every open WebSocket with `1012` before the application's shutdown hook runs, so the planned shutdown cannot live in that hook. Order:
+
 1. The server stops accepting connections. A client that reconnects during the grace is refused at TCP and retries with backoff, instead of connecting and then getting a bare `1012`.
 2. Every authenticated connection gets the `shutdown_notice`.
 3. After the grace period, every connection gets `bye` `shutdown` with `retry_after_ms` = `expected_downtime_ms`, then close `1001`.
@@ -2821,6 +2823,24 @@ discarded rather than applied out of order.
           "environment": { "$ref": "cv://ws/v1/common.schema.json#/$defs/environment" },
           "is_paper": { "$ref": "cv://ws/v1/common.schema.json#/$defs/isPaper" },
           "stale": { "type": "boolean", "default": false },
+          "stale_since_ms": {
+            "oneOf": [
+              { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
+              { "type": "null" }
+            ]
+          },
+          "health": {
+            "type": "object",
+            "required": ["state", "reason", "heartbeat_age_ms", "rest_only", "changed_at_ms"],
+            "properties": {
+              "state": { "enum": ["healthy", "degraded", "down"] },
+              "reason": { "type": "string" },
+              "heartbeat_age_ms": { "type": ["integer", "null"], "minimum": 0 },
+              "rest_only": { "type": "boolean" },
+              "changed_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" }
+            },
+            "additionalProperties": false
+          },
           "updated_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" }
         },
         "additionalProperties": false
@@ -2830,6 +2850,11 @@ discarded rather than applied out of order.
   "additionalProperties": false
 }
 ```
+
+**Staleness and account health (E27-T04).** `stale` and `stale_since_ms` mirror REST
+`balance_stale` and `balance_stale_since`; `health` is REST `AccountHealth` with `changed_at_ms`
+for `changed_at`. Health rides on `wallet` because `wallet` is narrowed to granted accounts
+(§6.3), never on role-filtered `system`; an account with no wallet snapshot has it on REST only.
 
 ### 15.5 `TradeGroupUpdate`
 

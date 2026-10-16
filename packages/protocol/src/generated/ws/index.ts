@@ -1516,6 +1516,17 @@ export interface Wallet {
      */
     is_paper?: boolean;
     stale?: boolean;
+    stale_since_ms?: number | null;
+    health?: {
+      state: "healthy" | "degraded" | "down";
+      reason: string;
+      heartbeat_age_ms: number | null;
+      rest_only: boolean;
+      /**
+       * Epoch milliseconds, UTC.
+       */
+      changed_at_ms: number;
+    };
     /**
      * Epoch milliseconds, UTC.
      */

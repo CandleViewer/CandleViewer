@@ -1035,7 +1035,8 @@ export interface paths {
      * @description Owners see every account; managers and viewers see only accounts granted through
      *     `user_account_access`. Balances are served from the cached wallet snapshot maintained
      *     by the private-WS `wallet` stream; `balance_stale` is `true` when the snapshot is
-     *     older than 10 s.
+     *     older than 10 s (`balance_stale_since` says since when). After 60 s of stream silence a
+     *     REST reconciliation refreshes it; if that fails too, risk-based sizing is unavailable.
      */
     get: operations["listExchangeAccounts"];
     put?: never;
@@ -4019,6 +4020,22 @@ export interface components {
        */
       level: "read" | "trade";
     };
+    /** @description Per-account connection health (US-ACCT-010), from positive evidence only (an authenticated private-WS heartbeat or a REST success); it decays on silence. `healthy`, `degraded` and `down` set `connection_state` to `connected`, `degraded` and `disconnected`. Order entry for the account is refused while it is `down`. */
+    AccountHealth: {
+      /**
+       * Format: date-time
+       * @description When `state` last changed; a new value marks a discrete transition to announce.
+       */
+      changed_at: string;
+      /** @description Milliseconds since the last authenticated private-WS heartbeat; `null` before the first. */
+      heartbeat_age_ms: number | null;
+      /** @description Open set of machine codes the client renders as text: `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (no REST success yet either), `no_success` (nothing for the 30 s down window), `never_connected`. */
+      reason: string;
+      /** @description True while `degraded`; rule actions that need sub-second reaction are flagged. */
+      rest_only: boolean;
+      /** @enum {string} */
+      state: "healthy" | "degraded" | "down";
+    };
     /** @enum {string} */
     AccountKind: "main" | "sub";
     AccountProfile: components["schemas"]["AccountProfileInput"] & {
@@ -4305,6 +4322,16 @@ export interface components {
       /** Format: date-time */
       last_verified_at?: string | null;
       read_only?: boolean;
+      /**
+       * Format: date-time
+       * @description `created_at` plus the deployment's key-rotation policy (default 90 days), never the exchange-reported `expires_at`; `null` unless the key is `active`.
+       */
+      rotation_due_at?: string | null;
+      /**
+       * @description `warn` inside the warning window (default 14 days), `overdue` past `rotation_due_at`. Age alone never disables a key. `null` unless the key is `active`.
+       * @enum {string|null}
+       */
+      rotation_state?: "ok" | "warn" | "overdue" | null;
       status: components["schemas"]["KeyStatus"];
     };
     ApiKeyRotation: {
@@ -5042,6 +5069,11 @@ export interface components {
       active_profile_id?: string | null;
       balance?: components["schemas"]["WalletBalance"] | null;
       balance_stale?: boolean;
+      /**
+       * Format: date-time
+       * @description Last refresh plus the 10 s threshold while `balance_stale` is true, else `null`.
+       */
+      balance_stale_since?: string | null;
       /** @enum {string} */
       connection_state?: "pending" | "connected" | "degraded" | "disconnected" | "disabled";
       /** Format: date-time */
@@ -5051,6 +5083,8 @@ export interface components {
       environment: components["schemas"]["Environment"];
       exchange: components["schemas"]["ExchangeCode"];
       exchange_uid: string;
+      /** @description `null` until the account is monitored. */
+      health?: components["schemas"]["AccountHealth"] | null;
       /** Format: uuid */
       id: string;
       /** @enum {string} */
