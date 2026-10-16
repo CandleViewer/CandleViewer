@@ -85,6 +85,28 @@ describe("SystemSocket", () => {
     socket.stop();
   });
 
+  // #2483: the server picks `cv.v1.msgpack` whenever it is offered, and this client decodes only
+  // JSON text frames, so every connection it opens must offer `cv.v1.json` alone.
+  it("offers only cv.v1.json, on the first connect and on a reconnect", () => {
+    vi.useFakeTimers();
+    FakeWebSocket.instances = [];
+    const socket = new SystemSocket({
+      url: "wss://localhost/api/v1/ws",
+      createSocket: (url, protocols) => new FakeWebSocket(url, protocols) as unknown as WebSocket,
+      random: () => 0.5,
+      callbacks: { onConnectionChange: () => {}, onSystemUpdate: () => {} },
+    });
+    socket.connect();
+    FakeWebSocket.instances[0]!.emitClose();
+    vi.runOnlyPendingTimers();
+    expect(FakeWebSocket.instances.map((ws) => ws.protocols)).toEqual([
+      ["cv.v1.json"],
+      ["cv.v1.json"],
+    ]);
+    socket.stop();
+    vi.useRealTimers();
+  });
+
   it("ignores frames on a channel other than system", () => {
     FakeWebSocket.instances = [];
     const updates: unknown[] = [];

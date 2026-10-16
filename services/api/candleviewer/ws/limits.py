@@ -39,7 +39,8 @@ CLOSE_SLOW_CONSUMER = 4429
 SERVER_WS_HEADROOM_BYTES = 4 * 1024
 #: Transport-level max message size (applies to the decompressed message).
 SERVER_WS_MAX_SIZE = MAX_INBOUND_FRAME_BYTES + SERVER_WS_HEADROOM_BYTES
-#: `cv.v1.json` negotiates permessage-deflate (§5); the size cap above bounds it.
+#: §3.5: permessage-deflate is agreed for `cv.v1.json` only; `server.CvWebSocketsProtocol` withdraws
+#: it from a `cv.v1.msgpack` upgrade. The size cap above bounds the inflated message.
 SERVER_WS_PER_MESSAGE_DEFLATE = True
 #: Small per-connection inbound queue; clients are limited to 30 frames/s (§16.2).
 SERVER_WS_MAX_QUEUE = 4

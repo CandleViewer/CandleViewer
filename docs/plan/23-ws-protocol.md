@@ -67,7 +67,7 @@ Same origin, same Tailscale-only exposure and same TLS termination as REST. Plai
 
 ### 2.2 Subprotocol negotiation
 
-The client offers subprotocols in preference order via `Sec-WebSocket-Protocol`:
+The client lists the subprotocols it can speak in `Sec-WebSocket-Protocol`, and the server picks by its own order (below):
 
 ```
 Sec-WebSocket-Protocol: cv.v1.msgpack, cv.v1.json
@@ -81,6 +81,8 @@ Sec-WebSocket-Protocol: cv.v1.msgpack, cv.v1.json
 The server echoes exactly one. A client offering no recognised subprotocol is closed with `1002` before the handshake completes.
 
 **As built (#2486).** The gateway refuses such an upgrade before `accept`. A real server therefore answers it with HTTP `403` and no WebSocket close code; only an in-process test client reports `1002`.
+
+**As built (#2483).** Both are served, in the server's order: `cv.v1.msgpack` whenever the client offers it, wherever it sits in the offer, else `cv.v1.json`. On `cv.v1.msgpack` every frame, both ways, is one binary WebSocket message holding one MessagePack map; on `cv.v1.json` every frame is one text message. A client frame of the other kind (text on `cv.v1.msgpack`, binary on `cv.v1.json`) is `frame_malformed` (§3.6).
 
 **Decision — why MessagePack and not a bespoke binary envelope.** The envelope must stay human-inspectable in DevTools, must tolerate additive schema evolution, and must decode fast in the browser. MessagePack gives all three with a mature, small (~8 kB) decoder, and lets us carry raw `bin` fields with **zero-copy** access to their `ArrayBuffer` — so the _hot_ payloads (book deltas, bars, footprint cells, heatmap columns) get a hand-rolled fixed-layout binary format (§3.4) _inside_ a self-describing envelope. A fully bespoke envelope was rejected: it would save ~20 bytes per frame while costing every debugging session and every schema change. JSON-only was rejected: measured decode cost of a 200-level book delta is ~4× MessagePack and produces GC garbage on every frame, which the 100 ms heatmap cadence cannot afford.
 
@@ -236,6 +238,8 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 
 `permessage-deflate` is negotiated at the WebSocket layer and is **enabled for `cv.v1.json`, disabled for `cv.v1.msgpack`**. Reason: the binary payloads are already dense and near-incompressible; deflating them burns CPU on both ends for <5 % gain and adds latency jitter at the 10–20 ms book cadence. JSON frames compress ~6× and are not on the latency-critical path.
 
+**As built (#2483).** The extension is agreed in the upgrade, before the gateway accepts a subprotocol, so the server makes the §2.2 choice there first, from the same offer. When it will be `cv.v1.msgpack`, the server agrees to no extension, whatever the client offers; a `cv.v1.json` upgrade gets `permessage-deflate` when the client offers it. The transport's message cap (256 KiB plus 4 KiB) applies to the inflated message.
+
 ### 3.6 Frame size limits
 
 | Limit                              | Value   | Enforcement                                                                                                                                                                                                                                                                                                                                                                   |
@@ -250,6 +254,8 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 Snapshot chunking: a `snap` larger than 4 MiB is sent as N frames sharing one `id`, each with `partial` set, the last one clearing it. All chunks consume **one** sequence number in total, assigned to the final chunk; intermediate chunks carry `s: null`.
 
 Time span of a bars or footprint frame: per-bar times are `u32` offsets from the header's `ts_base_ms` (§3.4), so one frame spans at most 2³²−1 ms (about 49.7 days). Footprint (body_kind 5) follows the bars rule (body_kind 4, §6.1): a new frame starts when a bar's open time is more than 2³²−1 ms after the frame's `ts_base_ms`, and inside a snapshot those frames are `partial` chunks as above, each with its own `ts_base_ms` (200 daily footprint bars span about 1.7 × 10¹⁰ ms). Clients key bars by `(generation, index)` (§8.2), never by frame or chunk.
+
+**MessagePack client frames (as built, SR-185; #2509, #2483).** The 256 KiB cap is checked first, as for JSON. msgpack's C unpacker then decodes the frame under these bounds: nesting 32 (as for JSON), at most 128 entries in an array and 32 in a map, and at most 16 384 values in the frame. A frame past any of them is a `frame_malformed` protocol violation (3 strikes -> `4400`), never `1011`. So are an ext type (a timestamp included), a binary string, a map key that is not a string, NaN or an infinity, invalid UTF-8, truncated input, trailing bytes and a text frame. On `cv.v1.json`, likewise, a binary frame is `frame_malformed` and is never read as JSON. The bounds cover every list and object the server acts on: the longest list is a `rules` sub's 100 `rule_ids`, the widest object an `opts`. Past them, the JSON path answers per topic or per option, or ignores the part, where this one refuses the frame: a `sub` or `unsub` naming more than 128 topics, an option list longer than 128, an `opts` or envelope wider than 32 keys, and a `hello` or `auth` array longer than 128.
 
 ---
 
@@ -396,7 +402,7 @@ Rules:
 - Three malformed or unexpected frames after `hello` close with `bye bad_client` + `4400`.
 - The heartbeat-timeout `bye` (`heartbeat_timeout`) uses `1001`.
 - More than 8 connections per user: the oldest idle one is closed with `too_many_connections` (`4429`).
-- Only `cv.v1.json` is negotiated today; `cv.v1.msgpack` follows its dependency PR.
+- Both subprotocols are served, `cv.v1.msgpack` first (§2.2, #2483). Its client frames are decoded under the SR-185 bounds (§3.6), and its data frames carry CVWB payloads raw, as `e: "b"` (§3.2).
 - `welcome.server_version` / `git_sha` come from settings (`CV_VERSION`, `CV_GIT_SHA`). `auth_ok.kill_switch` reflects the live kill-switch state at the time of the `auth`.
 - Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_SHUTDOWN_GRACE_MS` (5 000), `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000), `CV_WS_QUEUE_BYTES` (8 388 608), `CV_WS_QUEUE_FRAMES` (2 000) and `CV_WS_CLASSIFY_INTERVAL_MS` (2 000). The defaults are the values in this section, §8.3, §8.4 and §9.4.
 - `auth_ok` carries `user_id`, `roles`, `permissions`, `account_scope`, `session_id`, `token_expires_at_ms` and `kill_switch`. It does not carry `username` or `allowed_environments`, which the examples above show and §13.4 marks optional (#2486).

@@ -6,7 +6,7 @@ import pytest
 import uvicorn
 from pydantic import ValidationError
 
-from candleviewer.server import APP, uvicorn_kwargs
+from candleviewer.server import APP, CvWebSocketsProtocol, uvicorn_kwargs
 from candleviewer.settings import Settings
 from candleviewer.ws import limits
 from candleviewer.ws.lifecycle import HEARTBEAT_INTERVAL_S, HEARTBEAT_TIMEOUT_S
@@ -17,6 +17,7 @@ def test_server_config_matches_limits() -> None:
     assert cfg.ws_max_size == limits.MAX_INBOUND_FRAME_BYTES + limits.SERVER_WS_HEADROOM_BYTES
     assert limits.MAX_INBOUND_FRAME_BYTES < cfg.ws_max_size < 2 * limits.MAX_INBOUND_FRAME_BYTES
     assert cfg.ws_per_message_deflate is limits.SERVER_WS_PER_MESSAGE_DEFLATE
+    assert cfg.ws is CvWebSocketsProtocol  # §3.5: deflate off for cv.v1.msgpack (server.py)
     assert cfg.ws_max_queue == limits.SERVER_WS_MAX_QUEUE <= 8
     assert cfg.limit_concurrency == limits.SERVER_LIMIT_CONCURRENCY
     assert cfg.ws_ping_interval == HEARTBEAT_INTERVAL_S

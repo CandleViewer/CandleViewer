@@ -4,7 +4,7 @@ The rest of the WS suite uses Starlette's in-process TestClient, which differs f
 in the upgrade (an unknown subprotocol is HTTP 403 here, `1002` there) and has no transport
 size cap. No network beyond 127.0.0.1; every wait is bounded by `asyncio.timeout`.
 
-The `cv.v1.msgpack` half of this follows #2483."""
+#2483 adds `cv.v1.msgpack`: the extension handshake, which only a real server performs (§3.5)."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import msgpack
 import pytest
 import uvicorn
 from websockets.asyncio.client import ClientConnection, connect
@@ -75,6 +76,34 @@ async def test_real_socket_unknown_subprotocol_is_refused_with_http_403() -> Non
             async with connect(url, subprotocols=[Subprotocol("cv.v2.json")], origin=_ORIGIN):
                 pass
         assert exc.value.response.status_code == 403  # in process (TestClient) this is 1002
+
+
+@pytest.mark.parametrize(
+    ("offer", "chosen", "extensions"),
+    [
+        (_JSON, "cv.v1.json", ["permessage-deflate"]),
+        ([Subprotocol("cv.v1.msgpack"), *_JSON], "cv.v1.msgpack", []),
+        ([*_JSON, Subprotocol("cv.v1.msgpack")], "cv.v1.msgpack", []),  # the server's order wins
+        ([Subprotocol("cv.v1.msgpack")], "cv.v1.msgpack", []),
+    ],
+    ids=["json", "msgpack", "json-first", "msgpack-only"],
+)
+async def test_real_socket_permessage_deflate_is_on_for_json_and_off_for_msgpack(
+    offer: list[Subprotocol], chosen: str, extensions: list[str]
+) -> None:
+    """§3.5: the client offers permessage-deflate either way (the `websockets` default), and the
+    server agrees to it for `cv.v1.json` only. Frames then flow in the agreed encoding."""
+    async with asyncio.timeout(_DEADLINE_S), _serve() as url:
+        async with connect(url, subprotocols=offer, origin=_ORIGIN) as ws:
+            assert ws.subprotocol == chosen
+            assert [e.name for e in ws.protocol.extensions] == extensions
+            binary = chosen == "cv.v1.msgpack"
+            hello = {"t": "hello", "id": "h"}
+            await ws.send(msgpack.packb(hello) if binary else json.dumps(hello))
+            raw = await ws.recv()
+            assert isinstance(raw, bytes) is binary  # a binary frame on msgpack, text on JSON
+            welcome = msgpack.unpackb(raw) if binary else json.loads(raw)
+            assert welcome["p"]["encoding"] == chosen.removeprefix("cv.v1.")
 
 
 async def test_real_socket_frame_over_the_gateway_cap_gets_bye_then_1009() -> None:

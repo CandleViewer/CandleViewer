@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
+import msgpack
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -40,6 +41,7 @@ SESSION = "35aa4bad-7085-44f7-be13-d8c34121772e"
 BASE_MS = 1_789_132_262_000
 TOKEN_TTL_S = 600
 JSON = ["cv.v1.json"]
+MSGPACK = ["cv.v1.msgpack"]
 # Rejected-token marker for the secrecy assertions. It must contain a character that can never
 # occur in hex or UUID text (`z`): a random `session_id`/`request_id` like `35aa4bad-7085-…`
 # contains "bad-", which made a `"bad-" not in repr(records)` assertion flaky (#2760).
@@ -119,10 +121,27 @@ def world() -> Any:
         yield w
 
 
+def _receive(ws: Any) -> dict[str, Any]:
+    """One frame in the negotiated encoding (§2.2): binary MessagePack on `cv.v1.msgpack` (a text
+    frame there fails the test), else JSON text."""
+    if ws.accepted_subprotocol == "cv.v1.msgpack":
+        frame: dict[str, Any] = msgpack.unpackb(ws.receive_bytes())
+        return frame
+    text_frame: dict[str, Any] = ws.receive_json()
+    return text_frame
+
+
+def _send(ws: Any, frame: dict[str, Any]) -> None:
+    if ws.accepted_subprotocol == "cv.v1.msgpack":
+        ws.send_bytes(msgpack.packb(frame))
+    else:
+        ws.send_json(frame)
+
+
 def _recv(ws: Any) -> dict[str, Any]:
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        frame: dict[str, Any] = pool.submit(ws.receive_json).result(timeout=_TIMEOUT_S)
+        frame: dict[str, Any] = pool.submit(_receive, ws).result(timeout=_TIMEOUT_S)
     except FutureTimeout:
         pytest.fail(f"no WS frame within {_TIMEOUT_S}s")
     finally:
@@ -134,7 +153,7 @@ def _closed(ws: Any) -> int:
     """The close code; fails if a frame arrives instead."""
     pool = ThreadPoolExecutor(max_workers=1)
     try:
-        frame = pool.submit(ws.receive_json).result(timeout=_TIMEOUT_S)
+        frame = pool.submit(_receive, ws).result(timeout=_TIMEOUT_S)
     except WebSocketDisconnect as exc:
         return int(exc.code)
     except FutureTimeout:
@@ -145,13 +164,13 @@ def _closed(ws: Any) -> int:
 
 
 def _hello(ws: Any, **p: Any) -> dict[str, Any]:
-    ws.send_json({"t": "hello", "id": "c-1", "p": p})
+    _send(ws, {"t": "hello", "id": "c-1", "p": p})
     return _recv(ws)
 
 
 # S107: "good-1" is a fake test token, not a credential.
 def _auth(ws: Any, token: str = "good-1", fid: str = "c-2") -> dict[str, Any]:  # noqa: S107
-    ws.send_json({"t": "auth", "id": fid, "p": {"access_token": token}})
+    _send(ws, {"t": "auth", "id": fid, "p": {"access_token": token}})
     return _recv(ws)
 
 
@@ -183,13 +202,17 @@ def _bye_then_close(ws: Any) -> tuple[dict[str, Any], int]:
 # -- negotiation + hello -----------------------------------------------------------------------
 
 
-def test_happy_path_handshake_welcome_auth_ok_and_system(world: _World) -> None:
-    with world.client.websocket_connect("/ws", subprotocols=["cv.v1.msgpack", *JSON]) as ws:
-        assert ws.accepted_subprotocol == "cv.v1.json"
+@pytest.mark.parametrize(
+    "offer", [["cv.v1.msgpack", *JSON], MSGPACK, JSON], ids=["msgpack-first", "msgpack", "json"]
+)
+def test_happy_path_handshake_welcome_auth_ok_and_system(world: _World, offer: list[str]) -> None:
+    """§2.2: `cv.v1.msgpack` whenever it is offered; every frame then goes both ways in it."""
+    with world.client.websocket_connect("/ws", subprotocols=offer) as ws:
+        assert ws.accepted_subprotocol == offer[0]
         welcome = _hello(ws, clock_ms=BASE_MS - 22)
         assert (welcome["t"], welcome["id"]) == ("welcome", "c-1")
         p = welcome["p"]
-        assert p["protocol"] == "cv.v1" and p["encoding"] == "json"
+        assert p["protocol"] == "cv.v1" and p["encoding"] == offer[0].removeprefix("cv.v1.")
         assert (p["server_version"], p["git_sha"]) == ("1.2.3", "a91f0c3")
         assert p["clock_skew_ms"] == 22 and p["connection_id"].startswith("ws_")
         assert p["limits"]["max_symbols_per_connection"] == 40
@@ -199,7 +222,11 @@ def test_happy_path_handshake_welcome_auth_ok_and_system(world: _World) -> None:
         assert ok["p"]["account_scope"] == [] and ok["p"]["session_id"] == SESSION
         assert ok["p"]["token_expires_at_ms"] == BASE_MS + TOKEN_TTL_S * 1000
         assert ok["p"]["kill_switch"] == {"engaged": False, "scope": "global"}
-        ws.send_json({"t": "unsub", "id": "u", "p": {"topics": ["system"]}})
+        _send(ws, {"t": "pong", "id": "s-hb-1"})  # taken silently: the next reply is the sub's
+        _send(ws, {"t": "sub", "id": "s", "p": {"topics": [{"ch": "book.BTCUSDT.50"}]}})
+        sub_ok = _recv(ws)
+        assert (sub_ok["t"], sub_ok["p"]["results"][0]["ok"]) == ("sub_ok", True)
+        _send(ws, {"t": "unsub", "id": "u", "p": {"topics": ["system"]}})
         assert _recv(ws)["t"] == "unsub_ok"
         # §6.2: `system` stays attached - the shutdown broadcast still reaches it.
         assert world.client.portal is not None

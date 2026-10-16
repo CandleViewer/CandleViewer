@@ -15,6 +15,9 @@ Do not pass `--ws-*` flags or override the entrypoint in compose; edit `ws/limit
 `proxy_headers` is off (see below). Symptom of a too-small cap: clients closed with 1009.
 Regression test: `tests/unit/ws/test_server_limits.py`.
 
+Deflate per subprotocol (on for `cv.v1.json`, off for `cv.v1.msgpack`, protocol §3.5) comes from
+`ws=CvWebSocketsProtocol` in `uvicorn_kwargs()`: any other start also deflates `cv.v1.msgpack`.
+
 ## Forwarded headers and a reverse proxy (#2275)
 
 uvicorn's proxy-header handling is off (`proxy_headers=False` in `candleviewer.server`): uvicorn
