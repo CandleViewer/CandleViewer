@@ -14,6 +14,12 @@ and the two catalogue gauges, and `start()` runs ONE supervised loop that refres
 - A loop that still dies is logged by its done-callback and reads DEGRADED at once
   (AGENTS.md §5.2 async hygiene: no silent task).
 - The fake backend attaches nothing: no loop runs and the gauges stay unset.
+
+`attach_key_selfcheck()` takes the stored-key self-check (E27-T03, `accounts.selfcheck`). Nothing
+attaches it yet: its Postgres adapter, exchange calls and wiring are #836 slice 2b. Once attached,
+`start()` awaits its boot assertion, so it ends before the app serves, `stop()` stops its loop,
+and `health()` reads DEGRADED while a key fails it, the job holds a fail-closed latch or its loop
+has ended.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from candleviewer.observability import spawn
 from candleviewer.observability.health import HealthReport, HealthStatus
 
 if TYPE_CHECKING:
+    from candleviewer.accounts.selfcheck import KeySelfCheck
     from candleviewer.app import AppContext
     from candleviewer.observability.metrics import BoundedMetric
     from candleviewer.storage.repositories.accounts import AccountsRowCounts
@@ -58,7 +65,8 @@ def _log_loop_exit(task: asyncio.Task[None]) -> None:
 
 
 class AccountsService:
-    """M13 lifecycle; publishes the account and API-key row gauges."""
+    """M13 lifecycle; publishes the account and API-key row gauges and, once one is attached,
+    runs the stored-key self-check."""
 
     def __init__(
         self,
@@ -79,6 +87,7 @@ class AccountsService:
         self._started = False
         self._last_ok: float | None = None
         self._failures = 0
+        self._selfcheck: KeySelfCheck | None = None
 
     def attach_row_gauges(
         self,
@@ -93,16 +102,25 @@ class AccountsService:
         self._gauges = (accounts_rows, api_keys_rows)
         self._env = env
 
+    def attach_key_selfcheck(self, selfcheck: KeySelfCheck) -> None:
+        """Wire the stored-key self-check (the wiring of #836 slice 2b; nothing calls it yet)."""
+        self._selfcheck = selfcheck
+
     async def start(self, ctx: AppContext) -> None:
-        """Start the one refresh loop when the gauges are wired; otherwise nothing runs."""
+        """Run the key self-check's boot assertion, then start the loops that are wired."""
         self._started = True
+        if self._selfcheck is not None:
+            await self._selfcheck.start()
         if self._counts is not None and self._task is None:
             self._task = spawn(self._loop(), name="accounts-row-gauges")
             self._task.add_done_callback(_log_loop_exit)
 
     async def stop(self, grace_s: float) -> None:
-        """Cancel the refresh loop and wait for it (it only awaits a read or the sleep)."""
+        """Stop the key self-check's loop, then cancel the refresh loop and wait for it (it only
+        awaits a read or the sleep)."""
         self._started = False
+        if self._selfcheck is not None:
+            await self._selfcheck.stop()
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
@@ -148,6 +166,8 @@ class AccountsService:
     def _health(self) -> tuple[HealthStatus, str]:
         if not self._started:
             return HealthStatus.STOPPED, "stopped"
+        if self._selfcheck is not None and (fault := self._selfcheck.fault) is not None:
+            return HealthStatus.DEGRADED, fault
         if self._counts is None:
             return HealthStatus.OK, "no accounts store (fake backend): row gauges unset"
         if self._task is not None and self._task.done():  # before a first success, too

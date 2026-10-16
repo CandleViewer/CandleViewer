@@ -281,8 +281,8 @@ class KeySelfCheckStore(Protocol):
 
     The job has no principal, so it takes no scope: `accounts.selfcheck` is its one caller,
     pinned by `tests/unit/architecture/test_key_selfcheck_store_callers.py` (C-12.4). It writes
-    the verification columns of `api_keys`, never a ciphertext, identity or status column. Each
-    write returns whether it changed a row."""
+    the verification columns of `api_keys` and `exchange_accounts.trading_enabled`, never a
+    ciphertext, identity or status column. Each write returns whether it changed a row."""
 
     async def targets(self) -> tuple[SelfCheckTargetRow, ...]:
         """Every `active` or `rotating`, unrevoked key of a non-deleted account."""
@@ -292,4 +292,9 @@ class KeySelfCheckStore(Protocol):
 
     async def record_error(self, key_id: UUID, *, code: str, at: datetime) -> bool:
         """`last_error_code` and `last_error_at` only: the verified columns keep their time."""
+        ...
+
+    async def disable_trading(self, account_id: UUID) -> bool:
+        """`trading_enabled` to false where it is true (one conditional update); `False` when
+        the account was not armed, so the caller records only a real disarm."""
         ...
