@@ -1,16 +1,17 @@
-"""E42-T03: the feature-flag registry refuses any definition that gates a security control
-(C-4.14), at construction (import) and again when the service builds the registry at startup."""
+"""E42-T03: the flag registry refuses a definition that gates a security control (C-4.14) or whose
+class disagrees with its gates (D2a), at construction (import) and again at startup."""
 
 from __future__ import annotations
 
 import dataclasses
+import functools
+import operator
 from typing import Any
 
 import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.admin.flags import (
-    DENIED,
     Category,
     FlagKind,
     FlagRegistry,
@@ -21,8 +22,9 @@ from candleviewer.admin.flags import (
     value_matches,
 )
 
-_DENIED_MEMBERS = [m for m in Category if m in DENIED]
 _B = FlagKind.BOOLEAN
+#: The five categories a flag may gate; every other one is a security control (C-4.14).
+_ALLOWED = {"UI_SURFACE", "FEATURE_ROLLOUT", "OPERATIONS", "LIVE_GATE", "KILL_SWITCH"}
 
 
 def _spec(
@@ -51,39 +53,35 @@ def _spec(
     )
 
 
-def test_denied_set_is_exactly_the_security_controls() -> None:
-    names = {m.name for m in _DENIED_MEMBERS}
-    assert names == {
-        "AUTH",
-        "RBAC",
-        "AUDIT",
-        "NATIVE_STOP_LOSS",
-        "RISK_LIMITS",
-        "WITHDRAWAL_CHECK",
-        "RATE_LIMIT_RESERVE",
-        "ENVIRONMENT_ISOLATION",
-    }
+def test_the_denied_category_truth_table() -> None:
+    """All 8,192 gate sets, each with its class booleans: only a non-empty set of the five allowed
+    categories is accepted, and a refused security control is named with the flag and C-4.14."""
+    members = list(Category)
+    for bits in range(1 << len(members)):
+        chosen = [m for i, m in enumerate(members) if bits >> i & 1]
+        gates = functools.reduce(operator.or_, chosen, Category(0))
+        kill, live = Category.KILL_SWITCH in gates, Category.LIVE_GATE in gates
+        try:
+            _spec("ui.sneaky", gates, is_killswitch=kill, requires_evidence=live)
+        except UnsafeFlagDefinitionError as exc:
+            denied = [str(m.name).lower() for m in chosen if m.name not in _ALLOWED]
+            assert not gates or (denied and "C-4.14" in str(exc) and "'ui.sneaky'" in str(exc))
+            assert all(name in str(exc) for name in denied)
+        else:
+            assert chosen and all(m.name in _ALLOWED for m in chosen), gates
 
 
-@pytest.mark.parametrize("category", _DENIED_MEMBERS, ids=lambda c: c.name)
-def test_spec_gating_a_denied_category_is_refused_naming_flag_and_category(
-    category: Category,
-) -> None:
-    with pytest.raises(UnsafeFlagDefinitionError) as exc:
-        _spec("ui.sneaky", Category.UI_SURFACE | category)
-    message = str(exc.value)
-    assert "'ui.sneaky'" in message
-    assert str(category.name).lower() in message
-    assert "C-4.14" in message
-
-
-def test_registry_rechecks_every_spec_at_startup() -> None:
+@pytest.mark.parametrize(
+    ("field", "value", "match"),
+    [("gates", Category.RBAC, r"'auth\.bypass'.*'rbac'"), ("visibility", None, "no visibility")],
+)
+def test_registry_rechecks_every_spec_at_startup(field: str, value: object, match: str) -> None:
     """A spec that escaped its constructor check (here forced past it) still stops startup."""
     smuggled, valid = object.__new__(FlagSpec), _spec("auth.bypass")
-    for field in dataclasses.fields(FlagSpec):  # every field, so a new one never leaves this stale
-        object.__setattr__(smuggled, field.name, getattr(valid, field.name))
-    object.__setattr__(smuggled, "gates", Category.RBAC)
-    with pytest.raises(UnsafeFlagDefinitionError, match=r"'auth\.bypass'.*'rbac'"):
+    for each in dataclasses.fields(FlagSpec):  # every field, so a new one never leaves this stale
+        object.__setattr__(smuggled, each.name, getattr(valid, each.name))
+    object.__setattr__(smuggled, field, value)
+    with pytest.raises(UnsafeFlagDefinitionError, match=match):
         FlagRegistry([_spec(), smuggled])
 
 
@@ -95,6 +93,8 @@ def test_registry_rechecks_every_spec_at_startup() -> None:
         ({"key": "a.b.c.d.e"}, "malformed"),
         ({"key": "a_b.c"}, "malformed"),
         ({"key": "a.b."}, "malformed"),
+        ({"key": "a.b\n"}, "malformed"),  # fullmatch: `$` alone would admit a trailing newline
+        ({"key": "a." + "b" * 79}, "malformed"),  # 81 characters: over the flagKey maxLength
         ({"gates": Category(0)}, "no gate category"),
         ({"default": 1}, "is not a boolean"),
         ({"kind": FlagKind.PERCENTAGE, "default": 101}, "is not a percentage"),
@@ -102,15 +102,12 @@ def test_registry_rechecks_every_spec_at_startup() -> None:
         ({"default": False, "restrictive": "yes"}, "is not a boolean"),
         ({"visibility": "all_roles"}, "declares no visibility"),
         ({"kind": FlagKind.PERCENTAGE, "default": 5, "is_killswitch": True}, "must be boolean"),
-        (
-            {
-                "kind": FlagKind.VARIANT,
-                "default": "a",
-                "variants": ("a",),
-                "requires_evidence": True,
-            },
-            "must be boolean",
-        ),
+        ({"kind": FlagKind.PERCENTAGE, "default": 5, "requires_evidence": True}, "must be boolean"),
+        ({"gates": Category.KILL_SWITCH}, "class and gates disagree"),
+        ({"is_killswitch": True}, "class and gates disagree"),
+        ({"gates": Category.LIVE_GATE}, "class and gates disagree"),
+        ({"requires_evidence": True}, "class and gates disagree"),
+        ({"key": "killswitch.foo", "gates": Category.OPERATIONS}, "class and gates disagree"),
     ],
 )
 def test_malformed_definitions_are_refused(kwargs: dict[str, Any], match: str) -> None:
@@ -170,7 +167,7 @@ def test_startup_log_lists_every_flag_with_its_gates() -> None:
     assert registry["ui.panel"].key == "ui.panel" and len(registry) == 2
 
 
-@pytest.mark.parametrize("key", ["a.b", "a1.b_2", "a.b.c.d"])
+@pytest.mark.parametrize("key", ["a.b", "a1.b_2", "a.b.c.d", "a." + "b" * 78])
 def test_keys_of_two_to_four_segments_are_accepted(key: str) -> None:
     assert _spec(key).key == key
 
@@ -179,7 +176,7 @@ def test_keys_of_two_to_four_segments_are_accepted(key: str) -> None:
     ("kwargs", "overridable"),
     [
         ({}, True),
-        ({"requires_evidence": True}, False),
+        ({"requires_evidence": True, "gates": Category.LIVE_GATE}, False),
         ({"is_killswitch": True, "gates": Category.KILL_SWITCH}, False),
     ],
 )
@@ -189,4 +186,4 @@ def test_only_ordinary_flags_are_overridable(kwargs: dict[str, Any], overridable
 
 def test_visibility_is_mandatory_with_no_default() -> None:
     with pytest.raises(TypeError, match="visibility"):
-        FlagSpec("ui.panel", _B, "d", Category.UI_SURFACE, False)  # type: ignore[call-arg]  # pinned
+        FlagSpec("ui.panel", _B, "d", Category.UI_SURFACE, False)  # type: ignore[call-arg]  # visibility has no default (D6a)
