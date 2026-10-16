@@ -16,8 +16,9 @@ other sinks still get the emission, and
 
 `generation` is stamped on every emission: the series' epoch (`BarBuilderSet._Entry.generation`).
 A restored series keeps its blob's, a cold start begins a new one (#2662), so
-`(bar_param, generation, index)` (#2019) does not repeat (barring the clock-regression residual,
-`builder_set.py`). `WriterSink` stores it on every row, and `BarSubmitter.submit` has no default
+`(bar_param, generation, index)` (#2019) does not repeat (barring the clock-regression residual
+and a restore whose tape lost trades after the watermark, `builder_set.py`). `WriterSink` stores
+it on every row, and `BarSubmitter.submit` has no default
 for it, so an emission's generation cannot be dropped silently. An ADR-0033 rebuild (E12-S12,
 not implemented) would write under a generation of its own and swap a pointer.
 """

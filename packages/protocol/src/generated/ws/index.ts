@@ -514,7 +514,7 @@ export interface FootprintSymbolBarTypeParam {
   price_grouping?: number;
   bars: {
     /**
-     * ADR-0033 series generation (= epoch); 0 until ratified. Part of the bar key (§8.2).
+     * ADR-0033 series generation (= epoch), as for the `bars[]` item (§14.3): an opaque id that a builder cold start or a rebuild replaces, normally with a higher one; index restarts inside it. Compare for equality only: a change in either direction is a new epoch. Never read it as a time. Part of the bar key (§8.2).
      */
     generation: number;
     /**
