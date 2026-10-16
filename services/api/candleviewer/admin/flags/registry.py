@@ -31,6 +31,9 @@ FlagValue = bool | int | str
 #: matching the `flagKey` path pattern of `PUT /admin/feature-flags/{flagKey}` and its maxLength.
 _KEY_RE: Final = re.compile(r"^[a-z0-9]+(\.[a-z0-9_]+){1,3}$")
 KEY_MAX: Final = 80
+#: The live gate and maintenance mode, bound to their class by key as well as by gates (D2a).
+LIVE_ENABLED: Final = "trading.live_enabled"
+MAINTENANCE_MODE: Final = "maintenance.mode"
 
 
 class Category(enum.Flag):
@@ -104,6 +107,10 @@ class FlagSpec:
     def fail_closed_value(self) -> FlagValue:
         return self.default if self.restrictive is None else self.restrictive
 
+    def visible_to(self, roles: frozenset[str]) -> bool:
+        """Whether a principal with `roles` may learn this flag (its visibility)."""
+        return self.visibility is Visibility.ALL_ROLES or "owner" in roles
+
     @property
     def overridable(self) -> bool:
         """D2: the live gate and kill-switch-class flags take no per-user or per-role override,
@@ -141,6 +148,8 @@ def check_spec(spec: FlagSpec) -> None:
         (Category.KILL_SWITCH in spec.gates) != spec.is_killswitch
         or (Category.LIVE_GATE in spec.gates) != spec.requires_evidence
         or (spec.key.startswith("killswitch.") and not spec.is_killswitch)
+        or (spec.key == LIVE_ENABLED and not spec.requires_evidence)
+        or (spec.key == MAINTENANCE_MODE and not spec.is_killswitch)
     ):
         raise UnsafeFlagDefinitionError(f"feature flag {spec.key!r}: its class and gates disagree")
 

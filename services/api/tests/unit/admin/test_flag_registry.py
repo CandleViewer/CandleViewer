@@ -108,6 +108,8 @@ def test_registry_rechecks_every_spec_at_startup(field: str, value: object, matc
         ({"gates": Category.LIVE_GATE}, "class and gates disagree"),
         ({"requires_evidence": True}, "class and gates disagree"),
         ({"key": "killswitch.foo", "gates": Category.OPERATIONS}, "class and gates disagree"),
+        ({"key": "trading.live_enabled", "gates": Category.OPERATIONS}, "class and gates disagree"),
+        ({"key": "maintenance.mode", "gates": Category.OPERATIONS}, "class and gates disagree"),
     ],
 )
 def test_malformed_definitions_are_refused(kwargs: dict[str, Any], match: str) -> None:
