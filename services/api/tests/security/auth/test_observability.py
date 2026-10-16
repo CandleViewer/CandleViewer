@@ -31,16 +31,23 @@ _METRIC = re.compile(r"[a-z_][a-z0-9_]*")
 
 #: metric -> the alert rules whose `expr` reads it. Empty: no alert can fire on that signal.
 ALERTING: dict[str, set[str]] = {
-    "auth_csrf_refused_total": {"CsrfRefusalsHigh", "CsrfRefusalAuditUnavailable"},
+    "auth_csrf_refused_total": {
+        "CsrfRefusalsHigh",
+        "CsrfRefusalAuditUnavailable",
+        "CsrfRefusalAuditDegraded",  # audit_slow / audit_saturated (#2838)
+    },
     "auth_session_fixation_attempts_total": set(),
     "auth_refresh_reuse_total": set(),
     "auth_step_up_failures_total": set(),
+    "auth_stepup_failures_total": set(),  # scraped since #2612, but SR-125's alert is not written
     "users_invites_rejected_total": set(),
     "cv_ws_auth_failures_total": set(),
     "cv_ws_closes_total": {"WsOriginRefusalsHigh"},  # only reason="origin_forbidden" (#2276)
+    "cv_ws_errors_total": set(),
     "cv_ws_revoked_total": set(),
     "cv_ws_subscribe_total": set(),
-    # SR-125 metrics that are alerted but never emitted: only the absent() guard can fire.
+    # SR-125: #2612 emits the lockout and permission-denial counters, so their alerts can fire.
+    # `auth_login_failures_total` is still alerted but never emitted: only its absent() guard can.
     "auth_login_failures_total": {
         "AuthLoginFailureSpike",
         "ExpectedMetricMissingAuthLoginFailuresTotal",
@@ -81,19 +88,21 @@ def _rows(stack: Stack, action: str) -> list[tuple[Any, Any, Any]]:
     ]
 
 
-def test_obs_credential_stuffing_and_lockout_leave_audit_rows_but_no_metric(
+def test_obs_credential_stuffing_leaves_audit_rows_and_one_lock_count_but_no_failure_metric(
     stack: Stack,
 ) -> None:  # AC-CRED-03/04/05, AC-ENUM-01/02
     stack.add_user("victim")
     wrong = {"identifier": "victim", "password": "wrong-guess-1"}
     tries = LOCKOUT_THRESHOLD + 1
+    locks = stack.scraped("auth_lockouts_total")  # a process-wide counter: compare, never equate
     codes = [stack.client.post("/auth/login", json=wrong).status_code for _ in range(tries)]
     ghost = stack.client.post("/auth/login", json={"identifier": "ghost", "password": "x"})
     assert codes == [401] * LOCKOUT_THRESHOLD + [423] and ghost.status_code == 401
     assert _rows(stack, "auth.login_failed") == [(None, "failure", "info")] * tries  # uniform
     assert _rows(stack, "auth.account_locked") == [(None, "denied", "warning")]
-    assert stack.scraped("auth_login_failures_total") == 0.0  # planned, never emitted
-    assert stack.scraped("auth_lockouts_total") == 0.0
+    assert stack.scraped("auth_login_failures_total") == 0.0  # planned, never emitted (O-1)
+    # #2612: the failure that applies the lock is counted once, never the attempt it refuses
+    assert stack.scraped("auth_lockouts_total") - locks == 1
 
 
 def test_obs_mfa_guessing_and_recovery_misuse_leave_mfa_failed_rows_only(stack: Stack) -> None:
@@ -156,33 +165,39 @@ def test_obs_csrf_refusals_are_audited_scraped_and_alertable_but_an_idor_probe_i
     assert len(stack.audit.records) == recorded  # ... but invisible: no row, no metric
 
 
-def test_obs_rbac_denial_is_audited_but_its_planned_metric_is_never_emitted(
+def test_obs_rbac_denial_is_audited_and_counted_on_the_scraped_registry(
     stack: Stack,
 ) -> None:  # AC-AUTHZ-01/07 over HTTP (U19)
     manager, seed = stack.principal("manny", "manager")
     body = {"email": "x@example.com", "username": "xavier", "roles": ["viewer"]}
     assert stack.client.post("/users", headers=manager, json=body).status_code == 403
     assert stack.step_up(manager, seed).status_code == 200
+    permission = Permission.USERS_WRITE.value
+    counted = stack.scraped("authz_denied_total", permission=permission)
     denied = stack.client.post("/users", headers=manager, json=body)
     assert (denied.status_code, denied.json()["code"]) == (403, "forbidden")
     ((reason, outcome, severity),) = _rows(stack, "rbac.denied")
     assert reason.startswith(f"{denied.json()['reason']}:users:write")  # names permission
     assert (outcome, severity) == ("denied", "warning")
-    assert stack.scraped("authz_denied_total") == 0.0  # AuthzDeniedSpike can never fire
+    # #2612: `auth.scopes.enforce` counts the denial that writes the row: AuthzDeniedSpike can fire
+    assert stack.scraped("authz_denied_total", permission=permission) - counted == 1
 
 
-def test_obs_step_up_failure_is_audited_and_metered_but_not_scraped(stack: Stack) -> None:
-    # AC-STEP-01..04 (U18)
+def test_obs_step_up_failure_is_audited_and_counted_under_two_names_but_only_one_is_scraped(
+    stack: Stack,
+) -> None:  # AC-STEP-01..04 (U18)
     owner, _ = stack.principal("owner", "owner", Permission.USERS_WRITE)
     body = {"email": "x@example.com", "username": "xavier", "roles": ["viewer"]}
     assert stack.client.post("/users", headers=owner, json=body).status_code == 403
     before = in_process("auth_step_up_failures_total", action_class="users")
+    twin = stack.scraped("auth_stepup_failures_total")
     wrong = {"code": "000000", "password": "wrong"}
     assert stack.client.post("/auth/step-up", headers=owner, json=wrong).status_code == 401
     ((reason, outcome, severity),) = _rows(stack, "auth.step_up_failed")
     assert reason.startswith("users:") and (outcome, severity) == ("failure", "error")
     assert in_process("auth_step_up_failures_total", action_class="users") - before == 1
-    assert stack.scraped("auth_step_up_failures_total") == 0.0
+    assert stack.scraped("auth_step_up_failures_total") == 0.0  # the per-class series is unscraped
+    assert stack.scraped("auth_stepup_failures_total") - twin == 1  # #2612: no alert reads it
 
 
 def test_obs_invite_guessing_and_role_tamper_are_audited_metric_in_process_only(
