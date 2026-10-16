@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable, Iterator
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -51,6 +51,11 @@ _ONBOARDING_EDGES = (
     "has_account_binding",
     "latest_binding_at",
 )
+#: The checklist steps whose owning work has not shipped on main: E27 key inventory (the
+#: `api_key` probe never passes) and the flag-table steps (E39 limits, E27 demo sessions).
+_UNSHIPPED_STEPS = frozenset({"api_key", "profile_limits", "demo_session"})
+#: A sub-account binding older than the exchange's 48 h key-creation window.
+_BOUND_LONG_AGO = datetime(2020, 1, 1, tzinfo=UTC)
 
 
 class _OnboardingRows:
@@ -59,6 +64,7 @@ class _OnboardingRows:
 
     def __init__(self) -> None:
         self.totp: set[uuid.UUID] = set()
+        self.bound: dict[uuid.UUID, datetime] = {}
         self.dismissed: set[uuid.UUID] = set()
         self.calls: list[tuple[str, uuid.UUID]] = []
 
@@ -76,11 +82,11 @@ class _OnboardingRows:
 
     async def has_account_binding(self, user_id: uuid.UUID) -> bool:
         self.calls.append(("has_account_binding", user_id))
-        return False
+        return user_id in self.bound
 
     async def latest_binding_at(self, user_id: uuid.UUID) -> datetime | None:
         self.calls.append(("latest_binding_at", user_id))
-        return None
+        return self.bound.get(user_id)
 
 
 def _loopback_only() -> list[str]:
@@ -204,16 +210,20 @@ def test_deployed_app_onboarding_reads_and_evaluates_dismissal_on_the_callers_ow
     deployed: SimpleNamespace,
 ) -> None:
     """The owner's checklist and dismissal run on the owner's own rows in the real
-    `SqlAlchemyOnboardingStore` (scope `self`, user id from the session). The dismissal reaches
-    the store and is evaluated against those rows, but nothing is written: the unshipped
-    E27/E39 steps keep the card incomplete on main, so the documented answer is 409."""
+    `SqlAlchemyOnboardingStore` (scope `self`, user id from the session). With every shipped
+    step satisfied, the dismissal is evaluated against those rows and refused 409 with nothing
+    written, because exactly the unshipped steps keep the card incomplete on main.
+    Deviation (#2506): the 204 path that writes the dismissal row cannot be reached through the
+    deployed router yet. The ticket that ships those steps turns this pin into that assertion."""
     owner, viewer, rows = rbac.user_id_of("owner"), rbac.user_id_of("viewer"), deployed.onboarding
     client = deployed.client
     rows.totp.add(owner)
+    rows.bound[owner] = _BOUND_LONG_AGO
     try:
-        mine = client.get("/onboarding/checklist", headers=_headers(client, "owner"))
-        theirs = client.get("/onboarding/checklist", headers=_headers(client, "viewer"))
-        assert _states(mine)["totp"] == "ok" and _states(theirs)["totp"] == "pending"
+        mine = _states(client.get("/onboarding/checklist", headers=_headers(client, "owner")))
+        theirs = _states(client.get("/onboarding/checklist", headers=_headers(client, "viewer")))
+        assert {key for key, state in mine.items() if state != "ok"} == _UNSHIPPED_STEPS, mine
+        assert theirs["totp"] == theirs["sub_account"] == "pending", theirs
 
         start = len(rows.calls)
         resp = client.post("/onboarding/checklist/dismiss", headers=_headers(client, "owner"))
@@ -226,6 +236,7 @@ def test_deployed_app_onboarding_reads_and_evaluates_dismissal_on_the_callers_ow
         assert owner not in rows.dismissed and viewer not in rows.dismissed
     finally:
         rows.totp.discard(owner)
+        rows.bound.pop(owner, None)
 
 
 def test_fake_backend_keeps_the_onboarding_checklist_fail_closed() -> None:
