@@ -17,6 +17,8 @@ _PERMISSIONS = {
     "owner": frozenset({"admin:read", "admin:write"}),
     "manager": frozenset({"accounts:read", "audit:read"}),
     "viewer": frozenset({"audit:read"}),
+    "reader": frozenset({"admin:read"}),  # reads the admin area, may not write it
+    "admin": frozenset({"admin:read", "admin:write"}),  # a second writer whose name is no "owner"
 }
 
 

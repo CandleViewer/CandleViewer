@@ -186,6 +186,23 @@ class AdminCapacityService:
         )
         return CapacitySnapshot(self._now(), storage, ingestion, rate_budget, subaccounts)
 
+    def invalidate_subaccounts(self) -> None:
+        """Drop the cached `subaccounts` slice and any read in flight: the tier was just written."""
+        self._fan.invalidate(AdminSlice.SUBACCOUNTS)
+
+    async def subaccounts_recorded(
+        self, tier: Tier, recorded_at: datetime
+    ) -> SliceResult[SubaccountCapacity]:
+        """The slice right after `tier` was committed (`PUT .../subaccount-tier`): the committed row
+        is the tier, so only `used` is read, uncached; a failing `used` degrades the slice."""
+
+        async def load() -> SubaccountCapacity | Degraded[SubaccountCapacity]:
+            used, problem = await read_part("subaccounts", self._used, self._part_budget_s)
+            value = SubaccountCapacity(tier, TIER_CAPS[tier], used, "recorded", recorded_at)
+            return combine(value, [problem])
+
+        return await self._fan.read(AdminSlice.SUBACCOUNTS, load, cached=False)
+
     async def _storage(self) -> DiskProjection:
         if self._recorder is None:
             raise _unwired("storage")
