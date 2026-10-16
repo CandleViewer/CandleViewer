@@ -1112,7 +1112,9 @@ operations:
     public: false
     state: not_mounted
     reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
-    outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
+    # 04 §7.2.2 row 34: Owner only, with step-up. Managers hold killswitch:write, so only this
+    # row carries the narrowing; an `allow` here would certify a handler that lets them clear it.
+    outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /risk/summary:
     permissions: ['positions:read']
     scope: granted_accounts

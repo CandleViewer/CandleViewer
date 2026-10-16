@@ -387,9 +387,11 @@ def test_administrative_mutations_require_step_up_even_for_the_owner(
 
 #: Owner-only, step-up-gated mutations the app does not serve yet. Mounting one fails
 #: `test_unmounted_administrative_mutations_are_not_served_yet` until it moves into
-#: `_ADMIN_MUTATIONS` with a request body, so the two tests above cover it (#2575). Empty since
-#: E16-T06 (#490) mounted `POST /admin/recorder/purge` and moved it into `_ADMIN_MUTATIONS`.
-_ADMIN_MUTATIONS_UNMOUNTED: list[tuple[str, str]] = []
+#: `_ADMIN_MUTATIONS` with a request body, so the two tests above cover it (#2575). E16-T06
+#: (#490) mounted `POST /admin/recorder/purge` and moved it into `_ADMIN_MUTATIONS`.
+_ADMIN_MUTATIONS_UNMOUNTED: list[tuple[str, str]] = [
+    ("POST", "/risk/lockouts/{accountId}/override"),  # 04 §7.2.2 row 34; mounted by E39-S02 (#955)
+]
 #: The matrix row of an Owner-only operation (the `POST /admin/audit/verify` shape).
 _OWNER_ONLY_OUTCOMES = {
     "owner": "allow",
@@ -423,15 +425,18 @@ def _matrix_outcomes(method: str, path: str) -> dict[str, str]:
 def test_administrative_mutation_rows_are_owner_only_even_while_unmounted(
     method: str, path: str
 ) -> None:
-    """#2575: an Owner-only narrowing within a permission Managers hold (purge: `recording:write`,
-    04 §7.2.2 row 9a) lives only in the matrix, so the row must refuse every non-Owner before
-    the route is mounted; a Manager `allow` would certify a handler that lets any Manager purge."""
+    """#2575, #2625: an Owner-only narrowing within a permission Managers hold (purge:
+    `recording:write`, 04 §7.2.2 row 9a; lockout override: `killswitch:write`, row 34) lives only
+    in the matrix, so the row must refuse every non-Owner before the route is mounted; a Manager
+    `allow` would certify a handler that lets any Manager purge or clear a risk lockout."""
     assert _matrix_outcomes(method, path) == _OWNER_ONLY_OUTCOMES, f"{method} {path}"
 
 
 def test_unmounted_administrative_mutations_are_not_served_yet(world: World) -> None:
-    """#492 guard: once the app serves one of `_ADMIN_MUTATIONS_UNMOUNTED`, this fails until the
-    route moves into `_ADMIN_MUTATIONS`, so the Owner-only and step-up tests cannot miss it."""
+    """#492/#955 guard: once the app serves one of `_ADMIN_MUTATIONS_UNMOUNTED`, this fails until
+    the route moves into `_ADMIN_MUTATIONS`, so the Owner-only and step-up tests cannot miss it.
+    The two tests above format paths with `uid` only; a route with another path parameter
+    (`{accountId}`) needs them extended when it moves, never the assertions weakened."""
     served = {(m, _shape(p)) for m, p in served_operations(world.app)}
     now_served = [f"{m} {p}" for m, p in _ADMIN_MUTATIONS_UNMOUNTED if (m, _shape(p)) in served]
     assert not now_served, (
