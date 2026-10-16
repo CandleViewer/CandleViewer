@@ -1450,6 +1450,11 @@ before any OMS work (C-2.21): `order_entry_refusal(checks, account_id)` runs eve
 first, and the first refusal becomes the `403 trading_disabled` problem; its `reason` extension
 member lands with the E42-T03 contract. A check is O(1), does no I/O and never queries an
 interpreter. The gate is never flag-gated (C-4.14) and never sits on cancel, flatten or SL-amend.
+Each refusal is audited write-ahead, before the 403 is returned (C-2.9): the edge code that turns
+it into the 403 writes `account.disabled_by_policy` with actor, role, account, `reason` and
+traceId. E42-T03 (#964) owns that write and proves it in
+`test_a_refused_order_is_audited_before_the_403`, with a forbidden-role and a cross-account case
+that RBAC refuses first, disclosing no gate `reason`.
 `OrderEntryRefusal(reason, detail)`: `detail` is fixed human text, never an id, a secret or
 exchange-supplied text, and `reason` is this closed set, listed in the order the checks ask:
 
