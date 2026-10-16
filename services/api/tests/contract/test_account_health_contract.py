@@ -1,7 +1,8 @@
 """Contract (E27-T04): per-account health, wallet staleness and key-rotation fields. Additive only
 (C-6.3): nothing pre-existing changes and nothing new is required; `connection_state` keeps its
 enum (decision Q2 on #837); the documented example round-trips; `wallet` frames validate, with
-health reported per account apart from balances, and every reason set is closed.
+health reported per account apart from balances, and every reason set is closed; the server's
+`wallet` merge keeps the latest health of every account and still validates.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import pytest
 
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.ws.coalescing import CoalescingQueue
 from tests.contract.ws._harness import SCHEMAS, check_schema
 
 _SPEC: dict[str, Any] = load_openapi_spec()
@@ -20,6 +22,7 @@ _LIST = _SPEC["paths"]["/exchange-accounts"]["get"]["responses"]["200"]["content
 _WALLET = "cv://ws/v1/wallet.schema.json"
 _WS_ENTRY: dict[str, Any] = SCHEMAS[_WALLET]["properties"]["health"]["items"]
 _ACC = "a1000000-0000-4000-8000-000000000001"
+_ACC_B = "a1000000-0000-4000-8000-000000000002"
 _ITEM = {"exchange_account_id": _ACC, "coin": "USDT", "equity": "1", "updated_at_ms": 1}
 _FULL = _ITEM | {"stale": True, "stale_since_ms": 1}
 _HEALTH = dict(exchange_account_id=_ACC, state="degraded", reason="rest_only", rest_only=True)
@@ -103,3 +106,20 @@ def test_wallet_health_refuses_a_partial_entry_an_open_code_or_a_balance_item(
 ) -> None:
     with pytest.raises(AssertionError, match="violates"):
         check_schema(_WALLET, frame, "wallet")
+
+
+def test_a_merged_wallet_window_keeps_every_account_health_and_validates() -> None:
+    """Provider (C-6.2): the §8.2 `wallet` merge emits a frame the schema accepts, keeping the
+    latest `health` entry of each account its window touched."""
+    queue = CoalescingQueue("wallet")
+    other = _ENTRY | {"exchange_account_id": _ACC_B}
+    for delta in (
+        {"balances": [_FULL]},
+        {"balances": [], "health": [_ENTRY]},
+        {"balances": [], "health": [other]},
+    ):
+        assert queue.offer(delta)
+    [merged] = queue.take()
+    assert merged.body == {"balances": [_FULL], "health": [_ENTRY, other]}
+    disclosed = merged.body | {"coalesced": True, "coalesced_count": merged.coalesced_count}
+    check_schema(_WALLET, disclosed, "wallet")
