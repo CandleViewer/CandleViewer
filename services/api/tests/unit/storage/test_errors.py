@@ -17,6 +17,7 @@ from candleviewer.storage.errors import (
     StorageExportVerifyFailed,
     StoragePartitionDropNotApplied,
     StorageQueryFailed,
+    StorageRecordInvalid,
     StorageRetentionBlockedByPin,
     StorageRetentionBlockedByReplay,
     StorageRetentionBlockedUnverified,
@@ -44,6 +45,7 @@ def test_error_codes_are_stable_and_unique() -> None:
         MissingDesignatedTimestamp: "STORAGE_ILP_MISSING_DESIGNATED_TS",
         InvalidSymbol: "STORAGE_ILP_INVALID_SYMBOL",
         UnknownIlpTable: "STORAGE_ILP_UNKNOWN_TABLE",
+        StorageRecordInvalid: "STORAGE_RECORD_INVALID",
     }
     assert len(set(ERROR_CODES.values())) == len(ERROR_CODES)
 
