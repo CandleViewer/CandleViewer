@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Literal, Protocol
 
@@ -63,9 +64,24 @@ class AuditPrincipal:
     #: Resolved by the session resolver through `auth.scopes.PrincipalSnapshot.is_owner`
     #: (the sanctioned owner check, SR-017); this module never compares role names.
     is_owner: bool = False
+    #: When the session's most recent successful step-up happened (any action class), or `None`
+    #: when its row records none (#2754). Read-only observability for the `reauth_age_s` of
+    #: `admin.area_entered`: no authorisation decision reads it, and step-up stays enforced by
+    #: the `DANGEROUS_ROUTES` middleware (SR-025).
+    last_step_up_at: datetime | None = None
 
     def has(self, permission: str) -> bool:
         return "*" in self.permissions or permission in self.permissions  # nosem: no-adhoc-authz reason=Principal.has_permission-wildcard-impl-pending-E09-T01-authorize owner=@CandleViewer/security review=2026-12-31  # noqa: E501  # fmt: skip
+
+    def reauth_age_s(self, now: datetime) -> int | None:
+        """Whole seconds from `last_step_up_at` to `now`, a reading of the caller's injected
+        clock (never the wall clock), or `None` before any step-up. A reading that is not
+        timezone-aware is unknown rather than an error, and a clock that stepped back reads
+        `0`: this is observability, so it never fails or refuses a request."""
+        stepped = self.last_step_up_at
+        if stepped is None or stepped.utcoffset() is None or now.utcoffset() is None:
+            return None
+        return max(0, int((now - stepped).total_seconds()))
 
 
 class _Emitter(Protocol):

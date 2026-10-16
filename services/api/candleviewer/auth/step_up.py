@@ -65,6 +65,9 @@ NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch"})
 POSITION_SOURCE_NOT_DEPLOYED = "not_deployed"
 #: Key prefix (in `step_up_elevations`) of the challenge issued by the last 403.
 _PENDING = "pending:"
+#: Key prefix (in `step_up_elevations`) of a one-shot grant: a no-grace class is stored as
+#: `once:<class>` by `step_up()` and removed by `consume_single_use`.
+_ONCE = "once:"
 
 
 def grace_expires_at(elevations: dict[str, datetime], now: datetime) -> datetime | None:
@@ -72,6 +75,26 @@ def grace_expires_at(elevations: dict[str, datetime], now: datetime) -> datetime
     one-shot grants) - the `step_up_expires_at` the dialog counts down."""
     live = [v for k, v in elevations.items() if k in ACTION_CLASSES and v > now]
     return max(live) if live else None
+
+
+def last_step_up_at(elevations: dict[str, datetime]) -> datetime | None:
+    """When the session's most recent successful step-up happened, whatever its action class,
+    or `None` when the row records none (#2754).
+
+    `step_up()` stores `now + GRACE_WINDOW` under the class (`once:<class>` for a one-shot
+    grant), so a grant's expiry less the window is the instant it was given. A `pending:`
+    challenge carries the same expiry but is no step-up, and a key that is not an action class
+    is ignored. A grant stays on the row after its window lapses, so the instant outlives the
+    window; it is gone once something removes the grant: an idle-lock unlock (B16.7), the
+    read-only downgrade, the spend of a one-shot grant, or a later write that prunes lapsed
+    windows. A token refresh starts a successor row, which holds none. Observability only:
+    elevation is still decided by `require_elevation`, never here."""
+    given = [
+        until - GRACE_WINDOW
+        for key, until in elevations.items()
+        if key.removeprefix(_ONCE) in ACTION_CLASSES
+    ]
+    return max(given) if given else None
 
 
 Clock = Callable[[], datetime]
@@ -260,7 +283,7 @@ class StepUpService:
         # No-grace classes store a one-shot grant under "once:<class>" that a
         # handler consumes via `consume_single_use`; grace classes a window.
         elevations = {k: v for k, v in elevations.items() if not k.startswith(_PENDING)}
-        elevations[f"once:{action_class}" if single_use else action_class] = until
+        elevations[f"{_ONCE}{action_class}" if single_use else action_class] = until
         await self._save(session_id, elevations=elevations, failures=0, readonly_until=None)
         await self._record(
             record,
@@ -367,7 +390,7 @@ class StepUpService:
         step-up code, then the one-shot grant is gone."""
         await self.assert_writable(session_id)
         record = await self._live(session_id)
-        key = f"once:{action_class}"
+        key = f"{_ONCE}{action_class}"
         now = self._clock()
         until = record.step_up_elevations.get(key) if record else None
         if record is None or until is None or until <= now:
