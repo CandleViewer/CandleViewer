@@ -50,6 +50,7 @@ def test_idor_matrix_on_workspaces(method: str, actor: str) -> None:
     assert env.audit.denied()[0]["object_id"] == mine["id"]
     missing = _send(env, method, MISSING)  # byte-identical to a missing id, and not audited
     assert missing.status_code == 404 and missing.content == r.content
+    assert dict(missing.headers) == dict(r.headers)  # same headers, not only the same body
     assert len(env.audit.denied()) == 1
 
 
