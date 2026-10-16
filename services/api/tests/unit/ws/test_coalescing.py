@@ -10,14 +10,20 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from candleviewer.ws.binary import BOOK_DELTA, Frame
-from candleviewer.ws.coalescing import MAX_PENDING_FRAMES, CoalescingQueue, Emission
+from candleviewer.ws.binary import BOOK_DELTA, HEATMAP_COLUMN, Frame
+from candleviewer.ws.coalescing import (
+    MAX_PENDING_FRAMES,
+    MERGED_FAMILIES,
+    SENT_COLUMNS_MEMORY,
+    CoalescingQueue,
+    Emission,
+)
 
 Body = dict[str, Any]
 State = dict[str, Any]
 _LISTS = frozenset(
     {"bids", "asks", "bars", "trades", "liquidations", "dropped", "coalesced", "coalesced_count"}
-    | {"series", "tickers", "balances", "positions", "removed"}
+    | {"series", "tickers", "balances", "positions", "removed", "columns"}
 )
 
 # -- reference clients: every payload, coalesced or not, is applied the same way (§8.2) --------
@@ -46,6 +52,22 @@ def _apply_bars(state: State, body: Mapping[str, Any]) -> None:
         cur = bars.get(key)
         if cur is None or not cur["confirm"] or (item["confirm"] and item.get("amended")):
             bars[key] = item
+
+
+def _apply_footprint(state: State, body: Mapping[str, Any]) -> None:
+    _root(state, body)
+    for bar in body["bars"]:
+        entry = state.setdefault("bars", {}).setdefault(bar["t_ms"], {"fields": {}, "cells": {}})
+        entry["fields"].update((k, v) for k, v in bar.items() if k != "cells")
+        for cell in bar["cells"]:
+            cur = entry["cells"].setdefault(Decimal(cell["price"]), {})
+            for key, value in cell.items():
+                if key in ("bid_volume", "ask_volume", "delta", "total_volume"):
+                    cur[key] = cur.get(key, Decimal(0)) + Decimal(value)  # increments (§8.2)
+                elif key == "trades":
+                    cur[key] = cur.get(key, 0) + value
+                else:
+                    cur[key] = value
 
 
 def _keyed(field: str, key: Callable[[Body], Any], *, newer: bool = False) -> Callable[..., None]:
@@ -112,8 +134,52 @@ _bars = st.builds(
     lambda items: {"symbol": "BTCUSDT", "bar_type": "time", "param": "1m", "bars": items},
     st.lists(_bar_item, min_size=1, max_size=2),
 )
+_cell = st.builds(
+    lambda price, bid, ask, delta, total, n: {
+        "price": price,
+        "bid_volume": bid,
+        "ask_volume": ask,
+        "delta": delta,
+        "total_volume": total,
+        "trades": n,
+    },
+    _PRICE,
+    st.sampled_from(["0.5", "1", "0.00000001", "2.000"]),
+    st.sampled_from(["0.5", "1.25", "7.5"]),
+    st.sampled_from(["-1.5", "0", "0.00000001", "-0.00000002"]),  # signed: no exponent form
+    st.sampled_from(["1", "2.75", "0.00000003"]),
+    st.integers(0, 3),
+)
+_footprint = st.builds(
+    lambda t_ms, poc, cells: {
+        "symbol": "BTCUSDT",
+        "bar_type": "time",
+        "param": "1m",
+        "bars": [{"t_ms": t_ms, "poc_price": poc, "cells": cells}],
+    },
+    st.sampled_from([0, 60_000]),
+    _PRICE,
+    st.lists(_cell, max_size=3),
+)
 
 
+def _heatmap(ops: list[tuple[int, bool, int]]) -> list[Body]:
+    """Columns per 100 ms bucket; once a bucket is complete its column is final (repeats only)."""
+    final: set[int] = set()
+    out = []
+    for t_ms, complete, level in ops:
+        done = complete or t_ms in final
+        if done:
+            final.add(t_ms)
+        col = {"t_ms": t_ms, "price_min": "100", "price_step": "0.5", "complete": done}
+        col |= {"bids": [t_ms / 100.0], "asks": [1.0]} if done else {"bids": [level], "asks": []}
+        out.append({"symbol": "BTCUSDT", "time_bucket_ms": 100, "columns": [col]})
+    return out
+
+
+_heatmaps = st.lists(
+    st.tuples(st.sampled_from([0, 100, 200]), st.booleans(), st.integers(0, 9)), max_size=25
+).map(_heatmap)
 _metrics = st.builds(
     lambda m, params, v: {
         "symbol": "BTCUSDT",
@@ -180,6 +246,8 @@ _liquidations = st.builds(
 FAMILIES: list[tuple[str, Any, Callable[..., None]]] = [
     ("book", st.lists(_book, max_size=25), _apply_book),
     ("bars", st.lists(_bars, max_size=25), _apply_bars),
+    ("footprint", st.lists(_footprint, max_size=25), _apply_footprint),
+    ("heatmap", _heatmaps, _keyed("columns", lambda c: c["t_ms"])),
     (
         "metrics",
         st.lists(_metrics, max_size=25),
@@ -419,6 +487,11 @@ def test_coalescer_book_level_bound_refuses_until_cleared() -> None:
             {"bars": [{"generation": 0, "index": 0, "confirm": False}]},
             {"bars": [{"generation": 0, "index": 1, "confirm": False}]},
         ),
+        (
+            "footprint",
+            {"bars": [{"t_ms": 0, "cells": []}]},
+            {"bars": [{"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1"}]}]},
+        ),
         ("ticker", {"tickers": [{"symbol": "A"}]}, {"tickers": [{"symbol": "B"}]}),
         ("positions", {"positions": [], "removed": ["p1"]}, {"positions": [], "removed": ["p2"]}),
         ("trades", {"trades": [{"id": "1"}]}, {"trades": [{"id": "2"}]}),
@@ -438,6 +511,7 @@ def test_coalescer_bound_reached_sets_overflowed(family: str, first: Body, grown
         ("book", {"bids": [["NaN", "1"]], "asks": []}),
         ("book", {"bids": [["100", "1", "2"]], "asks": []}),
         ("bars", {"bars": [{"index": 0, "confirm": False}]}),
+        ("footprint", {"bars": [{"t_ms": 0, "cells": [{"price": "1", "bid_volume": "x"}]}]}),
         ("wallet", {"balances": [{"coin": "USDT"}]}),
         ("trades", {"trades": 7}),
     ],
@@ -579,6 +653,71 @@ def test_coalescer_metrics_params_keep_series_apart() -> None:
     assert [s["v"] for s in frame.body["series"]] == ["2", "3"]
 
 
+def _column(t_ms: int, *, complete: bool = True) -> Body:
+    return {
+        "t_ms": t_ms,
+        "price_min": "1",
+        "price_step": "1",
+        "bids": [1.0],
+        "asks": [],
+        "complete": complete,
+    }
+
+
+def test_coalescer_heatmap_complete_column_already_sent_is_dropped() -> None:
+    queue = CoalescingQueue("heatmap")
+    body = {"symbol": "X", "time_bucket_ms": 100, "columns": [_column(0)]}
+    queue.offer(body)
+    assert len(queue.take()) == 1
+    queue.offer(body)
+    assert not queue.pending
+    assert queue.take() == []
+    queue.offer({**body, "max_value": 2.0})  # a new root value still goes out
+    assert [f.body["max_value"] for f in queue.take()] == [2.0]
+
+
+def test_coalescer_heatmap_late_column_for_a_sent_complete_bucket_is_dropped() -> None:
+    queue = CoalescingQueue("heatmap")
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_column(0)]})
+    queue.take()
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_column(0, complete=False)]})
+    assert queue.take() == []
+
+
+def test_coalescer_heatmap_incomplete_column_then_complete_is_sent() -> None:
+    queue = CoalescingQueue("heatmap")
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_column(0, complete=False)]})
+    queue.take()
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_column(0)]})
+    assert [f.body["columns"] for f in queue.take()] == [[_column(0)]]
+
+
+def test_coalescer_heatmap_sent_memory_is_bounded() -> None:
+    queue = CoalescingQueue("heatmap")
+    for t_ms in range(SENT_COLUMNS_MEMORY + 1):
+        queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_column(t_ms)]})
+        queue.take()
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_column(0)]})
+    assert queue.pending  # the oldest bucket was forgotten, so it is sent again
+
+
+def test_coalescer_footprint_sums_cells_exactly_within_a_bar_only() -> None:
+    queue = CoalescingQueue("footprint")
+    cell = {"price": "100", "bid_volume": "0.00000001", "ask_volume": "1.5", "trades": 1}
+    queue.offer({"bars": [{"t_ms": 0, "poc_price": "100", "cells": [cell]}]})
+    queue.offer({"bars": [{"t_ms": 0, "poc_price": "101", "cells": [cell]}]})
+    queue.offer({"bars": [{"t_ms": 60_000, "cells": [cell]}]})
+    [frame] = queue.take()
+    first, second = frame.body["bars"]
+    assert first["poc_price"] == "101"
+    assert first["cells"] == [
+        {"price": "100", "bid_volume": "0.00000002", "ask_volume": "3.0", "trades": 2}
+    ]
+    assert second["cells"] == [
+        {"price": "100", "bid_volume": "0.00000001", "ask_volume": "1.5", "trades": 1}
+    ]
+
+
 def test_coalescer_fold_refused_by_the_key_bound_overflows() -> None:
     queue = CoalescingQueue("book", coalesce=False, max_frames=2, max_keys=1)
     assert queue.offer(_level("1"))
@@ -628,6 +767,14 @@ def test_coalescer_pathologically_nested_update_is_refused(family: str, body: Bo
     queue = CoalescingQueue(family)
     assert not queue.offer(body)
     assert queue.overflowed
+
+
+def test_coalescer_heatmap_merged_columns_leave_in_time_order() -> None:
+    queue = CoalescingQueue("heatmap")
+    for t_ms in (200, 100, 300):
+        queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_column(t_ms)]})
+    [frame] = queue.take()
+    assert [col["t_ms"] for col in frame.body["columns"]] == [100, 200, 300]
 
 
 @pytest.mark.parametrize("malformed", [[{"x": 1}], 5, [3]])
@@ -683,3 +830,139 @@ def test_coalescer_nested_whole_frame_or_root_field_is_refused(family: str, body
     queue = CoalescingQueue(family)
     assert not queue.offer(body)
     assert queue.overflowed
+
+
+def test_coalescer_heatmap_single_update_drops_a_column_of_a_sent_bucket() -> None:
+    """#2500 review: a lone update mixing a sent bucket and a new one must not leave verbatim."""
+    queue = CoalescingQueue("heatmap")
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_column(1)]})
+    queue.take()
+    stale, fresh = _column(1, complete=False), _column(2, complete=False)
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [stale, fresh]})
+    [frame] = queue.take()
+    assert frame.body["columns"] == [fresh]
+
+
+def test_coalescer_heatmap_root_change_never_resends_a_sent_bucket() -> None:
+    queue = CoalescingQueue("heatmap")
+    queue.offer({"symbol": "X", "time_bucket_ms": 100, "max_value": 1.0, "columns": [_column(1)]})
+    queue.take()
+    body = {"symbol": "X", "time_bucket_ms": 100, "max_value": 2.0}
+    queue.offer({**body, "columns": [_column(1, complete=False)]})
+    [frame] = queue.take()
+    assert frame.body == {**body, "columns": []}
+
+
+def test_coalescer_footprint_update_without_bars_changes_nothing() -> None:
+    queue = CoalescingQueue("footprint")
+    queue.offer({"symbol": "X", "bars": []})
+    assert not queue.pending
+
+
+def test_coalescer_footprint_absurd_exponent_is_refused() -> None:
+    queue = CoalescingQueue("footprint")
+    cell = {"price": "1", "bid_volume": "1E+999999"}
+    assert not queue.offer({"bars": [{"t_ms": 0, "cells": [cell]}]})
+    assert queue.overflowed
+
+
+@pytest.mark.parametrize("body", [["x"], None, "bids"])
+def test_coalescer_body_that_is_not_a_mapping_is_refused(body: Any) -> None:
+    queue = CoalescingQueue("book")
+    assert not queue.offer(body)
+    assert queue.overflowed
+
+
+# -- #2500 security review --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "columns",
+    [5, [3], ["x"], [{"complete": True}], [{"complete": True, "t_ms": "abc"}]],
+    ids=["not-a-list", "int-column", "str-column", "no-t_ms", "bad-t_ms"],
+)
+def test_coalescer_whole_heatmap_frame_with_unreadable_columns_is_refused_at_entry(
+    columns: Any,
+) -> None:
+    """`coalesce: false` queues whole frames; `take()` must never meet one it cannot read."""
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    assert not queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": columns})
+    assert queue.overflowed and queue.take() == []
+
+
+_JSON = st.recursive(
+    st.none() | st.booleans() | st.integers(-3, 3) | st.sampled_from(["", "x", "1", "-2.5"]),
+    lambda inner: st.lists(inner, max_size=3) | st.dictionaries(st.text(max_size=8), inner),
+    max_leaves=12,
+)
+_BODY_KEYS = ["columns", "bars", "bids", "asks", "items", "t_ms", "complete", "symbol"]
+
+
+@given(
+    family=st.sampled_from(sorted(MERGED_FAMILIES)),
+    body=st.dictionaries(st.sampled_from(_BODY_KEYS), _JSON, max_size=4),
+)
+def test_coalescer_whole_frame_take_never_raises(family: str, body: dict[str, Any]) -> None:
+    queue = CoalescingQueue(family, coalesce=False)
+    queue.offer(body)
+    queue.take()  # refused or emitted, never an exception
+
+
+def test_coalescer_footprint_refuses_two_bars_with_one_open_time() -> None:
+    """Non-time bars can share an open time (§8.2 "Bar key"): refuse rather than fuse them."""
+    queue = CoalescingQueue("footprint")
+    bar = {"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1"}]}
+    assert not queue.offer({"bars": [bar, dict(bar)]})
+    assert queue.overflowed
+
+
+def test_coalescer_footprint_refuses_an_update_to_a_bar_confirmed_in_the_window() -> None:
+    queue = CoalescingQueue("footprint")
+    cells = [{"price": "1", "bid_volume": "1"}]
+    assert queue.offer({"bars": [{"t_ms": 0, "confirm": True, "cells": cells}]})
+    assert not queue.offer({"bars": [{"t_ms": 0, "confirm": False, "cells": cells}]})
+    assert queue.overflowed
+
+
+def test_coalescer_footprint_sums_exactly_or_refuses() -> None:
+    queue = CoalescingQueue("footprint")
+    big = {"price": "1", "bid_volume": "1E+29"}
+    queue.offer({"bars": [{"t_ms": 0, "cells": [big]}]})
+    queue.offer({"bars": [{"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1E-8"}]}]})
+    [frame] = queue.take()
+    assert frame.body["bars"][0]["cells"][0]["bid_volume"] == "1" + "0" * 29 + ".00000001"
+    tiny = {"price": "1", "bid_volume": "1E-140"}  # 1E+29 + 1E-140 needs 170 digits: inexact
+    queue.offer({"bars": [{"t_ms": 0, "cells": [big]}]})
+    assert not queue.offer({"bars": [{"t_ms": 0, "cells": [tiny]}]})
+    assert queue.overflowed
+
+
+def test_coalescer_heatmap_discarded_stale_column_keeps_the_next_lone_update_verbatim() -> None:
+    queue = CoalescingQueue("heatmap")
+    root = {"symbol": "X", "time_bucket_ms": 100}
+    queue.offer({**root, "columns": [_column(0)]})
+    queue.take()
+    queue.offer({**root, "columns": [_column(0, complete=False)]})  # a sent bucket: discarded
+    part = Frame(HEATMAP_COLUMN)
+    queue.offer({**root, "columns": [_column(100)]}, part)
+    [frame] = queue.take()
+    assert frame.part is part  # left verbatim, with its binary part
+
+
+def test_coalescer_heatmap_root_fields_seen_are_bounded() -> None:
+    queue = CoalescingQueue("heatmap", max_keys=8)
+    for i in range(8):
+        queue.offer({"symbol": "X", f"k{i}": i})
+        queue.take()
+    assert not queue.offer({"symbol": "X", "k8": 8})
+    assert queue.overflowed
+
+
+def test_coalescer_take_turns_an_unreadable_frame_into_an_overflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Defence in depth behind `validate`: `take()` never raises, it overflows."""
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    monkeypatch.setattr(queue._merge, "validate", lambda body: None)
+    assert queue.offer({"symbol": "X", "columns": [3]})
+    assert queue.take() == [] and queue.overflowed
