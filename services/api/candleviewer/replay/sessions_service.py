@@ -110,14 +110,14 @@ class ReplayChartError(ReplayError):
 
 
 class ReplayUnavailableError(ReplayError):
-    """A dependency (repository, coverage, audit, handles) timed out or failed before the
+    """A dependency await timed out, or the audit record could not be written, before the
     change was recorded (HTTP 503); retry later."""
 
 
 @dataclass(frozen=True, slots=True)
 class WindowCoverage:
     """Recorded coverage of one window as half-open µs intervals (24 §13.3.1), clipped to it.
-    Everything else in the window is a gap (`_uncovered`)."""
+    Everything else in the window is a gap (`uncovered`)."""
 
     covered: tuple[tuple[int, int], ...]
 
@@ -356,7 +356,9 @@ class ReplaySessionService:
         try:
             await self._io("on_ended", self._on_ended(live.id, live.user_id, reason))
         except Exception as exc:
-            logger().error("replay_session_ended_failed", session_id=live.id, error=str(exc))
+            logger().error(
+                "replay_session_ended_failed", session_id=live.id, error=type(exc).__name__
+            )
 
     async def _mirror_loop(self) -> None:
         while True:
@@ -653,7 +655,7 @@ class ReplaySessionService:
         if receipt_is_conclusive(receipt) and receipt.error is not None:
             raise ReplayChartError(f"B12 {event}: {type(receipt.error).__name__}")
         if receipt.deferred or receipt.denied:  # `changed=False` alone is fine: internal arms
-            self.refusals.record_send_refused("deferred")
+            self.refusals.record_send_refused("deferred" if receipt.deferred else "denied")
             state = ReplayState(leaf_of(live.interp))
             logger().warning(
                 "replay_session_event_parked", session_id=live.id, control=event, state=state

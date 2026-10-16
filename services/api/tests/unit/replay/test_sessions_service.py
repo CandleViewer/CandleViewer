@@ -8,13 +8,13 @@ releases. The chart is the real committed B12 contract built through `statechart
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -22,6 +22,7 @@ import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
+import candleviewer.replay.sessions_service as sessions_service
 import candleviewer.statechart.bindings.b12_replay as b12
 from candleviewer.replay.sessions_service import (
     ReplayChartError,
@@ -33,7 +34,9 @@ from candleviewer.replay.sessions_service import (
     ReplayWindowUncoveredError,
     WindowCoverage,
     to_us,
+    uncovered,
 )
+from candleviewer.statechart import build as build_chart
 from candleviewer.statechart.gateway import Gateway, GatewayError
 from candleviewer.statechart.registry import Registry
 from candleviewer.storage.repositories.replay_sessions import (
@@ -57,10 +60,13 @@ class FakeCoverage:
         self.covered: tuple[tuple[int, int], ...] = ((to_us(T0), GAP[0]), (GAP[1], to_us(T1)))
         self.calls: list[tuple[str, int, int]] = []
         self.fail: BaseException | None = None
+        self.hang = False
 
     async def window(self, symbol: str, lo_us: int, hi_us: int) -> WindowCoverage:
         self.calls.append((symbol, lo_us, hi_us))
         await asyncio.sleep(0)  # a real read suspends: lets concurrent creates interleave here
+        if self.hang:
+            await asyncio.Event().wait()
         if self.fail is not None:
             raise self.fail
         return WindowCoverage(covered=self.covered)
@@ -70,10 +76,18 @@ class FakeAudit:
     def __init__(self) -> None:
         self.rows: list[tuple[str, dict[str, Any]]] = []
         self.fail = False
+        #: Holds this user's writes until released (a slow WAL append for one user).
+        self.hold_user: str | None = None
+        self.hold = asyncio.Event()
+        self.holding = False
 
     async def emit(self, action: str, **kwargs: Any) -> None:
+        await asyncio.sleep(0)  # a real append suspends: concurrent creates interleave here
         if self.fail:
             raise RuntimeError("audit unavailable")
+        if self.hold_user is not None and kwargs.get("actor_user_id") == self.hold_user:
+            self.holding = True
+            await self.hold.wait()
         self.rows.append((action, kwargs))
 
     def actions(self) -> list[str]:
@@ -84,8 +98,11 @@ class FakeHandles:
     def __init__(self) -> None:
         self.acquired: list[str] = []
         self.released: Counter[str] = Counter()
+        self.fail = False
 
     async def acquire(self, row: ReplaySessionRow) -> Sequence[Callable[[], Awaitable[None]]]:
+        if self.fail:
+            raise ConnectionError("source unavailable")
         self.acquired.append(row.id)
 
         async def release() -> None:
@@ -148,13 +165,44 @@ async def until(pred: Callable[[], Awaitable[bool]]) -> None:
 # --- create ---------------------------------------------------------------------------------
 
 
-async def test_create_forces_principal_mints_id_audits_and_seeds_gaps() -> None:
+def _record_charts(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Keeps every chart the service builds, to check a rollback stops it."""
+    built: list[Any] = []
+
+    async def recording(*args: Any, **kwargs: Any) -> Any:
+        result = await build_chart(*args, **kwargs)
+        built.append(result.interpreter)
+        return result
+
+    monkeypatch.setattr(sessions_service, "build", recording)
+    return built
+
+
+async def test_create_ignores_client_supplied_identity_fields() -> None:
     env = make_env()
     row = await env.s.create(USER_A, request(id="client-id", user_id=USER_B))
-    assert row.user_id == USER_A and row.id == str(uuid.UUID(row.id)) and row.cursor_ts == T0
-    assert (row.state, env.s.state_of(row.id)) == (ReplayState.CREATED, "created")
-    assert env.handles.acquired == [row.id] and env.audit.actions() == ["replay.session.created"]
-    facts = env.s.facts_of(row.id)
+    assert row.user_id == USER_A and row.id == str(uuid.UUID(row.id))
+
+
+async def test_create_starts_in_created_with_the_cursor_at_range_start() -> None:
+    env = make_env()
+    row = await env.s.create(USER_A, request())
+    assert (row.state, row.cursor_ts, env.s.state_of(row.id)) == (
+        ReplayState.CREATED,
+        T0,
+        "created",
+    )
+
+
+async def test_create_writes_the_created_audit_record() -> None:
+    env = make_env()
+    await env.s.create(USER_A, request())
+    assert env.audit.actions() == ["replay.session.created"]
+
+
+async def test_create_seeds_the_recorder_gap_into_the_chart() -> None:
+    env = make_env()
+    facts = env.s.facts_of((await env.s.create(USER_A, request())).id)
     assert facts is not None and facts["coverage_gaps"] == [GAP]
 
 
@@ -166,15 +214,61 @@ async def test_create_partly_covered_window_seeds_every_uncovered_span_as_a_gap(
     assert facts is not None and facts["coverage_gaps"] == [[to_us(T0), start], GAP]
 
 
-async def test_create_dependency_failures_are_typed_and_allocate_nothing() -> None:
+@pytest.mark.parametrize(
+    ("covered", "gaps"),
+    [
+        ((), [[0, 100]]), (((0, 100),), []), (((10, 20), (15, 30)), [[0, 10], [30, 100]]),
+        (((-5, 10), (90, 120)), [[10, 90]]), (((40, 60), (0, 10)), [[10, 40], [60, 100]]),
+    ],
+)  # fmt: skip
+def test_uncovered_returns_every_hole_of_the_window(
+    covered: tuple[tuple[int, int], ...], gaps: list[list[int]]
+) -> None:
+    assert uncovered(0, 100, covered) == gaps
+
+
+async def test_create_turns_a_coverage_timeout_into_a_typed_error() -> None:
     env = make_env()
     env.coverage.fail = TimeoutError()
     with pytest.raises(ReplayUnavailableError):
         await env.s.create(USER_A, request())
-    env.coverage.fail, env.audit.fail = None, True
+    assert env.handles.acquired == [] and (await env.repo.list_page(USER_A)).rows == ()
+
+
+async def test_create_turns_an_audit_outage_into_a_typed_error() -> None:
+    env = make_env()
+    env.audit.fail = True
     with pytest.raises(ReplayUnavailableError):
         await env.s.create(USER_A, request())
     assert env.handles.acquired == [] and (await env.repo.list_page(USER_A)).rows == ()
+
+
+async def test_create_bounds_a_hanging_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sessions_service, "_IO_TIMEOUT_S", 0.01)
+    env = make_env()
+    env.coverage.hang = True
+    async with asyncio.timeout(2):  # an unbounded await would hang here instead
+        with pytest.raises(ReplayUnavailableError):
+            await env.s.create(USER_A, request())
+
+
+async def test_one_users_slow_create_does_not_hold_up_another_user() -> None:
+    env = make_env()
+    env.audit.hold_user = USER_A
+
+    async def holding() -> bool:
+        return env.audit.holding
+
+    async def second_user_creates_while_the_first_waits() -> None:
+        await until(holding)
+        async with asyncio.timeout(2):  # one global quota lock would wait for USER_A forever
+            await env.s.create(USER_B, request())
+        env.audit.hold.set()
+
+    await asyncio.gather(
+        env.s.create(USER_A, request()), second_user_creates_while_the_first_waits()
+    )
+    assert len(env.handles.acquired) == 2
 
 
 class _BrokenGateway(Gateway):
@@ -182,13 +276,27 @@ class _BrokenGateway(Gateway):
         raise GatewayError("registry broken")
 
 
-async def test_create_rolls_back_handles_chart_and_row_when_registration_fails() -> None:
+async def test_create_rolls_back_when_chart_registration_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    charts = _record_charts(monkeypatch)
     env = make_env(gateway=_BrokenGateway())
     with pytest.raises(GatewayError):
         await env.s.create(USER_A, request())
     sid = env.handles.acquired[0]
-    assert env.handles.released[sid] == 1 and env.s.state_of(sid) is None
-    assert (await env.repo.list_page(USER_A)).rows == ()
+    assert env.handles.released[sid] == 1 and not charts[0].is_running
+    assert env.s.state_of(sid) is None and (await env.repo.list_page(USER_A)).rows == ()
+
+
+async def test_create_rolls_back_when_the_handles_cannot_be_allocated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    charts = _record_charts(monkeypatch)
+    env = make_env()
+    env.handles.fail = True
+    with pytest.raises(ConnectionError):
+        await env.s.create(USER_A, request())
+    assert not charts[0].is_running and (await env.repo.list_page(USER_A)).rows == ()
 
 
 async def test_create_uncovered_window_refused_before_any_row_audit_or_handle() -> None:
@@ -279,7 +387,7 @@ _PAYLOADS: dict[str, dict[str, Any]] = {
 }  # fmt: skip
 
 
-async def test_control_events_follow_b12_and_the_row_mirrors_every_state() -> None:
+async def test_the_row_mirrors_every_state_of_a_control_sequence() -> None:
     env = make_env()
     row = await env.s.create(USER_A, request(), prepare=True)  # created -> buffering -> paused
     assert (row.state, env.s.state_of(row.id)) == (ReplayState.PAUSED, "paused")
@@ -304,16 +412,29 @@ async def test_range_end_with_loop_rewinds_the_cursor_to_range_start() -> None:
     assert (row.state, row.cursor_ts) == (ReplayState.PAUSED, T0)
 
 
-async def test_source_error_enters_error_with_a_token_audited_and_seek_recovers() -> None:
-    env = make_env()
+async def _errored(env: Env) -> tuple[str, ReplaySessionRow]:
     sid = (await env.s.create(USER_A, request(), prepare=True)).id
     await env.s.transition(USER_A, sid, "PLAY")
     failure = {"error": "ParquetReadError: /data/parquet/x.parquet"}
-    row = await env.s.transition(USER_A, sid, "SOURCE_ERROR", failure)
+    return sid, await env.s.transition(USER_A, sid, "SOURCE_ERROR", failure)
+
+
+async def test_source_error_keeps_only_the_error_token() -> None:
+    _sid, row = await _errored(make_env())
     assert (row.state, row.error_message) == (ReplayState.ERROR, "ParquetReadError")
+
+
+async def test_source_error_is_audited_as_the_chart() -> None:
+    env = make_env()
+    await _errored(env)
     assert ("replay.session.error", "ParquetReadError", "system:replay-chart") in [
         (a, kw["reason"], kw["actor_label"]) for a, kw in env.audit.rows
     ]
+
+
+async def test_seek_recovers_a_session_from_error() -> None:
+    env = make_env()
+    sid, _row = await _errored(env)
     row = await env.s.transition(USER_A, sid, "SEEK", SEEK_T0)
     assert (row.state, row.error_message) == (ReplayState.PAUSED, None)
 
@@ -330,7 +451,7 @@ ERRORED = ("PREPARE", "PLAY", "SOURCE_ERROR")
         (ERRORED, "PLAY"), (ERRORED, "STEP"), (ERRORED, "CANCEL"), (ERRORED, "RANGE_END"),
     ],
 )  # fmt: skip
-async def test_illegal_event_refused_by_the_chart_and_the_row_is_unchanged(
+async def test_an_illegal_event_is_refused_without_side_effects(
     setup: tuple[str, ...], event: str
 ) -> None:
     env = make_env()
@@ -411,7 +532,7 @@ class _CompletionFirst(Gateway):
         return await super().send(key, event, wait=wait)
 
 
-async def test_a_send_held_by_the_chart_after_a_racing_completion_is_refused_and_counted(
+async def test_a_send_held_after_a_racing_completion_is_a_counted_refusal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gate = asyncio.Event()
@@ -423,6 +544,21 @@ async def test_a_send_held_by_the_chart_after_a_racing_completion_is_refused_and
     assert env.s.refusals.counts == {"deferred": 1}
     row = await env.repo.get(USER_A, sid)
     assert row is not None and row.state is ReplayState.PAUSED and env.s.state_of(sid) == "paused"
+
+
+class _DeniesEverything(Gateway):
+    """Answers every send with a guard-denied receipt (B12 itself has no deniable arm)."""
+
+    async def send(self, key: str, event: Any, *, wait: bool = False) -> Any:
+        return SimpleNamespace(changed=False, error=None, deferred=False, denied=True)
+
+
+async def test_a_guard_denied_send_is_a_counted_refusal() -> None:
+    env = make_env(gateway=_DeniesEverything())
+    sid = (await env.s.create(USER_A, request())).id
+    with pytest.raises(ReplaySessionIllegalUpdateError):
+        await env.s.transition(USER_A, sid, "PREPARE")
+    assert env.s.refusals.counts == {"denied": 1}
 
 
 async def test_an_audit_outage_on_a_chart_error_still_records_the_error_state() -> None:
@@ -453,20 +589,60 @@ async def test_a_raising_binding_action_surfaces_as_a_chart_error(
 # --- destroy and idle reclaim (INV-B12-e) ---------------------------------------------------
 
 
-async def test_destroy_winds_down_releases_once_audits_and_is_idempotent() -> None:
-    env = make_env()
+async def _playing(env: Env) -> str:
     sid = (await env.s.create(USER_A, request(), prepare=True)).id
     await env.s.transition(USER_A, sid, "PLAY")  # B12.3: DESTROY is not handled in `playing`
-    racing = await asyncio.gather(env.s.destroy(USER_A, sid), env.s.destroy(USER_A, sid))
-    assert sorted(racing) == [False, True]
-    assert await env.s.destroy(USER_A, sid) is False
-    assert env.handles.released[sid] == 1 and env.s.state_of(sid) is None
+    return sid
+
+
+async def test_destroy_of_a_playing_session_releases_its_handles_once() -> None:
+    env = make_env()
+    sid = await _playing(env)
+    assert await env.s.destroy(USER_A, sid) is True
     row = await env.repo.get(USER_A, sid)
     assert row is not None and row.state is ReplayState.DESTROYED and row.finished_at is not None
-    destroyed = [kw for a, kw in env.audit.rows if a == "replay.session.destroyed"]
-    assert [kw["reason"] for kw in destroyed] == ["client"]
+    assert env.handles.released[sid] == 1 and env.s.state_of(sid) is None
+
+
+async def test_concurrent_destroys_destroy_once() -> None:
+    env = make_env()
+    sid = await _playing(env)
+    racing = await asyncio.gather(env.s.destroy(USER_A, sid), env.s.destroy(USER_A, sid))
+    assert sorted(racing) == [False, True] and await env.s.destroy(USER_A, sid) is False
+    assert env.handles.released[sid] == 1
+
+
+async def test_destroy_audits_the_client_reason() -> None:
+    env = make_env()
+    await env.s.destroy(USER_A, (await env.s.create(USER_A, request())).id)
+    reasons = [kw["reason"] for a, kw in env.audit.rows if a == "replay.session.destroyed"]
+    assert reasons == ["client"]
+
+
+async def test_a_destroyed_session_refuses_control_events() -> None:
+    env = make_env()
+    sid = (await env.s.create(USER_A, request())).id
+    await env.s.destroy(USER_A, sid)
     with pytest.raises(ReplaySessionIllegalUpdateError):
         await env.s.transition(USER_A, sid, "SEEK", SEEK_T0)
+
+
+async def test_a_control_event_queued_behind_a_destroy_is_refused_as_destroyed() -> None:
+    env = make_env()
+    sid = await _playing(env)
+    _destroyed, refused = await asyncio.gather(
+        env.s.destroy(USER_A, sid), env.s.transition(USER_A, sid, "PAUSE"), return_exceptions=True
+    )
+    assert isinstance(refused, ReplaySessionIllegalUpdateError)
+    assert env.s.refusals.counts == {}  # the destroyed guard refused it; the chart never saw it
+
+
+async def test_destroy_rejects_an_unknown_reason() -> None:
+    env = make_env()
+    sid = (await env.s.create(USER_A, request())).id
+    with pytest.raises(ReplaySessionValidationError):
+        await env.s.destroy(USER_A, sid, reason="cron")
+    assert env.s.state_of(sid) == "created"
 
 
 async def test_destroy_is_refused_when_the_audit_record_cannot_be_written() -> None:
@@ -487,7 +663,7 @@ async def test_destroy_cancels_a_buffering_session_first(monkeypatch: pytest.Mon
     assert await state_in_db(env, USER_A, sid) is ReplayState.DESTROYED
 
 
-async def test_destroy_during_a_running_step_is_refused_and_releases_nothing(
+async def test_destroy_during_a_running_step_has_no_side_effects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     gate = asyncio.Event()
@@ -511,18 +687,25 @@ class _LosesOneDestroyWrite(FakeReplaySessionRepository):
         return await super().update_state(user_id, session_id, **kw)
 
 
-async def test_a_lost_destroy_write_still_retires_the_chart_and_a_retry_completes_it() -> None:
+async def test_a_lost_destroy_write_still_retires_the_chart() -> None:
     env = make_env(repo=_LosesOneDestroyWrite())
     sid = (await env.s.create(USER_A, request())).id
     with pytest.raises(ConnectionError):
         await env.s.destroy(USER_A, sid)
     assert env.s.state_of(sid) is None and env.handles.released[sid] == 1
+
+
+async def test_a_destroy_retry_completes_after_a_lost_write() -> None:
+    env = make_env(repo=_LosesOneDestroyWrite())
+    sid = (await env.s.create(USER_A, request())).id
+    with pytest.raises(ConnectionError):
+        await env.s.destroy(USER_A, sid)
     assert await env.s.destroy(USER_A, sid) is True  # revived from the live row, then destroyed
     assert await state_in_db(env, USER_A, sid) is ReplayState.DESTROYED
     assert env.handles.released[sid] == 2  # each acquired set released once
 
 
-async def test_destroy_tells_on_ended_once_even_when_the_listener_fails() -> None:
+async def test_on_ended_hears_every_destroy_with_its_reason() -> None:
     ended: list[tuple[str, str, str]] = []
 
     async def on_ended(session_id: str, user_id: str, reason: str) -> None:
@@ -537,6 +720,20 @@ async def test_destroy_tells_on_ended_once_even_when_the_listener_fails() -> Non
     env.clock.advance(hours=3)
     assert await env.s.reclaim_idle(env.clock()) == 1
     assert ended == [(sid, USER_A, "client"), (other, USER_A, "idle_reclaim")]
+
+
+async def test_a_hanging_on_ended_listener_does_not_hold_up_destroy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sessions_service, "_IO_TIMEOUT_S", 0.01)
+
+    async def on_ended(session_id: str, user_id: str, reason: str) -> None:
+        await asyncio.Event().wait()
+
+    env = make_env(on_ended=on_ended)
+    sid = (await env.s.create(USER_A, request())).id
+    async with asyncio.timeout(2):  # an unbounded listener would hang the destroy here
+        assert await env.s.destroy(USER_A, sid) is True
 
 
 async def test_reclaim_idle_destroys_exactly_the_idle_set_once() -> None:
@@ -582,6 +779,19 @@ async def test_a_state_change_postpones_idle_reclaim() -> None:
     assert await env.s.reclaim_idle(env.clock()) == 0
 
 
+async def test_one_failing_session_does_not_stop_the_reclaim_sweep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(b12.SERVICES, "emit_one_step", _gated(asyncio.Event()))
+    env = make_env()
+    stuck = (await env.s.create(USER_A, request(), prepare=True)).id
+    await env.s.transition(USER_A, stuck, "STEP")  # a step that never completes refuses DESTROY
+    idle = (await env.s.create(USER_A, request())).id
+    env.clock.advance(hours=3)
+    assert await env.s.reclaim_idle(env.clock()) == 1
+    assert env.s.state_of(stuck) == "stepping" and env.s.state_of(idle) is None
+
+
 async def test_the_reclaimer_runs_as_a_tracked_task_until_stopped() -> None:
     sleeps: list[float] = []
 
@@ -610,18 +820,27 @@ class _DownRepository(FakeReplaySessionRepository):
         raise ConnectionError("database down")
 
 
-async def test_the_module_lifecycle_owns_the_service_and_survives_a_boot_outage() -> None:
+async def test_the_module_starts_and_stops_its_session_service() -> None:
     from candleviewer.observability.health import HealthStatus
     from candleviewer.replay.service import ReplayService
 
-    module, env = ReplayService(), make_env(repo=_DownRepository())
+    module, env = ReplayService(), make_env()
     assert module.health().status is HealthStatus.STOPPED
     module.attach_sessions(env.s)
+    await module.start(cast(Any, None))
+    assert module.health().status is HealthStatus.OK and env.s.tasks_alive
+    await module.stop(1.0)
+    assert module.health().status is HealthStatus.STOPPED and not env.s.tasks_alive
+
+
+async def test_the_module_survives_a_database_outage_at_boot() -> None:
+    from candleviewer.replay.service import ReplayService
+
+    module, env = ReplayService(), make_env(repo=_DownRepository())
+    module.attach_sessions(env.s)
     await module.start(cast(Any, None))  # the outage is logged; the sessions revive on next use
-    assert module.health().status is HealthStatus.OK
     assert (await env.s.create(USER_A, request(), prepare=True)).state is ReplayState.PAUSED
     await module.stop(1.0)
-    assert module.health().status is HealthStatus.STOPPED
 
 
 async def test_module_health_degrades_when_a_session_task_dies() -> None:
@@ -744,11 +963,18 @@ async def test_restart_rebuilds_from_the_row_when_the_snapshot_is_refused(tamper
     await again.s.stop()
 
 
-async def test_a_slow_seek_can_be_cancelled_or_completes_later_and_is_mirrored(
+async def test_cancel_ends_a_slow_seek_in_paused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(b12.SERVICES, "seek_and_prime", _gated(asyncio.Event()))
+    env = make_env()
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
+    assert await state_in_db(env, USER_A, sid) is ReplayState.BUFFERING
+    assert (await env.s.transition(USER_A, sid, "CANCEL")).state is ReplayState.PAUSED
+
+
+async def test_a_late_seek_completion_is_mirrored_by_the_mirror_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    gate = asyncio.Event()
-    primed = to_us(T0) + 7
+    gate, primed = asyncio.Event(), to_us(T0) + 7
 
     async def slow_seek(*_args: object) -> dict[str, Any]:
         await gate.wait()
@@ -757,21 +983,17 @@ async def test_a_slow_seek_can_be_cancelled_or_completes_later_and_is_mirrored(
     monkeypatch.setitem(b12.SERVICES, "seek_and_prime", slow_seek)
     env = make_env()
     await env.s.start()
-    cancelled = (await env.s.create(USER_A, request(), prepare=True)).id
-    assert await state_in_db(env, USER_A, cancelled) is ReplayState.BUFFERING
-    row = await env.s.transition(USER_A, cancelled, "CANCEL")
-    assert row.state is ReplayState.PAUSED
-    late = (await env.s.create(USER_A, request(), prepare=True)).id
+    sid = (await env.s.create(USER_A, request(), prepare=True)).id
     gate.set()
 
     async def mirrored() -> bool:
-        row = await env.repo.get(USER_A, late)
+        row = await env.repo.get(USER_A, sid)
         return row is not None and row.state is ReplayState.PAUSED
 
     await until(mirrored)
-    late_row = await env.repo.get(USER_A, late)
-    assert late_row is not None and to_us(late_row.cursor_ts or T1) == primed
-    facts = env.s.facts_of(late)
+    row = await env.repo.get(USER_A, sid)
+    assert row is not None and to_us(row.cursor_ts or T1) == primed
+    facts = env.s.facts_of(sid)
     assert facts is not None and facts["coverage_gaps"] == [[to_us(T0), to_us(T0) + 1]]
     await env.s.stop()
 
@@ -817,15 +1039,19 @@ async def _walk(path: list[tuple[int, bool]]) -> set[str]:
             if leaf is None:
                 break
             move = (moves := _moves(leaf))[pick % len(moves)]
-            if slow and move != "RELEASE":
-                gate.clear()
-            else:
+            if move == "RELEASE":
                 gate.set()
-            with contextlib.suppress(ReplaySessionIllegalUpdateError):
-                if move == "DESTROY":
-                    await env.s.destroy(USER_A, sid)
-                elif move != "RELEASE":
-                    await env.s.transition(USER_A, sid, move, _PAYLOADS.get(move))
+            elif leaf not in ("buffering", "stepping"):  # never release a held service by accident
+                if slow:
+                    gate.clear()
+                else:
+                    gate.set()
+            # The move is legal for the current state and nothing can move the chart under it,
+            # so a refusal here is a bug: it is not swallowed.
+            if move == "DESTROY":
+                await env.s.destroy(USER_A, sid)
+            elif move != "RELEASE":
+                await env.s.transition(USER_A, sid, move, _PAYLOADS.get(move))
             if move == "RELEASE":
                 await until(moved_on)
             await until(mirrored)
@@ -846,7 +1072,7 @@ _HOLDING = [(0, True), (2, False), (1, True), (0, False)]
 @example(_TO_FINISHED)
 @example(_TO_ERROR)
 @example(_HOLDING)
-def test_row_status_mirrors_the_machine_and_handles_release_exactly_once(
+def test_any_legal_walk_keeps_the_session_invariants(
     path: list[tuple[int, bool]],
 ) -> None:
     asyncio.run(_walk(path))
@@ -861,7 +1087,7 @@ def test_the_legal_walk_reaches_every_chart_state() -> None:
     }  # fmt: skip
 
 
-async def test_audit_rows_are_registered_attributed_and_carry_only_session_facts() -> None:
+async def test_audit_rows_are_attributable_session_records() -> None:
     from candleviewer.audit.actions import AUDIT_ACTIONS  # POSIX-only package (audit.journal)
 
     env = make_env()

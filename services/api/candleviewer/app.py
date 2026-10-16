@@ -372,6 +372,18 @@ def _build_replay_sessions(
     )
 
 
+def _attach_replay_sessions(
+    ctx: AppContext,
+    settings: Settings,
+    pg: SqlAlchemyRelationalRepository | None,
+    coverage: CoverageService | None,
+) -> None:
+    """Replay sessions need Postgres and the recorded-coverage service (real backend only);
+    without them the module stays scaffold-only and nothing is attached."""
+    if pg is not None and coverage is not None:
+        ctx.replay.attach_sessions(_build_replay_sessions(settings, pg, coverage, ctx.audit))
+
+
 def _audit_ready(audit: AuditHandle) -> Callable[[], bool]:
     """#2492 (C-2.9): an owner action whose audit record cannot be written is refused
     before it changes anything: the writer is started, its flusher has not died and
@@ -944,10 +956,7 @@ def create_app(
     app.state.coverage_service = coverage_service
     if coverage_service is not None:
         ctx.recorder.attach_coverage(coverage_service)
-    if coverage_service is not None and _kb_pg is not None:  # E26-T01: started by the supervisor
-        ctx.replay.attach_sessions(
-            _build_replay_sessions(resolved, _kb_pg, coverage_service, ctx.audit)
-        )
+    _attach_replay_sessions(ctx, resolved, _kb_pg, coverage_service)  # started by the supervisor
     # E16-T07 (#491): DiskBudget on the real backend (no recorder flag; lifespan-started).
     app.state.disk_budget = build_disk_budget(
         resolved,

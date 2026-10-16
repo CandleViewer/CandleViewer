@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import Any, cast
 
-from candleviewer.app import _build_replay_sessions, _ReplayCoverage
+import pytest
+
+from candleviewer.app import _attach_replay_sessions, _build_replay_sessions, _ReplayCoverage
 from candleviewer.recorder.coverage import CoveredInterval, GapInterval, StreamCoverage
+from candleviewer.replay.service import ReplayService
 from candleviewer.replay.sessions_service import ReplayLimits
 from candleviewer.settings import Settings
 
@@ -49,3 +53,18 @@ def test_build_replay_sessions_takes_its_limits_from_the_settings() -> None:
         max_window=timedelta(hours=6),
         reclaim_interval_s=5.0,
     )
+
+
+@pytest.mark.parametrize(
+    ("with_pg", "with_coverage", "attached"),
+    [(False, False, False), (True, False, False), (False, True, False), (True, True, True)],
+)
+def test_replay_sessions_are_attached_only_with_postgres_and_coverage(
+    with_pg: bool, with_coverage: bool, attached: bool
+) -> None:
+    ctx = SimpleNamespace(replay=ReplayService(), audit=object())
+    pg = object() if with_pg else None
+    coverage = _CoverageService() if with_coverage else None
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]  # pydantic-settings kwarg
+    _attach_replay_sessions(cast(Any, ctx), settings, cast(Any, pg), cast(Any, coverage))
+    assert (ctx.replay.sessions is not None) is attached
