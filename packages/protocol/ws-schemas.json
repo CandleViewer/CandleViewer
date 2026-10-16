@@ -552,9 +552,18 @@
         "snapMeta": {
           "additionalProperties": false,
           "properties": {
+            "build_version": {
+              "description": "bars snapshots: the lowest bar builder version among the bars sent (SR-E12-14, §6.1).",
+              "minimum": 1,
+              "type": "integer"
+            },
             "history_bars": {
               "minimum": 0,
               "type": "integer"
+            },
+            "include_delta": {
+              "description": "bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1).",
+              "type": "boolean"
             },
             "previous_seq": {
               "$ref": "#/$defs/seq"
@@ -580,6 +589,11 @@
                 "live",
                 "replay"
               ]
+            },
+            "spec_hash": {
+              "description": "bars snapshots: the series' bar spec (SR-E12-14).",
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
             }
           },
           "type": "object"

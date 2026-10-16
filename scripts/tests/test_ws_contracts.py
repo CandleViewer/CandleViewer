@@ -203,3 +203,46 @@ def test_every_coalesced_family_declares_the_disclosure_fields() -> None:
         assert props["coalesced"].get("type") == "boolean", family
         assert props["coalesced_count"].get("type") == "integer", family
         assert props["coalesced_count"].get("minimum") == 1, family
+
+
+def test_snap_meta_names_the_bar_build_identity(schemas: dict[str, object]) -> None:
+    """SR-E12-14 (#399): a bars or footprint snapshot names its `spec_hash` and `build_version`."""
+    from jsonschema import Draft202012Validator
+
+    meta = Draft202012Validator(
+        {"$ref": "cv://ws/v1/common.schema.json#/$defs/snapMeta"},
+        registry=val.build_registry(schemas),
+    )
+    assert meta.is_valid({"reason": "initial", "spec_hash": "0" * 64, "build_version": 1})
+    for bad in ({"spec_hash": "A" * 64}, {"spec_hash": "0" * 63}, {"build_version": 0}):
+        assert not meta.is_valid({"reason": "initial", **bad}), bad
+
+
+def test_snap_meta_echoes_include_delta_on_bars_frames(schemas: dict[str, object]) -> None:
+    """#399: `meta.include_delta` says whether a kind-4 `delta` of 0 is real."""
+    from jsonschema import Draft202012Validator
+
+    meta = Draft202012Validator(
+        {"$ref": "cv://ws/v1/common.schema.json#/$defs/snapMeta"},
+        registry=val.build_registry(schemas),
+    )
+    assert meta.is_valid({"include_delta": False}) and meta.is_valid({"include_delta": True})
+    assert not meta.is_valid({"include_delta": "no"})
+
+
+def test_envelope_meta_carries_the_bars_fields_on_snap_and_d_frames(
+    schemas: dict[str, object],
+) -> None:
+    """#399: the envelope `meta` is snapMeta on every frame type, so a `d` echoes `include_delta`;
+    a bars snapshot carries no `meta.sources` (§6.1: the topic is tape-built only)."""
+    from jsonschema import Draft202012Validator
+
+    env = Draft202012Validator(
+        {"$ref": "cv://ws/v1/envelope.schema.json"}, registry=val.build_registry(schemas)
+    )
+    frame = {"ch": "bars.BTCUSDT.time.5", "ts": 1789132262404, "e": "b", "p": "AAAA"}
+    identity = {"spec_hash": "0" * 64, "build_version": 1, "include_delta": True}
+    snap = {**frame, "t": "snap", "s": 1, "meta": {"reason": "initial", **identity}}
+    delta = {**frame, "t": "d", "s": 2, "meta": {"include_delta": False}}
+    assert env.is_valid(snap) and env.is_valid(delta)
+    assert not env.is_valid({**delta, "meta": {"include_delta": False, "sources": ["tape"]}})

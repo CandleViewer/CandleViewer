@@ -218,6 +218,20 @@
             "source": {
               "enum": ["live", "replay"],
               "default": "live"
+            },
+            "spec_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "description": "bars snapshots: the series' bar spec (SR-E12-14)."
+            },
+            "build_version": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "bars snapshots: the lowest bar builder version among the bars sent (SR-E12-14, §6.1)."
+            },
+            "include_delta": {
+              "type": "boolean",
+              "description": "bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1)."
             }
           },
           "additionalProperties": false

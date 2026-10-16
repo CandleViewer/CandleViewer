@@ -328,6 +328,18 @@ export interface SnapMeta {
   recording_started_at_ms?: EpochMs;
   history_bars?: number;
   source?: "live" | "replay";
+  /**
+   * bars snapshots: the series' bar spec (SR-E12-14).
+   */
+  spec_hash?: string;
+  /**
+   * bars snapshots: the lowest bar builder version among the bars sent (SR-E12-14, §6.1).
+   */
+  build_version?: number;
+  /**
+   * bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1).
+   */
+  include_delta?: boolean;
 }
 
 // Source: cv://ws/v1/ctl.schema.json
@@ -424,6 +436,18 @@ export interface SnapMeta {
   recording_started_at_ms?: number;
   history_bars?: number;
   source?: "live" | "replay";
+  /**
+   * bars snapshots: the series' bar spec (SR-E12-14).
+   */
+  spec_hash?: string;
+  /**
+   * bars snapshots: the lowest bar builder version among the bars sent (SR-E12-14, §6.1).
+   */
+  build_version?: number;
+  /**
+   * bars snapshots and deltas: echoes the subscription's include_delta, so a kind-4 delta of 0 is never read as real (§6.1).
+   */
+  include_delta?: boolean;
 }
 
 // Source: cv://ws/v1/executions.schema.json
