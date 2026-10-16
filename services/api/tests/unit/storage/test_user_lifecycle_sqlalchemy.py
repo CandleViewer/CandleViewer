@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
+from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories import owner_floor_sqlalchemy as f
 from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as m
 from candleviewer.storage.repositories.user_lifecycle import (
@@ -54,6 +55,7 @@ class _Rel:
         grants: Sequence[tuple[uuid.UUID, bool]] = ((_A, True), (_B, False)),
         raise_at: Any = None,
         sqlstate: str = "23514",
+        commit_error: BaseException | None = None,
     ) -> None:
         found = status is not None
         self.rows: dict[Any, list[Any]] = {
@@ -64,7 +66,7 @@ class _Rel:
             m._REVOKE_SESSIONS: [(_DriverUUID(str(s)),) for s in sessions],
             m._LIVE_GRANTS: [(_DriverUUID(str(a)), trade) for a, trade in grants],
         }
-        self.raise_at, self.sqlstate = raise_at, sqlstate
+        self.raise_at, self.sqlstate, self.commit_error = raise_at, sqlstate, commit_error
         self.ran, self.committed = list[Any](), False
 
     @asynccontextmanager
@@ -81,6 +83,8 @@ class _Rel:
             )
 
         async def commit() -> None:
+            if self.commit_error is not None:
+                raise self.commit_error
             self.committed = True
 
         yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=commit)
@@ -197,9 +201,17 @@ async def test_disable_audit_hook_that_never_returns_times_out_and_rolls_back() 
     done, _ = await asyncio.wait({call}, timeout=_GUARD_S)
     gate.set()
     assert call in done, "the audit hook was not bounded"
-    with pytest.raises(TimeoutError):
+    with pytest.raises(WriteAheadTimeout):  # typed: rolled back, nothing changed
         call.result()
     assert rel.order()[-1] == "AUDIT" and not rel.committed
+
+
+async def test_disable_commit_timeout_is_raised_as_is_with_the_outcome_unknown() -> None:
+    """Only the hook's bound is `WriteAheadTimeout`; a commit's `TimeoutError` is not one."""
+    rel = _Rel(commit_error=TimeoutError("commit lost"))
+    with pytest.raises(TimeoutError) as raised:
+        await _disable(rel)
+    assert type(raised.value) is TimeoutError and rel.order()[-1] == "AUDIT"
 
 
 @pytest.mark.parametrize(

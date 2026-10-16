@@ -7,7 +7,7 @@ lock the user row; a user already disabled is a no-op (AC5); lock the owner gran
 the last active owner; set `disabled`; revoke every live session; soft-revoke every live grant
 (never a DELETE: the freeze columns, the cap and `granted_by` are never written, O4); run the
 deferred constraints (23514 maps onto the floor refusal); await the caller's audit hook, bounded
-by `audit_timeout_s` (C-2.9); commit. Anything that raises rolls everything back; if the hook
+by `audit_timeout_s` (C-2.9); commit. A raise before the commit rolls all of it back; if the hook
 had started, its record may be durable, and the caller closes it. The post-commit steps (B16
 REVOKE, sockets, rule disarm, invite revoke) are slice S4's. The session revoke sees only its
 statement's snapshot, so a successor that an in-flight refresh mints after it stays live: slice
@@ -16,7 +16,6 @@ S4 must close that window.
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime
 
@@ -42,6 +41,7 @@ from candleviewer.storage.repositories.user_lifecycle import (
     UserSelfTargetError,
     UserStatusChange,
 )
+from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_write_ahead
 
 #: Bounds the audit hook, during which the user row and every owner grant stay locked.
 AUDIT_TIMEOUT_S = 2.0
@@ -95,7 +95,9 @@ class SqlAlchemyUserLifecycleStore:
         """Disable the user; sessions are revoked at `now`. `None` if the user does not exist.
 
         Raises `UserSelfTargetError`, what the owner-floor check raises for the last active
-        owner, what `audit` raises, or `TimeoutError`; on any of them nothing changes."""
+        owner, what `audit` raises, or `WriteAheadTimeout` when `audit` outlives
+        `audit_timeout_s`; on any of them the transaction rolls back and nothing changes. A
+        driver or commit `TimeoutError` is raised as is: the outcome is unknown."""
         if user_id == actor:
             raise UserSelfTargetError(str(user_id))
         uid = str(user_id)
@@ -122,8 +124,7 @@ class SqlAlchemyUserLifecycleStore:
                 await s.execute(_REVOKE_GRANTS, {"id": uid, "revoked": revoked})
                 change = UserStatusChange(user_id, before, "disabled", roles, sessions, grants)
                 await s.execute(CONSTRAINTS_NOW)  # the floor trigger fires before the audit
-                async with asyncio.timeout(self._audit_timeout_s):
-                    await audit(change)
+                await bounded_write_ahead(audit(change), self._audit_timeout_s)
                 await uow.commit()
         except IntegrityError as exc:
             refuse_floor_violation(exc, self._owner_floor, counted, _NO_ROLES)
