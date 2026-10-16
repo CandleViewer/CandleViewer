@@ -133,64 +133,64 @@ def make_admin_capacity_router(
 ) -> APIRouter:
     router = admin_router(Permission.ADMIN_WRITE, resolver=resolver, audit=audit)
 
-    async def record(request: Request) -> JSONResponse:
-        principal: AuditPrincipal = request.state.admin_principal  # left there by the guard
-        wanted = await _body(request)
-        if store is None:
-            raise _Problem(ErrorCode.STORE_UNAVAILABLE, "The settings store is unavailable.")
-
-        async def write_ahead(before: StoredSetting | None) -> None:
-            try:
-                await audit.emit(
-                    "settings.change",
-                    actor_label=principal.username,
-                    actor_user_id=principal.user_id,
-                    actor_ip=principal.ip,
-                    session_id=principal.session_id,
-                    object_kind="setting",
-                    object_id=SUBACCOUNT_TIER_KEY,
-                    outcome=AuditOutcome.SUCCESS,
-                    severity=Severity.INFO,
-                    reason=None,
-                    before_state={"tier": None if before is None else before.value},
-                    after_state={"tier": wanted.tier},
-                    request_id=principal.request_id,
-                )
-            except Exception as exc:  # any failure to make the record durable refuses the change
-                raise _AuditRefused from exc
-
-        try:
-            stored = await store.put_string(
-                SUBACCOUNT_TIER_KEY,
-                wanted.tier,
-                updated_by=principal.user_id,
-                write_ahead=write_ahead,
-            )
-        except (_AuditRefused, WriteAheadTimeout) as exc:
-            # listed before `OSError` below: a write-ahead timeout is also a `TimeoutError`
-            cause = exc.__cause__ if isinstance(exc, _AuditRefused) else exc
-            _log().error(
-                "admin_tier_audit_failed",
-                error=type(cause).__name__,
-                actor_user_id=principal.user_id,
-                request_id=principal.request_id,
-            )
-            detail = "The audit record could not be written; the tier is unchanged."
-            raise _Problem(ErrorCode.AUDIT_UNAVAILABLE, detail) from None
-        except (OSError, StorageTierUnavailable) as exc:
-            _log().error("admin_tier_store_unavailable", error=type(exc).__name__)
-            msg = "The settings store is unavailable."
-            raise _Problem(ErrorCode.STORE_UNAVAILABLE, msg) from None
-        finally:
-            capacity.invalidate_subaccounts()  # also after a failure: the outcome may be unknown
-        result = await capacity.subaccounts_recorded(wanted.tier, stored.updated_at)
-        shown = api.SubaccountCapacity.model_validate(subaccounts_payload(result))
-        return JSONResponse(shown.model_dump(mode="json", exclude_unset=True))
-
     @router.put("/capacity/subaccount-tier")
     async def set_subaccount_tier(request: Request) -> JSONResponse:
+        # The handler itself writes the audit (write-ahead, below): C-2.9 / SR-112.
         try:
-            return await record(request)
+            principal: AuditPrincipal = request.state.admin_principal  # left there by the guard
+            wanted = await _body(request)
+            if store is None:
+                raise _Problem(ErrorCode.STORE_UNAVAILABLE, "The settings store is unavailable.")
+
+            async def write_ahead(before: StoredSetting | None) -> None:
+                try:
+                    await audit.emit(
+                        "settings.change",
+                        actor_label=principal.username,
+                        actor_user_id=principal.user_id,
+                        actor_ip=principal.ip,
+                        session_id=principal.session_id,
+                        object_kind="setting",
+                        object_id=SUBACCOUNT_TIER_KEY,
+                        outcome=AuditOutcome.SUCCESS,
+                        severity=Severity.INFO,
+                        reason=None,
+                        before_state={"tier": None if before is None else before.value},
+                        after_state={"tier": wanted.tier},
+                        request_id=principal.request_id,
+                    )
+                except Exception as exc:
+                    # any failure to make the record durable refuses the change
+                    raise _AuditRefused from exc
+
+            try:
+                stored = await store.put_string(
+                    SUBACCOUNT_TIER_KEY,
+                    wanted.tier,
+                    updated_by=principal.user_id,
+                    write_ahead=write_ahead,
+                )
+            except (_AuditRefused, WriteAheadTimeout) as exc:
+                # listed before `OSError` below: a write-ahead timeout is also a `TimeoutError`
+                cause = exc.__cause__ if isinstance(exc, _AuditRefused) else exc
+                _log().error(
+                    "admin_tier_audit_failed",
+                    error=type(cause).__name__,
+                    actor_user_id=principal.user_id,
+                    request_id=principal.request_id,
+                )
+                detail = "The audit record could not be written; the tier is unchanged."
+                raise _Problem(ErrorCode.AUDIT_UNAVAILABLE, detail) from None
+            except (OSError, StorageTierUnavailable) as exc:
+                _log().error("admin_tier_store_unavailable", error=type(exc).__name__)
+                msg = "The settings store is unavailable."
+                raise _Problem(ErrorCode.STORE_UNAVAILABLE, msg) from None
+            finally:
+                # also after a failure: the outcome may be unknown
+                capacity.invalidate_subaccounts()
+            result = await capacity.subaccounts_recorded(wanted.tier, stored.updated_at)
+            shown = api.SubaccountCapacity.model_validate(subaccounts_payload(result))
+            return JSONResponse(shown.model_dump(mode="json", exclude_unset=True))
         except _Problem as problem:
             return problem.response()
 
