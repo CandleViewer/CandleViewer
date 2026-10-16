@@ -78,6 +78,25 @@ compare it before and after; a burst of parallel wrong passwords can add more th
 `AuthLockouts` rule (`infra/prometheus/alerts/system_ticket.yml`) reads it:
 `increase(auth_lockouts_total[10m]) > 0`.
 
+Owner alert for a lock (SR-016, SR-126): the `AuthLockouts` alert is that rule. It is severity
+`ticket`, and Alertmanager sends it to the Owner's ticket channel, a Slack-compatible webhook read
+from a secret file (`infra/alertmanager/alertmanager.yml`). The message holds the alert name,
+component, environment, severity, an occurrence count, the summary "Account lockout occurred" and
+the runbook link (`docs/plan/07-release-and-prr.md#alert-authlockouts`). **It does not name the
+account**: the audit rows in step 1 carry only a redacted identifier (first three characters and
+its length), and the lock itself is `users.locked_until`. Locks in one burst arrive as one message
+(grouped by alert, component and environment). Two limits:
+
+- **Quiet hours.** A `ticket` notification inside quiet hours (22:00-07:00 UTC by default,
+  `CV_ALERT_QUIET_HOURS`) is muted, not queued, and the alert stays active for only 10 minutes after
+  the last lock. So a lock during quiet hours is not delivered, except one in the last 10 minutes
+  before the window ends (#2621). The audit log and `auth_lockouts_total` still show it: check them
+  in the morning.
+- **Delivery is not exercised by any test**: it needs the compose stack and a receiver
+  (environment-only, #2105). Offline, `tests/security/auth/test_lockout_owner_alert.py` proves that
+  one lock moves the series the rule reads, once, next to the audit rows, and the promtool cases in
+  `infra/prometheus/tests/system_alerts.test.yml` prove the rule fires on that series.
+
 Owner's own account: the same expiry applies. If the Owner has lost the TOTP device,
 `POST $API/auth/mfa/recovery` takes `{"mfa_token":"<from login>","recovery_code":"<code>"}`:
 
@@ -96,9 +115,6 @@ Re-enrolment is forced unconditionally after a recovery (`auth/mfa_service.py`);
 Not available today:
 
 - **Early unlock by an Owner: not implemented, no ticket.** Wait for expiry.
-- **Owner alert on lockout: BLOCKED — not verified/implemented.** The review found it unverified
-  (see #2102). Do not rely on being notified; check the audit log. The `AuthLockouts` rule has a
-  signal to read since #2117, but delivery of its ticket to the Owner has not been verified.
 
 Stop and escalate if every Owner account is locked and has no TOTP device or recovery codes: go to
 procedure 3.
@@ -365,7 +381,7 @@ repository's secret settings, never from an agent session.
 | Scheduled audit-chain verifier                                            | #2111                |
 | Disable-user cascade (SR-029)                                             | #965                 |
 | Session rotation on role change and step-up                               | #2101                |
-| Owner notification on lockout                                             | #2102                |
+| Lock alerts lost inside quiet hours                                       | #2621                |
 | `auth_login_failures_total` declared but not emitted                      | #2319 (item 4)       |
 
 ## Execution record
