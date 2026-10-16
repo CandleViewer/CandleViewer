@@ -332,6 +332,10 @@ x-error-codes:
     title: "Unhandled server error (correlation id in `instance`)"
     retryable: true
     surface: [rest, ws] # same slug, same meaning on the WS (23-ws-protocol.md §10.2)
+  - code: not_implemented
+    status: 501
+    title: Operation declared but its backing provider is not wired yet; nothing was done
+    retryable: false
   - code: exchange_error
     status: 502
     title: Bybit returned a non-zero retCode
@@ -344,6 +348,10 @@ x-error-codes:
   - code: store_unavailable
     status: 503
     title: QuestDB / Postgres / Parquet tier unavailable
+    retryable: true
+  - code: audit_unavailable
+    status: 503
+    title: Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)
     retryable: true
   - code: degraded_data
     status: 503
@@ -9234,6 +9242,56 @@ paths:
                       tier_source: unrecorded
                       recorded_at: null
 
+  /admin/capacity/subaccount-tier:
+    put:
+      tags: [admin]
+      operationId: setSubaccountTier
+      summary: Record the Bybit sub-account tier as a fact (never inferred)
+      description: |
+        Records the system-scope setting `accounts.subaccount_tier` (21-database-schema.md 3.9)
+        that `GET /admin/capacity` reports as `SubaccountCapacity`: cap 5 for `regular`, 20 for
+        `business_kyc`. Owner-only (`admin:write`). Every successful call is audited as
+        `settings.change` with the before and after tier, written ahead of the response; a denied
+        attempt is audited too. The tier cannot be cleared here, and nothing else ever sets it.
+
+        The tier is committed and audited before capacity is read. If the `used` source then
+        fails, the call still returns `200` with `status: error`, and `tier`, `cap`, `tier_source`
+        and `recorded_at` are populated. `503 store_unavailable` when storage fails: the tier is
+        unchanged and no `settings.change` row is written. Its `detail` is a fixed reason, never
+        the driver error. A successful write invalidates the cached `subaccounts` slice, so the
+        next `GET /admin/capacity` shows the new tier at once (E42-T01 AC3).
+
+        `Idempotency-Key` is not used: a repeat with the same tier returns `200` and is still
+        audited (before == after). No step-up: `admin:write` is not an SR-025 action class, and a
+        higher tier only widens a local cap on `createExchangeAccount`, which SR-E27-02 requires
+        to be step-up gated; its accounts are inert until keys are attached via the step-up-gated
+        key routes (SR-025).
+      x-rbac: { permissions: [admin:write], scope: none }
+      x-idempotency: ignored
+      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [tier]
+              properties:
+                tier: { type: string, enum: [regular, business_kyc] }
+            examples:
+              businessKyc: { value: { tier: business_kyc } }
+      responses:
+        "200":
+          description: Tier recorded; the resulting sub-account capacity.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SubaccountCapacity" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
   /admin/incidents:
     get:
       tags: [admin]
@@ -14322,6 +14380,7 @@ components:
             without_mfa: { type: integer }
         accounts:
           type: object
+          description: Counts are scoped to the serving environment (C-2.11), never demo and live together.
           allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
           properties:
             total: { type: integer }
@@ -14337,7 +14396,7 @@ components:
             lag_seconds_p99: { type: number }
         storage:
           type: object
-          description: "`days_until_full` is `null` unless growth is measured; the estimated fallback exists only in `CapacityReport.storage`."
+          description: "`days_until_full` is `0` when the disk has no headroom left; otherwise it is `null` unless growth is measured. The estimated fallback exists only in `CapacityReport.storage`."
           allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
           properties:
             used_bytes: { type: integer, format: int64 }
@@ -14391,7 +14450,8 @@ components:
                 `estimated`: no measurement yet, so 0.75 GB/day per recorded symbol (7.5e8 bytes,
                 upper bound of the 0.5-0.75 band at 200-depth); `estimated` is `true` (convention
                 C10). `nothing_recorded`: no symbol recorded, so growth is `0` by fact and
-                `days_until_full` is `null`. **Open-ended for readers:** clients must tolerate
+                `days_until_full` is `null`, or `0` when the disk has no headroom left (as for
+                every basis). **Open-ended for readers:** clients must tolerate
                 values they do not know, so adding a basis is an additive change (C-6.3).
             estimated:
               type: boolean
@@ -14422,6 +14482,8 @@ components:
         Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact (setting
         `accounts.subaccount_tier`, `21-database-schema.md` §3.9), never inferred from counts or
         `max_sub_accounts_hint`; `tier` and `cap` are `null` iff `tier_source` is `unrecorded`.
+        If the tier read itself fails, the slice status is not `ok` and the four tier fields
+        (`tier`, `cap`, `tier_source`, `recorded_at`) are omitted, never defaulted.
       allOf: [{ $ref: "#/components/schemas/AdminSliceStatus" }]
       properties:
         tier:
@@ -14437,8 +14499,10 @@ components:
           type: integer
           minimum: 0
           description: >
-            Most non-deleted live sub-accounts (`exchange_accounts.kind = sub`, `env = live`)
-            under any one main account: the cap binds live exchange UIDs, per main (C-2.11).
+            Most non-deleted sub-accounts in the process environment (live in production; C-2.11)
+            under any one main account (`exchange_accounts.kind = sub`): the cap binds exchange
+            UIDs, per main. The process environment is `CV_ENV`, the process-scope key
+            (`20-architecture.md` §7.2), not the per-session `/session/environment` switch.
         tier_source:
           type: string
           enum: [recorded, unrecorded]

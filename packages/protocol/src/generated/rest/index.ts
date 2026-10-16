@@ -185,6 +185,43 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  "/admin/capacity/subaccount-tier": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /**
+     * Record the Bybit sub-account tier as a fact (never inferred)
+     * @description Records the system-scope setting `accounts.subaccount_tier` (21-database-schema.md 3.9)
+     *     that `GET /admin/capacity` reports as `SubaccountCapacity`: cap 5 for `regular`, 20 for
+     *     `business_kyc`. Owner-only (`admin:write`). Every successful call is audited as
+     *     `settings.change` with the before and after tier, written ahead of the response; a denied
+     *     attempt is audited too. The tier cannot be cleared here, and nothing else ever sets it.
+     *
+     *     The tier is committed and audited before capacity is read. If the `used` source then
+     *     fails, the call still returns `200` with `status: error`, and `tier`, `cap`, `tier_source`
+     *     and `recorded_at` are populated. `503 store_unavailable` when storage fails: the tier is
+     *     unchanged and no `settings.change` row is written. Its `detail` is a fixed reason, never
+     *     the driver error. A successful write invalidates the cached `subaccounts` slice, so the
+     *     next `GET /admin/capacity` shows the new tier at once (E42-T01 AC3).
+     *
+     *     `Idempotency-Key` is not used: a repeat with the same tier returns `200` and is still
+     *     audited (before == after). No step-up: `admin:write` is not an SR-025 action class, and a
+     *     higher tier only widens a local cap on `createExchangeAccount`, which SR-E27-02 requires
+     *     to be step-up gated; its accounts are inert until keys are attached via the step-up-gated
+     *     key routes (SR-025).
+     */
+    put: operations["setSubaccountTier"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/admin/feature-flags": {
     parameters: {
       query?: never;
@@ -4113,6 +4150,7 @@ export interface components {
     };
     /** @description Partial-result roll-up (E42-T01): every slice carries `AdminSliceStatus`; `generated_at` is when it was assembled; `incidents_open` mirrors `incidents.open` (omitted if not `ok`). */
     AdminOverview: {
+      /** @description Counts are scoped to the serving environment (C-2.11), never demo and live together. */
       accounts?: {
         enabled?: number;
         keys_expiring_30d?: number;
@@ -4130,7 +4168,7 @@ export interface components {
         symbols_degraded?: number;
         symbols_recording?: number;
       } & components["schemas"]["AdminSliceStatus"];
-      /** @description `days_until_full` is `null` unless growth is measured; the estimated fallback exists only in `CapacityReport.storage`. */
+      /** @description `days_until_full` is `0` when the disk has no headroom left; otherwise it is `null` unless growth is measured. The estimated fallback exists only in `CapacityReport.storage`. */
       storage?: {
         days_until_full?: number | null;
         /** Format: int64 */
@@ -4539,7 +4577,7 @@ export interface components {
           used_bytes?: number;
         }[];
         /**
-         * @description Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day per recorded symbol (7.5e8 bytes, upper bound of the 0.5-0.75 band at 200-depth); `estimated` is `true` (convention C10). `nothing_recorded`: no symbol recorded, so growth is `0` by fact and `days_until_full` is `null`. **Open-ended for readers:** clients must tolerate values they do not know, so adding a basis is an additive change (C-6.3).
+         * @description Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day per recorded symbol (7.5e8 bytes, upper bound of the 0.5-0.75 band at 200-depth); `estimated` is `true` (convention C10). `nothing_recorded`: no symbol recorded, so growth is `0` by fact and `days_until_full` is `null`, or `0` when the disk has no headroom left (as for every basis). **Open-ended for readers:** clients must tolerate values they do not know, so adding a basis is an additive change (C-6.3).
          * @enum {string}
          */
         projection_basis?: "measured" | "estimated" | "nothing_recorded";
@@ -7487,7 +7525,7 @@ export interface components {
       | "liquidations"
       | "open_interest"
       | "funding";
-    /** @description Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact (setting `accounts.subaccount_tier`, `21-database-schema.md` §3.9), never inferred from counts or `max_sub_accounts_hint`; `tier` and `cap` are `null` iff `tier_source` is `unrecorded`. */
+    /** @description Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact (setting `accounts.subaccount_tier`, `21-database-schema.md` §3.9), never inferred from counts or `max_sub_accounts_hint`; `tier` and `cap` are `null` iff `tier_source` is `unrecorded`. If the tier read itself fails, the slice status is not `ok` and the four tier fields (`tier`, `cap`, `tier_source`, `recorded_at`) are omitted, never defaulted. */
     SubaccountCapacity: {
       /** @description 5 for `regular`, 20 for `business_kyc`, `null` while unrecorded. */
       cap?: number | null;
@@ -7506,7 +7544,7 @@ export interface components {
        * @enum {string}
        */
       tier_source?: "recorded" | "unrecorded";
-      /** @description Most non-deleted live sub-accounts (`exchange_accounts.kind = sub`, `env = live`) under any one main account: the cap binds live exchange UIDs, per main (C-2.11). */
+      /** @description Most non-deleted sub-accounts in the process environment (live in production; C-2.11) under any one main account (`exchange_accounts.kind = sub`): the cap binds exchange UIDs, per main. The process environment is `CV_ENV`, the process-scope key (`20-architecture.md` §7.2), not the per-session `/session/environment` switch. */
       used?: number;
     } & components["schemas"]["AdminSliceStatus"];
     /**
@@ -8486,6 +8524,46 @@ export interface operations {
           "application/json": components["schemas"]["CapacityReport"];
         };
       };
+    };
+  };
+  setSubaccountTier: {
+    parameters: {
+      query?: never;
+      header: {
+        /**
+         * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
+         *     against the session id the server resolves itself (not merely header == cookie). All
+         *     comparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except
+         *     the pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or
+         *     unbound → `403 csrf_token_invalid`.
+         */
+        "X-CSRF-Token": components["parameters"]["CsrfToken"];
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        "application/json": {
+          /** @enum {string} */
+          tier: "regular" | "business_kyc";
+        };
+      };
+    };
+    responses: {
+      /** @description Tier recorded; the resulting sub-account capacity. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["SubaccountCapacity"];
+        };
+      };
+      401: components["responses"]["Unauthorized"];
+      403: components["responses"]["Forbidden"];
+      422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   listFeatureFlags: {

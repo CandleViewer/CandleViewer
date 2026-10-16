@@ -5111,12 +5111,17 @@ class Incidents(AdminSliceStatus):
 class AdminOverview(BaseModel):
     generated_at: AwareDatetime | None = None
     users: Users | None = None
-    accounts: Accounts | None = None
+    accounts: Annotated[
+        Accounts | None,
+        Field(
+            description="Counts are scoped to the serving environment (C-2.11), never demo and live together."
+        ),
+    ] = None
     recorder: Recorder | None = None
     storage: Annotated[
         Storage | None,
         Field(
-            description="`days_until_full` is `null` unless growth is measured; the estimated fallback exists only in `CapacityReport.storage`."
+            description="`days_until_full` is `0` when the disk has no headroom left; otherwise it is `null` unless growth is measured. The estimated fallback exists only in `CapacityReport.storage`."
         ),
     ] = None
     trading: Trading1 | None = None
@@ -5148,7 +5153,7 @@ class Storage1(AdminSliceStatus):
     projection_basis: Annotated[
         Literal["measured", "estimated", "nothing_recorded"] | None,
         Field(
-            description="Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day per recorded symbol (7.5e8 bytes, upper bound of the 0.5-0.75 band at 200-depth); `estimated` is `true` (convention C10). `nothing_recorded`: no symbol recorded, so growth is `0` by fact and `days_until_full` is `null`. **Open-ended for readers:** clients must tolerate values they do not know, so adding a basis is an additive change (C-6.3).\n"
+            description="Source of `daily_growth_bytes`. `measured`: the recorder's DiskBudget fit. `estimated`: no measurement yet, so 0.75 GB/day per recorded symbol (7.5e8 bytes, upper bound of the 0.5-0.75 band at 200-depth); `estimated` is `true` (convention C10). `nothing_recorded`: no symbol recorded, so growth is `0` by fact and `days_until_full` is `null`, or `0` when the disk has no headroom left (as for every basis). **Open-ended for readers:** clients must tolerate values they do not know, so adding a basis is an additive change (C-6.3).\n"
         ),
     ] = None
     estimated: Annotated[
@@ -5187,7 +5192,7 @@ class SubaccountCapacity(AdminSliceStatus):
     used: Annotated[
         int | None,
         Field(
-            description="Most non-deleted live sub-accounts (`exchange_accounts.kind = sub`, `env = live`) under any one main account: the cap binds live exchange UIDs, per main (C-2.11).\n",
+            description="Most non-deleted sub-accounts in the process environment (live in production; C-2.11) under any one main account (`exchange_accounts.kind = sub`): the cap binds exchange UIDs, per main. The process environment is `CV_ENV`, the process-scope key (`20-architecture.md` §7.2), not the per-session `/session/environment` switch.\n",
             ge=0,
         ),
     ] = None
