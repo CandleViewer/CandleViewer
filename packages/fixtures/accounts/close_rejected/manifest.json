@@ -1,0 +1,23 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "close_rejected",
+  "origin": "plan",
+  "description": "As compliant, but every order create, so the flatten's reduce-only close, is rejected with a reply whose code is unconfirmed. TC-305's open position comes from the overlay open_position_btcusdt_5x_sl, so no opening order is needed; the stub has no request matcher (#2893).",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000011",
+    "key_id": "fixture-close_rejected-0030"
+  },
+  "rest": {
+    "POST /v5/order/create": {
+      "payload": "close_rejected/order_create_rejected.json",
+      "code_unconfirmed": true,
+      "note": "No recorded close rejection exists; 110017 (reduce-only) is the closest code in 24-internal-schemas section 8.6 (README, unconfirmed codes)."
+    }
+  },
+  "expected": {
+    "outcome": "The flatten failure is shown with the exchange's reason; the key is not reported revoked unless it was; the remaining choices are offered.",
+    "cases": ["E27-TC-305"]
+  }
+}

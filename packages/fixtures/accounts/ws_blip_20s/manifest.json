@@ -1,0 +1,45 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_blip_20s",
+  "origin": "plan",
+  "description": "Switched in at runtime once the key is stored (TC-411; the switch is #2893's), so its scenario time starts at the switch. Healthy for 10 s after the switch; from 10 s to 30 s after it the private WS drops and refuses reconnects and every REST call answers HTTP 503; from 30 s everything recovers as compliant.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-ws_blip_20s-0028"
+  },
+  "rest": {
+    "*": {
+      "payload": "../bybit/2026-10-05/rest/error_503.json",
+      "http_status": 503,
+      "from_ms": 10000,
+      "until_ms": 30000
+    }
+  },
+  "ws": {
+    "private": {
+      "timeline": [
+        {
+          "at_ms": 10000,
+          "do": "refuse_reconnects",
+          "label": "blip starts"
+        },
+        {
+          "at_ms": 10000,
+          "do": "drop",
+          "label": "connection dropped"
+        },
+        {
+          "at_ms": 30000,
+          "do": "accept_reconnects",
+          "label": "blip ends"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "outcome": "Watched for 60 s from T0, the switch: never red (health never down; green or amber both pass) and order entry never disabled for the 20 s outage (T0 + 10 s to T0 + 30 s).",
+    "cases": ["E27-TC-411"]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_quiet",
+  "origin": "plan",
+  "description": "REST as compliant. The private WS stays connected and answers pings, but sends no wallet frame after the snapshot.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-ws_quiet-0025"
+  },
+  "ws": {
+    "private": {
+      "after_auth": [
+        {
+          "after_ms": 0,
+          "payload": "_base/ws_wallet.json",
+          "label": "wallet snapshot after auth"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "outcome": "The REST truth-check runs at 60 s and the timestamp updates; the account stays green with no stale badge (contract balance_stale after 10 s, plan DC-12).",
+    "health": "healthy",
+    "cases": ["E27-TC-406", "E27-TC-407"]
+  }
+}

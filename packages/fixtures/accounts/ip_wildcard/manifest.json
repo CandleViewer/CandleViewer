@@ -1,0 +1,28 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ip_wildcard",
+  "origin": "plan (E27 threat model AC-15)",
+  "description": "As compliant, but key info reports the allowlist as the wildcard [\"*\"].",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-ip_wildcard-0039"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "ips": ["*"]
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: no wildcard; SR-030a, #2417, E27 threat model AC-15): 422 validation_failed with a rule of its own, never the one ip_missing (TC-104) gets; the rule name is pending #2417. Not persisted. A 201 is P0 (plan DC-03).",
+    "verification": "refused",
+    "problem": "validation_failed",
+    "cases": ["E27-TC-106b"]
+  }
+}

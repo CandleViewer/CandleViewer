@@ -1,0 +1,24 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_auth_timeout",
+  "origin": "plan",
+  "description": "As compliant over REST; the private WS accepts the connection but never answers auth.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-ws_auth_timeout-0023"
+  },
+  "ws": {
+    "private": {
+      "on_auth": {
+        "do": "ignore"
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Test connection: 200 with passed false, websocket.ok false and an error from a fixed vocabulary; the UI names the failed probe in text.",
+    "verification": "refused",
+    "cases": ["E27-TC-125"]
+  }
+}

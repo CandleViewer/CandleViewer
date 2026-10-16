@@ -1,0 +1,18 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "stored_key_rejected",
+  "origin": "plan",
+  "description": "As compliant until the key is stored. A runtime switch (#2893) then makes every signed call answer as in live_key_on_demo and the private WS close on auth, while the key keeps the id and secret it was stored with: the key was deleted at Bybit and never revoked locally.",
+  "environment": "demo",
+  "extends": "compliant",
+  "switch_to": "live_key_on_demo",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-stored_key_rejected-0046"
+  },
+  "expected": {
+    "outcome": "After the switch the self-check marks the key and its account invalid with an alert and disables trading there, while the other account stays verified. The check cannot verify withdrawal-off or the allowlist, so it counts as failed and the system is read-only (plan DC-04).",
+    "verification": "refused",
+    "cases": ["E27-TC-134"]
+  }
+}

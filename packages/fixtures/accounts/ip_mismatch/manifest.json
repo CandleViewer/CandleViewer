@@ -1,0 +1,28 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ip_mismatch",
+  "origin": "ticket",
+  "description": "As compliant, but key info reports the allowlist 198.51.100.20 while the egress is 203.0.113.10.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-ip_mismatch-0006"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "ips": ["198.51.100.20"]
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Refused: egress IP not in the allowlist; not persisted; the current egress IP is shown with a copy control.",
+    "verification": "refused",
+    "problem": "validation_failed/key_ip_whitelist_mismatch",
+    "cases": ["E27-TC-105", "E27-TC-127"]
+  }
+}

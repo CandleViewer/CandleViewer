@@ -1,0 +1,20 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "expiring_15d",
+  "origin": "ticket (verdict)",
+  "description": "As compliant, but key info reports an expiry 15 days after the injected now.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-expiring_15d-0017"
+  },
+  "clock": {
+    "key_expires_offset_ms": 1296000000
+  },
+  "expected": {
+    "outcome": "201 with warnings [] and no expiring chip: no false warning outside 14 days.",
+    "verification": "passed",
+    "cases": ["E27-TC-117"]
+  }
+}

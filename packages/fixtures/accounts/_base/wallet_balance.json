@@ -1,0 +1,42 @@
+{
+  "retCode": 0,
+  "retMsg": "OK",
+  "result": {
+    "list": [
+      {
+        "accountType": "UNIFIED",
+        "totalEquity": "10000.00",
+        "totalWalletBalance": "10000.00",
+        "totalAvailableBalance": "10000.00",
+        "totalMarginBalance": "10000.00",
+        "totalInitialMargin": "0",
+        "totalMaintenanceMargin": "0",
+        "totalPerpUPL": "0",
+        "accountIMRate": "0",
+        "accountMMRate": "0",
+        "accountLTV": "0",
+        "coin": [
+          {
+            "coin": "USDT",
+            "equity": "10000.00",
+            "walletBalance": "10000.00",
+            "usdValue": "10000.00",
+            "unrealisedPnl": "0",
+            "cumRealisedPnl": "0",
+            "totalPositionIM": "0",
+            "totalPositionMM": "0",
+            "totalOrderIM": "0",
+            "locked": "0",
+            "borrowAmount": "0",
+            "accruedInterest": "0",
+            "bonus": "0",
+            "marginCollateral": true,
+            "collateralSwitch": true
+          }
+        ]
+      }
+    ]
+  },
+  "retExtInfo": {},
+  "time": 1792141200000
+}

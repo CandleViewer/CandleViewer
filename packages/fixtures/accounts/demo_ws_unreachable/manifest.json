@@ -1,0 +1,22 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "demo_ws_unreachable",
+  "origin": "plan",
+  "description": "As compliant over REST; the demo private WS refuses every connection.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-demo_ws_unreachable-0015"
+  },
+  "ws": {
+    "private": {
+      "on_connect": "refuse"
+    }
+  },
+  "expected": {
+    "outcome": "The outage is reported (system exchange_state frame); no fallback: zero connections or requests to live hosts.",
+    "health": "degraded",
+    "cases": ["E27-TC-115"]
+  }
+}

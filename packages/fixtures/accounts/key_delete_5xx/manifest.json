@@ -1,0 +1,26 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "key_delete_5xx",
+  "origin": "plan",
+  "description": "As compliant, but both Bybit key-delete endpoints answer HTTP 503.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000011",
+    "key_id": "fixture-key_delete_5xx-0029"
+  },
+  "rest": {
+    "POST /v5/user/delete-api": {
+      "payload": "../bybit/2026-10-05/rest/error_503.json",
+      "http_status": 503
+    },
+    "POST /v5/user/delete-sub-api": {
+      "payload": "../bybit/2026-10-05/rest/error_503.json",
+      "http_status": 503
+    }
+  },
+  "expected": {
+    "outcome": "A negative guard: local revocation always happens and is the only one (204, key revoked, nothing signed with it afterwards). Under the contract no build calls a key-delete endpoint, so any call to one is a contract deviation even when its 503 is handled (plan DC-07).",
+    "cases": ["E27-TC-306"]
+  }
+}

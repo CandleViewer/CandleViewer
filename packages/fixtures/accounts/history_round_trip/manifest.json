@@ -1,0 +1,85 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "history_round_trip",
+  "origin": "overlay",
+  "description": "Seeds the exchange-side history of one BTCUSDT round trip on the scenario it is named with: the order history holds a filled market buy and its filled reduce-only market sell, the execution list their two fills, and the position list stays flat. The audit history is the application's own: it comes from running the round trip through the stack (#2893 or an E27-Q02 seeding path).",
+  "environment": "demo",
+  "rest": {
+    "GET /v5/order/history": {
+      "payload": "_base/order_list_empty.json",
+      "merge_patch": {
+        "result": {
+          "list": [
+            {
+              "orderId": "00000000-0000-4000-8000-0000000000f4",
+              "orderLinkId": "fixture-order-0004",
+              "symbol": "BTCUSDT",
+              "side": "Buy",
+              "orderType": "Market",
+              "qty": "0.001",
+              "orderStatus": "Filled",
+              "reduceOnly": false
+            },
+            {
+              "orderId": "00000000-0000-4000-8000-0000000000f5",
+              "orderLinkId": "fixture-order-0005",
+              "symbol": "BTCUSDT",
+              "side": "Sell",
+              "orderType": "Market",
+              "qty": "0.001",
+              "orderStatus": "Filled",
+              "reduceOnly": true
+            }
+          ]
+        }
+      }
+    },
+    "GET /v5/execution/list": {
+      "payload": "_base/order_list_empty.json",
+      "merge_patch": {
+        "result": {
+          "list": [
+            {
+              "symbol": "BTCUSDT",
+              "orderId": "00000000-0000-4000-8000-0000000000f4",
+              "orderLinkId": "fixture-order-0004",
+              "side": "Buy",
+              "orderType": "Market",
+              "orderQty": "0.001",
+              "leavesQty": "0",
+              "execId": "00000000-0000-4000-8000-0000000000e4",
+              "execPrice": "63110.00",
+              "execQty": "0.001",
+              "execValue": "63.11",
+              "execFee": "0.0347105",
+              "feeCurrency": "USDT",
+              "execPnl": "0",
+              "isMaker": false
+            },
+            {
+              "symbol": "BTCUSDT",
+              "orderId": "00000000-0000-4000-8000-0000000000f5",
+              "orderLinkId": "fixture-order-0005",
+              "side": "Sell",
+              "orderType": "Market",
+              "orderQty": "0.001",
+              "leavesQty": "0",
+              "execId": "00000000-0000-4000-8000-0000000000e5",
+              "execPrice": "63120.00",
+              "execQty": "0.001",
+              "execValue": "63.12",
+              "execFee": "0.034716",
+              "feeCurrency": "USDT",
+              "execPnl": "0.01",
+              "isMaker": false
+            }
+          ]
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "A flat account with order and execution history, still listed after a delete (TC-311).",
+    "cases": ["E27-TC-311"]
+  }
+}

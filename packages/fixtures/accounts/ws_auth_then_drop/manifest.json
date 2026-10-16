@@ -1,0 +1,40 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_auth_then_drop",
+  "origin": "ticket",
+  "description": "REST as compliant. The private WS authenticates and sends one wallet snapshot; 5 s after the scenario starts it refuses reconnects and drops the connection, for good.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-ws_auth_then_drop-0024"
+  },
+  "ws": {
+    "private": {
+      "after_auth": [
+        {
+          "after_ms": 0,
+          "payload": "_base/ws_wallet.json",
+          "label": "wallet snapshot after auth"
+        }
+      ],
+      "timeline": [
+        {
+          "at_ms": 5000,
+          "do": "refuse_reconnects",
+          "label": "reconnects refused"
+        },
+        {
+          "at_ms": 5000,
+          "do": "drop",
+          "label": "connection dropped"
+        }
+      ]
+    }
+  },
+  "expected": {
+    "outcome": "A REST wallet reconciliation runs 60 s after the last frame and the freshness timestamp moves to it; figures not greyed; amber 'degraded - REST only'.",
+    "health": "degraded",
+    "cases": ["E27-TC-403", "E27-TC-409"]
+  }
+}

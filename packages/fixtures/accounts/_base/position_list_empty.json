@@ -1,0 +1,11 @@
+{
+  "retCode": 0,
+  "retMsg": "OK",
+  "result": {
+    "category": "linear",
+    "list": [],
+    "nextPageCursor": ""
+  },
+  "retExtInfo": {},
+  "time": 1792141200000
+}

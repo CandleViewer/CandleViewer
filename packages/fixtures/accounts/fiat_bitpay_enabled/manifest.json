@@ -1,0 +1,31 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "fiat_bitpay_enabled",
+  "origin": "plan (#2417)",
+  "description": "As compliant, but key info adds a non-empty FiatBitPay group, a fund-moving group whose name holds neither withdraw nor transfer (E27 threat model, section 5, item 2).",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-fiat_bitpay_enabled-0036"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "permissions": {
+            "FiatBitPay": ["FaitPayOrder"]
+          }
+        }
+      },
+      "note": "FaitPayOrder is the spelling the E27 threat model (section 5, item 2) gives; not re-verified (README)."
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: fund-moving group outside the allow-list; #2417, E27 threat model AC-15): 422 validation_failed with rule key_withdraw_permission; not persisted. A 201 is P0 (plan DC-01).",
+    "verification": "refused",
+    "problem": "validation_failed/key_withdraw_permission",
+    "cases": ["E27-TC-103e"]
+  }
+}

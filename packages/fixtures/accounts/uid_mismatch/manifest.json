@@ -1,0 +1,28 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "uid_mismatch",
+  "origin": "ticket",
+  "description": "As compliant, but key info reports UID 90000099 whatever account the key is attached to.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-uid_mismatch-0008"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "userID": 90000099
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Refused; the reason names both UIDs; not persisted.",
+    "verification": "refused",
+    "problem": "validation_failed/key_uid_mismatch",
+    "cases": ["E27-TC-107"]
+  }
+}

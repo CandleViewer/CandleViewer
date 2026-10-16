@@ -1,0 +1,28 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ip_missing",
+  "origin": "ticket",
+  "description": "As compliant, but key info reports an empty IP allowlist.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-ip_missing-0005"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "ips": []
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: allowlist present) with an allowlist rule in every environment; not persisted; the copy says the allowlist is set in the Bybit dashboard (TC-104). On a stored key switched to it, the start-up self-check (TC-128) and the hourly one (TC-132b) flag only that account: it is disabled by policy with the reason shown and an alert raised, the other accounts stay verified, and the system is read-only (cancel and flatten still work).",
+    "verification": "refused",
+    "problem": "validation_failed/key_ip_whitelist_missing",
+    "cases": ["E27-TC-104", "E27-TC-128", "E27-TC-132b"]
+  }
+}

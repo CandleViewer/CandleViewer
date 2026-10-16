@@ -1,0 +1,20 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "expiring_13d",
+  "origin": "ticket (verdict)",
+  "description": "As compliant, but key info reports an expiry 13 days after the injected now.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-expiring_13d-0016"
+  },
+  "clock": {
+    "key_expires_offset_ms": 1123200000
+  },
+  "expected": {
+    "outcome": "201 with a warning naming the expiry ('key expires in 13 days'); a warning, not a block: order entry stays enabled; expiring chips per SCR-125 and SCR-079.",
+    "verification": "passed_with_warning",
+    "cases": ["E27-TC-116"]
+  }
+}

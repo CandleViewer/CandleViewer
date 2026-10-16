@@ -1,0 +1,20 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "expired_key",
+  "origin": "plan",
+  "description": "As compliant, but key info reports an expiry 1 day before the injected now.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-expired_key-0018"
+  },
+  "clock": {
+    "key_expires_offset_ms": -86400000
+  },
+  "expected": {
+    "outcome": "The self-check disables the account for order placement (SR-034); an age-overdue account still trades: expiry and age are not conflated.",
+    "verification": "refused",
+    "cases": ["E27-TC-212"]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "missing_trade_scope",
+  "origin": "plan",
+  "description": "As compliant, but key info has no contract Order or Position scope (empty ContractTrade).",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-missing_trade_scope-0012"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "permissions": {
+            "ContractTrade": []
+          }
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Refused: required trade scopes absent for a read_only false key; not persisted.",
+    "verification": "refused",
+    "problem": "validation_failed/key_missing_scopes",
+    "cases": ["E27-TC-111"]
+  }
+}

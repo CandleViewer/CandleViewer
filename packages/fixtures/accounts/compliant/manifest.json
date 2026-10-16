@@ -1,0 +1,111 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "compliant",
+  "origin": "ticket (verdict)",
+  "description": "Every stub answers as a healthy, compliant demo key: key info lists the contract trade scopes only, with every other group empty (Wallet included), the egress IP as the whole allowlist, unified 0 and uta 1 (plan section 10 DC-33: the UTA verdict comes from uta), the account's UID, an expiry 365 days after the injected now and a creation time 30 days before it. The IP echo check answers the egress IP and server time answers the stub's clock, so no real echo service or exchange is reached. The signed probe answers retCode 0 inside recv_window; the private WS authenticates, sends a wallet snapshot, then a wallet frame every 5 s, and answers pings. Fee-rate, set-leverage, trading-stop, order create and cancel and the three mode-switch calls succeed; the position and open-order lists are empty unless an overlay seeds them. It is the default for setup and the root every other key scenario extends.",
+  "environment": "demo",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-compliant-0001"
+  },
+  "egress_ip": "203.0.113.10",
+  "clock": {
+    "server_offset_ms": 0,
+    "key_created_offset_ms": -2592000000,
+    "key_expires_offset_ms": 31536000000
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json"
+    },
+    "GET /v5/account/wallet-balance": {
+      "payload": "_base/wallet_balance.json"
+    },
+    "GET /v5/market/time": {
+      "payload": "../bybit/2026-10-05/rest/server_time.json"
+    },
+    "GET /v5/account/fee-rate": {
+      "payload": "_base/fee_rate.json"
+    },
+    "POST /v5/position/set-leverage": {
+      "payload": "_base/set_leverage_ok.json"
+    },
+    "POST /v5/position/trading-stop": {
+      "payload": "_base/trading_stop_ok.json"
+    },
+    "POST /v5/order/create": {
+      "payload": "_base/order_ack.json"
+    },
+    "POST /v5/order/cancel": {
+      "payload": "_base/order_ack.json"
+    },
+    "GET /v5/order/realtime": {
+      "payload": "_base/order_list_empty.json"
+    },
+    "GET /v5/position/list": {
+      "payload": "_base/position_list_empty.json"
+    },
+    "POST /v5/position/switch-mode": {
+      "payload": "_base/mode_switch_ok.json"
+    },
+    "POST /v5/position/switch-isolated": {
+      "payload": "_base/mode_switch_ok.json"
+    },
+    "POST /v5/account/set-margin-mode": {
+      "payload": "_base/mode_switch_ok.json"
+    }
+  },
+  "ws": {
+    "private": {
+      "on_connect": "accept",
+      "on_auth": {
+        "do": "reply",
+        "payload": "_base/ws_auth_ok.json"
+      },
+      "on_subscribe": {
+        "do": "reply",
+        "payload": "_base/ws_subscribe_ok.json"
+      },
+      "on_ping": {
+        "do": "reply",
+        "payload": "_base/ws_pong.json"
+      },
+      "after_auth": [
+        {
+          "after_ms": 0,
+          "payload": "_base/ws_wallet.json",
+          "label": "wallet snapshot after auth"
+        },
+        {
+          "after_ms": 5000,
+          "payload": "_base/ws_wallet.json",
+          "every_ms": 5000,
+          "label": "wallet frame every 5 s"
+        }
+      ],
+      "timeline": []
+    }
+  },
+  "expected": {
+    "outcome": "Key verified and stored: passed true, withdraw_enabled false, unified true (the contract's name for the UTA verdict, from uta 1; plan DC-33), ip_whitelist_matches_egress true, probe_ret_code 0 and no warnings (an expiry 365 days ahead is compliant under every source, plan DC-27); the account is green (healthy) with a freshness timestamp; with no position or order, a margin-mode switch succeeds (TC-419). Switched back to it, a save that failed on a 5xx answers 201 (TC-122), the stale badge clears and risk-based sizing returns (TC-405), and a red account turns green with order entry re-enabled (TC-412).",
+    "verification": "passed",
+    "health": "healthy",
+    "cases": [
+      "E27-TC-012",
+      "E27-TC-101",
+      "E27-TC-119",
+      "E27-TC-121",
+      "E27-TC-122",
+      "E27-TC-124",
+      "E27-TC-211",
+      "E27-TC-212",
+      "E27-TC-401",
+      "E27-TC-405",
+      "E27-TC-408",
+      "E27-TC-412",
+      "E27-TC-413",
+      "E27-TC-419",
+      "E27-TC-422"
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_quiet_rest_fail",
+  "origin": "plan",
+  "description": "ws_quiet plus a failing REST balance reconciliation: the WS stays quiet and every wallet-balance call answers HTTP 503 with the shared corpus's 503 body. Not wallet_probe_error's 10005, a verdict about the key that would also fail the key; order calls still succeed.",
+  "environment": "demo",
+  "extends": "ws_quiet",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-ws_quiet_rest_fail-0026"
+  },
+  "rest": {
+    "GET /v5/account/wallet-balance": {
+      "payload": "../bybit/2026-10-05/rest/error_503.json",
+      "http_status": 503
+    }
+  },
+  "expected": {
+    "outcome": "'stale since' badge; risk-based sizing disabled with the reason shown and refused server-side; fixed-quantity entry stays available (the WS is healthy).",
+    "health": "healthy",
+    "cases": ["E27-TC-405"]
+  }
+}

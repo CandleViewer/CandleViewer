@@ -1,0 +1,18 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "unknown_key",
+  "origin": "plan",
+  "description": "Identical answers to live_key_on_demo, for a key id no environment issued (a typo): every signed demo REST call answers the 10003 invalid-key reply and the private WS closes on auth. Live hosts are never stubbed: any live-host request is a defect.",
+  "environment": "demo",
+  "extends": "live_key_on_demo",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-unknown_key-0045"
+  },
+  "expected": {
+    "outcome": "The same status, rule and copy as live_key_on_demo: Refused (check: environment) with 'key does not belong to this environment'; not persisted; no signed or private-WS traffic to a live host. A difference claims a determination the system cannot make without contacting live (plan DC-29).",
+    "verification": "refused",
+    "problem": "validation_failed/key_wrong_environment",
+    "cases": ["E27-TC-133"]
+  }
+}
