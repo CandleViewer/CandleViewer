@@ -12,6 +12,17 @@ Every derived view (bars, footprint, CVD, bubbles) is a cache over this stream
   any later print (no consumer sees time move backwards). A `GapEvent` with
   explicit bounds and a text label is published either way; `recovered=False`
   when the backfill failed or did not reach back to the gap start.
+* **An unrecovered window stays visible (#2715)** — it is kept per symbol
+  (bounded) and reported by `unrecovered_gaps()` (health `trade_gap_unrecovered`)
+  until a later backfill covers it, the symbol leaves demand, or
+  `UNRECOVERED_RETENTION_S` after it closed (then only its `GapEvent` remains,
+  so a hole no page can reach never pins health for good). A failed (or
+  empty) backfill is retried on a capped, jittered backoff through the same
+  REST path and rate governor (C-12.7). A covering page sends the missing
+  prints to the hot tier only: the live tape moved on, so publishing them
+  would move time backwards, and the window's `GapEvent` stays as published.
+  Each window is judged on its own: one a page no longer reaches back to is
+  not retried again (later recent-trade pages only move forward).
 * **Off the dispatch path (#1905)** — the backfill runs in a tracked,
   single-flight task per symbol; live batches for that symbol are held
   (bounded) and published after the merge, so other symbols/streams never wait.
@@ -25,6 +36,7 @@ parsing and REST are injected (C-2.2): this module sees only `TradePrint`s.
 from __future__ import annotations
 
 import asyncio
+import random
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterable, Sequence
@@ -66,6 +78,17 @@ BACKFILL_TIMEOUT_S = 5.0
 #: (5 000 prints/s x the 5 s backfill timeout, x2). Overflow: drop newest,
 #: counted, and the gap is reopened so the next batch backfills again.
 HOLD_CAPACITY = 50_000
+#: #2715: an unrecovered window is re-backfilled after GAP_RETRY_MIN_S doubling to
+#: GAP_RETRY_MAX_S, equal jitter: at most one recent-trade page per symbol per 30-60 s
+#: once capped, on the same REST client and rate governor as the first backfill (C-12.7).
+GAP_RETRY_MIN_S = 2.0
+GAP_RETRY_MAX_S = 60.0
+#: #2715: unrecovered windows kept per symbol; past it the newest folds into the last.
+UNRECOVERED_WINDOWS_CAP = 16
+#: #2715 review: a window is reported for at most this long after it closed (15 retries
+#: at the 60 s cap fit inside); a hole no page can reach would otherwise pin health for good.
+UNRECOVERED_RETENTION_S = 15 * GAP_RETRY_MAX_S
+_JITTER = random.SystemRandom().random
 
 
 class TradeWriter(Protocol):
@@ -90,6 +113,16 @@ class GapEvent:
 
         prefix = "Backfilled" if self.recovered else "No data"
         return f"{prefix} {hms(self.start_us)}-{hms(self.end_us)}"
+
+
+@dataclass(slots=True, eq=False)  # identity, not value: two holes may share bounds
+class _Hole:
+    """#2715: a window that closed `recovered=False`, kept for the health signal."""
+
+    start_us: int
+    end_us: int
+    expires: float  # `clock` s: reported until then unless a page covers it first
+    retry: bool  # False once a page no longer reached back to `start_us`
 
 
 class DedupeRing:
@@ -152,6 +185,8 @@ class TradeStream:
         write_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         write_rand: Callable[[], float] | None = None,
         hold_capacity: int = HOLD_CAPACITY,
+        retry_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        retry_rand: Callable[[], float] = _JITTER,
     ) -> None:
         self._bus, self._env = bus, env
         self._set_desired, self._parse = set_desired, parse_frame
@@ -184,6 +219,10 @@ class TradeStream:
         self._hold: dict[str, list[TradePrint]] = {}
         self._hold_overflow: set[str] = set()
         self._hold_cap = hold_capacity
+        #: #2715: windows that closed `recovered=False`, oldest first, + one retry per symbol.
+        self._unrecovered: dict[str, list[_Hole]] = {}
+        self._retry_tasks: dict[str, asyncio.Task[None]] = {}
+        self._retry_sleep, self._retry_rand = retry_sleep, retry_rand
         self._health = bus.subscribe(
             "trade-stream-health",
             TopicPattern(env=env, domain="health", detail="feed"),
@@ -205,9 +244,9 @@ class TradeStream:
     def sync(self) -> None:
         wanted = self._demand.desired()
         self._set_desired({self._topic_for(s) for s in wanted})
-        for gone in set(self._rings) - wanted:
-            for d in (self._rings, self._last_ts, self._gap_open):
-                d.pop(gone, None)
+        for gone in (set(self._rings) | set(self._unrecovered)) - wanted:
+            for d in (self._rings, self._last_ts, self._gap_open, self._unrecovered):
+                d.pop(gone, None)  # a pending retry sees no windows and ends (#2715)
 
     async def prune_unlisted(self) -> list[str]:
         """#1913: drop + unsubscribe symbols that left the catalogue."""
@@ -235,6 +274,23 @@ class TradeStream:
 
     def open_gaps(self) -> dict[str, tuple[int, str]]:
         return dict(self._gap_open)
+
+    def unrecovered_gaps(self) -> dict[str, tuple[int, int]]:
+        """#2715: symbol -> (oldest start_us, newest end_us) over `unrecovered_windows`."""
+        wanted = self._demand.desired()
+        gaps = {s: self._reported(s, wanted) for s in self._unrecovered}
+        return {s: (w[0][0], w[-1][1]) for s, w in gaps.items() if w}
+
+    def unrecovered_windows(self, symbol: str) -> list[tuple[int, int]]:
+        """#2715: `symbol`'s windows that closed `recovered=False`, oldest first, as
+        (start_us, end_us): none covered by a later backfill, none past the retention
+        horizon, and none once the symbol left demand."""
+        return self._reported(symbol, self._demand.desired())
+
+    def _reported(self, symbol: str, wanted: set[str]) -> list[tuple[int, int]]:
+        now = self._clock()
+        holes = self._unrecovered.get(symbol, ()) if symbol in wanted else ()
+        return [(h.start_us, h.end_us) for h in holes if h.expires > now]
 
     # ---- gaps -----------------------------------------------------------
     def mark_gap(self, reason: str, symbol: str | None = None) -> None:
@@ -318,6 +374,8 @@ class TradeStream:
         gev = GapEvent(sym, start_us, end_us, recovered, reason)
         self._gaps.setdefault(sym, deque(maxlen=256)).append(gev)
         trade_gaps_total.labels(symbol=symbol_label(sym), recovered=str(recovered).lower()).inc()
+        if not recovered:  # health keeps it; only a missing/empty page is worth a retry
+            self._keep_unrecovered(gev, retry=not rows)
         await self._bus.publish(Topic(env=self._env, domain="md", symbol=sym, detail="gap"), gev)
         tagged = [(p, "live" if p.trade_id in live_ids else "backfill") for p in merged]
         await self._publish_all(sym, tagged, ts_ingest)
@@ -343,6 +401,87 @@ class TradeStream:
                         self._gap_open.setdefault(sym, (self._last_ts[sym], "backfill_failed"))
         if not task.cancelled() and task.exception() is not None:
             get_logger(__name__).error("trade backfill task failed", exc_info=task.exception())
+
+    # ---- unrecovered windows (#2715) ------------------------------------------
+    def _holes(self, sym: str) -> list[_Hole]:
+        """`sym`'s holes inside the retention horizon; expired ones are dropped."""
+        now = self._clock()
+        holes = [h for h in self._unrecovered.pop(sym, ()) if h.expires > now]
+        if holes:
+            self._unrecovered[sym] = holes
+        return holes
+
+    def _keep_unrecovered(self, gev: GapEvent, *, retry: bool) -> None:
+        sym = gev.symbol
+        hole = _Hole(gev.start_us, gev.end_us, self._clock() + UNRECOVERED_RETENTION_S, retry)
+        holes = self._holes(sym)
+        if len(holes) >= UNRECOVERED_WINDOWS_CAP:  # bounded: the newest folds into the last
+            last = holes.pop()  # the fold spans both: worth a retry only if both still are
+            hole.start_us, hole.retry = last.start_us, last.retry and retry
+        self._unrecovered[sym] = [*holes, hole]
+        task = self._retry_tasks.get(sym)  # a done one waits for `_retry_done`: not running
+        if hole.retry and self._fetch is not None and (task is None or task.done()):
+            task = spawn(self._retry_unrecovered(sym), name=f"trade-gap-retry:{sym}")
+            self._retry_tasks[sym] = task
+            task.add_done_callback(self._retry_done)
+
+    async def _retry_unrecovered(self, sym: str) -> None:
+        """Re-run the backfill for `sym`'s holes until each is covered, expired, or past
+        the backfill horizon (later pages only move forward), or `sym` leaves demand."""
+        attempt = 0
+        while any(h.retry for h in self._holes(sym)):
+            attempt += 1
+            step = min(GAP_RETRY_MAX_S, GAP_RETRY_MIN_S * 2.0 ** min(attempt - 1, 16))
+            await self._retry_sleep(step / 2 + step / 2 * self._retry_rand())
+            if sym not in self._demand.desired():  # its grace ran out with no sync() since
+                self._unrecovered.pop(sym, None)
+            if not any(h.retry for h in self._holes(sym)):  # nothing left: no REST call
+                return
+            page = [p for p in (await self._backfill(sym) or ()) if p.symbol == sym]
+            if not page:
+                continue  # failed or empty page: no evidence yet, try again later
+            oldest = min(p.ts_event_us for p in page)
+            newest = max(p.ts_event_us for p in page)
+            healed: list[_Hole] = []
+            for h in self._holes(sym):
+                if h.retry and h.start_us < oldest:  # reported until it expires; no retries
+                    h.retry = False
+                    get_logger(__name__).warning(
+                        "trade gap past the backfill horizon", symbol=sym, start_us=h.start_us
+                    )
+                elif h.retry and h.end_us <= newest:  # else REST lags the window end: retry
+                    healed.append(h)
+            if healed:
+                self._heal(sym, healed, page)
+
+    def _heal(self, sym: str, healed: list[_Hole], page: list[TradePrint]) -> None:
+        """Write the holes' missing prints to the hot tier (never the live topic) and
+        drop the holes from the health signal."""
+        ring = self._rings.setdefault(sym, DedupeRing(self._cap))
+        ts_ingest, written = self._now_us(), 0
+        for p in sorted(page, key=lambda p: (p.ts_event_us, p.trade_id)):
+            # Inclusive: one ms can stamp several prints, so a lost one may share a bound. A
+            # bound print already out of the ring is written again: the hot tier's dedup
+            # upsert keys (ts, symbol, trade_id) make that a no-op, so `written` is an upper bound.
+            inside = any(h.start_us <= p.ts_event_us <= h.end_us for h in healed)
+            if inside and ring.add(p.trade_id):
+                self._enqueue_write(self._event(p, "backfill", ts_ingest))
+                written += 1
+        left = [h for h in self._unrecovered.get(sym, ()) if h not in healed]
+        if left:
+            self._unrecovered[sym] = left
+        else:
+            self._unrecovered.pop(sym, None)
+        get_logger(__name__).info(
+            "trade gap healed", symbol=sym, windows=len(healed), rows_written=written
+        )
+
+    def _retry_done(self, task: asyncio.Task[None]) -> None:
+        for sym, t in list(self._retry_tasks.items()):
+            if t is task:
+                del self._retry_tasks[sym]
+        if not task.cancelled() and task.exception() is not None:
+            get_logger(__name__).error("trade gap retry failed", exc_info=task.exception())
 
     async def wait_backfills(self) -> None:
         """Await every in-flight backfill (tests, orderly shutdown)."""
@@ -374,6 +513,7 @@ class TradeStream:
             )
 
     def _event(self, p: TradePrint, source: str, ts_ingest: int) -> TradeEvent:
+        # `seq` is monotonic, not contiguous (§2.1): a hot-tier-only heal row (#2715) takes one.
         seq = self._seq.get(p.symbol, 0) + 1
         self._seq[p.symbol] = seq
         tick = self._tick_size(p.symbol)
@@ -452,7 +592,8 @@ class TradeStream:
         ]
 
     async def stop(self) -> None:
-        tasks, self._tasks = self._tasks + list(self._bf_tasks.values()), []
+        tasks = self._tasks + list(self._bf_tasks.values()) + list(self._retry_tasks.values())
+        self._tasks = []
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
@@ -462,6 +603,10 @@ class TradeStream:
 
 __all__ = [
     "DEDUPE_CAPACITY",
+    "GAP_RETRY_MAX_S",
+    "GAP_RETRY_MIN_S",
+    "UNRECOVERED_RETENTION_S",
+    "UNRECOVERED_WINDOWS_CAP",
     "DedupeRing",
     "GapEvent",
     "TradeStream",

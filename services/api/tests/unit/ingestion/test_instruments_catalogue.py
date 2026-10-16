@@ -208,3 +208,20 @@ def test_cache_mark_stale_is_a_noop_when_never_populated() -> None:
     cache = InstrumentCatalogueCache(ttl_seconds=1)
     cache.mark_stale(stale_since_us=5)
     assert cache.current() is None
+
+
+def test_cache_marked_stale_is_stale_while_still_inside_the_ttl() -> None:
+    """#2715: a failed refresh makes the catalogue stale at once, not only after the TTL."""
+    cache = InstrumentCatalogueCache(ttl_seconds=43_200)
+    cache.swap(CatalogueSnapshot(by_symbol={}, fetched_at_us=1_000_000))
+    cache.mark_stale(stale_since_us=1_000_001)
+    assert cache.is_stale(now_us=1_000_002) is True
+
+
+def test_cache_successful_refresh_clears_the_stale_mark() -> None:
+    """#2715: the next successful refresh swaps in a fresh, unmarked snapshot."""
+    cache = InstrumentCatalogueCache(ttl_seconds=43_200)
+    cache.swap(CatalogueSnapshot(by_symbol={}, fetched_at_us=1_000_000))
+    cache.mark_stale(stale_since_us=1_000_001)
+    cache.swap(CatalogueSnapshot(by_symbol={}, fetched_at_us=2_000_000))
+    assert cache.is_stale(now_us=2_000_001) is False

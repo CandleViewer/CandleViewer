@@ -253,6 +253,8 @@ class Rig:
             writer=self.writer,
             write_sleep=self.clock.sleep,  # #1918 write-behind backoff on virtual time
             write_rand=self.rng.random,
+            retry_sleep=self.clock.sleep,  # #2715 unrecovered-gap retries on virtual time
+            retry_rand=self.rng.random,
         )
         self.svc.attach_trades(self.trades)
         self.book_supervisor = B14BookSupervisor()

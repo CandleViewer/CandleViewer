@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import json
 import time
 from collections.abc import Sequence
@@ -23,14 +25,24 @@ from candleviewer.exchange.bybit.trades import (
     recent_trades_fetcher,
     trade_topic,
 )
+from candleviewer.ingestion import trade_stream as trade_stream_mod
 from candleviewer.ingestion.metrics import (
     trade_duplicates_suppressed_total,
     trade_gaps_total,
 )
 from candleviewer.ingestion.ticker_stream import UnknownSymbolError
-from candleviewer.ingestion.trade_stream import DedupeRing, GapEvent, TradeStream, merge_ordered
+from candleviewer.ingestion.trade_stream import (
+    GAP_RETRY_MAX_S,
+    GAP_RETRY_MIN_S,
+    UNRECOVERED_RETENTION_S,
+    DedupeRing,
+    GapEvent,
+    TradeStream,
+    merge_ordered,
+)
 from candleviewer.ingestion.watchdog import FeedHealthEvent
 from tests._corpus import corpus_path
+from tests.unit.ingestion._fakes import ParkingSleep, settle
 
 FIX = corpus_path("ws")
 FRAMES = (FIX / "publicTrade_BTCUSDT.jsonl").read_text(encoding="utf-8").splitlines()
@@ -42,8 +54,20 @@ def _val(counter: Any, **labels: str) -> float:
     return float(counter.labels(**labels)._value.get())
 
 
+async def _park(_delay: float) -> None:
+    """Default gap-retry `sleep`: parks until the test ends (never real time, C-13.7)."""
+    await asyncio.Event().wait()
+
+
 class Harness:
-    def __init__(self, fetch: Any = None, writer: Any = None, maxsize: int = 100_000) -> None:
+    def __init__(
+        self,
+        fetch: Any = None,
+        writer: Any = None,
+        maxsize: int = 100_000,
+        retry_sleep: Any = _park,
+        clock: Any = lambda: 0.0,
+    ) -> None:
         self.bus = Bus()
         self.desired: set[str] = set()
         self.sub = self.bus.subscribe(
@@ -60,9 +84,11 @@ class Harness:
             touch=lambda _t: None,
             fetch_recent=fetch,
             tick_size=lambda _s: Decimal("0.10"),
-            clock=lambda: 0.0,
+            clock=clock,
             now_us=lambda: 1_700_000_009_500_000,
             writer=writer,
+            retry_sleep=retry_sleep,
+            retry_rand=lambda: 0.5,
         )
         self.stream.acquire("tape", "BTCUSDT")
         # #1905: backfill runs off the dispatch path; these scenarios assert
@@ -221,7 +247,8 @@ async def test_backfill_unavailable_leaves_gap_unrecovered_stream_continues(mode
         return [p for p in parse_recent_trades("BTCUSDT", RECENT) if p.trade_id[-1] in "67"]
 
     fetch = {"rate_limited": rate_limited, "short": short, "none": None}[mode]
-    h = Harness(fetch=fetch)
+    sleep = ParkingSleep()
+    h = Harness(fetch=fetch, retry_sleep=sleep)
     await h.stream.handle_frame(FRAMES[1])
     await _reconnect(h)
     before = _val(trade_gaps_total, symbol="BTCUSDT", recovered="false")
@@ -231,6 +258,10 @@ async def test_backfill_unavailable_leaves_gap_unrecovered_stream_continues(mode
     assert gap.label().startswith("No data ")
     assert _val(trade_gaps_total, symbol="BTCUSDT", recovered="false") == before + 1
     assert h.events()[-1].trade_id == f"{ID}7"  # stream continues
+    assert h.stream.unrecovered_gaps() == {"BTCUSDT": (gap.start_us, gap.end_us)}  # #2715
+    await settle()  # only a failed fetch is retried: a short page already scrolled past it
+    assert len(sleep.delays) == (1 if mode == "rate_limited" else 0)
+    await h.stream.stop()
 
 
 async def test_recent_trades_fetcher_passes_limit_1000() -> None:
@@ -410,3 +441,216 @@ async def test_frames_for_unsubscribed_symbol_ignored() -> None:
     await h.stream.handle_frame(FRAMES[0].replace("BTCUSDT", "SOLUSDT"))
     await h.stream.handle_frame('{"topic":"tickers.BTCUSDT"}')
     assert h.events() == []
+
+
+# ---- #2715: an unrecovered window stays reported and is retried -------------------------
+class _Rest:
+    """Recent-trade REST double: each call pops the next answer (an exception is raised);
+    once the answers run out the venue keeps failing."""
+
+    def __init__(self, *answers: Exception | Sequence[TradePrint]) -> None:
+        self.answers = list(answers)
+        self.calls = 0
+
+    async def __call__(self, _s: str) -> Sequence[TradePrint]:
+        self.calls += 1
+        answer = self.answers.pop(0) if self.answers else RuntimeError("503")
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+PAGE = parse_recent_trades("BTCUSDT", RECENT)  # prints 1, 3-7: reaches back past print 3
+
+
+async def _unrecovered(h: Harness) -> GapEvent:
+    """Print 3, reconnect, then print 7 closes the window while the first backfill fails."""
+    await h.stream.handle_frame(FRAMES[1])
+    await _reconnect(h)
+    await h.stream.handle_frame(FRAMES[2])
+    (gap,) = h.gap_events()
+    assert gap.recovered is False
+    return gap
+
+
+async def test_failed_gap_backfill_is_retried_on_a_capped_jittered_backoff() -> None:
+    rest, sleep = _Rest(), ParkingSleep()  # the venue's REST stays down
+    h = Harness(fetch=rest, retry_sleep=sleep)
+    await _unrecovered(h)
+    for _ in range(7):
+        await settle()
+        sleep.release()
+    await settle()
+    steps = [min(GAP_RETRY_MAX_S, GAP_RETRY_MIN_S * 2**n) for n in range(8)]
+    assert sleep.delays == [0.75 * step for step in steps]  # equal jitter at rand 0.5
+    assert rest.calls == 1 + 7  # one page per attempt, on the first backfill's REST path
+    assert "BTCUSDT" in h.stream.unrecovered_gaps()
+    await h.stream.stop()
+    assert sleep.parked[-1].cancelled()  # stop() cancels the tracked retry
+
+
+async def test_gap_retry_waits_out_empty_and_lagging_pages_then_heals() -> None:
+    lagging = [p for p in PAGE if p.trade_id[-1] != "7"]  # REST behind the window end
+    rest, sleep, w = _Rest(RuntimeError("503"), [], lagging, PAGE), ParkingSleep(), _Writer()
+    h = Harness(fetch=rest, retry_sleep=sleep, writer=w)
+    gap = await _unrecovered(h)
+    for _ in range(3):
+        await settle()
+        assert h.stream.unrecovered_gaps() == {"BTCUSDT": (gap.start_us, gap.end_us)}
+        sleep.release()
+    await settle()
+    assert h.stream.unrecovered_gaps() == {}
+    assert len(sleep.delays) == 3 and rest.calls == 4  # healed: no further retry
+    while h.stream.write_behind.qsize():
+        await h.stream.drain_writes()
+    assert [e.trade_id[-1] for e in w.rows if e.source == "backfill"] == ["4", "5", "6"]
+    assert [e.trade_id[-1] for e in h.events()] == ["3", "7"]  # never on the live topic
+    assert h.gap_events() == []
+
+
+async def test_gap_retry_stops_once_the_page_has_scrolled_past_the_window() -> None:
+    scrolled = [p for p in PAGE if p.trade_id[-1] in "67"]  # oldest print after the start
+    rest, sleep = _Rest(RuntimeError("503"), scrolled), ParkingSleep()
+    h = Harness(fetch=rest, retry_sleep=sleep)
+    gap = await _unrecovered(h)
+    await settle()
+    sleep.release()
+    await settle()
+    assert rest.calls == 2 and len(sleep.delays) == 1  # later pages only move forward
+    assert h.stream.unrecovered_gaps() == {"BTCUSDT": (gap.start_us, gap.end_us)}  # a hole
+
+
+async def test_unrecovered_windows_share_one_retry_and_stay_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(trade_stream_mod, "UNRECOVERED_WINDOWS_CAP", 2)
+    rest, sleep = _Rest(), ParkingSleep()
+    h = Harness(fetch=rest, retry_sleep=sleep)
+    first = await _unrecovered(h)
+    for i in range(2):  # two more unrecovered windows on the same symbol
+        await _reconnect(h)
+        await h.stream.handle_frame(_frame([_p(100 + i, 1_700_000_020_000 + 1000 * i)]))
+    *_, last = h.gap_events()
+    await settle()
+    assert len(h.stream.unrecovered_windows("BTCUSDT")) == 2  # the newest folded into the last
+    assert h.stream.unrecovered_gaps() == {"BTCUSDT": (first.start_us, last.end_us)}
+    assert len(sleep.delays) == 1  # one retry per symbol, not one per window
+    await h.stream.stop()
+
+
+async def test_gap_retry_ends_without_rest_once_the_symbol_left_demand() -> None:
+    now = [0.0]
+    rest, sleep = _Rest(), ParkingSleep()
+    h = Harness(fetch=rest, retry_sleep=sleep, clock=lambda: now[0])
+    await _unrecovered(h)
+    await settle()
+    h.stream.release("tape", "BTCUSDT")
+    assert "BTCUSDT" in h.stream.unrecovered_gaps()  # inside the 30 s demand grace
+    now[0] = 31.0  # grace over; no sync() since
+    assert h.stream.unrecovered_gaps() == {}
+    calls = rest.calls
+    sleep.release()
+    await settle()
+    assert rest.calls == calls and len(sleep.delays) == 1  # ended without a REST call
+
+
+async def test_window_closed_during_a_retry_fetch_waits_for_the_next_retry() -> None:
+    venue_answers = asyncio.Event()
+    calls: list[str] = []
+
+    async def fetch(symbol: str) -> Sequence[TradePrint]:
+        calls.append(symbol)
+        if len(calls) == 2:  # the retry's page; it only reaches the window-1 end
+            await venue_answers.wait()
+            return PAGE
+        raise RuntimeError("503")
+
+    sleep = ParkingSleep()
+    h = Harness(fetch=fetch, retry_sleep=sleep)
+    await _unrecovered(h)
+    await settle()
+    sleep.release()  # the retry's fetch is now in flight
+    await settle()
+    await _reconnect(h)  # a second window closes unrecovered meanwhile
+    await h.stream.handle_frame(_frame([_p(100, 1_700_000_020_000)]))
+    (second,) = h.gap_events()
+    venue_answers.set()
+    await settle()
+    assert h.stream.unrecovered_gaps() == {"BTCUSDT": (second.start_us, second.end_us)}
+    assert len(sleep.delays) == 2  # healed the first; the second waits for the next retry
+    await h.stream.stop()
+
+
+async def test_a_hole_the_first_page_cannot_reach_clears_after_the_retention_horizon() -> None:
+    """#2715 review: the first page already starts after the window (later pages only move
+    forward, so no retry); the hole is reported for `UNRECOVERED_RETENTION_S`, then only its
+    `GapEvent(recovered=False)` remains, so one outage cannot pin health for good."""
+    now = [0.0]
+    scrolled = [p for p in PAGE if p.trade_id[-1] in "67"]
+    h = Harness(fetch=_Rest(scrolled), clock=lambda: now[0])
+    gap = await _unrecovered(h)
+    now[0] = UNRECOVERED_RETENTION_S - 1.0
+    assert h.stream.unrecovered_gaps() == {"BTCUSDT": (gap.start_us, gap.end_us)}
+    now[0] = UNRECOVERED_RETENTION_S
+    assert h.stream.unrecovered_gaps() == {}
+    assert h.stream.unrecovered_windows("BTCUSDT") == []
+    assert h.stream.gaps("BTCUSDT") == [gap]  # the permanent record
+
+
+async def test_gap_retry_judges_each_window_against_the_page() -> None:
+    """#2715 review: a page that no longer reaches window 1 still heals window 2 (its lost
+    print reaches the hot tier); window 1 is not retried again and stays reported until the
+    retention horizon ends."""
+    now, w = [0.0], _Writer()
+    rest, sleep = _Rest(), ParkingSleep()  # both windows' first backfill fails
+    h = Harness(fetch=rest, retry_sleep=sleep, writer=w, clock=lambda: now[0])
+    first = await _unrecovered(h)
+    await _reconnect(h)
+    await h.stream.handle_frame(_frame([_p(100, 1_700_000_020_000)]))
+    (second,) = h.gap_events()
+    assert (second.start_us, second.recovered) == (first.end_us, False)
+    seven = [p for p in PAGE if p.trade_id[-1] == "7"]  # the page starts at window 2's start
+    rest.answers.append([*seven, _p(101, 1_700_000_015_000), _p(100, 1_700_000_020_000)])
+    await settle()
+    sleep.release()
+    await settle()
+    assert h.stream.unrecovered_windows("BTCUSDT") == [(first.start_us, first.end_us)]
+    assert rest.calls == 3 and len(sleep.delays) == 1  # nothing left worth a retry
+    while h.stream.write_behind.qsize():
+        await h.stream.drain_writes()
+    assert [e.trade_id for e in w.rows if e.source == "backfill"] == ["t00101"]
+    now[0] = UNRECOVERED_RETENTION_S
+    assert h.stream.unrecovered_gaps() == {}
+
+
+async def test_window_closing_as_the_retry_ends_still_gets_a_retry() -> None:
+    """#2715 review: a finished retry task leaves `_retry_done` one loop turn later; a window
+    that closes unrecovered in that turn must start its own retry, not count the done one."""
+    answers: list[asyncio.Future[Sequence[TradePrint]]] = []
+
+    async def fetch(_s: str) -> Sequence[TradePrint]:
+        answer: asyncio.Future[Sequence[TradePrint]] = asyncio.get_running_loop().create_future()
+        answers.append(answer)
+        return await answer
+
+    sleep = ParkingSleep()
+    h = Harness(fetch=fetch, retry_sleep=sleep)
+    frame = functools.partial(TradeStream.handle_frame, h.stream)  # backfills not awaited
+    await frame(FRAMES[1])
+    await _reconnect(h)
+    await frame(FRAMES[2])  # window 1 closes ...
+    await settle()
+    answers[0].set_exception(RuntimeError("503"))  # ... unrecovered: its retry parks
+    await settle()
+    await _reconnect(h)
+    await frame(_frame([_p(100, 1_700_000_020_000)]))  # window 2 closes; backfill pending
+    await settle()
+    sleep.release()
+    await settle()  # the retry's page request is in flight too
+    answers[2].set_result(PAGE)  # covers window 1: the retry task ends ...
+    answers[1].set_exception(RuntimeError("503"))  # ... in the turn window 2 stays a hole
+    await settle()
+    _, second = h.gap_events()
+    assert h.stream.unrecovered_gaps() == {"BTCUSDT": (second.start_us, second.end_us)}
+    assert len(sleep.delays) == 2  # window 2 got a retry of its own
+    await h.stream.stop()

@@ -405,7 +405,8 @@ class IngestionService:
             slo = {} if self._book_slo_s is None else {"slo_s": self._book_slo_s}
             if self.books.out_of_live(**slo):
                 reasons.append(HealthReason.BOOK_OUT_OF_LIVE)
-        if self.trades is not None and self.trades.open_gaps():
+        trades = self.trades  # #2715: an open window, or one that closed unrecovered
+        if trades is not None and (trades.open_gaps() or trades.unrecovered_gaps()):
             reasons.append(HealthReason.TRADE_GAP_UNRECOVERED)
         if self.instruments is not None and self.instruments.cache.is_stale(now_us=self._now_us()):
             reasons.append(HealthReason.CATALOGUE_STALE)

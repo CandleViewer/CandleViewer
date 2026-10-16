@@ -6,6 +6,9 @@ window -> `GapEvent(recovered=True)` on `{env}.md.{sym}.gap`, missing prints
 published with `source="backfill"`, no duplicates. Backfill impossible (REST
 down) -> `GapEvent(recovered=False)` and `trade_gaps_total{recovered="false"}`
 +1, which the `IngestionTradeGapUnrecovered` alert keys on - never absorbed.
+#2715: health stays `degraded` (`trade_gap_unrecovered`) after live prints
+resume, until a retried backfill covers the window once REST recovers; the
+lost prints then reach the hot tier (never the live topic) and health is `ok`.
 """
 
 from __future__ import annotations
@@ -13,6 +16,9 @@ from __future__ import annotations
 import pytest
 
 from candleviewer.ingestion.metrics import trade_backfill_rows_total, trade_gaps_total
+from candleviewer.ingestion.service import HealthReason
+from candleviewer.ingestion.trade_stream import BACKFILL_TIMEOUT_S, GAP_RETRY_MAX_S
+from tests.chaos.ingestion._clock import ScenarioTimeoutError
 from tests.chaos.ingestion._faults import Fault, FaultKind
 from tests.chaos.ingestion._feed import Feeder
 from tests.chaos.ingestion._rig import Rig, metric
@@ -27,6 +33,16 @@ BACKFILL_RETRY_BUDGET_S = 15.0
 
 def _gaps(recovered: str) -> float:
     return metric(trade_gaps_total, symbol="BTCUSDT", recovered=recovered)
+
+
+async def _feed_until_ok(rig: Rig, feed: Feeder, *, within_s: float) -> None:
+    """The venue keeps trading while ingestion recovers; health `ok` is the SLO."""
+    start = rig.clock.now
+    while rig.health_report() != "ok":
+        if rig.clock.now - start > within_s:
+            detail = rig.svc.health().detail
+            raise ScenarioTimeoutError(f"health not ok within {within_s}s ({detail})")
+        await feed.run(1.0)
 
 
 async def _reconnect_with_lost_prints(rig: Rig, feed: Feeder) -> list[str]:
@@ -62,12 +78,24 @@ async def test_s04_unrecoverable_gap_raises_an_alert_signal(rig: Rig) -> None:
     feed = Feeder(rig.ex)
     before, errors = _gaps("false"), metric(trade_backfill_rows_total, result="error")
     rig.ex.inject(Fault(FaultKind.HTTP_STATUS, status=503, count=50, path=BACKFILL_PATH))
-    await _reconnect_with_lost_prints(rig, feed)
+    lost = await _reconnect_with_lost_prints(rig, feed)
     await feed.run(BACKFILL_RETRY_BUDGET_S)  # REST retries back off on the virtual clock
     seen = rig.observe()
     assert [g.recovered for g in seen.gaps] == [False]  # visible, never absorbed
     assert _gaps("false") == before + 1  # IngestionTradeGapUnrecovered fires on this
-    assert metric(trade_backfill_rows_total, result="error") == errors + 1
+    # +1 per failed attempt: the first backfill, then each #2715 retry
+    assert metric(trade_backfill_rows_total, result="error") >= errors + 1
+    # #2715: live prints resumed, but the hole is still open while REST is down
+    assert rig.svc.health().detail == HealthReason.TRADE_GAP_UNRECOVERED
+
+    rig.ex.clear(FaultKind.HTTP_STATUS, path=BACKFILL_PATH)  # the REST outage ends
+    await _feed_until_ok(rig, feed, within_s=GAP_RETRY_MAX_S + BACKFILL_TIMEOUT_S)
+    await feed.run(1.0)  # the write-behind flushes the healed rows
+    healed = {t.trade_id for t in rig.writer.persisted_trades if t.source == "backfill"}
+    assert set(lost) <= healed, "lost prints not healed into the hot tier"
+    live = {t.trade_id for t in rig.observe().trades if hasattr(t, "trade_id")}
+    assert not set(lost) & live, "healed prints republished: time moved backwards"
+    assert [g.recovered for g in rig.observe().gaps] == [False]  # the window's event stays
 
 
 async def test_s04_rest_outage_during_backfill_does_not_recycle_the_ws(rig: Rig) -> None:

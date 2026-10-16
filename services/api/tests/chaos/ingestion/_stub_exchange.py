@@ -161,6 +161,11 @@ class StubExchange:
             return
         self._faults.append(fault)
 
+    def clear(self, kind: FaultKind, *, path: str | None = None) -> None:
+        """The outage is over: drop every armed `kind` fault (on `path`, if given)."""
+        self.trace.add(self.clock.now, "clear", f"{kind}:{path}")
+        self._faults = [f for f in self._faults if f.kind is not kind or path not in (None, f.path)]
+
     def _take(
         self, kind: FaultKind, *, topic: str | None = None, path: str | None = None
     ) -> Fault | None:
