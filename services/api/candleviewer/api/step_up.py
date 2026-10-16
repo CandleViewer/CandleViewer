@@ -176,10 +176,10 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     # restoreBackup (no-grace): this guard spends the one-shot grant before RBAC and before the
     # handler validates, so a refused restore costs the code and a retry waits for the next TOTP
     # step. The handler must not gate again (a second check always fails); its ticket may instead
-    # move this row to HANDLER_GATED_ROUTES and spend the grant after validation. Before it is
-    # mounted, `consume_single_use` must become atomic (a read-modify-write today, so concurrent
-    # restores can share one code: #2798), and the restore's write-ahead audit record must name
-    # the step-up (B16 records no spend: #2799).
+    # move this row to HANDLER_GATED_ROUTES and spend the grant after validation.
+    # `consume_single_use` spends the grant with one conditional UPDATE (#2895), so concurrent
+    # restores cannot share one code. Before it is mounted, the restore's write-ahead audit
+    # record must name the step-up (B16 records no spend: #2799).
     ("POST", re.compile(r"^/admin/backups/[^/]+/restore$"), "backups"),
     # #2738 (SR-025, 04 §7.2.2 row 9, Owner and Manager): every request changes retention.
     ("PUT", re.compile(r"^/recording/retention-policies$"), "recorder"),  # setRetentionPolicies
