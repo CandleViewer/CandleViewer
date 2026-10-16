@@ -1294,9 +1294,9 @@ CREATE INDEX ix_orders_inflight  ON orders (created_ts) WHERE idempotency_state 
 CREATE INDEX ix_orders_untracked ON orders (exchange_account_id) WHERE state = 'untracked';
 ```
 
-`order_link_id` construction is owned by `24-internal-schemas.md` §8.3. The id is generated once, stored here before the first send and reused unchanged on every retry, so a retry after an ambiguous timeout is a no-op at the exchange. `ord_link_fmt` admits exactly the two shapes that section defines, both 36 chars: our own id and the `ext-` key of an adopted row. It has no `state` term, because `state` changes and the id never does.
+`order_link_id` construction is owned by `24-internal-schemas.md` §8.3. The id is generated once, stored here before the first send and reused unchanged on every retry, so a retry after an ambiguous timeout is a no-op at the exchange. `ord_link_fmt` admits exactly the two shapes that section defines, both 36 chars: our own id and the `ext-` key an adopted order gets in place of a foreign or empty `orderLinkId`. It has no `state` term, because `state` changes and the id never does.
 
-**Adopted rows.** Reconciliation inserts an order it finds on the exchange without a local row (`24-internal-schemas.md` §8.5 step 3c) with `state = 'untracked'` and the `ext-` key of its Bybit `orderId` (`24-internal-schemas.md` §8.3) as `order_link_id`, so the column stays NOT NULL and unique over all rows. Bybit's own `orderLinkId` is never stored in this column; it stays only in the `payload` (the raw exchange message) of the adoption's `order_events` row. The `ext-` prefix marks an adopted row for its whole life: the id never changes (`24-internal-schemas.md` §8.3 rules 1 and 4), so the row keeps it, and still passes `ord_link_fmt`, through `untracked → accepted | cancelled` (§3.3.1) and through adoption under management (E45-S01), even when that binds it to a trade group. Adoption is idempotent on `ux_orders_exch_id`.
+**Adopted rows.** Reconciliation inserts an exchange order that no row holds (`24-internal-schemas.md` §8.5 step 3c) with `state = 'untracked'` and the id the adapter normalised (`24-internal-schemas.md` §14.2 rule 11) as `order_link_id`: our own id when Bybit reports one (an order of ours whose row was lost, for example by a restore, this document's §8.3), otherwise the `ext-` key of its Bybit `orderId`. So the column stays NOT NULL and unique over all rows, and a foreign or empty `orderLinkId` is never stored in it; it stays only in the `payload` (the raw exchange message) of the adoption's `order_events` row. An `ext-` key marks such a row for its whole life: the id never changes (`24-internal-schemas.md` §8.3 rules 1 and 4), so the row keeps it, and still passes `ord_link_fmt`, through `untracked → accepted | cancelled` (§3.3.1) and through adoption under management (E45-S01), even when that binds it to a trade group. Adoption never inserts a second row for a Bybit order that `ux_orders_exch_id` already holds.
 
 #### 3.3.5 `order_events` — append-only audit of the order lifecycle
 
@@ -1338,7 +1338,7 @@ CREATE TABLE executions (
   exchange_account_id uuid NOT NULL REFERENCES exchange_accounts(id) ON DELETE RESTRICT,
   trade_group_leg_id  uuid REFERENCES trade_group_legs(id) ON DELETE SET NULL,
   exec_id             text NOT NULL,               -- Bybit execId
-  order_link_id       text,
+  order_link_id       text,                        -- = its order's order_link_id, normalised per 24-internal-schemas.md §14.2 rule 11
   symbol              symbol_code NOT NULL,
   side                text NOT NULL,
   exec_qty            numeric(38,18) NOT NULL,
