@@ -2,9 +2,10 @@
 
 The catalog equals 21-database-schema.md Sec.3.3.4-3.3.7 but the two documented leg FKs; the #845
 Gherkin scenarios that are pure database behaviour hold on the engine; every invalid row is refused
-by its NAMED constraint; SR-E29-05 (TRUNCATE guard, revoked grants) and SR-E29-12 (adopted rows of
-both id arms) hold; an empty and a seeded database round-trip and a populated one refuses.
-`testcontainers` in CI; run on a scratch PostgreSQL 16.2 before push (no docker on the laptop).
+by its NAMED constraint; the C-5.7 guards (TRUNCATE trigger, revoked grants) and the Sec.3.3.4
+adopted-row rule (both id arms) hold; an empty and a seeded database round-trip and a populated
+one refuses. `testcontainers` in CI; run on a scratch PostgreSQL 16.2 before push (no docker on
+the laptop).
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ _TABLES = ("orders", "order_events", "executions", "positions", "position_snapsh
 _BLOCKS = ("3.3.4 `orders`", "3.3.5 `order_events`", "3.3.6 `executions`", "3.3.7 `positions`")
 _LEG_FK = " REFERENCES trade_group_legs(id) ON DELETE SET NULL"  # deferred to E28-T01 (#905)
 _NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
+_OUR = "cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en"  # the #845 Gherkin id, 24-internal-schemas.md Sec.8.3
 _TEMPLATE = "oms_head_template"
 
 Conn = psycopg.Connection[tuple[Any, ...]]
@@ -221,13 +223,12 @@ def test_schema_matches_the_plan_doc_but_the_deferred_leg_fks(pg_dsn: str) -> No
             "SELECT attrelid::regclass::text, count(*), min(d), max(d) FROM ("
             "SELECT attrelid, col_description(attrelid, attnum) AS d FROM pg_attribute "
             "WHERE attrelid = ANY(%s::regclass[]) AND attnum > 0) s "
-            "WHERE d IS NOT NULL GROUP BY 1 ORDER BY 1",
+            "WHERE d IS NOT NULL GROUP BY 1",
             (list(_TABLES),),
         ).fetchall()
         p1 = "PII: financial personal data (21 Sec.12, class P1); never sent to third parties"
-        assert tagged == [
-            (t, n, p1, p1) for t, n in (("executions", 7), ("orders", 10), ("positions", 14))
-        ]
+        counts = {"orders": 10, "executions": 7, "positions": 14, "position_snapshots": 7}
+        assert {row[0]: row[1:] for row in tagged} == {t: (n, p1, p1) for t, n in counts.items()}
 
 
 @pytest.mark.parametrize("seeded", [False, True], ids=["empty", "seeded"])
@@ -277,14 +278,12 @@ def test_downgrade_refuses_while_any_oms_table_holds_rows(pg_dsn: str, table: st
 
 def test_idempotency_is_enforced_by_the_database(pg_dsn: str) -> None:
     """Scenario "Idempotency is enforced by the database", database half: `ux_orders_link` refuses a
-    second row under the id, whatever its account or state (the repository's DuplicateOrderLinkId
-    mapping is slice 2). The scenario's `cv-l7f3a91c2-ent-00` predates #2841; ids are OUR_IDs."""
-    with _conn(pg_dsn) as c:
-        account = _account(c)
-        link = _link(account)
-        _order(c, account, order_link_id=link)
+    second row under the scenario's id, whatever its account or state (the repository's
+    DuplicateOrderLinkId mapping is slice 2). A fresh database, so the literal id is never taken."""
+    with _conn(_fresh(pg_dsn)) as c:
+        _order(c, _account(c), order_link_id=_OUR)
         with pytest.raises(pgerr.UniqueViolation) as exc:
-            _order(c, _account(c), order_link_id=link, state="cancelled")
+            _order(c, _account(c), order_link_id=_OUR, state="cancelled")
         assert exc.value.diag.constraint_name == "ux_orders_link"
 
 
@@ -292,7 +291,7 @@ def test_idempotency_is_enforced_by_the_database(pg_dsn: str) -> None:
 @pytest.mark.parametrize("verb", ["UPDATE {} SET id = id", "DELETE FROM {}", "TRUNCATE {}"])
 def test_history_cannot_be_rewritten(pg_dsn: str, table: str, verb: str) -> None:
     """Scenario "History cannot be rewritten": `forbid_mutation()` (row) and, for TRUNCATE,
-    `audit_refuse_truncate()` (SR-E29-05) raise, and the whole transaction aborts."""
+    `audit_refuse_truncate()` (C-5.7) raise, and the whole transaction aborts."""
     count = sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(table))
     with _conn(pg_dsn) as c:
         account = _account(c)
@@ -351,13 +350,13 @@ def test_monetary_precision_is_preserved(pg_dsn: str) -> None:
 # --- Every invalid row is refused by its NAMED constraint (#845 test plan) --------------------
 
 _SELF = str(uuid.uuid4())
-_OUR = "cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en"  # 24-internal-schemas.md Sec.8.3 example
 
 
 @pytest.mark.parametrize(
     ("table", "cols", "constraint"),
     [
-        ("orders", {"qty": Decimal("0")}, "ord_qty"),  # a negative qty trips ord_cum first
+        ("orders", {"qty": Decimal("0")}, "ord_qty"),
+        ("orders", {"qty": Decimal("-0.010")}, "ord_cum"),  # CHECKs run in name order: cum < qty
         ("orders", {"cum_exec_qty": Decimal("0.011")}, "ord_cum"),
         ("orders", {"order_link_id": "cv-l7f3a91c2-ent-00"}, "ord_link_fmt"),
         ("orders", {"order_link_id": _OUR + "\n"}, "ord_link_fmt"),
@@ -369,6 +368,9 @@ _OUR = "cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en"  # 24-internal-schemas.md Sec.8.3 
         ("orders", {"order_type": "Stop"}, "ord_type"),
         ("orders", {"trigger_direction": 3}, "ord_trigdir"),
         ("orders", {"trigger_by": "LTP"}, "ord_trigby"),
+        ("orders", {"take_profit": Decimal("0")}, "ord_tp_px"),
+        ("orders", {"stop_loss": Decimal("0")}, "ord_sl_px"),  # "0" clears a stop: stored as NULL
+        ("orders", {"stop_loss": Decimal("-1")}, "ord_sl_px"),
         ("orders", {"tpsl_mode": "full"}, "ord_tpslmode"),  # Bybit casing, as positions
         ("orders", {"submit_attempts": 11}, "ord_attempts"),
         ("orders", {"idempotency_state": "sent"}, "ord_idem"),
@@ -398,12 +400,25 @@ def test_invalid_row_is_refused_by_its_named_constraint(
     assert exc.value.diag.constraint_name == constraint
 
 
+def test_orders_store_the_attached_tp_and_sl_as_decimal(pg_dsn: str) -> None:
+    """C-2.6: the native stop attached on create is stored on the row; `ord_tp_px` and `ord_sl_px`
+    admit any price above 0, down to the column's smallest step."""
+    tp, sl = Decimal("64000.5"), Decimal("0.000000000000000001")
+    with _conn(pg_dsn) as c:
+        oid = _order(c, _account(c), take_profit=tp, stop_loss=sl, tpsl_mode="Partial")
+        row = c.execute(
+            "SELECT take_profit, stop_loss, tpsl_mode FROM orders WHERE id = %s", (oid,)
+        ).fetchone()
+    assert row == (tp, sl, "Partial")
+
+
 @pytest.mark.parametrize("arm", ["our_id", "ext_key"])
 def test_adopted_row_of_either_id_arm_passes_ord_link_fmt_untracked_to_accepted(
     pg_dsn: str, arm: str
 ) -> None:
-    """SR-E29-12: `ord_link_fmt` has no state term, so an adopted row keeps the adapter-normalised
-    id for life: its own OUR_ID when Bybit reports one, otherwise `ext_key(orderId)`."""
+    """Sec.3.3.4 "Adopted rows": `ord_link_fmt` has no state term, so an adopted row keeps the
+    adapter-normalised id for life: its own OUR_ID when Bybit reports one, otherwise
+    `ext_key(orderId)`."""
     exchange_order_id = str(uuid.uuid4())
     with _conn(pg_dsn) as c:
         account = _account(c)
@@ -448,7 +463,7 @@ def test_leaves_qty_is_generated_from_qty_and_cum_exec_qty_and_never_written(pg_
             c.execute("UPDATE orders SET leaves_qty = 0 WHERE id = %s", (oid,))
 
 
-# --- SR-E29-05: no role may rewrite order history (the 0003 grant pattern) ---------------------
+# --- C-5.7: no role may rewrite order history (the 0003 grant pattern) --------------------------
 
 
 @pytest.fixture(scope="module")

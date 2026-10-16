@@ -37,7 +37,6 @@ _TABLES = {
         models.position_snapshots,
     )
 }
-_MONEY_TABLES = ("orders", "executions", "positions")
 
 
 def _alembic(*args: str) -> str:
@@ -126,7 +125,7 @@ def test_upgrade_ships_only_these_objects() -> None:
     sql = _up()
     assert sql.count("CREATE TABLE ") == 5 and sql.count("CREATE TYPE ") == 3
     assert sql.count("CREATE UNIQUE INDEX ") == 3 and sql.count("CREATE INDEX ") == 19
-    assert sql.count("CREATE TRIGGER ") == 4 and sql.count("COMMENT ON COLUMN ") == 31
+    assert sql.count("CREATE TRIGGER ") == 4 and sql.count("COMMENT ON COLUMN ") == 38
     for absent in ("CREATE FUNCTION", "INSERT INTO", "GRANT ", "audit_log", "IF NOT EXISTS"):
         assert absent not in sql
 
@@ -136,7 +135,8 @@ def test_upgrade_ships_only_these_objects() -> None:
     [("order_events", "oe", _BLOCKS[1]), ("executions", "exec", _BLOCKS[2])],
 )
 def test_append_only_tables_copy_the_audit_log_guards(table: str, tag: str, heading: str) -> None:
-    """SR-E29-05: row trigger, TRUNCATE statement trigger and the grant revocation (0003)."""
+    """C-5.7 (the #845 ruling): row trigger, TRUNCATE statement trigger and the grant
+    revocation, the 0003 pattern."""
     sql = _up()
     assert (
         f"CREATE TRIGGER trg_{tag}_append BEFORE UPDATE OR DELETE ON {table} "
@@ -156,7 +156,7 @@ def test_append_only_tables_copy_the_audit_log_guards(table: str, tag: str, head
             ],
         )
     revoke = f"-- REVOKE UPDATE, DELETE, TRUNCATE ON {table} FROM cv_app, cv_ro;"
-    assert revoke in " ".join(_doc_block(heading).split())  # recorded in the doc (G-4)
+    assert revoke in " ".join(_doc_block(heading).split())  # recorded in the doc
 
 
 def test_upgrade_bounds_every_lock_with_lock_timeout() -> None:
@@ -290,10 +290,11 @@ def test_orders_carry_the_native_stop_loss_fields_from_day_one() -> None:
     """C-2.6 (main-orchestrator ruling on #845, 2026-10-16): the TP/SL attached on create
     (24-internal-schemas.md Sec.8.1 `Order`, Sec.8.8 rule 1) is stored on the order row."""
     ddl = _up().split("CREATE TABLE orders (", 1)[1].split(");", 1)[0]
-    for name in ("take_profit", "stop_loss"):
+    for name, tag in (("take_profit", "tp"), ("stop_loss", "sl")):
         column = models.orders.c[name]
         assert f" {name} numeric(38,18), " in ddl
         assert column.nullable and column.comment == models.OMS_MONEY_COMMENT
+        assert f" CONSTRAINT ord_{tag}_px CHECK ({name} IS NULL OR {name} > 0), " in ddl
     tpsl_mode = models.orders.c.tpsl_mode
     assert " tpsl_mode text NOT NULL DEFAULT 'Full', " in ddl
     assert " CONSTRAINT ord_tpslmode CHECK (tpsl_mode IN ('Full','Partial')), " in ddl
@@ -308,7 +309,8 @@ def test_every_numeric_column_reads_back_as_decimal() -> None:
 
 
 def test_money_columns_carry_the_p1_classification_comment() -> None:
-    """C-5.9 / Sec.12: every numeric(38,18) column of orders, executions and positions is P1."""
+    """C-5.9 / Sec.12: every numeric(38,18) column of an OMS table is P1, `position_snapshots`
+    (the history of `positions`) included; nothing else carries a comment."""
     assert models.OMS_MONEY_COMMENT.startswith("PII: ")
     for name, table in _TABLES.items():
         money = {
@@ -317,7 +319,24 @@ def test_money_columns_carry_the_p1_classification_comment() -> None:
             if isinstance(c.type, Numeric) and (c.type.precision, c.type.scale) == (38, 18)
         }
         tagged = {c.name for c in table.columns if c.comment}
-        assert tagged == (money if name in _MONEY_TABLES else set()), name
+        assert tagged == money, name
         for column in tagged:
             assert table.c[column].comment == models.OMS_MONEY_COMMENT
             assert f"COMMENT ON COLUMN {name}.{column} IS '{models.OMS_MONEY_COMMENT}';" in _up()
+
+
+@pytest.mark.parametrize("table", list(_TABLES))
+def test_a_later_migration_naming_an_oms_table_is_flagged_for_security_review(
+    tmp_path: Path, table: str
+) -> None:
+    """CI-MIG-006 lists the OMS tables (`tools/ci/security-sensitive-tables.txt`): financial records
+    (#845 security notes, Sec.12), so a revision that alters one raises the security-review flag."""
+    later = tmp_path / "0099_later.py"
+    later.write_text(f'op.add_column("{table}", sa.Column("note", sa.Text()))\n', encoding="utf-8")
+    lint = _ROOT.parents[1] / "tools" / "ci" / "migration_lint.py"
+    r = subprocess.run(  # noqa: S603 -- fixed argv, the repo's own lint script, no shell (#845)
+        [sys.executable, str(lint), "--versions-dir", str(tmp_path)],
+        capture_output=True, text=True, timeout=60,
+    )  # fmt: skip
+    assert r.returncode == 0, r.stderr
+    assert f"WARN CI-MIG-006: {later}: touches security-sensitive table '{table}'" in r.stderr
