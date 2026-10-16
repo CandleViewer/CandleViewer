@@ -87,16 +87,18 @@ def _throttle() -> PerIpLoginThrottle:
 class _World:
     def __init__(self, make_error: ErrorFactory | None = None, *, raced: bool = False) -> None:
         self.repo = FakeSessionRepository()
-        factory: type[SessionService] = _RacedSessionService if raced else SessionService
-        self.svc = factory(self.repo, HASHER, clock=lambda: NOW)
-        make = make_error or _WRITER_ERRORS[0]
-        self.writer = _RefusingWriter(make())
-        self.audit = AuditService()  # active: the writer is what refuses
-        self.audit.writer = self.writer
         self.published: list[tuple[str, str]] = []
 
         async def publish(session_id: str, reason: str) -> None:
             self.published.append((session_id, reason))
+
+        # #2272: the service publishes every revocation; the router publishes nothing.
+        factory: type[SessionService] = _RacedSessionService if raced else SessionService
+        self.svc = factory(self.repo, HASHER, clock=lambda: NOW, publish_revocation=publish)
+        make = make_error or _WRITER_ERRORS[0]
+        self.writer = _RefusingWriter(make())
+        self.audit = AuditService()  # active: the writer is what refuses
+        self.audit.writer = self.writer
 
         app = FastAPI()
         app.include_router(
@@ -104,7 +106,6 @@ class _World:
                 SessionsAuth(self.svc),
                 self.audit,
                 identity=Identity(),
-                publish_revocation=publish,
                 ip_throttle=_throttle(),
                 session_throttle=_throttle(),
                 csrf=CSRF_CODEC,
@@ -194,7 +195,7 @@ async def test_refresh_race_outcome_record_refused_keeps_the_401_and_closes_the_
     family = set(w.repo.sessions)
     assert len(family) == 2
     assert {sid for sid, _ in w.published} == family  # every socket still closes
-    assert {reason for _, reason in w.published} == {"session_revoked"}
+    assert {reason for _, reason in w.published} == {"rotation_reuse"}  # the service publishes
     (lost,) = [e for e in logs if e["event"] == "auth.refresh_reuse_detected.audit_unavailable"]
     assert (lost["log_level"], lost["session_id"]) == ("error", str(m.session_id))
 
