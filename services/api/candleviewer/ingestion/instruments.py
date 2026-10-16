@@ -144,9 +144,12 @@ class InstrumentCatalogueCache:
         return self._snapshot
 
     def is_stale(self, *, now_us: int) -> bool:
-        if self._snapshot is None:
+        """Nothing loaded, the last refresh failed (`mark_stale`; the next successful
+        refresh swaps in an unmarked snapshot, #2715), or older than the TTL."""
+        snap = self._snapshot
+        if snap is None or snap.stale_since_us is not None:
             return True
-        return self._snapshot.age_seconds(now_us=now_us) > self.ttl_seconds
+        return snap.age_seconds(now_us=now_us) > self.ttl_seconds
 
     def swap(self, snapshot: CatalogueSnapshot) -> None:
         """Atomically install a new snapshot (single attribute assignment —
