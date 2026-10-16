@@ -22,7 +22,7 @@ from typing import Any, Final, Protocol
 import structlog
 
 from candleviewer.bars.limits import MAX_NON_TIME_WINDOW_US, MAX_TIME_WINDOW_US
-from candleviewer.bars.limits import MAX_TAIL as MAX_TAIL  # drop once B2a/B2b import from limits
+from candleviewer.bars.limits import MAX_TAIL as MAX_TAIL  # end of life: #2787 D2-M1
 from candleviewer.bars.metrics import bars_tape_read_degraded_total
 from candleviewer.bars.models import Bar, BarSpec
 from candleviewer.bars.rows import BUILD_VERSIONS, bar_param_for, row_checksum
@@ -327,9 +327,8 @@ class BarReader:
         served as-is. A malformed row is skipped, never fatal to the whole tail.
 
         Callers skip a `history` of 0 (a `limit` below 1 raises) and bound every read with a
-        timeout, degrading when it expires (SR-E12-01), as the WS series store does with its
-        `timeout_s`. `BarTail` says what `since_us` and `fetched` tell of a tail shorter than
-        `limit`, and what they do not."""
+        timeout, degrading when it expires (SR-E12-01). `BarTail` says what `since_us` and
+        `fetched` tell of a tail shorter than `limit`, and what they do not."""
         now = self._now_us()
         since = now - tail_window_us(spec, limit)
         bar_param = bar_param_for(spec)
@@ -382,10 +381,11 @@ class BarTail:
     `since_us` and `fetched` say where the read stopped, and no more. `fetched` below the `limit`
     asked for means the read took every builder row (one with a bar index) from `since_us` on;
     `bars` can hold fewer, since rows are dropped, skipped or malformed. They do not say whether
-    older bars exist below `since_us`, nor which of three causes cut a short tail: the series'
-    first bar, the window (`TAIL_SPAN_FACTOR` times the span of `limit` bars) or the SR-E12-02
-    cap. Telling an exhausted series apart needs its recording start (REST
-    `meta.recording_started_at`) compared with `since_us`.
+    older bars exist below `since_us`, nor why a short tail is short: the series' first bar, or
+    the window ending the read (`tail_window_us`: for a time kind `TAIL_SPAN_FACTOR` times the
+    span of `limit` bars, within the SR-E12-02 cap; for any other kind the cap itself). Telling
+    an exhausted series apart needs its recording start (REST `meta.recording_started_at`)
+    compared with `since_us`.
     """
 
     bars: list[tuple[int, Bar]]
@@ -397,6 +397,9 @@ class BarTail:
     #: Where the read stopped: its window start (µs) and the rows the query returned, before
     #: drops and skips. `fetched` below the limit: every builder row from `since_us` on was
     #: taken. Not whether older bars exist, nor why the tail is short (see the class docstring).
+    #: `read_tail` always sets both. A `BarTail` built by hand leaves both at 0, which is not a
+    #: measurement: its `since_us` is no window start of 1970 (a real read's is now minus its
+    #: window), and its `fetched` is no empty read (a real read of a tapeless series reports 0).
     since_us: int = 0
     fetched: int = 0
 
