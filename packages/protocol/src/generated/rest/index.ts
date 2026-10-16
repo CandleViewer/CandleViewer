@@ -1447,7 +1447,13 @@ export interface paths {
       };
       cookie?: never;
     };
-    /** Get one instrument, including risk-limit tiers */
+    /**
+     * Get one instrument, including risk-limit tiers
+     * @description Served from the cached `instruments-info` snapshot. An unknown symbol triggers one
+     *     throttled on-demand refresh, bounded by a server-side deadline. While no catalogue is
+     *     loaded, or when that refresh misses its deadline, the answer is `503`, never a false
+     *     `404` for a real symbol.
+     */
     get: operations["getInstrument"];
     put?: never;
     post?: never;
@@ -10945,6 +10951,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getInstrument: {
@@ -10967,7 +10974,9 @@ export interface operations {
           "application/json": components["schemas"]["InstrumentDetail"];
         };
       };
+      400: components["responses"]["BadRequest"];
       404: components["responses"]["NotFound"];
+      503: components["responses"]["ServiceUnavailable"];
     };
   };
   getTicker: {
