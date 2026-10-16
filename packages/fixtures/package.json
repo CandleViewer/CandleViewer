@@ -10,7 +10,7 @@
     ".": "./src/index.mjs"
   },
   "scripts": {
-    "lint": "eslint . --max-warnings=0",
+    "lint": "eslint . --max-warnings=0 && node ./scripts/verify.mjs && vitest run",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "typecheck": "echo \"@candleviewer/fixtures: no TS sources to typecheck\"",

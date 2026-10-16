@@ -1,0 +1,83 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "open_position_btcusdt_5x_sl",
+  "origin": "overlay",
+  "description": "Seeds one open BTCUSDT position on the scenario it is named with: the position list holds a 0.001 long at 5x with a native stop-loss 300 ticks below its entry, and the three mode-switch calls answer with an open-position refusal whose code is unconfirmed. Closing orders are accepted by the scenario's order create; the fill, after which the list is flat, is state the stub transport keeps (#2893).",
+  "environment": "demo",
+  "rest": {
+    "GET /v5/position/list": {
+      "payload": "_base/position_list_empty.json",
+      "merge_patch": {
+        "result": {
+          "list": [
+            {
+              "symbol": "BTCUSDT",
+              "side": "Buy",
+              "size": "0.001",
+              "avgPrice": "63110.00",
+              "positionValue": "63.11",
+              "leverage": "5",
+              "markPrice": "63110.00",
+              "liqPrice": "50803.50",
+              "bustPrice": "50488.00",
+              "positionIdx": 0,
+              "tpslMode": "Full",
+              "takeProfit": "0",
+              "stopLoss": "63080.00",
+              "trailingStop": "0",
+              "unrealisedPnl": "0"
+            }
+          ]
+        }
+      }
+    },
+    "POST /v5/position/switch-mode": {
+      "payload": "_base/error_10004.json",
+      "merge_patch": {
+        "retCode": 110024,
+        "retMsg": "Mode switch refused: the account holds an open position"
+      },
+      "code_unconfirmed": true,
+      "note": "No recording exists. 24-internal-schemas section 8.6 has no open-position refusal of a mode switch, and its one position-mode entry, 110025, is a hard error (alert and block the account) that TC-420 does not expect. So this code is outside the table, and section 8.6's last row applies: a plain reject. 110024 is the exchange's open-position refusal of a position-mode switch from recollection only. The message describes the condition; it is not the exchange's wording (README, unconfirmed codes)."
+    },
+    "POST /v5/position/switch-isolated": {
+      "payload": "_base/error_10004.json",
+      "merge_patch": {
+        "retCode": 110024,
+        "retMsg": "Mode switch refused: the account holds an open position"
+      },
+      "code_unconfirmed": true,
+      "note": "No recording exists. 24-internal-schemas section 8.6 has no open-position refusal of a mode switch, and its one position-mode entry, 110025, is a hard error (alert and block the account) that TC-420 does not expect. So this code is outside the table, and section 8.6's last row applies: a plain reject. 110024 is the exchange's open-position refusal of a position-mode switch from recollection only. The message describes the condition; it is not the exchange's wording (README, unconfirmed codes)."
+    },
+    "POST /v5/account/set-margin-mode": {
+      "payload": "_base/error_10004.json",
+      "merge_patch": {
+        "retCode": 110024,
+        "retMsg": "Mode switch refused: the account holds an open position"
+      },
+      "code_unconfirmed": true,
+      "note": "No recording exists. 24-internal-schemas section 8.6 has no open-position refusal of a mode switch, and its one position-mode entry, 110025, is a hard error (alert and block the account) that TC-420 does not expect. So this code is outside the table, and section 8.6's last row applies: a plain reject. 110024 is the exchange's open-position refusal of a position-mode switch from recollection only. The message describes the condition; it is not the exchange's wording (README, unconfirmed codes)."
+    }
+  },
+  "expected": {
+    "outcome": "The account holds one BTCUSDT position at 5x whose native SL stays on the exchange throughout (C-2.6); while it is open, a margin-mode switch is refused with 409 conflict (TC-420).",
+    "cases": [
+      "E27-TC-126",
+      "E27-TC-132",
+      "E27-TC-205",
+      "E27-TC-302",
+      "E27-TC-303",
+      "E27-TC-304",
+      "E27-TC-305",
+      "E27-TC-310",
+      "E27-TC-316",
+      "E27-TC-410",
+      "E27-TC-412",
+      "E27-TC-415",
+      "E27-TC-416",
+      "E27-TC-417",
+      "E27-TC-418",
+      "E27-TC-420"
+    ]
+  }
+}

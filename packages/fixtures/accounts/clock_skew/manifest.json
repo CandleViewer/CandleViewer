@@ -1,0 +1,25 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "clock_skew",
+  "origin": "ticket",
+  "description": "As compliant, but the stub's exchange clock runs 6 s ahead of the injected now and the signed probe fails on recv_window with the 10002 reply of the shared corpus.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-clock_skew-0010"
+  },
+  "clock": {
+    "server_offset_ms": 6000
+  },
+  "rest": {
+    "GET /v5/account/wallet-balance": {
+      "payload": "../bybit/2026-10-05/rest/error_10002.json"
+    }
+  },
+  "expected": {
+    "outcome": "Not persisted and never shown verified. SR-E27-18 classes a 10002 clock-drift probe as inconclusive, never a verdict about the key, so a 502 exchange_error is recorded and raised as a contract question (plan DC-31). The reason names clock sync, the measured offset and the fix (sync the host clock); the exchange code only in a details disclosure.",
+    "verification": "inconclusive",
+    "cases": ["E27-TC-109"]
+  }
+}

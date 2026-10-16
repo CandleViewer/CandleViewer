@@ -1,0 +1,23 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ws_drop_rest_fail",
+  "origin": "plan",
+  "description": "ws_auth_then_drop plus HTTP 503 on every REST call.",
+  "environment": "demo",
+  "extends": "ws_auth_then_drop",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-ws_drop_rest_fail-0027"
+  },
+  "rest": {
+    "*": {
+      "payload": "../bybit/2026-10-05/rest/error_503.json",
+      "http_status": 503
+    }
+  },
+  "expected": {
+    "outcome": "Figures greyed with 'stale since <time of the last good snapshot>'; red within 30 s; order entry disabled for the account with the reason shown.",
+    "health": "down",
+    "cases": ["E27-TC-404", "E27-TC-410", "E27-TC-412"]
+  }
+}

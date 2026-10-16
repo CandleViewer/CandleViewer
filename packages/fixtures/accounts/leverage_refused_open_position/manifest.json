@@ -1,0 +1,24 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "leverage_refused_open_position",
+  "origin": "plan",
+  "description": "As compliant, but set-leverage is refused because of the open position, with a reply whose code is unconfirmed.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-leverage_refused_open_position-0032"
+  },
+  "rest": {
+    "POST /v5/position/set-leverage": {
+      "payload": "leverage_refused_open_position/set_leverage_refused.json",
+      "code_unconfirmed": true,
+      "note": "No recorded refusal exists. 110044 is 24-internal-schemas section 8.6 'Exceeds risk-limit tier' (mapping.py: risk_limit_tier); the v5 error table may read 110044 'Available margin is insufficient' and 110013 'Cannot set leverage due to risk limit level' (unverified). Verify before E27-Q02 relies on it (README, unconfirmed codes)."
+    }
+  },
+  "expected": {
+    "outcome": "502 exchange_error carrying the exchange code and message; the UI shows the exact reason (code in details) and the slider returns to the previous leverage.",
+    "problem": "exchange_error",
+    "cases": ["E27-TC-416"]
+  }
+}

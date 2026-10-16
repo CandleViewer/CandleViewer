@@ -1,0 +1,31 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "extra_scope_options",
+  "origin": "plan",
+  "description": "As compliant, but key info also grants a right in the Options group (SR-030a).",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-extra_scope_options-0041"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "permissions": {
+            "Options": ["OptionsTrade"]
+          }
+        }
+      },
+      "note": "Right name not re-verified (README); the allow-list refuses any right in a group outside it, so the verdict does not depend on the spelling."
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: scopes outside the allow-list; SR-030a, #2417): a trading key carries only the contract trade scopes, and the allow-list refuses any other right under rule key_withdraw_permission; not persisted.",
+    "verification": "refused",
+    "problem": "validation_failed/key_withdraw_permission",
+    "cases": ["E27-TC-112"]
+  }
+}

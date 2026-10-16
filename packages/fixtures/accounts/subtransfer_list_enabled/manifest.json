@@ -1,0 +1,30 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "subtransfer_list_enabled",
+  "origin": "plan",
+  "description": "As compliant, but key info lists SubMemberTransferList under the Wallet group.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-subtransfer_list_enabled-0034"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "permissions": {
+            "Wallet": ["SubMemberTransferList"]
+          }
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: transfer right; C-2.8, SR-030a, #2417): 422 validation_failed with rule key_withdraw_permission; not persisted. A 201 is P0 (plan DC-01).",
+    "verification": "refused",
+    "problem": "validation_failed/key_withdraw_permission",
+    "cases": ["E27-TC-103c"]
+  }
+}

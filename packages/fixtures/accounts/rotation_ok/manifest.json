@@ -1,0 +1,19 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "rotation_ok",
+  "origin": "plan",
+  "description": "Rotation pair: the old key answers as compliant, the new key as compliant_alt.",
+  "environment": "demo",
+  "rotation": {
+    "old_key": "compliant",
+    "new_key": "compliant_alt"
+  },
+  "tester_inputs": {
+    "account_uid": "90000001"
+  },
+  "expected": {
+    "outcome": "200 state overlapping; new key active and primary, old key rotating then revoked after the drain window; no wallet frame lost across the switch; open orders and positions untouched.",
+    "verification": "passed",
+    "cases": ["E27-TC-201", "E27-TC-202", "E27-TC-203", "E27-TC-205"]
+  }
+}

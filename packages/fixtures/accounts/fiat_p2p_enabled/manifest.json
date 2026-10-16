@@ -1,0 +1,30 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "fiat_p2p_enabled",
+  "origin": "plan (#2417, E27 threat model AC-15)",
+  "description": "As compliant, but key info adds a non-empty FiatP2P group, a fund-moving group whose name holds neither withdraw nor transfer (E27 threat model, section 5, item 2).",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-fiat_p2p_enabled-0035"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "permissions": {
+            "FiatP2P": ["FiatP2POrder"]
+          }
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: fund-moving group outside the allow-list; #2417, E27 threat model AC-15): 422 validation_failed with a rule of its own, never the one transfer_enabled (TC-103a) gets; the rule name is pending #2417. Not persisted. A 201 is P0 (plan DC-01).",
+    "verification": "refused",
+    "problem": "validation_failed",
+    "cases": ["E27-TC-103d"]
+  }
+}

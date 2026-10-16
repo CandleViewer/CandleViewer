@@ -1,0 +1,41 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    "lint": {
+      "inputs": [
+        "**/*.{ts,tsx,js,mjs,cjs,json}",
+        "raw/**",
+        "golden/**",
+        "bybit/**",
+        "accounts/**",
+        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
+      ]
+    },
+    "test": {
+      "inputs": [
+        "src/**",
+        "test/**",
+        "scripts/**",
+        "raw/**",
+        "golden/**",
+        "bybit/**",
+        "accounts/**",
+        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
+      ]
+    },
+    "test:cov": {
+      "inputs": [
+        "src/**",
+        "test/**",
+        "scripts/**",
+        "raw/**",
+        "golden/**",
+        "bybit/**",
+        "accounts/**",
+        "$TURBO_ROOT$/qa/plans/e27-accounts-test-plan.md"
+      ],
+      "outputs": ["coverage/**"]
+    }
+  }
+}

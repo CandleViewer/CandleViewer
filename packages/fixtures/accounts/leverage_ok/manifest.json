@@ -1,0 +1,21 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "leverage_ok",
+  "origin": "plan",
+  "description": "As compliant: set-leverage answers retCode 0. Named for the leverage cases, which add the overlay open_position_btcusdt_5x_sl.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-leverage_ok-0031"
+  },
+  "rest": {
+    "POST /v5/position/set-leverage": {
+      "payload": "_base/set_leverage_ok.json"
+    }
+  },
+  "expected": {
+    "outcome": "With the overlay open_position_btcusdt_5x_sl: PUT /positions/{positionId}/leverage to 10x answers 200 and the drawer and the positions frame show it (TC-415). Past the profile cap it is refused client-side and server-side (risk_limit_breached, plan DC-11), the request log shows zero set-leverage requests and the leverage is unchanged (TC-417). A manager's PUT is refused with 403 (Owner only) and nothing reaches the exchange; a 200 is raised as needs-clarification (TC-418, plan DC-15).",
+    "cases": ["E27-TC-415", "E27-TC-417", "E27-TC-418"]
+  }
+}

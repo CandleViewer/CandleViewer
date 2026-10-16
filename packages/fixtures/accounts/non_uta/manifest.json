@@ -1,0 +1,29 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "non_uta",
+  "origin": "ticket",
+  "description": "As compliant, but key info reports a non-UTA account: unified 0 and uta 0, both pinned so the stub is deterministic whichever flag a build reads (plan section 10 DC-33).",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-non_uta-0009"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "unified": 0,
+          "uta": 0
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Refused: not a Unified Trading Account; not persisted.",
+    "verification": "refused",
+    "problem": "validation_failed/key_not_unified",
+    "cases": ["E27-TC-108"]
+  }
+}

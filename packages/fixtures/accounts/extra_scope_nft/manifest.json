@@ -1,0 +1,31 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "extra_scope_nft",
+  "origin": "plan",
+  "description": "As compliant, but key info also grants a right in the NFT group (SR-030a).",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-extra_scope_nft-0043"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "permissions": {
+            "NFT": ["NFT"]
+          }
+        }
+      },
+      "note": "No right name for this group is documented in the repository, so the group's own name stands in (README); the allow-list refuses any right in the group, so the verdict does not depend on it."
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: scopes outside the allow-list; SR-030a, #2417): a trading key carries only the contract trade scopes, and the allow-list refuses any other right under rule key_withdraw_permission; not persisted.",
+    "verification": "refused",
+    "problem": "validation_failed/key_withdraw_permission",
+    "cases": ["E27-TC-112"]
+  }
+}

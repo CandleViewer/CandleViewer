@@ -1,0 +1,29 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "wallet_probe_error",
+  "origin": "ticket",
+  "description": "As compliant, but every signed probe (wallet-balance) answers retCode 10005, permission denied: a non-zero code the adapter classes as a verdict about the key (SR-E27-18), unlike 10004 or 10002, which are inconclusive. No recording exists, so the reply is flagged.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-wallet_probe_error-0011"
+  },
+  "rest": {
+    "GET /v5/account/wallet-balance": {
+      "payload": "_base/error_10004.json",
+      "merge_patch": {
+        "retCode": 10005,
+        "retMsg": "Permission denied for key scope"
+      },
+      "code_unconfirmed": true,
+      "note": "No recording exists. 10005 and its message are 24-internal-schemas section 8.6 (the Meaning text), chosen because key_info.py classes 10005 as a verdict (permission_denied); whether the exchange answers the probe alone this way is unconfirmed (README, unconfirmed codes)."
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: the signed probe returns retCode 0): 422 validation_failed, the pipeline text; a 502 exchange_error is recorded and raised as a contract question (plan DC-31). A domain-language reason with the exchange code in details, never asserted (unconfirmed); not persisted.",
+    "verification": "refused",
+    "problem": "validation_failed/key_probe_failed",
+    "cases": ["E27-TC-110"]
+  }
+}

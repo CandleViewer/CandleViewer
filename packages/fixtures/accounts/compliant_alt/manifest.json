@@ -1,0 +1,18 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "compliant_alt",
+  "origin": "plan",
+  "description": "As compliant, with a second key id: the replacement key in rotation_ok.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-compliant_alt-0002"
+  },
+  "expected": {
+    "outcome": "As compliant; used as the new key of rotation_ok.",
+    "verification": "passed",
+    "health": "healthy",
+    "cases": ["E27-TC-201", "E27-TC-202", "E27-TC-203", "E27-TC-205"]
+  }
+}

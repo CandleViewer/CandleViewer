@@ -1,0 +1,31 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "fiat_convert_broker_enabled",
+  "origin": "plan (#2417)",
+  "description": "As compliant, but key info adds a non-empty FiatConvertBroker group, a fund-moving group whose name holds neither withdraw nor transfer (E27 threat model, section 5, item 2).",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-fiat_convert_broker_enabled-0037"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "permissions": {
+            "FiatConvertBroker": ["FiatConvertBroker"]
+          }
+        }
+      },
+      "note": "No right name for this group is documented in the repository, so the group's own name stands in (README); the allow-list refuses any right in the group, so the verdict does not depend on it."
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: fund-moving group outside the allow-list; #2417, E27 threat model AC-15): 422 validation_failed with rule key_withdraw_permission; not persisted. A 201 is P0 (plan DC-01).",
+    "verification": "refused",
+    "problem": "validation_failed/key_withdraw_permission",
+    "cases": ["E27-TC-103f"]
+  }
+}

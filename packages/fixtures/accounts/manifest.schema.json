@@ -1,0 +1,219 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://candleviewer.invalid/fixtures/accounts/manifest.schema.json",
+  "title": "E27 fault-injection scenario manifest",
+  "description": "One per scenario directory (packages/fixtures/accounts/<scenario>/manifest.json): a key scenario, a rotation pair or an overlay (README). Every value is fabricated. Paths are relative to packages/fixtures/accounts/. Times are milliseconds relative to an injected now: the scenario start, which for a scenario switched in at runtime is the switch (README, scenario time). This subset has no conditionals, so which fields each kind carries is checked by scripts/accounts-pack.mjs. Only the keywords the vitest validator implements may appear here: type, required, properties, patternProperties, additionalProperties, enum, const, pattern, minLength, minimum, items, minItems, $ref.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "scenario", "origin", "description", "environment", "expected"],
+  "properties": {
+    "$schema": { "const": "../manifest.schema.json" },
+    "scenario": {
+      "description": "Equals the directory name; selected as CV_ACCOUNT_FIXTURE=<scenario>.",
+      "$ref": "#/$defs/scenarioName"
+    },
+    "origin": {
+      "description": "The test plan section 9.3 'Origin' column, verbatim; 'overlay' marks an overlay.",
+      "enum": [
+        "ticket",
+        "ticket (verdict)",
+        "plan",
+        "plan (#2417)",
+        "plan (#2417, E27 threat model AC-15)",
+        "plan (E27 threat model AC-15)",
+        "overlay"
+      ]
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "environment": {
+      "description": "The only environment the pack stubs; a live-host request is a defect.",
+      "const": "demo"
+    },
+    "extends": {
+      "description": "'As <scenario>': every stub this manifest does not set is answered by that scenario.",
+      "$ref": "#/$defs/scenarioName"
+    },
+    "switch_to": {
+      "description": "A runtime switch (#2893): until it the key answers as this manifest resolves, after it as the named key scenario, keeping this key's id and secret.",
+      "$ref": "#/$defs/scenarioName"
+    },
+    "rotation": {
+      "description": "A rotation pair: the old and the new key each answer as the named key scenario. A rotation manifest carries no extends, switch_to, egress_ip, clock, rest or ws of its own.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["old_key", "new_key"],
+      "properties": {
+        "old_key": { "$ref": "#/$defs/scenarioName" },
+        "new_key": { "$ref": "#/$defs/scenarioName" }
+      }
+    },
+    "tester_inputs": {
+      "description": "What a tester types; every key scenario and rotation pair has it, an overlay has none. The secret is never stored here: it is derived by the README rule fixture-<scenario>-secret-not-real.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_uid"],
+      "properties": {
+        "account_uid": { "type": "string", "pattern": "^9000[0-9]{4}$" },
+        "key_id": { "type": "string", "pattern": "^fixture-[a-z][a-z0-9_]*-[A-Za-z0-9]{4}$" }
+      }
+    },
+    "egress_ip": {
+      "description": "What the deployment's IP echo check answers (SR-033): the egress IP a key's allowlist is judged against. RFC 5737 only; every key scenario resolves one through extends.",
+      "type": "string",
+      "pattern": "^(192[.]0[.]2|198[.]51[.]100|203[.]0[.]113)[.](25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$"
+    },
+    "clock": {
+      "description": "Exchange-side times relative to the injected now; each field overrides the extended scenario's.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "server_offset_ms": {
+          "description": "The stub exchange clock minus now: reply 'time', server time and header timestamps.",
+          "type": "integer"
+        },
+        "key_created_offset_ms": {
+          "description": "Key info createdAt minus now.",
+          "type": "integer"
+        },
+        "key_expires_offset_ms": {
+          "description": "Key info expiredAt minus now; null means no expiry.",
+          "type": ["integer", "null"]
+        }
+      }
+    },
+    "rest": {
+      "description": "Stubbed REST calls keyed by '<METHOD> <path>'; '*' answers every call the scenario does not list. Lookup: this scenario's exact key, then its '*', then the extended scenario.",
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^(GET|POST) /v5/[a-z0-9-]+(/[a-z0-9-]+)*$": { "$ref": "#/$defs/restStub" },
+        "^[*]$": { "$ref": "#/$defs/restStub" }
+      }
+    },
+    "ws": {
+      "description": "The private WS script; each field overrides the extended scenario's.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["private"],
+      "properties": {
+        "private": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "on_connect": { "enum": ["accept", "refuse"] },
+            "on_auth": { "$ref": "#/$defs/wsReaction" },
+            "on_subscribe": { "$ref": "#/$defs/wsReaction" },
+            "on_ping": { "$ref": "#/$defs/wsReaction" },
+            "after_auth": {
+              "description": "Frames sent after every successful auth, relative to that auth.",
+              "type": "array",
+              "items": { "$ref": "#/$defs/wsSend" }
+            },
+            "timeline": {
+              "description": "Connection events relative to the scenario start (the switch, for a scenario switched in at runtime); equal times run in list order.",
+              "type": "array",
+              "items": { "$ref": "#/$defs/wsStep" }
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "description": "The black-box outcome, named as in the test plan; never an internal function or field. An overlay records outcome and cases only.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome", "cases"],
+      "properties": {
+        "outcome": { "type": "string", "minLength": 1 },
+        "verification": {
+          "enum": ["passed", "passed_with_warning", "refused", "restricted", "inconclusive"]
+        },
+        "problem": {
+          "description": "Problem code, with the rule after a slash where the contract names one.",
+          "type": "string",
+          "pattern": "^[a-z_]+(/[a-z_]+)?$"
+        },
+        "health": { "enum": ["healthy", "degraded", "down"] },
+        "cases": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^E27-TC-[0-9]{3}[a-z]?$" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "scenarioName": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "payloadPath": {
+      "description": "A JSON file in _base/, in a scenario directory, or in the shared corpus's rest/ folder.",
+      "type": "string",
+      "pattern": "^(_base/[a-z0-9_]+[.]json|[a-z][a-z0-9_]*/[a-z0-9_]+[.]json|[.][.]/bybit/[0-9]{4}-[0-9]{2}-[0-9]{2}/rest/[a-z0-9_]+[.]json)$"
+    },
+    "restStub": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload"],
+      "properties": {
+        "payload": { "$ref": "#/$defs/payloadPath" },
+        "merge_patch": {
+          "description": "RFC 7396 merge patch applied to the payload after the clock is applied.",
+          "type": "object"
+        },
+        "http_status": { "type": "integer", "minimum": 100 },
+        "headers": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "X-Bapi-Limit": { "type": "string", "pattern": "^[0-9]+$" },
+            "X-Bapi-Limit-Status": { "type": "string", "pattern": "^[0-9]+$" },
+            "X-Bapi-Limit-Reset-Timestamp": { "$ref": "#/$defs/relativeTime" }
+          }
+        },
+        "from_ms": { "type": "integer", "minimum": 0 },
+        "until_ms": { "type": "integer", "minimum": 1 },
+        "code_unconfirmed": {
+          "description": "The reply's retCode and retMsg could not be confirmed (README).",
+          "const": true
+        },
+        "note": { "type": "string", "minLength": 1 }
+      }
+    },
+    "relativeTime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["now_offset_ms"],
+      "properties": { "now_offset_ms": { "type": "integer" } }
+    },
+    "wsReaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["do"],
+      "properties": {
+        "do": { "enum": ["reply", "ignore", "close"] },
+        "payload": { "$ref": "#/$defs/payloadPath" }
+      }
+    },
+    "wsSend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["after_ms", "payload"],
+      "properties": {
+        "after_ms": { "type": "integer", "minimum": 0 },
+        "payload": { "$ref": "#/$defs/payloadPath" },
+        "merge_patch": { "type": "object" },
+        "every_ms": { "type": "integer", "minimum": 1000 },
+        "label": { "type": "string", "minLength": 1 }
+      }
+    },
+    "wsStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at_ms", "do"],
+      "properties": {
+        "at_ms": { "type": "integer", "minimum": 0 },
+        "do": { "enum": ["drop", "refuse_reconnects", "accept_reconnects", "silence"] },
+        "label": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

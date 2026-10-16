@@ -1,0 +1,43 @@
+{
+  "retCode": 0,
+  "retMsg": "",
+  "result": {
+    "id": "1000",
+    "note": "cv-fixture-demo-trade",
+    "apiKey": "***",
+    "readOnly": 0,
+    "secret": "",
+    "permissions": {
+      "ContractTrade": ["Order", "Position"],
+      "Spot": [],
+      "Wallet": [],
+      "Options": [],
+      "Derivatives": ["DerivativesTrade"],
+      "CopyTrading": [],
+      "BlockTrade": [],
+      "Exchange": [],
+      "NFT": [],
+      "Affiliate": [],
+      "Earn": []
+    },
+    "ips": ["203.0.113.10"],
+    "type": 1,
+    "deadlineDay": 180,
+    "expiredAt": "",
+    "createdAt": "2026-09-16T09:00:00Z",
+    "unified": 0,
+    "uta": 1,
+    "userID": 90000001,
+    "inviterID": 0,
+    "vipLevel": "No VIP",
+    "mktMakerLevel": "0",
+    "affiliateID": 0,
+    "rsaPublicKey": "",
+    "isMaster": true,
+    "parentUid": "0",
+    "kycLevel": "LEVEL_DEFAULT",
+    "kycRegion": ""
+  },
+  "retExtInfo": {},
+  "time": 1792141200000
+}

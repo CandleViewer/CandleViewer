@@ -1,0 +1,33 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "live_key_on_demo",
+  "origin": "ticket (verdict)",
+  "description": "A key from another environment: every signed demo REST call answers the 10003 invalid-key reply and the demo private WS closes the connection on auth. Server time still answers. Live hosts are never stubbed: any live-host request is a defect.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-live_key_on_demo-0014"
+  },
+  "rest": {
+    "GET /v5/market/time": {
+      "payload": "../bybit/2026-10-05/rest/server_time.json"
+    },
+    "*": {
+      "payload": "_base/error_10003.json"
+    }
+  },
+  "ws": {
+    "private": {
+      "on_auth": {
+        "do": "close"
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: environment) with 'key does not belong to this environment'; not persisted; the request log shows every signed request and private-WS attempt on demo hosts only, none on a live host (the live public market-data stream is expected).",
+    "verification": "refused",
+    "problem": "validation_failed/key_wrong_environment",
+    "cases": ["E27-TC-113"]
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "withdraw_enabled",
+  "origin": "ticket",
+  "description": "As compliant, but key info lists Withdraw under the Wallet group.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-withdraw_enabled-0003"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "permissions": {
+            "Wallet": ["Withdraw"]
+          }
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Hard block: 422 validation_failed with rule key_withdraw_permission; the key is not persisted; the withdrawal state is never rendered neutrally. On a stored key the self-check force-disables trading with a critical alert.",
+    "verification": "refused",
+    "problem": "validation_failed/key_withdraw_permission",
+    "cases": ["E27-TC-102", "E27-TC-119", "E27-TC-126", "E27-TC-132a"]
+  }
+}

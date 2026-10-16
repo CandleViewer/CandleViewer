@@ -1,0 +1,28 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "ip_extra_foreign",
+  "origin": "plan",
+  "description": "As compliant, but key info reports the allowlist as the egress IP plus 192.0.2.30.",
+  "environment": "demo",
+  "extends": "compliant",
+  "tester_inputs": {
+    "account_uid": "90000001",
+    "key_id": "fixture-ip_extra_foreign-0007"
+  },
+  "rest": {
+    "GET /v5/user/query-api": {
+      "payload": "_base/query_api.json",
+      "merge_patch": {
+        "result": {
+          "ips": ["203.0.113.10", "192.0.2.30"]
+        }
+      }
+    }
+  },
+  "expected": {
+    "outcome": "Refused (check: every allowlist entry equals the egress IP; SR-030a); not persisted. A 201 is P0 (plan DC-03).",
+    "verification": "refused",
+    "problem": "validation_failed/key_ip_whitelist_mismatch",
+    "cases": ["E27-TC-106a"]
+  }
+}

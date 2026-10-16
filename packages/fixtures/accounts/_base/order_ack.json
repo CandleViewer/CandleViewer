@@ -1,0 +1,10 @@
+{
+  "retCode": 0,
+  "retMsg": "OK",
+  "result": {
+    "orderId": "00000000-0000-4000-8000-0000000000f1",
+    "orderLinkId": "fixture-order-0001"
+  },
+  "retExtInfo": {},
+  "time": 1792141200000
+}

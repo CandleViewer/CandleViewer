@@ -1,0 +1,20 @@
+{
+  "$schema": "../manifest.schema.json",
+  "scenario": "rotation_new_key_withdraw",
+  "origin": "plan",
+  "description": "Rotation pair: the old key answers as compliant, the new key as withdraw_enabled.",
+  "environment": "demo",
+  "rotation": {
+    "old_key": "compliant",
+    "new_key": "withdraw_enabled"
+  },
+  "tester_inputs": {
+    "account_uid": "90000001"
+  },
+  "expected": {
+    "outcome": "Promotion refused (422 key_withdraw_permission); the old key stays active and primary; the account stays verified and tradeable; the new key is not stored.",
+    "verification": "refused",
+    "problem": "validation_failed/key_withdraw_permission",
+    "cases": ["E27-TC-204"]
+  }
+}
