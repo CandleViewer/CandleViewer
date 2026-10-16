@@ -2,7 +2,7 @@
   "$schema": "../manifest.schema.json",
   "scenario": "wallet_probe_error",
   "origin": "ticket",
-  "description": "As compliant, but every signed probe (wallet-balance) answers retCode 10005, permission denied: a non-zero code the adapter classes as a verdict about the key (SR-E27-18), unlike 10004 or 10002, which are inconclusive. No recording exists, so the reply is flagged.",
+  "description": "As compliant, but every signed probe (wallet-balance) answers retCode 10005, permission denied: a non-zero code the adapter classes as a verdict about the key (SR-E27-18), unlike 10004 or 10002, which are inconclusive. The code is confirmed against the official v5 error table (#3005).",
   "environment": "demo",
   "extends": "compliant",
   "tester_inputs": {
@@ -14,10 +14,9 @@
       "payload": "_base/error_10004.json",
       "merge_patch": {
         "retCode": 10005,
-        "retMsg": "Permission denied for key scope"
+        "retMsg": "Permission denied, please check your API key permissions."
       },
-      "code_unconfirmed": true,
-      "note": "No recording exists. 10005 and its message are 24-internal-schemas section 8.6 (the Meaning text), chosen because key_info.py classes 10005 as a verdict (permission_denied); whether the exchange answers the probe alone this way is unconfirmed (README, unconfirmed codes)."
+      "note": "No recording exists. 10005 and its message come from the official v5 error table (page dated 2026-10-14, #2893 S15; #3005); key_info.py classes 10005 as a verdict (permission_denied). The message is the table's description, not a recorded reply."
     }
   },
   "expected": {

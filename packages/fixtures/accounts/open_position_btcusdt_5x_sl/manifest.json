@@ -2,7 +2,7 @@
   "$schema": "../manifest.schema.json",
   "scenario": "open_position_btcusdt_5x_sl",
   "origin": "overlay",
-  "description": "Seeds one open BTCUSDT position on the scenario it is named with: the position list holds a 0.001 long at 5x with a native stop-loss 300 ticks below its entry, and the three mode-switch calls answer with an open-position refusal whose code is unconfirmed. Closing orders are accepted by the scenario's order create; the fill, after which the list is flat, is state the stub transport keeps (#2893).",
+  "description": "Seeds one open BTCUSDT position on the scenario it is named with: the position list holds a 0.001 long at 5x with a native stop-loss 300 ticks below its entry. The position-mode switch is refused with 110024, an existing position (the official v5 error table, #3005); the two margin-mode calls answer 110073, set margin mode failed, whose use for this refusal is unconfirmed. Closing orders are accepted by the scenario's order create; the fill, after which the list is flat, is state the stub transport keeps (#2893).",
   "environment": "demo",
   "rest": {
     "GET /v5/position/list": {
@@ -35,28 +35,27 @@
       "payload": "_base/error_10004.json",
       "merge_patch": {
         "retCode": 110024,
-        "retMsg": "Mode switch refused: the account holds an open position"
+        "retMsg": "You have an existing position, so the position mode cannot be switched."
       },
-      "code_unconfirmed": true,
-      "note": "No recording exists. 24-internal-schemas section 8.6 has no open-position refusal of a mode switch, and its one position-mode entry, 110025, is a hard error (alert and block the account) that TC-420 does not expect. So this code is outside the table, and section 8.6's last row applies: a plain reject. 110024 is the exchange's open-position refusal of a position-mode switch from recollection only. The message describes the condition; it is not the exchange's wording (README, unconfirmed codes)."
+      "note": "No recording exists. 110024 and its message come from the official v5 error table (page dated 2026-10-14, #2893 S15; #3005): the open-position refusal of a position-mode switch, which mapping.py maps to an explicit, non-retryable rejection (never auto-switch mode). The message is the table's description, not a recorded reply."
     },
     "POST /v5/position/switch-isolated": {
       "payload": "_base/error_10004.json",
       "merge_patch": {
-        "retCode": 110024,
-        "retMsg": "Mode switch refused: the account holds an open position"
+        "retCode": 110073,
+        "retMsg": "Set margin mode failed"
       },
       "code_unconfirmed": true,
-      "note": "No recording exists. 24-internal-schemas section 8.6 has no open-position refusal of a mode switch, and its one position-mode entry, 110025, is a hard error (alert and block the account) that TC-420 does not expect. So this code is outside the table, and section 8.6's last row applies: a plain reject. 110024 is the exchange's open-position refusal of a position-mode switch from recollection only. The message describes the condition; it is not the exchange's wording (README, unconfirmed codes)."
+      "note": "No recording exists. 110073, set margin mode failed, is the official v5 error table's margin-mode failure, which #2893 S15 advises for the margin-mode overlays. Whether the exchange answers a margin-mode switch with an open position this way is not verified, so the code stays flagged (README, unconfirmed codes)."
     },
     "POST /v5/account/set-margin-mode": {
       "payload": "_base/error_10004.json",
       "merge_patch": {
-        "retCode": 110024,
-        "retMsg": "Mode switch refused: the account holds an open position"
+        "retCode": 110073,
+        "retMsg": "Set margin mode failed"
       },
       "code_unconfirmed": true,
-      "note": "No recording exists. 24-internal-schemas section 8.6 has no open-position refusal of a mode switch, and its one position-mode entry, 110025, is a hard error (alert and block the account) that TC-420 does not expect. So this code is outside the table, and section 8.6's last row applies: a plain reject. 110024 is the exchange's open-position refusal of a position-mode switch from recollection only. The message describes the condition; it is not the exchange's wording (README, unconfirmed codes)."
+      "note": "No recording exists. 110073, set margin mode failed, is the official v5 error table's margin-mode failure, which #2893 S15 advises for the margin-mode overlays. Whether the exchange answers a margin-mode switch with an open position this way is not verified, so the code stays flagged (README, unconfirmed codes)."
     }
   },
   "expected": {
