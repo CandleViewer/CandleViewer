@@ -1982,6 +1982,7 @@ paths:
                         stale_since: null,
                       }
         "400": { $ref: "#/components/responses/BadRequest" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /instruments/{symbol}:
     parameters: [{ $ref: "#/components/parameters/SymbolPath" }]
@@ -1989,6 +1990,11 @@ paths:
       tags: [instruments]
       operationId: getInstrument
       summary: Get one instrument, including risk-limit tiers
+      description: |
+        Served from the cached `instruments-info` snapshot. An unknown symbol triggers one
+        throttled on-demand refresh, bounded by a server-side deadline. While no catalogue is
+        loaded, or when that refresh misses its deadline, the answer is `503`, never a false
+        `404` for a real symbol.
       x-rbac: { permissions: [instruments:read], scope: none }
       responses:
         "200":
@@ -1996,7 +2002,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/InstrumentDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /instruments/refresh:
     post:
