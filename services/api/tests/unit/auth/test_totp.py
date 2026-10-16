@@ -16,6 +16,7 @@ from hypothesis import strategies as st
 
 from candleviewer.auth.totp import (
     TOTP_DIGITS,
+    TOTP_SKEW_STEPS,
     TOTP_STEP_SECONDS,
     base32_to_secret,
     generate_code,
@@ -110,9 +111,50 @@ def test_verify_code_refuses_non_ascii_digits_instead_of_raising(code: str) -> N
     assert verify_code(generate_secret(), code, unix_time=1_700_000_000.0) is None
 
 
+class _NeverScanned(str):
+    """A `str` that fails the test if anything scans its characters: only `len()` may look at it."""
+
+    def isascii(self) -> bool:
+        raise AssertionError("scanned the characters of a code of the wrong length")
+
+    def isdigit(self) -> bool:
+        raise AssertionError("scanned the characters of a code of the wrong length")
+
+
+@pytest.mark.parametrize("length", [0, TOTP_DIGITS - 1, TOTP_DIGITS + 1, 100_000])
+def test_verify_code_checks_the_length_before_scanning_the_characters(length: int) -> None:
+    """The bounded check comes first, so a string of any other length costs `len()` and no scan."""
+    code = _NeverScanned("1" * length)
+    assert verify_code(generate_secret(), code, unix_time=0.0) is None
+
+
 _FIXED_SECRET = b"\x07" * 20
 _FIXED_TIME = 1_700_000_000.0
 _NON_ASCII_DECIMAL = st.characters(categories=["Nd"], min_codepoint=0x80)
+
+
+def _window_steps() -> dict[str, int]:
+    """Every code the authenticator can show inside the accepted window, with the step
+    `verify_code` must report for it (the first one tried, should two steps ever share a code)."""
+    current_step = time_step_for(_FIXED_TIME)
+    steps: dict[str, int] = {}
+    for step in range(current_step - TOTP_SKEW_STEPS, current_step + TOTP_SKEW_STEPS + 1):
+        steps.setdefault(generate_code(_FIXED_SECRET, step), step)
+    return steps
+
+
+def _respell(code: str, zero: int) -> str:
+    """`code` written with the decimal digits of the script whose zero is code point *zero*."""
+    return "".join(chr(zero + int(digit)) for digit in code)
+
+
+_WINDOW_STEPS = _window_steps()
+_WINDOW_CODES = st.sampled_from(list(_WINDOW_STEPS))
+#: A right code written in Arabic-Indic or fullwidth digits. It is refused too: a fix that
+#: normalised instead of refusing (NFKC turns fullwidth digits into ASCII ones) would accept it.
+_WINDOW_CODES_IN_OTHER_DIGITS = st.builds(
+    _respell, _WINDOW_CODES, st.sampled_from([0x0660, 0xFF10])
+)
 
 
 @given(
@@ -120,12 +162,12 @@ _NON_ASCII_DECIMAL = st.characters(categories=["Nd"], min_codepoint=0x80)
         st.text(),
         st.text(alphabet=_NON_ASCII_DECIMAL, min_size=TOTP_DIGITS, max_size=TOTP_DIGITS),
         st.text(alphabet=st.characters(categories=["Nd"]), max_size=2 * TOTP_DIGITS),
+        _WINDOW_CODES,  # the accepting side: without it the property would only see refusals
+        _WINDOW_CODES_IN_OTHER_DIGITS,
     )
 )
-def test_verify_code_never_raises_and_accepts_only_ascii_digit_strings(code: str) -> None:
-    accepted = verify_code(_FIXED_SECRET, code, unix_time=_FIXED_TIME)
-    if accepted is not None:
-        assert code.isascii() and code.isdigit() and len(code) == TOTP_DIGITS
+def test_verify_code_never_raises_and_accepts_exactly_the_window_codes(code: str) -> None:
+    assert verify_code(_FIXED_SECRET, code, unix_time=_FIXED_TIME) == _WINDOW_STEPS.get(code)
 
 
 def test_verify_code_never_tries_a_negative_time_step() -> None:
