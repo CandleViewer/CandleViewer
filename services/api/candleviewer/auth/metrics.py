@@ -258,6 +258,7 @@ _KNOWN_REASONS = frozenset(
         "unlock_attempts_exceeded",
         "user_disabled",
         "mfa_enrolled",  # a confirmed enrolment ends every session of the user (#2295)
+        "mfa_recovery",  # so does a recovery sign-in, before it mints its own (#2344)
     }
 )
 
