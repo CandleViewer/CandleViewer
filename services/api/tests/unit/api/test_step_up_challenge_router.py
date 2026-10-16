@@ -1,9 +1,9 @@
 """#2304 over HTTP: every `403 step_up_required` is a challenge for the one request it refused,
-and `POST /auth/step-up` answers the live one by its id.
+restated from server-side records, and `POST /auth/step-up` answers the live one by its id.
 
-The harness route stands in for the routes the route slice of #2304 wires: it validates its
-request, then calls the route-level gate. `POST /trading/kill-switch` has E39's shape (not
-mounted yet).
+The harness routes stand in for the routes the route slice of #2304 wires: they validate their
+request, compose the restatement from server records, then call the route-level gate.
+`POST /trading/kill-switch` has E39's shape (not mounted yet).
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from candleviewer.api.step_up import (
     make_step_up_router,
     require_elevation_for,
 )
+from candleviewer.api.step_up_challenge import ChallengeText, account_reference, typed_target
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.mfa_service import MfaService
@@ -37,6 +38,7 @@ from tests.contract.test_step_up_challenge_contract import (
     _PROBLEM,
     _SPEC,
     _STEP_UP_REQUIRED_BODY,
+    _account_reference,
     _ref,
     _validator,
 )
@@ -58,6 +60,13 @@ from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _KEY = "5f0c6b1e-2d3a-4c4b-9e8f-7a6b5c4d3e2f"  # the held request's Idempotency-Key
 _RELEASE = {"engaged": False, "scope": "global"}
+#: The server's account records (label, environment, exchange UID), by account id.
+_ACCOUNTS = {
+    "acc-1": ("sub_002", "live", "1001234"),
+    "acc-2": ("Main", "live", "1001235"),
+    "acc-3": ("MAIN", "demo", "2002001"),
+    "acc-4": ("demo-1' (demo)\u202e", "demo", "2002002"),
+}
 
 
 class _KillSwitch(BaseModel):
@@ -138,28 +147,71 @@ async def _world() -> _World:
     async def kill_switch(request: Request) -> Any:
         body = _KillSwitch.model_validate(await request.json()).model_dump(mode="json")
         if not body["engaged"]:  # release needs a no-grace step-up
-            denied = await require_elevation_for(auth, _sid(request), "killswitch")
+            denied = await require_elevation_for(
+                auth,
+                _sid(request),
+                "killswitch",
+                text=ChallengeText(f"Release kill switch, scope {body['scope']}"),
+            )
             if denied is not None:
                 return denied
         executed.append(body)
         return {"ok": True}
 
+    @app.post("/harness/accounts/{account_id}/keys/rotate")
+    async def rotate(account_id: str, request: Request) -> Any:
+        label, environment, uid = _ACCOUNTS[account_id]  # server records, never the body
+        others = [other[0] for key, other in _ACCOUNTS.items() if key != account_id]
+        text = ChallengeText(
+            f"Rotate API key for account {account_reference(label, environment, uid)}",
+            typed_target(label, account_id, others),
+        )
+        return await require_elevation_for(auth, _sid(request), "keys", text=text) or {}
+
     return _World(TestClient(app), audit, seed, clock, auth, rows, sessions, executed)
 
 
-async def test_refusal_is_a_challenge_for_the_refused_request() -> None:
+async def test_refusal_is_a_challenge_that_restates_what_would_execute() -> None:
+    """AC "Challenge restates what will execute" (release the kill switch, scope global)."""
     w = await _world()
     denied = w.send(_RELEASE)
     assert denied.status_code == 403
     body = denied.json()
     _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(body)  # provider side (C-6.2)
     assert body["action_class"] == "killswitch"
+    assert body["action_summary"] == "Release kill switch, scope global" and body["target"] is None
     assert uuid.UUID(body["challenge_id"]).version == 4
     expires = datetime.fromisoformat(body["challenge_expires_at"])
     assert expires == w.clock.now + timedelta(minutes=5)
     (required,) = w.of("auth.step_up_required")
     assert required["object_id"] == body["challenge_id"]
     assert w.executed == []
+
+
+@pytest.mark.parametrize(
+    ("account", "summary", "target"),
+    [
+        ("acc-1", "Rotate API key for account 'sub_002' (live, UID 1001234)", "sub_002"),
+        ("acc-2", "Rotate API key for account 'Main' (live, UID 1001235)", "acc-2"),
+        (
+            "acc-4",
+            "Rotate API key for account 'demo-1\\' (demo)\\u{202E}' (demo, UID 2002002)",
+            "acc-4",
+        ),
+    ],
+    ids=["unique-label", "label-shared-case-insensitively", "escaped-label"],
+)
+async def test_restatement_comes_from_server_records_never_the_request(
+    account: str, summary: str, target: str
+) -> None:
+    w = await _world()
+    forged = {"action_summary": "Rotate nothing", "target": "x", "label": "sub_002"}
+    denied = w.client.post(f"/harness/accounts/{account}/keys/rotate", headers=w.h(), json=forged)
+    body = denied.json()
+    _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(body)
+    assert (body["action_summary"], body["target"]) == (summary, target)
+    account_part = summary.removeprefix("Rotate API key for account ")
+    assert _account_reference(_SPEC).fullmatch(account_part)
 
 
 @pytest.mark.parametrize("stale", ["expired", "unknown", "superseded"])

@@ -3,21 +3,24 @@
 Everything is re-derived server-side per request (C-12.4): permissions and granted
 accounts from the identity store, the owner flag from the user's roles, and live-arming
 step-up from the session's one-shot `live_enablement` grant (no-grace class, consumed
-exactly once by the transition that uses it).
+exactly once by the transition that uses it). A refusal carries the challenge it issued
+(#2304), so the client answers that challenge by id and re-sends the held request.
 """
 
 from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 
 from fastapi import Request
 
 from candleviewer.audit.models import AuditOutcome
-from candleviewer.auth.errors import AuthError, StepUpRequired
+from candleviewer.auth.errors import AuthError, SessionReadOnly, SessionRevoked, StepUpRequired
 from candleviewer.auth.scopes import PrincipalSnapshot
-from candleviewer.rules.manager import Actor
+from candleviewer.auth.step_up import StepUpChallenge
+from candleviewer.rules.manager import Actor, RuleError
 
 STEP_UP_CLASS = "live_enablement"
 
@@ -51,6 +54,32 @@ def _before(payload: dict[str, Any]) -> dict[str, Any] | None:
     if "b9_from" in payload:
         before["b9_state"] = payload["b9_from"]
     return before
+
+
+def _challenged(challenge: StepUpChallenge) -> RuleError:
+    """`403 step_up_required` carrying the challenge issued for this request (#2304): a no-grace
+    step-up must name it, so a refusal without it could never be answered."""
+    return RuleError(
+        403,
+        "step_up_required",
+        "Re-enter your authenticator code to arm a live rule.",
+        action_class=challenge.action_class,
+        challenge_id=str(challenge.challenge_id),
+        challenge_expires_at=challenge.expires_at.isoformat(),
+    )
+
+
+def _unanswerable(exc: SessionReadOnly | SessionRevoked) -> RuleError:
+    """A session that cannot answer a challenge gets its own refusal, never a challenge."""
+    if isinstance(exc, SessionReadOnly):
+        until = exc.until.isoformat() if isinstance(exc.until, datetime) else None
+        return RuleError(
+            403,
+            "session_read_only",
+            "This session is read-only for 5 minutes after repeated step-up failures.",
+            readonly_until=until,
+        )
+    return RuleError(401, "unauthorized", "no verified session")
 
 
 def make_rules_audit(emitter: Any) -> Callable[[str, dict[str, Any]], Any]:
@@ -102,14 +131,22 @@ class SessionRulesActorResolver:
         session_id = str(record.id)
         step_up = self._step_up
 
-        async def consume() -> bool:
+        async def challenge() -> StepUpChallenge | None:
+            # None: this transition used the one-shot grant; else the challenge issued for it.
             try:
                 await step_up().consume_single_use(session_id, STEP_UP_CLASS)
             except StepUpRequired:
-                await step_up().record_pending(session_id, STEP_UP_CLASS)
-                return False
-            except AuthError:
-                return False
+                issued: StepUpChallenge = await step_up().record_pending(session_id, STEP_UP_CLASS)
+                return issued
+            return None
+
+        async def consume() -> bool:
+            try:
+                issued = await challenge()
+            except (SessionReadOnly, SessionRevoked) as exc:
+                raise _unanswerable(exc) from exc
+            if issued is not None:
+                raise _challenged(issued)
             return True
 
         return Actor(

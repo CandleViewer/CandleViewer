@@ -28,6 +28,7 @@ from fastapi.responses import JSONResponse, Response
 # dispatches on, by construction. A move upstream fails the import, never open.
 from starlette._utils import get_route_path
 
+from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import Severity
 from candleviewer.auth.errors import (
@@ -143,8 +144,12 @@ def _challenge_refused(field: str, rule: str) -> JSONResponse:
     )
 
 
-def required_problem(challenge: StepUpChallenge) -> JSONResponse:
-    """`403 step_up_required`: the challenge issued for the one request it refused (#2304)."""
+def required_problem(challenge: StepUpChallenge, text: ChallengeText | None = None) -> JSONResponse:
+    """`403 step_up_required`: the challenge issued for the one request it refused (#2304),
+    restating it in the server-composed `text` of a route that validated its request."""
+    restated = (
+        {} if text is None else {"action_summary": text.action_summary, "target": text.target}
+    )
     return _problem(
         403,
         "step_up_required",
@@ -153,22 +158,24 @@ def required_problem(challenge: StepUpChallenge) -> JSONResponse:
         action_class=challenge.action_class,
         challenge_id=str(challenge.challenge_id),
         challenge_expires_at=challenge.expires_at.isoformat(),
+        **restated,
     )
 
 
 async def require_elevation_for(
-    auth: _AuthLike, session_id: str, action_class: str
+    auth: _AuthLike, session_id: str, action_class: str, *, text: ChallengeText | None = None
 ) -> JSONResponse | None:
     """The `is_dangerous` decision-point hook (E09-T03 routes call this):
     None when elevated, else the problem to return. A refusal issues the
-    challenge for this request. An unregistered class is a server defect,
-    never a challenge (500); a revoked session is a 401."""
+    challenge for this request, restated by `text` when the route validated
+    it. An unregistered class is a server defect, never a challenge (500); a
+    revoked session is a 401."""
     step_up = auth.step_up
     try:
         try:
             await step_up.require_elevation(session_id, action_class)
         except StepUpRequired:
-            return required_problem(await step_up.record_pending(session_id, action_class))
+            return required_problem(await step_up.record_pending(session_id, action_class), text)
     except SessionReadOnly as exc:
         return readonly_problem(exc)
     except SessionRevoked:

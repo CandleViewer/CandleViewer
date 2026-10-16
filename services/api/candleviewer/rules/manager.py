@@ -134,7 +134,8 @@ class Actor:
     granted_accounts: frozenset[str] = frozenset()
     is_owner: bool = False
     step_up_fresh: bool = False
-    #: Consumes a fresh one-shot step-up grant; True on success (live arming only).
+    #: Consumes a fresh one-shot step-up grant; True on success (live arming only). It may
+    #: raise `RuleError` to refuse with its own problem (#2304: the challenge it issued).
     consume_step_up: Callable[[], Awaitable[bool]] | None = None
 
 
