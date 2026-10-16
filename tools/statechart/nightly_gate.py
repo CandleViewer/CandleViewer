@@ -8,7 +8,9 @@ Consumes the ``--json`` output of ``docs/research/xstate/gate/run_gate.py`` and
   0.9.1 baseline failures (triaged in ADR-0016), so the verdict here is a
   regression diff: a blocking check (any non-``repro`` FAIL, or any ERROR)
   that is not already failing in the committed baseline result. A BENCH-6
-  p99 above the threshold at 500 busy machines also fails.
+  p99 above the threshold at 500 busy machines (or none at all) also fails,
+  and so does lost coverage: a check that PASSED in the baseline but is
+  ``SKIP-ENV`` now, because the nightly can no longer see what it gates.
 * ``--mode upstream`` never gates: same report, always exit 0, every delta is
   an informational note that feeds the upstream-liaison chore.
 
@@ -29,7 +31,7 @@ Two refinements apply in ``--mode pinned`` only (#579 triage,
   reported but not counted a second time.
 
 Offline and deterministic: it only reads files. Exit 0 = green (or
-informational), 1 = pinned regression / BENCH-6 breach, 2 = unreadable input.
+informational), 1 = pinned regression / BENCH-6 breach / lost coverage, 2 = unreadable input.
 """
 
 from __future__ import annotations
@@ -236,7 +238,7 @@ def render(
     unexcused: list[str] | None = None,
 ) -> str:
     gating = mode == "pinned"
-    red = bool(new) or bench_ok is False
+    red = bool(new) or bench_ok is False or (gating and bool(lost))
     verdict = ("RED" if red else "GREEN") if gating else ("NOTE" if red else "CLEAN")
     lines = [
         f"# xstate nightly gate - {date} ({mode})",
@@ -254,7 +256,10 @@ def render(
     lines += ["", "## Skipped (environment) - not run on this host, not a regression"]
     lines += [f"- {k}" for k in skipped or []] or ["- none"]
     for k in lost or []:
-        lines.append(f"- COVERAGE LOSS: {k} passed in the baseline but was skipped (environment)")
+        gate = " - blocking in pinned mode" if gating else ""
+        lines.append(
+            f"- COVERAGE LOSS: {k} passed in the baseline but was skipped (environment){gate}"
+        )
     if ratio > SKIP_WARN_RATIO:
         lines.append(
             f"- WARNING: {ratio:.0%} of checks skipped (environment), above "
@@ -315,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
         bench6_row = _statuses(result).get(BENCH6_ROW, "missing")
     new = regressions(result, baseline, frozenset(excused))
     gone = fixed(result, baseline)
+    lost = coverage_lost(result, baseline)
     ok, p99 = bench6(bench, args.threshold)
     report = render(
         mode=args.mode,
@@ -326,7 +332,7 @@ def main(argv: list[str] | None = None) -> int:
         p99=p99,
         threshold=args.threshold,
         skipped=skipped_env(result),
-        lost=coverage_lost(result, baseline),
+        lost=lost,
         ratio=skip_ratio(result),
         documented=[(k, KNOWN_DELTAS[k]) for k in deltas] if pinned else None,
         drift=delta_drift(result) if pinned else None,
@@ -338,7 +344,7 @@ def main(argv: list[str] | None = None) -> int:
     print(report)
     if args.mode == "upstream":
         return 0
-    return 1 if (new or ok is False) else 0
+    return 1 if (new or ok is False or lost) else 0
 
 
 if __name__ == "__main__":

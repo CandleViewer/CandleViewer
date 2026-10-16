@@ -117,7 +117,7 @@ def test_nightly_gate_flags_baseline_pass_now_skipped_as_coverage_loss() -> None
     assert nightly_gate.coverage_lost(result, baseline) == ["verifyM3:142"]
 
 
-def test_render_coverage_loss_and_skip_ratio_warning_stay_non_blocking() -> None:
+def test_render_skip_ratio_warning_stays_non_blocking() -> None:
     report = nightly_gate.render(
         mode="pinned",
         date="2026-10-07",
@@ -128,10 +128,8 @@ def test_render_coverage_loss_and_skip_ratio_warning_stay_non_blocking() -> None
         p99=None,
         threshold=100.0,
         skipped=["verifyM3:142"],
-        lost=["verifyM3:142"],
         ratio=0.5,
     )
-    assert "COVERAGE LOSS: verifyM3:142" in report
     assert "WARNING: 50% of checks skipped" in report
     assert "**GREEN**" in report
 

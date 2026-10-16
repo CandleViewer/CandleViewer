@@ -209,6 +209,21 @@ def test_bench2_without_a_readable_value_is_not_excused(tmp_path: Path, detail: 
     assert rc == 1 and "measured unreadable, floor 380.9" in report
 
 
+def test_pinned_lost_coverage_is_red_but_upstream_stays_informational(tmp_path: Path) -> None:
+    # LC-02 PASSes in BASE; a nightly that cannot run it any more must not stay green.
+    cur = _res(
+        ("verify", "LC-01", "FAIL"), ("verify", "LC-02", "SKIP-ENV"), ("repro", "R1", "FAIL")
+    )
+    rc, report = _run(tmp_path, "pinned", cur)
+    assert rc == 1 and "**RED**" in report
+    assert "- COVERAGE LOSS: verify:LC-02 passed in the baseline" in report
+    assert "blocking in pinned mode" in report
+    assert "- none" in report.split("## Baseline failures now passing")[0]  # not a regression row
+    rc, report = _run(tmp_path, "upstream", cur)
+    assert rc == 0 and "**CLEAN**" in report and "COVERAGE LOSS: verify:LC-02" in report
+    assert "blocking in pinned mode" not in report
+
+
 def test_documented_delta_drift_is_reported_but_never_gates(tmp_path: Path) -> None:
     cur = _with(("verifyM4", "174", "PASS"))
     assert "verifyM4:174 is PASS, documented as FAIL" in delta_drift(cur)
