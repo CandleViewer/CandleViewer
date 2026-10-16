@@ -17,9 +17,10 @@ from uuid import UUID
 
 from candleviewer.accounts.health import HealthState
 
-# TODO(#964): OrderEntryRefusal and OrderEntryCheck move to the shared composed gate
-# (`candleviewer/api/order_entry_gate.py`, E42-T03). M13 may not import M23 (CONSTITUTION §3),
-# so the shared types must live where both modules can import them.
+# TODO(#964): OrderEntryReason, OrderEntryRefusal and OrderEntryCheck are proposed to move to
+# `candleviewer/domain/order_entry.py`, which every module may import, so that the composed gate
+# of E42-T03 and this check share one definition. `candleviewer/api/order_entry_gate.py` cannot
+# hold them: M13 may not import M23 (CONSTITUTION §3).
 
 #: The gate's closed `reason` set (24-internal-schemas.md §8.4.1); `maintenance` is E42-T03's.
 OrderEntryReason = Literal[

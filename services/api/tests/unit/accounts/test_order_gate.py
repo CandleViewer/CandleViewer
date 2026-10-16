@@ -4,6 +4,7 @@ refuses risk-based sizing only; health is derived on read, so no tick has to run
 
 from __future__ import annotations
 
+import inspect
 from typing import cast
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from candleviewer.accounts.order_gate import (
     AccountHealthCheck,
     DisabledReason,
     KeyStanding,
+    OrderEntryCheck,
     OrderEntryRefusal,
 )
 from tests.unit.accounts._fakes import ACC, Dms, FakeClock, Sizing, Standings
@@ -30,6 +32,15 @@ def _gate(
     keys = Standings({ACC: standing} if standing else {})
     sizing = Sizing({ACC: True} if wallets is None else wallets)
     return AccountHealthCheck(health, keys, sizing), health, clock
+
+
+def test_the_account_check_is_an_order_entry_check_of_the_shared_gate() -> None:
+    gate, health, _ = _gate()
+    health.ws_heartbeat(ACC)
+    checks: list[OrderEntryCheck] = [gate]  # mypy --strict checks the structural match
+    shared = inspect.signature(OrderEntryCheck.refusal)
+    assert inspect.signature(AccountHealthCheck.refusal) == shared
+    assert [check.refusal(ACC) for check in checks] == [None]
 
 
 @pytest.mark.parametrize("evidence", ["ws_heartbeat", "rest_ok"])
