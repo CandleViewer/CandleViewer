@@ -7,13 +7,14 @@ composition root, not imported (C-3.1). Static, parameterised SQL over effective
 user lifecycle store (`owner_floor_sqlalchemy.py`): lock the target user (changes
 to one user queue), lock every active-owner grant in key order (concurrent
 demotions and disables queue, never deadlock), re-check the floor on the count
-read after that lock, replace the set, fire the deferred owner-floor trigger
-(SQLSTATE 23514 maps onto the same check), then hand the locked before-set to the
-caller's write-ahead audit hook before commit (C-2.9): a refused audit write rolls
-the change back. Held under those locks, the hook is bounded
-(`WRITE_AHEAD_TIMEOUT_S`, #2510): `WriteAheadTimeout` rolls back and frees them. A
-timed-out append may still land (`AuditWriter.emit` is cancellation-safe): the trail
-may over-report an attempt (as a failed commit can), never under-report.
+read after that lock (a target that is not active holds no counted owner grant),
+replace the set, fire the deferred owner-floor trigger (SQLSTATE 23514 maps onto
+the same check), then hand the locked before-set to the caller's write-ahead
+audit hook before commit (C-2.9): a refused audit write rolls the change back.
+Held under those locks, the hook is bounded (`WRITE_AHEAD_TIMEOUT_S`, #2510):
+`WriteAheadTimeout` rolls back and frees them. A timed-out append may still land
+(`AuditWriter.emit` is cancellation-safe): the trail may over-report an attempt
+(as a failed commit can), never under-report.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from candleviewer.storage.repositories.owner_floor_sqlalchemy import (
     COUNT_OWNERS,
     LOCK_USER,
     OwnerFloorCheck,
+    counted_roles,
     effective_roles,
     lock_active_owners,
     refuse_floor_violation,
@@ -102,20 +104,22 @@ class SqlAlchemyUserRoleStore:
         so nothing changes without its audit record."""
         uid, wanted = str(user_id), sorted(roles)
         current: frozenset[str] = frozenset()
+        counted = current  # what the floor counts of `current` (`counted_roles`)
         try:
             async with self._relational.unit_of_work() as uow:
                 s = uow.session
-                if (await s.execute(LOCK_USER, {"id": uid})).first() is None:
+                if (row := (await s.execute(LOCK_USER, {"id": uid})).first()) is None:
                     return False
                 owners = await lock_active_owners(s)
                 current = await effective_roles(s, uid) or current
-                self._owner_floor(current, roles, owners)
+                counted = counted_roles(str(row[0]), current)
+                self._owner_floor(counted, roles, owners)
                 await s.execute(_DROP, {"id": uid, "roles": wanted})
                 await s.execute(_GRANT, {"id": uid, "roles": wanted, "by": str(actor)})
                 await s.execute(CONSTRAINTS_NOW)  # the floor trigger fires before the audit
                 await bounded_write_ahead(audit(current), self._audit_timeout_s)
                 await uow.commit()
         except IntegrityError as exc:
-            refuse_floor_violation(exc, self._owner_floor, current, roles)
+            refuse_floor_violation(exc, self._owner_floor, counted, roles)
             raise
         return True

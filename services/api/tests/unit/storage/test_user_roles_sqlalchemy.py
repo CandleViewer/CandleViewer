@@ -111,6 +111,15 @@ async def test_apply_roles_floor_counts_after_the_lock_not_the_locked_rows() -> 
     assert refused.value.__context__ is None and not rel.committed
 
 
+async def test_apply_roles_demoting_a_disabled_owner_counts_only_active_owners() -> None:
+    """E42-T04: a disabled owner holds none of the counted grants (`counted_roles`), so the
+    one other active owner meets the floor; the audit still gets the roles held before."""
+    rel = _Rel(owners=1)
+    rel.rows[f.LOCK_USER] = [("disabled",)]
+    assert await _apply(rel) is True
+    assert rel.committed and rel.ran[-1] == ("AUDIT", frozenset({"owner"}))
+
+
 async def test_apply_roles_writes_ahead_audit_with_the_locked_set_then_commits() -> None:
     rel = _Rel(owners=2)
     assert await _apply(rel) is True
@@ -128,13 +137,18 @@ async def test_apply_roles_refused_audit_write_rolls_the_change_back() -> None:
 
 
 @pytest.mark.parametrize(
-    ("sqlstate", "raised"), [("23514", OwnerFloorError), ("23505", IntegrityError)]
+    ("status", "sqlstate", "raised"),
+    [
+        ("active", "23514", OwnerFloorError),
+        ("active", "23505", IntegrityError),
+        ("disabled", "23514", IntegrityError),  # not this change's floor: re-raised as is
+    ],
 )
 async def test_apply_roles_trigger_check_before_audit_maps_only_the_floor(
-    sqlstate: str, raised: type[Exception]
+    status: str, sqlstate: str, raised: type[Exception]
 ) -> None:
     rel = _Rel(owners=2, raise_at=f.CONSTRAINTS_NOW)
-    rel.sqlstate = sqlstate
+    rel.rows[f.LOCK_USER], rel.sqlstate = [(status,)], sqlstate
     with pytest.raises(raised):
         await _apply(rel)
     assert "AUDIT" not in rel.order() and not rel.committed
