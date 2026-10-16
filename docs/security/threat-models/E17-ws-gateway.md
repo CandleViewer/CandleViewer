@@ -365,7 +365,8 @@ an undeliverable flush, never the attempt. With the flag on an expiry is observa
 `flush_abandoned: true` (with the `trigger` that `23-ws-protocol.md` §4.3 defines, `flush_deadline` only when no
 step 3 trigger fired) and `cv_ws_overflow_total{reason="close_flush_deadline"}` counts it (`23-ws-protocol.md`
 §8.4). Flag off, as built, neither is recorded, and the same 2 s starts when the reader returns, so a peer that is
-silent as well as not reading is ended by the transport keepalive alone (15 s ping, 45 s timeout).
+silent as well as not reading is ended by the transport keepalive alone (15 s ping, 45 s timeout); the
+`internal_error` close after a writer fault has no flush deadline at all (`23-ws-protocol.md` §10.1).
 
 ## 7. Abuse-case seeds (handed to E17-X02)
 
@@ -450,19 +451,18 @@ deadline expired, so a `budget` close whose flush also expires keeps `budget`. T
 trigger values and one flag, never a topic name or a count), so the row stays one fixed-size record, and the two
 fields keep both facts of a close: an identity whose `redrop` closes repeat (a client that cannot recover its
 snapshots) reads differently from one with `budget` closes (a client that cannot drain at all), and
-`flush_abandoned: true` on either marks a peer that was not reading when the close came. The same expiry counts in
+`flush_abandoned: true` on either marks a peer that did not take the flush within 2 s. The same expiry counts in
 `cv_ws_overflow_total{reason="close_flush_deadline"}` (`23-ws-protocol.md` §8.4), in addition to the step 3 value.
 The registry's eviction of a connection whose `permission_change` or `revoked` send stalled or failed (the fan-out
 send timeout above) is also a `slow_consumer` close: it carries no step 3 trigger (when its own flush expires it
 carries `trigger` `flush_deadline` and `flush_abandoned: true`), and with the flag on, like every `slow_consumer`
 close, it clears both lanes before the `bye`, so nothing queued under the old scope follows an identity change
 (flag off, as built: the `bye` follows the frames already queued, `23-ws-protocol.md` §8.4). A non-droppable frame
-(`orders`, `executions`, control, `system`) that
-cannot be encoded, or whose emission raises, closes the connection `internal_error`: it fails closed and never
-drops silently, because a client that missed an order transition or a `revoked` would act on a false state. That
-close is audited (`ws.connection.closed`, reason `internal_error`, `warning`) and counted
-(`cv_ws_closes_total{reason="internal_error"}`), and the offending frame is logged by type, family and error
-class, never its payload (C-12.6).
+(`orders`, `executions`, control, `system`) that cannot be encoded, or whose emission raises, closes the connection
+`internal_error`: it fails closed and never drops silently, because a client that missed an order transition or a
+`revoked` would act on a false state. That close is audited (`ws.connection.closed`, reason `internal_error`,
+`warning`) and counted (`cv_ws_closes_total{reason="internal_error"}`), and the offending frame is logged by type,
+family and error class, never its payload (C-12.6).
 
 ## 9. Control-to-ticket map
 
