@@ -8,11 +8,11 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   before `accept` (HTTP 403, no `bye`): no negotiation, frame, auth or store access. Each
   refusal is counted and logged with the source address MeshOnly admitted, with a cap.
 - **Negotiation** (§2.2): the subprotocol is chosen before `accept`; when the
-  client offers none we serve -> close `1002` before the handshake completes.
+  client offers none we serve -> close `1002` before the handshake completes, counted
+  as `unsupported_protocol` as the origin refusal is counted as `origin_forbidden`.
   `cv.v1.msgpack` whenever offered: then client frames go to the SR-185 decoder and
   server frames are MessagePack (`ws/codec.py`). A frame of the other subprotocol's
-  kind (text on msgpack, binary on JSON) is malformed. The refusal
-  is counted like the origin refusal.
+  kind (text on msgpack, binary on JSON) is malformed.
 - **hello -> welcome** (§4.2): any other first frame -> `bye` + `1002`.
 - **auth -> auth_ok** (§4.3): the token is read ONLY from the `auth` frame
   body, never the URL. Verified by the injected E09 `authenticate`; the

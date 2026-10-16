@@ -213,11 +213,14 @@ cv_ws_closes_total = Counter(
 # plans alerts on others. Bound here, beside the counter, so `export_ws_metrics` serves every series
 # without the gateway. `normal`, `server_shedding_load` and `other` have no counting path today.
 # Nothing closes with the first two. `other` has no producer: `lifecycle.bye_frame` raises on an
-# unknown reason, and a `bye=` frame is built only by `user_disabled_bye` (a fixed reason) and by
-# `revocation.bye_frame`, which does not validate its reason and is reached through
-# `RevocationHub.close_for`. So only `app._hub_publisher` (it narrows a revoke reason to
-# `user_disabled` or `session_revoked`) keeps `other` empty. They stay bound all the same (a
-# hand-kept exclusion list would rot), so their 0 is not coverage.
+# unknown reason on a connection's first close (a sealed close on one already closing skips it, and
+# its only caller without `bye=` passes `token_expired`), and a `bye=` frame is built only by
+# `user_disabled_bye` (a fixed reason) and by `revocation.bye_frame`, which does not validate its
+# reason and is reached through `RevocationHub.close_for` (from `_close_all` and from `run_auth`'s
+# revoked-before-registration check), whose reasons are the ones `revoke` remembered. So only
+# `app._hub_publisher` (it narrows a revoke reason to `user_disabled` or `session_revoked`) keeps
+# `other` empty. They stay bound all the same (a hand-kept exclusion list would rot), so their 0
+# is not coverage.
 for _close_reason in (*CLOSE_REASONS, OTHER_CLOSE_REASON):
     cv_ws_closes_total.labels(reason=_close_reason)
 cv_ws_clock_skew_ms = Histogram(

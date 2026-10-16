@@ -21,14 +21,19 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from prometheus_client import REGISTRY
 from starlette.websockets import WebSocketDisconnect
 
 from candleviewer.ws.lifecycle import CLOSE_REASONS, OTHER_CLOSE_REASON
-from candleviewer.ws.sequencing import COUNTED_SNAP_REASONS, INCIDENT_REASONS
+from candleviewer.ws.sequencing import (
+    COUNTED_SNAP_REASONS,
+    INCIDENT_REASONS,
+    SNAP_REASONS,
+    SnapReason,
+)
 from tests.unit.ws.test_lifecycle_socket import _closed, _no_sleep
 from tests.unit.ws.test_token_expiry import _JSON, _USER, _Bare, _bare_gateway, _Clock, _open
 
@@ -104,6 +109,12 @@ def test_every_counted_resync_reason_starts_at_zero(
     assert "initial" not in COUNTED_SNAP_REASONS
     assert INCIDENT_REASONS <= set(COUNTED_SNAP_REASONS)
     assert fresh["cv_ws_resync_total"] == {r: 0.0 for r in COUNTED_SNAP_REASONS}
+
+
+def test_snap_reason_type_and_tuple_name_the_same_reasons() -> None:
+    """`snapshot`/`resnapshot` rely on the `SnapReason` type to keep the counter's labels closed,
+    and the bound series come from `SNAP_REASONS`: the two hand-kept lists must not drift."""
+    assert set(get_args(SnapReason)) == set(SNAP_REASONS)
 
 
 def test_the_sequence_gap_counter_starts_at_zero(fresh: dict[str, dict[str, float]]) -> None:
