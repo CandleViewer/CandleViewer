@@ -3798,8 +3798,10 @@ class ServerConfig(BaseModel):
     bind_host: str = "127.0.0.1"          # Tailscale/WSL-internal only, never 0.0.0.0
     bind_port: int = 8080
     ws_max_connections: int = 50
-    ws_send_queue_size: int = 1000
-    ws_slow_consumer_policy: Literal["drop_deltas","disconnect"] = "drop_deltas"
+    ws_backpressure_enabled: bool = False # C-4.13 flag, removal #2900; off keeps the 1 024-frame push bound
+    ws_queue_bytes: int = 8_388_608       # 23 §8.4 budget; may be lowered, never raised
+    ws_queue_frames: int = 2_000          # 23 §8.4 budget; may be lowered, never raised
+    ws_classify_interval_ms: int = 2_000  # 23 §8.3; 500..10 000
     request_timeout_s: int = 30
     cors_origins: tuple[str, ...] = ()
     trusted_proxies: tuple[str, ...] = ()
@@ -3905,7 +3907,7 @@ class ObservabilityConfig(BaseModel):
     slow_query_ms: int = 500
 ```
 
-**Validation and safety.** Cross-field validators enforce: `bind_host` must not be `0.0.0.0` when `env == "prod"` (Tailscale-only); `exchange.environment == "live"` requires the `live_trading` flag **and** a recorded pen-test completion date (per the release plan's R4 gate); `recv_window_ms ≤ 10000`; `oms.block_on_postgres_unavailable` cannot be `False` in prod. Secrets are `SecretStr` and `repr()`-safe; a test asserts that `str(config)` contains no secret value. The effective config (redacted) is dumped to the log at startup and shown on the admin config screen with each value's source (default/file/env/db).
+**Validation and safety.** Cross-field validators enforce: `bind_host` must not be `0.0.0.0` when `env == "prod"` (Tailscale-only); `exchange.environment == "live"` requires the `live_trading` flag **and** a recorded pen-test completion date (per the release plan's R4 gate); `recv_window_ms ≤ 10000`; `oms.block_on_postgres_unavailable` cannot be `False` in prod; `server.ws_queue_bytes` and `server.ws_queue_frames` may be lowered but never raised above their defaults (the 8 MiB / 2 000-frame budget is both the DoS control and the performance budget, so a raise is a security-reviewed contract change, E17 threat model §6, not a config edit), and `server.ws_classify_interval_ms` must lie in 500..10 000. Secrets are `SecretStr` and `repr()`-safe; a test asserts that `str(config)` contains no secret value. The effective config (redacted) is dumped to the log at startup and shown on the admin config screen with each value's source (default/file/env/db).
 
 ### 16.2 Feature flag schema
 
@@ -4031,7 +4033,9 @@ The owner/admin screens live **inside the web app** (no separate admin applicati
 |                             | Demo faucet top-up                                                                           | — (action, `/v5/account/demo-apply-money`)                                                  | ✔                | `ACCOUNT_MANAGE`                               | `account.updated`                                                                    |
 | **Feature flags**           | Flag list, enable/disable, percentage, variant, overrides, expiry, owner                     | `FeatureFlag`, `FeatureFlagOverride`                                                        | ✔                | `FLAG_MANAGE`; kill-switch flags need elevated | `flag.changed`                                                                       |
 | **Server & observability**  | Bind host/port                                                                               | `ServerConfig.bind_host`, `.bind_port`                                                      | ✘ (boot)         | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
-|                             | WS max connections, send-queue size, slow-consumer policy                                    | `.ws_max_connections`, `.ws_send_queue_size`, `.ws_slow_consumer_policy`                    | ✔                | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
+|                             | WS max connections                                                                           | `.ws_max_connections`                                                                       | ✔                | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
+|                             | WS outbound queue bytes and frames (lower only)                                              | `.ws_queue_bytes`, `.ws_queue_frames`                                                       | ✘ (boot)         | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
+|                             | WS classify interval (500..10 000 ms), backpressure flag                                     | `.ws_classify_interval_ms`, `.ws_backpressure_enabled`                                      | ✘ (boot)         | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
 |                             | Request timeout, CORS origins, trusted proxies                                               | `.request_timeout_s`, `.cors_origins`, `.trusted_proxies`                                   | ✘ (boot)         | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
 |                             | Log level / format                                                                           | `ObservabilityConfig.log_level`, `.log_format`                                              | ✔                | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |
 |                             | Metrics & tracing toggles, OTLP endpoint, slow-query threshold                               | `.metrics_enabled`, `.metrics_port`, `.tracing_enabled`, `.otlp_endpoint`, `.slow_query_ms` | ✔ (except ports) | `SYSTEM_CONFIG_EDIT`                           | `config.changed`                                                                     |

@@ -275,7 +275,7 @@ justified it. The merged design (E17-S02) has three parts:
 
 **Gap analysis.** Once a subscription is narrowed or dropped, emission reads the subscription's own account
 set, so a withdrawn account cannot be emitted after the synchronous step. The remaining windows are about
-**which snapshot is applied**, not about emission:
+**which snapshot is applied** and **what is still queued**, not about emission:
 
 - _Snapshot ordering._ Principal resolution is asynchronous, so the design must guarantee that the
   snapshot applied to a connection is never older than the latest grant change, including for a connection
@@ -286,6 +286,14 @@ set, so a withdrawn account cannot be emitted after the synchronous step. The re
   current grants. With SR-E17-07 it cannot inherit a stale snapshot.
 - _Producer-side filtering._ Private-topic producers (E29/E34) must route events by account through the
   subscription's account set, not by user. Recorded as a referenced control (WS-I02).
+- _Queued and windowed data (E17-T03, flag on)._ With two outbound lanes (`23-ws-protocol.md` §8.4),
+  `permission_change` and `revoked` ride the priority lane and overtake what the normal lane still holds, and a
+  throttle window can hold data coalesced under the old scope. Requirement: a narrowed subscription is re-pended
+  `reconfigure`, and its pre-narrowing window **and** every frame of it still queued are discarded **before**
+  the `reconfigure` snapshot is built under the new scope; a subscription dropped outright loses both the same
+  way. Invariant: no row of a removed account is delivered after `permission_change`. Owner: E17-T03 (#412); a
+  test asserts it with a full window and a queued backlog (WS-E02, AC-13). With the flag off the single FIFO
+  queue sends everything already queued ahead of `permission_change`, so this window does not exist.
 
 Detection: `ws_revoked_total{reason}`, the `ws.subscription.revoked` and `ws.subscribe.denied` audit actions,
 and a metric for denied cross-account subscribes per identity (§8).
@@ -331,6 +339,15 @@ no rate bound (the 5 / topic / min limit covers client resyncs only, WS-D03). It
 Amplification (WS-D08): one authenticated user can hold 8 x 40 symbols with 200-depth books and 2 000-column
 heatmaps. Encode-once-send-many keeps CPU flat in client count, but per-user cost is real and unmeasured until
 E17-Q03. Tracked as **RSK-063**.
+
+**Outbound budget under `CV_WS_BACKPRESSURE_ENABLED` (E17-T03, WS-D01).** The flag (C-4.13, off by default,
+removal #2900) swaps the mechanism that enforces the outbound bound; the bound itself exists in both states (1 024
+frames while it is off), so the flag gates no safety invariant (C-4.14). With it on, both lanes of the queue are
+inside the same 8 MiB / 2 000-frame accounting: a peer that cannot drain `orders`, `executions`, `system` or
+control frames meets the same `slow_consumer` close as any other (`23-ws-protocol.md` §8.4), and no lane is
+unbounded (C-2.18). `CV_WS_QUEUE_BYTES` and `CV_WS_QUEUE_FRAMES` accept values up to this table's numbers and
+no more: lowering is allowed, and a raise is a change to a number in this table, which needs a security review in
+the same PR. `CV_WS_CLASSIFY_INTERVAL_MS` is held to 500-10 000 ms.
 
 ## 7. Abuse-case seeds (handed to E17-X02)
 
@@ -406,6 +423,18 @@ a user's first refusal in a window. Every close also writes the generic `ws clos
 `cv_ws_closes_total{reason="client_rate_limited"}` ticks for each refusal too, and is shared with the inbound frame
 limiter's `4429` close (D05), so RSK-063's trigger reads the dedicated counter.
 
+**Close detail (E17-T03).** A `slow_consumer` close is the one `ws.connection.closed` row at `warning`
+(`23-ws-protocol.md` §4.3). With the backpressure flag on it also carries `after_state` `{"trigger": "budget"}` or
+`{"trigger": "redrop"}`, the §8.4 step 3 trigger that fired (flag off: none). The vocabulary is closed (two
+values, never a topic name or a count), so the row stays one fixed-size record, and an identity whose `redrop`
+closes repeat (a client that cannot recover its snapshots) reads differently from one with `budget` closes (a
+client that cannot drain at all). A non-droppable frame (`orders`, `executions`, control, `system`) that cannot be
+encoded or queued closes the connection `internal_error`: it fails closed and never drops silently, because a
+client that missed an order transition or a `revoked` would act on a false state. That close is audited
+(`ws.connection.closed`, reason `internal_error`, `warning`) and counted
+(`cv_ws_closes_total{reason="internal_error"}`), and the offending frame is logged by type, family and error
+class, never its payload (C-12.6).
+
 ## 9. Control-to-ticket map
 
 Every E17-* ticket appears here; a missing row is a model defect (GOV-008,
@@ -421,7 +450,7 @@ PR; local aliases `SR-E17-01..07` in the rows above map 1:1 to SR-183..SR-189; S
 | E17-S01                     | Handshake, timeouts, attempts, rate limit, frame cap, re-auth identity, no query-string token (S01-S06, T02, D05-D07, E05, I01); Origin allow-list SR-183; nested-JSON handling SR-184; #2155 follow-ups (pre-auth cap, await timeouts) |
 | E17-S02                     | Registry, option schema, per-account `decide`, generic denial, revocation, audit (T03-T06, I02, I03, E01-E03, R01, R02, D04, D09); snapshot versioning SR-189 (follow-up filed)                                                         |
 | E17-S03                     | Sequencing, `upstream_desync` snap, resync rate limit, 4 MiB chunking (T05, T07, D03, D10); `system` payload filtering SR-188                                                                                                           |
-| E17-T03                     | 8 MiB / 2 000-frame budget, overflow ladder, coalescing, throttles (D01, D08)                                                                                                                                                           |
+| E17-T03                     | 8 MiB / 2 000-frame budget (lower only), both lanes inside it, overflow ladder, coalescing, throttles (D01, D08); narrowing drops queued and windowed data first (E02); an unsendable non-droppable frame closes `internal_error` (D01) |
 | E17-T04                     | Web client `hello`/`auth` (#2155), worker decode, gap detection, no token in URL (T07, D10, I07)                                                                                                                                        |
 | E17-T05                     | Single error builder; `internal_error` carries no text (I01)                                                                                                                                                                            |
 | E17-T06                     | Detection metrics and audit-failure counter (§8, SR-186, SR-187)                                                                                                                                                                        |
@@ -500,3 +529,4 @@ E17-S02. SR-183..SR-188 are requested as scope on the open tickets named above.
 | 2026-10-16 | author (agent; PR for #2735)                      | WS-R04 as built (#2735): a host-cancelled handler attempts its close row; the shutdown label is best effort in the window (§10)              |
 | 2026-10-16 | author (agent; PR for #2565)                      | WS-D17 added (#2565): the planned shutdown against the stop budget and uvicorn's drain; WS-R04 as built gains the drain floor (#2827)        |
 | 2026-10-16 | author (agent; PR for #2558)                      | WS-D07: per-user connect rate; §8 carve-out and its dedicated counter; AC-15 extended (§7, §8)                                               |
+| 2026-10-16 | author (agent; PR for #412 contract)              | E17-T03 wiring contract: narrowing rider (§5), flag and lower-only settings (§6), close trigger and fail-closed close (§8), E17-T03 row (§9) |
