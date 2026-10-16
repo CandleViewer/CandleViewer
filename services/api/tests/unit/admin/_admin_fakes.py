@@ -26,7 +26,14 @@ def principal(role: str, last_step_up_at: datetime | None = None) -> AuditPrinci
     n = list(_PERMISSIONS).index(role) + 1
     ids = UUID(int=n), UUID(int=100 + n), UUID(int=200 + n)  # user, session, request
     return AuditPrincipal(
-        ids[0], role, _PERMISSIONS[role], ids[1], f"10.0.0.{n}", ids[2], n == 1, last_step_up_at
+        ids[0],
+        role,
+        _PERMISSIONS[role],
+        ids[1],
+        f"10.0.0.{n}",
+        ids[2],
+        n == 1,
+        last_step_up_at=last_step_up_at,
     )
 
 

@@ -22,6 +22,7 @@ from candleviewer.admin.http import (
     AdminAreaRefused,
     AuditEmitter,
     PrincipalResolver,
+    _utc_now,
     admin_area,
     admin_area_refused_handler,
     admin_router,
@@ -34,8 +35,6 @@ from tests.unit.audit.audit_fakes import FakeAuditRepository
 READ = Permission.ADMIN_READ
 AUDIT = Permission.AUDIT_READ  # held by the viewer and the manager, not the owner
 _ERRORS = "https://candleviewer.local/errors/"
-
-
 _NOW = datetime(2026, 10, 16, 9, 30, 0, tzinfo=UTC)
 
 
@@ -222,19 +221,59 @@ async def test_the_record_survives_the_real_writer_and_its_redactor(tmp_path: Pa
     assert rows == [(AREA_ENTERED, "success", state), (AREA_ENTERED, "denied", state)]
 
 
+def _stepped(ago: int | None) -> datetime | None:
+    """The session's last step-up, `ago` seconds before `_NOW`; `None` is none recorded."""
+    return None if ago is None else _NOW - timedelta(seconds=ago)
+
+
 @pytest.mark.parametrize("role", ["owner", "viewer"])
-@pytest.mark.parametrize(
-    ("ago", "age"), [(None, None), (0, 0), (47, 47), (301, 301), (86_400, 86_400)]
-)
-def test_reauth_age_s_is_null_before_any_step_up_and_whole_seconds_after(
-    role: str, ago: int | None, age: int | None
-) -> None:
-    """Allowed and denied callers alike; past the 300 s grace window the age keeps counting."""
-    stepped = None if ago is None else _NOW - timedelta(seconds=ago)
+@pytest.mark.parametrize("ago", [None, 0, 47, 301, 86_400])
+def test_reauth_age_s_is_the_seconds_since_the_recorded_step_up(role: str, ago: int | None) -> None:
+    """Allowed and denied callers alike; `null` when none is recorded; past the 300 s grace
+    window the age keeps counting."""
     spy = AuditSpy()
-    client, _ = _guarded(Resolver(stepped), spy)
+    client, _ = _guarded(Resolver(_stepped(ago)), spy)
     client.get("/admin/probe", headers={"x-role": role})
-    assert spy.records == [expected_record(role, "/admin/probe", reauth_age_s=age)]
+    assert spy.records == [expected_record(role, "/admin/probe", reauth_age_s=ago)]
+
+
+def test_the_clock_is_read_on_every_entry() -> None:
+    ticks = iter([_NOW, _NOW + timedelta(seconds=100)])
+    spy = AuditSpy()
+    client, _ = _guarded(Resolver(_stepped(47)), spy, clock=lambda: next(ticks))
+    for _ in range(2):
+        client.get("/admin/probe", headers={"x-role": "owner"})
+    assert [record["after_state"]["reauth_age_s"] for record in spy.records] == [47, 147]
+
+
+def test_the_default_clock_is_the_utc_wall_clock() -> None:
+    before = datetime.now(UTC)
+    now = _utc_now()
+    assert now.tzinfo is UTC and before <= now <= datetime.now(UTC)
+
+
+async def test_with_no_clock_injected_the_age_is_measured_on_the_wall_clock() -> None:
+    """The router as the app builds it today (#2924): a step-up 30 s ago reads as whole seconds."""
+    spy = AuditSpy()
+    await admin_area(READ, Resolver(datetime.now(UTC) - timedelta(seconds=30)), spy)(
+        _request("owner")
+    )
+    (record,) = spy.records
+    age = record["after_state"]["reauth_age_s"]
+    assert type(age) is int and 30 <= age < 90
+
+
+@pytest.mark.parametrize(("role", "status"), [("owner", 503), ("viewer", 403)])
+def test_a_failing_clock_shuts_the_area_like_a_failed_audit_write(role: str, status: int) -> None:
+    def broken() -> datetime:
+        raise RuntimeError("clock gone dsn=postgres://x")
+
+    spy = AuditSpy()
+    client, served = _guarded(Resolver(_stepped(47)), spy, clock=broken)
+    with capture_logs() as logs:
+        response = client.get("/admin/probe", headers={"x-role": role})
+    assert (response.status_code, spy.records, served) == (status, [], [])
+    assert "clock gone" not in response.text and "clock gone" not in str(logs)
 
 
 def test_reauth_age_s_is_measured_against_the_injected_clock_only() -> None:
@@ -248,8 +287,7 @@ def test_reauth_age_s_is_measured_against_the_injected_clock_only() -> None:
 @pytest.mark.parametrize("ago", [None, 30 * 86_400])
 def test_a_missing_or_stale_step_up_never_refuses_the_route(ago: int | None) -> None:
     """Observability only: `admin:read` has no step-up mark, so the guard never gates on the age."""
-    stepped = None if ago is None else _NOW - timedelta(seconds=ago)
-    client, served = _guarded(Resolver(stepped), AuditSpy())
+    client, served = _guarded(Resolver(_stepped(ago)), AuditSpy())
     assert client.get("/admin/probe", headers={"x-role": "owner"}).status_code == 200
     assert served == ["owner"]
 
