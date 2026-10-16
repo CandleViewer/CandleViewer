@@ -90,7 +90,7 @@ def build_admin_read_models(
     counts = None
     if settings.storage_backend == "real":
         # The counts ride the settings store's repository: one lazy engine for the admin area, not
-        # two. Like every repository `create_app` builds it is never disposed at shutdown (#2526).
+        # two. Like most repositories `create_app` builds, it is never disposed at shutdown (#2526).
         relational = (
             system_settings.relational
             if isinstance(system_settings, SqlAlchemySystemSettings)
