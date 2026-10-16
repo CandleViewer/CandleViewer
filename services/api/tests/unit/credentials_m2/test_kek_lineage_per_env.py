@@ -6,6 +6,7 @@ Two `SecretsService`s share one `InMemoryCredentialStore`, the stand-in for the 
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -151,6 +152,49 @@ async def test_kek_enrolled_outside_live_never_joins_the_live_lineage() -> None:
     live, ctx = await _start(store, "live", _Src(KEK_V1, 1))
     assert live.health().detail == "kek_reused" and ctx.oms_read_only_gate.is_read_only
     assert await _lineages(store) == [("demo", 1)]
+
+
+class _EnrolRace(InMemoryCredentialStore):
+    """One KEK enrolled by two environments at once: both boots read `kek_versions` empty and
+    pass the reuse check, then `winner`'s insert lands first (the order the race decides)."""
+
+    def __init__(self, winner: str) -> None:
+        super().__init__()
+        self.winner = winner
+        self.refused: list[str] = []
+        self._loser_read, self._winner_done = asyncio.Event(), asyncio.Event()
+
+    async def record_kcv(self, env: str, version: int, kcv: bytes) -> bytes:
+        if env == self.winner:
+            await self._loser_read.wait()
+            try:
+                return await super().record_kcv(env, version, kcv)
+            finally:
+                self._winner_done.set()
+        self._loser_read.set()
+        await self._winner_done.wait()
+        try:
+            return await super().record_kcv(env, version, kcv)
+        except ValueError as exc:
+            self.refused.append(str(exc))
+            raise
+
+
+@pytest.mark.parametrize(("winner", "loser"), [("live", "demo"), ("demo", "live")])
+async def test_two_environments_enrolling_one_kek_at_once(winner: str, loser: str) -> None:
+    """The documented race (runbook, `kcv_store_unavailable`): the second insert hits the global
+    `kv_kcv_unique`, so that boot fails closed with its KEK zeroed and nothing enrolled for it."""
+    store = _EnrolRace(winner)
+    loser_src = _Src(KEK_V1, 1)
+    audit = AuditLog()
+    (won, _), (lost, ctx) = await asyncio.gather(
+        _start(store, winner, _Src(KEK_V1, 1)), _start(store, loser, loser_src, audit=audit)
+    )
+    assert won.health().status is HealthStatus.OK and store.refused == ["kv_kcv_unique"]
+    assert lost.health().detail == "kcv_store_unavailable" and ctx.oms_read_only_gate.is_read_only
+    assert _zeroed(loser_src) and await _lineages(store) == [(winner, 1)]
+    fields = {"actor_kind": "system", "actor_role": "secrets", "reason": "kcv_store_unavailable"}
+    assert audit.records == [("security.kek_load_failed", {**fields, "env": loser})]
 
 
 async def _live_v1_v2(store: InMemoryCredentialStore) -> None:

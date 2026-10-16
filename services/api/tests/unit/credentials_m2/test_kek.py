@@ -8,6 +8,7 @@ import shutil
 import tempfile
 from functools import partial
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -255,6 +256,14 @@ def test_loaded_kek_unknown_environment_refused_and_zeroed() -> None:
     with pytest.raises(KekLoadError):
         _kek.LoadedKek(buf, 1, env_name="prod")
     assert buf == bytearray(32)
+
+
+def test_loaded_kek_environment_is_read_only() -> None:
+    k = kek()
+    rebind: Any = k  # Any: assigning to the read-only property is the point
+    with pytest.raises(AttributeError):
+        rebind.env_name = "live"
+    assert k.env_name == "demo"
 
 
 def test_wrap_is_v2_and_round_trips_in_its_environment() -> None:

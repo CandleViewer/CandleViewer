@@ -41,7 +41,7 @@ class LoadedKek:
     """32 KEK bytes in memory, bound at load to the environment whose DEKs it wraps (#2338).
     Renders as `***`; not picklable; `close()` zeroes."""
 
-    __slots__ = ("_closed", "_key", "env_name", "is_fifo", "version")
+    __slots__ = ("_closed", "_env_name", "_key", "is_fifo", "version")
 
     def __init__(
         self, key: bytearray, version: int, *, env_name: str, is_fifo: bool = False
@@ -51,9 +51,14 @@ class LoadedKek:
             raise KekLoadError("kek_unavailable")
         self._key = key
         self.version = version
-        self.env_name = env_name
+        self._env_name = env_name
         self.is_fifo = is_fifo
         self._closed = False
+
+    @property
+    def env_name(self) -> str:
+        """Read-only: the environment is bound once, at load; a KEK is never re-bound."""
+        return self._env_name
 
     def _live_key(self) -> bytearray:
         if self._closed:
