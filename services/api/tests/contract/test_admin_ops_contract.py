@@ -216,7 +216,12 @@ def test_backup_actions_need_a_usable_backup_and_audit_at_severity_error() -> No
         assert "severity `error`" in desc
         if operation is not _FETCH:
             assert "`ok`, `verified` or `restored`" in desc and "`backup_not_usable`" in desc
-    assert "Audited as `backup.deleted` (actor, backup id," in text(_DELETE["description"])
+    deleted = text(_DELETE["description"])
+    for clause in (
+        "Audited as `backup.deleted` (actor, backup id, `before_state.status`) ahead of the `204`",
+        "an attempt refused after RBAC and step-up is audited with `outcome: failure`",
+    ):
+        assert clause in deleted, clause
 
 
 def test_backups_is_a_no_grace_class_for_restore_download_and_delete_only() -> None:
@@ -253,7 +258,8 @@ def test_download_token_rules_are_normative() -> None:
         assert headers["Referrer-Policy"]["schema"]["const"] == "no-referrer"
     nosniff = _FETCH["responses"]["200"]["headers"]["X-Content-Type-Options"]["schema"]
     assert nosniff == {"type": "string", "const": "nosniff"}
-    assert "never the link or its token" in text(_ISSUE["description"])
+    logged = "access logs, traces, metrics labels and audit fields record the route template, "
+    assert logged + "never the link or its token" in text(_ISSUE["description"])
     assert _json_body(_ISSUE, "200")["required"] == ["download_url", "expires_at"]
     (gone,) = [e for e in SPEC["x-error-codes"] if e["code"] == "gone"]
     assert "a one-time link that expired or was used" in gone["title"]
