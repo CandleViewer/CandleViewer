@@ -2,17 +2,18 @@
 
 `BackpressureConfig` is what the composition root hands `make_ws_router` while
 `CV_WS_BACKPRESSURE_ENABLED` is on: the outbound budget (`max_bytes` or `max_frames`, whichever
-binds first) and the cadence of the adaptive classification. Without one (`None`, the default) the
-gateway keeps today's 1 024-frame push bound: the flag swaps the bounding mechanism and never
-removes the bound (C-2.18).
+binds first), the cadence of the adaptive classification and the close flush deadline. Without one
+(`None`, the default) the gateway keeps today's 1 024-frame push bound: the flag swaps the bounding
+mechanism and never removes the bound (C-2.18).
 
-The defaults are the contract values. `Settings` owns the ceilings (the same numbers as `le=`: the
-budget may be lowered, never raised, E17 threat model §6) and the floors, so this class only holds
-values and enforces nothing: a harness may build one with a small budget. The code that first
-consumes a config must therefore check it (`0 < max_bytes <= QUEUE_BYTES`, `0 < max_frames <=
-QUEUE_FRAMES`, `classify_interval_ms > 0`) or accept only `Settings`-built ones: a hand-built
-config must not stand in for a checked one (carried review finding, #412). Plain data: no I/O, no
-clock.
+The defaults are the contract values. `Settings` owns the budget's ceilings (the same numbers as
+`le=`: the budget may be lowered, never raised, E17 threat model §6) and floors, so the budget is
+not checked here: a harness may build a config with a small one. The code that first consumes a
+config must therefore check it (`0 < max_bytes <= QUEUE_BYTES`, `0 < max_frames <= QUEUE_FRAMES`,
+`classify_interval_ms > 0`) or accept only `Settings`-built ones: a hand-built config must not
+stand in for a checked one (carried review finding, #412). The one check here is the close
+deadline's, which `Settings` never sets: it may only be lowered, because the stop budget counts
+`CLOSE_FLUSH_TIMEOUT_S`. Plain data: no I/O, no clock.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES
 from candleviewer.ws.pacing import CLASSIFY_INTERVAL_S
 
@@ -29,11 +31,22 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class BackpressureConfig:
-    """One connection's outbound budget (§8.4) and classification cadence (§8.3)."""
+    """One connection's outbound budget (§8.4), classification cadence (§8.3) and close flush
+    deadline (§4.4)."""
 
     max_bytes: int = QUEUE_BYTES
     max_frames: int = QUEUE_FRAMES
     classify_interval_ms: int = round(CLASSIFY_INTERVAL_S * 1000)
+    #: Seconds a closing connection may spend flushing, from its close on (§8.4). Lower only:
+    #: `settings.MIN_DRAIN_TIMEOUT_S` and the stop budget count `CLOSE_FLUSH_TIMEOUT_S` once.
+    close_flush_s: float = CLOSE_FLUSH_TIMEOUT_S
+
+    def __post_init__(self) -> None:
+        if not 0 < self.close_flush_s <= CLOSE_FLUSH_TIMEOUT_S:
+            raise ValueError(
+                f"close_flush_s must lie in (0, {CLOSE_FLUSH_TIMEOUT_S:g}] s: the stop budget "
+                "counts the close flush, so it may only be lowered"
+            )
 
     @classmethod
     def from_settings(cls, settings: Settings) -> BackpressureConfig:

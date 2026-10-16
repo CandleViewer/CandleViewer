@@ -226,8 +226,9 @@ cv_ws_closes_total = Counter(
 # Nothing closes with the first two. `other` has no producer: `lifecycle.bye_frame` raises on an
 # unknown reason on a connection's first close (a sealed close on one already closing skips it, and
 # its only caller without `bye=` passes `token_expired`), and a `bye=` frame is built only by
-# `user_disabled_bye` (a fixed reason), by the gateway's `refuse_connect` (through
-# `lifecycle.bye_frame`, so validated) and by `revocation.bye_frame`, which does not validate its
+# `user_disabled_bye` (a fixed reason), by the gateway's `refuse_connect` and the flag-on
+# `pipeline.slow_consumer_bye` (both through `lifecycle.bye_frame`, so validated) and by
+# `revocation.bye_frame`, which does not validate its
 # reason and is reached through `RevocationHub.close_for` (from `_close_all` and from `run_auth`'s
 # revoked-before-registration check), whose reasons are the ones `revoke` remembered. So only
 # `app._hub_publisher` (it narrows a revoke reason to `user_disabled` or `session_revoked`) keeps

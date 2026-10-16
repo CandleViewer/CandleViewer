@@ -1,0 +1,179 @@
+"""One connection's outbound pipeline while `CV_WS_BACKPRESSURE_ENABLED` is on (E17-T03, #412;
+`23-ws-protocol.md` §4.4, §8.4, §10.1).
+
+From `accept` on, `_Connection.push` hands every frame to `ConnectionPipeline.push`, the `welcome`
+included. It is encoded once in the negotiated subprotocol (`outbound.encode`), queued on the
+`OutboundQueue` lanes and counted against the connection's budget, which binds both lanes
+(C-2.18). A push that leaves the queue over budget closes the connection `slow_consumer` (§8.4
+step 3); the ladder's drop and re-snapshot steps before it arrive in a later slice. The writer
+(`gateway.py`) sends each payload as it was encoded.
+
+A close takes the terminal slot (`Terminal`), in no lane and never counted. A close that ends the
+identity (token expiry, revocation, a disabled user) and every `slow_consumer` close clear both
+lanes, so the `bye` is next; any other close keeps the priority lane ahead of the `bye` and
+discards the normal lane. Nothing is queued after a close. The flush runs under one deadline,
+`BackpressureConfig.close_flush_s` from the first close on (a later seal never extends it): the
+writer `arm`s it, and past it gives up with no `bye` (§4.4).
+
+A frame its encoder refuses is a server fault and fails closed: `internal_error` (§10.1). The
+droppable case of §10.1 (a market-data frame drops its topic to a `backpressure` re-snapshot
+instead) arrives with the ladder; until then it fails closed too. A non-finite number fails only
+on JSON: MessagePack carries it (a producer bug either way). The log line names the frame's
+type, family and error class, never its payload or the error's text (C-12.6), and nothing raises
+into the caller, so one bad frame never stops a fan-out.
+
+Plain synchronous code: no I/O and no task of its own; the gateway's writer drives it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any, Final, Protocol
+
+import structlog
+
+from candleviewer.ws.backpressure_config import BackpressureConfig
+from candleviewer.ws.codec import encode_server_frame
+from candleviewer.ws.lifecycle import SUBPROTOCOL_MSGPACK, bye_frame
+from candleviewer.ws.metrics import cv_ws_overflow_total
+from candleviewer.ws.outbound import FrameEncoder, OutboundQueue, encode, json_payload
+from candleviewer.ws.sequencing import MAX_OUTBOUND_FRAME_BYTES
+from candleviewer.ws.topics import FAMILIES
+
+#: §8.4 step 3's `bye`: one fixed message for both triggers (a `redrop` close happens under budget).
+SLOW_CONSUMER_RETRY_AFTER_MS: Final = 3000
+SLOW_CONSUMER_MESSAGE: Final = "Client is not draining its outbound queue."
+#: What an encoder raises for a frame it cannot serialise: a non-finite number (JSON), a type
+#: neither codec knows, an integer out of MessagePack's range, a reference cycle.
+_ENCODE_ERRORS: Final = (ValueError, TypeError, OverflowError, RecursionError)
+#: The frame types the server sends (§13.1): a log line names one of these, else `other`.
+_SERVER_TYPES: Final = frozenset(
+    (
+        "welcome auth_ok sub_ok unsub_ok ctl_ok err permission_change revoked ping pong bye d snap"
+    ).split()
+)
+
+
+class Close(Protocol):
+    """`_Connection.close_with`, as the pipeline calls it."""
+
+    def __call__(self, reason: str, *, bye: dict[str, Any] | None = None) -> None: ...
+
+
+def slow_consumer_bye(now_ms: int) -> dict[str, Any]:
+    """The step-3 `bye`: `retry_after_ms` 3 000 and the generic message, never a size. The
+    `hint` naming the most expensive topics arrives with the ladder."""
+    frame = bye_frame("slow_consumer", now_ms=now_ms, retry_after_ms=SLOW_CONSUMER_RETRY_AFTER_MS)
+    frame["p"]["message"] = SLOW_CONSUMER_MESSAGE
+    return frame
+
+
+@dataclass(frozen=True, slots=True)
+class Terminal:
+    """The close under way: its `bye` (encoded when the writer sends it) and close code. `flush`:
+    the priority lane goes out before the `bye`; otherwise the `bye` is next."""
+
+    bye: dict[str, Any]
+    code: int
+    flush: bool
+
+
+class ConnectionPipeline:
+    """Encoding, lanes, budget and close slot of one connection (module docstring)."""
+
+    def __init__(
+        self,
+        *,
+        encoding: str,
+        config: BackpressureConfig,
+        close: Close,
+        wall_ms: Callable[[], int],
+        connection_id: str,
+    ) -> None:
+        self.config = config
+        self.queue = OutboundQueue(config.max_bytes, config.max_frames)
+        self.terminal: Terminal | None = None
+        self.released = False
+        self._dumps: FrameEncoder = (
+            encode_server_frame if encoding == SUBPROTOCOL_MSGPACK else json_payload
+        )
+        self._close = close
+        self._wall_ms = wall_ms
+        self._connection_id = connection_id
+        #: The flush deadline on the loop's clock, from the first close; the writer's scope.
+        self._deadline: float | None = None
+        self._timeout: asyncio.Timeout | None = None
+
+    def push(self, frame: Mapping[str, Any], received: float | None = None) -> None:
+        """Queue one frame; nothing once a close or `release` happened (WS-D01)."""
+        if self.terminal is not None or self.released:
+            return
+        try:
+            item = encode(frame, self._dumps, received=received)
+        except _ENCODE_ERRORS as exc:
+            _log().error("ws frame unencodable", **self._fields(frame), error=type(exc).__name__)
+            self._close("internal_error")
+            return
+        if item.size > MAX_OUTBOUND_FRAME_BYTES:  # #2818: logged and sent, never refused
+            _log().warning(
+                "ws outbound frame over the frame limit", **self._fields(frame), size=item.size
+            )
+        self.queue.push(item)
+        if self.queue.over_budget():  # §8.4 step 3; steps 1 and 2 arrive with the ladder
+            cv_ws_overflow_total.labels(reason="close_budget").inc()
+            self._close("slow_consumer", bye=slow_consumer_bye(self._wall_ms()))
+
+    def close(self, bye: dict[str, Any], code: int, *, flush: bool) -> int:
+        """Take the terminal slot (`_Connection.close_with`; a later call changes nothing) and
+        start the flush deadline. `flush` keeps the priority lane ahead of the `bye`; otherwise
+        both lanes go. Returns how many queued frames were discarded."""
+        if self.terminal is not None:
+            return 0
+        self.terminal = Terminal(bye, code, flush)
+        dropped = self.queue.clear(normal_only=flush)
+        self.queue.wake()
+        self._deadline = asyncio.get_running_loop().time() + self.config.close_flush_s
+        if self._timeout is not None:
+            self._timeout.reschedule(self._deadline)
+        return dropped
+
+    def seal(self) -> int:
+        """The identity ended during a close: the priority lane goes too, and the close's own
+        `bye` is next. The deadline stays the first close's. Returns how many were discarded."""
+        if self.terminal is not None:
+            self.terminal = Terminal(self.terminal.bye, self.terminal.code, flush=False)
+        dropped = self.queue.clear()
+        self.queue.wake()
+        return dropped
+
+    def arm(self, timeout: asyncio.Timeout) -> None:
+        """The writer's deadline scope; a close taken before the writer started applies now."""
+        self._timeout = timeout
+        if self._deadline is not None:
+            timeout.reschedule(self._deadline)
+
+    def disarm(self) -> None:
+        self._timeout = None
+
+    def release(self) -> None:
+        """Teardown: free both lanes; nothing is queued after it."""
+        self.released = True
+        self.queue.clear()
+        self._timeout = None
+
+    def _fields(self, frame: Mapping[str, Any]) -> dict[str, Any]:
+        """A frame as a log line may name it: bounded type and family, never the payload."""
+        t, ch = frame.get("t"), frame.get("ch")
+        family = ch.split(".", 1)[0] if isinstance(ch, str) else None
+        return {
+            "connection_id": self._connection_id,
+            "t": t if isinstance(t, str) and t in _SERVER_TYPES else "other",
+            "family": family if family is None or family in FAMILIES else "other",
+        }
+
+
+def _log() -> Any:
+    """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
+    return structlog.get_logger(__name__)
