@@ -47,8 +47,8 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Export an audit slice as signed NDJSON
-     * @description Produces a downloadable NDJSON bundle with a detached signature over the file digest, for offline retention. Export itself is audited.
+     * Export an audit slice as signed NDJSON (owner, step-up `audit`)
+     * @description Produces a downloadable NDJSON bundle with a detached signature over the file digest, for offline retention. Export itself is audited. Requires an `audit` step-up (SR-025, 5-minute grace); until the session holds one the route answers `403 step_up_required` with `action_class` set to `audit`.
      */
     post: operations["exportAuditLog"];
     delete?: never;
@@ -133,8 +133,8 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Restore from a backup (owner, step-up)
-     * @description Restores into the running deployment. Trading is force-disabled for the duration and must be re-enabled explicitly afterwards, so a restore can never silently resume order flow against stale OMS state (21-database-schema.md section 8.2). Asynchronous.
+     * Restore from a backup (owner, step-up `backups`)
+     * @description Restores into the running deployment. Trading is force-disabled for the duration and must be re-enabled explicitly afterwards, so a restore can never silently resume order flow against stale OMS state (21-database-schema.md section 8.2). Asynchronous. `backups` is a no-grace step-up class: each restore spends a fresh code, and without one the route answers `403 step_up_required` with `action_class` set to `backups`.
      */
     post: operations["restoreBackup"];
     delete?: never;
