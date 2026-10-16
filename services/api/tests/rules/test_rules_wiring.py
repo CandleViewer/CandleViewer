@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.step_up import HANDLER_GATED_ROUTES
 from candleviewer.app import create_app
@@ -40,14 +42,16 @@ def test_create_app_binds_postgres_rule_store_not_in_memory() -> None:
 _UID = "00000000-0000-4000-8000-000000000001"
 
 
-async def test_actor_consume_refuses_without_fresh_step_up() -> None:
-    """The hard-coded `step_up_fresh=True` is safe only because `consume` is the real check."""
+@pytest.mark.parametrize("revoked", [False, True], ids=["live", "revoked-meanwhile"])
+async def test_actor_consume_refuses_without_fresh_step_up(revoked: bool) -> None:
+    """The hard-coded `step_up_fresh=True` is safe only because `consume` is the real check.
+    #2304: a session revoked before its challenge is issued is refused all the same."""
     from types import SimpleNamespace
 
     from starlette.requests import Request
 
     from candleviewer.api.rules_actor import SessionRulesActorResolver
-    from candleviewer.auth.errors import StepUpRequired
+    from candleviewer.auth.errors import SessionRevoked, StepUpRequired
 
     class _Sessions:
         async def authenticate_access_token(self, token: str, touch: bool = True) -> object:
@@ -67,6 +71,8 @@ async def test_actor_consume_refuses_without_fresh_step_up() -> None:
             raise StepUpRequired("no fresh step-up")
 
         async def record_pending(self, sid: str, cls: str) -> None:
+            if revoked:
+                raise SessionRevoked("step_up")
             pending.append(sid)
 
     req = Request({"type": "http", "headers": [(b"authorization", b"Bearer t")]})
@@ -75,7 +81,7 @@ async def test_actor_consume_refuses_without_fresh_step_up() -> None:
     ).resolve(req)
     assert actor is not None and actor.consume_step_up is not None
     assert await actor.consume_step_up() is False
-    assert pending == ["s1"]
+    assert pending == ([] if revoked else ["s1"])
 
 
 async def test_service_sink_records_simulation_for_simulating_rule() -> None:

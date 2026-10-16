@@ -77,7 +77,8 @@ async def _emit(
     """Write one audit record for this transition (C-2.9, C-12.8): actor,
     session, before/after elevation state. `replay=True` events (chart
     hydration from the persisted `sessions` row) were audited when they
-    first happened and are not re-recorded."""
+    first happened and are not re-recorded. A step-up challenge (#2304) is
+    the record's object."""
     payload = _payload(event)
     if payload.get("replay"):
         return
@@ -85,11 +86,14 @@ async def _emit(
         raise B16AuditSinkMissingError(f"B16 {action}: no audit sink wired")
     sid, uid = _identity(context)
     before = payload.get("before")
+    challenge = payload.get("challenge_id")
     await _SINK[0].emit(
         action,
         actor_label=uid or "system",
         actor_user_id=uid,
         session_id=sid,
+        object_kind="step_up_challenge" if isinstance(challenge, str) else None,
+        object_id=challenge if isinstance(challenge, str) else None,
         outcome=outcome,
         severity=severity,
         reason=reason,

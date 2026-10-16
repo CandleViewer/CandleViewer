@@ -7,7 +7,13 @@ from datetime import timedelta
 
 import pytest
 
-from candleviewer.auth.errors import InviteRejected, StepUpCodeInvalid, StepUpRequired
+from candleviewer.auth.errors import (
+    InviteRejected,
+    SessionRevoked,
+    StepUpCodeInvalid,
+    StepUpRequired,
+    UnknownActionClass,
+)
 from candleviewer.auth.invite_service import INVITE_TTL, InviteService
 from tests.unit.auth.test_invite_service import (
     GOOD_PW,
@@ -30,7 +36,7 @@ async def test_ac_stepup_01_elevation_not_transplantable_across_session_or_actio
         await svc.require_elevation("s2", "keys")
     with pytest.raises(StepUpRequired):  # other action class
         await svc.require_elevation("s1", "users")
-    with pytest.raises(StepUpRequired):  # fabricated class names
+    with pytest.raises(UnknownActionClass):  # fabricated class names: refused, never challenged
         await svc.require_elevation("s1", "keys; admin")
 
 
@@ -55,7 +61,7 @@ async def test_ac_stepup_03_other_users_totp_code_does_not_elevate() -> None:
 
 async def test_ac_stepup_04_unknown_session_cannot_elevate() -> None:
     svc, clock, seed, user, _ = await _setup()
-    with pytest.raises(StepUpRequired):
+    with pytest.raises(SessionRevoked):  # #2304: a 401, never a challenge
         await svc.step_up(str(user), "no-such-session", "keys", _code(seed, clock), PASSWORD)
 
 

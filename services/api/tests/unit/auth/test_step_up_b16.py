@@ -361,11 +361,13 @@ async def test_unlock_of_an_idle_locked_row_drops_every_step_up_elevation() -> N
     await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
     clock.now += timedelta(seconds=30)  # a fresh TOTP time step
     await svc.step_up(str(user), "s1", "killswitch", _code(seed, clock), PASSWORD)
-    await svc.record_pending("s1", "users")
-    with pytest.raises(StepUpCodeInvalid):
-        await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
+    challenge = await svc.record_pending("s1", "users")
+    with pytest.raises(StepUpCodeInvalid):  # a wrong code for the live challenge (#2304)
+        await svc.step_up(
+            str(user), "s1", None, "000000", PASSWORD, challenge_id=challenge.challenge_id
+        )
     elevations = set(sessions.sessions["s1"].step_up_elevations)
-    assert elevations == {"keys", "once:killswitch", "pending:users"}
+    assert elevations == {"keys", "once:killswitch", challenge.key()}
     locked = await _lock_and_unlock(svc, clock, sessions)
     row = sessions.sessions["s1"]
     with pytest.raises(StepUpRequired):
@@ -386,10 +388,10 @@ async def test_unlock_of_an_idle_locked_row_keeps_the_readonly_downgrade() -> No
             await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
     with pytest.raises(SessionReadOnly):
         await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
-    await svc.record_pending("s1", "keys")
+    challenge = await svc.record_pending("s1", "keys")
     locked = await _lock_and_unlock(svc, clock, sessions)
     row = sessions.sessions["s1"]
-    assert set(locked.step_up_elevations) == {"pending:keys"} and row.step_up_elevations == {}
+    assert set(locked.step_up_elevations) == {challenge.key()} and row.step_up_elevations == {}
     assert locked.readonly_until is not None
     assert (row.step_up_failures, row.readonly_until) == (3, locked.readonly_until)
     with pytest.raises(SessionReadOnly):

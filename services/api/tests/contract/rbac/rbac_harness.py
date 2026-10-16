@@ -37,6 +37,7 @@ from candleviewer.auth.errors import (
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.recorder.retention import PrunePlan, RunReport
 from candleviewer.rules.manager import InMemoryRuleStore
 from candleviewer.storage.repositories.alerts import Page
@@ -183,8 +184,8 @@ class _StepUp:
         if not self.elevated:
             raise StepUpRequired(action_class)
 
-    async def record_pending(self, session_id: str, action_class: str) -> None:
-        return None
+    async def record_pending(self, session_id: str, action_class: str) -> StepUpChallenge:
+        return StepUpChallenge(uuid.uuid4(), action_class, datetime.now(UTC) + CHALLENGE_WINDOW)
 
     async def assert_writable(self, session_id: str) -> None:
         return None

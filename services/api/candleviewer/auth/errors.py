@@ -175,6 +175,18 @@ class UnknownActionClass(AuthError):
     """Step-up requested for an action class outside the closed set."""
 
 
+class StepUpChallengeRefused(AuthError):
+    """`POST /auth/step-up` cannot answer the challenge (#2304): `rule` is
+    `challenge_expired`, `challenge_mismatch` or `required` for `field`.
+    Decided before any factor is checked, so no failure is counted and
+    nothing is elevated."""
+
+    def __init__(self, field: str, rule: str) -> None:
+        super().__init__(f"step-up challenge refused: {field} {rule}")
+        self.field = field
+        self.rule = rule
+
+
 class InviteRejected(AuthError):
     """An invite token that cannot be used (E09-S05). `reason` is one of
     `unknown | expired | redeemed | revoked | enrollment_invalid` and is for
