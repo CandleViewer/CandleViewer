@@ -63,6 +63,8 @@ def run_migrations_online() -> None:
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        # A failed statement's exception text otherwise renders its bound values (C-12.6).
+        hide_parameters=True,
     )
 
     with connectable.connect() as connection:
