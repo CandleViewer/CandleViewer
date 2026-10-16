@@ -274,6 +274,7 @@ from candleviewer.storage.retention.rule_prune import RulePruneTask
 from candleviewer.storage.retention.schedule import RetentionSchedule
 from candleviewer.storage.service import StorageService
 from candleviewer.ws.gateway import Authenticate, GatewayHub, make_ws_router
+from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
@@ -1141,14 +1142,17 @@ def create_app(
     # #377 wiring: E08 upstream sink, BarBuilderSet leases, audit, instrument check, snapshots
     # (pending stubs until #2195-#2197), sequencing; lifecycle + shutdown in `WsRuntime`.
     ws_upstream = UpstreamRefs(IngestionUpstreamSink(ingestion_streams(ctx)))
+    # E17-T08: `machines.{entity}.state` entries; `sub` is authorised and snapped from them.
+    machine_states = MachineStateRegistry()
     ws_services = SubscriptionServices(
         upstream=ws_upstream,
         bars=getattr(getattr(app.state, "bars_runtime", None), "builder_set", None),
         audit=_LazyAuditEmitter(ctx.audit),
         instrument_known=lambda sym: _ws_symbol_known(ctx, sym),
-        snapshots=default_snapshot_router(),
+        snapshots=default_snapshot_router({"machines": machine_states}),
         sequencing=SequencingHub(),
         bars_off=not resolved.bars_enabled,
+        machines=machine_states,
     )
     ws_registry = ConnectionRegistry(
         snapshot_loader or build_ws_principal_loader(resolved, identity),

@@ -51,7 +51,7 @@ from candleviewer.ws.binary import (
 )
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.metrics import SAMPLE_MASK
-from candleviewer.ws.topics import is_topic_name
+from candleviewer.ws.topics import is_topic_name, machine_refusal
 
 if TYPE_CHECKING:
     from candleviewer.ws.permissions import ConnectionAuthz, Subscription
@@ -656,10 +656,13 @@ def in_scope(
     holds even if the removal stops part-way. Then: a family scoped to accounts needs the
     event's account among the subscription's; a SELF family (`alerts`) reaches only the
     connections of the user the event belongs to, and nobody when the event names none; a NONE
-    family (`recorder`) reaches every subscription."""
+    family (`recorder`) reaches every subscription. A `machines` subscription is matched by its
+    entity: its kind's whole §6.4 row, applied to the scope stored on it at `sub` (no lookup)."""
     family = sub.topic.family
     if not family.private:
         return True
+    if sub.topic.entity_kind is not None:  # §6.4: the whole row, on the scope stored at `sub`
+        return machine_refusal(authz.principal, sub.topic.entity_kind, sub.entity) is None
     if family.permission not in authz.principal.permissions:
         return False
     if family.scope is Scope.SELF:

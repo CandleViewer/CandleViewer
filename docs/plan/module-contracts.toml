@@ -313,6 +313,14 @@ rule = "C-2.20"
 source_modules = ["candleviewer.book", "candleviewer.bars", "candleviewer.orderflow", "candleviewer.orderbook_wiring"]
 forbidden_modules = ["candleviewer.statechart", "xstate_statemachine"]
 
+[cross_cutting.ws_statechart]
+# C-2.20 / ADR-0016 / 23-ws-protocol.md §6.4: the WS gateway answers `machines.{entity}.state`
+# only from what the publisher recorded. It never imports the statechart factory or persistence,
+# nor the runtime, so it can never build, restore or query an `Interpreter`.
+rule = "C-2.20"
+source_modules = ["candleviewer.ws"]
+forbidden_modules = ["candleviewer.statechart.factory", "candleviewer.statechart.persistence", "xstate_statemachine"]
+
 # Frontend module boundaries (§3 "Frontend module boundaries" table).
 # dependency-cruiser (`.dependency-cruiser.js`) reads this table; there is no
 # frontend import-linter equivalent, so this section is descriptive only —

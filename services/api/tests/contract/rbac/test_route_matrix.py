@@ -25,6 +25,7 @@ from candleviewer.api.deny_by_default import (
 )
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.ws.permissions import TOPIC_PERMISSIONS
+from candleviewer.ws.topics import MACHINE_KINDS
 from tests.contract.rbac.rbac_harness import (
     ACTORS,
     HTTP,
@@ -124,8 +125,18 @@ def test_matrix_permissions_and_scope_agree_with_the_contract() -> None:
         assert row["scope"] == rbac["scope"], f"{key}: scope drifted"
 
 
+#: §6.4: one `machines.{kind}` row per entity kind, with that kind's read rule.
+_MACHINE_ROWS = {f"machines.{k}": (m.permission, m.scope) for k, m in MACHINE_KINDS.items()}
+
+
+def _row_of(pattern: str) -> str:
+    """The matrix row a registry pattern belongs to: its family, or `machines.{kind}`."""
+    family, _, rest = pattern.partition(".")
+    return f"machines.{rest.split('.')[0].split(':')[0]}" if family == "machines" else family
+
+
 def test_topic_matrix_is_total_over_the_ws_registry_and_agrees_with_it() -> None:
-    registry = set(TOPIC_PERMISSIONS) | {"system"}
+    registry = set(TOPIC_PERMISSIONS) | {"system"} | set(_MACHINE_ROWS)
     missing_topics = ", ".join(sorted(registry - set(_TOPICS)))
     topic_msg = f"WS topic families with no matrix row; add all 5 actors: {missing_topics}"
     assert not missing_topics, topic_msg
@@ -138,6 +149,10 @@ def test_topic_matrix_is_total_over_the_ws_registry_and_agrees_with_it() -> None
         if fam in TOPIC_PERMISSIONS:
             perm, scope = TOPIC_PERMISSIONS[fam]
             assert (row["permission"], row["scope"]) == (perm.value, scope.value), fam
+        if fam in _MACHINE_ROWS:
+            kind_perm, scope = _MACHINE_ROWS[fam]
+            value = kind_perm.value if kind_perm else None
+            assert (row["permission"], row["scope"]) == (value, scope.value), fam
     assert DECLARED_WS_ROUTES == {"/ws"}, "a new WS route needs its own matrix section"
 
 
@@ -147,13 +162,13 @@ def test_topic_matrix_is_total_over_registry_patterns_both_ways() -> None:
     `sample` parses to its own family."""
     from candleviewer.ws.topics import TOPIC_REGISTRY, parse_topic
 
-    families = {pattern.split(".", 1)[0] for pattern, _ in TOPIC_REGISTRY}
+    families = {_row_of(pattern) for pattern, _ in TOPIC_REGISTRY}
     assert families == set(_TOPICS), sorted(families ^ set(_TOPICS))
     for pattern, permission in TOPIC_REGISTRY:
-        row = _TOPICS[pattern.split(".", 1)[0]]
+        row = _TOPICS[_row_of(pattern)]
         assert row["permission"] == permission, pattern
     for fam, row in _TOPICS.items():
-        assert parse_topic(row["sample"]).family.family == fam, fam
+        assert _row_of(parse_topic(row["sample"]).ch) == fam, fam
 
 
 def test_vocabulary_single_source_check_exists_and_passes() -> None:

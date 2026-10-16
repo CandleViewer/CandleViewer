@@ -35,6 +35,7 @@ _TOPICS: dict[str, dict[str, Any]] = _MATRIX["topics"]
 _LEASED = frozenset({"bars", "footprint"})
 FAMILIES = tuple(sorted(set(_TOPICS) - _LEASED))
 ACCOUNT_SCOPED = tuple(f for f in FAMILIES if _TOPICS[f]["scope"] == "granted_accounts")
+ACCOUNT_SCOPED = tuple(f for f in ACCOUNT_SCOPED if "." not in f)  # `machines.*`: by entity
 UNLISTED = uuid.UUID("00000000-0000-4000-8000-00000000000c")  # in no `user_account_access` row
 _WS_TIMEOUT_S = 5.0
 
@@ -133,6 +134,8 @@ def test_deployed_app_ws_sub_answers_as_the_matrix_says(
 ) -> None:
     row = _TOPICS[family]
     account = rbac.GRANTED if family in ACCOUNT_SCOPED else None
+    if family.startswith("machines."):
+        rbac.seed_machine(deployed.app, row, actor)
     observed = _subscribe_once(deployed.app, actor, row["sample"], account)
     assert observed == row["outcomes"][actor], (family, actor)
 

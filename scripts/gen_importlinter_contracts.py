@@ -187,6 +187,17 @@ def render(manifest: dict) -> str:
     lines.append("forbidden_modules =\n    " + "\n    ".join(hot["forbidden_modules"]))
     lines.append("")
 
+    # C-2.20 / ADR-0016 (23-ws-protocol §6.4): the WS gateway never reaches an `Interpreter`.
+    ws = cc["ws_statechart"]
+    lines.append("[importlinter:contract:forbidden-ws-statechart]")
+    lines.append(
+        f"name = {ws['rule']} — ws never imports the statechart factory, persistence or runtime"
+    )
+    lines.append("type = forbidden")
+    lines.append("source_modules =\n    " + "\n    ".join(ws["source_modules"]))
+    lines.append("forbidden_modules =\n    " + "\n    ".join(ws["forbidden_modules"]))
+    lines.append("")
+
     return "\n".join(lines) + "\n"
 
 

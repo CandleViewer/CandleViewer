@@ -31,6 +31,10 @@ _SYM = "BTCUSDT"
 
 # Minimal schema-valid snapshot + delta body per family (ws-schema.json §14-§15).
 _UUID = "00000000-0000-4000-8000-0000000000aa"
+#: A B18 `kill_switch` state (§15.10): an unscoped kind, so no registry entry is needed to `sub`.
+_KS = {"machine_kind": "kill_switch", "degraded": False, "machine_hash": "0" * 64,
+       "environment": "demo", "updated_at_ms": 1,
+       "context_summary": {"scope": "global"}}  # fmt: skip
 _SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     "book": (
         {"symbol": _SYM, "bids": [["100.0", "1.0"]], "asks": [["101.0", "2.0"]]},
@@ -178,10 +182,15 @@ _SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     ),
     "recorder": ({"overall": "healthy", "symbols": []}, {"overall": "healthy", "symbols": []}),
     "system": ({"kind": "health"}, {"kind": "notice"}),
+    "machines": (
+        {**_KS, "state": "clear", "tags": ["trading_allowed"]},
+        {**_KS, "state": "engaged", "tags": ["trading_blocked"]},
+    ),
 }
 _IMPLICIT = {"system"}
 _SCOPED = {f.family for f in FAMILIES.values() if f.account_scoped}
-_SEG = {"symbol": _SYM, "depth": "50", "bar_type": "time", "param": "1", "profile_kind": "volume"}
+_SEG = {"symbol": _SYM, "depth": "50", "bar_type": "time", "param": "1", "profile_kind": "volume",
+        "entity": "kill_switch", "state": "state"}  # fmt: skip
 
 
 def _entry(fam: str, shape: tuple[str, ...]) -> dict[str, Any]:

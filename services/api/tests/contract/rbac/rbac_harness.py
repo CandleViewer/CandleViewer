@@ -94,6 +94,23 @@ def token_of(actor: str) -> str:
     return f"tok-{actor}"
 
 
+def seed_machine(app: FastAPI, row: dict[str, Any], actor: str) -> None:
+    """Before a `machines.{kind}` cell: an emptied registry holding only the row's sample
+    entity, on account A (`granted_accounts`) or as the caller's own (`self`), as in 23 §6.4."""
+    from candleviewer.ws.machines import MachineEntity
+    from candleviewer.ws.topics import EntityScope
+
+    registry = app.state.ws_registry.services.machines
+    registry._entries.clear()
+    kind, _, ident = row["sample"].split(".")[1].partition(":")
+    scope = EntityScope()
+    if row["scope"] == "granted_accounts":
+        scope = EntityScope(accounts=frozenset({GRANTED}))
+    elif row["scope"] == "self":
+        scope = EntityScope(user=_USER_IDS.get(actor))
+    registry.publish(MachineEntity(kind, ident or None, scope), {"state": "seeded"})
+
+
 class _Identity:
     def __init__(self, spec: dict[str, Any]) -> None:
         self._spec = spec
