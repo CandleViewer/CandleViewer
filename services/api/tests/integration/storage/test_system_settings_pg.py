@@ -171,13 +171,15 @@ async def test_writers_of_one_key_queue_and_the_second_sees_the_first(
         )
         async with engine.connect() as probe:
             await _until_waiting(probe, 1)  # the second writer is parked on the first's lock
+            parked: Any = (await probe.execute(sa.text("SELECT clock_timestamp()"))).scalar_one()
         assert seen == []
         release.set()
         written = await first
-        await second
+        stored = await second
     finally:
         await engine.dispose()
     assert seen == [written]  # it read the first writer's committed row, not an empty table
+    assert written.updated_at < parked < stored.updated_at  # stamped after the wait, not at BEGIN
 
 
 async def test_a_hook_that_outlives_its_bound_writes_nothing_and_frees_the_lock(
