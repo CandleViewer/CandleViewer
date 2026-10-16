@@ -12,6 +12,7 @@ import structlog
 from prometheus_client import generate_latest
 from prometheus_client.parser import text_string_to_metric_families
 
+from candleviewer.observability import metrics_catalogue
 from candleviewer.observability.metrics import DISALLOWED_LABEL_NAMES, Metrics
 from candleviewer.observability.metrics_catalogue import (
     CATALOGUE,
@@ -81,6 +82,17 @@ def test_catalogue_every_planned_entry_has_owning_epic() -> None:
     for s in CATALOGUE:
         if s.status == "planned":
             assert _KNOWN_EPICS.match(s.owner_epic), s.name
+
+
+def test_catalogue_planned_section_headers_only_cover_planned_entries() -> None:
+    # A `# --- ... (planned) ---` comment reads as the status of its block; the SR-125 one went on
+    # saying so after its auth series went live (#2319 review).
+    source = Path(metrics_catalogue.__file__).read_text(encoding="utf-8")
+    parts = re.split(r"^\s*# --- (.+?) -*$", source, flags=re.MULTILINE)  # head, title, body, ...
+    status = {spec.name: spec.status for spec in CATALOGUE}
+    for title, body in zip(parts[1::2], parts[2::2], strict=True):
+        live = [name for name in re.findall(r'_s\(\s*"(\w+)"', body) if status[name] != "planned"]
+        assert "(planned)" not in title or not live, f"{title!r} heads live entries: {live}"
 
 
 def test_catalogue_no_disallowed_label_names() -> None:

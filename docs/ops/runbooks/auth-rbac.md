@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -96,6 +96,20 @@ its length), and the lock itself is `users.locked_until`. Locks in one burst arr
   (environment-only, #2105). Offline, `tests/security/auth/test_lockout_owner_alert.py` proves that
   one lock moves the series the rule reads, once, next to the audit rows, and the promtool cases in
   `infra/prometheus/tests/system_alerts.test.yml` prove the rule fires on that series.
+
+Telemetry for failed logins: counter `auth_login_failures_total{method}` rises by 1 per failed
+authentication on the `/auth` routes, `method` being the factor that failed: `password` per
+`auth.login_failed` row written by `POST /auth/login` (wrong password, unknown identifier,
+per-address throttle, or a disabled account after a correct password); `totp`, `webauthn` or
+`recovery_code` (as named in the request) per `auth.mfa_failed` row of `POST /auth/mfa/verify`;
+`recovery_code` also per `auth.mfa_failed` row of `POST /auth/mfa/recovery` and per
+`auth.recovery_codes_exhausted`. It does not move for an attempt refused while the account is locked
+(the `auth.account_locked` rows above), for a success, or for the WebSocket gateway's
+`auth.login_failed` rows (actor `ws`, reason `ws_auth_failed`, written on the third failed `auth`
+frame of a connection): `cv_ws_auth_failures_total{reason}` counts those, one per failed frame.
+Every method is listed at 0 from process start. The `AuthLoginFailureSpike` rule reads it
+(`sum(increase(...[10m])) > 10`); `sum by (method) (increase(auth_login_failures_total[10m]))`
+shows which factor is attacked.
 
 Owner's own account: the same expiry applies. If the Owner has lost the TOTP device,
 `POST $API/auth/mfa/recovery` takes `{"mfa_token":"<from login>","recovery_code":"<code>"}`:
@@ -201,8 +215,8 @@ not exist in `api/users.py`; the only user route there is `PUT /users/{userId}/r
 What exists and may be used as separate primitives (no endpoint wires them to a disable):
 
 - `SessionService.revoke_all` (`auth/session_service.py`) and the socket hub
-  (`ws/revocation.py`). Metric `auth_revocation_latency_seconds` and
-  `auth_session_revocations_total{reason}` record revocations.
+  (`ws/revocation.py`). Metric `auth_session_revocations_total{reason}` counts revocations (served on
+  the metrics listener since #2319); `auth_revocation_latency_seconds` is process-local and not served.
 - `users.status = disabled` makes login refuse with `403 Account disabled` after a correct password.
 
 Until #965 lands, an operator cannot disable a user end to end. Escalate. The in-process drill
@@ -349,9 +363,25 @@ matching query in step 1.
 
 **`auth_stepup_failures_total`** (no labels) counts each failed step-up verification: wrong password,
 locked account, wrong or replayed code. The audit row is `auth.step_up_failed` (names the action
-class). `auth_step_up_failures_total{action_class}` also exists inside the process but is not served on
-the metrics listener, like the other auth counters outside `AUTH_EXPORTED_NAMES` (`auth/metrics.py`);
-that gap is tracked in #2319.
+class); the per-class counter that used to sit beside it was retired in #2319. No alert rule reads it
+yet (#2746). `auth_readonly_downgrades_total` counts sessions made read-only after the third
+failure.
+
+**Session and invite signals (#2319).** Served on the metrics listener with `env`. No alert rule reads
+them yet (#2746), so read them when investigating:
+
+| Series                                   | Meaning                                                                                                                                                                                     | Audit row                                                                                                                                                                                |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth_refresh_reuse_total`               | a rotated-out refresh token was presented again; the whole session family is revoked                                                                                                        | `auth.refresh_reuse_detected` (critical)                                                                                                                                                 |
+| `auth_session_revocations_total{reason}` | sessions revoked; `reason` is from a closed set (logout, logout_all, rotated, rotation_reuse, expired, idle, admin, user_revoked, locked, timeout, unlock_attempts_exceeded) plus `other`   | `auth.session_revoked` for the logout and revoke routes                                                                                                                                  |
+| `users_invites_rejected_total{reason}`   | invite requests refused: unknown, expired, redeemed, revoked, enrollment_invalid, role_tamper (a `role` or `roles` claim) or identity_tamper (`username`, `user_id` or `email` in the body) | `users.invite_rejected` (warning for redeemed, role_tamper and identity_tamper). Tamper requests count against the per-address invite budget: the 11th in a minute gets `429` and no row |
+
+Deliberately not served on the metrics listener: `auth_sessions_active` (a process-local gauge that
+drifts: it never drops on expiry or rotation, and a restarted process drives it negative; the database
+is the truth for live sessions) and `cv_ws_errors_total{code}` (its label name is not on the Semgrep
+metric-label allow-list, decision in #2747; the WS cases are covered by the other `cv_ws_*` series).
+The other module-level auth counters outside `AUTH_EXPORTED_NAMES` (`auth/metrics.py`) also stay
+unscraped.
 
 Note: the role-change route writes `rbac.denied` with detail `owner_floor` when you try to demote the
 last active Owner (`409`).
@@ -444,7 +474,8 @@ of an accepted code stay silent.
 | Disable-user cascade (SR-029)                                             | #965                 |
 | Session rotation on role change and step-up                               | #2101                |
 | Lock alerts lost inside quiet hours                                       | #2621                |
-| `auth_login_failures_total` declared but not emitted                      | #2319 (item 4)       |
+| No alert rule reads the session, invite or step-up failure series         | #2746                |
+| `cv_ws_errors_total{code}` not served (label `code` is not allow-listed)  | #2747                |
 
 ## Execution record
 

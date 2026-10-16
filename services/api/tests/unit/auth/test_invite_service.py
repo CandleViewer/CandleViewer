@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, get_args, get_type_hints
 
 import pytest
 
@@ -396,6 +396,13 @@ async def test_invite_metrics_count_created_redeemed_rejected() -> None:
     with pytest.raises(InviteRejected):
         await svc.inspect("z" * 40, source_ip="2.2.2.2")
     assert _sample(m.users_invites_rejected_total, reason="unknown") == rejected0 + 1
+
+
+def test_refuse_takes_only_the_two_tamper_reasons() -> None:
+    # The reason is the `users_invites_rejected_total` label: a Literal keeps a caller from opening
+    # its cardinality (#2319); mypy checks every caller against it.
+    reason = get_type_hints(InviteService.refuse)["reason"]
+    assert set(get_args(reason)) == {"role_tamper", "identity_tamper"}
 
 
 @pytest.mark.parametrize("exc", [AuditUnavailable("wal full"), AuditWriterStopped()])
