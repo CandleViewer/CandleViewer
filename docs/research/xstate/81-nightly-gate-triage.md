@@ -17,12 +17,13 @@ tag `v0.9.1` (commit `801eacd`).
 **Why exit 1.** `tools/statechart/nightly_gate.py --mode pinned` exits 1 in only two cases:
 
 - a blocking row (a non-`repro` FAIL, or any ERROR) is not a blocking failure in `result-v0.9.1.json`;
-- the dedicated BENCH-6 step reports p99 > 100 ms at 500 busy machines.
+- the dedicated BENCH-6 step reports p99 > 100 ms at 500 busy machines, or no p99 at all.
 
 The second never happened: p99 was 19.7–50.9 ms. SKIP-ENV rows, `COVERAGE LOSS` lines and "baseline
-failures now passing" never change the exit code. So every red night came from the regression list
+failures now passing" did not change the exit code. So every red night came from the regression list
 alone. That baseline was recorded once, on Windows with Python 3.13.7, **without benchmarks**
-(`benchmarks_run: false`). Any bench row that is not PASS is therefore automatically "new".
+(`benchmarks_run: false`). Any bench row that is not PASS is therefore automatically "new". This
+branch makes one of those rules stricter: lost coverage is now red in pinned mode (§4).
 
 **What the list held.** Since #1962 (2026-10-07) it has always been `bench:BENCH-2`, `bench:BENCH-6`,
 `verifyM4:174` and `verifyM5:174`. On 4 of those 9 nights it also held `bench:BENCH-1`. The runs of
@@ -34,10 +35,14 @@ with evidence.
 **Result.** With this change the 2026-10-15 artifact comes out **GREEN**. It is excused only by the
 three rows with a written justification and by the BENCH-6 double count. Of the 9 post-#1962 nights,
 5 come out green. The other 4 stay **red on BENCH-1 alone**, which needs an owner decision (§5).
+The saved artifacts ran without the venvs of §4, so each also carries 9 `COVERAGE LOSS` rows, which
+the new comparator marks red. These verdicts replay them with the 13 env rows set to the statuses
+the local run gave them.
 
 ## 1. Per-night evidence
 
-"Old" and "new" are the comparator on `main` and on this branch, run on the same artifact.
+"Old" and "new" are the comparator on `main` and on this branch, run on the same artifact. For "new",
+the 13 SKIP-ENV rows of 10-07 onwards are set to their local statuses (§0, §4).
 
 | Night      | Run         | BENCH-1 (≥ 3.0×) | BENCH-2 (≥ 2,000 ev/s) | BENCH-6 step p99 (max) | Old regressions | New regressions | New verdict |
 | ---------- | ----------- | ---------------- | ---------------------- | ---------------------- | --------------- | --------------- | ----------- |
@@ -74,7 +79,7 @@ found).
 | ----------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `bench:BENCH-6` (the `run_gate` row)                                                      | (a)   | ERROR every night. From 10-07 it reads `metric summary_by_busy_level.500.p99 not found`; before that, the hard-coded path. `bench_c_timers_v2.py` prints one bare JSON document, but `run_gate.py` only parsed `=== name ===` blocks, so this row could never read its metric. The dedicated step on the same nights: p99 19.7–50.9 ms, within budget. | `run_gate.parse_bare_json` fallback: run locally, the row reads p99 25.3 ms and PASSes. `nightly_gate` judges BENCH-6 once, from `--bench`, and reports the `run_gate` row as superseded.                               |
 | 13 SKIP-ENV rows (9 `COVERAGE LOSS`)                                                      | (a)   | The runner had no `_upstream/.venv-main` and no `_upstream/.venv-gate`, so every script needing them exited 77. `XSTATE_SRC` already resolves to the `_upstream` checkout; the venvs were the missing piece.                                                                                                                                           | The workflow builds both venvs: the pinned wheel (sha256 from `services/api/uv.lock`), plus upstream's `test` group from the tag's own `uv.lock`, all with `--require-hashes --no-build`. Locally all 13 rows run (§4). |
-| `bench:BENCH-2`                                                                           | (c)   | 569–1,195 ev/s against 2,000. The owner decision of 2026-09-24 (header of `29-statechart-adoption-plan.md`) calls this "permanent". `79-r14-final-readiness-verdict.md` §0 and §9 record it as architectural and as the reason for row 8, not row 9. The study machine read 380.9 ev/s.                                                                | `KNOWN_DELTAS` entry, which excuses FAIL only. The threshold is unchanged and the row is still reported. BENCH-7 stays the hot-path regression guard.                                                                   |
+| `bench:BENCH-2`                                                                           | (c)   | 569–1,195 ev/s against 2,000. The owner decision of 2026-09-24 (header of `29-statechart-adoption-plan.md`) calls this "permanent". `79-r14-final-readiness-verdict.md` §0 and §9 record it as architectural and as the reason for row 8, not row 9. The study machine read 380.9 ev/s.                                                                | `KNOWN_DELTAS` entry, which excuses FAIL only, at or above a 380.9 ev/s floor. The threshold is unchanged and the row is still reported. BENCH-7 stays the hot-path regression guard.                                   |
 | `verifyM4:174`, `verifyM5:174`                                                            | (d)   | Deterministic: FAIL on all 12 nights and in 2 of 2 local runs. Only criterion [2] fails, as §3 shows. Criterion [2] measures the Windows timer tick, not the library.                                                                                                                                                                                  | `KNOWN_DELTAS` entries, which excuse FAIL only. The proposed rewrite of criterion [2] is in §5.                                                                                                                         |
 | `bench:BENCH-1` (FAIL on 10-04, 10-07, 10-10, 10-12, 10-13)                               | (b)   | 2.75–7.47× across nights. The 5 failures sit at 2.75–2.95×, just under 3.0×. `bench1-idle-rerun-p3-g4.md` rules that a BENCH-1 taken on a loaded host is "inconclusive, not a pass". `79-r14` §9 says a sub-3.0× reading leaves the decision at row 8 (CV-C13: the order lane is on a dedicated loop regardless).                                      | **None.** How to gate BENCH-1 on a shared runner is an owner decision (§5).                                                                                                                                             |
 | `verify:LC-26` ("baseline failure now passing" on 10-14 and 10-15); `repro:LC-26` flaps   | (b)   | LC-26 asserts timer lateness ≤ 50 ms under 100 busy interpreters. It passes only on the two faster-runner nights (BENCH-7 above). It never gates.                                                                                                                                                                                                      | None.                                                                                                                                                                                                                   |
@@ -131,24 +136,26 @@ That comment should be corrected when the row is rewritten.
     - `verifyM4:167` and `verifyM5:167` PASS. The baseline has them as FAIL; `79-r14` §2 calls row
       167 a load-flake. They will show under "baseline failures now passing", which never gates.
   - **Least privilege.** The gate job drops `issues: write`. A new `notify` job holds that permission
-    alone, runs no checkout and no third-party code, and comments on the open tracker issue. It files a
-    new issue only when none is open.
+    alone, runs no checkout and no third-party code, and comments on the tracker issue named by the
+    repo variable `CV_XSTATE_TRACKER_ISSUE` (default 2472). It never files one, and it runs on a timeout.
   - **Credentials.** All checkouts set `persist-credentials: false`.
 - **`tools/statechart/nightly_gate.py`.**
   - **`KNOWN_DELTAS`.** Three entries, each excusing exactly one status (FAIL), each with one
     justification line. Any other status of those rows is judged normally. If a row stops showing its
     documented status, the report prints a `DRIFT` line.
+  - **BENCH-2 floor.** `bench:BENCH-2` is excused only while its measured value is at or above
+    380.9 ev/s, the study figure behind the 2026-09-24 decision; lower or unreadable is a regression.
+  - **Lost coverage gates.** In pinned mode a check that passed in the baseline and is SKIP-ENV now
+    turns the run red; it used to be a warning.
   - **BENCH-6 judged once.** When `--bench` is given, BENCH-6 is judged from it alone.
   - **Upstream mode unchanged.**
 - **`docs/research/xstate/gate/run_gate.py`.** `parse_bare_json`, so `bench_c_timers_v2.py` output is
   read.
 - **Tests.**
-  - `scripts/tests/test_nightly_gate.py`: 8 new cases, 17 pass.
-  - `services/api/tests/unit/statechart/test_xstate_gate_env_skip.py`: 3 new cases.
-- **Docs.** This note and a log row in `80-upstream-liaison-log.md`.
-- **Not yet on this branch: the E50-T04 implementation note in `29-statechart-adoption-plan.md` §1.7.**
-  The one-line update is drafted, but the file is not prettier-clean on `main`. Committing it through
-  the repo's `lint-staged` hook rewrites 278 lines of the binding plan, so it is left for decision 2.
+  - `scripts/tests/test_nightly_gate.py`: 23 new cases, 32 pass.
+  - `services/api/tests/unit/statechart/test_xstate_gate_env_skip.py`: 8 new cases, 33 pass.
+- **Docs.** This note, a log row in `80-upstream-liaison-log.md` and the §1.7 verdict wording in
+  `29-statechart-adoption-plan.md`, edited in place (that file is not prettier-clean on `main`).
 
 **Unchanged:** the pin, `machine_hashes.lock`, every machine, every research script's assertions,
 every threshold, and `result-v0.9.1.json`.
@@ -164,24 +171,25 @@ every threshold, and `result-v0.9.1.json`.
    Until one is chosen, roughly 4 nights in 9 stay red on BENCH-1 alone, and they now comment on one
    tracker instead of filing issues.
 
-2. **Accept the documented-deltas extension of the committed baseline.** It changes the verdict
-   wording of `29-statechart-adoption-plan.md` §1.7 (CODEOWNER: architecture), which must change in
-   the same PR (C-15.2). Choose how to land that one line: normalise 29 with prettier in its own
-   `docs` PR first, or apply the drafted line where the hook does not reformat the file. Item M,
-   point 3 (re-record the baseline on Ubuntu) then becomes optional. Re-recording would freeze one
-   night's bench noise into the baseline.
-3. **Rewrite criterion [2] of both 174 scripts** (amendment 21): report the busy-loop lateness but do
+2. **Accept the documented-deltas extension of the committed baseline.** This branch already changes
+   the verdict wording of `29-statechart-adoption-plan.md` §1.7 to match (CODEOWNER: architecture;
+   C-15.2), in place; normalising that file with prettier is a separate `docs` change. If you accept,
+   item M, point 3 (re-record the baseline on Ubuntu) becomes optional: re-recording would freeze one
+   night's bench noise into the baseline. If you reject, drop the `KNOWN_DELTAS` entries and revert
+   that paragraph.
+3. **Rewrite criterion [2] of both 174 scripts** (amendment 21, #ISSUE-CRITERION2): report the busy-loop lateness but do
    not gate on it. The `KNOWN_DELTAS` entries can then be removed. Until then, a change in [1], [3] or
    [4] on Linux is hidden behind [2]'s FAIL.
-4. **Close the 11 duplicate auto-filed issues** in favour of #2472 as the tracker.
+4. **Close the duplicate auto-filed issues** (the 11 listed at the top and #2821, from the 2026-10-16 night)
+   in favour of #2472 as the tracker.
 
 ## 6. Follow-ups (not on this branch)
 
 - **#1965: pin `_upstream` by commit.** The tag `v0.9.1` is tag object `45bb7f3c…` and points to
   commit `801eacdeef5bda2ba24b75f537ae04cc3527747e`. The checkout now feeds two venvs and the upstream
   test run, so a moved tag matters more than before.
-- **`bench_c_timers_v2.py` "p99".** It takes `sorted(vals)[int(0.99·n) − 1]`, which for n = 5 is the
+- **`bench_c_timers_v2.py` "p99" (#ISSUE-P99).** It takes `sorted(vals)[int(0.99·n) − 1]`, which for n = 5 is the
   second-largest of 5, not the maximum. The nightly margin is ≥ 49 ms, so no verdict changes. Fix it,
   with a justification, before P3-G6 relies on the number.
-- **The `upstream` job checks out no upstream tree**, so most env rows SKIP there: 38 SKIP-ENV on the
+- **The `upstream` job checks out no upstream tree** (#ISSUE-UPSTREAM), so most env rows SKIP there: 38 SKIP-ENV on the
   0.11.0 run of 2026-10-14.
