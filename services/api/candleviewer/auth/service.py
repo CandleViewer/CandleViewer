@@ -18,6 +18,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from candleviewer.auth.break_glass_notice import BreakGlassEvents, BreakGlassNotice
 from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import InviteService
@@ -57,6 +58,7 @@ class AuthService:
         clock: Callable[[], datetime] | None = None,
         invite_repository: InviteRepository | None = None,
         system_events: SystemEventWriter | None = None,
+        break_glass_events: BreakGlassEvents | None = None,
     ) -> None:
         self._started = False
         #: Where a TOTP clock-skew event goes (#2146); `None` still counts the metric.
@@ -80,6 +82,8 @@ class AuthService:
         #: WS `RevocationHub`); attached by the composition root.
         self._revocation_sink: RevocationSink | None = None
         self._skew_reporter: TotpSkewReporter | None = None
+        #: E09-S11 (O4): the unresolved break-glass state behind the WS `system` notice.
+        self._break_glass_notice = BreakGlassNotice(break_glass_events)
 
     @property
     def is_active(self) -> bool:
@@ -130,6 +134,10 @@ class AuthService:
         if self._sessions is None:
             raise RuntimeError("AuthService.start() has not wired a SessionRepository")
         return self._sessions
+
+    @property
+    def break_glass_notice(self) -> BreakGlassNotice:
+        return self._break_glass_notice
 
     def attach_revocation_sink(self, sink: RevocationSink) -> None:
         """Publish every session this module revokes to *sink*
@@ -227,6 +235,7 @@ class AuthService:
                     clock=self._clock,
                     skew_reporter=skew_reporter,
                 )
+        await self._break_glass_notice.start()  # read before cv-api serves, then every minute
         self._started = True
 
     async def stop(self, grace_s: float) -> None:
@@ -237,6 +246,7 @@ class AuthService:
         if self._skew_reporter is not None:
             await self._skew_reporter.stop()
             self._skew_reporter = None
+        await self._break_glass_notice.stop()
         if self._step_up is not None:
             await self._step_up.stop()
         self._step_up = None

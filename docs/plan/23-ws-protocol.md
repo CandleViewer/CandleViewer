@@ -3424,6 +3424,16 @@ replaces it (the later frame wins).
 }
 ```
 
+**Break-glass notice (E09-S11, SR-023).** While an offline break-glass Owner reset is unresolved
+(a critical `system_events` row with component `auth` and kind `break_glass_used`), a **first**
+authentication receives one `system` frame of `kind: "notice"` right after `auth_ok`: `severity`
+`critical`, a role-neutral `message` and `reason` `auth.break_glass_used`. Every role receives the
+same frame; it names no user, and the details stay in `system_events`. An in-place re-auth does not
+repeat it. The server reads the state at start-up and then every minute, never per connection, so
+a resolved event stops the notice within a minute. Order entry keys on the `reason` code, never on
+`severity` `critical`: this notice does not disable order entry, while a read-only code (below)
+does. This uses the existing schema; no schema change.
+
 **Read-only / degraded notice (E27-T02).** When the server's process read-only gate changes —
 the mesh binding self-check or the credential key (KEK) being unavailable — every authenticated
 connection receives a `system` frame of `kind: "notice"` using only the fields above:
