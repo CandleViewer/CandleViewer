@@ -315,7 +315,7 @@ def test_the_connect_over_the_limit_gets_bye_4429_before_auth_ok_and_writes_no_a
         assert refused_id not in {r["object_id"] for r in w.audit.records}
         assert [r["action"] for r in w.audit.records] == [CLOSED] * 3
         # Nothing of it is left: the SR-189 permission registration was undone by its teardown, and
-        # it never got a revocation hook.
+        # the revocation hook `run_auth` registered for its session was dropped by `do_auth`.
         assert not w.registry._conns.get(USER)
         revoked = w.client.portal.call(w.revocation.revoke, SESSION)  # type: ignore[union-attr]
         assert revoked == 0  # portal is set inside `with w.client`
