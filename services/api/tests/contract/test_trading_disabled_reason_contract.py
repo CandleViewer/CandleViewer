@@ -1,15 +1,16 @@
 """Contract (#837 Q5, E42-T03): the `403 trading_disabled` problem carries the order-entry gate's
 `reason` extension member. `OrderEntryRefusalReason` is the closed server set that
 `24-internal-schemas.md` 8.10 lists, open-ended for readers; `TradingDisabledProblem` is `Problem`
-plus a required `reason`; the shared `Forbidden` response documents and exemplifies it. Additive
-only (C-6.3): two new schemas, one new example, and `Problem` itself is unchanged."""
+with `code` pinned to `trading_disabled` plus a required `reason`, and the shared `Forbidden`
+response is `anyOf: [Problem, TradingDisabledProblem]`. Additive only (C-6.3): two new schemas,
+one new example, a wider `Forbidden` schema, and `Problem` itself is unchanged."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from candleviewer.api._generated import openapi_models as api
-from candleviewer.api.contract_conformance import REPO_ROOT, load_openapi_spec
+from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
 
 _SPEC = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
@@ -20,7 +21,11 @@ _REASONS = [
     "no_active_key",
     "account_unhealthy",
 ]
-_DOC = REPO_ROOT / "docs/plan/24-internal-schemas.md"
+_DOC = OPENAPI_SPEC_PATH.parent / "24-internal-schemas.md"
+
+
+def _ref(name: str) -> dict[str, str]:
+    return {"$ref": f"#/components/schemas/{name}"}
 
 
 def _example() -> dict[str, Any]:
@@ -38,15 +43,16 @@ def test_the_reason_set_is_closed_for_the_server_and_open_for_readers() -> None:
 
 def test_trading_disabled_problem_is_problem_plus_a_required_reason() -> None:
     problem, extra = _SCHEMAS["TradingDisabledProblem"]["allOf"]
-    assert problem == {"$ref": "#/components/schemas/Problem"}
+    assert problem == _ref("Problem")
     assert extra["required"] == ["reason"]
-    assert extra["properties"]["reason"] == {"$ref": "#/components/schemas/OrderEntryRefusalReason"}
+    assert extra["properties"]["code"] == {"const": "trading_disabled"}
+    assert extra["properties"]["reason"] == _ref("OrderEntryRefusalReason")
     assert "reason" not in _SCHEMAS["Problem"]["properties"]
 
 
-def test_the_forbidden_response_documents_the_gate_refusal() -> None:
-    assert "`TradingDisabledProblem`" in _FORBIDDEN["description"]
-    assert "`code: trading_disabled`" in _FORBIDDEN["description"]
+def test_the_forbidden_response_admits_the_gate_refusal() -> None:
+    schema = _FORBIDDEN["content"]["application/problem+json"]["schema"]
+    assert schema == {"anyOf": [_ref("Problem"), _ref("TradingDisabledProblem")]}
 
 
 def test_the_example_round_trips_and_uses_the_registry_title() -> None:
@@ -59,6 +65,9 @@ def test_the_example_round_trips_and_uses_the_registry_title() -> None:
         403,
         entry["code"],
     )
+    assert "maintenance mode" in entry["title"]
+    # Neutral: the order kill switch and an unreadable store engage the gate too.
+    assert example["detail"] == "Order entry is paused."
 
 
 def test_the_generated_model_mirrors_the_schema() -> None:

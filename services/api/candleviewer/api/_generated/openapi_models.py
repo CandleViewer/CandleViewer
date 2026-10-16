@@ -4374,10 +4374,13 @@ class FeatureFlag(BaseModel):
     default_value: Annotated[
         Any | None,
         Field(
-            description="Deployment default: the deployment-wide stored value that `PUT` writes and that resolution falls back to (`feature_flags.default_value`, E42-T03). Omitted when the flag is `unreadable`.\n"
+            description="Deployment default: the deployment-wide stored value resolution falls back to (`feature_flags.default_value`, E42-T03). A `PUT` writes it on a `boolean` or `variant` flag; on a `percentage` flag it writes `rollout_pct` instead. Omitted when the list's `resolution` is `fail_closed` or the flag is `unreadable`.\n"
         ),
     ] = None
-    overrides: list[Override] | None = None
+    overrides: Annotated[
+        list[Override] | None,
+        Field(description="Omitted when the list's `resolution` is `fail_closed` (E42-T03)."),
+    ] = None
     updated_by: Annotated[
         UUID | None,
         Field(
@@ -4402,7 +4405,7 @@ class FeatureFlagResolution(RootModel[Literal["stored", "fail_closed"]]):
     root: Annotated[
         Literal["stored", "fail_closed"],
         Field(
-            description="How `GET /admin/feature-flags` resolved its list (E42-T03), a closed set. `stored`: from the flag store. `fail_closed`: the store was unreachable (its read failed or exceeded its read budget), so every flag shows its fail-closed value and omits `updated_at` and `updated_by`. A single unreadable row is not an outage: the list stays `stored` and that flag is marked `unreadable`.\n"
+            description="How `GET /admin/feature-flags` resolved its list (E42-T03), a closed set; always sent. `stored`: from the flag store. `fail_closed`: the store was unreachable (its read failed or exceeded its read budget), so every flag shows its fail-closed value and omits `default_value`, `overrides`, `updated_at` and `updated_by`. A single unreadable row is not an outage: the list stays `stored` and that flag is marked `unreadable`.\n"
         ),
     ]
 
@@ -5330,6 +5333,10 @@ class SecuritySummary(BaseModel):
 
 
 class TradingDisabledProblem(Problem):
+    code: Annotated[
+        Literal["trading_disabled"],
+        Field(description="Stable machine-readable error code from `x-error-codes`."),
+    ]
     reason: Annotated[
         Literal["maintenance", "account_disabled_by_policy", "no_active_key", "account_unhealthy"],
         Field(
