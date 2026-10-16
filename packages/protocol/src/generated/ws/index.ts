@@ -182,7 +182,16 @@ export interface CvWsV1ByeSchemaJson {
   retry_after_ms?: number;
   reconnect?: boolean;
   hint?: {
-    most_expensive_topics?: string[];
+    /**
+     * @maxItems 5
+     */
+    most_expensive_topics?:
+      | []
+      | [string]
+      | [string, string]
+      | [string, string, string]
+      | [string, string, string, string]
+      | [string, string, string, string, string];
   };
 }
 
@@ -595,6 +604,8 @@ export interface HeatmapSymbol {
   }[];
   max_value?: number;
   estimated?: boolean;
+  coalesced?: boolean;
+  coalesced_count?: number;
 }
 
 // Source: cv://ws/v1/hello.schema.json
@@ -697,6 +708,8 @@ export interface MetricsSymbol {
       [k: string]: unknown;
     };
   }[];
+  coalesced?: boolean;
+  coalesced_count?: number;
 }
 
 // Source: cv://ws/v1/orders.schema.json
@@ -852,9 +865,11 @@ export interface Positions {
     updated_at_ms: number;
   }[];
   /**
-   * Positions that went flat.
+   * Positions that went flat; applied after this frame's `positions` upserts.
    */
   removed?: string[];
+  coalesced?: boolean;
+  coalesced_count?: number;
 }
 
 // Source: cv://ws/v1/profile.schema.json
@@ -1329,6 +1344,8 @@ export interface TickerSymbolTicker {
     ts_ms: number;
     stale?: boolean;
   }[];
+  coalesced?: boolean;
+  coalesced_count?: number;
 }
 
 // Source: cv://ws/v1/trade_groups.schema.json
@@ -1521,6 +1538,8 @@ export interface Wallet {
      */
     updated_at_ms: number;
   }[];
+  coalesced?: boolean;
+  coalesced_count?: number;
 }
 
 // Source: cv://ws/v1/welcome.schema.json

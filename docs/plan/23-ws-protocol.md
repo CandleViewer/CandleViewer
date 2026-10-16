@@ -237,14 +237,14 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 
 ### 3.6 Frame size limits
 
-| Limit                              | Value   | Enforcement                                                                                |
-| ---------------------------------- | ------- | ------------------------------------------------------------------------------------------ |
-| Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`.                                                              |
+| Limit                              | Value   | Enforcement                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Max inbound frame (client→server)  | 256 KiB | Exceeding closes with `1009`.                                                                                                                                                                                                                                                                                                                                                 |
 | Max inbound JSON nesting depth     | 32      | As-built (SR-184): pre-scanned before decode; deeper, malformed or non-UTF-8 frames are a `frame_malformed` protocol violation (3 strikes -> `4400`), never `1011`. The deepest legitimate client frame in `ws-schema.json` (`sub`/`ctl`: envelope -> topic entry -> `options` -> list) nests at most 6 levels including the envelope, so 32 is headroom, not a format limit. |
-| Max outbound frame (server→client) | 4 MiB   | Server splits snapshots into `partial` chunks (header flag bit3) rather than exceeding it. |
-| Max topics per `sub` frame         | 50      | Excess rejected per-topic with `too_many_topics`.                                          |
-| Max subscriptions per connection   | 200     | New subscribes rejected with `subscription_limit`.                                         |
-| Max connections per user           | 8       | Oldest idle connection is closed with `bye` when exceeded.                                 |
+| Max outbound frame (server→client) | 4 MiB   | Server splits snapshots into `partial` chunks (header flag bit3) rather than exceeding it.                                                                                                                                                                                                                                                                                    |
+| Max topics per `sub` frame         | 50      | Excess rejected per-topic with `too_many_topics`.                                                                                                                                                                                                                                                                                                                             |
+| Max subscriptions per connection   | 200     | New subscribes rejected with `subscription_limit`.                                                                                                                                                                                                                                                                                                                            |
+| Max connections per user           | 8       | Oldest idle connection is closed with `bye` when exceeded.                                                                                                                                                                                                                                                                                                                    |
 
 Snapshot chunking: a `snap` larger than 4 MiB is sent as N frames sharing one `id`, each with `partial` set, the last one clearing it. All chunks consume **one** sequence number in total, assigned to the final chunk; intermediate chunks carry `s: null`.
 
@@ -397,7 +397,7 @@ Rules:
 - More than 8 connections per user: the oldest idle one is closed with `too_many_connections` (`4429`).
 - Only `cv.v1.json` is negotiated today; `cv.v1.msgpack` follows its dependency PR.
 - `welcome.server_version` / `git_sha` come from settings (`CV_VERSION`, `CV_GIT_SHA`). `auth_ok.kill_switch` reflects the live kill-switch state at the time of the `auth`.
-- Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_SHUTDOWN_GRACE_MS` (5 000) and `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000). The defaults are the values in this section and §9.4.
+- Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_SHUTDOWN_GRACE_MS` (5 000), `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000), `CV_WS_QUEUE_BYTES` (8 388 608), `CV_WS_QUEUE_FRAMES` (2 000) and `CV_WS_CLASSIFY_INTERVAL_MS` (2 000). The defaults are the values in this section, §8.3, §8.4 and §9.4.
 - `auth_ok` carries `user_id`, `roles`, `permissions`, `account_scope`, `session_id`, `token_expires_at_ms` and `kill_switch`. It does not carry `username` or `allowed_environments`, which the examples above show and §13.4 marks optional (#2486).
 - When an authenticated connection ends, one `ws.connection.closed` audit row is written (#2486):
   - its reason is the close reason: the `bye`'s; else `internal_error` after a fault, `shutdown` when the server transport closed the socket (uvicorn's own shutdown sends `1012`), or `client_closed`;
@@ -406,6 +406,7 @@ Rules:
   - it is best effort, bounded at 2 s.
 
   An unauthenticated close writes no row; its 3rd failed `auth` is already audited.
+
 - Gateway metrics as built: connections in use are `cv_ws_connections_in_use` (the ticket's `cv_ws_clients`), and `cv_ws_closes_total` is labelled by `reason` alone, because each reason has one close code (#2486).
 
 ### 4.4 Close codes
@@ -490,7 +491,7 @@ A refused upgrade (§2.5) also uses `4403`, with reason `origin_forbidden`. It i
 | ------------- | -------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `throttle_ms` | int                        | per-topic (§6)         | Minimum interval between frames; floored at `limits.min_throttle_ms` (50).                                                                         |
 | `encoding`    | `"binary"`\|`"structured"` | binary where supported | Rejected with `encoding_unsupported` if the topic has no binary form or the subprotocol is JSON without `b64` capability.                          |
-| `coalesce`    | bool                       | `true`                 | Disabling is honoured only while the client keeps up; the server re-enables it under pressure and says so in a `ctl_ok`-style notice on the topic. |
+| `coalesce`    | bool                       | `true`                 | Disabling is honoured only while the client keeps up; the server re-enables it under pressure and says so in a `connection_quality` notice (§8.3). |
 
 ### 5.2 `sub_ok`
 
@@ -896,7 +897,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 
 | Mechanism      | What it does                                                               | Applied to                                                          | Loss of information?                                    |
 | -------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------- |
-| **Throttling** | Emits at most one frame per `throttle_ms` per topic.                       | All topics except `orders`, `executions`.                           | No — state is complete at each emission.                |
+| **Throttling** | Releases a topic's pending updates at most once per `throttle_ms`.         | All topics except `orders`, `executions`.                           | No — state is complete at each emission.                |
 | **Coalescing** | Merges all pending updates for a topic into one frame.                     | Book, bars, footprint, heatmap, metrics, ticker, positions, wallet. | Intermediate _frames_ are lost; final _state_ is exact. |
 | **Shedding**   | Drops the subscription and forces a re-snapshot, or closes the connection. | Last resort under sustained overflow.                               | Yes — recovered by re-snapshot.                         |
 
@@ -908,7 +909,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 | `bars`                          | Per bar `(generation, index)`, last-write-wins; a confirmed bar never replaced by an unconfirmed one, except a confirmed update with `amended: true` (below). | The in-progress bar is overwritten many times per second.      |
 | `footprint`                     | Per (bar, price) cell, values summed for the _same_ bar, replaced across bars.                                                                                | Cells are cumulative within a bar.                             |
 | `heatmap`                       | Per time-bucket column, last-write-wins; whole columns dropped only if the bucket is complete and already sent.                                               | Columns are the atomic render unit.                            |
-| `metrics`                       | Per metric code, last point wins.                                                                                                                             | Scalar time series.                                            |
+| `metrics`                       | Per series (metric code and `params`), last point wins.                                                                                                       | Scalar time series.                                            |
 | `ticker`, `wallet`, `positions` | Whole-object last-write-wins.                                                                                                                                 | Snapshot-shaped.                                               |
 | `trades`, `liquidations`        | **Append, never merge** — throttling batches them into arrays.                                                                                                | Every print matters for the tape and CVD.                      |
 | `orders`, `executions`          | **Never coalesced, never throttled.**                                                                                                                         | State-machine transitions and fills must be seen individually. |
@@ -916,6 +917,16 @@ The server accepts this **only** when it can prove continuity: it holds state co
 **Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts when ADR-0033 starts a new generation/epoch. A channel streams one generation at a time; a generation swap arrives as a new snapshot (ADR-0033 client ingestion). Clients key their bar stores the same way.
 
 **Amended bars (#2018, 24 §3.2).** A late trade can re-close an already-confirmed bar; the server then emits a `confirm: true` item with `amended: true` at the same `(generation, index)`. This is the one carve-out to "confirmed is final": a confirmed→confirmed replacement is permitted (and coalesced last-write-wins) only when the incoming item sets `amended`. A confirmed→unconfirmed replacement is never permitted. Clients replace the stored bar by key and re-render it.
+
+**Footprint increments (#412).** A `footprint` delta carries, per cell, the volume added since the previous frame of the same bar: `bid_volume`, `ask_volume`, `delta`, `total_volume` and `trades` are increments that clients add to the stored cell, which is what makes summing lossless. Every other bar or cell field (`poc_price`, the value area, `is_poc`, `imbalances`, `unfinished_auction`, the bar-level `delta`) is the bar's current value and replaces the stored one.
+
+**Completed heatmap buckets (#412).** Once a bucket's `complete: true` column has been sent, the server drops any later column for that bucket instead of re-sending or regressing it.
+
+**Positions removed, then re-opened (#412).** `removed` ids apply after the `positions` upserts of the same frame. When a position id is removed and then upserted again within one window, the server closes the frame before the upsert, so the removal and the re-open reach the client in two frames.
+
+**Client rules the merges rely on (#412).** Clients enforce the bar confirmed/amended precedence themselves, so a window's merge never has to know what earlier windows sent. Within one `positions` frame, `removed` applies after the upserts. An entity whose `updated_at_ms` equals the stored one replaces it (the later frame wins; §15). Event-like metrics (`iceberg`, `stop_run`, `absorption`, `exhaustion`) keep only the latest point of a window, as any series does.
+
+**Families without a merge rule (#412).** `profile`, `trade_groups`, `rules`, `alerts` and `recorder` are throttled but never merged: the frames a window collects leave back to back when it closes, unchanged. Their frames count against the §8.4 budget like any other, and overflow follows the §8.4 ladder.
 
 A coalesced frame sets `coalesced: true` (structured) or header flag bit1 (binary), and carries `coalesced_count` — the number of source updates merged. The UI uses this to drive the "feed compressed" indicator on the tape-speed widget rather than silently under-reporting activity.
 
@@ -930,7 +941,9 @@ The server tracks per-connection outbound queue depth and round-trip `ping`/`pon
 | `saturated`   | queue 60–90 %, or RTT > 500 ms       | Multiply by 4; drop `heatmap` and `profile` to 1 000 ms; emit a `system` notice. |
 | `overflowing` | queue > 90 %                         | §8.4.                                                                            |
 
-Class changes are announced so the UI can be honest about degraded fidelity:
+The queue depth is the larger of the byte and frame fractions of the §8.4 budget. RTT is sampled with a server `ping` every classification interval (§9.1); while a probe is unanswered, its age counts as the RTT. A class worsens at once and improves only after two consecutive samples of a better class, so throttles do not oscillate.
+
+Class changes, in both directions, are announced so the UI can be honest about degraded fidelity:
 
 ```jsonc
 {
@@ -959,12 +972,14 @@ Each connection has a **bounded** outbound budget: 8 MiB or 2 000 frames, whiche
 
 On overflow the server acts in this order:
 
-1. **Drop coalescable pending state** for the offending topics and mark them `resnapshot_required`.
-2. Send `snap` with `reason: "backpressure"` for each such topic once the queue drains below 50 %.
-3. If the queue is still over budget after the drop **and** the affected topics include `orders` or `executions` (which cannot be dropped), send `bye` with `slow_consumer` and close `4429`.
-4. Record `cv_ws_overflow_total{action}` and, if step 3 fires, write a `warning` audit entry.
+1. **Drop the queued frames and coalescable pending state** of the offending topics and mark them `resnapshot_required`. Every throttled topic can be dropped this way, the append-only `trades` and `liquidations` included; a dropped topic recovers through its snapshot (step 2), never by a replay of what was dropped. `orders` and `executions` (never throttled), control frames (`sub_ok`, `err`, `pong`, ...) and `system` frames are never dropped.
+2. Send `snap` with `reason: "backpressure"` for each such topic once the queue drains below 50 %. Snapshots are queued one at a time, each only while the queue, earlier snapshots included, is still below 50 %.
+3. Send `bye` with `slow_consumer` and close `4429` when either:
+   - the queue is still over budget after the drop, because what remains cannot be dropped: `orders` or `executions`, or a backlog of control or `system` frames (S6); or
+   - three drops in a row each remove a topic's `backpressure` snapshot before it was sent: the client drains too slowly for that topic to recover (a snapshot larger than the budget never could).
+4. Record `cv_ws_overflow_total{reason}`, where `reason` is `drop` (step 1), `resnapshot` (step 2), or `close_budget` / `close_redrop` (the two step-3 triggers), and, if step 3 fires, write a `warning` audit entry: the connection's close audit, `ws.connection.closed` with reason `slow_consumer` (#2486), not a second action.
 
-A client that is closed as a slow consumer should reconnect with backoff and _reduce its subscription set_ — the `bye` payload names the topics that were most expensive:
+A client that is closed as a slow consumer should reconnect with backoff and _reduce its subscription set_ — the `bye` payload names the topics that were most expensive (up to five, by queued plus pending bytes when the overflow began, largest first; empty when no topic held any):
 
 ```jsonc
 {
@@ -1002,6 +1017,7 @@ A client that is closed as a slow consumer should reconnect with backoff and _re
 
 - The **client** sends `ping` every `welcome.heartbeat.interval_ms` (15 s default). The server replies `pong` echoing `id` and including its own clock.
 - The **server** also sends unsolicited `ping` when it has sent nothing for 20 s; the client MUST reply `pong` within 10 s.
+- The **server** also sends `ping` every `CV_WS_CLASSIFY_INTERVAL_MS` (2 s) as the RTT probe for adaptive throttling (§8.3); the client replies `pong` echoing `id`, as for any server ping.
 - Either side seeing no traffic at all for `heartbeat.timeout_ms` (45 s) closes the connection.
 
 ```jsonc
@@ -1059,6 +1075,7 @@ Before a deploy or restart the server broadcasts on `system`, then closes with `
 The UI uses `expected_downtime_ms` to show a countdown instead of a bare "disconnected", and — critically — **disables the order ticket** for the duration, because a restart mid-submission is exactly when a double-send would happen.
 
 **As built (#2546).** The sequence runs when the server is asked to exit (SIGTERM, Ctrl+C), before uvicorn's own shutdown. uvicorn fails every open WebSocket with `1012` before the application's shutdown hook runs, so the planned shutdown cannot live in that hook. Order:
+
 1. The server stops accepting connections. A client that reconnects during the grace is refused at TCP and retries with backoff, instead of connecting and then getting a bare `1012`.
 2. Every authenticated connection gets the `shutdown_notice`.
 3. After the grace period, every connection gets `bye` `shutdown` with `retry_after_ms` = `expected_downtime_ms`, then close `1001`.
@@ -1971,6 +1988,7 @@ Shared definitions used throughout:
       "properties": {
         "most_expensive_topics": {
           "type": "array",
+          "maxItems": 5,
           "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/topic" }
         }
       },
@@ -2270,7 +2288,9 @@ result against these schemas, which is what keeps the two representations from d
       }
     },
     "max_value": { "type": "number" },
-    "estimated": { "type": "boolean", "default": false }
+    "estimated": { "type": "boolean", "default": false },
+    "coalesced": { "type": "boolean", "default": false },
+    "coalesced_count": { "type": "integer", "minimum": 1 }
   },
   "additionalProperties": false
 }
@@ -2402,7 +2422,9 @@ result against these schemas, which is what keeps the two representations from d
         },
         "additionalProperties": false
       }
-    }
+    },
+    "coalesced": { "type": "boolean", "default": false },
+    "coalesced_count": { "type": "integer", "minimum": 1 }
   },
   "additionalProperties": false
 }
@@ -2446,7 +2468,9 @@ result against these schemas, which is what keeps the two representations from d
         },
         "additionalProperties": false
       }
-    }
+    },
+    "coalesced": { "type": "boolean", "default": false },
+    "coalesced_count": { "type": "integer", "minimum": 1 }
   },
   "additionalProperties": false
 }
@@ -2494,7 +2518,8 @@ result against these schemas, which is what keeps the two representations from d
 
 Every private payload carries `environment` so a UI showing live and demo side by side can never
 confuse them (arch P9), and every entity carries `updated_at_ms` so late-arriving frames can be
-discarded rather than applied out of order.
+discarded rather than applied out of order; an entity whose `updated_at_ms` equals the stored one
+replaces it (the later frame wins).
 
 ### 15.1 `OrderUpdate`
 
@@ -2710,8 +2735,10 @@ discarded rather than applied out of order.
     "removed": {
       "type": "array",
       "items": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
-      "description": "Positions that went flat."
-    }
+      "description": "Positions that went flat; applied after this frame's `positions` upserts."
+    },
+    "coalesced": { "type": "boolean", "default": false },
+    "coalesced_count": { "type": "integer", "minimum": 1 }
   },
   "additionalProperties": false
 }
@@ -2825,7 +2852,9 @@ discarded rather than applied out of order.
         },
         "additionalProperties": false
       }
-    }
+    },
+    "coalesced": { "type": "boolean", "default": false },
+    "coalesced_count": { "type": "integer", "minimum": 1 }
   },
   "additionalProperties": false
 }

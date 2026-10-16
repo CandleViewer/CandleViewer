@@ -186,3 +186,19 @@ def test_constants_main_writes_and_detects_stale(
     assert const.main(["--check"]) == 0
     with pytest.raises(ValueError, match="section 6"):
         const.topic_patterns("x")
+
+
+def test_every_coalesced_family_declares_the_disclosure_fields() -> None:
+    """§8.2: a coalesced frame carries `coalesced` and `coalesced_count`, so every family the
+    §8.1 "Coalescing" row names must declare both (E17-T03)."""
+    row = re.search(r"^\| \*\*Coalescing\*\* +\|[^|]*\|([^|]*)\|", MD_TEXT, re.MULTILINE)
+    assert row is not None
+    families = [name.strip().rstrip(".").lower() for name in row.group(1).split(",")]
+    assert len(families) == 8, f"§8.1 Coalescing row changed: {families}"
+    schemas = ext.build_bundle(MD_TEXT)["schemas"]
+    for family in families:
+        props = schemas[f"cv://ws/v1/{family}.schema.json"]["properties"]
+        assert {"coalesced", "coalesced_count"} <= props.keys(), family
+        assert props["coalesced"].get("type") == "boolean", family
+        assert props["coalesced_count"].get("type") == "integer", family
+        assert props["coalesced_count"].get("minimum") == 1, family

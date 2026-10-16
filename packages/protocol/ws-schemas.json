@@ -396,6 +396,7 @@
               "items": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/topic"
               },
+              "maxItems": 5,
               "type": "array"
             }
           },
@@ -1084,6 +1085,14 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
+        "coalesced": {
+          "default": false,
+          "type": "boolean"
+        },
+        "coalesced_count": {
+          "minimum": 1,
+          "type": "integer"
+        },
         "columns": {
           "items": {
             "additionalProperties": false,
@@ -1288,6 +1297,14 @@
       "properties": {
         "bar_type": {
           "$ref": "cv://ws/v1/common.schema.json#/$defs/barType"
+        },
+        "coalesced": {
+          "default": false,
+          "type": "boolean"
+        },
+        "coalesced_count": {
+          "minimum": 1,
+          "type": "integer"
         },
         "param": {
           "type": "string"
@@ -1646,6 +1663,14 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
+        "coalesced": {
+          "default": false,
+          "type": "boolean"
+        },
+        "coalesced_count": {
+          "minimum": 1,
+          "type": "integer"
+        },
         "positions": {
           "items": {
             "additionalProperties": false,
@@ -1798,7 +1823,7 @@
           "type": "array"
         },
         "removed": {
-          "description": "Positions that went flat.",
+          "description": "Positions that went flat; applied after this frame's `positions` upserts.",
           "items": {
             "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid"
           },
@@ -2755,6 +2780,14 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
+        "coalesced": {
+          "default": false,
+          "type": "boolean"
+        },
+        "coalesced_count": {
+          "minimum": 1,
+          "type": "integer"
+        },
         "tickers": {
           "items": {
             "additionalProperties": false,
@@ -3291,6 +3324,14 @@
             "type": "object"
           },
           "type": "array"
+        },
+        "coalesced": {
+          "default": false,
+          "type": "boolean"
+        },
+        "coalesced_count": {
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "required": [
