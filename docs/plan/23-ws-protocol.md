@@ -670,7 +670,7 @@ All private topics are **account-scoped**: the server intersects the requested `
 | `orders`       | `exchange_account_ids`, `symbols`, `open_only` | All open orders                      | 0 ms (never throttled) | [`OrderUpdate`](#151-orderupdate)           |
 | `positions`    | `exchange_account_ids`, `symbols`              | All open positions                   | 100 ms                 | [`PositionUpdate`](#152-positionupdate)     |
 | `executions`   | `exchange_account_ids`, `symbols`              | Last 100 fills                       | 0 ms (never throttled) | [`ExecutionUpdate`](#153-executionupdate)   |
-| `wallet`       | `exchange_account_ids`                         | Current balances                     | 500 ms                 | [`WalletUpdate`](#154-walletupdate)         |
+| `wallet`       | `exchange_account_ids`                         | Current balances + account health    | 500 ms                 | [`WalletUpdate`](#154-walletupdate)         |
 | `trade_groups` | `exchange_account_ids`, `status`               | Active groups                        | 100 ms                 | [`TradeGroupUpdate`](#155-tradegroupupdate) |
 | `rules`        | `rule_ids`, `include_events`                   | Armed/simulating rules + state       | 250 ms                 | [`RuleUpdate`](#156-ruleupdate)             |
 | `alerts`       | `unacked_only`                                 | Unacked deliveries                   | 250 ms                 | [`AlertUpdate`](#157-alertupdate)           |
@@ -2829,19 +2829,32 @@ discarded rather than applied out of order.
               { "type": "null" }
             ]
           },
-          "health": {
-            "type": "object",
-            "required": ["state", "reason", "heartbeat_age_ms", "rest_only", "changed_at_ms"],
-            "properties": {
-              "state": { "enum": ["healthy", "degraded", "down"] },
-              "reason": { "type": "string" },
-              "heartbeat_age_ms": { "type": ["integer", "null"], "minimum": 0 },
-              "rest_only": { "type": "boolean" },
-              "changed_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" }
-            },
-            "additionalProperties": false
-          },
           "updated_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "health": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "exchange_account_id",
+          "state",
+          "reason",
+          "heartbeat_age_ms",
+          "rest_only",
+          "changed_at_ms"
+        ],
+        "properties": {
+          "exchange_account_id": { "$ref": "cv://ws/v1/common.schema.json#/$defs/uuid" },
+          "state": { "enum": ["healthy", "degraded", "down"] },
+          "reason": {
+            "enum": ["ws_heartbeat", "rest_only", "ws_silent", "no_success", "never_connected"]
+          },
+          "heartbeat_age_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "rest_only": { "type": "boolean" },
+          "changed_at_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" }
         },
         "additionalProperties": false
       }
@@ -2852,9 +2865,14 @@ discarded rather than applied out of order.
 ```
 
 **Staleness and account health (E27-T04).** `stale` and `stale_since_ms` mirror REST
-`balance_stale` and `balance_stale_since`; `health` is REST `AccountHealth` with `changed_at_ms`
-for `changed_at`. Health rides on `wallet` because `wallet` is narrowed to granted accounts
-(§6.3), never on role-filtered `system`; an account with no wallet snapshot has it on REST only.
+`balance_stale` and `balance_stale_since`. A `health` entry is REST `AccountHealth` for one
+account, with `changed_at_ms` for `changed_at` and `heartbeat_age_ms` as of the frame's `ts`. Health
+is reported apart from balances, so an account with no wallet snapshot is covered too: the snapshot
+lists every monitored account of the subscription, and a delta carries an account's entry when
+monitoring starts and on every `state` transition. A delta changes only what it carries: balance
+items per `exchange_account_id` and `coin`, health entries per `exchange_account_id`, each
+last-write-wins (§8.2); a delta that only reports health has an empty `balances`. Health rides on
+`wallet` because `wallet` is narrowed to granted accounts (§6.3), never on role-filtered `system`.
 
 ### 15.5 `TradeGroupUpdate`
 

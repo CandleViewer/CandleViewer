@@ -1444,6 +1444,27 @@ sequenceDiagram
 
 The synchronous REST response is an **accept acknowledgement, not a fill confirmation** — the private WS `order`/`execution` streams are the source of truth (research 06 §5, §19).
 
+**8.4.1 Order-entry gate (decision Q5 on #837).** Submit routes ask one composed synchronous gate
+before any OMS work (C-2.21): `order_entry_refusal(checks, account_id)` runs every
+`OrderEntryCheck.refusal(account_id) -> OrderEntryRefusal | None` in a fixed order, maintenance
+first, and the first refusal becomes the `403 trading_disabled` problem; its `reason` extension
+member lands with the E42-T03 contract. A check is O(1), does no I/O and never queries an
+interpreter. The gate is never flag-gated (C-4.14) and never sits on cancel, flatten or SL-amend.
+`OrderEntryRefusal(reason, detail)`: `detail` is fixed human text, never an id, a secret or
+exchange-supplied text, and `reason` is this closed set, listed in the order the checks ask:
+
+| `reason`                     | Owner   | Refused while                                                                  |
+| ---------------------------- | ------- | ------------------------------------------------------------------------------ |
+| `maintenance`                | E42-T03 | maintenance mode is engaged                                                    |
+| `account_disabled_by_policy` | E27-T04 | the key verifier (E27-T03) disabled the account, for a closed `DisabledReason` |
+| `no_active_key`              | E27-T04 | the account has no verified active key, or its standing is unknown             |
+| `account_unhealthy`          | E27-T04 | the account is `down` or unmonitored, derived from its evidence on every read  |
+| `balance_stale`              | E27-T04 | risk-based sizing only: the wallet snapshot is stale or missing                |
+
+Key age never refuses (US-ACCT-005), so the set has no rotation reason. Risk-based sizing calls
+`sizing_refusal(account_id)` before it reads any wallet figure (§9.3 step 4); a missing snapshot
+refuses like a stale one.
+
 ### 8.5 Reconciliation algorithm
 
 > **Statechart contract:** [`28-statechart-catalogue.md` §B19](28-statechart-catalogue.md#b19--reconciliation-job) — the fetch → diff → remediate → report pipeline, plus `stale_lockout`. The contract is normative for the _behaviour_; this section remains the owner of the algorithm, the Bybit endpoints used and the divergence taxonomy (`CONSTITUTION.md` §16.5). Governed by [`27-adrs/ADR-0016-statechart-runtime.md`](27-adrs/ADR-0016-statechart-runtime.md).

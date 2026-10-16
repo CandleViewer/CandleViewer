@@ -10501,16 +10501,19 @@ components:
         Per-account connection health (US-ACCT-010), from positive evidence only (an authenticated
         private-WS heartbeat or a REST success); it decays on silence. `healthy`, `degraded` and
         `down` set `connection_state` to `connected`, `degraded` and `disconnected`. Order entry
-        for the account is refused while it is `down`.
+        for the account is refused while it is `down`. The server derives every field from the
+        evidence when it serves it, so a lapse shows without waiting for a scheduled re-check.
       required: [state, reason, heartbeat_age_ms, rest_only, changed_at]
       properties:
         state: { type: string, enum: [healthy, degraded, down] }
         reason:
           type: string
+          enum: [ws_heartbeat, rest_only, ws_silent, no_success, never_connected]
           description: >
-            Open set of machine codes the client renders as text: `ws_heartbeat`, `rest_only` (REST
-            polling replaced the private WS), `ws_silent` (no REST success yet either), `no_success`
-            (nothing for the 30 s down window), `never_connected`.
+            Closed set of machine codes the client renders as text, never exchange-supplied text:
+            `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (no
+            REST success yet either), `no_success` (nothing for the 30 s down window),
+            `never_connected`.
         heartbeat_age_ms:
           type: ["integer", "null"]
           minimum: 0

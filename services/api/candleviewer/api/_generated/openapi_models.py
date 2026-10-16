@@ -345,9 +345,9 @@ class AccountAccessGrant(AccountAccessGrantInput):
 class AccountHealth(BaseModel):
     state: Literal["healthy", "degraded", "down"]
     reason: Annotated[
-        str,
+        Literal["ws_heartbeat", "rest_only", "ws_silent", "no_success", "never_connected"],
         Field(
-            description="Open set of machine codes the client renders as text: `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (no REST success yet either), `no_success` (nothing for the 30 s down window), `never_connected`.\n"
+            description="Closed set of machine codes the client renders as text, never exchange-supplied text: `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (no REST success yet either), `no_success` (nothing for the 30 s down window), `never_connected`.\n"
         ),
     ]
     heartbeat_age_ms: Annotated[

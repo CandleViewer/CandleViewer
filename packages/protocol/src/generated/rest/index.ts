@@ -4020,7 +4020,7 @@ export interface components {
        */
       level: "read" | "trade";
     };
-    /** @description Per-account connection health (US-ACCT-010), from positive evidence only (an authenticated private-WS heartbeat or a REST success); it decays on silence. `healthy`, `degraded` and `down` set `connection_state` to `connected`, `degraded` and `disconnected`. Order entry for the account is refused while it is `down`. */
+    /** @description Per-account connection health (US-ACCT-010), from positive evidence only (an authenticated private-WS heartbeat or a REST success); it decays on silence. `healthy`, `degraded` and `down` set `connection_state` to `connected`, `degraded` and `disconnected`. Order entry for the account is refused while it is `down`. The server derives every field from the evidence when it serves it, so a lapse shows without waiting for a scheduled re-check. */
     AccountHealth: {
       /**
        * Format: date-time
@@ -4029,8 +4029,11 @@ export interface components {
       changed_at: string;
       /** @description Milliseconds since the last authenticated private-WS heartbeat; `null` before the first. */
       heartbeat_age_ms: number | null;
-      /** @description Open set of machine codes the client renders as text: `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (no REST success yet either), `no_success` (nothing for the 30 s down window), `never_connected`. */
-      reason: string;
+      /**
+       * @description Closed set of machine codes the client renders as text, never exchange-supplied text: `ws_heartbeat`, `rest_only` (REST polling replaced the private WS), `ws_silent` (no REST success yet either), `no_success` (nothing for the 30 s down window), `never_connected`.
+       * @enum {string}
+       */
+      reason: "ws_heartbeat" | "rest_only" | "ws_silent" | "no_success" | "never_connected";
       /** @description True while `degraded`; rule actions that need sub-second reaction are flagged. */
       rest_only: boolean;
       /** @enum {string} */
