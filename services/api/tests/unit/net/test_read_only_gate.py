@@ -76,3 +76,16 @@ def test_gate_trip_survives_a_raising_listener_and_still_notifies_the_rest() -> 
 
     assert gate.is_read_only is False
     assert calls == [True, False]
+
+
+def test_gate_latched_reason_code_is_none_for_a_trip() -> None:
+    gate = ReadOnlyGate()
+    gate.trip(reason_code="net.public_binding_detected", reason_text="bad bind")
+    assert gate.latched_reason_code is None
+
+
+def test_gate_latched_reason_code_names_the_latch_over_a_trip() -> None:
+    gate = ReadOnlyGate()
+    gate.trip(reason_code="net.public_binding_detected", reason_text="bad bind")
+    gate.latch(reason_code="secrets.kek_unavailable", reason_text="kek")
+    assert gate.latched_reason_code == "secrets.kek_unavailable"
