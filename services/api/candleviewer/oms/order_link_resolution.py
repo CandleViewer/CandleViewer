@@ -14,6 +14,7 @@ from typing import Final, Literal, Protocol, cast
 
 import structlog
 
+from candleviewer.domain.order_link import OUR_ID
 from candleviewer.domain.primitives import OrderLinkId, Symbol, TsUs
 from candleviewer.exchange.base.errors import DuplicateClientIdError, OmsErrorCode
 from candleviewer.exchange.base.models import (
@@ -23,6 +24,8 @@ from candleviewer.exchange.base.models import (
     OrderAck,
     PlaceOrderRequest,
 )
+
+from .errors import InvalidOrderLinkId
 
 __all__ = [
     "DEMO_RETENTION_EXPIRED",
@@ -97,7 +100,14 @@ async def place_or_adopt(port: PlacementPort, request: PlaceOrderRequest) -> Pla
     The request goes out unchanged, so a retry sends the same `order_link_id`
     and the same native stop-loss. Every other error propagates: a transport
     failure after send is the caller's `unknown`, never a resend under a new id.
+
+    The id must be one the generator produced (`OUR_ID`). An `ext-` key never
+    goes on the wire (§8.3), and any other id would come back from the adapter
+    as a different `ext_key(orderId)` (§14.2 rule 11) and never pair with its
+    row, so `InvalidOrderLinkId` is raised before anything is sent.
     """
+    if OUR_ID.fullmatch(request.order_link_id) is None:
+        raise InvalidOrderLinkId(f"not a generated order_link_id: {request.order_link_id!r}")
     try:
         ack = await port.place_order(request)
     except DuplicateClientIdError:
@@ -137,8 +147,10 @@ def _adopted(order: Order, source: Literal["realtime", "history"]) -> Adopted:
 @dataclass(frozen=True, slots=True)
 class HistoryRetentionPolicy:
     """Rule 6, for the E29-T06 reconciler: an id older than the exchange's order
-    retention less one day cannot be resolved from history, so its order closes
-    as `rejected` with `DEMO_RETENTION_EXPIRED` (demo keeps 7 days: 6 days).
+    retention less one day cannot be resolved from history (demo keeps 7 days:
+    6 days). The reconciler then closes the order: `rejected` with
+    `DEMO_RETENTION_EXPIRED` (rule 6), or `cancelled` for an `untracked` row
+    (§8.5 step 3b).
 
     Driven by `ExchangeCapabilities.order_retention_days`, never by an
     environment check (§14.2 rule 3); `None` means history never expires.

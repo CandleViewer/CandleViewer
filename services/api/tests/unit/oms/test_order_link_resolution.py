@@ -16,6 +16,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import (
     AccountId,
     GroupId,
@@ -33,6 +34,7 @@ from candleviewer.exchange.base.models import (
     PlaceOrderRequest,
 )
 from candleviewer.exchange.base.ports import TradingPort
+from candleviewer.oms.errors import InvalidOrderLinkId
 from candleviewer.oms.fakes import InMemoryOrderLinkLookup
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator
@@ -260,6 +262,33 @@ async def test_a_transport_failure_after_send_propagates_without_lookups() -> No
         await place_or_adopt(exchange, _request())
 
     assert exchange.calls == [("place_order", ACCOUNT, LINK)]
+
+
+@pytest.mark.parametrize(
+    "refused",
+    [
+        pytest.param(
+            _request(ext_key("c4b4e5d5-1d2b-4b3e-a4f4-0123456789ab")), id="adopted-ext-key"
+        ),
+        pytest.param(_request("manual-order-1"), id="foreign-id"),
+        # `model_copy(update=...)` skips validation, which checks the charset and not the shape.
+        pytest.param(
+            _request().model_copy(update={"order_link_id": LINK + "\n"}), id="trailing-newline"
+        ),
+    ],
+)
+async def test_an_id_the_generator_cannot_produce_is_refused_before_any_call(
+    refused: PlaceOrderRequest,
+) -> None:
+    """§14.2 rule 11: the adapter turns any id that is not an `OUR_ID` into a different
+    `ext_key(orderId)`, so such a create would never pair with its row. An `ext-` key
+    never goes on the wire (§8.3), neither on the create nor on a history lookup."""
+    exchange = _FakeExchange()
+
+    with pytest.raises(InvalidOrderLinkId):
+        await place_or_adopt(exchange, refused)
+
+    assert exchange.calls == []
 
 
 async def test_retry_reuses_the_id() -> None:
