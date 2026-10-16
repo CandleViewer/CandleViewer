@@ -22,6 +22,10 @@ from base64 import b32decode, b32encode
 TOTP_DIGITS = 6
 TOTP_STEP_SECONDS = 30
 TOTP_SKEW_STEPS = 1
+#: How far (steps either side of now) `detect_skew` looks for a rejected code: a diagnostic reach,
+#: never an acceptance window (SR-021 stays at `TOTP_SKEW_STEPS`). A random wrong code matches one
+#: of the 18 steps in between with probability about 1.8e-5.
+TOTP_SKEW_DIAGNOSTIC_STEPS = 10
 
 #: Base32 alphabet minus padding, used for the raw seed (20 bytes / 160 bit,
 #: matching Google Authenticator's and most authenticator apps' default).
@@ -84,6 +88,33 @@ def verify_code(
         if hmac.compare_digest(expected, code):
             return candidate_step
     return None
+
+
+def detect_skew(
+    secret: bytes, code: str, *, unix_time: float, floor: int | None = None
+) -> int | None:
+    """Diagnostics for a code `verify_code` refused: the signed step offset (matched step minus
+    `unix_time`'s own step) at which `code` is the right code for `secret`, when that step lies
+    beyond the accepted `TOTP_SKEW_STEPS` but within `TOTP_SKEW_DIAGNOSTIC_STEPS`; else `None`.
+    Negative: the authenticator's clock is behind the server's; positive: ahead.
+
+    `floor` is the method's last accepted step: a code for a step at or below it is a replay that
+    `record_time_step` refuses whatever the clock says, so it never matches. Never accepts anything
+    and a caller must answer a skewed code like any other wrong one. The whole window is always
+    scanned, so timing hides the match."""
+    if not code.isascii() or not code.isdigit() or len(code) != TOTP_DIGITS:
+        return None  # compare_digest raises on non-ASCII text
+    current_step = time_step_for(unix_time)
+    found: int | None = None
+    for distance in range(TOTP_SKEW_STEPS + 1, TOTP_SKEW_DIAGNOSTIC_STEPS + 1):
+        for delta in (-distance, distance):
+            step = current_step + delta
+            if step < 0:
+                continue
+            matched = hmac.compare_digest(generate_code(secret, step), code)
+            if matched and found is None and (floor is None or step > floor):
+                found = delta
+    return found
 
 
 def otpauth_uri(*, secret: bytes, account_name: str, issuer: str = "CandleViewer") -> str:

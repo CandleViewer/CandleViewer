@@ -22,6 +22,7 @@ import asyncpg
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from starlette.websockets import WebSocketDisconnect
 
 from candleviewer.auth.errors import SessionNotFound, SessionRevoked
@@ -34,10 +35,12 @@ from candleviewer.auth.session_service import (
     access_token_expires_at,
 )
 from candleviewer.auth.totp import generate_code, time_step_for, verify_code
+from candleviewer.auth.totp_skew import SKEW_HOLD_S, TotpSkewReporter
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry
 from candleviewer.ws.revocation import CLOSE_TOKEN_EXPIRED, RevocationHub
 from tests.chaos.storage import _stack as st
+from tests.unit.auth.mfa_fakes import RecordingSystemEvents
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 pytestmark = [pytest.mark.chaos, pytest.mark.integration]
@@ -179,15 +182,30 @@ async def test_s1b_real_postgres_restart_fails_closed_then_recovers() -> None:
     assert (await svc.require_active(sid)).id is not None  # recovered, no manual step
 
 
-def test_s2_totp_step_skew_pm1_accepted_pm3_rejected_replay_refused() -> None:
-    # Analogue of C-13.6 #6 (NOT recv_window drift): SR-021 +-1 step accepted, +-3 rejected.
-    secret = os.urandom(20)
+def _skew_metric(kind: str) -> float:
+    return REGISTRY.get_sample_value("auth_totp_clock_skew_total", {"kind": kind}) or 0.0
+
+
+async def test_s2_totp_step_skew_pm1_accepted_pm3_rejected_replay_refused() -> None:
+    # Analogue of C-13.6 #6 (NOT recv_window drift): SR-021 +-1 step accepted, +-3 rejected. Each
+    # rejected skew raises a system event and moves the metric once its hold has elapsed, so the
+    # operator can diagnose it without reading logs (#2146).
+    secret = bytes(range(1, 21))  # its codes for steps -30..+40 around `server_t` are distinct
     server_t = 1_800_000_000.0
     step = time_step_for(server_t)
     for k in (-1, 1):
         assert verify_code(secret, generate_code(secret, step + k), unix_time=server_t) == step + k
+    events = RecordingSystemEvents()
+    reporter = TotpSkewReporter(events)
+    moved = {kind: _skew_metric(kind) for kind in ("authenticator_behind", "authenticator_ahead")}
     for k in (-3, 3):
-        assert verify_code(secret, generate_code(secret, step + k), unix_time=server_t) is None
+        code = generate_code(secret, step + k)
+        assert verify_code(secret, code, unix_time=server_t) is None
+        reporter.report_rejection([(secret, None)], code, unix_time=server_t)
+    assert events.written == []  # held until the matched codes are dead
+    await reporter.publish_due(server_t + SKEW_HOLD_S)
+    assert [e.details["offset_steps"] for e in events.written] == ["-3", "3"]
+    assert all(_skew_metric(kind) == before + 1 for kind, before in moved.items())
     # Replay refusal (SR-021) is enforced by MfaService via the atomic record_time_step; it is
     # covered by tests/unit/auth/test_mfa_service.py::test_verify_reused_code_is_rejected.
 

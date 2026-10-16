@@ -372,6 +372,43 @@ repository's secret settings, never from an agent session.
   is no shared credential to rotate.
 - **Secret scanning.** If a fixture secret leaks, follow `SECURITY.md` and rotate immediately.
 
+## 9. A user says their correct TOTP code is refused (clock skew)
+
+The server accepts the current 30 s step and one step either side (SR-021, `TOTP_SKEW_STEPS` in
+`auth/totp.py`). A code from a clock further off is refused exactly like a typo: the one generic
+`401` at login (`api/auth.py`), the same refusal at enrolment confirmation and step-up. **The user
+is never told it is a clock problem** (a distinct answer would be an oracle). The operator is, in
+two places, **about six minutes after the refusal** (#2146):
+
+- `auth_totp_clock_skew_total{kind}` on the metrics registry: the private listener
+  (`127.0.0.1:9108`) and, today, also the API app's unauthenticated `/metrics` route. `kind` is
+  `authenticator_behind` or `authenticator_ahead`.
+- One `system_events` row: `component` `auth`, `kind` `totp_clock_skew`, `severity` `warning`,
+  `details` `{kind, offset_steps, refused_at}` (a step is 30 s; `event_ts` is the publication,
+  `refused_at` the refusal, also in `message`). It holds no user id, code or secret, and nothing
+  joins it to a user exactly: match `refused_at` and the source address against the `auth.login`
+  audit row (it names the identifier) and the `auth.mfa_failed` row (address only).
+
+The delay is deliberate. A code for a step ahead stays acceptable for up to 5 minutes, and a counter
+that moved at once on the public route would tell whoever holds a password which refused guess to
+resend. Reports wait in memory for `SKEW_HOLD_S` (`auth/totp_skew.py`; at most 256, the newest beyond
+that is dropped and logged as `auth.totp_clock_skew_dropped`) and a restart inside the wait discards
+them. Only a code that is right for a step 2 to 10 steps (1 to 5 min) from the server's, and newer
+than the method's last accepted code, is reported: a wrong guess, a code further off and a replay
+of an accepted code stay silent.
+
+1. Confirm: `curl -s http://127.0.0.1:9108/metrics | grep auth_totp_clock_skew_total` is non-zero
+   and rising. The events are in the support bundle (`POST $API/admin/support-bundle`,
+   `system_events.json`, `message` only) or in the `system_events` table (`component` `auth`,
+   `kind` `totp_clock_skew`).
+2. Whose clock? One user, always the same side: that user's device. Several users at once, or
+   everyone after the host slept and resumed: the **server**. Check `exchange_clock_drift_ms`, the
+   `BybitClockDrift*` alerts (`docs/plan/runbooks/clock-sync.md`) and the host time source first.
+3. Fix the clock, not the tolerance. Device: automatic time on (or the authenticator app's time
+   correction), then sign in again from the password step. Server: correct the host time. No
+   setting widens the window and none may be added (SR-021).
+4. Verify: a fresh sign-in succeeds and the counter stops rising.
+
 ## Known gaps referenced above
 
 | Gap                                                                       | Reference            |

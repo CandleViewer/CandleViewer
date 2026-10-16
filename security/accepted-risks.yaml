@@ -74,7 +74,7 @@ entries:
     approver: "basiltt"
     expires: "2027-03-25"
     ticket: "https://github.com/basiltt/CandleViewer/issues/1978"
-  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py:67"
+  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py:68"
     tool: codeql
     severity: HIGH
     reason: "Random 256-bit bearer mfa_token hashed with SHA-256 as a storage lookup key (high-entropy input, not a password; slow KDFs are inappropriate); CodeQL's password-hashing heuristic keys on the token name. Standing owner-delegated acceptance (run log 2026-09-25, #1778)"

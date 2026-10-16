@@ -47,6 +47,7 @@ from candleviewer.auth.session_chart import SessionChart, to_us
 from candleviewer.auth.session_repository import SessionRepository
 from candleviewer.auth.session_service import RevocationSink, publish_revoked
 from candleviewer.auth.totp import verify_code
+from candleviewer.auth.totp_skew import TotpSkewReporter
 
 #: Ticket: "a 5-minute grace per action class".
 GRACE_WINDOW = timedelta(minutes=5)
@@ -137,6 +138,7 @@ class StepUpService:
         clock: Clock = _utc_now,
         publish_revocation: RevocationSink | None = None,
         chart: SessionChart | None = None,
+        skew_reporter: TotpSkewReporter | None = None,
     ) -> None:
         self._chart = chart if chart is not None else SessionChart()
         #: #2272: the owner TOTP reset closes the target's sockets through it.
@@ -147,6 +149,7 @@ class StepUpService:
         self._users = user_repository
         self._hasher = hasher
         self._clock = clock
+        self._skew_reporter = skew_reporter or TotpSkewReporter()
 
     @property
     def chart(self) -> SessionChart:
@@ -323,15 +326,19 @@ class StepUpService:
         return ok
 
     async def _verify(self, user_id: str, code: str, now: datetime) -> bool:
+        refused: list[tuple[bytes, int | None]] = []
         for method in await self._mfa.find_active_totp_methods(user_id):
             if method.secret_enc is None:
                 continue
             seed = self._encryptor.decrypt(method.secret_enc)
             step = verify_code(seed, code, unix_time=now.timestamp())
             if step is None:
+                refused.append((seed, method.last_accepted_time_step))
                 continue
             # Same replay protection as login codes (ticket Security notes).
             return await self._mfa.record_time_step(str(method.id), time_step=step)
+        # #2146: reached only with a correct password; holds a report for a skewed clock.
+        self._skew_reporter.report_rejection(refused, code, unix_time=now.timestamp())
         return False
 
     async def remaining_grace(self, session_id: str, action_class: str) -> timedelta | None:
