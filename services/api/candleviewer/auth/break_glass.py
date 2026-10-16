@@ -97,6 +97,11 @@ class BreakGlassResetService:
         self._environment = environment
         self._clock = clock or (lambda: datetime.now(UTC))
 
+    @property
+    def environment(self) -> Environment:
+        """The configured environment, read-only: the CLI flow takes `live` from here."""
+        return self._environment
+
     async def reset(
         self,
         target_user_id: uuid.UUID,

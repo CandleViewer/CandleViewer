@@ -4,6 +4,7 @@ composes the real ports and runs them on Postgres."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import inspect
 import json
@@ -16,6 +17,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.admin import breakglass
 from candleviewer.admin.breakglass import (
     CLOSE_GRACE_S,
     BreakGlassFlow,
@@ -25,6 +27,9 @@ from candleviewer.admin.breakglass import (
 )
 from candleviewer.admin.breakglass import BreakGlassExit as X
 from candleviewer.admin.errors import BreakGlassUnavailable
+from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.audit.journal import ACTOR as JOURNAL_ACTOR
+from candleviewer.audit.journal import BREAK_GLASS_ACTIONS
 from candleviewer.audit.models import AuditOutcome, ExchangeEnv, Severity
 from candleviewer.audit.redact import redact
 from candleviewer.audit.writer import AuditUnavailable
@@ -45,6 +50,8 @@ _KEY = bytes(range(32))  # test-only HMAC key, not a credential
 _CODE = "ABCD-EFGH-JKMN-PQRS-TUVW-XYZ2-3456"  # test value, not a real recovery code
 _HASH = hash_recovery_code(_CODE, key=_KEY)
 _PROVEN, _DONE = KekCheckResult(3, True, None), (2, 3, 41)  # methods, sessions, event id
+_PRE_AUDIT = "Audit: no record could be written (pre-audit refusal); the log has the reason."
+_UNRECORDED = "Audit: the outcome record could not be written; the attempt record is kept."
 LIVE, DEMO, TESTNET = Environment.LIVE, Environment.DEMO, Environment.TESTNET
 DENIED, FAILURE, SUCCESS = AuditOutcome.DENIED, AuditOutcome.FAILURE, AuditOutcome.SUCCESS
 P = pytest.param
@@ -57,16 +64,24 @@ def _answer[T](value: T | BaseException) -> T:
     return value
 
 
+@dataclasses.dataclass(eq=False)
 class _Trail:
-    """`refuse`: an action it cannot keep; `pending`: what `close()` reports (or raises)."""
+    """`refuse`: an action it cannot keep; `pending`: what `close()` reports (or raises);
+    `hang`: "emit" or "close" never returns; `close()` frees `lock` (the run lock)."""
 
-    def __init__(self, calls: list[str], pending: int | BaseException, refuse: str | None) -> None:
-        self.calls, self.pending, self.refuse = calls, pending, refuse
-        self.records: list[dict[str, Any]] = []
-        self.closed: list[float] = []
+    calls: list[str]
+    pending: int | BaseException = 0
+    refuse: str | None = None
+    hang: str | None = None
+    lock: list[_Trail] | None = None
+    release: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+    records: list[dict[str, Any]] = dataclasses.field(default_factory=list)
+    closed: list[float] = dataclasses.field(default_factory=list)
 
     async def emit(self, action: str, **fields: Any) -> None:
         self.calls.append(action)
+        if self.hang == "emit":
+            await self.release.wait()  # hung unless the test releases it: the flow's timer ends it
         if action == self.refuse:
             raise AuditUnavailable("injected: the trail refused the append")
         self.records.append({"action": action, **fields})
@@ -74,6 +89,10 @@ class _Trail:
     async def close(self, grace_s: float) -> int:
         self.calls.append("close")
         self.closed.append(grace_s)
+        if self.lock is not None and self in self.lock:
+            self.lock.remove(self)
+        if self.hang == "close":
+            await self.release.wait()
         return _answer(self.pending)
 
 
@@ -88,25 +107,33 @@ class _Host:
     pending: int | BaseException = 0
     refuse: str | None = None
     kek: KekCheckResult = _PROVEN
-    api_up: bool | BaseException = False
+    api_up: bool | BaseException | list[bool] = False  # a list: one answer per probe
     owner_id: uuid.UUID | None = _OWNER_ID
     tty: bool | BaseException = True
     typed: str | BaseException | None = None  # None: the phrase the terminal showed
     code: str | BaseException = _CODE
     outcome: _Outcome | Exception = _DONE
+    hang: str | None = None  # the port that parks until `release` (never set: it is hung)
+    hang_after: int = 0  # visits of that port before the one that parks
+    lock: list[_Trail] | None = None  # a run lock shared by hosts: one open journal at a time
     calls: list[str] = dataclasses.field(default_factory=list)
     lines: list[str] = dataclasses.field(default_factory=list)
     seen: list[dict[str, str | None]] = dataclasses.field(default_factory=list)
+    entered: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+    release: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
+    cut: list[BaseException] = dataclasses.field(default_factory=list)  # what ended a park
 
     def __post_init__(self) -> None:
-        self.journal = _Trail(self.calls, self.pending, self.refuse)
+        self.journal = _Trail(
+            self.calls, self.pending, self.refuse, self.hang, self.lock, release=self.release
+        )
         self.direct = _Trail(self.calls, 0, self.direct_refuse)
         reset = BreakGlassResetService(self, recovery_code_key=_KEY, environment=self.env)
         ports = BreakGlassPorts(
             self.open_journal, self.open_direct, self.prove_kek, self.probe, self.resolve_owner,
             reset, self, new_run_id=lambda: _RUN,
         )  # fmt: skip
-        self.flow = BreakGlassFlow(ports, environment=self.env)
+        self.flow = BreakGlassFlow(ports)
 
     async def run(self, owner: str = _OWNER, *, live_flag: bool = False) -> X:
         return await self.flow.run(owner, live_flag=live_flag)
@@ -115,20 +142,36 @@ class _Host:
         self.calls.append(port)
         return _answer(answer)
 
+    async def _port[T](self, port: str, answer: T | BaseException) -> T:
+        if port == self.hang and self.calls.count(port) == self.hang_after:
+            self.entered.set()
+            try:
+                await self.release.wait()
+            except BaseException as exc:  # the flow's timer or a cancel: kept for its frames
+                self.cut.append(exc)
+                raise
+        return self._use(port, answer)
+
     async def open_journal(self) -> _Trail:
-        return self._use("journal", self.journal_error or self.journal)
+        journal = await self._port("journal", self.journal_error or self.journal)
+        if self.lock is not None:
+            if self.lock:  # held, as by cv-api or another run: what the real lock reports
+                raise BreakGlassUnavailable("api_running")
+            self.lock.append(journal)
+        return journal
 
     async def open_direct(self) -> _Trail | None:
-        return self.direct if self._use("direct", self.direct_up) else None
+        return self.direct if await self._port("direct", self.direct_up) else None
 
     async def prove_kek(self) -> KekCheckResult:
-        return self._use("kek", self.kek)
+        return await self._port("kek", self.kek)
 
     async def probe(self) -> bool:
-        return self._use("probe", self.api_up)
+        up = self.api_up.pop(0) if isinstance(self.api_up, list) else self.api_up
+        return await self._port("probe", up)
 
     async def resolve_owner(self, identifier: str) -> uuid.UUID | None:
-        return self._use("owner", self.owner_id if identifier == _OWNER else None)
+        return await self._port("owner", self.owner_id if identifier == _OWNER else None)
 
     def is_interactive(self) -> bool:
         return self._use("tty", self.tty)
@@ -139,15 +182,26 @@ class _Host:
 
     async def ask(self, prompt: str) -> str:
         shown = self.lines[-1].removeprefix("To confirm, type: ")
-        return self._use("ask", shown if self.typed is None else self.typed)
+        return await self._port("ask", shown if self.typed is None else self.typed)
 
     async def ask_secret(self, prompt: str) -> str:
-        return self._use("ask_secret", self.code)
+        return await self._port("ask_secret", self.code)
 
     async def reset_owner_mfa(self, target_user_id: str, **kw: Any) -> _Outcome:
         code_hash, corr = kw["recovery_code_hash"], kw["correlation_id"]
         self.seen.append({"target": target_user_id, "hash": code_hash, "corr": corr})
-        return self._use("reset", self.outcome)
+        return await self._port("reset", self.outcome)
+
+
+async def _cancelled(w: _Host, *, live_flag: bool) -> None:
+    """Run, cancel once the `hang` port is parked (Ctrl-C under `asyncio.run`), let the port
+    answer, and check that the run re-raises the cancel."""
+    running = asyncio.create_task(w.run(live_flag=live_flag))
+    await w.entered.wait()
+    running.cancel()
+    w.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await running
 
 
 def _rows(records: list[dict[str, Any]]) -> list[tuple[str, AuditOutcome, str | None]]:
@@ -163,34 +217,40 @@ def _assert_breakglass_record(record: dict[str, Any], env: Environment) -> None:
 
 
 _NO_FS = ["journal", "direct"]  # no journal and no audit_log either: nothing else runs
+_S3 = [*_NO_FS, ATTEMPT, REFUSED, "close"]  # no journal, Postgres up: straight to audit_log
 _NO_KEK = ["journal", ATTEMPT, "kek", REFUSED, "close"]
+_NO_DIR = BreakGlassUnavailable("host_fs_unavailable")
 
 
-@pytest.mark.parametrize(("setup", "ran", "refusals", "exit_code"), [
-    P({"journal_error": BreakGlassUnavailable("host_fs_unavailable")}, _NO_FS, [],
-      X.HOST_FS_UNAVAILABLE, id="journal-dir-not-anchored"),
+@pytest.mark.parametrize(("setup", "ran", "refused", "exit_code"), [
+    P({"journal_error": _NO_DIR}, _NO_FS, [], X.HOST_FS_UNAVAILABLE, id="journal-dir-not-anchored"),
     P({"journal_error": PermissionError("injected")}, _NO_FS, [], X.HOST_FS_UNAVAILABLE,
       id="journal-unwritable"),
-    *(P({"kek": KekCheckResult(None, False, r)}, _NO_KEK, [{"proof": r}], X.KEK_UNPROVEN, id=r)
-      for r in ("kek_unavailable", "kek_mismatch", "kek_not_enrolled")),
+    P({"journal_error": _NO_DIR, "direct_up": True}, _S3, [("host_fs_unavailable", None)],
+      X.HOST_FS_UNAVAILABLE, id="S3-records-straight-to-audit-log"),
+    *(P({"kek": KekCheckResult(None, False, r)}, _NO_KEK, [("kek_unproven", {"proof": r})],
+        X.KEK_UNPROVEN, id=r) for r in ("kek_unavailable", "kek_mismatch", "kek_not_enrolled")),
 ])  # fmt: skip
 async def test_break_glass_requires_host_filesystem_and_kek_present(
-    setup: dict[str, Any], ran: list[str], refusals: list[dict[str, str]], exit_code: X
+    setup: dict[str, Any], ran: list[str], refused: list[tuple[str, Any]], exit_code: X
 ) -> None:
-    # U10 / E09-X04: no host journal, nothing else runs; no KEK, attempt + refusal, no reset.
-    w = _Host(direct_up=False, **setup)
+    # U10 / E09-X04 / S3: no host journal, nothing else runs, and the attempt and refusal go
+    # straight to audit_log if Postgres is up; no KEK: attempt + refusal, no reset.
+    w = _Host(**{"direct_up": False, **setup})
     assert await w.run() is exit_code
     assert (w.calls, w.seen) == (ran, [])
-    assert [r["after_state"] for r in w.journal.records if r["action"] == REFUSED] == refusals
+    records = w.direct.records + w.journal.records
+    assert [(r["reason"], r["after_state"]) for r in records if r["action"] == REFUSED] == refused
 
 
 @pytest.mark.parametrize(("env", "live_flag", "checks"), [
-    (DEMO, False, ["kek", "probe", "owner", "tty", "ask", "reset"]),
-    (LIVE, True, ["kek", "probe", "owner", "tty", "ask", "ask_secret", "reset"]),
+    (DEMO, False, ["kek", "probe", "owner", "tty", "ask", "probe", "reset"]),
+    (LIVE, True, ["kek", "probe", "owner", "tty", "ask", "ask_secret", "probe", "reset"]),
 ])  # fmt: skip
-async def test_attempt_record_precedes_every_precondition_check(
+async def test_attempt_record_precedes_every_check(
     env: Environment, live_flag: bool, checks: list[str]
 ) -> None:
+    # cv-api is probed again last, after the prompts, right before the reset (R2c).
     w = _Host(env)
     assert await w.run(live_flag=live_flag) is X.RESET
     assert w.calls == ["journal", ATTEMPT, *checks, RESET, "close"]
@@ -219,8 +279,8 @@ async def test_each_refusal_writes_a_critical_denied_record_with_reason_code(
     assert w.journal.closed == [CLOSE_GRACE_S]
 
 
-async def test_refusal_records_stay_in_journal_when_postgres_is_down() -> None:
-    # Postgres down: no KCV rows, no flush; the records wait in the journal for the fold-in.
+async def test_refusals_journaled_when_postgres_down() -> None:
+    # S7, Postgres down: no KCV rows, no flush; the records wait in the journal for the fold-in.
     w = _Host(kek=KekCheckResult(None, False, "kek_unavailable"), pending=2)
     assert await w.run() is X.KEK_UNPROVEN
     assert [r["action"] for r in w.journal.records] == [ATTEMPT, REFUSED]
@@ -228,20 +288,26 @@ async def test_refusal_records_stay_in_journal_when_postgres_is_down() -> None:
     assert "Audit: records waiting in the host journal: 2;" in "\n".join(w.lines)
 
 
-@pytest.mark.parametrize(("live_flag", "code", "outcome", "exit_code", "asked", "hashes"), [
-    P(False, _CODE, _DONE, X.LIVE_FLAG_REQUIRED, False, [], id="no-live-flag"),
-    P(True, "", _DONE, X.RECOVERY_CODE_REQUIRED, True, [], id="no-code"),
-    P(True, _CODE, "recovery_code_invalid", X.RECOVERY_CODE_INVALID, True, [_HASH], id="used"),
-    P(True, TimeoutError(), _DONE, X.RECOVERY_CODE_REQUIRED, True, [], id="code-prompt-timeout"),
-    P(True, _CODE, _DONE, X.RESET, True, [_HASH], id="unused-owner-code"),
+@pytest.mark.parametrize(("live_flag", "setup", "exit_code", "asked", "hashes"), [
+    P(False, {}, X.LIVE_FLAG_REQUIRED, False, [], id="no-live-flag"),
+    P(True, {"typed": "reset alice on live"}, X.CONFIRMATION_MISMATCH, False, [], id="no-phrase"),
+    P(True, {"code": ""}, X.RECOVERY_CODE_REQUIRED, True, [], id="no-code"),
+    P(True, {"outcome": "recovery_code_invalid"}, X.RECOVERY_CODE_INVALID, True, [_HASH],
+      id="used"),
+    P(True, {"code": TimeoutError()}, X.RECOVERY_CODE_REQUIRED, True, [], id="code-prompt-timeout"),
+    P(True, {}, X.RESET, True, [_HASH], id="unused-owner-code"),
 ])  # fmt: skip
-async def test_live_requires_explicit_flag_and_unused_recovery_code(
-    live_flag: bool, code: Any, outcome: Any, exit_code: X, asked: bool, hashes: list[str]
+async def test_live_requires_flag_and_phrase(
+    live_flag: bool, setup: dict[str, Any], exit_code: X, asked: bool, hashes: list[str]
 ) -> None:
-    # Read with echo off after --live and the phrase; the store sees only its keyed hash.
-    w = _Host(LIVE, code=code, outcome=outcome)
+    # S6: --live, the retyped phrase, then (O3) one Owner recovery code read with echo off;
+    # the store sees only its keyed hash, and a refusal consumes nothing.
+    w = _Host(LIVE, **setup)
     assert await w.run(live_flag=live_flag) is exit_code
     assert ("ask_secret" in w.calls, [s["hash"] for s in w.seen]) == (asked, hashes)
+
+
+_PROMPTED = ["journal", ATTEMPT, "kek", "probe", "owner", "tty", "ask", "ask_secret", "probe"]
 
 
 @pytest.mark.parametrize(("kw", "ran"), [
@@ -249,15 +315,33 @@ async def test_live_requires_explicit_flag_and_unused_recovery_code(
       ["journal", "direct", ATTEMPT, REFUSED, "close"], id="run-lock-held-by-cv-api"),
     P({"api_up": True}, ["journal", ATTEMPT, "kek", "probe", REFUSED, "close"],
       id="cv-api-session-on-postgres"),
+    P({"env": LIVE, "api_up": [False, True]}, [*_PROMPTED, REFUSED, "close"],
+      id="cv-api-connected-during-the-prompts"),
 ])  # fmt: skip
-async def test_refuses_while_api_instance_lock_is_held(kw: dict[str, Any], ran: list[str]) -> None:
-    # cv-api holds the run lock: the records go straight to audit_log, nothing else runs. The
-    # R2(c) probe catches a cv-api whose lock lives elsewhere but whose sessions are live.
+async def test_refuses_while_api_running(kw: dict[str, Any], ran: list[str]) -> None:
+    # S4: cv-api holds the run lock: the records go straight to audit_log, nothing else runs.
+    # The R2(c) probe catches a cv-api whose lock lives elsewhere but whose sessions are live,
+    # also one that connected while the operator answered the prompts.
     w = _Host(**kw)
-    assert await w.run() is X.API_RUNNING
+    assert await w.run(live_flag=w.env is LIVE) is X.API_RUNNING
     assert (w.calls, w.seen) == (ran, [])
     written = [(r["action"], r["reason"]) for r in w.direct.records + w.journal.records]
     assert written == [(ATTEMPT, None), (REFUSED, "api_running")]
+
+
+async def test_second_run_refused() -> None:
+    # Concurrency: the run lock admits one journal. A second run while the first waits at its
+    # prompt is refused like a running cv-api and changes nothing; the first's close frees it.
+    lock: list[Any] = []
+    first, second = _Host(lock=lock, hang="ask"), _Host(lock=lock)
+    running = asyncio.create_task(first.run())
+    await first.entered.wait()
+    assert await second.run() is X.API_RUNNING
+    refused = [r["reason"] for r in second.direct.records]
+    assert (refused, second.seen) == ([None, "api_running"], [])
+    first.release.set()
+    assert (await running, len(first.seen), lock) == (X.RESET, 1, [])
+    assert await _Host(lock=lock).run() is X.RESET
 
 
 @pytest.mark.parametrize(("tty", "typed", "status"), [
@@ -297,38 +381,63 @@ async def test_happy_path_resets_owner_writes_outcome_and_raises_critical_system
 
 
 async def test_reset_failure_writes_failure_outcome_and_exits_nonzero() -> None:
-    failure = ConnectionError("injected: connection lost mid-transaction")
-    w = _Host(LIVE, outcome=failure)
+    w = _Host(LIVE, outcome=ConnectionError("injected: connection lost mid-transaction"))
     exit_code = await w.run(live_flag=True)
     assert (exit_code, int(exit_code) != 0) == (X.RESET_FAILED, True)
     assert _rows(w.journal.records) == [(ATTEMPT, SUCCESS, None), (RESET, FAILURE, "reset_failed")]
-    assert w.journal.records[1]["after_state"] == {"error": "ConnectionError"}
+    # A link lost at COMMIT may have committed: the record does not claim a rollback.
+    state = {"error": "ConnectionError", "outcome": "rolled_back_or_unknown"}
+    assert w.journal.records[1]["after_state"] == state
+
+
+async def test_reset_failure_leaves_no_plaintext_code_in_any_frame() -> None:
+    failure = ConnectionError("injected: connection lost mid-transaction")
+    assert await _Host(LIVE, outcome=failure).run(live_flag=True) is X.RESET_FAILED
     # No frame of the failed call, the flow's included, still holds the plaintext code.
     frames = [frame for frame, _ in traceback.walk_tb(failure.__traceback__)]
     assert "BreakGlassFlow._reset" in {frame.f_code.co_qualname for frame in frames}
     plain = (_CODE, normalize_recovery_code(_CODE))
     assert not [v for f in frames for v in f.f_locals.values() if any(p in repr(v) for p in plain)]
-    assert await _Host(LIVE).run(live_flag=True) is X.RESET  # S10: rolled back, a re-run works
 
 
-@pytest.mark.parametrize(("refuse", "tail", "resets"), [
-    P(ATTEMPT, ["journal", ATTEMPT, "close"], 0, id="attempt-not-durable"),
-    P(RESET, ["reset", RESET, "close"], 1, id="outcome-not-durable"),
+async def test_rerun_after_a_failed_reset_resets() -> None:
+    # S10: the failed run released the run lock and left nothing behind; a re-run resets.
+    w = _Host(LIVE, outcome=ConnectionError("injected: connection lost mid-transaction"), lock=[])
+    assert await w.run(live_flag=True) is X.RESET_FAILED
+    w.outcome = _DONE
+    assert await w.run(live_flag=True) is X.RESET
+
+
+_WAITING = "Audit: records waiting in the host journal: 1; cv-api folds them in."
+
+
+@pytest.mark.parametrize(("setup", "tail", "resets", "audit"), [
+    P({"refuse": ATTEMPT}, ["journal", ATTEMPT, "close"], 0, [_PRE_AUDIT],
+      id="attempt-not-durable"),
+    P({"refuse": RESET}, ["reset", RESET, "close"], 1, [_UNRECORDED], id="outcome-not-durable"),
+    P({"refuse": RESET, "pending": 1}, ["reset", RESET, "close"], 1, [_UNRECORDED, _WAITING],
+      id="outcome-not-durable-attempt-not-flushed"),
+    P({"refuse": REFUSED, "owner_id": None}, ["owner", REFUSED, "close"], 0, [_UNRECORDED],
+      id="refusal-not-durable"),
 ])  # fmt: skip
-async def test_no_option_skips_audit(refuse: str, tail: list[str], resets: int) -> None:
+async def test_no_option_skips_audit(
+    setup: dict[str, Any], tail: list[str], resets: int, audit: list[str]
+) -> None:
     # C-4.14: the inputs are the target and --live, no port is a switch, nothing runs without
-    # its write-ahead record, and a record the journal cannot keep ends in AUDIT_UNAVAILABLE.
+    # its write-ahead record, and a record the journal cannot keep ends in AUDIT_UNAVAILABLE,
+    # with a summary that claims no more than was written (C-2.9).
     assert list(inspect.signature(BreakGlassFlow.run).parameters) == ["self", "owner", "live_flag"]
     assert [f.name for f in dataclasses.fields(BreakGlassPorts)] == [
         "open_journal", "open_direct", "prove_kek", "api_running", "resolve_owner", "reset",
         "terminal", "new_run_id",
     ]  # fmt: skip
-    w = _Host(LIVE, refuse=refuse)
+    w = _Host(LIVE, **setup)
     assert await w.run(live_flag=True) is X.AUDIT_UNAVAILABLE
     assert (w.calls[-len(tail) :], len(w.seen)) == (tail, resets)
+    assert [line for line in w.lines if line.startswith("Audit:")] == audit
 
 
-async def test_no_secret_in_captured_output_or_logs(capsys: pytest.CaptureFixture[str]) -> None:
+async def test_no_secret_in_output_or_logs(capsys: pytest.CaptureFixture[str]) -> None:
     dsn, seed, kek = "LEAK-DSN-PASSWORD-5c1f", "LEAK-TOTP-SEED-JBSWY3DP", "LEAK-KEK-9f8e"
     hosts = [  # each port answers with something that must not travel further
         _Host(LIVE, outcome=ConnectionError(f"{dsn} {seed} {_HASH}")),
@@ -360,8 +469,10 @@ async def test_no_secret_in_captured_output_or_logs(capsys: pytest.CaptureFixtur
 async def test_live_derived_from_environment_not_argv(
     env: Environment, live_flag: bool, exit_code: X, asked_code: bool
 ) -> None:
-    # `live` is the configured environment (arch P9), as for the reset service.
+    # `live` is the configured environment (arch P9), and only the reset service's: the flow
+    # takes no environment of its own, so the two cannot disagree.
     assert "environment" not in inspect.signature(BreakGlassFlow.run).parameters
+    assert list(inspect.signature(BreakGlassFlow).parameters) == ["ports"]
     w = _Host(env)
     assert await w.run(live_flag=live_flag) is exit_code
     assert ("ask_secret" in w.calls) is asked_code
@@ -380,6 +491,7 @@ async def test_unresolved_identifier_is_labelled_never_echoed(owner: str, label:
 
 
 _LOCK = BreakGlassUnavailable("api_running")
+_UNCONFIRMED = "no change is confirmed. Before re-running, check for an unresolved break_glass_used"
 
 
 @pytest.mark.parametrize(("setup", "exit_code", "last", "shown"), [
@@ -387,6 +499,8 @@ _LOCK = BreakGlassUnavailable("api_running")
       id="journal-close-fails"),
     P({"tty": RuntimeError("injected")}, X.STEP_FAILED, [(REFUSED, FAILURE, "step_failed")],
       "step_failed: flow", id="terminal-port-raises"),
+    P({"outcome": ConnectionError("injected")}, X.RESET_FAILED, [(RESET, FAILURE, "reset_failed")],
+      _UNCONFIRMED, id="reset-raises-outcome-unconfirmed"),
     P({"journal_error": _LOCK, "direct_up": OSError("injected")}, X.API_RUNNING, [],
       "pre-audit refusal", id="audit-log-unreachable"),
     P({"journal_error": _LOCK, "direct_refuse": ATTEMPT}, X.API_RUNNING, [], "pre-audit refusal",
@@ -401,16 +515,123 @@ async def test_degraded_ports_fail_closed_with_a_record_where_possible(
     assert shown in "\n".join(w.lines)
 
 
-def test_nonce_phrase_exit_codes_and_reasons() -> None:
+@pytest.mark.parametrize(("env", "hang", "after"), [
+    P(DEMO, "ask", 0, id="at-the-phrase-prompt"),
+    P(LIVE, "ask_secret", 0, id="at-the-code-prompt"),
+    P(LIVE, "probe", 1, id="at-the-last-probe"),
+])  # fmt: skip
+async def test_cancel_before_reset_writes_operator_cancelled_refusal(
+    env: Environment, hang: str, after: int
+) -> None:
+    # Ctrl-C: the trail still closes with a refusal, no reset starts, the cancel propagates.
+    w = _Host(env, hang=hang, hang_after=after)
+    await _cancelled(w, live_flag=env is LIVE)
+    closing = (REFUSED, DENIED, "operator_cancelled")
+    assert _rows(w.journal.records) == [(ATTEMPT, SUCCESS, None), closing]
+    assert (w.seen, w.journal.closed) == ([], [CLOSE_GRACE_S])
+
+
+@pytest.mark.parametrize(("outcome", "closing"), [
+    P(_DONE, (RESET, SUCCESS, None), id="reset-commits"),
+    P(ConnectionError("injected"), (RESET, FAILURE, "reset_failed"), id="reset-raises"),
+    P("recovery_code_invalid", (REFUSED, DENIED, "recovery_code_invalid"), id="reset-refuses"),
+])  # fmt: skip
+async def test_cancel_during_reset_lets_it_finish_and_records_its_outcome(
+    outcome: _Outcome | Exception, closing: tuple[str, AuditOutcome, str | None]
+) -> None:
+    # A cancel cannot cut the transaction at COMMIT and leave a reset unrecorded: it runs to
+    # its end, its real outcome is recorded and shown, then the cancel propagates.
+    w = _Host(LIVE, hang="reset", outcome=outcome)
+    await _cancelled(w, live_flag=True)
+    assert _rows(w.journal.records) == [(ATTEMPT, SUCCESS, None), closing]
+    assert (len(w.seen), w.journal.closed) == (1, [CLOSE_GRACE_S])
+    assert "Cancelled: the line above says how the run ended." in w.lines
+
+
+async def test_reset_cut_short_at_shutdown_is_an_unknown_outcome_not_a_refusal() -> None:
+    # A second Ctrl-C makes asyncio.run cancel every task, the reset's too: what it did is
+    # unknown, so it is a failed reset that may have applied, never "nothing was changed".
+    w = _Host(LIVE, hang="reset")
+    running = asyncio.create_task(w.run(live_flag=True))
+    await w.entered.wait()
+    running.cancel()
+    [reset] = [task for task in asyncio.all_tasks() if task.get_name() == "breakglass.reset"]
+    reset.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    assert _rows(w.journal.records)[1:] == [(RESET, FAILURE, "reset_failed")]
+    state = {"error": "Interrupted", "outcome": "rolled_back_or_unknown"}
+    assert w.journal.records[1]["after_state"] == state
+    assert [line for line in w.lines if "nothing was changed" in line] == []
+
+
+async def test_cancel_leaves_no_plaintext_code_in_any_frame() -> None:
+    # Cancelled at the last probe, after the code was read: no frame the cancel unwound, the
+    # flow's included, still holds the plaintext code (C-12.6).
+    w = _Host(LIVE, hang="probe", hang_after=1)
+    await _cancelled(w, live_flag=True)
+    frames = [frame for frame, _ in traceback.walk_tb(w.cut[0].__traceback__)]
+    assert "BreakGlassFlow._reset" in {frame.f_code.co_qualname for frame in frames}
+    plain = (_CODE, normalize_recovery_code(_CODE))
+    assert not [v for f in frames for v in f.f_locals.values() if any(p in repr(v) for p in plain)]
+
+
+@pytest.mark.parametrize(("setup", "exit_code", "shown"), [
+    P({"hang": "journal"}, X.HOST_FS_UNAVAILABLE, "(host_fs_unavailable)", id="open-journal"),
+    P({"hang": "direct", "journal_error": _NO_DIR}, X.HOST_FS_UNAVAILABLE, _PRE_AUDIT,
+      id="open-audit-log"),
+    P({"hang": "kek"}, X.STEP_FAILED, "(step_failed: kek_proof)", id="prove-kek"),
+    P({"hang": "ask"}, X.CONFIRMATION_TIMEOUT, "(confirmation_timeout)", id="phrase-prompt"),
+    P({"env": LIVE, "hang": "ask_secret"}, X.RECOVERY_CODE_REQUIRED, "(recovery_code_required)",
+      id="code-prompt"),
+    P({"hang": "emit"}, X.AUDIT_UNAVAILABLE, _PRE_AUDIT, id="attempt-record"),
+    P({"hang": "close"}, X.RESET, "Audit: the journal did not close cleanly.", id="close"),
+])  # fmt: skip
+async def test_hung_port_ends_on_the_flows_timer(
+    monkeypatch: pytest.MonkeyPatch, setup: dict[str, Any], exit_code: X, shown: str
+) -> None:
+    # Every external await is bounded: a port that never answers ends the run on its timer,
+    # fail-closed, instead of holding the run lock (and cv-api's boot) forever.
+    for timer in ("STEP_TIMEOUT_S", "PROMPT_TIMEOUT_S", "CLOSE_GRACE_S", "CLOSE_SLACK_S"):
+        monkeypatch.setattr(breakglass, timer, 0.01)
+    w = _Host(**setup)
+    running = asyncio.create_task(w.run(live_flag=w.env is LIVE))
+    try:  # the flow's own timer ends the run long before 5 s; without one, it fails here
+        await asyncio.wait({running}, timeout=5)
+        assert running.done() and running.result() is exit_code
+    finally:
+        w.release.set()  # a port the flow failed to bound answers now: nothing outlives the test
+    assert shown in "\n".join(w.lines)
+
+
+def test_phrase_nonce_is_six_random_hex_digits() -> None:
     nonces = {new_phrase_nonce() for _ in range(5)}
     assert all(re.fullmatch(r"[0-9A-F]{6}", nonce) for nonce in nonces) and len(nonces) > 1
+
+
+def test_confirmation_phrase_names_owner_environment_and_nonce() -> None:
     assert confirmation_phrase("alice", LIVE, "0A1B2C") == "reset alice on live 0A1B2C"
-    # The runbook's exit codes and the audit `reason` codes, pinned; 0 only for a reset.
+
+
+def test_exit_codes_and_reasons_are_pinned() -> None:
+    # The runbook's exit codes and the audit `reason` codes; 0 only for a reset.
     assert {x.reason: int(x) for x in X} == {
         "reset": 0, "step_failed": 1, "reset_failed": 3, "host_fs_unavailable": 4,
         "api_running": 5, "audit_unavailable": 6, "live_flag_required": 7,
         "live_flag_mismatch": 8, "kek_unproven": 9, "not_owner": 10, "no_tty": 11,
         "confirmation_mismatch": 12, "confirmation_timeout": 13, "recovery_code_required": 14,
-        "recovery_code_invalid": 15,
+        "recovery_code_invalid": 15, "operator_cancelled": 16,
     }  # fmt: skip
+
+
+def test_reset_service_refusals_are_exit_reasons() -> None:
     assert {r.value for r in BreakGlassRefusal} <= {x.reason for x in X}
+
+
+def test_action_names_and_actor_match_the_audit_registry() -> None:
+    # A drift would end every run in AUDIT_UNAVAILABLE (an unknown action) or make cv-api's
+    # boot fold-in reject the journal as foreign; slice 1 owns the registry. The flow takes
+    # the actor from the journal; `_assert_breakglass_record` pins it on every record.
+    flow = {breakglass.ATTEMPT, breakglass.REFUSED, breakglass.RESET}
+    assert flow == {ATTEMPT, REFUSED, RESET} == BREAK_GLASS_ACTIONS and flow <= AUDIT_ACTIONS
+    assert JOURNAL_ACTOR == "system:breakglass"

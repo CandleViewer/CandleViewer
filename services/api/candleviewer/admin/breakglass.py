@@ -8,6 +8,8 @@ and a retyped phrase; in `live` one Owner recovery code (echo off); the one-tran
 take stays in the journal for cv-api's boot fold-in). Without a journal nothing else runs: the
 attempt and the refusal go straight to `audit_log` if it is reachable (else: a pre-audit
 refusal). No input skips a record (C-4.14); no secret is printed, logged or audited (C-12.6).
+A cancel (Ctrl-C) before the reset is an `operator_cancelled` refusal; the reset and every
+record run to their end, so the outcome is recorded; then the cancel is re-raised.
 """
 
 from __future__ import annotations
@@ -17,33 +19,38 @@ import dataclasses
 import os
 import re
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from enum import IntEnum
 from typing import Any, Protocol
 
 import structlog
 
 from candleviewer.admin.errors import BreakGlassUnavailable
+from candleviewer.audit.journal import ACTOR  # every record's `actor_label` (R3): no user acts
 from candleviewer.audit.models import AuditOutcome, ExchangeEnv, Severity
 from candleviewer.auth.break_glass import BreakGlassRefusal, BreakGlassResetService
 from candleviewer.auth.errors import BreakGlassRefused
+from candleviewer.observability import spawn
 from candleviewer.secrets import KekCheckResult
 from candleviewer.settings import Environment
 
-#: `actor_label` of every break-glass record (decision R3): no user acts.
-ACTOR = "system:breakglass"
+#: The journal admits only these (`audit.journal.BREAK_GLASS_ACTIONS`; a test pins them).
 ATTEMPT = "auth.break_glass_attempt"
 REFUSED = "auth.break_glass_refused"
 RESET = "auth.break_glass_reset"
-#: Bound on each precondition port; the run lock is held meanwhile, so cv-api cannot boot.
+#: Bound on each precondition port and each record; the run lock is held, so cv-api cannot boot.
 STEP_TIMEOUT_S = 60.0
 #: Bound on each operator prompt (the sealed recovery-code envelope may take a while to fetch).
 PROMPT_TIMEOUT_S = 300.0
 #: Flush grace when a trail closes; what is not in `audit_log` by then stays in the journal.
 CLOSE_GRACE_S = 10.0
+#: The close's margin beyond the grace (stop and unlock) before the CLI gives up on it.
+CLOSE_SLACK_S = 5.0
 #: A refusal code from `secrets` is recorded only if it looks like one (C-12.6).
 _REASON_CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _AUDITED = "Audit: every record reached audit_log."
+_PRE_AUDIT = "Audit: no record could be written (pre-audit refusal); the log has the reason."
+_UNRECORDED = "Audit: the outcome record could not be written; the attempt record is kept."
 _State = dict[str, Any] | None
 
 
@@ -59,7 +66,7 @@ class BreakGlassExit(IntEnum):
 
     RESET = 0
     STEP_FAILED = 1  # a check broke (a port raised or timed out); nothing changed
-    RESET_FAILED = 3  # the reset rolled back, nothing changed (2 is argparse's usage error)
+    RESET_FAILED = 3  # rolled back, or unknown if cut at COMMIT (2 is argparse's usage)
     HOST_FS_UNAVAILABLE = 4
     API_RUNNING = 5
     AUDIT_UNAVAILABLE = 6
@@ -72,6 +79,7 @@ class BreakGlassExit(IntEnum):
     CONFIRMATION_TIMEOUT = 13
     RECOVERY_CODE_REQUIRED = 14
     RECOVERY_CODE_INVALID = 15
+    OPERATOR_CANCELLED = 16  # recorded, then `run` re-raises the cancel; slice 5 exits with it
 
     @property
     def reason(self) -> str:
@@ -164,6 +172,11 @@ class _StepFailed(Exception):
         self.step, self.error = step, error
 
 
+class Interrupted(Exception):
+    """A record or the reset was cut short anyway (`asyncio.run` cancels every task on a second
+    Ctrl-C): its outcome is unknown, so it is never reported as "nothing was changed"."""
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class _Verdict:
     """How a run ends: `RESET` (its counts in `details`) or the status that says why not."""
@@ -188,53 +201,93 @@ class _Verdict:
 
 
 class _Records:
-    """One run's records on one trail: critical, `system:breakglass`, no user id."""
+    """One run's records on one trail: critical, `system:breakglass`, no user id. `cancelled`
+    notes a cancel that came while a record or the reset ran to its end; `run` re-raises it."""
 
     def __init__(self, trail: AuditTrail, run_id: uuid.UUID, owner: str, env: Environment) -> None:
         self.trail, self.run_id, self.label = trail, run_id, _label(owner)
         self.env = ExchangeEnv(env.value)
         self.target: uuid.UUID | None = None
+        self.cancelled = False
+
+    async def to_the_end[T](self, call: Coroutine[Any, Any, T], name: str) -> T:
+        """`call`'s result once it has ended, even if the run is cancelled meanwhile: a cancel
+        that cut a record or the reset's COMMIT short would leave the outcome unknown."""
+        task = spawn(call, name=f"breakglass.{name}")
+        while not task.done():
+            try:
+                await asyncio.wait({task})
+            except asyncio.CancelledError:  # noted here, re-raised by `run` (never swallowed)
+                self.cancelled = True
+        if task.cancelled():  # cut short itself: unknown, not "never happened"
+            self.cancelled = True
+            raise Interrupted(name)
+        return task.result()
 
     async def write(
         self, action: str, outcome: AuditOutcome, reason: str | None, state: _State
     ) -> None:
-        await self.trail.emit(
-            action,
-            actor_label=ACTOR,
-            actor_user_id=None,
-            object_kind="user",
-            object_id=None if self.target is None else str(self.target),
-            object_label=self.label,
-            outcome=outcome,
-            severity=Severity.CRITICAL,
-            reason=reason,
-            after_state=state,
-            request_id=self.run_id,
-            env=self.env,
-        )
+        """Durable when it returns; raises if the trail refuses or takes too long."""
+        await self.to_the_end(self._emit(action, outcome, reason, state), "record")
+
+    async def _emit(
+        self, action: str, outcome: AuditOutcome, reason: str | None, state: _State
+    ) -> None:
+        async with asyncio.timeout(STEP_TIMEOUT_S):
+            await self.trail.emit(
+                action,
+                actor_label=ACTOR,
+                actor_user_id=None,
+                object_kind="user",
+                object_id=None if self.target is None else str(self.target),
+                object_label=self.label,
+                outcome=outcome,
+                severity=Severity.CRITICAL,
+                reason=reason,
+                after_state=state,
+                request_id=self.run_id,
+                env=self.env,
+            )
 
 
 async def _close(trail: AuditTrail) -> int | None:
     """Close with the bounded grace; None if that failed (the journal keeps what it has)."""
     try:
-        async with asyncio.timeout(CLOSE_GRACE_S + 5.0):
+        async with asyncio.timeout(CLOSE_GRACE_S + CLOSE_SLACK_S):
             return await trail.close(CLOSE_GRACE_S)
     except Exception as exc:
         _log().critical("breakglass.trail_close_failed", error=type(exc).__name__)
         return None
 
 
-class BreakGlassFlow:
-    """One break-glass run per `run()`. `environment` is the configured one (arch P9): it
-    decides `live`, as it does for the reset service, and `--live` only has to confirm it."""
+def _audit_lines(verdict: _Verdict, pending: int | None) -> list[str]:
+    """Where the records are, never more than was written (C-2.9): `pending` is what the
+    journal's close left outside `audit_log` (None: it did not close cleanly)."""
+    if verdict.status is _X.AUDIT_UNAVAILABLE:  # the attempt record itself was not written
+        return [_PRE_AUDIT]
+    lines = [_UNRECORDED] if verdict.unrecorded else []
+    if pending is None:
+        lines.append("Audit: the journal did not close cleanly.")
+    elif pending:
+        waiting = f"records waiting in the host journal: {pending}; cv-api folds them in."
+        lines.append(f"Audit: {waiting}")
+    elif not verdict.unrecorded:
+        lines.append(_AUDITED)
+    return lines
 
-    def __init__(self, ports: BreakGlassPorts, *, environment: Environment) -> None:
-        self._ports, self._environment = ports, environment
-        self._live = environment is Environment.LIVE
+
+class BreakGlassFlow:
+    """One break-glass run per `run()`. The environment is the reset service's, the configured
+    one (arch P9): the one source of `live`, which `--live` only has to confirm."""
+
+    def __init__(self, ports: BreakGlassPorts) -> None:
+        self._ports, self._environment = ports, ports.reset.environment
+        self._live = self._environment is Environment.LIVE
 
     async def run(self, owner: str, *, live_flag: bool) -> BreakGlassExit:
         """Reset the MFA of the Owner named `owner` (username or email); `live_flag` is
-        `--live`. Returns the exit status; no secret reaches the terminal or the log."""
+        `--live`. Returns the exit status; no secret reaches the terminal or the log. A cancel
+        is recorded and summarised first, then re-raised."""
         run_id = self._ports.new_run_id()
         try:
             async with asyncio.timeout(STEP_TIMEOUT_S):
@@ -250,10 +303,9 @@ class BreakGlassFlow:
             verdict = await self._journaled(records, owner, live_flag)
         finally:
             pending = await _close(trail)
-        audit = _AUDITED if pending == 0 else "Audit: the journal did not close cleanly."
-        if pending:
-            audit = f"Audit: records waiting in the host journal: {pending}; cv-api folds them in."
-        self._summarise(verdict, owner, audit)
+        self._summarise(verdict, owner, _audit_lines(verdict, pending), records.cancelled)
+        if records.cancelled:
+            raise asyncio.CancelledError  # honoured now that the trail is closed
         return verdict.exit
 
     def _intent(self, live_flag: bool) -> dict[str, Any]:
@@ -267,7 +319,14 @@ class BreakGlassFlow:
             error = type(exc).__name__
             _log().critical("breakglass.attempt_unrecorded", run_id=run_id, error=error)
             return _Verdict(_X.AUDIT_UNAVAILABLE)
-        verdict = await self._decide(records, owner, live_flag)
+        verdict = _Verdict(_X.OPERATOR_CANCELLED)  # cancelled during the attempt record
+        if not records.cancelled:
+            try:
+                verdict = await self._decide(records, owner, live_flag)
+            except asyncio.CancelledError:  # before the reset began: a recorded refusal
+                records.cancelled = True
+        if records.cancelled:
+            _log().warning("breakglass.run_cancelled", run_id=run_id, reason=verdict.status.reason)
         action, outcome, reason = verdict.record
         try:
             await records.write(action, outcome, reason, verdict.details)
@@ -342,18 +401,25 @@ class BreakGlassFlow:
                     code = await self._ports.terminal.ask_secret("Owner recovery code (hidden): ")
             except (TimeoutError, EOFError):
                 code = None
+        try:  # probed again, last: a cv-api may have connected during the prompts (R2c)
+            running = await self._step("api_probe", self._ports.api_running)
+        except BaseException:
+            del code  # no frame of a probe failure or a cancel keeps the plaintext code
+            raise
+        if running:
+            return _Verdict(_X.API_RUNNING)
         call = self._ports.reset.reset(target, recovery_code=code, correlation_id=records.run_id)
         del code  # the service hashes it before its first await: no frame here keeps it
-        # No timer here: a cancel during COMMIT would leave the outcome unknown. Each statement
-        # is bounded by the relational repository's `statement_timeout`.
+        # No timer and no cancel cuts it: either would leave the outcome unknown if it hit
+        # COMMIT. Each statement is bounded by the relational repository's `statement_timeout`.
         try:
-            done = await call
+            done = await records.to_the_end(call, "reset")
         except BreakGlassRefused as exc:
             return _Verdict(_REFUSED_BY_RESET[exc.reason])
-        except Exception as exc:  # rolled back: zero rows changed (scenario S10)
+        except Exception as exc:  # rolled back (S10), or unknown if the link broke at COMMIT
             error = type(exc).__name__
             _log().error("breakglass.reset_failed", run_id=str(records.run_id), error=error)
-            return _Verdict(_X.RESET_FAILED, {"error": error})
+            return _Verdict(_X.RESET_FAILED, {"error": error, "outcome": "rolled_back_or_unknown"})
         counts = {
             "methods_revoked": done.methods_revoked,
             "sessions_revoked": done.sessions_revoked,
@@ -367,7 +433,7 @@ class BreakGlassFlow:
     ) -> BreakGlassExit:
         """No journal (scenario S3, or cv-api holds the run lock): nothing else runs. The
         attempt and the refusal go straight to `audit_log` if it can be reached."""
-        recorded = False
+        recorded, cancelled = False, False
         try:
             async with asyncio.timeout(STEP_TIMEOUT_S):
                 trail = await self._ports.open_direct()
@@ -379,20 +445,23 @@ class BreakGlassFlow:
                     )
                     await records.write(REFUSED, AuditOutcome.DENIED, status.reason, None)
                 finally:
-                    pending = await _close(trail)
+                    pending, cancelled = await _close(trail), records.cancelled
                 recorded = pending == 0
         except Exception as exc:
             error = type(exc).__name__
             _log().error("breakglass.direct_audit_failed", run_id=str(run_id), error=error)
         log = _log().warning if recorded else _log().critical
         log("breakglass.refused_unjournaled", run_id=str(run_id), reason=status.reason, ok=recorded)
-        pre_audit = "Audit: no record could be written (pre-audit refusal); the log has the reason."
-        self._summarise(_Verdict(status), owner, _AUDITED if recorded else pre_audit)
+        self._summarise(_Verdict(status), owner, [_AUDITED if recorded else _PRE_AUDIT], cancelled)
+        if cancelled:
+            raise asyncio.CancelledError  # honoured once both records ran to their end
         return status
 
-    def _summarise(self, verdict: _Verdict, owner: str, audit: str) -> None:
-        """The non-secret summary: counts, reason codes and where the records are."""
+    def _summarise(self, verdict: _Verdict, owner: str, audit: list[str], cancelled: bool) -> None:
+        """The non-secret summary: the outcome, reason codes and where the records are."""
         write, details = self._ports.terminal.write, verdict.details or {}
+        more = details.get("proof") or details.get("step") or details.get("error")
+        why = f"{verdict.status.reason}: {more}" if more else verdict.status.reason
         if verdict.status is _X.RESET:
             write(
                 f"Break-glass reset done for {owner} on {self._environment.value}: "
@@ -400,10 +469,16 @@ class BreakGlassFlow:
                 f"sessions revoked, system event {details['system_event_id']} raised. The Owner "
                 "enrols TOTP again at the next sign-in."
             )
+        elif verdict.status is _X.RESET_FAILED:  # a link lost at COMMIT may still have applied it
+            write(
+                f"Break-glass reset failed ({why}); no change is confirmed. Before re-running, "
+                "check for an unresolved break_glass_used system event: if there is one, the "
+                "reset applied."
+            )
         else:
-            more = details.get("proof") or details.get("step")
-            why = f"{verdict.status.reason}: {more}" if more else verdict.status.reason
             write(f"Break-glass ended without a reset ({why}); nothing was changed.")
-        if verdict.unrecorded:
-            write("Audit: the outcome record could not be written; the attempt record is kept.")
-        write(audit)
+        if cancelled and verdict.status is not _X.OPERATOR_CANCELLED:
+            # A reset or record under way ended first, or was cut short: the line above says so.
+            write("Cancelled: the line above says how the run ended.")
+        for line in audit:
+            write(line)
