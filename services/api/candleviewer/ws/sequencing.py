@@ -111,6 +111,12 @@ COALESCE_FIELDS: Final = frozenset({"book", "bars", "footprint"})
 cv_ws_resync_total = Counter(
     "cv_ws_resync_total", "Server-sent re-snapshots by reason.", labelnames=("reason",)
 )
+# Bind every counted reason now: a series created by its first event gives `increase()` nothing to
+# subtract, so the first `upstream_desync` after every restart would never alert (#2264). `initial`
+# is a routine attach and is never counted (`TopicEmitter.snapshot`).
+for _resync_reason in SNAP_REASONS:
+    if _resync_reason != "initial":
+        cv_ws_resync_total.labels(reason=_resync_reason)
 cv_ws_snapshot_bytes = Histogram(
     "cv_ws_snapshot_bytes",
     "Serialized snapshot size (all chunks); the topic label holds the topic family.",

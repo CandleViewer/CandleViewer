@@ -272,6 +272,13 @@ def close_reason_label(reason: str) -> str:
     return reason if reason in CLOSE_REASONS else "other"
 
 
+# Bind every `reason` now: a series created by its first close gives `increase()` nothing to
+# subtract, so the first `slow_consumer` (or `origin_forbidden`) close after every restart would
+# never alert (#2264). `infra/prometheus/alerts/ws_gateway.yml` and `ws_origin.yml` read them.
+for _close_reason in (*CLOSE_REASONS, "other"):
+    cv_ws_closes_total.labels(reason=_close_reason)
+
+
 def closed_reason(
     conn: _Connection, fault: BaseException | None, *, server_shutting_down: bool = False
 ) -> str:
