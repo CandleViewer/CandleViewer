@@ -9,8 +9,10 @@ and the two catalogue gauges, and `start()` runs ONE supervised loop that refres
   which is also the metrics facade's `env` label, so demo rows never show as live (C-2.11).
 - Every value of the closed `account_kind` / `key_status` enums is set on each refresh, zero when
   absent, so a vanished category reads 0, never its stale count.
-- A failed or timed-out read keeps the last values, counts the failure (consecutive, reset on
-  success) and degrades `health()`; it never stops the loop or the app.
+- A failed or timed-out read, or a failed publish, keeps the last values, counts the failure
+  (consecutive, reset on success) and degrades `health()`; it never stops the loop or the app.
+- A loop that still dies is logged by its done-callback and reads DEGRADED at once
+  (AGENTS.md §5.2 async hygiene: no silent task).
 - The fake backend attaches nothing: no loop runs and the gauges stay unset.
 """
 
@@ -46,6 +48,13 @@ _MODULE: Final = "accounts"
 def logger() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+def _log_loop_exit(task: asyncio.Task[None]) -> None:
+    """Done-callback (AGENTS.md §5.2): logs, and so retrieves, the error that ended the loop."""
+    error = None if task.cancelled() else task.exception()
+    if error is not None:
+        logger().error("accounts_row_gauges_loop_died", error=type(error).__name__)
 
 
 class AccountsService:
@@ -89,6 +98,7 @@ class AccountsService:
         self._started = True
         if self._counts is not None and self._task is None:
             self._task = spawn(self._loop(), name="accounts-row-gauges")
+            self._task.add_done_callback(_log_loop_exit)
 
     async def stop(self, grace_s: float) -> None:
         """Cancel the refresh loop and wait for it (it only awaits a read or the sleep)."""
@@ -99,14 +109,20 @@ class AccountsService:
             await asyncio.gather(task, return_exceptions=True)
 
     async def refresh_once(self) -> bool:
-        """Publish one refresh; on a read error or timeout keep the last values and count it."""
+        """Publish one refresh; on a read, timeout or publish error keep the last values and
+        count it (never raised, so the loop survives)."""
         if self._counts is None or self._gauges is None:
             return False
+        rows, key_rows = self._gauges
         try:
             async with asyncio.timeout(self._timeout_s):
                 accounts = await self._counts.count_accounts_by_kind(self._env)
             async with asyncio.timeout(self._timeout_s):
                 keys = await self._counts.count_api_keys_by_status(self._env)
+            for kind in _KINDS:
+                rows.labels(kind).set(accounts.get(kind, 0))
+            for state in _STATES:
+                key_rows.labels(state).set(keys.get(state, 0))
         except Exception as exc:  # TimeoutError included; cancellation still propagates
             self._failures += 1
             logger().warning(
@@ -115,11 +131,6 @@ class AccountsService:
                 consecutive_failures=self._failures,
             )
             return False
-        rows, key_rows = self._gauges
-        for kind in _KINDS:
-            rows.labels(kind).set(accounts.get(kind, 0))
-        for state in _STATES:
-            key_rows.labels(state).set(keys.get(state, 0))
         self._failures = 0
         self._last_ok = self._clock()
         return True
@@ -139,6 +150,8 @@ class AccountsService:
             return HealthStatus.STOPPED, "stopped"
         if self._counts is None:
             return HealthStatus.OK, "no accounts store (fake backend): row gauges unset"
+        if self._task is not None and self._task.done():  # before a first success, too
+            return HealthStatus.DEGRADED, "row gauge loop exited"
         age = None if self._last_ok is None else self._clock() - self._last_ok
         since = "never" if age is None else f"{age:.0f}s ago"
         if self._failures:

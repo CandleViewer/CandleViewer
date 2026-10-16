@@ -209,3 +209,31 @@ async def test_a_refresh_older_than_the_stale_bound_degrades_health() -> None:
     report = svc.health()
     assert report.status is HealthStatus.DEGRADED and "stale" in report.detail
     await svc.stop(1.0)
+
+
+async def test_a_publish_error_is_counted_like_a_read_error_and_never_raised() -> None:
+    counts = _Counts({"main": cast(int, "n/a")}, {})  # a count the gauge cannot take
+    svc, m = _wired(counts)
+    with capture_logs() as logs:
+        assert await svc.refresh_once() is False
+    assert [(e["error"], e["consecutive_failures"]) for e in logs] == [("ValueError", 1)]
+    counts.accounts = {"main": 3}
+    assert await svc.refresh_once() is True
+    assert _rows(m)["main"] == 3.0
+
+
+async def test_a_loop_that_dies_degrades_health_at_once_and_logs_the_error() -> None:
+    async def broken_sleep(delay: float) -> None:
+        raise RuntimeError("timer gone")
+
+    svc, m = _wired(_Counts({"main": 1}, {}), sleep=broken_sleep)
+    with capture_logs() as logs:
+        await svc.start(_CTX)
+        await asyncio.wait(_loops())  # the done-callback runs before this returns
+    assert _rows(m)["main"] == 1.0  # the pass before the crash still published
+    report = svc.health()
+    assert report.status is HealthStatus.DEGRADED and "exited" in report.detail
+    died = [e for e in logs if e["event"] == "accounts_row_gauges_loop_died"]
+    assert [e["error"] for e in died] == ["RuntimeError"]
+    await svc.stop(1.0)
+    assert svc.health().status is HealthStatus.STOPPED
