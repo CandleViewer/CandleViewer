@@ -216,17 +216,12 @@ class MfaMethodView(BaseModel):
 
 
 class MfaVerifiedResult(BaseModel):
-    """Successful `POST /auth/mfa/verify` or `/auth/mfa/recovery` outcome.
-
-    Mirrors `MfaChallengeResult`'s own documented boundary: minting a real
-    `TokenBundle`/session is E09-S03 scope, so `MfaService` returns this
-    typed marker instead of fabricating an unsigned token (see
-    `mfa_service.py`'s `verify`/`recovery` docstrings)."""
+    """Successful `POST /auth/mfa/verify` outcome: the user whose challenge the TOTP code
+    satisfied. `MfaService` never mints the session itself; the router does."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     user_id: uuid.UUID
-    forced_totp_reenroll: bool = False
 
 
 class MfaRecoveryCheck(BaseModel):

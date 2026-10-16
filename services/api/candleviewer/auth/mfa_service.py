@@ -325,14 +325,6 @@ class MfaService:
             await self._repository.record_challenge_attempt(challenge_id)
             raise RecoveryCodeInvalid("invalid or already-used recovery code")
 
-    async def recover(self, mfa_token: str, recovery_code: str) -> MfaVerifiedResult:
-        """Transitional (#2344): the two halves back to back, with no audit record between them,
-        for the route as it stood before it moved to `check_recovery` and `complete_recovery`;
-        the route's switch removes this."""
-        check = await self.check_recovery(mfa_token, recovery_code)
-        await self.complete_recovery(check)
-        return MfaVerifiedResult(user_id=check.user_id, forced_totp_reenroll=True)
-
     async def regenerate_recovery_codes(self, user_id: str) -> RecoveryCodesRegenerated:
         """`POST /auth/mfa/recovery`'s SCR-112 regeneration sibling (ticket
         "Scope / Deliverables": "regenerates codes, hard-deleting unused
