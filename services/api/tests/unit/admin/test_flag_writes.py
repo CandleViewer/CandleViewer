@@ -1,13 +1,16 @@
-"""E42-T03: the flag write path: one step-up per write chosen from the locked row (D3a, D3b),
-write-ahead audit, the live-gate evidence precondition and the evidence URL rules, D2a (no
-overrides on the live gate or kill switches), concurrent writes and the 409 `current`, kind
-validation, a store outage logged and counted but never audited, the repair of an unreadable row,
-and `maintenance.*` records only on a real stored transition (D1c)."""
+"""E42-T03: the flag write path: RBAC first, validation (`unknown_user` included) before the one
+step-up chosen from the locked row, write-ahead audit, no overrides on the live gate or the kill
+switches, conflicts and the 409 `current`, a store outage logged and counted (and audited once a
+row was read), the repair of an unreadable row, `maintenance.*` records only on a real stored
+transition, every external await bounded, and the cache dropped after every write."""
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import inspect
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
@@ -15,58 +18,73 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.admin.flags import LIVE_ENABLED, MAINTENANCE_MODE, StoredFlag, default_registry
+from candleviewer.admin.flags.evidence import REDACTED_CREDENTIAL, REDACTED_UNPARSEABLE
 from candleviewer.admin.flags.metrics import flag_changes_total
 from candleviewer.admin.flags.service import FlagService
 from candleviewer.admin.flags.store import StoreUnavailableError
 from candleviewer.admin.flags.writes import (
+    WRITE_AWAIT_TIMEOUT_S,
     FlagConflictError,
+    FlagsWriteDenied,
     FlagValidationError,
     FlagWriter,
     UnknownFlagError,
-    step_up_class,
 )
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
-from tests.unit.admin.flag_fakes import T0, Clock, FakeAudit, FakeFlagStore, FakeStepUp, NoStepUp
+from candleviewer.audit.writer import AuditWriter
+from tests.unit.admin.flag_fakes import (
+    T0,
+    Clock,
+    FakeAudit,
+    FakeFlagStore,
+    FakeStepUp,
+    FakeUsers,
+    NoStepUp,
+)
 
 _A = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001")
 _B = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002")
+_C = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0003")  # names no user
 _SESSION = UUID("5e000000-0000-4000-8000-000000000001")
 _REQUEST = UUID("7e000000-0000-4000-8000-000000000001")
+_K = "rules.graph_editor"
 
 
 def _who(user: UUID = _A) -> AuditPrincipal:
-    return AuditPrincipal(
-        user_id=user,
-        username=f"user-{str(user)[-1]}",
-        permissions=frozenset({"flags:write"}),
-        session_id=_SESSION,
-        ip="127.0.0.1",
-        request_id=_REQUEST,
-    )
+    can = frozenset({"flags:write"})
+    return AuditPrincipal(user, f"user-{str(user)[-1]}", can, _SESSION, "127.0.0.1", _REQUEST)
 
 
 class _Hook:
-    def __init__(self, fail: bool = False) -> None:
+    def __init__(self, fail: bool = False, hang: bool = False) -> None:
         self.calls: list[tuple[str, StoredFlag | None, StoredFlag]] = []
-        self.fail = fail
+        self.fail, self.hang = fail, hang
 
     async def __call__(self, key: str, before: StoredFlag | None, after: StoredFlag) -> None:
+        if self.hang:
+            await asyncio.Event().wait()
         if self.fail:
             raise RuntimeError("push down")
         self.calls.append((key, before, after))
 
 
-class _BrokenAudit(FakeAudit):
-    """Fails every record from the `fail_from`-th on (0: the first)."""
+class _Audit(FakeAudit):
+    """Yields on every record, as a WAL append does. From the `fail_from`-th record on (0: the
+    first) it raises; from the `stall_from`-th on it stalls until `release` is set."""
 
-    def __init__(self, fail_from: int = 0) -> None:
+    def __init__(self, fail_from: int = 99, stall_from: int = 99) -> None:
         super().__init__()
-        self.fail_from = fail_from
+        self.fail_from, self.stall_from = fail_from, stall_from
+        self.stalled, self.release = asyncio.Event(), asyncio.Event()
 
     async def emit(self, action: str, **kwargs: Any) -> None:
+        await asyncio.sleep(0)
         if len(self.records) >= self.fail_from:
             raise RuntimeError("audit unavailable")
+        if len(self.records) >= self.stall_from:
+            self.stalled.set()
+            await self.release.wait()
         await super().emit(action, **kwargs)
 
 
@@ -78,33 +96,26 @@ async def _service() -> tuple[FlagService, FakeFlagStore]:
 
 
 async def _writer(
-    hook: _Hook | None = None, audit: FakeAudit | None = None, step_up: FakeStepUp | None = None
+    hook: _Hook | None = None,
+    audit: FakeAudit | None = None,
+    *,
+    step_up: FakeStepUp | None = None,
+    users: FakeUsers | None = None,
+    timeout_s: float = WRITE_AWAIT_TIMEOUT_S,
 ) -> tuple[FlagWriter, FakeFlagStore, FakeAudit]:
     service, store = await _service()
     audit = audit or FakeAudit()
-    return FlagWriter(service, audit, step_up or FakeStepUp(), on_change=hook), store, audit
+    step_up, users = step_up or FakeStepUp(), users or FakeUsers({_A, _B})
+    writer = FlagWriter(service, audit, step_up, users, on_change=hook, await_timeout_s=timeout_s)
+    return writer, store, audit
 
 
 async def _set(
-    writer: FlagWriter,
-    key: str,
-    value: object,
-    who: AuditPrincipal | None = None,
-    *,
-    reason: str | None = "rollout",
-    expected_updated_at: datetime | None = T0,
-    evidence_url: str | None = None,
-    user_overrides: dict[UUID, object] | None = None,
+    writer: FlagWriter, key: str, value: object, who: AuditPrincipal | None = None, **extra: Any
 ) -> StoredFlag:
-    return await writer.set(
-        key,
-        who or _who(),
-        value=value,
-        reason=reason,
-        expected_updated_at=expected_updated_at,
-        evidence_url=evidence_url,
-        user_overrides=user_overrides,
-    )
+    """A write by `who` (default user A) with reason `rollout`, read at `T0` unless `extra` says."""
+    request: dict[str, Any] = {"reason": "rollout", "expected_updated_at": T0, **extra}
+    return await writer.set(key, who or _who(), value=value, **request)
 
 
 def _changes(key: str, result: str) -> float:
@@ -113,10 +124,17 @@ def _changes(key: str, result: str) -> float:
 
 async def test_a_committed_write_is_audited_write_ahead_then_with_its_outcome() -> None:
     writer, store, audit = await _writer(_Hook())
+    ok = _changes("rules.form_editor", "ok")
     await _set(writer, "rules.form_editor", False, user_overrides={_B: True})
     (a1, intent), (a2, outcome) = audit.records
     assert (a1, a2) == ("flags.change", "flags.change")
-    assert intent["after_state"]["phase"] == "intent"
+    asked = {
+        "value": False,
+        "overrides": {str(_B): True},
+        "reason": "rollout",
+        "evidence_url": None,
+    }
+    assert intent["after_state"] == {**asked, "phase": "intent"}
     assert intent["before_state"] == {"value": True, "overrides": {}}
     assert outcome["after_state"] == {
         "value": False,
@@ -124,13 +142,14 @@ async def test_a_committed_write_is_audited_write_ahead_then_with_its_outcome() 
         "phase": "outcome",
     }
     assert (outcome["outcome"], outcome["reason"]) == (AuditOutcome.SUCCESS, "ok")
-    assert store.rows["rules.form_editor"].user_overrides == {_B: True}
+    assert [w.user_overrides for w in store.writes] == [{_B: True}]
+    assert _changes("rules.form_editor", "ok") == ok + 1
 
 
 @pytest.mark.parametrize("key", ["rules.form_editor", MAINTENANCE_MODE])
 async def test_an_unrecordable_intent_writes_nothing(key: str) -> None:
-    writer, store, _ = await _writer(_Hook(), _BrokenAudit())
-    store.rows[key] = replace(store.rows[key], value=True)  # a kill-switch release too (L4)
+    writer, store, _ = await _writer(_Hook(), _Audit(fail_from=0))
+    store.rows[key] = replace(store.rows[key], value=True)  # a kill-switch release too
     with pytest.raises(RuntimeError, match="audit unavailable"):
         await _set(writer, key, False)
     assert store.writes == [] and store.rows[key].value is True
@@ -139,138 +158,36 @@ async def test_an_unrecordable_intent_writes_nothing(key: str) -> None:
 @pytest.mark.parametrize("key", ["ui.nonexistent", LIVE_ENABLED])  # a 404 and a 422 probe
 async def test_rbac_precedes_every_lookup_and_every_422(key: str) -> None:
     writer, store, audit = await _writer(_Hook())
-    with pytest.raises(PermissionError):
+    with pytest.raises(FlagsWriteDenied):
         await _set(writer, key, True, AuditPrincipal(_B, "viewer", frozenset({"flags:read"})))
     assert (store.writes, audit.records) == ([], [])
 
 
-async def test_every_record_names_the_principal_object_and_severity() -> None:
+async def test_every_record_names_the_principal_and_binds_to_the_audit_writer() -> None:
     writer, _, audit = await _writer(_Hook())
-    await _set(writer, "rules.form_editor", False)
-    for _, record in audit.records:
-        assert record["actor_user_id"] == _A and record["actor_label"] == "user-1"
+    await _set(writer, MAINTENANCE_MODE, True)  # intent, outcome, maintenance.enabled
+    for key, value in (("ui.nonexistent", True), (_K, 1), (MAINTENANCE_MODE, False)):
+        with pytest.raises((UnknownFlagError, FlagValidationError, FlagConflictError)):
+            await _set(writer, key, value)  # a 404, a 422, and a 409 (T0 is stale now)
+    assert len(audit.records) == 7
+    for action, record in audit.records:
+        inspect.signature(AuditWriter.emit).bind(None, action, **record)
+        assert (record["actor_user_id"], record["actor_label"]) == (_A, "user-1")
         assert (record["session_id"], record["request_id"]) == (_SESSION, _REQUEST)
-        assert record["actor_ip"] == "127.0.0.1"
-        assert (record["object_kind"], record["object_id"]) == ("feature_flag", "rules.form_editor")
+        assert (record["actor_ip"], record["object_kind"]) == ("127.0.0.1", "feature_flag")
+        assert record["object_id"] in (key, MAINTENANCE_MODE, "ui.nonexistent", _K)
         assert record["severity"] is Severity.WARNING
 
 
-@pytest.mark.parametrize("key", [LIVE_ENABLED, MAINTENANCE_MODE])
-async def test_the_live_gate_and_maintenance_take_no_user_override(key: str) -> None:
-    """The probe: value false globally, user B pinned true, no evidence."""
-    writer, store, audit = await _writer(_Hook())
-    with pytest.raises(FlagValidationError) as exc:
-        await _set(writer, key, False, user_overrides={_B: True})
-    assert (exc.value.rule, exc.value.field) == ("overrides_not_allowed", "overrides")
-    assert store.writes == [] and audit.records[0][1]["reason"] == "overrides_not_allowed"
-
-
-async def test_concurrent_writes_one_succeeds_the_other_conflicts_both_audited() -> None:
-    service, store = await _service()
-    hook, audit, key = _Hook(), FakeAudit(), "rules.graph_editor"
-    writer = FlagWriter(service, audit, FakeStepUp(), on_change=hook)
-    first = await _set(writer, key, False, _who(_A), user_overrides={_B: True})
-    with pytest.raises(FlagConflictError) as exc:
-        await _set(writer, key, True, _who(_B))
-    assert exc.value.current == first and store.rows[key].value is False
-    # The 409 `current` is the row as it stands now, rendered for the caller (B's override).
-    members = service.resolved(service.registry[key], exc.value.current, _B, frozenset()).members()
-    assert (members["value"], members["default_value"], members["updated_by"]) == (True, False, _A)
-    assert members["updated_at"] == T0 + timedelta(seconds=1)
-    results = [(r["actor_user_id"], r["outcome"], r["reason"]) for _, r in audit.records]
-    assert results == [
-        (_A, AuditOutcome.SUCCESS, "rollout"),
-        (_A, AuditOutcome.SUCCESS, "ok"),
-        (_B, AuditOutcome.SUCCESS, "rollout"),
-        (_B, AuditOutcome.FAILURE, "conflict"),
-    ]
-    assert [c[0] for c in hook.calls] == ["rules.graph_editor"]
-
-
-@pytest.mark.parametrize(
-    ("key", "value", "extra", "rule", "field"),
-    [
-        ("rules.graph_editor", True, {"reason": " "}, "required", "reason"),
-        (
-            "rules.graph_editor",
-            True,
-            {"expected_updated_at": None},
-            "required",
-            "expected_updated_at",
-        ),
-        ("rules.graph_editor", 1, {}, "kind_mismatch", "value"),
-        ("rules.graph_editor", "true", {}, "kind_mismatch", "value"),
-        ("rules.graph_editor", True, {"user_overrides": {_B: "yes"}}, "kind_mismatch", "overrides"),
-        (LIVE_ENABLED, True, {}, "gate_evidence_required", "evidence_url"),
-    ],
-)
-async def test_invalid_writes_are_refused_before_the_store_and_audited(
-    key: str, value: object, extra: dict[str, Any], rule: str, field: str
+@pytest.mark.parametrize("user_overrides", [None, {}])
+async def test_a_safety_flag_write_drops_override_rows_found_in_the_store(
+    user_overrides: dict[UUID, object] | None,
 ) -> None:
     writer, store, audit = await _writer(_Hook())
-    before = _changes(key, rule)
-    with pytest.raises(FlagValidationError) as exc:
-        await _set(writer, key, value, **extra)
-    assert (exc.value.rule, exc.value.field) == (rule, field)
-    assert store.writes == [] and [r["reason"] for _, r in audit.records] == [rule]
-    assert audit.records[0][1]["before_state"] is not None
-    assert _changes(key, rule) == before + 1
-
-
-async def test_an_unknown_flag_is_audited_but_never_reaches_a_series() -> None:
-    writer, _, audit = await _writer(_Hook())
-    with pytest.raises(UnknownFlagError):
-        await _set(writer, "ui.nonexistent", True)
-    assert [(a, r["reason"]) for a, r in audit.records] == [("flags.change", "not_found")]
-    assert not any(
-        s.labels.get("flag") == "ui.nonexistent"
-        for m in flag_changes_total.collect()
-        for s in m.samples
-    )
-
-
-@pytest.mark.parametrize(("mid_write", "reasons"), [(False, []), (True, ["rollout"])])
-async def test_a_store_outage_is_logged_and_counted_never_audited(
-    mid_write: bool, reasons: list[str]
-) -> None:
-    writer, store, audit = await _writer(_Hook())
-    store.down, store.fail_write = not mid_write, mid_write
-    before = _changes("rules.form_editor", "store_unavailable")
-    with capture_logs() as logs, pytest.raises(StoreUnavailableError):
-        await _set(writer, "rules.form_editor", False)
-    assert store.writes == [] and [r["reason"] for _, r in audit.records] == reasons  # intent only
-    assert _changes("rules.form_editor", "store_unavailable") == before + 1
-    assert [sorted(e) for e in logs] == [["event", "key", "log_level", "request_id"]]  # only (L3)
-    assert (logs[0]["key"], logs[0]["request_id"]) == ("rules.form_editor", str(_REQUEST))
-
-
-async def test_maintenance_toggles_add_their_own_audit_actions() -> None:
-    writer, store, audit = await _writer(_Hook())
-    for value in (True, True, False):
-        await _set(
-            writer,
-            MAINTENANCE_MODE,
-            value,
-            expected_updated_at=store.rows[MAINTENANCE_MODE].updated_at,
-        )
-    toggles = [a for a, _ in audit.records if a.startswith("maintenance.")]
-    assert toggles == ["maintenance.enabled", "maintenance.disabled"]
-
-
-async def test_the_hook_gets_the_committed_before_and_after_rows() -> None:
-    hook = _Hook()
-    writer, store, _ = await _writer(hook)
-    before = store.rows["rules.form_editor"]
-    after = await _set(writer, "rules.form_editor", False)
-    assert hook.calls == [("rules.form_editor", before, after)]
-
-
-async def test_a_failing_push_never_undoes_a_committed_write() -> None:
-    writer, store, _ = await _writer(_Hook(fail=True))
-    with capture_logs() as logs:
-        await _set(writer, "rules.form_editor", False)
-    assert store.rows["rules.form_editor"].value is False
-    assert logs[-1]["event"] == "feature_flag_push_failed"
+    store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], user_overrides={_B: True})
+    await _set(writer, MAINTENANCE_MODE, True, user_overrides=user_overrides)
+    assert [w.user_overrides for w in store.writes] == [{}]
+    assert audit.records[0][1]["before_state"] == {"value": False, "overrides": {str(_B): True}}
 
 
 async def test_omitted_overrides_are_kept_and_an_empty_list_clears_them() -> None:
@@ -279,62 +196,239 @@ async def test_omitted_overrides_are_kept_and_an_empty_list_clears_them() -> Non
     await _set(writer, key, True, user_overrides={_B: False})
     await _set(writer, key, False, expected_updated_at=store.rows[key].updated_at)
     assert store.rows[key].user_overrides == {_B: False}
-    await _set(
-        writer, key, False, expected_updated_at=store.rows[key].updated_at, user_overrides={}
-    )
-    assert store.rows[key].user_overrides == {}
+    stored = store.rows[key].updated_at
+    await _set(writer, key, False, expected_updated_at=stored, user_overrides={})
+    assert store.rows[key].user_overrides == {} and len(store.writes) == 3
 
 
-async def test_a_failed_outcome_record_is_logged_and_the_write_stands() -> None:
-    writer, store, _ = await _writer(_Hook(), _BrokenAudit(fail_from=1))
-    with capture_logs() as logs:
-        await _set(writer, "rules.form_editor", False)
-    assert store.rows["rules.form_editor"].value is False
-    assert "flags_change_outcome_audit_failed" in [e["event"] for e in logs]
-
-
-async def test_a_failed_maintenance_record_never_blocks_the_gate_hook() -> None:
+async def test_a_stale_write_is_a_conflict_that_writes_nothing() -> None:
     hook = _Hook()
-    writer, _, _ = await _writer(hook, _BrokenAudit(fail_from=2))
-    with capture_logs() as logs:
-        await _set(writer, MAINTENANCE_MODE, True)
-    assert [c[0] for c in hook.calls] == [MAINTENANCE_MODE]
-    assert "maintenance_audit_failed" in [e["event"] for e in logs]
+    writer, store, audit = await _writer(hook)
+    conflicts = _changes(_K, "conflict")
+    first = await _set(writer, _K, False, _who(_A), user_overrides={_B: True})
+    with pytest.raises(FlagConflictError) as exc:
+        await _set(writer, _K, True, _who(_B))  # read at T0, before the first write
+    assert exc.value.current == first and store.rows[_K] == first and len(store.writes) == 1
+    assert [c[0] for c in hook.calls] == [_K] and _changes(_K, "conflict") == conflicts + 1
+    results = [(r["actor_user_id"], r["outcome"], r["reason"]) for _, r in audit.records[2:]]
+    assert results == [
+        (_B, AuditOutcome.SUCCESS, "rollout"),
+        (_B, AuditOutcome.FAILURE, "conflict"),
+    ]
+
+
+async def test_the_conflicts_current_is_resolved_for_the_caller() -> None:
+    service, _ = await _service()
+    writer = FlagWriter(service, FakeAudit(), FakeStepUp(), FakeUsers({_B}))
+    await _set(writer, _K, False, _who(_A), user_overrides={_B: True})
+    with pytest.raises(FlagConflictError) as exc:
+        await _set(writer, _K, True, _who(_B))
+    members = service.resolved(service.registry[_K], exc.value.current, _B, frozenset()).members()
+    assert (members["value"], members["default_value"], members["updated_by"]) == (True, False, _A)
+    assert members["updated_at"] == T0 + timedelta(seconds=1)
+
+
+async def test_two_writes_from_one_read_commit_once_and_conflict_once() -> None:
+    writer, store, _ = await _writer(_Hook(), _Audit())
+    done = await asyncio.gather(
+        _set(writer, _K, False), _set(writer, _K, True, _who(_B)), return_exceptions=True
+    )
+    assert [type(result) for result in done] == [StoredFlag, FlagConflictError]
+    assert len(store.writes) == 1
 
 
 @pytest.mark.parametrize(
-    ("key", "stored", "value", "expected"),
+    ("key", "value", "extra", "rule", "field"),
     [
-        ("killswitch.ingestion", 0, False, "killswitch"),  # unreadable counts as engaged
-        (MAINTENANCE_MODE, False, True, "flags"),  # engaging: the console is not the emergency stop
-        (MAINTENANCE_MODE, True, True, "flags"),
-        (LIVE_ENABLED, False, True, "live_enablement"),
-        (LIVE_ENABLED, "yes", True, "live_enablement"),  # unreadable: not enabled
-        (LIVE_ENABLED, True, True, "live_enablement"),  # whatever is stored (L1)
-        ("rules.graph_editor", True, False, "flags"),
+        (_K, True, {"reason": " "}, "required", "reason"),
+        (_K, True, {"expected_updated_at": None}, "required", "expected_updated_at"),
+        (_K, 1, {}, "kind_mismatch", "value"),
+        (_K, "true", {}, "kind_mismatch", "value"),
+        (_K, True, {"user_overrides": {_A: True, _B: "yes"}}, "kind_mismatch", "overrides"),
+        (_K, True, {"user_overrides": {_A: True, _C: True}}, "unknown_user", "overrides"),
+        (LIVE_ENABLED, False, {"user_overrides": {_B: True}}, "overrides_not_allowed", "overrides"),
+        (
+            MAINTENANCE_MODE,
+            False,
+            {"user_overrides": {_B: True}},
+            "overrides_not_allowed",
+            "overrides",
+        ),
+        (_K, True, {"evidence_url": "http://h.example/pt-1"}, "https_required", "evidence_url"),
+        (LIVE_ENABLED, True, {}, "gate_evidence_required", "evidence_url"),
+        (LIVE_ENABLED, True, {"evidence_url": ""}, "gate_evidence_required", "evidence_url"),
     ],
 )
-def test_one_step_up_class_from_the_key_and_the_row_as_stored(
-    key: str, stored: object, value: object, expected: str
+async def test_invalid_writes_are_refused_before_the_gate_and_audited(
+    key: str, value: object, extra: dict[str, Any], rule: str, field: str
 ) -> None:
-    spec = default_registry()[key]
-    assert step_up_class(spec, StoredFlag(stored), value) == expected  # type: ignore[arg-type]
+    step_up, users = FakeStepUp(), FakeUsers({_A, _B})
+    writer, store, audit = await _writer(_Hook(), step_up=step_up, users=users)
+    before = _changes(key, rule)
+    with pytest.raises(FlagValidationError) as exc:
+        await _set(writer, key, value, **extra)
+    assert (exc.value.rule, exc.value.field) == (rule, field)
+    ((_, record),) = audit.records
+    assert (record["outcome"], record["reason"]) == (AuditOutcome.FAILURE, rule)
+    assert record["after_state"]["result"] == rule and record["before_state"] is not None
+    assert (store.writes, step_up.demanded, _changes(key, rule)) == ([], [], before + 1)
+    assert users.lookups == ([frozenset({_A, _C})] if rule == "unknown_user" else [])
 
 
-async def test_validation_then_one_elevation_per_write_and_a_refused_one_records_nothing() -> None:
+@pytest.mark.parametrize(
+    ("url", "audited"),
+    [
+        ("https://[::1/x?token=secret", REDACTED_UNPARSEABLE),
+        ("https://u\uff20h.example/x#token=secret", REDACTED_UNPARSEABLE),
+        ("https://github.com/x?access_token=secret", REDACTED_CREDENTIAL),
+    ],
+)
+async def test_a_refused_evidence_url_never_reaches_the_record_raw(url: str, audited: str) -> None:
+    writer, _, audit = await _writer(_Hook())
+    with pytest.raises(FlagValidationError):
+        await _set(writer, LIVE_ENABLED, True, evidence_url=url)
+    ((_, record),) = audit.records
+    assert record["after_state"]["evidence_url"] == audited and "secret" not in str(record)
+
+
+async def test_an_unknown_flag_is_audited_but_never_reaches_a_series_or_the_gate() -> None:
+    step_up = FakeStepUp()
+    writer, _, audit = await _writer(_Hook(), step_up=step_up)
+    with pytest.raises(UnknownFlagError):
+        await _set(writer, "ui.nonexistent", True)
+    assert [(a, r["reason"]) for a, r in audit.records] == [("flags.change", "not_found")]
+    samples = [s for m in flag_changes_total.collect() for s in m.samples]
+    assert step_up.demanded == [] and all(s.labels["flag"] != "ui.nonexistent" for s in samples)
+
+
+@pytest.mark.parametrize(
+    ("mid_write", "request_id", "reasons"),
+    [(False, _REQUEST, []), (True, None, ["rollout", "store_unavailable"])],
+)
+async def test_a_store_outage_is_counted_once_and_audited_once_a_row_was_read(
+    mid_write: bool, request_id: UUID | None, reasons: list[str]
+) -> None:
+    writer, store, audit = await _writer(_Hook())
+    store.down, store.fail_write = not mid_write, mid_write
+    before = _changes("rules.form_editor", "store_unavailable")
+    with capture_logs() as logs, pytest.raises(StoreUnavailableError):
+        await _set(writer, "rules.form_editor", False, replace(_who(), request_id=request_id))
+    assert store.writes == [] and [r["reason"] for _, r in audit.records] == reasons
+    assert _changes("rules.form_editor", "store_unavailable") == before + 1
+    ids = {} if request_id is None else {"request_id": str(request_id)}  # the key and id only
+    assert logs == [
+        {"event": "feature_flag_write_store_unavailable", "key": "rules.form_editor"}
+        | ids
+        | {"log_level": "warning"}
+    ]
+
+
+@pytest.mark.parametrize("hung", ["users", "step_up", "intent"])
+async def test_a_hung_await_under_the_row_lock_is_an_outage_that_writes_nothing(hung: str) -> None:
+    users, step_up = FakeUsers({_B}), FakeStepUp()
+    users.hold = asyncio.Event() if hung == "users" else None
+    step_up.hold = asyncio.Event() if hung == "step_up" else None
+    audit = _Audit(stall_from=0 if hung == "intent" else 99)
+    writer, store, _ = await _writer(audit=audit, step_up=step_up, users=users, timeout_s=0.1)
+    with pytest.raises(StoreUnavailableError):
+        await _set(writer, "rules.form_editor", False, user_overrides={_B: True})
+    assert store.writes == [] and store.rows["rules.form_editor"].value is True
+    # The row was read, so the outcome is recorded too: unless the audit is what hung.
+    reasons = [r["reason"] for _, r in audit.records]
+    assert reasons == ([] if hung == "intent" else ["store_unavailable"])
+
+
+@pytest.mark.parametrize(
+    ("moved", "fail", "raised"),
+    [(False, False, None), (True, False, FlagConflictError), (True, True, StoreUnavailableError)],
+)
+async def test_a_write_drops_the_cached_row_whatever_its_outcome(
+    moved: bool, fail: bool, raised: type[Exception] | None
+) -> None:
+    service, store = await _service()
+    writer, key = FlagWriter(service, FakeAudit(), FakeStepUp(), FakeUsers()), "rules.form_editor"
+    assert await service.value(key) is True  # cached now
+    row = replace(store.rows[key], value=False, updated_at=T0 + timedelta(seconds=9))
+    store.on_lock = (lambda: store.rows.__setitem__(key, row)) if moved else None
+    store.fail_write = fail
+    with pytest.raises(raised) if raised else contextlib.nullcontext():
+        await _set(writer, key, False)
+    assert await service.value(key) is False  # read again, well inside the 30 s TTL
+
+
+async def test_maintenance_toggles_add_their_own_audit_actions() -> None:
+    writer, store, audit = await _writer(_Hook())
+    steps = [(MAINTENANCE_MODE, True), (MAINTENANCE_MODE, True), (MAINTENANCE_MODE, False)]
+    for key, value in [*steps, ("killswitch.order_entry", True)]:  # another switch: no record
+        await _set(writer, key, value, expected_updated_at=store.rows[key].updated_at)
+    records = [(a, r["reason"], r["after_state"]) for a, r in audit.records]
+    assert [r for r in records if r[0].startswith("maintenance.")] == [
+        ("maintenance.enabled", "rollout", {"value": True, "overrides": {}}),
+        ("maintenance.disabled", "rollout", {"value": False, "overrides": {}}),
+    ]
+
+
+@pytest.mark.parametrize("hang", [False, True])
+async def test_a_failing_or_hung_push_never_undoes_a_committed_write(hang: bool) -> None:
+    writer, store, _ = await _writer(_Hook(fail=not hang, hang=hang), timeout_s=0.1)
+    with capture_logs() as logs:
+        await _set(writer, "rules.form_editor", False)
+    assert store.rows["rules.form_editor"].value is False
+    assert (logs[-1]["event"], logs[-1]["log_level"]) == ("feature_flag_push_failed", "error")
+
+
+async def test_the_hook_gets_the_committed_rows_before_a_stalled_outcome_record() -> None:
+    hook, audit = _Hook(), _Audit(stall_from=1)  # the intent passes; the outcome stalls
+    writer, store, _ = await _writer(hook, audit)
+    before = store.rows[MAINTENANCE_MODE]
+    write = asyncio.create_task(_set(writer, MAINTENANCE_MODE, True))
+    await audit.stalled.wait()
+    assert hook.calls == [(MAINTENANCE_MODE, before, store.rows[MAINTENANCE_MODE])]
+    audit.release.set()
+    assert (await write).value is True
+
+
+@pytest.mark.parametrize(
+    ("key", "audit", "event"),
+    [
+        ("rules.form_editor", {"fail_from": 1}, "flags_change_outcome_audit_failed"),
+        ("rules.form_editor", {"stall_from": 1}, "flags_change_outcome_audit_failed"),
+        (MAINTENANCE_MODE, {"fail_from": 2}, "maintenance_audit_failed"),
+    ],
+)
+async def test_a_failed_or_hung_record_after_the_commit_is_logged_and_the_write_stands(
+    key: str, audit: dict[str, int], event: str
+) -> None:
+    hook = _Hook()
+    writer, store, _ = await _writer(hook, _Audit(**audit), timeout_s=0.1)
+    value = store.rows[key].value is not True  # a change, so maintenance.mode transitions
+    with capture_logs() as logs:
+        await _set(writer, key, value)
+    assert store.rows[key].value is value and [c[0] for c in hook.calls] == [key]
+    assert event in [e["event"] for e in logs]
+
+
+async def test_each_write_demands_exactly_one_elevation_for_its_key_and_value() -> None:
+    step_up, users = FakeStepUp(), FakeUsers()
+    writer, store, audit = await _writer(step_up=step_up, users=users)  # and no change hook
+    with capture_logs() as logs:
+        await _set(writer, "rules.form_editor", False)
+        await _set(writer, LIVE_ENABLED, True, evidence_url="https://h.example/pt-1")
+        stored = store.rows[LIVE_ENABLED].updated_at
+        await _set(writer, LIVE_ENABLED, False, expected_updated_at=stored)  # off: no evidence
+    assert step_up.demanded == ["flags", "live_enablement", "flags"]
+    assert store.rows[LIVE_ENABLED].value is False and logs == []
+    assert users.lookups == []  # no overrides given: no user lookup
+    assert audit.records[2][1]["after_state"]["evidence_url"] == "https://h.example/pt-1"
+
+
+async def test_a_release_refused_at_the_gate_records_and_writes_nothing() -> None:
     step_up = FakeStepUp(missing=frozenset({"killswitch"}))
     writer, store, audit = await _writer(_Hook(), step_up=step_up)
     store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
-    with pytest.raises(FlagValidationError):  # validation precedes the gate; its 422 is audited
-        await _set(writer, MAINTENANCE_MODE, False, reason=" ")
-    with pytest.raises(NoStepUp):  # a release refused at the gate records nothing
+    with pytest.raises(NoStepUp):
         await _set(writer, MAINTENANCE_MODE, False)
-    assert (step_up.demanded, store.writes) == (["killswitch"], [])
-    assert [r["reason"] for _, r in audit.records] == ["required"]
-    with pytest.raises(UnknownFlagError):  # a 404 comes before the gate
-        await _set(writer, "ui.nonexistent", True)
-    await _set(writer, "rules.form_editor", False)
-    assert step_up.demanded == ["killswitch", "flags"] and len(audit.records) == 4
+    assert (step_up.demanded, store.writes, audit.records) == (["killswitch"], [], [])
 
 
 async def test_a_release_is_judged_on_the_locked_row_not_a_cached_or_earlier_read() -> None:
@@ -342,50 +436,13 @@ async def test_a_release_is_judged_on_the_locked_row_not_a_cached_or_earlier_rea
     only a graced `flags` elevation: the release still needs `killswitch`."""
     step_up = FakeStepUp(missing=frozenset({"killswitch"}))
     service, store = await _service()
-    writer = FlagWriter(service, FakeAudit(), step_up)
+    writer = FlagWriter(service, FakeAudit(), step_up, FakeUsers())
     assert await service.value(MAINTENANCE_MODE) is False  # cached, and fresh until the lock
     engaged = replace(store.rows[MAINTENANCE_MODE], value=True)
     store.on_lock = lambda: store.rows.__setitem__(MAINTENANCE_MODE, engaged)
     with pytest.raises(NoStepUp):
         await _set(writer, MAINTENANCE_MODE, False)
     assert step_up.demanded == ["killswitch"] and store.writes == []
-
-
-@pytest.mark.parametrize(
-    ("url", "rule"),
-    [
-        ("javascript:alert(1)", "https_required"),
-        ("http://github.com/basiltt/CandleViewer/issues/412", "https_required"),
-        ("https:///issues/412", "https_required"),
-        ("https://github.com/a b", "https_required"),
-        ("https://[::1/issues", "https_required"),
-        ("https://user:secret@github.com/x", "credential_in_url"),
-        ("https://user@github.com/x", "credential_in_url"),
-        ("https://github.com/x?tab=1&access_token=secret", "credential_in_url"),
-        ("https://bucket.s3.amazonaws.com/pt.pdf?X-Amz-Signature=secret", "credential_in_url"),
-        ("https://acct.blob.core.windows.net/c/pt.pdf?sv=1&sig=secret", "credential_in_url"),
-        ("https://github.com/x#token=secret", "credential_in_url"),
-        ("https://idp.example/cb?Code=secret", "credential_in_url"),
-        ("https://github.com/" + "a" * 2030, "string_too_long"),
-    ],
-)
-async def test_evidence_is_an_https_url_without_userinfo_of_at_most_2048_chars(
-    url: str, rule: str
-) -> None:
-    writer, store, audit = await _writer(_Hook())
-    with pytest.raises(FlagValidationError) as exc:
-        await _set(writer, LIVE_ENABLED, True, evidence_url=url)
-    assert (exc.value.rule, exc.value.field) == (rule, "evidence_url") and store.writes == []
-    ((_, record),) = audit.records
-    assert record["reason"] == rule and ("secret" in str(record)) is False
-
-
-async def test_evidence_of_exactly_2048_chars_is_recorded_without_a_push_hook() -> None:
-    writer, store, audit = await _writer()
-    url = "https://github.com/" + "a" * 2029  # 2048 characters
-    await _set(writer, LIVE_ENABLED, True, evidence_url=url)
-    assert store.rows[LIVE_ENABLED].value is True
-    assert audit.records[0][1]["after_state"]["evidence_url"] == url
 
 
 @pytest.mark.parametrize(
