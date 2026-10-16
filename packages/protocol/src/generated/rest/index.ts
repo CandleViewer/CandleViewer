@@ -995,6 +995,7 @@ export interface paths {
      *     **Binding (no-grace classes).** For each no-grace class the one-shot grant is bound to the challenged request: its method, its path including any query string, and its canonical JSON body. The fingerprint is the hex SHA-256 of the method, a line feed, the raw request target (path and query string exactly as received, with no percent-decoding and no trailing-slash or parameter-order normalisation), a line feed, and the RFC 8785 (JCS) serialisation of the body as the operation validated it (empty when the operation takes no body). The server parses and validates the body once, and `action_summary`, the fingerprint and the executed action all come from that one object, so number forms, string escapes and duplicate member names cannot make them disagree; no Unicode normalisation is applied. Headers, `Idempotency-Key` included, are not part of the binding. Only that identical request can use the grant. Any other request of the class is refused with `403 step_up_required`, which is a new challenge for that request, and audited as `auth.step_up_mismatch`. The refusal does not use up the grant: it stays bound to the challenged request until that request uses it or a newer step-up for the class replaces it. The grant expires 60 seconds after the step-up, which leaves time only for the immediate re-send, and it also ends when the session turns read-only, when it idle-locks (#2301) and at logout. For a no-grace class the `200`'s `elevated_until` is that expiry, 60 seconds after the step-up, and its `step_up_expires_at` is null. A session holds at most one grant per no-grace class. Grace classes keep the unbound 5-minute window described below.
      *     **Holding the refused request.** The client keeps the refused request unchanged (method, path, body and `Idempotency-Key`) and re-sends it as is after a successful step-up. The refusal bound no idempotency key (Idempotency, "Binding point"), so the re-send is a first submission and executes once. On cancel, at `challenge_expires_at`, on the third failure (`session_read_only`), on idle lock and at absolute session expiry the client drops the request without sending it and tells the user it was not sent. If the re-send gets no answer after a successful step-up (a network error or a timeout), the action may have executed: the client never reports it as not sent and never re-sends it on its own, and reads the affected state back to learn the outcome.
      *     Grants a **5-minute** server-side grace for `action_class` on the current session (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the earlier 15). `live_enablement`, `killswitch` and `backups` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints that require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`, `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
+     *     **Session rotation (SR-013).** A successful step-up also rotates the session, the way `POST /auth/refresh` does: the server mints a replacement session with a new id, access token and refresh token. The replacement keeps the old session's absolute expiry and idle timeout, so rotation never extends the session's lifetime; it carries over the live step-up grants, including the one just granted, and drops the pending challenge. The old session is revoked as `rotated` and linked into the session family, so its access and refresh tokens stop working at once and replaying that refresh token at `POST /auth/refresh` revokes the whole family (reuse detection). The `200` carries the new access token in `tokens` (the `TokenBundle` of `POST /auth/mfa/verify`; the refresh token travels only in the cookie, so `refresh_token` is null) and sets rotated `cv_refresh` and `__Host-cv_csrf` cookies bound to the new session (SR-041). The client continues with the returned access token. A client that loses the `200` keeps only the old tokens: its next `POST /auth/refresh` trips reuse detection, so the user must sign in again.
      */
     post: operations["authStepUp"];
     delete?: never;
@@ -9964,9 +9965,11 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Elevated. */
+      /** @description Elevated; the session was rotated. */
       200: {
         headers: {
+          /** @description Rotated `cv_refresh` cookie and a rotated `__Host-cv_csrf` cookie bound to the new session (SR-041) */
+          "Set-Cookie"?: string;
           [name: string]: unknown;
         };
         content: {
@@ -9980,6 +9983,7 @@ export interface operations {
              * @description End of the grace window shown in the dialog; null for no-grace classes.
              */
             step_up_expires_at?: string | null;
+            tokens: components["schemas"]["TokenBundle"];
           };
         };
       };

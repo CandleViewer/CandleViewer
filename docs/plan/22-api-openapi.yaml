@@ -8234,14 +8234,17 @@ paths:
         token and refresh token. The replacement keeps the old session's absolute expiry and
         idle timeout, so rotation never extends the session's lifetime; it carries over the live
         step-up grants, including the one just granted, and drops the pending challenge. The old
-        session is revoked as `rotated` and linked into the refresh-token family, so its access
-        and refresh tokens stop working at once and replaying that refresh token at
+        session is revoked as `rotated` and linked into the session family, so its access and
+        refresh tokens stop working at once and replaying that refresh token at
         `POST /auth/refresh` revokes the whole family (reuse detection). The `200` carries the
         new access token in `tokens` (the `TokenBundle` of `POST /auth/mfa/verify`; the refresh
         token travels only in the cookie, so `refresh_token` is null) and sets rotated
         `cv_refresh` and `__Host-cv_csrf` cookies bound to the new session (SR-041). The client
-        continues with the returned access token.
+        continues with the returned access token. A client that loses the `200` keeps only the
+        old tokens: its next `POST /auth/refresh` trips reuse detection, so the user must sign in
+        again.
       x-rbac: { permissions: [], scope: self }
+      x-idempotency: ignored
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
         required: true

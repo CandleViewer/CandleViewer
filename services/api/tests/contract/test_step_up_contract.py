@@ -1,12 +1,12 @@
-"""Step-up session rotation contract (SR-013, #2101), slice 1/3: contract only (C-6.1).
+"""Step-up session rotation contract (SR-013, #2101).
 
-Pins the `POST /auth/step-up` `200` that the rotation slice implements: the body gains `tokens`,
-the `TokenBundle` that `POST /auth/mfa/verify` returns, and the response sets the rotated
-`cv_refresh` and `__Host-cv_csrf` cookies exactly as `POST /auth/refresh` does. Also pins the
-approved rotation rules (the replacement keeps the absolute expiry and idle timeout, carries the
-live grants over and drops the pending challenge; the old session is revoked as `rotated` inside
-the refresh-token family). The route answers the old body until the rotation slice lands;
-`tests/unit/api/test_step_up_router.py` pins that runtime and this slice leaves it alone.
+Pins the `POST /auth/step-up` `200`: the body carries `tokens`, the `TokenBundle` that
+`POST /auth/mfa/verify` returns, and the response sets the rotated `cv_refresh` and
+`__Host-cv_csrf` cookies exactly as `POST /auth/refresh` does. Also pins the rotation rules the
+operation description states (the replacement keeps the absolute expiry and idle timeout, carries
+the live grants over and drops the pending challenge; the old session is revoked as `rotated`
+inside the session family), step-up's place among the CSRF rotation points, its
+`x-idempotency`, and the provider check that the router's `200` validates against the schema.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from tests.unit.api.test_step_up_router import _H, _PW, _build, _code
 
 _BASE = "urn:cv:openapi"
 _STEP_UP_OK = "/paths/~1auth~1step-up/post/responses/200/content/application~1json/schema"
@@ -95,6 +96,29 @@ def test_step_up_ok_body_without_tokens_no_longer_conforms(spec: dict[str, Any])
         _validator(spec).validate(pre_rotation)
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValidationError,
+    reason="#2101: the route does not rotate the session yet, so its 200 has no `tokens`; "
+    "remove this marker when the step-up rotation lands",
+)
+async def test_step_up_route_ok_body_validates_against_the_contract(spec: dict[str, Any]) -> None:
+    """Provider side (C-6.2): the step-up router's `200` against the contract schema."""
+    client, _emitter, seed, clock, _user = await _build()
+    ok = client.post(
+        "/auth/step-up",
+        headers=_H,
+        json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
+    )
+    assert ok.status_code == 200
+    validator = _validator(spec)
+    # Any mismatch other than the missing `tokens` is a real failure, never the expected xfail.
+    assert {e.message for e in validator.iter_errors(ok.json())} <= {
+        "'tokens' is a required property"
+    }
+    validator.validate(ok.json())
+
+
 @pytest.mark.parametrize(
     "rule",
     [
@@ -102,8 +126,12 @@ def test_step_up_ok_body_without_tokens_no_longer_conforms(spec: dict[str, Any])
         "keeps the old session's absolute expiry and idle timeout",
         "carries over the live step-up grants, including the one just granted",
         "drops the pending challenge",
-        "revoked as `rotated` and linked into the refresh-token family",
+        "revoked as `rotated` and linked into the session family",
         "its access and refresh tokens stop working at once",
+        "replaying that refresh token at `POST /auth/refresh` revokes the whole family",
+        "the refresh token travels only in the cookie, so `refresh_token` is null",
+        "A client that loses the `200` keeps only the old tokens: its next `POST /auth/refresh` "
+        "trips reuse detection, so the user must sign in again",
     ],
 )
 def test_step_up_description_states_the_approved_rotation_rule(
@@ -122,3 +150,12 @@ def test_csrf_section_lists_step_up_as_a_rotation_point(spec: dict[str, Any]) ->
 def test_csrf_cookie_scheme_lists_step_up_as_a_rotation_point(spec: dict[str, Any]) -> None:
     scheme = _flat(spec["components"]["securitySchemes"]["csrfCookie"]["description"])
     assert "rotated on every `/auth/refresh` and on a successful `/auth/step-up`" in scheme
+
+
+@pytest.mark.parametrize("minting", ["/auth/login", "/auth/mfa/verify", "/auth/refresh"])
+def test_step_up_ignores_idempotency_keys_like_every_token_minting_operation(
+    spec: dict[str, Any], minting: str
+) -> None:
+    """A replay layer must never store or replay a response that carries a token bundle."""
+    step_up = spec["paths"]["/auth/step-up"]["post"]
+    assert step_up["x-idempotency"] == spec["paths"][minting]["post"]["x-idempotency"] == "ignored"
