@@ -114,6 +114,15 @@ async def test_sink_amended_close_of_a_bar_not_held_is_ignored() -> None:
     assert view(store) == ([5, 6], None) and store.version(SYM, H) == before
 
 
+@pytest.mark.parametrize("before", [(), (5, 6)], ids=["empty", "5-6"])
+async def test_sink_an_amended_close_above_the_window_is_ignored(before: tuple[int, ...]) -> None:
+    """Never a bar's first sight: above the newest index it would open a hole (#2666 r2)."""
+    store = await held(*(up("close", i) for i in before))
+    version = store.version(SYM, H)
+    await emit(store, up("close", 9, amended=True))
+    assert view(store) == (list(before), None) and store.version(SYM, H) == version
+
+
 async def test_sink_a_live_generation_change_resets_the_series_in_both_directions() -> None:
     """§8.2 generation swap: one live builder per series, so a lower live generation (#2662's
     clock-regression cold start) is as authoritative as a higher one."""
@@ -366,12 +375,10 @@ async def test_a_failed_or_timed_out_read_leaves_the_series_live_and_says_so(
         await store.ensure(SYM, SPEC)
     await emit(store, up("close", 4), up("open", 5))
     assert view(store) == ([4], 5) and not store.hydrated(SYM, H)
-    assert events(logs, "bars_series_hydrate_failed") == [
-        {
-            "event": "bars_series_hydrate_failed", "log_level": "warning", "spec_hash": H,
-            "symbol": SYM, "error_type": error_type,
-        }
-    ]  # fmt: skip
+    assert events(logs, "bars_series_hydrate_failed") == [{
+        "event": "bars_series_hydrate_failed", "log_level": "warning", "spec_hash": H,
+        "symbol": SYM, "error_type": error_type, "exc_info": True,
+    }]  # fmt: skip
 
 
 async def test_a_failed_read_is_read_again_by_an_ensure_retry_after_s_later() -> None:
@@ -391,8 +398,7 @@ async def test_a_failed_read_is_read_again_by_an_ensure_retry_after_s_later() ->
 
 async def test_a_cancelled_first_ensure_hands_its_read_to_a_waiter() -> None:
     """A client's disconnect must not leave another's series history-less: the waiter reads
-    again, a close seen during the abandoned read is kept (the recent closes seed the new read),
-    and the cancelled `ensure` holds nothing."""
+    again, keeps a close seen during the abandoned read, and the cancelled one holds nothing."""
     clock = Clock()
     tail = Tail(rows(0))
     store = SeriesStore(tail, clock=clock)
@@ -416,20 +422,35 @@ async def test_a_cancelled_first_ensure_hands_its_read_to_a_waiter() -> None:
 
 
 async def test_waiters_share_the_read_that_replaces_a_cancelled_one() -> None:
-    """Each read has its own `ready` event: the second waiter waits for the first waiter's
-    read instead of starting a third."""
+    """The second waiter waits for the first waiter's read instead of starting a third."""
     tail = Tail(rows(0))
     store = SeriesStore(tail)
     first = asyncio.create_task(store.ensure(SYM, SPEC))
     await tail.started.wait()
     waiters = [asyncio.create_task(store.ensure(SYM, SPEC)) for _ in range(2)]
     await asyncio.sleep(0)  # both reach their wait (a yield, not a delay)
+    tail.started.clear()
     first.cancel()
     with pytest.raises(asyncio.CancelledError):
         await first
+    await asyncio.wait_for(tail.started.wait(), 1.0)  # a waiter's read is in flight
     tail.gate.set()
     await asyncio.wait_for(asyncio.gather(*waiters), 1.0)
     assert tail.calls == 2 and store.hydrated(SYM, H) and view(store) == ([0], None)
+
+
+async def test_each_read_waits_on_a_fresh_unset_event() -> None:
+    """A waiter on an event the last read left set would spin and freeze the loop (white-box)."""
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(0), dropped=1)  # degraded: the next ensure reads again
+    store = SeriesStore(tail, retry_after_s=0.0)
+    await store.ensure(SYM, SPEC)
+    tail.gate.clear()
+    task = asyncio.create_task(store.ensure(SYM, SPEC))
+    await asyncio.sleep(0)  # the second read starts (a yield, not a delay)
+    assert tail.calls == 2 and not store._series[(SYM, H)].ready.is_set()
+    tail.gate.set()
+    await task
 
 
 async def test_a_cancelled_lone_read_does_not_hold_off_the_next_ensure() -> None:
@@ -466,9 +487,8 @@ async def test_a_waiter_keeps_a_failed_read_but_reads_a_degraded_one_again(
 
 
 async def test_a_degraded_read_is_served_but_not_final_and_is_read_again_later() -> None:
-    """SR-E12-11: a tail missing integrity-dropped rows is incomplete. Its bars are served, the
-    series is not `hydrated`, and an `ensure` `retry_after_s` later reads it again. A hole
-    inside the rows is not a gap."""
+    """SR-E12-11: a tail missing integrity-dropped rows is served, not `hydrated`, and read again
+    `retry_after_s` later. A hole inside the rows is not a gap."""
     clock = Clock()
     tail = Tail(now=True)
     tail.tail = BarTail(rows(0, 2), dropped=1)
@@ -476,12 +496,10 @@ async def test_a_degraded_read_is_served_but_not_final_and_is_read_again_later()
     with capture_logs() as logs:
         await store.ensure(SYM, SPEC)
     assert view(store) == ([0, 2], None) and not store.hydrated(SYM, H)
-    assert not store.gapped(SYM, H) and events(logs, "bars_series_hydrate_degraded") == [
-        {
-            "event": "bars_series_hydrate_degraded", "log_level": "warning", "spec_hash": H,
-            "symbol": SYM, "dropped": 1,
-        }
-    ]  # fmt: skip
+    assert not store.gapped(SYM, H) and events(logs, "bars_series_hydrate_degraded") == [{
+        "event": "bars_series_hydrate_degraded", "log_level": "warning", "spec_hash": H,
+        "symbol": SYM, "dropped": 1,
+    }]  # fmt: skip
     clock.t += RETRY_AFTER_S - 0.5
     await store.ensure(SYM, SPEC)
     assert tail.calls == 1
@@ -511,8 +529,7 @@ async def test_closes_emitted_just_before_the_hold_fill_the_junction() -> None:
 
 
 async def test_more_closes_during_the_read_than_the_ring_keeps_leave_no_gap() -> None:
-    """The ring only holds the newest closes: the read's replay keeps every one seen during it,
-    in emission order, so the junction stays whole and the rows survive."""
+    """Beyond the ring's 16, the read's replay keeps every close seen during it, in order."""
     tail = Tail(rows(*range(10)))
     store = SeriesStore(tail)
     task = asyncio.create_task(store.ensure(SYM, SPEC))
@@ -533,16 +550,54 @@ async def test_a_jump_past_the_recent_closes_flags_a_gap_that_the_next_read_heal
     with capture_logs() as logs:
         await store.ensure(SYM, SPEC)
     assert store.gapped(SYM, H) and view(store)[0] == [*range(10), *range(14, 30)]
-    assert events(logs, "bars_series_gap") == [
-        {
-            "event": "bars_series_gap", "log_level": "warning", "spec_hash": H, "symbol": SYM,
-            "from_index": 10, "to_index": 13,
-        }
-    ]  # fmt: skip
+    assert events(logs, "bars_series_gap") == [{
+        "event": "bars_series_gap", "log_level": "warning", "spec_hash": H, "symbol": SYM,
+        "from_index": 10, "to_index": 13,
+    }]  # fmt: skip
     tail.tail = BarTail(rows(*range(30)))
     clock.t += RETRY_AFTER_S
     await store.ensure(SYM, SPEC)
     assert tail.calls == 2 and not store.gapped(SYM, H) and view(store)[0] == list(range(30))
+
+
+async def test_a_re_read_keeps_the_live_bars_storage_still_lacks() -> None:
+    """The writer still lags at the second read: the bars the series held stay (#2666 r2)."""
+    clock = Clock()
+    tail = Tail(rows(*range(10)), now=True)
+    store = SeriesStore(tail, clock=clock)
+    await emit(store, *(up("close", i) for i in range(10, 30)))
+    await store.ensure(SYM, SPEC)  # bars 10..13 are missing: gapped
+    await emit(store, *(up("close", i) for i in range(30, 50)))
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)  # storage still ends at 9
+    assert (tail.calls, view(store)[0]) == (2, [*range(10), *range(14, 50)])
+
+
+async def test_a_re_read_keeps_no_held_bar_of_another_generation() -> None:
+    """Nothing seen live and the newest row is another generation's: no old bar stays."""
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(0, 1), dropped=1)  # degraded: the next ensure reads again
+    store = SeriesStore(tail, retry_after_s=0.0)
+    await store.ensure(SYM, SPEC)
+    tail.tail = BarTail([*rows(0, 1), (7, bar(0, shift=1))])  # a twin at bar 1's open time
+    await store.ensure(SYM, SPEC)
+    assert (generation(store), view(store)) == (7, ([0], None))
+
+
+async def test_a_close_sharing_the_newest_rows_open_time_is_kept() -> None:
+    """Non-time bars can share an open time (renko bricks): live closes are ordered by key."""
+    store = SeriesStore(Tail(rows(6, 7, 8), now=True))
+    await emit(store, up("close", 9, shift=-1))  # opens with bar 8, not stored yet
+    await store.ensure(SYM, SPEC)
+    assert view(store) == ([6, 7, 8, 9], None) and not store.gapped(SYM, H)
+
+
+async def test_a_live_generation_swap_after_the_read_leaves_it_not_hydrated() -> None:
+    """ADR-0033: the new generation's history is in storage, so the series is read again."""
+    store = SeriesStore(Tail(rows(0, 1), now=True))
+    await store.ensure(SYM, SPEC)
+    await emit(store, up("close", 0, shift=5), generation=1)
+    assert (store.hydrated(SYM, H), generation(store), view(store)) == (False, 1, ([0], None))
 
 
 async def test_a_live_close_that_skips_an_index_after_the_read_flags_a_gap() -> None:
@@ -669,15 +724,6 @@ async def test_a_resubscribe_inside_the_grace_reads_nothing() -> None:
     clock.t += RELEASE_GRACE_S - 0.5
     await store.ensure(SYM, SPEC)
     assert tail.calls == 1 and store.hydrated(SYM, H)
-
-
-async def test_a_series_without_its_stored_history_reports_no_gap() -> None:
-    """Gaps count against stored rows: with no reader a series has only its live bars, however
-    they start (here an amended close whose first close left the ring)."""
-    store = SeriesStore()
-    await emit(store, up("close", 3, amended=True), up("close", 5))
-    await store.ensure(SYM, SPEC)
-    assert view(store) == ([3, 5], None) and not store.gapped(SYM, H)
 
 
 async def test_an_empty_read_with_nothing_seen_live_names_no_generation() -> None:

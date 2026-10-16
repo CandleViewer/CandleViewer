@@ -11,7 +11,8 @@ a WS snapshot source reads `latest` and `version`.
   at or below the newest index (a builder cold start restarts `index`) resets the series, and so
   does an emission in any other generation, lower or higher: there is one live builder per series,
   so its generation is never stale (§8.2 generation swap). Generations are opaque epochs: none is
-  assumed, and a series has none until an emission or a read names one.
+  assumed, and a series has none until an emission or a read names one. A swap leaves the series
+  not `hydrated`, so the new generation's rows are read (ADR-0033).
 - **Hydration:** the first `ensure` starts a series from its ring, replayed by the sink rules,
   then reads the newest closed tape-built bars, bounded by `timeout_s`, and folds over them the
   closes seen just before the read (its ring) and during it, in emission order (those newer than
@@ -26,16 +27,20 @@ a WS snapshot source reads `latest` and `version`.
   as the sink kept it and reads nothing (BR-38); the next `ensure` sweeps the expired. At most
   `MAX_HISTORY` closed bars per series and `MAX_SERIES` series kept, held or in grace (the
   process-wide spec cap); rings for at most `MAX_SERIES` series, the least recently closed
-  dropped first.
+  dropped first. The sink keeps an expired series current until that sweep. Memory: about 5 KB
+  a close (measured), so 5 MB a series, 2.5 GB at `MAX_SERIES`, and 41 MB of rings.
+- **E12-S12 notes:** the generation rule assumes one live emitter per series (a rebuild must emit
+  through its own router), and `CAP_NAME` copies `SpecLeases`' literal until `leases` exports it.
 - **`version`** comes from one store-wide counter and moves on every change: a cache key that
   stays safe across a release and a new hold.
 
 Gaps: the closes emitted just before the hold that the writer had not landed yet come from the
-ring (the last `RECENT_CLOSES`). Once hydrated, a close that skips indexes past the rows marks the
-series `gapped` (`bars_series_gap`), and an `ensure` re-reads it, no sooner than `retry_after_s`
-after the last read. Not covered: the forming bar is unknown until the next `open` or `update`
-(builders expose none); a hole inside the stored rows (a row the read withheld or skipped, or one
-the writer missed) stays a hole and is not flagged; a jump is seen on a close only.
+ring (the last `RECENT_CLOSES`). A live close that skips indexes past the rows marks the series
+`gapped` (`bars_series_gap`), and an `ensure` re-reads it, no sooner than `retry_after_s` after
+the last read; the bars it holds that storage still lacks survive the re-read. Not covered: the
+forming bar is unknown until the next `open` or `update` (builders expose none); a hole inside the
+stored rows (a row the read withheld or skipped, or one the writer missed) stays a hole and is
+not flagged; a jump is seen on a close only.
 """
 
 from __future__ import annotations
@@ -80,8 +85,8 @@ Close = tuple[BarUpdate, int]
 class Latest(NamedTuple):
     """`latest`: the series' change counter and generation (None before an emission or a read
     names one), its closed bars in index order, the forming bar, and the lowest `build_version`
-    among those bars when one was built below the running code (None: all current; §6.1
-    `meta.build_version`)."""
+    among those bars when one was built below the running code (None: all current;
+    `meta.build_version` in #2595's §6.1)."""
 
     version: int
     generation: int | None
@@ -148,7 +153,7 @@ def _holds(s: _Series, bar: Bar) -> bool:
     return held is not None and held.open_time == bar.open_time
 
 
-def _apply(s: _Series, u: BarUpdate, *, gaps: bool = False) -> bool:
+def _apply(s: _Series, u: BarUpdate, *, gaps: bool = True) -> bool:
     """Fold one emission of `s.generation` into `s` (module docstring); False when it changes
     nothing. With `gaps`, a close that skips indexes past the newest one marks `s` gapped."""
     bar, i = u.bar, u.bar.index
@@ -162,7 +167,7 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = False) -> bool:
         s.closed[i] = bar  # the same bar closed again (amended or repeated): in place
         s.stale.pop(i, None)  # re-closed by the running code
         return True
-    if i <= last:
+    if i <= last or u.amended:  # an amended close is never a bar's first sight (#2666 r2)
         if u.amended:
             return False  # an amended close of a bar this window does not hold
         _clear(s)  # another bar at or below the newest index: the builder restarted
@@ -182,12 +187,12 @@ def _apply(s: _Series, u: BarUpdate, *, gaps: bool = False) -> bool:
 
 def _live(s: _Series, u: BarUpdate, generation: int) -> bool:
     """A sink emission. One live builder per series: any other generation, lower or higher, is
-    the series' new one (§8.2 generation swap), and the first emission names it. Gaps count
-    against stored rows, once hydrated."""
+    the series' new one (§8.2 generation swap), and the first emission names it."""
     if generation != s.generation:
         _clear(s)
         s.generation = generation
-    return _apply(s, u, gaps=s.hydrated)
+        s.hydrated = False  # the new generation's rows are read again (ADR-0033)
+    return _apply(s, u)
 
 
 def _update(kind: str, bar: Bar) -> BarUpdate:
@@ -313,10 +318,12 @@ class SeriesStore:
     async def _settle(self, s: _Series, symbol: str, spec: BarSpec) -> None:
         """Wait for the read in flight (its own `timeout_s` bounds it), then read when one is
         due: the first, a cancelled reader's, or one `retry_after_s` after the last read of a
-        series not hydrated or gapped. A waiter keeps a completed read's result."""
+        series not hydrated or gapped. A waiter keeps a completed read's result. A cancelled
+        read is not gated, so its waiters never stay live-only (SR-E12-07 bounds the churn)."""
         woke = False
         while s.replay is not None:  # one read at a time per series
             await s.ready.wait()
+            await asyncio.sleep(0)  # were `ready` ever stale, this spins one ensure, not the loop
             woke = True
         if woke and s.attempted:
             return
@@ -338,7 +345,7 @@ class SeriesStore:
             s.attempted = True
             _log().warning(
                 "bars_series_hydrate_failed", spec_hash=spec.spec_hash, symbol=symbol,
-                error_type=type(exc).__name__,
+                error_type=type(exc).__name__, exc_info=True,
             )  # fmt: skip
         else:
             self._fold(s, tail)
@@ -350,17 +357,19 @@ class SeriesStore:
                 )  # fmt: skip
             if tail.skipped:
                 _log().info(
-                    "bars_series_rows_skipped", spec_hash=spec.spec_hash, skipped=tail.skipped
-                )
+                    "bars_series_rows_skipped", spec_hash=spec.spec_hash, symbol=symbol,
+                    skipped=tail.skipped,
+                )  # fmt: skip
         finally:
             s.replay = None
             ready.set()
         s.retry_at = self._clock() + self._retry_after_s  # a completed read, not a cancelled one
 
     def _fold(self, s: _Series, tail: BarTail) -> None:
-        """Rebuild `s`: the read's rows, then the replayed closes newer than them (or replacing a
-        bar they hold), then the forming bar, in one generation: the live one (the forming bar's,
-        else the newest close's), else the newest row's, else unchanged."""
+        """Rebuild `s` in one generation: the live one (the forming bar's, else the newest
+        close's), else the newest row's (the highest at the newest `ts`, until ADR-0033's pointer
+        decides), else unchanged: the rows, the live closes newer by key or re-closing a row (the
+        bars `s` held, which storage may lack, then the replay), then the forming bar."""
         replay: Sequence[Close] = s.replay or ()
         forming = s.forming
         gen: int | None
@@ -372,20 +381,23 @@ class SeriesStore:
             gen = tail.bars[-1][0]
         else:
             gen = s.generation  # nothing seen and nothing stored: unchanged (none for a new series)
+        held = list(s.closed.values()) if gen == s.generation else []
         _clear(s)
         s.generation, s.gapped = gen, False
         for g, bar in tail.bars:
             if g != gen:
                 continue  # another epoch, or an unflipped ADR-0033 rebuild: the live one wins
-            _apply(s, _update("close", bar))
+            _apply(s, _update("close", bar), gaps=False)
             built = tail.builds.get((g, bar.index, bar.open_time))
             if built is not None:
                 s.stale[bar.index] = built
-        rows_end = next(reversed(s.closed.values())).open_time if s.closed else None
-        for u, g in replay:
-            # An older close the rows lack (a missed write, a pre-restart run) is not a restart.
-            if g == gen and (rows_end is None or u.bar.open_time > rows_end or _holds(s, u.bar)):
-                _apply(s, u, gaps=True)
+        last = next(reversed(s.closed.values()), None)
+        end = None if last is None else (last.open_time, last.index)
+        for u in [_update("close", b) for b in held] + [u for u, g in replay if g == gen]:
+            # By key: non-time bars share open times. An older close the rows lack (a missed
+            # write, a pre-restart run) is not a restart.
+            if end is None or (u.bar.open_time, u.bar.index) > end or _holds(s, u.bar):
+                _apply(s, u)
         if forming is not None:
             _apply(s, _update("update", forming))
         s.version = next(self._versions)
