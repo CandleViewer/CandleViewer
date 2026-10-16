@@ -16,6 +16,7 @@ from candleviewer.admin.flags.store import (
     StaleWriteError,
     StoreUnavailableError,
 )
+from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import validate_action
 
 T0 = datetime(2026, 10, 15, 8, 0, tzinfo=UTC)
@@ -95,6 +96,27 @@ class FakeUsers:
         if self.hold is not None:
             await self.hold.wait()
         return user_ids - self.known
+
+
+class NoStepUp(Exception):
+    """The fake's refusal: the session holds no fresh elevation of `args[0]`."""
+
+
+class FakeStepUp:
+    """Records every class a write demands; refuses the classes in `missing`; `hold` blocks a
+    demand until it is set (a hung auth store)."""
+
+    def __init__(self, missing: frozenset[str] = frozenset()) -> None:
+        self.demanded: list[str] = []
+        self.missing = missing
+        self.hold: asyncio.Event | None = None
+
+    async def __call__(self, principal: AuditPrincipal, action_class: str) -> None:
+        self.demanded.append(action_class)
+        if self.hold is not None:
+            await self.hold.wait()
+        if action_class in self.missing:
+            raise NoStepUp(action_class)
 
 
 class FakeAudit:
