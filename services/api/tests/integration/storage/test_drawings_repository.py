@@ -835,6 +835,8 @@ def _timed(label: str, timings: list[float]) -> float:
 
 
 @pytest.mark.perf
+# Client wall clock on shared CI runners (C-9.3). ticket: GH-2986 quarantined: 2026-10-16
+@pytest.mark.flaky
 async def test_batch_of_200_creates_p99_under_50ms(pg_dsn: str) -> None:
     """Ticket NFR: a batch of 200 ops < 50 ms p99.
 
@@ -883,6 +885,8 @@ async def test_batch_of_200_creates_p99_under_50ms(pg_dsn: str) -> None:
 
 
 @pytest.mark.perf
+# Client wall clock on shared CI runners (C-9.3). ticket: GH-2986 quarantined: 2026-10-16
+@pytest.mark.flaky
 async def test_mixed_batch_of_200_p99_under_50ms(pg_dsn: str) -> None:
     """Mixed NFR variant: 100 creates + 50 updates + 50 soft deletes per batch (200 ops).
 
