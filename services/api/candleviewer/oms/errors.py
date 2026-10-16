@@ -22,3 +22,8 @@ class OrderLinkIdExhausted(OmsError):
         super().__init__(f"no free order_link_id from {first} to {last}")
         self.first = first
         self.last = last
+
+
+class InvalidHistoryRetention(OmsError, ValueError):
+    """An exchange order retention under 2 days: §8.3 rule 6 expires an id after the
+    retention less one day, so 1 day or less would expire every id on creation."""

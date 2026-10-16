@@ -4,10 +4,13 @@ and bounded" and the ticket test plan, including the <50 µs generation budget."
 from __future__ import annotations
 
 import hashlib
+import importlib
 import re
 import statistics
 import time
 import zlib
+from collections.abc import MutableMapping
+from types import MappingProxyType
 from typing import cast, get_args
 from uuid import UUID
 
@@ -18,6 +21,7 @@ from hypothesis import strategies as st
 from candleviewer.domain.order_link import OUR_ID
 from candleviewer.domain.primitives import AccountId, Environment, ExecutionMode, GroupId
 from candleviewer.oms.errors import (
+    InvalidHistoryRetention,
     InvalidOrderLinkId,
     OmsError,
     OrderLinkIdExhausted,
@@ -126,7 +130,8 @@ def test_replay_fails_closed_with_a_typed_oms_error() -> None:
 
 
 @pytest.mark.parametrize(
-    "error", [InvalidOrderLinkId, UnsupportedExecutionMode, OrderLinkIdExhausted]
+    "error",
+    [InvalidOrderLinkId, UnsupportedExecutionMode, OrderLinkIdExhausted, InvalidHistoryRetention],
 )
 def test_order_link_errors_are_typed_oms_errors(error: type[Exception]) -> None:
     assert issubclass(error, OmsError)
@@ -152,6 +157,45 @@ def test_purpose_maps_to_its_suffix(purpose: OrderPurpose, tag: PurposeTag) -> N
 def test_every_intent_purpose_maps_onto_the_six_tags() -> None:
     assert set(PURPOSE_TAG) == set(PURPOSES)
     assert set(PURPOSE_TAG.values()) == {"en", "sl", "tp", "sc", "fl", "ac"}
+
+
+def test_purpose_tag_is_read_only() -> None:
+    """`Final` stops rebinding only: a `dict` here let any importer change what every
+    later `generate(purpose="entry")` produces, up to making it raise `InvalidOrderLinkId`."""
+    table = cast(MutableMapping[str, str], PURPOSE_TAG)  # the cast is the attack
+
+    assert isinstance(PURPOSE_TAG, MappingProxyType)
+    with pytest.raises(TypeError):
+        table["entry"] = "zz"
+    with pytest.raises(TypeError):
+        del table["entry"]
+    assert PURPOSE_TAG["entry"] == "en"
+    assert _generate(purpose="entry").value[34:] == "en"
+
+
+ID_PATH_MODULES = [
+    "candleviewer.domain.order_link",
+    "candleviewer.oms.errors",
+    "candleviewer.oms.order_link",
+    "candleviewer.oms.order_link_allocator",
+    "candleviewer.oms.order_link_resolution",
+]
+
+
+@pytest.mark.parametrize("name", ID_PATH_MODULES)
+def test_the_id_path_has_no_mutable_module_level_state(name: str) -> None:
+    """Global state on the id path is a `MappingProxyType`, `frozenset` or `tuple`: a
+    module-level `dict`, `list` or `set` could be edited by any importer."""
+    module = importlib.import_module(name)
+
+    mutable = {
+        attr: type(value).__name__
+        for attr, value in vars(module).items()
+        if not (attr.startswith("__") and attr.endswith("__"))
+        and isinstance(value, dict | list | set | bytearray)
+    }
+
+    assert mutable == {}
 
 
 def test_account_tag_reduces_crc32_modulo_62_to_the_4() -> None:

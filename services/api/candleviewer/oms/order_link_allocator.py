@@ -3,7 +3,9 @@
 E29-T02 (#846). Allocation runs once per logical order, before its first send;
 the caller persists the id at once (rule 1). A retry re-sends the persisted id
 and never allocates again, because the persisted row would count as a
-collision and yield a second id.
+collision and yield a second id. The one other allocation is a `ux_orders_link`
+violation on that INSERT: another allocation took the id between the check and
+the INSERT, so the caller allocates again, still before any send.
 """
 
 from __future__ import annotations
@@ -34,7 +36,12 @@ class OrderLinkLookup(Protocol):
 
     One indexed lookup on `ux_orders_link`. E29-T01's order repository
     implements it; `oms.fakes.InMemoryOrderLinkLookup` stands in until then.
-    It is a check, not a reservation: the unique index stays the final guard.
+
+    It is a check, not a reservation: two allocations of one candidate can both see
+    it free, so the unique index stays the final guard. A `ux_orders_link` violation
+    when the caller persists the id is therefore a collision, not a storage failure:
+    the caller allocates again (`OrderLinkIdAllocator.allocate` states the bound) and
+    persists the new id before any send.
     """
 
     async def exists(self, order_link_id: OrderLinkId) -> bool: ...
@@ -62,7 +69,19 @@ class OrderLinkIdAllocator:
         self, candidate: OrderLinkIdParts, *, replaces_order_id: OrderId | None = None
     ) -> AllocatedOrderLinkId:
         """Rule 5: while the id is taken, log both ids at warning and increment `seq2`;
-        raise `OrderLinkIdExhausted` after 16 increments or at `seq2` = 3843."""
+        raise `OrderLinkIdExhausted` after 16 increments or at `seq2` = 3843.
+
+        Check-then-act: the id is free only as of its lookup, so two concurrent
+        allocations of one candidate can both get it. The caller persists the id at once
+        (rule 1), and a `ux_orders_link` violation on that INSERT means the other one
+        won. That is a collision like any other, not a storage failure: allocate again
+        from the same `candidate`, whose lookup now sees the winner's row, and persist
+        the new id before any send. The bound is rule 5's, measured from the original
+        candidate, and the allocator enforces it because every call starts there: 16
+        increments, never past `seq2` = 3843, then `OrderLinkIdExhausted`. The caller
+        also gives up with `OrderLinkIdExhausted` after `MAX_SEQ_INCREMENTS` violations,
+        so a lookup that disagrees with the index cannot loop forever.
+        """
         parts = candidate
         increments = 0
         while await self._lookup.exists(parts.value):
@@ -82,7 +101,10 @@ class OrderLinkIdAllocator:
         self, replaced: OrderLinkId, *, replaces_order_id: OrderId
     ) -> AllocatedOrderLinkId:
         """Rule 4: a cancel-and-replace order takes the replaced id's next `seq2`
-        and records the order it replaces (#846 ruling Q3; E29-T04 persists it)."""
+        and records the order it replaces (#846 ruling Q3; E29-T04 persists it).
+
+        A `ux_orders_link` violation at persist time is handled as in `allocate`: call
+        this again with the same arguments."""
         parts = OrderLinkIdParts.parse(replaced)
         if parts.seq == SEQ_MAX:
             raise OrderLinkIdExhausted(first=replaced, last=replaced)

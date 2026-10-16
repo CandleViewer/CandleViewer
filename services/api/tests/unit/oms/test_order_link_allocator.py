@@ -3,6 +3,7 @@ row in any state collides), Q3 (`replaces_order_id`) and Q6 (16 increments, <= 3
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from uuid import UUID
 
@@ -11,7 +12,7 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
-from candleviewer.domain.primitives import AccountId, GroupId, OrderId
+from candleviewer.domain.primitives import AccountId, GroupId, OrderId, OrderLinkId
 from candleviewer.oms.errors import InvalidOrderLinkId, OrderLinkIdExhausted
 from candleviewer.oms.fakes import InMemoryOrderLinkLookup
 from candleviewer.oms.order_link import SEQ_MAX, OrderLinkIdParts
@@ -44,6 +45,20 @@ def _taken(taken: Iterable[int]) -> InMemoryOrderLinkLookup:
 
 def _looked_up(lookup: InMemoryOrderLinkLookup) -> list[int]:
     return [OrderLinkIdParts.parse(value).seq for value in lookup.lookups]
+
+
+class _BothLookBeforeEitherPersists:
+    """An `OrderLinkLookup` that answers only once `parties` allocations have asked: the
+    window between the check and the INSERT, closed deterministically."""
+
+    def __init__(self, rows: InMemoryOrderLinkLookup, parties: int) -> None:
+        self._rows = rows
+        self._barrier = asyncio.Barrier(parties)
+
+    async def exists(self, order_link_id: OrderLinkId) -> bool:
+        taken = await self._rows.exists(order_link_id)
+        await self._barrier.wait()
+        return taken
 
 
 async def test_in_memory_lookup_reports_persisted_rows_as_taken() -> None:
@@ -146,6 +161,21 @@ async def test_an_adopted_ext_key_cannot_be_replaced_by_seq() -> None:
         await OrderLinkIdAllocator(InMemoryOrderLinkLookup()).allocate_replacement(
             "ext-" + "0" * 32, replaces_order_id=REPLACED
         )
+
+
+async def test_two_allocations_of_one_candidate_can_both_get_it_so_the_loser_re_allocates() -> None:
+    """`allocate` checks, it does not reserve: the unique index tells two racing allocations
+    apart at INSERT time. The loser's `ux_orders_link` violation is a collision like any
+    other: it allocates again from the same candidate, which now skips the winner's row."""
+    rows = InMemoryOrderLinkLookup()
+    allocator = OrderLinkIdAllocator(_BothLookBeforeEitherPersists(rows, parties=2))
+
+    winner, loser = await asyncio.gather(allocator.allocate(_id(0)), allocator.allocate(_id(0)))
+    rows.add(winner.order_link_id)  # the first INSERT wins `ux_orders_link`
+
+    assert winner.order_link_id == loser.order_link_id == _id(0).value  # both saw it free
+    again = await OrderLinkIdAllocator(rows).allocate(_id(0))
+    assert again.parts == _id(1)  # one increment past the candidate, inside rule 5's bound
 
 
 @given(start=seqs, offsets=st.sets(st.integers(min_value=0, max_value=MAX_SEQ_INCREMENTS + 2)))

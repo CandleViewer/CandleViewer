@@ -40,7 +40,14 @@ def ext_key(exchange_order_id: str) -> OrderLinkId:
     hyphens; anything else gives the first 32 hex digits of the SHA-256 of its
     UTF-8 bytes. The key depends on the exchange order id alone, so one
     exchange order always maps to the same key.
+
+    Total over `str`. Real exchange order ids are ASCII, but a decoded payload can carry a lone
+    surrogate (a JSON escape such as `\\ud800`), which strict UTF-8 refuses. It encodes as
+    its own three bytes (`errors="surrogatepass"`), so the adapter's id normalisation
+    (§14.2 rule 11) never raises on it, and no two ids share a key by way of a replacement
+    character. Text without a surrogate encodes exactly as it always did.
     """
     if _CANONICAL_UUID.fullmatch(exchange_order_id) is not None:
         return "ext-" + exchange_order_id.lower().replace("-", "")
-    return "ext-" + hashlib.sha256(exchange_order_id.encode("utf-8")).hexdigest()[:32]
+    digest = hashlib.sha256(exchange_order_id.encode("utf-8", errors="surrogatepass"))
+    return "ext-" + digest.hexdigest()[:32]

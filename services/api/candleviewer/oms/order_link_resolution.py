@@ -25,10 +25,11 @@ from candleviewer.exchange.base.models import (
     PlaceOrderRequest,
 )
 
-from .errors import InvalidOrderLinkId
+from .errors import InvalidHistoryRetention, InvalidOrderLinkId
 
 __all__ = [
     "DEMO_RETENTION_EXPIRED",
+    "MIN_RETENTION_DAYS",
     "Adopted",
     "HistoryRetentionPolicy",
     "PlaceOutcome",
@@ -40,6 +41,10 @@ __all__ = [
 
 DEMO_RETENTION_EXPIRED: Final = "DEMO_RETENTION_EXPIRED"
 """`reject_code` of an order closed because its id expired from history (rule 6)."""
+
+MIN_RETENTION_DAYS: Final = 2
+"""The shortest exchange retention rule 6 can work with: it expires an id after the retention
+less one day, so with one day or less every id would count as unresolvable on creation."""
 
 _DAY_US: Final = 86_400 * 1_000_000
 
@@ -105,6 +110,17 @@ async def place_or_adopt(port: PlacementPort, request: PlaceOrderRequest) -> Pla
     goes on the wire (§8.3), and any other id would come back from the adapter
     as a different `ext_key(orderId)` (§14.2 rule 11) and never pair with its
     row, so `InvalidOrderLinkId` is raised before anything is sent.
+
+    Audit (C-2.9): this writes no audit record, no `order_events` row and no state
+    change. Its log lines are diagnostics, and an audit never depends on log level, so
+    the caller owes both records:
+
+    - before the call, the intent: the order row and its write-ahead `order_events` row,
+      committed ahead of the send (§8.4, §8.2 S8);
+    - after it, the adoption: for `Adopted`, a record of the id, the `source` and the
+      state taken from the exchange, in the same transaction as the state change where
+      possible; for `Unresolved`, the move to `unknown` (§8.2 S1), written ahead like
+      any other transition.
     """
     if OUR_ID.fullmatch(request.order_link_id) is None:
         raise InvalidOrderLinkId(f"not a generated order_link_id: {request.order_link_id!r}")
@@ -153,10 +169,19 @@ class HistoryRetentionPolicy:
     (§8.5 step 3b).
 
     Driven by `ExchangeCapabilities.order_retention_days`, never by an
-    environment check (§14.2 rule 3); `None` means history never expires.
+    environment check (§14.2 rule 3); `None` means history never expires, and any
+    other value is at least `MIN_RETENTION_DAYS`, or construction raises
+    `InvalidHistoryRetention`.
     """
 
     retention_days: int | None
+
+    def __post_init__(self) -> None:
+        if self.retention_days is not None and self.retention_days < MIN_RETENTION_DAYS:
+            raise InvalidHistoryRetention(
+                f"retention_days must be None or at least {MIN_RETENTION_DAYS}, "
+                f"got {self.retention_days}"
+            )
 
     @classmethod
     def from_capabilities(cls, capabilities: ExchangeCapabilities) -> HistoryRetentionPolicy:

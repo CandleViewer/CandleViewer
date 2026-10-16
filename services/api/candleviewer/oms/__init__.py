@@ -6,14 +6,22 @@ reconciliation, SL invariant.
 Public interface only — internal implementation modules are not re-exported.
 Allowed dependencies (CONSTITUTION.md C-3.1): M1, M3, M4, M5, M10, M13, M17.
 
-This module is mostly a conforming EMPTY scaffold (E02-T05); real order
-logic lands in the epic that owns this module (see
-docs/plan/20-architecture.md Sec.3 and the module table in
-CONSTITUTION.md Sec.3). `Validator`/`ReadOnlyCheck` (E09-T04) is the one
-exception, always-on ahead of the rest of OMS: it is the boundary every
-future order-placement path must call before accepting a position-opening
-command, so the read-only degradation invariant exists from day one rather
-than being retrofitted once OMS lands.
+Built so far (the rest lands in the epic that owns this module, see
+docs/plan/20-architecture.md Sec.3 and the module table in CONSTITUTION.md Sec.3):
+
+- `Validator`/`ReadOnlyCheck` (E09-T04), always-on ahead of the rest of OMS: it is the
+  boundary every future order-placement path must call before accepting a
+  position-opening command, so the read-only degradation invariant exists from day one
+  rather than being retrofitted once OMS lands.
+- The `order_link_id` id path (E29-T02, docs/plan/24-internal-schemas.md Sec.8.3):
+  generator and parser (`order_link`), collision-checked allocation
+  (`order_link_allocator`), success-after-lookup and history retention
+  (`order_link_resolution`), the typed errors (`errors`) and the in-memory lookup fake
+  (`fakes`). The submission pipeline that calls them is E29-T04.
+
+`service.py` (the lifecycle contract) and `models.py` are still the E02-T05 scaffold: the
+supervisor can construct and sequence the module, and `start()` builds the `Validator`, but
+no other order logic runs yet.
 """
 
 from __future__ import annotations

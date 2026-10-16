@@ -34,7 +34,7 @@ from candleviewer.exchange.base.models import (
     PlaceOrderRequest,
 )
 from candleviewer.exchange.base.ports import TradingPort
-from candleviewer.oms.errors import InvalidOrderLinkId
+from candleviewer.oms.errors import InvalidHistoryRetention, InvalidOrderLinkId, OmsError
 from candleviewer.oms.fakes import InMemoryOrderLinkLookup
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator
@@ -321,6 +321,38 @@ def test_unbounded_retention_never_expires() -> None:
     policy = HistoryRetentionPolicy(retention_days=None)
 
     assert policy.unresolvable_by_history(created_at=T0, now=T0 + 3650 * DAY_US) is False
+
+
+@pytest.mark.parametrize("retention_days", [1, 0, -1, -3])
+def test_retention_below_two_days_is_refused_at_construction(retention_days: int) -> None:
+    """One day or less would put the rule 6 threshold (retention less one day) at zero or
+    below, so every id would count as unresolvable by history the moment it was created."""
+    with pytest.raises(InvalidHistoryRetention, match=rf"got {retention_days}\b"):
+        HistoryRetentionPolicy(retention_days=retention_days)
+
+
+@pytest.mark.parametrize("retention_days", [2, 3, 7, 365])
+def test_retention_of_two_days_or_more_is_accepted(retention_days: int) -> None:
+    assert HistoryRetentionPolicy(retention_days=retention_days).retention_days == retention_days
+
+
+def test_the_shortest_accepted_retention_expires_ids_older_than_one_day() -> None:
+    policy = HistoryRetentionPolicy(retention_days=2)
+
+    assert policy.unresolvable_by_history(created_at=T0, now=T0 + DAY_US) is False
+    assert policy.unresolvable_by_history(created_at=T0, now=T0 + DAY_US + 1) is True
+
+
+def test_a_refused_retention_is_a_typed_oms_error_and_a_value_error() -> None:
+    assert issubclass(InvalidHistoryRetention, OmsError)
+    assert issubclass(InvalidHistoryRetention, ValueError)
+
+
+def test_capabilities_reporting_one_day_of_retention_are_refused() -> None:
+    capabilities = ExchangeCapabilities.model_construct(order_retention_days=1)
+
+    with pytest.raises(InvalidHistoryRetention):
+        HistoryRetentionPolicy.from_capabilities(capabilities)
 
 
 def test_retention_comes_from_the_exchange_capabilities() -> None:
