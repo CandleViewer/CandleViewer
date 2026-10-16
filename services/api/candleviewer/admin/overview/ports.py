@@ -12,8 +12,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Final, Protocol
 from uuid import UUID
+
+#: The system-scope `settings` key of the recorded sub-account tier (`21-database-schema.md` 3.9).
+SUBACCOUNT_TIER_KEY: Final = "accounts.subaccount_tier"
 
 
 @dataclass(frozen=True, slots=True)

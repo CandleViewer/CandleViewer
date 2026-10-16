@@ -42,7 +42,7 @@ from candleviewer.admin.wiring import (
     build_secrets_service,
     export_secrets_metrics,
 )
-from candleviewer.admin_wiring import build_admin_read_models
+from candleviewer.admin_wiring import build_admin_read_models, build_system_settings
 from candleviewer.alerts.dispatcher import AlertDispatcher, default_adapters
 from candleviewer.alerts.evaluator import AlertEvaluator, AlertMetrics
 from candleviewer.alerts.lifecycle import AlertCharts
@@ -1372,7 +1372,10 @@ def create_app(
         make_support_bundle_router(support_bundle, _LazyAuditEmitter(ctx.audit), audit_resolver)
     )
     # E42-T01: admin overview + capacity read models behind the audited admin-area dependency.
-    admin_overview, admin_capacity = build_admin_read_models(resolved)
+    admin_settings = build_system_settings(resolved)
+    admin_overview, admin_capacity = build_admin_read_models(
+        resolved, system_settings=admin_settings
+    )
     app.include_router(
         make_admin_overview_router(
             admin_overview,
