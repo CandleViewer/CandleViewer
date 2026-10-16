@@ -71,10 +71,10 @@ def _guard_record(role: str = "owner") -> dict[str, Any]:
     return expected_record(role, _PATH, Permission.ADMIN_WRITE) | {"before_state": None}
 
 
-def _change_record(before: str | None, after: str) -> dict[str, Any]:
-    """The `settings.change` record: the owner's guard fields (actor, ip, session, request id,
+def _change_record(before: str | None, after: str, role: str = "owner") -> dict[str, Any]:
+    """The `settings.change` record: the writer's guard fields (actor, ip, session, request id,
     success, info) with the setting as the object and the tier before and after."""
-    return expected_record("owner", _PATH, Permission.ADMIN_WRITE) | {
+    return expected_record(role, _PATH, Permission.ADMIN_WRITE) | {
         "action": "settings.change",
         "object_kind": "setting",
         "object_id": SUBACCOUNT_TIER_KEY,
@@ -130,8 +130,8 @@ def test_the_whole_settings_change_record_names_the_tier_before_and_after(
     before: str | None, after: str
 ) -> None:
     client, spy, _ = _app(_recorded(before))
-    assert _put(client, {"tier": after}).status_code == 200
-    assert spy.records == [_guard_record(), _change_record(before, after)]
+    assert _put(client, {"tier": after}, "admin").status_code == 200  # named "admin", not "owner"
+    assert spy.records == [_guard_record("admin"), _change_record(before, after, "admin")]
 
 
 async def test_the_record_survives_the_real_writer_and_its_redactor(tmp_path: Path) -> None:
