@@ -24,6 +24,7 @@ from candleviewer.accounts.health import (
     SystemClock,
 )
 from candleviewer.accounts.order_gate import AccountHealthCheck, KeyStanding
+from candleviewer.observability.context import bind_context, get_context
 from candleviewer.settings import Settings
 from tests.unit.accounts._fakes import ACC, ACC_B, T0, Dms, FakeClock, Sizing, Standings
 
@@ -206,6 +207,18 @@ async def test_a_raising_hook_is_logged_per_account_and_stops_no_other_account()
         }
     ]
     assert "retMsg" not in repr(logs)
+
+
+async def test_the_hook_runs_as_a_named_task_under_the_account_and_caller_context() -> None:
+    monitor, clock, dms = _monitor()
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    with bind_context(conn_id="ws-1"):
+        monitor.tick()
+        assert get_context() == {"conn_id": "ws-1"}  # the account binding stays with the call
+    await monitor.drain()
+    assert dms.contexts == [{"conn_id": "ws-1", "account_id": str(ACC)}]
+    assert dms.task_names == [f"account-dms:{ACC}"]
 
 
 _EVALUATIONS: dict[str, Callable[[AccountHealthMonitor], object]] = {

@@ -26,6 +26,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict
 
 from candleviewer.accounts.models import UtcDatetime
+from candleviewer.observability import bind_context, spawn
 from candleviewer.settings import Settings
 
 
@@ -116,11 +117,12 @@ class HealthTransition:
 class DeadMansSwitch(Protocol):
     """The dead-man's-switch policy hook (E39 owns the policy), owed a call for every transition
     into `down`. The monitor makes each call as its own task under `DMS_HOOK_TIMEOUT_S`, so the
-    hook can neither block nor abort an evidence call or `tick()`. A call that raises or times
-    out is logged and made again at the account's next evaluation until one returns, so the hook
-    must be idempotent, and a retry may land after the account recovered (`transition.at` dates
-    the episode). An account has at most one call in flight and one owed: a newer transition into
-    `down` replaces an older one whose call never succeeded."""
+    hook can neither block nor abort an evidence call or `tick()`. The task runs in the caller's
+    correlation context with `account_id` bound, so the hook's logs carry the account. A call
+    that raises or times out is logged and made again at the account's next evaluation until one
+    returns, so the hook must be idempotent, and a retry may land after the account recovered
+    (`transition.at` dates the episode). An account has at most one call in flight and one owed:
+    a newer transition into `down` replaces an older one whose call never succeeded."""
 
     async def account_down(self, transition: HealthTransition) -> None: ...
 
@@ -272,12 +274,14 @@ class AccountHealthMonitor:
 
     def _evaluate(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
         """Commit the account's transition, if any, then start the owed hook call unless one is
-        in flight. The call is a task: nothing here waits for the hook or sees it raise."""
+        in flight. The call is a task bound to the account's correlation context, on top of the
+        caller's: nothing here waits for the hook or sees it raise."""
         moved = self._commit(account_id, acc)
         if moved is not None and moved.to_state is HealthState.DOWN:
             acc.dms_owed = moved
         if acc.dms_owed is not None and (acc.dms_call is None or acc.dms_call.done()):
-            call = asyncio.get_running_loop().create_task(self._call_dms(acc, acc.dms_owed))
+            with bind_context(account_id=account_id):
+                call = spawn(self._call_dms(acc, acc.dms_owed), name=f"account-dms:{account_id}")
             acc.dms_call = call
             self._dms_calls.add(call)
             call.add_done_callback(self._dms_calls.discard)

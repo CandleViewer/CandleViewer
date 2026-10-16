@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from candleviewer.accounts.health import HealthTransition
 from candleviewer.accounts.order_gate import KeyStanding
+from candleviewer.observability.context import get_context
 
 T0 = datetime(2026, 10, 15, 12, tzinfo=UTC)
 DAY = timedelta(days=1)
@@ -34,14 +36,19 @@ ACC_B = UUID("a1000000-0000-4000-8000-000000000002")
 
 
 class Dms:
-    """Dead-man's-switch hook: records every call, raises for the `failing` accounts, and while
-    `hold` is set keeps each call waiting until the test sets it (a slow hook)."""
+    """Dead-man's-switch hook: records every call with the correlation context and task name it
+    ran under (and its monotonic time, given a clock), raises for the `failing` accounts, and
+    while `hold` is set keeps each call waiting until the test sets it (a slow hook)."""
 
-    def __init__(self, *failing: UUID) -> None:
+    def __init__(self, *failing: UUID, clock: FakeClock | None = None) -> None:
         self.transitions: list[HealthTransition] = []
+        self.contexts: list[dict[str, Any]] = []
+        self.task_names: list[str] = []
+        self.called_at: list[float] = []
         self.failing = set(failing)
         self.hold: asyncio.Event | None = None
         self.entered = asyncio.Event()
+        self._clock = clock
 
     @property
     def calls(self) -> list[tuple[UUID, str]]:
@@ -49,6 +56,12 @@ class Dms:
 
     async def account_down(self, transition: HealthTransition) -> None:
         self.transitions.append(transition)
+        self.contexts.append(get_context())
+        task = asyncio.current_task()
+        assert task is not None
+        self.task_names.append(task.get_name())
+        if self._clock is not None:
+            self.called_at.append(self._clock.monotonic())
         self.entered.set()
         if self.hold is not None:
             await self.hold.wait()
