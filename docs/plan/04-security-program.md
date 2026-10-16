@@ -594,7 +594,8 @@ Medium until E27-Q03 measures it. The open High and Critical residuals of the re
 not in the counts above and are not accepted: they are release blockers for R2 under the rule at the head of this
 paragraph, recorded as RR-09..RR-12 in §16.1 with owner sign-off pending (queued on #2701); RR1 to RR3 are tracked as
 RSK-069..RSK-071 and RR4 through G6 and G7 (`docs/security/threat-models/E26-replay.md` §13).
-The E29 OMS rows (E29-X01, OM-S01..OM-E06) are rated Low contingent on the E29 tickets and gaps in that model's §11; OM-D04 is a Medium residual awaiting Owner acceptance (its §12.2).
+The E29 OMS rows (E29-X01, OM-S01..OM-E06) are rated Low contingent on the E29 tickets and gaps in §11 of the E29 model
+(`docs/security/threat-models/E29-oms.md`); OM-D04 is a Medium residual awaiting Owner acceptance (E29 model §12.2).
 
 ---
 
