@@ -10377,13 +10377,6 @@ components:
       additionalProperties: false
       properties:
         refresh_token: { type: string, description: "Only for clients that cannot use cookies." }
-    ChangePasswordRequest:
-      type: object
-      additionalProperties: false
-      required: [current_password, new_password]
-      properties:
-        current_password: { type: string, format: password }
-        new_password: { type: string, format: password, minLength: 12, maxLength: 512 }
     Argon2Params:
       type: object
       additionalProperties: false
@@ -10393,6 +10386,13 @@ components:
         m: { type: integer, minimum: 1, description: "Memory cost in KiB (65536 = 64 MiB)." }
         t: { type: integer, minimum: 1, description: "Time cost (passes over memory)." }
         p: { type: integer, minimum: 1, description: "Parallelism (lanes)." }
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string, format: password }
+        new_password: { type: string, format: password, minLength: 12, maxLength: 512 }
     SessionInfo:
       type: object
       required: [user, permissions, account_scope, server_time]
