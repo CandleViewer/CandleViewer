@@ -138,3 +138,10 @@ class ReadOnlyGate:
     def reason_text(self) -> str | None:
         with self._lock:
             return self._reason_text
+
+    @property
+    def latched_reason_code(self) -> str | None:
+        """The latch's reason, `None` while no latch is set (a `trip()` is not one). E27-T03's
+        key self-check reads it so that it never replaces a more specific latch (#836)."""
+        with self._lock:
+            return None if self._latched_reason is None else self._latched_reason[0]
