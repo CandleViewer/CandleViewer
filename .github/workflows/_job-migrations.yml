@@ -146,4 +146,4 @@ jobs:
         run: uv run pytest -p no:cacheprovider -m integration tests/integration/migrations/test_boot_advisory_lock_integration.py --no-cov
 
       - name: cv_app has no DDL privilege (integration, testcontainers, #1556)
-        run: uv run pytest -p no:cacheprovider -m integration tests/integration/auth tests/integration/storage --no-cov
+        run: uv run pytest -p no:cacheprovider -m "integration and not perf and not flaky" tests/integration/auth tests/integration/storage --no-cov

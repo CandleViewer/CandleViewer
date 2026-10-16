@@ -15,7 +15,8 @@ name: _job-integration
 #      ubuntu runners.
 #      `perf` wall-clock budgets run once, in `py-perf` (_job-py.yml), which
 #      has Docker too. Tests marked `flaky` are quarantined (C-9.3) and run
-#      in neither: each carries its P1 ticket and quarantine date.
+#      in no lane (here, `py-perf` or the migrations job's storage step):
+#      each carries its P1 ticket and quarantine date.
 #
 # The OMS fake-exchange suite (per ADR-0012's table) has no product logic
 # to exercise yet — `oms/service.py` is an R0 scaffold with no order
