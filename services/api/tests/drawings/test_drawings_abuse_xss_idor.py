@@ -35,7 +35,7 @@ TEXT = {"symbol": "BTCUSDT", "tool": "text", "style": {}}
 PT = TRENDLINE["geometry"]["points"][0]
 SEQUENTIAL = "00000000-0000-4000-8000-000000000001"  # id classes: counter-like and random-like
 RANDOM = "9b2f6c1e-5d47-4a8e-b3c0-7e1d2a4f8c65"
-KEY = "4d9f1c2e-8a7b-4c3d-9e1f-0a1b2c3d4e5f"
+KEY = "00000000-0000-4000-8000-00000000000a"  # low entropy: gitleaks (CI-SEC-001)
 STALE = "2026-10-14T12:00:00.000000Z"
 JSON_CT = "application/json"
 
