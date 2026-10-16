@@ -36,8 +36,14 @@ LOOP_LAG_BUCKETS: Final = (
     1.0,
     2.5,
 )
-#: Fan-out: edges around the 20 ms p99 budget.
-FANOUT_BUCKETS: Final = (0.001, 0.0025, 0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.1, 0.25)
+#: Fan-out: two edges under 1 ms (a typical frame takes tens of us, and a p95 under the first
+#: edge reads flat), then edges around the 20 ms p95 budget (06-performance #6).
+FANOUT_BUCKETS: Final = (1e-4, 5e-4, 1e-3, 2.5e-3, 5e-3, 0.01, 0.015, 0.02, 0.03, 0.05, 0.1, 0.25)
+#: The HELP of `cv_ws_fanout_seconds` too (`ws/metrics.py` imports it).
+FANOUT_HELP: Final = (
+    "Gateway segment of budget #6: a subscription's turn in the hub loop (a paced frame: its "
+    "release) to the writer handing the data frame to the socket; sampled 1 in 32 (weighted)."
+)
 #: Per-engine CPU time per batch.
 ENGINE_BUCKETS: Final = (
     0.0001,
@@ -1244,6 +1250,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_fanout_seconds",
+        "histogram",
+        "seconds",
+        (),
+        FANOUT_HELP,
+        "planned: p95 > 0.02 for 5m with a minimum-rate guard (warning; alerts slice)",
+        _L,
+        "E17",
+        FANOUT_BUCKETS,
+        exported=True,
+    ),
+    _s(
         "ws_clients",
         "gauge",
         "clients",
@@ -1292,17 +1310,6 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "client health",
         _P,
         "E17",
-    ),
-    _s(
-        "ws_fanout_latency_seconds",
-        "histogram",
-        "seconds",
-        (),
-        "Bus to socket fan-out latency.",
-        "p99 > 0.02",
-        _P,
-        "E17",
-        FANOUT_BUCKETS,
     ),
     _s(
         "order_submit_seconds",
