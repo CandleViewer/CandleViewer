@@ -8,6 +8,7 @@ regression fails fast instead of hanging the suite.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -588,13 +589,18 @@ REQUEST_ID = "5e0f6a1c-2b7d-4c3e-9f10-7a8b9c0d1e2f"
 CLOSED = "ws.connection.closed"
 
 
+#: Wall-clock bound for `_settle`: a count of loop turns ran out on a loaded machine before the
+#: teardown's close audit landed (#2735). Only a hang ever reaches this bound.
+_SETTLE_S = 5.0
+
+
 def _settle(world: _World, done: Callable[[], bool]) -> None:
     """Let the handler's teardown run on the app loop until `done()` (bounded, no sleeps)."""
-    for _ in range(200):
-        if done():
-            return
+    deadline = time.monotonic() + _SETTLE_S
+    while not done():
+        if time.monotonic() > deadline:
+            pytest.fail("the connection teardown did not finish")
         world.client.portal.call(_no_sleep, 0)  # type: ignore[union-attr]  # portal set in ctx
-    pytest.fail("the connection teardown did not finish")
 
 
 def _close_audits(world: _World) -> list[dict[str, Any]]:
