@@ -1095,8 +1095,8 @@ Each row names the permission(s) and the operation(s) in `22-api-openapi.yaml` t
 - Table `audit_log` in Postgres: `seq BIGSERIAL PRIMARY KEY`, `ts TIMESTAMPTZ`, `event_type TEXT`, `actor_type TEXT`, `actor_id UUID NULL`, `session_id UUID NULL`, `role_at_time TEXT`, `source_ip INET NULL`, `account_id UUID NULL`, `object_ref TEXT NULL`, `request_id UUID`, `rule_id UUID NULL`, `rule_version INT NULL`, `outcome TEXT`, `reason_code TEXT NULL`, `before JSONB NULL`, `after JSONB NULL`, `payload JSONB NULL`, `prev_hash BYTEA`, `entry_hash BYTEA`.
 - **Append-only** (SR-066): the application connects with a role holding only `INSERT`/`SELECT`; a `BEFORE UPDATE OR DELETE` trigger raises an exception; no `ON CONFLICT DO UPDATE`.
 - **Hash chain** (SR-063): `entry_hash = SHA256(prev_hash ‖ canonical_json(entry_without_hashes))`, canonical JSON = sorted keys, no whitespace, UTF-8, RFC 3339 timestamps with microsecond precision. The genesis entry uses 32 zero bytes. The current head is stored in `audit_chain_head` and mirrored off-box (SR-068).
-- Verification job: on start and nightly, walk the chain and compare with the stored head (on start incrementally from the last verified seq; nightly the whole chain, genesis to head, with the settings in `24-internal-schemas.md` §15.4); a mismatch is a P1 alert and forces the app into read-only trading mode until the Owner acknowledges.
-- Enforced posture: detection ships first (#2111). What a mismatch enforces, the acknowledgement path and its contract are pending the Owner decision #2904; any enforced posture keeps risk-reducing actions (cancel, flatten, SL amend) available, so read-only never traps an open position.
+- Verification job: on start and nightly, walk the whole chain, genesis to head, and compare with the stored head (settings in `24-internal-schemas.md` §15.4); a mismatch is a P1 alert. The intended control, read-only trading mode until the Owner acknowledges, is pending the Owner decision #2904 (see **Enforced posture**).
+- **Enforced posture** (stated here once; §9.1, IR-06 and `07-release-and-prr.md` point to this bullet). Detection ships first (#2111): the P1 alert and the recorded outcome of each run. Until the Owner decides (#2904), a mismatch does not stop order entry by itself. What a mismatch enforces, the acknowledgement path and its contract are that decision; any enforced posture keeps risk-reducing actions (cancel, flatten, SL amend) available, so read-only never traps an open position.
 - Retention: indefinite. Archived (still hash-linked) to Parquet after 24 months for size control.
 
 ### 8.2 Event catalogue
@@ -1129,11 +1129,11 @@ Each row names the permission(s) and the operation(s) in `22-api-openapi.yaml` t
 
 ### 9.1 Scope levels
 
-| Level              | Trigger                                                                                                                                                             | Effect                                                                                                                        |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **Global kill**    | Owner, from any screen (persistent button + hotkey `Ctrl+Shift+K`, confirm dialog with typed confirmation for live)                                                 | Block all new orders; disable all rules; cancel-all on every account; optional flatten; mark all credentials trading-disabled |
-| **Account freeze** | Owner, from Risk Dashboard / Admin                                                                                                                                  | Same, scoped to one account/manager                                                                                           |
-| **Automatic**      | Risk engine: daily-loss or drawdown cap breached; rule circuit breaker; credential verification failure; clock drift; audit chain mismatch; reconciliation mismatch | Scoped per policy — always blocks new entries; flatten only if the Owner configured auto-flatten for that account             |
+| Level              | Trigger                                                                                                                                                                                   | Effect                                                                                                                        |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Global kill**    | Owner, from any screen (persistent button + hotkey `Ctrl+Shift+K`, confirm dialog with typed confirmation for live)                                                                       | Block all new orders; disable all rules; cancel-all on every account; optional flatten; mark all credentials trading-disabled |
+| **Account freeze** | Owner, from Risk Dashboard / Admin                                                                                                                                                        | Same, scoped to one account/manager                                                                                           |
+| **Automatic**      | Risk engine: daily-loss or drawdown cap breached; rule circuit breaker; credential verification failure; clock drift; audit chain mismatch (pending #2904, §8.1); reconciliation mismatch | Scoped per policy — always blocks new entries; flatten only if the Owner configured auto-flatten for that account             |
 
 ### 9.2 Sequence
 
@@ -1259,7 +1259,7 @@ flowchart TD
 
 **IR-06 — Audit chain mismatch or missing events (P1)**
 
-1. Force the app into read-only trading mode automatically (§8.1).
+1. Read-only trading mode on a mismatch is pending the Owner decision #2904 (§8.1), so nothing forces it yet. The Owner decides now whether to activate the global kill switch (§9.1).
 2. Compare local chain with the off-box mirror; identify the first divergent `seq`.
 3. Assume DB compromise or corruption; snapshot everything before touching it.
 4. Reconcile the affected window against exchange history to reconstruct what happened.

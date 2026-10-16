@@ -822,14 +822,14 @@ docker system df
 
 ### AuditChainVerificationFailed
 
-| Element               | Detail                                                                                                                                                         |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1. What fired         | The audit hash chain failed verification (`audit_chain_verification_failures_total` increased). Page.                                                          |
-| 2. User impact        | Possible tampering or corruption of the audit log; audit evidence is untrustworthy.                                                                            |
-| 3. What is still safe | Native stop-losses are unaffected. A break does not stop order entry yet, so the Owner decides; the posture is pending #2904 (`04-security-program.md` §8.1).  |
-| 5. Remediation        | Do not modify audit tables. Snapshot the database, identify the first broken link from the verifier log and escalate as a security incident per `SECURITY.md`. |
-| 6. Escalation         | Owner and security reviewer immediately.                                                                                                                       |
-| 7. Verify recovery    | Verifier passes on the next run and the cause is in the incident record.                                                                                       |
+| Element               | Detail                                                                                                                                                                                                                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1. What fired         | The audit hash chain failed verification (`audit_chain_verification_failures_total` increased). Page.                                                                                                                                                                          |
+| 2. User impact        | Possible tampering or corruption of the audit log; audit evidence is untrustworthy.                                                                                                                                                                                            |
+| 3. What is still safe | Native stop-losses are unaffected. A break does not stop order entry yet (posture pending #2904, `04-security-program.md` §8.1), so the Owner decides: the lever today is the global kill switch (`04-security-program.md` §9.1).                                              |
+| 5. Remediation        | Do not modify audit tables. Snapshot the database, identify the first broken link from the verifier log and escalate as a security incident per `SECURITY.md`.                                                                                                                 |
+| 6. Escalation         | Owner and security reviewer immediately.                                                                                                                                                                                                                                       |
+| 7. Verify recovery    | A known break is re-found, and paged again, by every nightly run until #2904's acknowledgement path exists. Recovery is IR-06's restore path (`04-security-program.md` §10.3): the next whole-chain run passes on the restored chain, and the cause is in the incident record. |
 
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
 
