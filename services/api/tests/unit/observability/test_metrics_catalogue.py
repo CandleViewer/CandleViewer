@@ -42,7 +42,7 @@ _SUFFIX_EXCEPTIONS = frozenset(
 
 #: Golden: sha256 of the sorted (name, kind, labels, status, owner) catalogue.
 #: Changing it requires updating 20-architecture.md §12.1 and dashboards/alerts.
-GOLDEN_CATALOGUE_SHA256 = "eaac6ca3d13bc6b9d4e78eeb4885191f08288986c63c857289476e1e36bb65c8"
+GOLDEN_CATALOGUE_SHA256 = "ee69913f710bead0301be4e9b46133a3ebdd7d5199faae5b7595561138b40b85"
 
 _KNOWN_EPICS = re.compile(r"^E\d{2}(-[A-Z]\d{2})?$")
 

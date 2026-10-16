@@ -6,15 +6,19 @@ throttled topic lands in that subscription's `CoalescingQueue`, and at most one 
 effective `throttle_ms` leaves through `TopicEmitter.delta`, so a coalesced frame still consumes
 exactly one sequence number. The first update after a quiet window leaves at once; later ones
 leave when the window closes (`tick`). `orders` and `executions` bypass the pacer, frame by frame
-(S4). A queue that overflows is dropped and its topic marked for a `backpressure` snapshot (§8.4
-step 1); the outbound budget decides when that snapshot may go (step 2).
+(S4). A queue that refuses an update is dropped and its topic marked for a `backpressure` snapshot
+(§8.4 step 1); the outbound budget decides when that snapshot may go (step 2). A full queue counts
+as `cv_ws_overflow_total{reason="drop"}`; a malformed update is a producer bug, counted in
+`cv_ws_malformed_updates_total` and logged (family and topic only), never as an overflow.
 
 `Classifier` turns the outbound queue depth and the RTT (`RttProbe`, §9.1) into a class every
 `CLASSIFY_INTERVAL_S`: a class worsens at once and improves only after two consecutive better
 samples. `Pacer.apply` enforces it: `lagging` doubles throttles and forces coalescing; `saturated`
 and `overflowing` quadruple them and hold `heatmap` and `profile` to at most one frame a second.
 
-Plain synchronous code on the hot path (C-2.20); time always comes from the caller's clock.
+Plain synchronous code on the hot path (C-2.20). There is one clock domain, the emitter's
+monotonic `TopicEmitter.clock`: `offer` reads it, and `tick`, `classify` and `apply` default `now`
+to it (a caller passing `now` must take it from that clock).
 """
 
 from __future__ import annotations
@@ -26,8 +30,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Final
 
+import structlog
+
 from candleviewer.ws.binary import Frame
 from candleviewer.ws.coalescing import CoalescingQueue
+from candleviewer.ws.metrics import cv_ws_malformed_updates_total, cv_ws_overflow_total
 from candleviewer.ws.permissions import Subscription
 from candleviewer.ws.sequencing import TopicEmitter
 
@@ -43,6 +50,8 @@ IMPROVE_AFTER: Final = 2
 DEGRADED_FAMILIES: Final = frozenset({"heatmap", "profile"})
 DEGRADED_THROTTLE_MS: Final = 1000
 RTT_PROBE_PREFIX: Final = "s-rtt-"
+#: §9.1: a server `ping` is answered within 10 s; a probe left unanswered that long is retired.
+PONG_TIMEOUT_S: Final = 10.0
 
 
 class ConnectionClass(StrEnum):
@@ -106,7 +115,9 @@ class Classifier:
 class RttProbe:
     """§9.1 RTT sampling: one server `ping` outstanding at a time, at most one per `interval_s`.
     While a probe is unanswered its age counts as the RTT, so a socket that stopped draining reads
-    as slow at once rather than when (if ever) the `pong` arrives."""
+    as slow at once rather than when (if ever) the `pong` arrives. After `PONG_TIMEOUT_S` the
+    probe is retired: its age becomes one sample and a fresh probe follows, so one lost `pong`
+    cannot hold the connection `saturated`."""
 
     def __init__(self, interval_s: float = CLASSIFY_INTERVAL_S, nonce: str | None = None) -> None:
         self.interval_s = interval_s
@@ -119,6 +130,7 @@ class RttProbe:
 
     def ping_id(self, now: float) -> str | None:
         """The id of the probe to send now, or None when one is outstanding or not yet due."""
+        self._retire(now)
         if self._outstanding is not None or now - self._last_sent < self.interval_s:
             return None
         self._sent += 1
@@ -127,7 +139,8 @@ class RttProbe:
         return probe
 
     def pong(self, probe: str, now: float) -> bool:
-        """Record the answer to `probe`; False for any other id (a heartbeat `pong`, say)."""
+        """Record the answer to `probe`; False for any other id (a heartbeat `pong`, a retired
+        probe's late one)."""
         if self._outstanding is None or self._outstanding[0] != probe:
             return False
         self.sample_ms = (now - self._outstanding[1]) * 1000
@@ -135,10 +148,16 @@ class RttProbe:
         return True
 
     def rtt_ms(self, now: float) -> float | None:
+        self._retire(now)
         if self._outstanding is None:
             return self.sample_ms
         age = (now - self._outstanding[1]) * 1000
         return age if self.sample_ms is None else max(self.sample_ms, age)
+
+    def _retire(self, now: float) -> None:
+        if self._outstanding is not None and now - self._outstanding[1] >= PONG_TIMEOUT_S:
+            self.sample_ms = (now - self._outstanding[1]) * 1000
+            self._outstanding = None
 
 
 def quality_notice(
@@ -209,13 +228,12 @@ class Pacer:
             return False
         lane = self.lanes.get(sub.sub_id)
         if lane is None:
-            family = sub.topic.family.family
-            lane = self.lanes[sub.sub_id] = _Lane(sub, CoalescingQueue(family), sub.seq)
+            lane = self.lanes[sub.sub_id] = _Lane(sub, _queue(sub), sub.seq)
         elif lane.seq != sub.seq:
             self._restart(lane)  # a snapshot went out since: what the lane holds is stale
         lane.queue.set_coalesce(self._coalesce(sub))
         if not lane.queue.offer(body, part, ts_ms=ts_ms):
-            self.drop(sub)
+            self._refused(lane)
             return False
         now = self.emitter.clock()
         if lane.due is None:
@@ -224,8 +242,9 @@ class Pacer:
             self._flush(lane, now)
         return True
 
-    def tick(self, now: float) -> int:
+    def tick(self, now: float | None = None) -> int:
         """Flush every lane whose window has closed; returns the frames emitted."""
+        now = self.emitter.clock() if now is None else now
         sent = 0
         for lane in list(self.lanes.values()):
             if lane.due is not None and now >= lane.due:
@@ -237,7 +256,9 @@ class Pacer:
         return min((lane.due for lane in self.lanes.values() if lane.due is not None), default=None)
 
     def _restart(self, lane: _Lane) -> None:
-        lane.queue.clear()
+        """A snapshot went out or is pending: a new queue, since the old one's memory across
+        windows (the heatmap's sent buckets, keyed by `t_ms` only) predates it (§8.2)."""
+        lane.queue = _queue(lane.sub)
         lane.due, lane.seq = None, lane.sub.seq
 
     def _flush(self, lane: _Lane, now: float) -> int:
@@ -245,9 +266,13 @@ class Pacer:
         if lane.seq != lane.sub.seq:
             self._restart(lane)  # never a pre-snapshot delta after the `snap`
             return 0
+        emissions = lane.queue.take()
+        if lane.queue.overflowed:  # defensive: `take` refused what it could not emit
+            self._refused(lane)
+            return 0
         sent = 0
         try:
-            for emission in lane.queue.take():
+            for emission in emissions:
                 sent += self.emitter.delta(
                     lane.sub,
                     emission.body,
@@ -263,15 +288,35 @@ class Pacer:
             lane.last_emit = now
         return sent
 
+    def _refused(self, lane: _Lane) -> None:
+        """A lane's queue refused an update: count why, then drop the topic (§8.4 step 1)."""
+        family = lane.sub.topic.family.family
+        if lane.queue.refusal == "malformed":  # a producer bug, not an overflow
+            cv_ws_malformed_updates_total.labels(topic=family).inc()
+            _log().warning("ws producer update malformed", family=family, topic=lane.sub.ch)
+        else:
+            cv_ws_overflow_total.labels(reason="drop").inc()
+        self.drop(lane.sub)
+
     def drop(self, sub: Subscription) -> None:
         """§8.4 step 1 for one topic: discard its pending state, hold its deltas, and mark it for
-        a `backpressure` snapshot."""
+        a `backpressure` snapshot. `orders` / `executions` are refused: they are never dropped,
+        so the ladder closes the connection instead (step 3)."""
+        if sub.topic.family.never_throttled:
+            raise ValueError(f"{sub.ch} is never dropped (S4)")
         lane = self.lanes.get(sub.sub_id)
         if lane is not None:
             lane.queue.clear()
             lane.due = None
         sub.snapshot_pending, sub.pending_reason = True, "backpressure"
         self.resnapshot_required[sub.sub_id] = sub
+
+    def shed(self, sub: Subscription) -> None:
+        """Discard the window of `sub` while it awaits a `snap` another sender queued: what the
+        window holds predates that snapshot, so it must not count against the budget (§8.4)."""
+        lane = self.lanes.get(sub.sub_id)
+        if lane is not None and sub.snapshot_pending and lane.queue.pending_bytes:
+            self._restart(lane)
 
     def forget(self, sub_id: str) -> None:
         """The subscription ended: nothing of it may be emitted or re-snapshotted."""
@@ -294,24 +339,36 @@ class Pacer:
         return self.cls is not ConnectionClass.HEALTHY or sub.effective.get("coalesce") is not False
 
     def classify(
-        self, now: float, queue_pct: float, subs: Iterable[Subscription]
+        self, queue_pct: float, subs: Iterable[Subscription], now: float | None = None
     ) -> dict[str, Any] | None:
         """One §8.3 sample: on a class change, enforce it and return the `connection_quality`
         notice to send on `system`; None otherwise. `subs` is the connection's full subscription
         set, from which the notice's `degraded_topics` are named."""
+        now = self.emitter.clock() if now is None else now
         rtt = self.probe.rtt_ms(now)
         if not self.classifier.observe(classify(queue_pct, rtt)):
             return None
-        return quality_notice(self.cls, queue_pct, rtt, self.apply(now, subs))
+        return quality_notice(self.cls, queue_pct, rtt, self.apply(subs, now))
 
-    def apply(self, now: float, subs: Iterable[Subscription]) -> dict[str, Any]:
+    def apply(self, subs: Iterable[Subscription], now: float | None = None) -> dict[str, Any]:
         """Re-pace every lane under the current class; returns the notice's `applied` block."""
+        now = self.emitter.clock() if now is None else now
         for lane in self.lanes.values():
             lane.queue.set_coalesce(self._coalesce(lane.sub))
-            if lane.due is not None:
+            if lane.queue.overflowed:  # forced coalescing folded past a bound
+                self._refused(lane)
+            elif lane.due is not None:
                 lane.due = max(now, lane.last_emit + self.throttle_ms(lane.sub) / 1000)
         return {
             "throttle_multiplier": _MULTIPLIER[self.cls],
             "forced_coalesce": self.cls is not ConnectionClass.HEALTHY,
             "degraded_topics": sorted(sub.ch for sub in subs if self._degrades(sub)),
         }
+
+
+def _queue(sub: Subscription) -> CoalescingQueue:
+    return CoalescingQueue(sub.topic.family.family)
+
+
+def _log() -> Any:
+    return structlog.get_logger(__name__)

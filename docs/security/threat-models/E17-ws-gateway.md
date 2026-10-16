@@ -311,6 +311,10 @@ security review in the same PR.
 | Fan-out send timeout                   | 2 s                             | Revocation fan-out (D09)     | —                              | merged                                         |
 | Heartbeat interval / timeout           | 15 s / 45 s                     | Dead-socket reclamation      | Disconnect detection           | merged                                         |
 
+Memory outside the outbound budget (WS-D01, #2552): each `heatmap` subscription remembers up to 2 000
+complete buckets it sent (`SENT_COLUMNS_MEMORY`), about 150 to 210 KB measured (the review estimated 168 KB),
+bounded by count but not counted in `pending_bytes`. At 40 symbols that is up to about 8 MiB per connection.
+
 Amplification (WS-D08): one authenticated user can hold 8 x 40 symbols with 200-depth books and 2 000-column
 heatmaps. Encode-once-send-many keeps CPU flat in client count, but per-user cost is real and unmeasured until
 E17-Q03. Tracked as **RSK-063**.

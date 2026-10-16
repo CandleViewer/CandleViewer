@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from candleviewer.ws.metrics import cv_ws_overflow_total
 from candleviewer.ws.outbound import (
     DRAIN_PCT,
     MAX_REDROPS,
@@ -333,8 +334,10 @@ def test_backpressure_nothing_droppable_over_budget_closes_without_a_drop() -> N
     book = _sub(conn, queue, "book.BTCUSDT.50")
     for _ in range(2):
         queue.push(encode(_frame("err")))
+    closes = _overflow("close_budget")
     assert Backpressure(queue, pacer).check([book]) == [LadderEvent("close", (), "budget")]
     assert not book.snapshot_pending
+    assert _overflow("close_budget") == closes + 1  # one per close, whatever the hint names
 
 
 def test_backpressure_drops_frames_of_pending_and_unsubscribed_topics() -> None:
@@ -496,3 +499,36 @@ def test_backpressure_drain_sends_each_snapshot_before_queuing_the_next() -> Non
         assert all(event.action == "resnapshot" for event in ladder.drain())
         sent += [frame["ch"] for frame in _drain(queue) if frame["t"] == "snap"]
     assert sent == ["book.BTCUSDT.50", "book.ETHUSDT.50"] and ladder._redrops == {}
+
+
+# -- #2552 follow-ups ---------------------------------------------------------------------------
+
+
+def _overflow(reason: str) -> float:
+    value: float = cv_ws_overflow_total.labels(reason=reason)._value.get()
+    return value
+
+
+def test_backpressure_sheds_the_window_of_a_topic_another_sender_pended() -> None:
+    """The window predates that sender's pending `snap`: it is shed, never counted to a close."""
+    conn, pacer, queue, _ = _setup(max_bytes=400)
+    book = _sub(conn, queue, "book.BTCUSDT.50")
+    pacer.offer(book, _bid("BTCUSDT", "90"))
+    _drain(queue)
+    pacer.offer(book, {"bids": [[str(p), "1"] for p in range(100, 140)], "asks": []})
+    book.snapshot_pending, book.pending_reason = True, "client_resync"
+    assert Backpressure(queue, pacer).check([book]) == []
+    assert pacer.pending_bytes == 0 and pacer.resnapshot_required == {}
+
+
+def test_backpressure_records_each_step_with_the_close_trigger_as_its_reason() -> None:
+    """#2504 §8.4 step 4: `cv_ws_overflow_total{reason}`, per topic for `drop` / `resnapshot`."""
+    reasons = ("drop", "resnapshot", "close_budget", "close_redrop")
+    before = [_overflow(r) for r in reasons]
+    _, pacer, _, book, ladder = _oversized()
+    pacer.drop(book)
+    for _ in range(MAX_REDROPS):
+        ladder.drain()
+        ladder.check([book])
+    assert [_overflow(r) - b for r, b in zip(reasons, before, strict=True)] == [3, 3, 0, 1]
+    assert [LadderEvent("close", (), t).reason for t in ("budget", "redrop")] == list(reasons[2:])

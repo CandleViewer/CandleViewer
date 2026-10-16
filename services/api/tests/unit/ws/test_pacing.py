@@ -4,10 +4,14 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
+from structlog.testing import capture_logs
 
+from candleviewer.ws.binary import BOOK_DELTA, FLAG_COALESCED, Frame, decode_b64
 from candleviewer.ws.coalescing import MAX_PENDING_KEYS
+from candleviewer.ws.metrics import cv_ws_malformed_updates_total, cv_ws_overflow_total
 from candleviewer.ws.pacing import (
     DEGRADED_THROTTLE_MS,
+    PONG_TIMEOUT_S,
     Classifier,
     ConnectionClass,
     Pacer,
@@ -21,6 +25,7 @@ from tests.unit.ws._seq_support import ACC_A, Book, Conn, Source, validate
 HEALTHY, LAGGING = ConnectionClass.HEALTHY, ConnectionClass.LAGGING
 _RS = "8f3a2c1e-0000-4000-8000-000000000001"  # a replay session id (uuid)
 SATURATED, OVERFLOWING = ConnectionClass.SATURATED, ConnectionClass.OVERFLOWING
+_COLUMN = {"t_ms": 0, "price_min": "1", "price_step": "1", "bids": [], "asks": [], "complete": True}
 
 
 def _conn() -> tuple[Conn, Pacer]:
@@ -181,7 +186,7 @@ def test_pacer_honours_coalesce_false_only_while_healthy() -> None:
         pacer.offer(sub, _bid(price))
     pacer.tick(100.05)
     assert [f["p"]["coalesced"] for f in conn.take()] == [False, False, False]
-    notice = pacer.classify(100.05, 30.0, [sub])
+    notice = pacer.classify(30.0, [sub], now=100.05)
     assert notice is not None
     assert notice["applied"]["forced_coalesce"] is True
     for price in ("104", "105"):
@@ -195,9 +200,9 @@ def test_pacer_class_multiplies_throttles_and_degrades_heatmap() -> None:
     book = _sub(conn, "book.BTCUSDT.50")
     heatmap = _sub(conn, "heatmap.BTCUSDT")
     assert (pacer.throttle_ms(book), pacer.throttle_ms(heatmap)) == (50, 500)
-    pacer.classify(100.0, 30.0, [book, heatmap])
+    pacer.classify(30.0, [book, heatmap], now=100.0)
     assert (pacer.throttle_ms(book), pacer.throttle_ms(heatmap)) == (100, 1000)
-    pacer.classify(102.0, 70.0, [book, heatmap])
+    pacer.classify(70.0, [book, heatmap], now=102.0)
     assert pacer.cls is SATURATED
     assert (pacer.throttle_ms(book), pacer.throttle_ms(heatmap)) == (200, 2000)
     assert DEGRADED_THROTTLE_MS == 1000
@@ -209,7 +214,7 @@ def test_pacer_rtt_over_500ms_announces_saturated_with_degraded_topics() -> None
     heatmap = _sub(conn, "heatmap.BTCUSDT")
     book = _sub(conn, "book.BTCUSDT.50")
     assert pacer.probe.ping_id(100.0) is not None
-    notice = pacer.classify(100.6, 0.0, [book, heatmap])
+    notice = pacer.classify(0.0, [book, heatmap], now=100.6)
     assert notice == {
         "kind": "connection_quality",
         "class": "saturated",
@@ -222,15 +227,15 @@ def test_pacer_rtt_over_500ms_announces_saturated_with_degraded_topics() -> None
         },
     }
     validate({"t": "d", "ch": "system", "s": 1, "ts": 1, "e": "j", "p": notice})
-    assert pacer.classify(102.6, 0.0, [book, heatmap]) is None  # probe still unanswered
+    assert pacer.classify(0.0, [book, heatmap], now=102.6) is None  # probe still unanswered
 
 
 def test_pacer_recovery_is_announced_after_two_healthy_samples() -> None:
     conn, pacer = _conn()
     book = _sub(conn, "book.BTCUSDT.50")
-    pacer.classify(100.0, 70.0, [book])
-    assert pacer.classify(102.0, 5.0, [book]) is None
-    notice = pacer.classify(104.0, 5.0, [book])
+    pacer.classify(70.0, [book], now=100.0)
+    assert pacer.classify(5.0, [book], now=102.0) is None
+    notice = pacer.classify(5.0, [book], now=104.0)
     assert notice is not None
     assert notice["class"] == "healthy"
     assert notice["applied"] == {
@@ -244,7 +249,9 @@ def test_pacer_queue_overflow_drops_the_topic_for_a_backpressure_snapshot() -> N
     conn, pacer = _conn()
     sub = _sub(conn, "book.BTCUSDT.50")
     flood = {"bids": [[str(i), "1"] for i in range(1, MAX_PENDING_KEYS + 2)], "asks": []}
+    drops = _count(cv_ws_overflow_total, reason="drop")
     assert not pacer.offer(sub, flood)
+    assert _count(cv_ws_overflow_total, reason="drop") == drops + 1  # a full queue overflows
     assert conn.take() == []  # never a partial state
     assert (sub.snapshot_pending, sub.pending_reason) == (True, "backpressure")
     assert pacer.resnapshot_required == {sub.sub_id: sub}
@@ -332,7 +339,7 @@ def test_pacer_class_change_re_times_a_pending_window() -> None:
     conn.clock.now = 100.01
     pacer.offer(sub, _bid("101"))
     assert pacer.next_due() == pytest.approx(100.05)
-    pacer.classify(100.02, 30.0, [sub])  # lagging: 50 ms becomes 100 ms
+    pacer.classify(30.0, [sub], now=100.02)  # lagging: 50 ms becomes 100 ms
     assert pacer.next_due() == pytest.approx(100.1)
     assert pacer.tick(100.05) == 0
     assert pacer.tick(100.1) == 1
@@ -342,7 +349,7 @@ def test_pacer_saturated_holds_a_fast_heatmap_to_one_frame_a_second() -> None:
     conn, pacer = _conn()
     heatmap = _sub(conn, "heatmap.BTCUSDT", time_bucket_ms=100)
     assert pacer.throttle_ms(heatmap) == 100
-    pacer.classify(100.0, 70.0, [heatmap])
+    pacer.classify(70.0, [heatmap], now=100.0)
     assert pacer.throttle_ms(heatmap) == DEGRADED_THROTTLE_MS  # x4 alone would give 400 ms
 
 
@@ -410,3 +417,125 @@ def test_pacer_window_of_a_paused_subscription_frees_its_pending_bytes() -> None
     sub.effective["paused"] = True
     assert not pacer.offer(sub, _bid("102"))
     assert pacer.pending_bytes == 0
+
+
+# -- #2552 follow-ups ---------------------------------------------------------------------------
+
+
+def _count(counter: Any, **labels: str) -> float:
+    value: float = counter.labels(**labels)._value.get()
+    return value
+
+
+class _GetRaises(dict[str, Any]):
+    def get(self, key: str, default: Any = None) -> Any:
+        raise RuntimeError("producer bug")
+
+
+def test_pacer_forced_coalescing_past_the_key_bound_drops_the_topic() -> None:
+    """`apply()` folds the frames queued under `coalesce: false` into one merge, which can
+    overflow: the topic is dropped for a snapshot, never lost silently."""
+    conn, pacer = _conn()
+    sub = _sub(conn, "book.BTCUSDT.50", coalesce=False)
+    pacer.offer(sub, _bid("1"))  # leaves at once; the next two wait for the window
+    for base in (10_000, 20_000):
+        levels = [[str(base + i), "1"] for i in range(MAX_PENDING_KEYS // 2 + 1)]
+        assert pacer.offer(sub, {"bids": levels, "asks": []})
+    assert pacer.classify(30.0, [sub]) is not None  # lagging forces coalescing
+    assert pacer.resnapshot_required == {sub.sub_id: sub}
+    assert pacer.pending_bytes == 0
+
+
+def test_pacer_malformed_update_is_counted_and_logged_apart_from_overflow() -> None:
+    """A producer bug drops the topic like an overflow but counts apart, logging only the
+    family and topic; a refusal by `take` is caught at the flush."""
+    conn, pacer = _conn()
+    heatmap = _sub(conn, "heatmap.BTCUSDT", coalesce=False)
+    before = (
+        _count(cv_ws_malformed_updates_total, topic="heatmap"),
+        _count(cv_ws_overflow_total, reason="drop"),
+    )
+    body = {"symbol": "BTCUSDT", "time_bucket_ms": 500, "columns": [_GetRaises(_COLUMN)]}
+    with capture_logs() as logs:
+        pacer.offer(heatmap, body)
+    assert conn.take() == [] and pacer.resnapshot_required == {heatmap.sub_id: heatmap}
+    after = (
+        _count(cv_ws_malformed_updates_total, topic="heatmap"),
+        _count(cv_ws_overflow_total, reason="drop"),
+    )
+    assert after == (before[0] + 1, before[1])
+    event = "ws producer update malformed"
+    assert logs == [
+        {"event": event, "family": "heatmap", "topic": heatmap.ch, "log_level": "warning"}
+    ]
+
+
+def test_pacer_one_missed_pong_does_not_pin_the_connection_saturated() -> None:
+    """§9.1: a probe unanswered for 10 s is retired; its age counts once and a fresh probe
+    follows, whose answer lets the class recover."""
+    conn, pacer = _conn()
+    book = _sub(conn, "book.BTCUSDT.50")
+    lost = pacer.probe.ping_id(100.0)
+    assert pacer.classify(0.0, [book], now=101.0) is not None  # saturated: unanswered for 1 s
+    assert pacer.probe.ping_id(100.0 + PONG_TIMEOUT_S - 0.01) is None
+    fresh = pacer.probe.ping_id(100.0 + PONG_TIMEOUT_S)
+    assert fresh is not None and lost is not None and not pacer.probe.pong(lost, 110.01)
+    assert pacer.probe.rtt_ms(110.0) == pytest.approx(PONG_TIMEOUT_S * 1000)
+    assert pacer.probe.pong(fresh, 110.04)
+    assert pacer.classify(0.0, [book], now=110.5) is None
+    notice = pacer.classify(0.0, [book], now=112.5)
+    assert notice is not None and notice["class"] == "healthy"
+
+
+@pytest.mark.parametrize("family", ["orders", "executions"])
+def test_pacer_drop_refuses_a_never_throttled_family(family: str) -> None:
+    """S4: never dropped; the ladder closes the connection instead (§8.4 step 3)."""
+    conn, pacer = _conn()
+    sub = _private(conn, family)
+    with pytest.raises(ValueError, match="never dropped"):
+        pacer.drop(sub)
+    assert (sub.snapshot_pending, pacer.resnapshot_required) == (False, {})
+
+
+def test_pacer_tick_apply_and_classify_default_to_the_emitter_clock() -> None:
+    conn, pacer = _conn()
+    sub = _sub(conn, "book.BTCUSDT.50")
+    pacer.offer(sub, _bid("100"))
+    pacer.offer(sub, _bid("101"))  # due at 100.05
+    assert pacer.tick() == 0
+    conn.clock.now = 100.3
+    pacer.apply([sub])
+    assert pacer.next_due() == pytest.approx(100.3)
+    assert pacer.tick() == 1
+    pacer.probe.ping_id(100.3)
+    conn.clock.now = 100.9
+    notice = pacer.classify(0.0, [sub])
+    assert notice is not None and notice["rtt_ms"] == 600
+
+
+def test_pacer_reconfigured_heatmap_sends_a_bucket_time_it_sent_before() -> None:
+    """A new `time_bucket_ms` reuses `t_ms` values, and the sent-bucket memory is keyed by `t_ms`
+    only: every snapshot gives the lane a new queue."""
+    conn, pacer = _conn()
+    heatmap = _sub(conn, "heatmap.BTCUSDT")
+    body = {"symbol": "BTCUSDT", "time_bucket_ms": 500, "columns": [_COLUMN]}
+    pacer.offer(heatmap, body)
+    assert len(conn.take()) == 1
+    assert conn.authz.ctl(heatmap.ch, {"time_bucket_ms": 100})[1]  # `resnapshot: true`
+    conn.emitter.flush_pending([heatmap])
+    assert [f["meta"]["reason"] for f in conn.take()] == ["reconfigure"]
+    conn.clock.now = 101.0
+    pacer.offer(heatmap, {**body, "time_bucket_ms": 100})
+    assert [f["p"]["columns"] for f in conn.take()] == [[_COLUMN]]
+
+
+def test_pacer_merged_book_window_reaches_a_binary_subscriber_as_a_coalesced_delta() -> None:
+    conn, pacer = _conn()
+    sub = _sub(conn, "book.BTCUSDT.50", encoding="binary")
+    for price in (100, 101, 102):  # the first leaves at once; the other two merge
+        part = Frame(BOOK_DELTA, ((0, price * 10, 1000),), price_scale=1, qty_scale=3)
+        pacer.offer(sub, _bid(str(price)), part=part)
+    pacer.tick(100.05)
+    merged = decode_b64(conn.take()[-1]["p"])
+    assert merged.flags & FLAG_COALESCED
+    assert merged.records == ((0, 1020, 1000), (0, 1010, 1000))

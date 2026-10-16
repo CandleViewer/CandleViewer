@@ -501,7 +501,7 @@ def test_coalescer_bound_reached_sets_overflowed(family: str, first: Body, grown
     queue = CoalescingQueue(family, max_keys=1, max_items=1)
     assert queue.offer(first)
     assert not queue.offer(grown)
-    assert queue.overflowed
+    assert queue.overflowed and queue.refusal == "full"
 
 
 @pytest.mark.parametrize(
@@ -523,7 +523,7 @@ def test_coalescer_unmergeable_update_is_refused_like_an_overflow(
     queue refuses it and the topic is re-snapshotted."""
     queue = CoalescingQueue(family)
     assert not queue.offer(malformed)
-    assert queue.overflowed
+    assert queue.overflowed and queue.refusal == "malformed"
     assert queue.take() == []
     queue.clear()
     assert not queue.pending
@@ -956,6 +956,8 @@ def test_coalescer_heatmap_root_fields_seen_are_bounded() -> None:
         queue.take()
     assert not queue.offer({"symbol": "X", "k8": 8})
     assert queue.overflowed
+    queue.clear()
+    assert queue.offer({"symbol": "X"})  # the refusal discarded the overgrown merge
 
 
 def test_coalescer_take_turns_an_unreadable_frame_into_an_overflow(
@@ -966,3 +968,92 @@ def test_coalescer_take_turns_an_unreadable_frame_into_an_overflow(
     monkeypatch.setattr(queue._merge, "validate", lambda body: None)
     assert queue.offer({"symbol": "X", "columns": [3]})
     assert queue.take() == [] and queue.overflowed
+
+
+# -- #2552 follow-ups ---------------------------------------------------------------------------
+
+
+class _Boom:
+    """A producer bug no merge rule anticipates: reading it raises."""
+
+    def __str__(self) -> str:
+        raise RuntimeError("producer bug")
+
+    def __deepcopy__(self, memo: Any) -> Any:
+        raise RuntimeError("producer bug")
+
+
+class _GetRaises(dict[str, Any]):
+    def get(self, key: str, default: Any = None) -> Any:
+        raise RuntimeError("producer bug")
+
+
+@pytest.mark.parametrize(
+    ("family", "body"),
+    [
+        ("book", {"bids": [["1", "1"]], "asks": [], "meta": _Boom()}),
+        ("profile", {"symbol": "X", "kind": "volume", "profiles": [_Boom()]}),
+        ("positions", {"positions": [{"id": "p1", "updated_at_ms": 1, "x": _Boom()}]}),
+    ],
+    ids=["merge-size", "frame-size", "private-deepcopy"],
+)
+def test_coalescer_any_error_a_payload_raises_is_refused_as_malformed(
+    family: str, body: Body
+) -> None:
+    queue = CoalescingQueue(family)
+    assert not queue.offer(body)
+    assert (queue.refusal, queue.pending_bytes) == ("malformed", 0)
+
+
+def test_coalescer_take_refuses_a_frame_it_cannot_record_as_sent() -> None:
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    assert queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_GetRaises(_column(0))]})
+    assert queue.take() == []
+    assert queue.refusal == "malformed"
+
+
+def test_coalescer_byte_bound_refuses_and_frees_every_buffer_at_once() -> None:
+    queue = CoalescingQueue("book", max_bytes=40)
+    assert queue.offer(_level("1")) and queue.offer(_level("2"))  # 23 + 9 estimated bytes
+    assert not queue.offer(_level("3"))
+    assert (queue.refusal, queue.pending_bytes) == ("full", 0)  # before any `clear()`
+    frames = CoalescingQueue("profile", max_bytes=40)
+    assert not frames.offer({"symbol": "X", "kind": "volume", "profiles": [{"pad": "x" * 30}]})
+    assert frames.refusal == "full"
+
+
+def test_coalescer_metrics_params_key_is_canonical_json_for_any_params() -> None:
+    queue = CoalescingQueue("metrics")
+    for params, v in (
+        ({"k": Decimal("1.5"), "w": 5}, "1"),
+        ({"w": 5, "k": Decimal("1.5")}, "2"),  # the same series
+        ({"k": Decimal("2.5"), 1: "x"}, "3"),  # another series, with a non-string key
+    ):
+        item = {"metric": "atr", "t_ms": 1, "v": v, "params": params}
+        assert queue.offer({"symbol": "X", "series": [item]})
+    [frame] = queue.take()
+    assert [s["v"] for s in frame.body["series"]] == ["2", "3"]
+
+
+def _delta(*records: tuple[int, int, int], scale: int = 1) -> Frame:
+    return Frame(BOOK_DELTA, records, price_scale=scale, qty_scale=3)
+
+
+@pytest.mark.parametrize(
+    ("price", "part"),
+    [
+        ("101", None),
+        ("101", _delta((0, 101, 1000), scale=0)),
+        ("100.55", _delta((0, 1005, 1000))),
+        ("1E+18", _delta((0, 0, 1000))),
+    ],
+    ids=["no-part", "other-scales", "inexact", "beyond-i64"],
+)
+def test_coalescer_merged_book_window_is_structured_only_unless_every_part_fits(
+    price: str, part: Frame | None
+) -> None:
+    queue = CoalescingQueue("book")
+    queue.offer({"bids": [["100", "1"]], "asks": []}, _delta((0, 1000, 1000)))  # exact at 0 and 1
+    queue.offer({"bids": [[price, "1"]], "asks": []}, part)
+    [frame] = queue.take()
+    assert (frame.part, frame.coalesced_count) == (None, 2)

@@ -10,16 +10,20 @@ folds them into its merge at the frame bound rather than overflow. `never_thrott
 
 Exactly one pending update leaves verbatim, with its binary `part` and its own replay `ts_ms`; two
 or more leave as one merged structured payload with `coalesced_count` and the latest `ts_ms` (the
-emitter adds the §8.2 disclosure). The producer's CVWB parts cannot be merged here, so a merged
-frame is structured even for a binary subscriber. An update that carries nothing new is discarded
-as the client would discard it: an entity older than the pending one (§15 `updated_at_ms`), or a
-column for a heatmap bucket already sent complete.
+emitter adds the §8.2 disclosure). A merged `book` window is also re-encoded as one CVWB book delta
+(§3.4 kind 2, flagged `coalesced` by the emitter) when every update in it carried one at the same
+scales; any other merged frame is structured, even for a binary subscriber. An update that carries
+nothing new is discarded as the client would discard it: an entity older than the pending one (§15
+`updated_at_ms`), or a column for a heatmap bucket already sent complete.
 
 `pending_bytes` estimates the JSON size of what `take()` would emit, so the connection budget
-(§8.4) counts pending state as well as queued frames; every buffer is also bounded by count. A
-queue that hits a bound, or gets an update it cannot merge (a non-finite price, a missing key),
-refuses it and reports `overflowed`: its pending state no longer equals the applied stream, so the
-caller must `clear()` it and re-snapshot the topic (§8.4) instead of emitting it.
+(§8.4) counts pending state as well as queued frames; every buffer is also bounded by count, and
+the queue as a whole by `max_bytes` (defence in depth). A queue that hits a bound (`refusal`
+`full`), or meets an update it cannot merge or size (`malformed`: a non-finite price, a missing
+key, or anything else a producer's payload raises, `RecursionError` included), refuses it, reports
+`overflowed` and drops every buffer at once: its pending state no longer equals the applied stream,
+so the caller re-snapshots the topic (§8.4) and `clear()`s the queue to accept updates again.
+Nothing raises out of `offer`, `set_coalesce` or `take` (fail closed).
 
 A queue belongs to one connection and never mutates its input. It copies the top level of what it
 keeps and every merged entity; nested values of a public family's verbatim update are shared, as
@@ -34,15 +38,17 @@ import copy
 import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Context, Decimal, Inexact
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from candleviewer.ws.bar_coalescer import BarCoalescer, BarKey, bar_key
-from candleviewer.ws.binary import Frame
+from candleviewer.ws.binary import BOOK_DELTA, Frame
 from candleviewer.ws.topics import FAMILIES
 
 Payload = Mapping[str, Any]
+#: Why a queue refused an update: a bound, or a producer bug (counted apart, never as overflow).
+Refusal = Literal["full", "malformed"]
 
 #: §8.2: append, never merge; throttling batches them into arrays.
 APPENDED_FAMILIES: Final = frozenset({"trades", "liquidations"})
@@ -53,6 +59,8 @@ MAX_PENDING_KEYS: Final = 4096
 MAX_PENDING_ITEMS: Final = 20_000
 #: Whole frames one frame queue may hold.
 MAX_PENDING_FRAMES: Final = 256
+#: Estimated bytes one queue may hold: no one topic may exceed the whole §8.4 connection budget.
+MAX_PENDING_BYTES: Final = 8 * 1024 * 1024
 #: Complete heatmap columns remembered as already sent (one snapshot's worth, §6.1.1).
 SENT_COLUMNS_MEMORY: Final = 2000
 
@@ -64,19 +72,7 @@ _SUMMED_COUNTS: Final = ("trades",)
 
 
 class _BufferFullError(Exception):
-    """A merge buffer hit its bound; the update was refused."""
-
-
-#: What an update the queue cannot take raises: a bound, or a malformed producer payload (a
-#: pathologically nested one included).
-_REFUSED: Final = (
-    _BufferFullError,
-    ArithmeticError,
-    LookupError,
-    RecursionError,
-    TypeError,
-    ValueError,
-)
+    """A bound was hit; the update was refused (`full`). Anything else raised is `malformed`."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,7 +124,8 @@ def _plain(value: Decimal) -> str:
 class _Merge(ABC):
     """Root fields are last-write-wins; subclasses merge their list fields, keep `bytes` (the
     estimated size of the merged lists) current, return False when an update changed nothing (the
-    client would discard it) and raise one of `_REFUSED` instead of taking an update. `result` is
+    client would discard it) and raise instead of taking an update (`_BufferFullError` at a bound).
+    A raise can leave a merge half-applied, so the queue never reuses one that raised. `result` is
     called once per window, before `reset`."""
 
     def __init__(self, limit: int, lists: tuple[str, ...]) -> None:
@@ -161,8 +158,8 @@ class _Merge(ABC):
         return False
 
     def validate(self, body: Payload) -> None:
-        """Raise one of `_REFUSED` if `body` is queued as a whole frame that `emitted` cannot
-        read. The merge path checks the same fields as it merges."""
+        """Raise if `body` is queued as a whole frame that `emitted` cannot read. The merge path
+        checks the same fields as it merges."""
         return None
 
     def emitted(self, body: Payload) -> None:
@@ -499,9 +496,19 @@ def _balance_key(item: Payload) -> Hashable:
 
 
 def _metric_key(item: Payload) -> Hashable:
-    """Per metric code; `params` tells two series of the same code apart."""
+    """Per series: the metric code and its `params` as canonical JSON (string keys, sorted; a
+    Decimal as its decimal string, the wire form), so every schema-valid `params` has a key."""
     params = item.get("params")
-    return (str(item["metric"]), json.dumps(params, sort_keys=True) if params else "")
+    canonical = json.dumps(_json(params), sort_keys=True, separators=(",", ":")) if params else ""
+    return (str(item["metric"]), canonical)
+
+
+def _json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(k): _json(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_json(v) for v in value]
+    return str(value) if isinstance(value, Decimal) else value
 
 
 #: The §8.2 merge rule of each merged or appended family: `(keys bound, items bound) -> merge`.
@@ -532,6 +539,7 @@ class CoalescingQueue:
         max_keys: int = MAX_PENDING_KEYS,
         max_items: int = MAX_PENDING_ITEMS,
         max_frames: int = MAX_PENDING_FRAMES,
+        max_bytes: int = MAX_PENDING_BYTES,
     ) -> None:
         topic = FAMILIES.get(family)
         if topic is None:
@@ -543,6 +551,7 @@ class CoalescingQueue:
         self._coalesce = coalesce
         self._bounds = (max_keys, max_items)
         self._max_frames = max_frames
+        self._max_bytes = max_bytes
         rule = _RULES.get(family)
         self._rule = rule
         self._merge = rule(max_keys, max_items) if rule is not None else None
@@ -551,7 +560,10 @@ class CoalescingQueue:
         self._ts_ms: int | None = None
         self._frames: list[Emission] = []
         self._frame_bytes = 0
-        self._overflowed = False
+        #: The window's latest CVWB book delta, while every update of it carried one at one scale.
+        self._delta: Frame | None = None
+        #: Why the queue refused an update, until `clear()`; None while it accepts updates.
+        self.refusal: Refusal | None = None
 
     @property
     def merging(self) -> bool:
@@ -561,12 +573,12 @@ class CoalescingQueue:
     @property
     def overflowed(self) -> bool:
         """An update was refused: `take()` yields nothing until `clear()` (§8.4)."""
-        return self._overflowed
+        return self.refusal is not None
 
     @property
     def pending(self) -> bool:
         """True when `take()` would emit something."""
-        return not self._overflowed and bool(self._count or self._frames)
+        return self.refusal is None and bool(self._count or self._frames)
 
     @property
     def pending_bytes(self) -> int:
@@ -576,91 +588,102 @@ class CoalescingQueue:
         return self._frame_bytes + merged
 
     def set_coalesce(self, coalesce: bool) -> None:
-        """Turning coalescing on folds any whole frames queued meanwhile into one merge at once;
-        turning it off takes effect once the pending merge has been taken, so it leaves whole."""
+        """Turning coalescing on folds any whole frames queued meanwhile into one merge at once
+        (which can overflow); turning it off takes effect once the pending merge has been taken,
+        so it leaves whole."""
         if coalesce == self._coalesce:
             return
         self._coalesce = coalesce
         if coalesce and self._merge is not None and self._frames and not self._count:
-            self._fold(self._merge)
+            try:
+                self._fold(self._merge)
+            except Exception as exc:  # fail closed (module docstring)
+                self._refuse(exc)
 
     def offer(self, body: Payload, part: Frame | None = None, *, ts_ms: int | None = None) -> bool:
         """Queue one source update; False when refused, i.e. the queue is (or was) overflowed.
         `body` is the structured payload every family needs; `part` is its optional CVWB form."""
-        if self._overflowed:
+        if self.refusal is not None:
             return False
+        try:
+            self._offer(body, part, ts_ms)
+        except Exception as exc:  # fail closed: whatever a producer sends is refused, not raised
+            self._refuse(exc)
+            return False
+        return True
+
+    def _offer(self, body: Payload, part: Frame | None, ts_ms: int | None) -> None:
         if not isinstance(body, Mapping):
-            self._overflowed = True  # a producer bug: refused like any other unmergeable update
-            return False
+            raise TypeError("a payload is a mapping")  # a producer bug
         if self._private:
-            try:
-                body = copy.deepcopy(body)  # SR-190: nothing of a private update is shared
-            except (*_REFUSED, copy.Error):
-                self._overflowed = True
-                return False
+            body = copy.deepcopy(body)  # SR-190: nothing of a private update is shared
         merge = self._merge
         if merge is None or not (self.merging or self._count):
             if len(self._frames) < self._max_frames:
                 emission = Emission(_own(body), part, 1, ts_ms)
-                try:
-                    size = _size(emission.body)
-                    if merge is not None:
-                        merge.validate(emission.body)  # `take` never meets a frame it can't read
-                except _REFUSED:
-                    self._overflowed = True
-                    return False
+                size = _size(emission.body)
+                if merge is not None:
+                    merge.validate(emission.body)  # `take` never meets a frame it can't read
                 self._frames.append(emission)
                 self._frame_bytes += size
-                return True
+                self._bound()
+                return
             if merge is None:
-                self._overflowed = True
-                return False
+                raise _BufferFullError
             self._fold(merge)  # a mergeable family merges rather than overflow
-            if self._overflowed:
-                return False
-        return self._merge_one(merge, body, part, ts_ms)
+        self._merge_one(merge, body, part, ts_ms)
 
     def _fold(self, merge: _Merge) -> None:
         frames, self._frames, self._frame_bytes = self._frames, [], 0
         for frame in frames:
-            if not self._merge_one(merge, frame.body, frame.part, frame.ts_ms):
-                return
+            self._merge_one(merge, frame.body, frame.part, frame.ts_ms)
 
     def _merge_one(
         self, merge: _Merge, body: Payload, part: Frame | None, ts_ms: int | None
-    ) -> bool:
-        try:
-            if self._count and merge.splits(body):
-                if len(self._frames) >= self._max_frames:
-                    raise _BufferFullError  # windows split off count against the frame bound
-                self._close_window(merge)
-            changed = merge.add(body)
-        except _REFUSED:
-            self._overflowed = True
-            return False
-        if changed:
+    ) -> None:
+        if self._count and merge.splits(body):
+            if len(self._frames) >= self._max_frames:
+                raise _BufferFullError  # windows split off count against the frame bound
+            self._close_window(merge)
+        if merge.add(body):
             self._count += 1
             if ts_ms is not None:
                 self._ts_ms = ts_ms
             if self._count == 1:
                 self._first = Emission(_own(body), part, 1, ts_ms)
-        return True
+                self._delta = part if part is not None and part.body_kind == BOOK_DELTA else None
+            elif self._delta is not None:
+                self._delta = part if _same_scales(self._delta, part) else None
+        self._bound()
+
+    def _bound(self) -> None:
+        if self.pending_bytes > self._max_bytes:
+            raise _BufferFullError
+
+    def _refuse(self, exc: Exception) -> None:
+        """Refuse until `clear()`, dropping every buffer now: a merge that raised is not reused."""
+        if self._rule is not None:
+            self._merge = self._rule(*self._bounds)
+        self.clear()
+        self.refusal = "full" if isinstance(exc, _BufferFullError) else "malformed"
 
     def take(self) -> list[Emission]:
-        """The frames to emit now (none after an overflow), resetting the pending state."""
-        if self._overflowed:
+        """The frames to emit now (none after a refusal), resetting the pending state. They count
+        as delivered (a heatmap remembers the complete buckets it sent): a caller that drops any
+        of them must `clear()` the queue and re-snapshot the topic."""
+        if self.refusal is not None:
             return []
         merge = self._merge
-        if merge is not None:
-            self._close_window(merge)
-        out, self._frames, self._frame_bytes = self._frames, [], 0
-        if merge is not None:
-            try:
+        try:
+            if merge is not None:
+                self._close_window(merge)
+            out, self._frames, self._frame_bytes = self._frames, [], 0
+            if merge is not None:
                 for emission in out:
                     merge.emitted(emission.body)
-            except (*_REFUSED, AttributeError):  # `offer` validated these; never raise here
-                self._overflowed = True
-                return []
+        except Exception as exc:  # `offer` validated these: never raise here (fail closed)
+            self._refuse(exc)
+            return []
         return out
 
     def _close_window(self, merge: _Merge) -> None:
@@ -669,7 +692,9 @@ class CoalescingQueue:
             emission = self._first
         elif self._count:
             count = 1 if self.family in APPENDED_FAMILIES else self._count
-            emission = Emission(merge.result(), None, count, self._ts_ms)
+            body = merge.result()
+            part = None if self._delta is None else _book_delta(body, self._delta)
+            emission = Emission(body, part, count, self._ts_ms)
         else:
             merge.reset()  # only discarded updates: nothing of theirs may leak into the next window
             return
@@ -679,12 +704,43 @@ class CoalescingQueue:
         self._count, self._first, self._ts_ms = 0, None, None
 
     def clear(self) -> None:
-        """Drop all pending state (§8.4 step 1) and accept updates again."""
+        """Drop the pending window (§8.4 step 1) and accept updates again. What a merge remembers
+        across windows (the heatmap's sent buckets, keyed by `t_ms` only, and root fields) is
+        kept: it holds only until the topic's next snapshot, after which `Pacer` builds a new
+        queue."""
         self._frames, self._frame_bytes = [], 0
         self._count, self._first, self._ts_ms = 0, None, None
-        if self._rule is not None:
-            self._merge = self._rule(*self._bounds)
-        self._overflowed = False
+        if self._merge is not None:
+            self._merge.reset()
+        self.refusal = None
+
+
+def _same_scales(delta: Frame, part: Frame | None) -> bool:
+    if part is None or part.body_kind != BOOK_DELTA:
+        return False
+    return (part.price_scale, part.qty_scale) == (delta.price_scale, delta.qty_scale)
+
+
+def _book_delta(body: Payload, like: Frame) -> Frame | None:
+    """The merged levels as one book delta at `like`'s scales; None (structured only) when a
+    level is not exact at those scales or does not fit its `i64` / `u64` field."""
+    records = []
+    for side, levels in ((0, body["bids"]), (1, body["asks"])):
+        for price, size in levels:
+            p, q = _scaled(price, like.price_scale), _scaled(size, like.qty_scale)
+            if p is None or q is None or not (-(2**63) <= p < 2**63 and 0 <= q < 2**64):
+                return None
+            records.append((side, p, q))
+    return replace(like, records=tuple(records), flags=0)
+
+
+def _scaled(value: Any, scale: int) -> int | None:
+    try:
+        scaled = Decimal(str(value)).scaleb(scale)
+    except ArithmeticError:
+        return None
+    exact = scaled.is_finite() and scaled == scaled.to_integral_value()
+    return int(scaled) if exact and scaled.adjusted() < 20 else None
 
 
 def _own(body: Payload) -> dict[str, Any]:

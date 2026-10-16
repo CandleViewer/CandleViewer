@@ -1147,6 +1147,8 @@ A client that is closed as a slow consumer should reconnect with backoff and _re
 }
 ```
 
+**Snapshot size while the client drains (#2552).** Step 2 queues a `backpressure` snapshot as soon as the queue is below 50 %, so a snapshot queued while the client is still draining has only the rest of the budget: as little as about half of it (4 MiB or 1 000 frames). A larger one is dropped again by the next over-budget check and queued again at a later drain; it is delivered once the client has drained enough for it to fit, and a snapshot that never fits ends in the step-3 close.
+
 ### 8.5 Client-side obligations
 
 - **Backgrounded windows.** When the Electron window or browser tab is hidden, the client MUST `ctl` all visual topics to ≥1 000 ms. It MUST NOT unsubscribe (that would force a full re-snapshot on return).
