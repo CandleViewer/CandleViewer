@@ -23,7 +23,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal
-from typing import Final, Literal, Protocol
+from typing import Final, Literal, Protocol, get_args, get_type_hints
 from uuid import UUID
 
 OrderState = Literal[
@@ -101,12 +101,6 @@ def _check(row: object, money: tuple[str, ...], stamps: tuple[str, ...]) -> None
             require_aware(name, value)
 
 
-_NEW_ORDER_MONEY: Final = (
-    "qty", "price", "trigger_price", "take_profit", "stop_loss", "cum_exec_qty", "cum_exec_value",
-    "avg_price", "fee_paid",
-)  # fmt: skip
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NewOrder:
     """An `orders` row to insert. The id is final (24 Sec.8.3 rules 1 and 4); `leaves_qty` and
@@ -146,13 +140,24 @@ class NewOrder:
     is_paper: bool = False
 
     def __post_init__(self) -> None:
-        _check(self, _NEW_ORDER_MONEY, ("exchange_created_ts", "exchange_updated_ts"))
+        _check(self, _NEW_ORDER_MONEY, _NEW_ORDER_STAMPS)
+
+
+def _annotated(cls: type[NewOrder], kind: type) -> tuple[str, ...]:
+    """The fields annotated `kind` or `kind | None`, read off the class, so none is missed."""
+    hints = get_type_hints(cls)
+    return tuple(name for name, hint in hints.items() if kind in (hint, *get_args(hint)))
+
+
+_NEW_ORDER_MONEY: Final = _annotated(NewOrder, Decimal)
+_NEW_ORDER_STAMPS: Final = _annotated(NewOrder, datetime)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NewOrderEvent:
     """An `order_events` row to append. The store assigns `seq` (0 for the first event, then the
-    next per order) and the states, and redacts `payload` before it is bound."""
+    next per order) and the states, and redacts `payload`, `ret_code` and `ret_msg` before they
+    are bound."""
 
     kind: OrderEventKind
     source: OrderEventSource
@@ -214,7 +219,7 @@ class OrderRow:
 @dataclass(frozen=True, slots=True)
 class OrderEventRow:
     """One `order_events` row plus its order's `order_link_id`, the correlation key (ADR-0006
-    rule 1). `payload` is what was stored: the redacted message."""
+    rule 1). `payload`, `ret_code` and `ret_msg` are what was stored: the redacted values."""
 
     id: int
     order_id: UUID

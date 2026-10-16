@@ -1,9 +1,10 @@
 """Order store port and Postgres adapter, without a database (E29-T01 #845 slice 2/3).
 
 The port is pinned to `0029_oms_core` (enums, CHECK vocabularies, `ix_orders_open`, the column
-lists); the adapter's statements are compiled and inspected (account scoping, one-statement create,
-row lock, `seq` assignment, redaction before binding), and its control flow and error mapping run
-over a scripted unit of work. Real-database behaviour is `tests/integration/storage/
+lists, the money and time columns `NewOrder` checks); the adapter's statements are compiled and
+inspected (account scoping, one-statement create, row lock, `seq` assignment, redaction of
+`payload`, `ret_code` and `ret_msg` before binding), and its control flow, statement cap and error
+mapping run over a scripted unit of work. Real-database behaviour is `tests/integration/storage/
 test_orders_store_pg.py`.
 """
 
@@ -22,15 +23,15 @@ from types import SimpleNamespace
 from typing import Any, cast, get_args
 
 import pytest
-from sqlalchemy import CheckConstraint
-from sqlalchemy.dialects.postgresql import asyncpg
+from sqlalchemy import CheckConstraint, DateTime, Numeric, TextClause
+from sqlalchemy.engine import Dialect, make_url
 from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
 
 from candleviewer.db import models
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories import orders as port
 from candleviewer.storage.repositories import orders_sqlalchemy as mod
-from candleviewer.storage.repositories.exchange_payload import REDACTED
+from candleviewer.storage.repositories.exchange_payload import MAX_CODE_CHARS, OVERSIZE, REDACTED
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
     MAX_EVENT_PAGE,
@@ -49,6 +50,7 @@ T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 ACCOUNT, ORDER = uuid.UUID(int=1), uuid.UUID(int=2)
 LINK = "cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en"  # the #845 Gherkin id
 _MAC = "9f" * 32  # synthetic 64-hex shape, digits and letters
+_KEY = "DUMMYKEY_" + "Q3w9" * 5  # synthetic, built at run time (SR-145)
 
 
 def _new_order(**over: Any) -> NewOrder:
@@ -91,7 +93,9 @@ def test_enum_literals_mirror_the_database_types(literal: Any, enum: Any) -> Non
 )
 def test_text_literals_mirror_their_checks(literal: Any, table: Any, check: str) -> None:
     constraint = next(
-        c for c in table.constraints if isinstance(c, CheckConstraint) and c.name.endswith(check)
+        c
+        for c in table.constraints
+        if isinstance(c, CheckConstraint) and isinstance(c.name, str) and c.name.endswith(check)
     )
     assert set(get_args(literal)) == set(re.findall(r"'(\w+)'", str(constraint.sqltext)))
 
@@ -144,16 +148,37 @@ def test_require_aware_refuses_only_a_naive_datetime() -> None:
         require_aware("event_ts", datetime(2026, 10, 16))
 
 
-@pytest.mark.parametrize(
-    "over",
-    [{"qty": 0.01}, {"price": Decimal("NaN")}, {"stop_loss": Decimal("1E-19")},
-     {"cum_exec_qty": Decimal("Infinity")}, {"exchange_updated_ts": datetime(2026, 10, 16)}],
-)  # fmt: skip
-def test_new_order_refuses_floats_non_finite_rounded_money_and_naive_times(
-    over: dict[str, Any],
-) -> None:
-    with pytest.raises((TypeError, ValueError)):
-        _new_order(**over)
+_WRITTEN = {f.name for f in fields(NewOrder)}
+#: The oracle is the table: every numeric(38,18) and timestamptz column a `NewOrder` writes.
+_MONEY = [
+    c.name
+    for c in models.orders.columns
+    if isinstance(c.type, Numeric) and c.type.scale == 18 and c.name in _WRITTEN
+]
+_TIMES = [
+    c.name for c in models.orders.columns if isinstance(c.type, DateTime) and c.name in _WRITTEN
+]
+
+
+def test_new_order_checks_every_money_and_time_column_it_writes() -> None:
+    assert _MONEY == [
+        "qty", "price", "trigger_price", "take_profit", "stop_loss", "cum_exec_qty",
+        "cum_exec_value", "avg_price", "fee_paid",
+    ]  # fmt: skip
+    assert _TIMES == ["exchange_created_ts", "exchange_updated_ts"]
+
+
+@pytest.mark.parametrize("column", _MONEY)
+@pytest.mark.parametrize("bad", [0.01, Decimal("NaN"), Decimal("Infinity"), Decimal("1E-19")])
+def test_new_order_refuses_a_float_non_finite_or_rounded_money_value(column: str, bad: Any) -> None:
+    with pytest.raises((TypeError, ValueError), match=f"^{column} "):
+        _new_order(**{column: bad})
+
+
+@pytest.mark.parametrize("column", _TIMES)
+def test_new_order_refuses_a_naive_exchange_time(column: str) -> None:
+    with pytest.raises(ValueError, match=f"^{column} must be a timezone-aware"):
+        _new_order(**{column: datetime(2026, 10, 16)})
 
 
 def test_new_order_event_refuses_a_naive_event_time() -> None:
@@ -171,16 +196,23 @@ def test_constraint_error_names_the_constraint_only() -> None:
 # -- adapter: statements ------------------------------------------------------------------------
 
 
+_ASYNCPG: Dialect = make_url("postgresql+asyncpg://").get_dialect()()
+
+
 def _sql(stmt: Any) -> str:
-    return str(stmt.compile(dialect=asyncpg.dialect(), compile_kwargs={"render_postcompile": True}))
+    return str(stmt.compile(dialect=_ASYNCPG, compile_kwargs={"render_postcompile": True}))
 
 
 def _bound(stmt: Any) -> list[Any]:
     """The bound values (a CTE's inserts bind anonymous names)."""
-    return list(stmt.compile(dialect=asyncpg.dialect()).params.values())
+    return list(stmt.compile(dialect=_ASYNCPG).params.values())
 
 
-_SECRET_EVENT = _event(payload={"headers": {"X-BAPI-SIGN": _MAC}, "result": {"orderId": "o-1"}})
+_SECRET_EVENT = _event(
+    payload={"headers": {"X-BAPI-SIGN": _MAC}, "result": {"orderId": "o-1"}},
+    ret_code="10004",
+    ret_msg=f"error sign! origin_string[1760630400000{_KEY}5000]",  # the signed string echoed
+)
 _STATEMENTS: dict[str, Any] = {
     "create_statement": mod.create_statement(_new_order(), _SECRET_EVENT),
     "get_statement": mod.get_statement(ACCOUNT, ORDER),
@@ -223,10 +255,17 @@ def test_create_writes_the_order_and_its_first_event_in_one_statement() -> None:
 
 
 @pytest.mark.parametrize("name", ["create_statement", "append_statement"])
-def test_payloads_are_redacted_before_they_are_bound(name: str) -> None:
+def test_payload_ret_code_and_ret_msg_are_redacted_before_they_are_bound(name: str) -> None:
     bound = _bound(_STATEMENTS[name])
     assert {"headers": REDACTED, "result": {"orderId": "o-1"}} in bound
-    assert _MAC not in json.dumps(bound, default=str)
+    assert "10004" in bound and REDACTED in bound  # the code kept, the echoing message replaced
+    blob = json.dumps(bound, default=str)
+    assert _MAC not in blob and _KEY not in blob
+
+
+def test_an_overlong_ret_code_is_bound_as_oversize() -> None:
+    event = _event(kind="reject", source="rest", ret_code="1" * (MAX_CODE_CHARS + 1))
+    assert OVERSIZE in _bound(mod.append_statement(ACCOUNT, ORDER, event))
 
 
 def test_list_open_renders_the_open_states_as_literals_for_the_partial_index() -> None:
@@ -287,16 +326,27 @@ class _Result:
 
 
 class _Rel:
-    """Scripted `SqlAlchemyRelationalRepository`: records statements, replays canned results."""
+    """Scripted `SqlAlchemyRelationalRepository`: records statements, replays canned results.
+
+    `units` keeps every unit of work's `(statement, params)` in order; the store's statement cap
+    (the one text clause) is answered without consuming the script and kept out of `statements`.
+    """
 
     def __init__(self, *script: _Result | Exception) -> None:
         self.script: list[_Result | Exception] = list(script)
         self.statements: list[Any] = []
+        self.units: list[list[tuple[Any, Any]]] = []
         self.commits = 0
 
     @asynccontextmanager
     async def unit_of_work(self) -> AsyncIterator[Any]:
-        async def execute(stmt: Any) -> _Result:
+        unit: list[tuple[Any, Any]] = []
+        self.units.append(unit)
+
+        async def execute(stmt: Any, params: Any = None) -> _Result:
+            unit.append((stmt, params))
+            if isinstance(stmt, TextClause):
+                return _Result()
             self.statements.append(stmt)
             step = self.script.pop(0)
             if isinstance(step, Exception):
@@ -309,12 +359,12 @@ class _Rel:
         yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=commit)
 
 
-def _store(rel: _Rel) -> mod.SqlAlchemyOrderStore:
-    return mod.SqlAlchemyOrderStore(cast(Any, rel))  # structural fake
+def _store(rel: _Rel, **kwargs: Any) -> mod.SqlAlchemyOrderStore:
+    return mod.SqlAlchemyOrderStore(cast(Any, rel), **kwargs)  # structural fake
 
 
 def _order_row(**over: Any) -> dict[str, Any]:
-    row = {f.name: None for f in fields(OrderRow)}
+    row: dict[str, Any] = {f.name: None for f in fields(OrderRow)}
     row |= {"id": ORDER, "exchange_account_id": ACCOUNT, "order_link_id": LINK, "qty": Decimal(1)}
     return row | over
 
@@ -359,6 +409,44 @@ async def test_append_returns_the_stored_event_with_its_order_link_id() -> None:
     assert (got.order_link_id, got.seq, got.kind, rel.commits) == (LINK, 3, "ack", 1)
     assert "FOR NO KEY UPDATE" in _sql(rel.statements[0])
     assert _sql(rel.statements[1]).startswith("INSERT INTO order_events")
+
+
+_CAP = "SELECT set_config('statement_timeout', :timeout, true)"
+#: Every store call, with the script one call consumes.
+_CALLS: dict[str, tuple[Callable[[mod.SqlAlchemyOrderStore], Awaitable[object]], list[_Result]]] = {
+    "create": (lambda st: st.create(_new_order(), _event()), [_Result([_order_row()])]),
+    "get": (lambda st: st.get(ACCOUNT, ORDER), [_Result()]),
+    "get_by_link_id": (lambda st: st.get_by_link_id(ACCOUNT, LINK), [_Result()]),
+    "list_open": (lambda st: st.list_open(ACCOUNT), [_Result()]),
+    "link_id_taken": (lambda st: st.link_id_taken(LINK), [_Result(scalar=False)]),
+    "append": (
+        lambda st: st.append(ACCOUNT, ORDER, _event(kind="ack", source="rest")),
+        [_Result(scalar=LINK), _Result([_event_row()])],
+    ),
+    "list_for_order": (lambda st: st.list_for_order(ACCOUNT, ORDER), [_Result()]),
+}
+
+
+@pytest.mark.parametrize("call", sorted(_CALLS))
+@pytest.mark.parametrize(("kwargs", "cap"), [({}, "2000"), ({"statement_timeout_ms": 150}, "150")])
+async def test_every_call_is_one_unit_of_work_capped_first_at_the_store_timeout(
+    call: str, kwargs: dict[str, int], cap: str
+) -> None:
+    """The cap precedes the call's own statements (#845 default 2000 ms), so a write blocked on a
+    lock fails within it instead of the repository-wide 30 s."""
+    run, script = _CALLS[call]
+    rel = _Rel(*script)
+    await run(_store(rel, **kwargs))
+    assert [(str(stmt), params) for stmt, params in (unit[0] for unit in rel.units)] == [
+        (_CAP, {"timeout": cap})
+    ]
+
+
+@pytest.mark.parametrize("timeout_ms", [0, -1, True, 1.5, "2000"])
+def test_a_statement_timeout_that_is_not_a_positive_int_is_refused(timeout_ms: Any) -> None:
+    """0 would switch the cap off in Postgres."""
+    with pytest.raises(ValueError, match="statement_timeout_ms"):
+        _store(_Rel(), statement_timeout_ms=timeout_ms)
 
 
 @pytest.mark.parametrize(("after_seq", "limit"), [(-2, 1), (0, 0), (0, MAX_EVENT_PAGE + 1)])
@@ -442,6 +530,20 @@ async def test_any_other_database_error_keeps_only_its_sqlstate(
     with pytest.raises(StorageQueryFailed) as err:
         await _WRITES[write](_store(rel))
     assert (err.value.sqlstate, rel.commits) == (reported, 0)
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
+    assert _P1 not in "".join(traceback.format_exception(err.value))
+
+
+@pytest.mark.parametrize(
+    "read", ["get", "get_by_link_id", "link_id_taken", "list_for_order", "list_open"]
+)
+async def test_a_failed_read_keeps_only_its_sqlstate_like_a_write(read: str) -> None:
+    """One error family for the OMS (24 Sec.8.2 S7): the allocator's lookup and every other read
+    raise `StorageQueryFailed` when Postgres fails, as the writes do."""
+    rel = _Rel(_leaky(OperationalError, "57P01"))
+    with pytest.raises(StorageQueryFailed) as err:
+        await _CALLS[read][0](_store(rel))
+    assert err.value.sqlstate == "57P01"
     assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
     assert _P1 not in "".join(traceback.format_exception(err.value))
 

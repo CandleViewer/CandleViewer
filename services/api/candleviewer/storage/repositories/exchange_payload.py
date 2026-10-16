@@ -1,11 +1,13 @@
-"""Fail-closed redaction of an exchange message before `order_events.payload` stores it (#845).
+"""Fail-closed redaction of what the exchange says before `order_events` stores it (#845).
 
-`21-database-schema.md` Sec.3.3.5 keeps the raw exchange message "redacted of credentials", and
-`order_events` is append-only and kept for good (C-5.7), so a credential stored once could never be
-removed. This is the fail-closed pass before insert of SR-E29-08 in the E29 STRIDE model (#849;
-the adapter's allow-listed record is the other pass, E29-T04): `orders_sqlalchemy` runs it on
-every payload before binding it, so no writer can skip it. It only removes or replaces, and it
-returns plain JSON.
+`21-database-schema.md` Sec.3.3.5 keeps the raw exchange message "redacted of credentials" (the
+#845 security notes: redacted before insert), and `order_events` is append-only and kept for good
+(C-5.7), so a credential stored once could never be removed (C-2.7). This is the fail-closed pass
+before insert; the adapter's allow-listed record is the other one (E29-T04). `orders_sqlalchemy`
+runs `redact_exchange_payload()` on every `payload` and `redact_exchange_text()` on `ret_msg` and
+`ret_code` before binding them, so no writer can skip it: a Bybit signature error (retCode
+10004) can echo the signed string, the API key included, in its retMsg. It only removes or
+replaces, and it returns plain JSON.
 
 Replaced by `REDACTED`:
 
@@ -25,7 +27,11 @@ Replaced by `REDACTED`:
 Keys that are not strings, that `jsonb` refuses or that are credential-shaped are dropped. A
 string over `MAX_STRING_CHARS`, an integer past 64 bits, a container over `MAX_ITEMS` entries and
 nesting past `MAX_DEPTH` become `OVERSIZE`, and a result whose JSON exceeds `MAX_PAYLOAD_CHARS` is
-replaced whole by `{"redacted": OVERSIZE}`.
+replaced whole by `{"redacted": OVERSIZE}`. `redact_exchange_text()` is the string rule alone,
+with its own length bound (`MAX_CODE_CHARS` for a code).
+
+A foreign `orderLinkId` is a string like any other: one that is credential-shaped (the 32 hex
+characters of a `uuid4().hex`, say) is stored as `REDACTED` (21 Sec.3.3.4 "Adopted rows").
 """
 
 from __future__ import annotations
@@ -47,6 +53,8 @@ MAX_DEPTH: Final = 8
 MAX_ITEMS: Final = 256
 MAX_STRING_CHARS: Final = 2048
 MAX_PAYLOAD_CHARS: Final = 16384
+#: Bound of a code (`ret_code`): a Bybit retCode has at most six digits, a local code is a word.
+MAX_CODE_CHARS: Final = 64
 
 #: Credential names, compared after `_name()`: exact matches, then fragments anywhere in the name.
 _NAMES: Final = frozenset({"key", "sign", "auth", "session", "recvwindow", "headers", "header"})
@@ -82,8 +90,8 @@ def _credential_shaped(text: str) -> bool:
     return any(not run.isalpha() and not run.isdigit() for run in _RUN.findall(_IDS.sub("-", text)))
 
 
-def _string(text: str) -> str:
-    if len(text) > MAX_STRING_CHARS:
+def _string(text: str, max_chars: int = MAX_STRING_CHARS) -> str:
+    if len(text) > max_chars:
         return OVERSIZE
     if not _storable(text):
         return REDACTED
@@ -140,3 +148,15 @@ def redact_exchange_payload(raw: Mapping[str, object]) -> dict[str, JsonValue]:
     if len(json.dumps(out, allow_nan=False)) > MAX_PAYLOAD_CHARS:
         return {"redacted": OVERSIZE}
     return out
+
+
+def redact_exchange_text(text: str | None, *, max_chars: int = MAX_STRING_CHARS) -> str | None:
+    """The string rule alone, for a text column the exchange fills (`ret_msg`, `ret_code`).
+
+    `None` stays `None`; anything that is not a string becomes `REDACTED`; a string longer than
+    `max_chars` becomes `OVERSIZE`; otherwise the result of the string rule above."""
+    if text is None:
+        return None
+    if not isinstance(text, str):
+        return REDACTED
+    return _string(text, max_chars)

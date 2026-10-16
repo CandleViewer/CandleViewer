@@ -1,4 +1,4 @@
-"""`redact_exchange_payload()` (E29-T01 #845 slice 2/3; SR-E29-08 second pass).
+"""`redact_exchange_payload()` and `redact_exchange_text()` (E29-T01 #845 slice 2/3, 21 Sec.3.3.5).
 
 The ticket's fixture is a signed order create carrying `X-BAPI-SIGN`, `X-BAPI-API-KEY` and the
 recv-window header (24-internal-schemas.md Sec.14.3 documents the four signing headers and the WS
@@ -15,7 +15,7 @@ import string
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from hypothesis import given
@@ -23,6 +23,7 @@ from hypothesis import strategies as st
 
 from candleviewer.domain.order_link import ext_key
 from candleviewer.storage.repositories.exchange_payload import (
+    MAX_CODE_CHARS,
     MAX_DEPTH,
     MAX_ITEMS,
     MAX_PAYLOAD_CHARS,
@@ -30,6 +31,7 @@ from candleviewer.storage.repositories.exchange_payload import (
     OVERSIZE,
     REDACTED,
     redact_exchange_payload,
+    redact_exchange_text,
 )
 
 _KEY = "DUMMYKEY_" + "Q3w9" * 5  # synthetic, shaped like an API key (letters and digits)
@@ -158,6 +160,7 @@ def test_a_credential_shaped_string_is_redacted(text: str) -> None:
         _ORDER_ID,
         "1760630400000",
         "1321003749386327552",
+        "0123456789abcdefg",  # 17: one short of a credential-shaped run
         "63099.800000000000000000",
         "insufficient available balance for this order",
         "ABCDEFGHIJKLMNOPQRST",  # letters only: a word, not a key
@@ -168,6 +171,15 @@ def test_a_credential_shaped_string_is_redacted(text: str) -> None:
 )
 def test_ids_numbers_and_words_are_kept(text: str) -> None:
     assert redact_exchange_payload({"retMsg": text}) == {"retMsg": text}
+
+
+def test_a_credential_shaped_foreign_order_link_id_is_stored_redacted() -> None:
+    """21 Sec.3.3.4 "Adopted rows": a foreign id stays only in the payload, as redaction leaves it.
+    The 32 hex characters of a `uuid4().hex` are credential-shaped; a hyphenated UUID and our own
+    id are not."""
+    kept = [{"orderLinkId": _ORDER_ID}, {"orderLinkId": _OUR}]
+    raw = {"orderLinkId": uuid.UUID(_ORDER_ID).hex, "list": kept}
+    assert redact_exchange_payload(raw) == {"orderLinkId": REDACTED, "list": kept}
 
 
 def test_values_become_plain_json() -> None:
@@ -273,6 +285,42 @@ def test_an_oversize_result_is_replaced_whole() -> None:
     assert redact_exchange_payload(raw) == {"redacted": OVERSIZE}
 
 
+# -- exchange text: `ret_msg` and `ret_code` (21 Sec.3.3.5) ----------------------------------------
+
+#: A signature error echoing the signed string: timestamp, key, recv window and body run together.
+_SIGN_ERROR = f'error sign! origin_string[1760630400000{_KEY}5000{{"category":"linear"}}]'
+
+
+def test_a_signature_error_echoing_the_key_is_redacted_as_text_and_in_a_payload() -> None:
+    assert redact_exchange_text(_SIGN_ERROR) == REDACTED
+    assert redact_exchange_payload({"retMsg": _SIGN_ERROR}) == {"retMsg": REDACTED}
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["OK", "10004", "110007", "insufficient available balance for this order", _OUR,
+     f"order {_OUR} accepted", "EC_PostOnlyWillTakeLiquidity", "DEMO_RETENTION_EXPIRED"],
+)  # fmt: skip
+def test_exchange_text_keeps_codes_ids_and_words(text: str) -> None:
+    assert redact_exchange_text(text) == text
+
+
+def test_exchange_text_none_stays_none_and_anything_else_unsafe_is_redacted() -> None:
+    assert redact_exchange_text(None) is None
+    assert redact_exchange_text(cast(Any, 10004)) == REDACTED  # not text: fail closed
+    assert redact_exchange_text("a\x00b") == REDACTED  # jsonb and text refuse NUL
+    url = f"/v5/order/realtime?symbol=BTCUSDT&sign={_MAC}"
+    assert redact_exchange_text(url) == "/v5/order/realtime?" + REDACTED
+
+
+def test_exchange_text_past_its_bound_is_oversize() -> None:
+    assert redact_exchange_text("x" * MAX_STRING_CHARS) == "x" * MAX_STRING_CHARS
+    assert redact_exchange_text("x" * (MAX_STRING_CHARS + 1)) == OVERSIZE
+    code = "1" * 64  # the `ret_code` bound 21 Sec.3.3.5 documents
+    assert redact_exchange_text(code, max_chars=MAX_CODE_CHARS) == code
+    assert redact_exchange_text(code + "1", max_chars=MAX_CODE_CHARS) == OVERSIZE
+
+
 # -- properties: no seeded secret survives, and a second pass changes nothing --------------------
 
 _ALNUM = string.ascii_letters + string.digits
@@ -309,3 +357,14 @@ def test_no_seeded_secret_survives_and_redaction_is_idempotent(
     out = redact_exchange_payload(_plant(tree, secret, place))
     assert secret not in _blob(out)
     assert redact_exchange_payload(out) == out
+
+
+@given(
+    secret=_SECRETS, before=_WORDS, after=_WORDS, glue=st.sampled_from(["", " ", "1760630400000"])
+)
+def test_no_seeded_secret_survives_in_exchange_text(
+    secret: str, before: str, after: str, glue: str
+) -> None:
+    out = redact_exchange_text(f"{before}{glue}{secret}{glue}{after}")
+    assert out is not None and secret not in out
+    assert redact_exchange_text(out) == out

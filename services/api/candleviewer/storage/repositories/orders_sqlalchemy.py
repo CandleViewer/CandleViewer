@@ -10,18 +10,25 @@ rule 5 yes/no over the global `ux_orders_link`. A unit test pins that set.
 one round trip in one transaction (#845 performance notes). `append` first locks the order row
 inside the account, then inserts the event with the next `seq` in a second statement, whose fresh
 snapshot sees every committed event; the lock serialises appends to one order, so `seq` stays
-dense and `UNIQUE (order_id, seq)` is only the backstop. Every payload passes
-`redact_exchange_payload()` inside the statement builders, before it is bound (SR-E29-08).
+dense and `UNIQUE (order_id, seq)` is only the backstop. Inside the statement builders, before
+anything is bound, `payload` passes `redact_exchange_payload()` and `ret_msg` and `ret_code` pass
+`redact_exchange_text()` (21 Sec.3.3.5; the #845 security notes).
 
-A database error never leaves with its statement, parameters or `DETAIL`, which carry P1 money
-values (21 Sec.12): it is re-raised `from None` as `OrderConstraintError(name)` or
-`StorageQueryFailed(sqlstate)` (C-12.6).
+Every unit of work first caps each of its statements, lock waits included, at the store's
+`statement_timeout` (`OMS_STATEMENT_TIMEOUT_MS`, the #845 default of `CV_OMS_STATEMENT_TIMEOUT_MS`,
+instead of the repository-wide 30 s), so a blocked order write fails within it and the OMS can
+refuse the order (24 Sec.8.2 S7) rather than hold the submit path.
+
+A database error of any call, read or write, never leaves with its statement, parameters or
+`DETAIL`, which carry P1 money values (21 Sec.12): it is re-raised `from None` as
+`OrderConstraintError(name)` or `StorageQueryFailed(sqlstate)` (C-12.6), so callers handle one
+error family.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Iterator, Mapping
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import fields
 from typing import Any, Final
 from uuid import UUID
@@ -31,7 +38,11 @@ from sqlalchemy.exc import DBAPIError
 
 from candleviewer.db.models import order_events, orders
 from candleviewer.storage.errors import StorageQueryFailed
-from candleviewer.storage.repositories.exchange_payload import redact_exchange_payload
+from candleviewer.storage.repositories.exchange_payload import (
+    MAX_CODE_CHARS,
+    redact_exchange_payload,
+    redact_exchange_text,
+)
 from candleviewer.storage.repositories.orders import (
     EVENT_FIELDS,
     MAX_EVENT_PAGE,
@@ -45,6 +56,7 @@ from candleviewer.storage.repositories.orders import (
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
+    SqlAlchemyUnitOfWork,
 )
 
 _O = orders.c
@@ -53,6 +65,10 @@ ORDER_COLUMNS: Final = tuple(_O[f.name] for f in fields(OrderRow))
 EVENT_COLUMNS: Final = tuple(_E[name] for name in EVENT_FIELDS)
 #: Statements without an `orders.exchange_account_id` filter (see the module docstring); tested.
 UNSCOPED: Final = frozenset({"create_statement", "link_taken_statement"})
+#: The default per-statement cap of the order store, in ms (#845 technical notes).
+OMS_STATEMENT_TIMEOUT_MS: Final = 2000
+#: Transaction-local (`true`), like the repository's `SET LOCAL`; the admin read model's form.
+_SET_TIMEOUT: Final = sa.text("SELECT set_config('statement_timeout', :timeout, true)")
 #: SQLSTATEs that carry a constraint name: unique, check and foreign-key violations.
 _NAMED_VIOLATIONS: Final = frozenset({"23505", "23514", "23503"})
 
@@ -62,8 +78,8 @@ def _event_values(event: NewOrderEvent) -> dict[str, Any]:
         "kind": event.kind,
         "source": event.source,
         "payload": redact_exchange_payload(event.payload),
-        "ret_code": event.ret_code,
-        "ret_msg": event.ret_msg,
+        "ret_code": redact_exchange_text(event.ret_code, max_chars=MAX_CODE_CHARS),
+        "ret_msg": redact_exchange_text(event.ret_msg),
         "latency_ms": event.latency_ms,
         "event_ts": event.event_ts,
     }
@@ -189,15 +205,36 @@ def _constraints() -> Iterator[None]:
 class SqlAlchemyOrderStore:
     """`OrderStore` and `OrderEventStore` over one relational repository (asyncpg)."""
 
-    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
+    def __init__(
+        self,
+        relational: SqlAlchemyRelationalRepository,
+        *,
+        statement_timeout_ms: int = OMS_STATEMENT_TIMEOUT_MS,
+    ) -> None:
+        # Postgres reads 0 as "no cap", and a bool is an int: neither is a cap.
+        if (
+            isinstance(statement_timeout_ms, bool)
+            or not isinstance(statement_timeout_ms, int)
+            or statement_timeout_ms < 1
+        ):
+            raise ValueError("statement_timeout_ms must be an int of at least 1")
         self._relational = relational
+        self._timeout = str(statement_timeout_ms)
+
+    @asynccontextmanager
+    async def _unit_of_work(self) -> AsyncIterator[SqlAlchemyUnitOfWork]:
+        """One transaction whose statements the store's cap bounds; a database error leaves it
+        as `OrderConstraintError` or `StorageQueryFailed`, unchained."""
+        with _constraints():
+            async with self._relational.unit_of_work() as uow:
+                await uow.session.execute(_SET_TIMEOUT, {"timeout": self._timeout})
+                yield uow
 
     async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
         stmt = create_statement(order, first_event)
-        with _constraints():
-            async with self._relational.unit_of_work() as uow:
-                row = (await uow.session.execute(stmt)).mappings().one()
-                await uow.commit()
+        async with self._unit_of_work() as uow:
+            row = (await uow.session.execute(stmt)).mappings().one()
+            await uow.commit()
         return _order(row)
 
     async def get(self, account_id: UUID, order_id: UUID) -> OrderRow | None:
@@ -209,26 +246,24 @@ class SqlAlchemyOrderStore:
     async def list_open(
         self, account_id: UUID, *, symbol: str | None = None
     ) -> tuple[OrderRow, ...]:
-        async with self._relational.unit_of_work() as uow:
+        async with self._unit_of_work() as uow:
             result = await uow.session.execute(list_open_statement(account_id, symbol))
             return tuple(_order(row) for row in result.mappings())
 
     async def link_id_taken(self, order_link_id: str) -> bool:
-        async with self._relational.unit_of_work() as uow:
-            return bool(
-                (await uow.session.execute(link_taken_statement(order_link_id))).scalar_one()
-            )
+        async with self._unit_of_work() as uow:
+            result = await uow.session.execute(link_taken_statement(order_link_id))
+            return bool(result.scalar_one())
 
     async def append(self, account_id: UUID, order_id: UUID, event: NewOrderEvent) -> OrderEventRow:
-        with _constraints():
-            async with self._relational.unit_of_work() as uow:
-                lock = await uow.session.execute(lock_statement(account_id, order_id))
-                order_link_id = lock.scalar_one_or_none()
-                if order_link_id is None:
-                    raise OrderNotFoundError
-                stmt = append_statement(account_id, order_id, event)
-                row = (await uow.session.execute(stmt)).mappings().one()
-                await uow.commit()
+        async with self._unit_of_work() as uow:
+            lock = await uow.session.execute(lock_statement(account_id, order_id))
+            order_link_id = lock.scalar_one_or_none()
+            if order_link_id is None:
+                raise OrderNotFoundError
+            stmt = append_statement(account_id, order_id, event)
+            row = (await uow.session.execute(stmt)).mappings().one()
+            await uow.commit()
         return _event(row, order_link_id)
 
     async def list_for_order(
@@ -237,18 +272,19 @@ class SqlAlchemyOrderStore:
         if after_seq < -1 or not 1 <= limit <= MAX_EVENT_PAGE:
             raise ValueError(f"after_seq must be >= -1 and limit 1..{MAX_EVENT_PAGE}")
         stmt = list_events_statement(account_id, order_id, after_seq, limit)
-        async with self._relational.unit_of_work() as uow:
+        async with self._unit_of_work() as uow:
             result = await uow.session.execute(stmt)
             return tuple(_event(row, row["order_link_id"]) for row in result.mappings())
 
     async def _one(self, stmt: sa.Select[Any]) -> OrderRow | None:
-        async with self._relational.unit_of_work() as uow:
+        async with self._unit_of_work() as uow:
             row = (await uow.session.execute(stmt)).mappings().first()
         return None if row is None else _order(row)
 
 
 __all__ = [
-    "EVENT_COLUMNS", "ORDER_COLUMNS", "UNSCOPED", "SqlAlchemyOrderStore", "append_statement",
-    "create_statement", "get_by_link_statement", "get_statement", "link_taken_statement",
-    "list_events_statement", "list_open_statement", "lock_statement",
+    "EVENT_COLUMNS", "OMS_STATEMENT_TIMEOUT_MS", "ORDER_COLUMNS", "UNSCOPED",
+    "SqlAlchemyOrderStore", "append_statement", "create_statement", "get_by_link_statement",
+    "get_statement", "link_taken_statement", "list_events_statement", "list_open_statement",
+    "lock_statement",
 ]  # fmt: skip
