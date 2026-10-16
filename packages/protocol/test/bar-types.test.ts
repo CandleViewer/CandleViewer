@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import type { bars } from "../src/generated/index.js";
 import type { ws } from "../src/generated/index.js";
 
 // E12-T01: the TS bar model is generated from the Pydantic models (via the committed
-// JSON Schema). Regenerating must reproduce the committed file byte-for-byte.
+// JSON Schema). Regenerating must reproduce the committed file byte-for-byte. The fresh copy goes to a
+// temp dir: rewriting the tracked file in place raced the generated-guard test (#2965).
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(__dirname, "..");
@@ -17,15 +19,17 @@ const vectorsPath = join(packageRoot, "..", "fixtures", "golden", "bars", "spec_
 describe("generated bar types", () => {
   it("match a fresh generation from bar-model.schema.json (drift check)", () => {
     const committed = readFileSync(outPath, "utf8").split("\r\n").join("\n");
+    const dir = mkdtempSync(join(tmpdir(), "cv-bar-types-"));
     try {
-      execFileSync("node", [join(packageRoot, "scripts", "generate-bar-types.mjs")], {
+      const freshPath = join(dir, "index.ts");
+      execFileSync("node", [join(packageRoot, "scripts", "generate-bar-types.mjs"), freshPath], {
         cwd: packageRoot,
         stdio: "pipe",
       });
-      const fresh = readFileSync(outPath, "utf8").split("\r\n").join("\n");
+      const fresh = readFileSync(freshPath, "utf8").split("\r\n").join("\n");
       expect(fresh).toBe(committed);
     } finally {
-      writeFileSync(outPath, committed, "utf8");
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
