@@ -179,7 +179,10 @@ omit = [
   "candleviewer/journal/*",
   "candleviewer/main.py",
   "candleviewer/observability/service.py",
-  "candleviewer/oms/*",
+  # oms errors/validator/fakes/order_link* (E09-T04, E29-T02) are counted in the floor.
+  "candleviewer/oms/__init__.py",
+  "candleviewer/oms/models.py",
+  "candleviewer/oms/service.py",
   "candleviewer/paper/*",
   "candleviewer/recorder/service.py",  # policy/models/errors: E16-T02, counted
   # replay (M12) is fully counted: E26-T01 (#624) service + E26-T02 read path (#2346).
