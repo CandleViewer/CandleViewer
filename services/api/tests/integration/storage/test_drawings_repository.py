@@ -787,7 +787,7 @@ async def test_bulk_batch_statements_use_the_pk_index_and_never_seq_scan_drawing
     ups = _rows_param([_row_json(i, f, _T) for i in sample])
     news = _rows_param([_row_json(str(uuid.uuid4()), f) for _ in range(100)])
     cases: dict[str, tuple[Any, dict[str, Any]]] = {
-        "snapshot": (_SNAPSHOT, {"ids": sample}),
+        "snapshot": (_SNAPSHOT, {"ids": sample, "owner": owner}),  # owner-scoped (#2407)
         "insert": (_INSERT_MANY, {"owner": owner, "rows": news}),
         "update": (_UPDATE_MANY, {"owner": owner, "ids": sample, "rows": ups}),
         "delete": (_SOFT_DELETE_MANY, {"owner": owner, "ids": sample}),
