@@ -497,9 +497,11 @@ def test_inbound_rate_limit_err_then_bye_4429(world: _World) -> None:
     )
 
 
-def test_pong_frames_do_not_count_toward_the_rate_limit(world: _World) -> None:
+def test_pong_frames_after_auth_ok_do_not_count_toward_the_rate_limit(world: _World) -> None:
+    """§8.5: once `auth_ok` is sent; before it a `pong` counts (`test_inbound_frame_limits.py`)."""
     with world.client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _hello(ws)
+        _auth(ws)
         for _ in range(40):
             ws.send_json({"t": "pong", "id": "s-hb-1"})
         ws.send_json({"t": "ping", "id": "p"})

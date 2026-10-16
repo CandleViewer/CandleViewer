@@ -10,9 +10,12 @@ decoder checks the cap again first. The other limits hold *while* msgpack's C un
   container to the length its header claims);
 - ext types are refused on sight, except the timestamp (type -1), which msgpack decodes itself
   and the check below refuses once the decode completes;
-- a value budget, `MAX_MSGPACK_VALUES`, charges every completed container: the container,
-  its elements, and each map key and value (before duplicate keys collapse). The decode ends
-  once the budget is spent, so the decoded value, and the check below, stay small.
+- a value budget, `MAX_MSGPACK_VALUES` (`MAX_PREAUTH_MSGPACK_VALUES` until `auth_ok`), charges
+  every completed container: the container, its elements, and each map key and value (before
+  duplicate keys collapse). The decode ends once the budget is spent, so the decoded value, and
+  the check below, stay small.
+
+Until the first `auth_ok` the gateway hands this decoder only frames of at most 8 KiB.
 
 Live memory during a decode is bounded by the open levels (at most 1 024, each pre-sized to
 its cap, plus the scalars and map pairs read into them, which the 256 KiB input bounds) and by
@@ -79,6 +82,10 @@ MAX_MSGPACK_MAP_LEN: Final = 32
 #: SR-185: values charged per frame (see `_Budget`). A `sub` of 50 `rules` topics with every
 #: list that family accepts full costs about 7 500.
 MAX_MSGPACK_VALUES: Final = 16_384
+#: SR-185: the value budget the gateway passes until the first `auth_ok`. The widest conforming
+#: frames there, a `hello` and an `auth` with each enum list naming every member once, are charged
+#: 36 and 16: this is twice the larger.
+MAX_PREAUTH_MSGPACK_VALUES: Final = 72
 _SCALARS: Final = (str, int, type(None))  # a bool is an int
 
 # `TypeAlias`, not a PEP 695 `type` statement: Semgrep cannot parse that, and it must scan this
@@ -96,13 +103,14 @@ class _Budget:
     """Charges each container as the unpacker completes it: 1 for the container, 1 per array
     element, 2 per map entry as read (so duplicate keys still cost). Ends the decode once spent."""
 
-    def __init__(self) -> None:
-        self.left = MAX_MSGPACK_VALUES
+    def __init__(self, limit: int) -> None:
+        self.limit = limit
+        self.left = limit
 
     def _charge(self, cost: int) -> None:
         self.left -= cost
         if self.left < 0:
-            raise MsgpackFrameError(f"more than {MAX_MSGPACK_VALUES} values")
+            raise MsgpackFrameError(f"more than {self.limit} values")
 
     def array(self, items: list[Any]) -> list[Any]:
         self._charge(1 + len(items))
@@ -113,13 +121,14 @@ class _Budget:
         return dict(pairs)
 
 
-def decode_client_frame(raw: bytes) -> JsonValue:
-    """One client frame's decoded value, or `MsgpackFrameError` (SR-185)."""
+def decode_client_frame(raw: bytes, *, max_values: int = MAX_MSGPACK_VALUES) -> JsonValue:
+    """One client frame's decoded value, or `MsgpackFrameError` (SR-185). `max_values` can only
+    lower the value budget: the gateway passes `MAX_PREAUTH_MSGPACK_VALUES` until `auth_ok`."""
     if not isinstance(raw, bytes | bytearray):  # a memoryview's len() is not its byte count
         raise MsgpackFrameError("a msgpack frame is binary")
     if len(raw) > MAX_INBOUND_FRAME_BYTES:
         raise MsgpackFrameError("frame exceeds the inbound cap")
-    budget = _Budget()
+    budget = _Budget(min(max_values, MAX_MSGPACK_VALUES))
     try:
         value: JsonValue = msgpack.unpackb(
             raw,

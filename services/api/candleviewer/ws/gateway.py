@@ -39,10 +39,10 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   every dequeue and every send, not only when idle, on the injected clocks
   (auth timeout, token expiry on both clocks, unsolicited `ping`, heartbeat
   timeout), so tests drive time instead of sleeping.
-- **Inbound limits**: size checked before decoding (`1009`); 30/s and 300/min
-  excluding `pong` (`client_rate_limited`, then `4429`). An envelope `id` that is not a
-  string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped before the frame is
-  handled, so no reply echoes it (§13.1, #2572).
+- **Inbound limits**: size checked before decoding (`1009`), 8 KiB until the first `auth_ok`;
+  30/s and 300/min, excluding `pong` once `auth_ok` is sent (`client_rate_limited`, then
+  `4429`). An envelope `id` that is not a string of at most `ENVELOPE_ID_MAX_LEN` characters
+  is dropped before the frame is handled, so no reply echoes it (§13.1, #2572).
 - Every server-initiated close after `accept` goes through `_Connection.close_with`, which
   queues `bye` ahead of the close frame (requirement S11), except the handler's own fault `bye`
   and 1011, which the handler counts itself. Token expiry and revocation seal the close:
@@ -84,7 +84,12 @@ from candleviewer.net import RESOLVED_SOURCE_KEY
 from candleviewer.observability.context import current_request_id, spawn
 from candleviewer.settings import CLOSE_AUDIT_TIMEOUT_S, CLOSE_FLUSH_TIMEOUT_S
 from candleviewer.ws.backpressure_config import BackpressureConfig
-from candleviewer.ws.codec import decode_client_frame, encode_server_frame
+from candleviewer.ws.codec import (
+    MAX_MSGPACK_VALUES,
+    MAX_PREAUTH_MSGPACK_VALUES,
+    decode_client_frame,
+    encode_server_frame,
+)
 from candleviewer.ws.errors import build_ws_error
 from candleviewer.ws.lifecycle import (
     CLOSE_REASONS,
@@ -540,10 +545,11 @@ class _Connection:
     def decode(self, msg: Mapping[str, Any], max_frame_bytes: int) -> Any:
         """One ASGI receive message -> decoded frame; `_OVERSIZE` after an oversize close.
 
-        Two limits come before any scan or decode (SR-184). The size cap is the smaller
-        `MAX_PREAUTH_FRAME_BYTES` until the first `auth_ok` (which sets `user_id`), the frame before
-        `hello` included. A JSON frame with more than `MAX_JSON_CONTAINERS` `[` and `{` characters
-        is malformed, and is never depth-scanned or decoded.
+        Until the first `auth_ok` (which sets `user_id`), the frame before `hello` included, the
+        size cap is the smaller `MAX_PREAUTH_FRAME_BYTES` (SR-040) and a MessagePack frame is
+        decoded under the smaller value budget `MAX_PREAUTH_MSGPACK_VALUES` (SR-185). A JSON
+        frame with more than `MAX_JSON_CONTAINERS` `[` and `{` characters is malformed, and is
+        never depth-scanned or decoded (SR-184).
 
         Size is checked on the raw payload BEFORE any decoding (1009). Each subprotocol has one
         frame kind (§2.2): a text frame on `cv.v1.msgpack` and a binary one on `cv.v1.json` are
@@ -555,16 +561,19 @@ class _Connection:
         `dispatch` counts a strike for either."""
         binary = msg.get("bytes")
         raw: str | bytes = binary if binary is not None else (msg.get("text") or "")
-        size = len(raw.encode()) if isinstance(raw, str) else len(raw)
-        cap = max_frame_bytes
+        cap, values = max_frame_bytes, MAX_MSGPACK_VALUES
         if self.user_id is None:
-            cap = min(cap, MAX_PREAUTH_FRAME_BYTES)
+            cap, values = min(cap, MAX_PREAUTH_FRAME_BYTES), MAX_PREAUTH_MSGPACK_VALUES
+        if isinstance(raw, bytes):
+            size = len(raw)
+        else:  # a character is at least one byte: a text past `cap` in characters is not encoded
+            size = len(raw) if len(raw) > cap else len(raw.encode())
         if size > cap:
             self.close_with("frame_too_big")
             return _OVERSIZE
         try:
             if self.msgpack:
-                return [] if isinstance(raw, str) else decode_client_frame(raw)
+                return [] if isinstance(raw, str) else decode_client_frame(raw, max_values=values)
             if isinstance(raw, bytes):
                 return []  # a binary frame on cv.v1.json: a violation, never decoded
             openers = raw.count("[") + raw.count("{")  # not string-aware: it can only over-count
@@ -931,7 +940,8 @@ def make_ws_router(
             del frame["id"]  # #2572: never echoed, on any reply; the frame is still handled
         kind = frame.get("t") if isinstance(frame, dict) else None
         fid = frame.get("id") if isinstance(frame, dict) else None
-        if kind != "pong" and not conn.rate.allow(conn.clock()):
+        exempt = kind == "pong" and conn.user_id is not None  # §8.5: from the first `auth_ok`
+        if not exempt and not conn.rate.allow(conn.clock()):
             conn.rate_strikes += 1
             if conn.rate_strikes > 1:
                 conn.close_with("client_rate_limited", retry_after_ms=1000)

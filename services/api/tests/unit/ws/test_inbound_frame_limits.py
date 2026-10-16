@@ -1,10 +1,12 @@
-"""SR-184: the inbound frame limits before `auth_ok` and before decode (`23-ws-protocol.md` §3.6).
+"""The inbound frame limits before `auth_ok` and before decode (`23-ws-protocol.md` §3.6, §8.5).
 
 Until the first `auth_ok`, the `hello` included, a frame may be at most `MAX_PREAUTH_FRAME_BYTES`:
-a larger one gets `bye frame_too_big` and 1009 and is never scanned or decoded. A JSON text frame
-holds at most `MAX_JSON_CONTAINERS` `[` and `{` characters: more is a `frame_malformed` strike, and
-the depth scan never walks it. Everything is counted, never timed: sizes, and what the depth scan
-and each decoder were handed (spies on the gateway module's own references)."""
+a larger one gets `bye frame_too_big` and 1009 and is never scanned or decoded (SR-040). There, a
+MessagePack frame is decoded under `MAX_PREAUTH_MSGPACK_VALUES` (SR-185), and a `pong` counts
+toward the inbound rate like any other frame. A JSON text frame holds at most `MAX_JSON_CONTAINERS`
+`[` and `{` characters: more is a `frame_malformed` strike, and the depth scan never walks it
+(SR-184). The tests count sizes, what the depth scan and each decoder were handed, the values the
+MessagePack decoder charged and the limiter's answers (spies on the modules' own references)."""
 
 from __future__ import annotations
 
@@ -18,9 +20,17 @@ from typing import Any, Final
 import msgpack
 import pytest
 
+import candleviewer.ws.codec as codec
 import candleviewer.ws.gateway as gateway
-from candleviewer.ws.codec import decode_client_frame
+from candleviewer.ws.codec import (
+    MAX_MSGPACK_ARRAY_LEN,
+    MAX_MSGPACK_VALUES,
+    MAX_PREAUTH_MSGPACK_VALUES,
+    MsgpackFrameError,
+    decode_client_frame,
+)
 from candleviewer.ws.gateway import _OVERSIZE, _Connection
+from candleviewer.ws.lifecycle import RATE_PER_SECOND, InboundRateLimiter
 from candleviewer.ws.limits import (
     MAX_INBOUND_FRAME_BYTES,
     MAX_JSON_CONTAINERS,
@@ -37,8 +47,10 @@ from tests.unit.ws.test_lifecycle_socket import (
     _bye_then_close,
     _hello,
     _recv,
+    _send,
     _World,
 )
+from tests.unit.ws.test_msgpack_decode_bounds import _budget_frame
 
 REPO = Path(__file__).resolve().parents[5]
 _SCHEMAS: Final[dict[str, Any]] = json.loads(
@@ -147,14 +159,44 @@ def handed(monkeypatch: pytest.MonkeyPatch) -> _Handed:
         seen.decoded.append(("json", len(raw)))
         return loads(raw)
 
-    def spy_unpack(raw: bytes) -> Any:
+    def spy_unpack(raw: bytes, **budget: int) -> Any:
         seen.decoded.append(("msgpack", len(raw)))
-        return decode_client_frame(raw)
+        return decode_client_frame(raw, **budget)
 
     monkeypatch.setattr(gateway, "json", SimpleNamespace(loads=spy_loads, dumps=json.dumps))
     monkeypatch.setattr(gateway, "json_depth_exceeds", spy_scan)
     monkeypatch.setattr(gateway, "decode_client_frame", spy_unpack)
     return seen
+
+
+@pytest.fixture
+def charged(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Each charge the MessagePack decoder's value budget took, in order: one per container it
+    completed (`codec._Budget`; the codec module's own reference is replaced)."""
+    charges: list[int] = []
+
+    class _Recording(codec._Budget):
+        def _charge(self, n: int) -> None:
+            charges.append(n)
+            super()._charge(n)
+
+    monkeypatch.setattr(codec, "_Budget", _Recording)
+    return charges
+
+
+@pytest.fixture
+def allowed(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Each answer the inbound rate limiter gave (`InboundRateLimiter.allow`), in order; the
+    gateway module's own reference is replaced."""
+    answers: list[bool] = []
+
+    class _Recording(InboundRateLimiter):
+        def allow(self, now: float) -> bool:
+            answers.append(ok := super().allow(now))
+            return ok
+
+    monkeypatch.setattr(gateway, "InboundRateLimiter", _Recording)
+    return answers
 
 
 # -- `_Connection.decode`: the size cap -----------------------------------------------------------
@@ -183,6 +225,32 @@ def test_decode_before_auth_ok_cap_counts_encoded_bytes_not_characters() -> None
     assert _decode(_connection(JSON[0]), at_cap) == at_cap[1:-1]
     over = '"' + "é" * half + '"'  # 8 194 bytes, 4 098 characters
     assert _decode(_connection(JSON[0]), over) is _OVERSIZE
+
+
+class _Encoded(Exception):
+    """Raised when something encodes an `_Unencodable`."""
+
+
+class _Unencodable(str):
+    """A text frame whose `encode` raises: measuring it in bytes would encode it."""
+
+    def encode(self, encoding: str = "utf-8", errors: str = "strict") -> bytes:
+        raise _Encoded
+
+
+@_AUTHED
+def test_decode_of_a_text_frame_longer_than_the_cap_in_characters_is_refused_unencoded(
+    authed: bool,
+) -> None:
+    """A character is at least one byte, so a text frame with more characters than the cap is over
+    it and is refused without being encoded to count its bytes. At the cap in characters it is
+    still counted in bytes: one two-byte character puts it over."""
+    cap = MAX_INBOUND_FRAME_BYTES if authed else MAX_PREAUTH_FRAME_BYTES
+    frame = _Unencodable("x" * (cap + 1))
+    assert _decode(_connection(JSON[0], authed=authed), frame) is _OVERSIZE
+    at_cap = '"é' + "x" * (cap - 3) + '"'
+    assert (len(at_cap), len(at_cap.encode())) == (cap, cap + 1)
+    assert _decode(_connection(JSON[0], authed=authed), at_cap) is _OVERSIZE
 
 
 @pytest.mark.parametrize(("subprotocols", "decoder"), _CODECS)
@@ -277,12 +345,87 @@ def test_decode_of_a_frame_one_over_the_container_cap_is_malformed_and_never_wal
     assert handed.nothing
 
 
+# -- `_Connection.decode`: the MessagePack value budget -------------------------------------------
+
+
+def _ping_of(values: int) -> bytes:
+    """A MessagePack `ping` the SR-185 decoder charges exactly `values`: 7 for the envelope map,
+    3 for `p` and 1 for its `pad` list, plus 1 per nil in that list."""
+    assert 11 <= values <= 11 + MAX_MSGPACK_ARRAY_LEN
+    packed: bytes = msgpack.packb({"t": "ping", "id": "p", "p": {"pad": [None] * (values - 11)}})
+    return packed
+
+
+#: MessagePack frames within the frame cap before `auth_ok` that the SR-185 budget alone lets the
+#: decoder charge thousands of values for (the count is in each comment).
+_VALUE_SHAPES: Final[dict[str, bytes]] = {
+    "empty-arrays": msgpack.packb([[[]] * 128] * 62),  # 8 125 B, 15 997
+    "one-entry-maps": msgpack.packb([[{"": None}] * 128] * 21),  # 8 130 B, 10 795
+    "nils": msgpack.packb([[None] * 127] * 62),  # 8 063 B, 7 999
+}
+
+
+def test_decode_msgpack_before_auth_ok_value_budget_exact_is_decoded_one_over_malformed() -> None:
+    conn = _connection(MSGPACK[0])
+    assert _decode(conn, _ping_of(MAX_PREAUTH_MSGPACK_VALUES))["t"] == "ping"
+    assert _decode(conn, _ping_of(MAX_PREAUTH_MSGPACK_VALUES + 1)) == []
+    assert not conn.closing  # a strike, counted by `dispatch`, not a close
+
+
+@pytest.mark.parametrize("frame", list(_VALUE_SHAPES.values()), ids=list(_VALUE_SHAPES))
+def test_decode_msgpack_before_auth_ok_charges_no_more_values_than_the_budget(
+    charged: list[int], frame: bytes
+) -> None:
+    """The decode ends on the container whose charge passes the budget: every charge before it
+    fits, whatever the frame's shape."""
+    assert len(frame) <= MAX_PREAUTH_FRAME_BYTES
+    assert _decode(_connection(MSGPACK[0]), frame) == []
+    assert sum(charged[:-1]) <= MAX_PREAUTH_MSGPACK_VALUES < sum(charged)
+
+
+def test_decode_msgpack_after_auth_ok_value_budget_is_the_sr_185_budget() -> None:
+    conn = _connection(MSGPACK[0], authed=True)
+    assert _decode(conn, _ping_of(MAX_PREAUTH_MSGPACK_VALUES + 1))["t"] == "ping"
+    for frame in _VALUE_SHAPES.values():
+        assert _decode(conn, frame) == msgpack.unpackb(frame)
+    assert _decode(conn, _budget_frame(0)) != []  # exactly MAX_MSGPACK_VALUES
+    assert _decode(conn, _budget_frame(1)) == []
+
+
+def test_codec_value_budget_can_only_be_lowered() -> None:
+    with pytest.raises(MsgpackFrameError, match="values"):
+        decode_client_frame(_budget_frame(1), max_values=2 * MAX_MSGPACK_VALUES)
+    with pytest.raises(MsgpackFrameError, match="values"):
+        decode_client_frame(_ping_of(12), max_values=11)
+
+
+@pytest.mark.parametrize(
+    ("authed", "reply"),
+    [(False, ("err", "frame_malformed")), (True, ("pong", None))],
+    ids=["before-auth_ok", "after-auth_ok"],
+)
+def test_gateway_msgpack_frame_past_the_pre_auth_value_budget_is_a_strike_until_auth_ok(
+    authed: bool, reply: tuple[str, str | None]
+) -> None:
+    w = _World()
+    with w.client, w.client.websocket_connect("/ws", subprotocols=MSGPACK) as ws:
+        _hello(ws)
+        if authed:
+            assert _auth(ws)["t"] == "auth_ok"
+        ws.send_bytes(_ping_of(MAX_PREAUTH_MSGPACK_VALUES + 1))
+        frame = _recv(ws)
+        assert (frame["t"], frame["p"].get("code")) == reply
+        _send(ws, {"t": "ping", "id": "p2"})  # one strike is not fatal
+        assert _recv(ws)["t"] == "pong"
+
+
 # -- the constants --------------------------------------------------------------------------------
 
 
 def _widest_hello() -> dict[str, Any]:
-    """The widest `hello` the schema allows: every property at its bound, each enum list holding
-    every member once (the schema sets no list bound; MessagePack caps one at 128)."""
+    """The widest conforming `hello`: every property at its bound and each enum list naming every
+    member once. The schema bounds no list, so a list that repeats a member is read as
+    non-conforming (MessagePack caps any list at 128)."""
     props = _schema("hello")["properties"]
     body = {
         "protocol": props["protocol"]["const"],
@@ -303,6 +446,8 @@ def _widest_hello() -> dict[str, Any]:
 
 
 def _widest_auth() -> dict[str, Any]:
+    """The widest conforming `auth`: the longest `access_token` the schema allows, in ASCII (the
+    schema bounds characters; the frame cap counts bytes), and every environment once."""
     props = _schema("auth")["properties"]
     environments = _SCHEMAS["cv://ws/v1/common.schema.json"]["$defs"]["environment"]["enum"]
     body = {
@@ -329,6 +474,9 @@ def _widest_sub() -> dict[str, Any]:
             assert bound is not None  # every list option has a bound, the schema's or the server's
             opts[name] = ["x"] * bound
         elif spec.get("type") == "object":
+            # No family accepts an object option, so `{}` is its widest form. One that does must
+            # bound its shape and re-derive this ceiling.
+            assert name not in server
             opts[name] = {}
     topics = [
         {"ch": f"t.{i}", "opts": opts} for i in range(sub["properties"]["topics"]["maxItems"])
@@ -342,13 +490,24 @@ def test_limits_pre_auth_cap_is_at_most_one_32nd_of_the_inbound_cap() -> None:
 
 @pytest.mark.parametrize("build", [_widest_hello, _widest_auth], ids=["hello", "auth"])
 @pytest.mark.parametrize("subprotocols", [JSON, MSGPACK], ids=["json", "msgpack"])
-def test_decode_before_auth_ok_admits_the_widest_schema_valid_hello_and_auth(
+def test_decode_before_auth_ok_admits_the_widest_schema_valid_hello_and_ascii_auth(
     build: Callable[[], dict[str, Any]], subprotocols: list[str]
 ) -> None:
     frame = build()
     raw: str | bytes = msgpack.packb(frame) if subprotocols == MSGPACK else json.dumps(frame)
     assert len(raw.encode() if isinstance(raw, str) else raw) <= MAX_PREAUTH_FRAME_BYTES
     assert _decode(_connection(subprotocols[0]), raw) == frame
+
+
+def test_limits_pre_auth_value_budget_is_at_least_twice_the_widest_hello_and_auth(
+    charged: list[int],
+) -> None:
+    widest = 0
+    for build in (_widest_hello, _widest_auth):
+        charged.clear()
+        decode_client_frame(msgpack.packb(build()))
+        widest = max(widest, sum(charged))
+    assert 2 * widest <= MAX_PREAUTH_MSGPACK_VALUES
 
 
 def test_limits_container_cap_is_at_least_twice_the_widest_schema_valid_sub() -> None:
@@ -396,3 +555,44 @@ def test_gateway_frame_past_the_pre_auth_cap_is_served_once_auth_ok_is_sent(
         assert _auth(ws)["t"] == "auth_ok"
         _send_raw(ws, _padded(subprotocols, "ping", MAX_PREAUTH_FRAME_BYTES + 1))
         assert _recv(ws)["t"] == "pong"
+
+
+# -- the inbound rate: a `pong` before `auth_ok` --------------------------------------------------
+
+
+def test_gateway_pong_counts_toward_the_inbound_rate_until_auth_ok_only(
+    allowed: list[bool],
+) -> None:
+    """§8.5: the limiter is asked about a `pong` before `auth_ok`, as about any frame, and never
+    after it. Each `ping` is answered before the next count is read, so every frame before it
+    has been handled."""
+    w = _World()
+    with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+        _hello(ws)
+        _send(ws, {"t": "pong", "id": "s-hb-1"})
+        _send(ws, {"t": "ping", "id": "p1"})
+        assert _recv(ws)["t"] == "pong"
+        before = len(allowed)  # `hello`, `pong`, `ping`
+        assert _auth(ws)["t"] == "auth_ok"
+        _send(ws, {"t": "pong", "id": "s-hb-2"})
+        _send(ws, {"t": "ping", "id": "p2"})
+        assert _recv(ws)["t"] == "pong"
+        after = len(allowed) - before  # `auth`, `ping`
+    assert (before, after) == (3, 2)
+    assert all(allowed)
+
+
+def test_gateway_pongs_before_auth_ok_get_client_rate_limited_then_4429() -> None:
+    """A peer that sends only `pong` frames before `auth_ok` meets the inbound rate like any
+    other: the fake clock stands still, so every frame below falls in one second."""
+    w = _World()
+    with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+        _hello(ws)  # the first frame of this second
+        for _ in range(RATE_PER_SECOND - 1):
+            _send(ws, {"t": "pong", "id": "s-hb-1"})
+        _send(ws, {"t": "ping", "id": "over"})
+        err = _recv(ws)
+        assert (err["t"], err["p"].get("code")) == ("err", "client_rate_limited")
+        _send(ws, {"t": "pong", "id": "s-hb-1"})
+        bye, code = _bye_then_close(ws)
+    assert (bye["p"]["reason"], code) == ("client_rate_limited", 4429)

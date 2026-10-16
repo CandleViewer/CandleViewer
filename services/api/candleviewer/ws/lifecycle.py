@@ -10,7 +10,8 @@ Pure, I/O-free building blocks the gateway drives:
 - `origin_refusal`: §2.5 `Origin` check on the upgrade (SR-042, SR-183), `header_values`
   (case-insensitive header names) and `RefusalLogLimiter` (the refusal log cap).
 - `bye_frame`: the one `bye` builder (§4.4, requirement S11).
-- `InboundRateLimiter`: 30 frames/s and 300 frames/min excluding `pong` (§8.5).
+- `InboundRateLimiter`: 30 frames/s and 300 frames/min (§8.5); the gateway exempts `pong` once
+  `auth_ok` is sent.
 - `ConnectRateLimiter`: new authenticated sockets per user per sliding minute (§4.3, #2558).
 - `Watchdog`: auth deadline, token expiry, unsolicited ping and heartbeat
   timeout evaluated against an injected monotonic clock (no sleeps).
