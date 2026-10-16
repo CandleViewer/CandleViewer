@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.admin.http import (
@@ -57,6 +58,12 @@ def _request(role: str) -> Request:
     return Request({"type": "http", "path": "/admin/overview", "headers": headers, "route": route})
 
 
+def _denied(permission: Permission) -> float:
+    """`authz_denied_total` (SR-125) for `permission`; a test asserts the delta, not the value."""
+    labels = {"permission": permission.value}
+    return float(REGISTRY.get_sample_value("authz_denied_total", labels) or 0.0)
+
+
 class FailingAudit:
     async def emit(self, action: str, **fields: Any) -> None:
         raise RuntimeError("wal full at /var/lib/cv")
@@ -80,10 +87,12 @@ class CancelledAudit:
 def test_rbac_cell_on_any_admin_route(role: str, status: int, code: str | None) -> None:
     spy = AuditSpy()
     client, served = _guarded(Resolver(), spy)
+    denied = _denied(READ)
     response = client.get("/admin/probe", headers={"x-role": role})
     assert response.status_code == status
     assert served == (["owner"] if status == 200 else [])
     assert spy.records == ([] if status == 401 else [expected_record(role, "/admin/probe")])
+    assert _denied(READ) - denied == (1 if status == 403 else 0)  # a decided denial, not a 401
     if code is not None:
         assert (response.json()["code"], response.json()["type"]) == (code, _ERRORS + code)
     if status == 403:
@@ -95,10 +104,13 @@ def test_the_guard_checks_the_permission_it_was_given(role: str, status: int) ->
     # A second router on `audit:read`, which the viewer and manager hold and the owner does not.
     spy = AuditSpy()
     client, served = _guarded(Resolver(), spy, AUDIT)
+    denied = _denied(AUDIT), _denied(READ)
     response = client.get("/admin/probe", headers={"x-role": role})
     assert response.status_code == status
     assert served == ([role] if status == 200 else [])
     assert spy.records == [expected_record(role, "/admin/probe", AUDIT)]
+    moved = (_denied(AUDIT) - denied[0], _denied(READ) - denied[1])
+    assert moved == (1 if status == 403 else 0, 0)  # the label is the router's permission
     if status == 403:
         assert response.json()["detail"] == "requires audit:read"
 
@@ -130,6 +142,20 @@ def test_the_guard_fails_closed_before_any_route_runs(
     assert "wal" not in response.text  # the failure's own message never leaves
 
 
+@pytest.mark.parametrize(
+    ("audit", "status", "counted"),
+    [(FailingAudit(), 403, 1), (None, 503, 0)],
+    ids=["write-failed", "no-audit-writer"],
+)
+def test_authz_denied_total_counts_a_decided_denial_even_if_the_audit_write_fails(
+    audit: AuditEmitter | None, status: int, counted: int
+) -> None:
+    client, _ = _guarded(Resolver(), audit)  # a viewer: denied, so there is a denial to count
+    denied = _denied(READ)
+    assert client.get("/admin/probe", headers={"x-role": "viewer"}).status_code == status
+    assert _denied(READ) - denied == counted  # no writer: the permission is never decided
+
+
 @pytest.mark.parametrize("role", ["owner", "viewer"])
 def test_a_failed_audit_write_is_logged_with_the_actor_and_the_request(role: str) -> None:
     client, _ = _guarded(Resolver(), FailingAudit())
@@ -157,8 +183,10 @@ def test_the_record_names_the_route_template_not_the_concrete_path() -> None:
 
 @pytest.mark.parametrize("role", ["owner", "viewer"])
 async def test_a_cancelled_audit_write_propagates(role: str) -> None:
+    denied = _denied(READ)
     with pytest.raises(asyncio.CancelledError):
         await admin_area(READ, Resolver(), CancelledAudit())(_request(role))
+    assert _denied(READ) - denied == (1 if role == "viewer" else 0)  # counted before the write
 
 
 async def test_an_unexpected_error_renders_as_a_generic_internal_error() -> None:
