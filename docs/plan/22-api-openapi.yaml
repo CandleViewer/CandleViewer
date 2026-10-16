@@ -8219,7 +8219,7 @@ paths:
 
         Grants a **5-minute** server-side grace for `action_class` on the current session
         (24-internal-schemas.md section 15.2/15.3; the ticket value of 5 minutes supersedes the
-        earlier 15). `live_enablement` and `killswitch` are no-grace classes: the response is
+        earlier 15). `live_enablement`, `killswitch` and `backups` are no-grace: the response is
         `single_use: true` and no window is opened. Three consecutive invalid codes downgrade the
         session to read-only for 5 minutes (`403 session_read_only` on every write). Endpoints
         that require elevation return `403` with `code: step_up_required` until this
@@ -8263,8 +8263,21 @@ paths:
                     Optional cross-check. The server elevates the class its last
                     `403 step_up_required` challenged on this session; a different
                     value is `400`. Without a pending challenge it is required.
+                    `audit` gates the audit-log export (`exportAuditLog`); `backups` gates a
+                    backup restore (`restoreBackup`), one fresh code per restore.
                   type: string
-                  enum: [keys, users, live_enablement, killswitch, risk_caps, recorder, flags]
+                  enum:
+                    [
+                      keys,
+                      users,
+                      live_enablement,
+                      killswitch,
+                      risk_caps,
+                      recorder,
+                      flags,
+                      audit,
+                      backups,
+                    ]
       responses:
         "200":
           description: Elevated.
