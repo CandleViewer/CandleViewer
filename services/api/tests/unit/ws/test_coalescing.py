@@ -1,0 +1,408 @@
+from __future__ import annotations
+
+import copy
+from collections.abc import Callable, Mapping, Sequence
+from decimal import Decimal
+from typing import Any
+
+import pytest
+from hypothesis import given
+from hypothesis import strategies as st
+
+from candleviewer.ws.binary import BOOK_DELTA, Frame
+from candleviewer.ws.coalescing import MAX_PENDING_FRAMES, CoalescingQueue, Emission
+
+Body = dict[str, Any]
+State = dict[str, Any]
+_LISTS = frozenset(
+    {"bids", "asks", "trades", "liquidations", "dropped", "coalesced", "coalesced_count"}
+)
+
+# -- reference clients: every payload, coalesced or not, is applied the same way (§8.2) --------
+
+
+def _root(state: State, body: Mapping[str, Any]) -> None:
+    state.setdefault("root", {}).update((k, v) for k, v in body.items() if k not in _LISTS)
+
+
+def _apply_book(state: State, body: Mapping[str, Any]) -> None:
+    _root(state, body)
+    for side in ("bids", "asks"):
+        levels = state.setdefault(side, {})
+        for price, size in body.get(side, ()):
+            if Decimal(size) == 0:
+                levels.pop(Decimal(price), None)
+            else:
+                levels[Decimal(price)] = Decimal(size)
+
+
+def _append(field: str) -> Callable[..., None]:
+    def apply(state: State, body: Mapping[str, Any]) -> None:
+        _root(state, body)
+        state.setdefault(field, []).extend(body[field])
+        state["dropped"] = state.get("dropped", 0) + body.get("dropped", 0)
+
+    return apply
+
+
+# -- update generators --------------------------------------------------------------------------
+
+_PRICE = st.sampled_from(["100", "100.0", "100.5", "101", "99.5"])
+_SIZE = st.sampled_from(["0", "0.5", "1", "3.25"])
+#: Producers never set the emitter-owned disclosure fields; a stray one must not leak through.
+_STRAY = st.sampled_from([{}, {}, {"coalesced": True, "coalesced_count": 9}])
+_book = st.builds(
+    lambda xu, bids, asks, stray: {
+        "symbol": "BTCUSDT",
+        "depth": 50,
+        "xu": xu,
+        "bids": bids,
+        "asks": asks,
+        **stray,
+    },
+    st.integers(0, 9),
+    st.lists(st.tuples(_PRICE, _SIZE).map(list), max_size=3),
+    st.lists(st.tuples(_PRICE, _SIZE).map(list), max_size=3),
+    _STRAY,
+)
+
+
+_trades = st.builds(
+    lambda ids, dropped, stray: {
+        "symbol": "BTCUSDT",
+        "trades": [{"id": f"t{i}", "price": "1", "size": "1", "side": "buy"} for i in ids],
+        **({"dropped": dropped} if dropped else {}),
+        **stray,
+    },
+    st.lists(st.integers(0, 999), max_size=4),
+    st.integers(0, 3),
+    _STRAY,
+)
+_liquidations = st.builds(
+    lambda ids, note: {
+        "liquidations": [{"symbol": "BTCUSDT", "ts_ms": i, "side": "buy"} for i in ids],
+        **({"note": note} if note else {}),
+    },
+    st.lists(st.integers(0, 999), max_size=3),
+    st.sampled_from([None, "n1", "n2"]),
+)
+
+FAMILIES: list[tuple[str, Any, Callable[..., None]]] = [
+    ("book", st.lists(_book, max_size=25), _apply_book),
+    ("trades", st.lists(_trades, max_size=25), _append("trades")),
+    ("liquidations", st.lists(_liquidations, max_size=25), _append("liquidations")),
+]
+_IDS = [f[0] for f in FAMILIES]
+#: One step of a stream: an update, then optionally close the window and/or toggle `coalesce`.
+_STEP = st.tuples(st.booleans(), st.sampled_from([None, True, False]))
+
+
+def _run(queue: CoalescingQueue, updates: list[Body], steps: list[Any]) -> list[Emission]:
+    emitted: list[Emission] = []
+    for update, (cut, toggle) in zip(updates, steps + [(False, None)] * len(updates), strict=False):
+        assert queue.offer(update)
+        if toggle is not None:
+            queue.set_coalesce(toggle)
+        if cut:
+            emitted += queue.take()
+    return emitted + queue.take()
+
+
+def _state(apply: Callable[..., None], bodies: Sequence[Mapping[str, Any]]) -> State:
+    state: State = {}
+    for body in bodies:
+        apply(state, body)
+    return {k: v for k, v in state.items() if v}  # an update that changed nothing leaves no trace
+
+
+@pytest.mark.parametrize(("family", "updates", "apply"), FAMILIES, ids=_IDS)
+def test_coalescer_state_matches_every_source_update_applied(
+    family: str, updates: Any, apply: Callable[..., None]
+) -> None:
+    """§16.4: "coalescer produces state identical to applying every source update", whatever
+    the windows and however `coalesce` is toggled along the way."""
+
+    @given(updates, st.lists(_STEP, max_size=25), st.booleans())
+    def check(source: list[Body], steps: list[Any], coalesce: bool) -> None:
+        emitted = _run(CoalescingQueue(family, coalesce=coalesce), source, steps)
+        assert _state(apply, [e.body for e in emitted]) == _state(apply, source)
+
+    check()
+
+
+@pytest.mark.parametrize(("family", "updates", "apply"), FAMILIES, ids=_IDS)
+def test_coalescer_never_mutates_its_input(
+    family: str, updates: Any, apply: Callable[..., None]
+) -> None:
+    @given(updates, st.lists(_STEP, max_size=25))
+    def check(source: list[Body], steps: list[Any]) -> None:
+        pristine = copy.deepcopy(source)
+        _run(CoalescingQueue(family), source, steps)
+        assert source == pristine
+
+    check()
+
+
+@pytest.mark.parametrize(("family", "updates", "apply"), FAMILIES, ids=_IDS)
+def test_coalescer_never_emits_the_disclosure_fields(
+    family: str, updates: Any, apply: Callable[..., None]
+) -> None:
+    """The emitter owns `coalesced` / `coalesced_count` (§8.2); a producer's copy never leaks."""
+
+    @given(updates, st.lists(_STEP, max_size=25))
+    def check(source: list[Body], steps: list[Any]) -> None:
+        for emission in _run(CoalescingQueue(family), source, steps):
+            assert not {"coalesced", "coalesced_count"} & emission.body.keys()
+
+    check()
+
+
+@given(st.lists(_book, min_size=1, max_size=25))
+def test_coalescer_book_window_counts_every_update(source: list[Body]) -> None:
+    queue = CoalescingQueue("book")
+    for update in source:
+        queue.offer(update)
+    [frame] = queue.take()
+    assert frame.coalesced_count == len(source)
+
+
+# -- acceptance scenarios (#412) ------------------------------------------------------------------
+
+
+def test_coalescer_500_book_updates_one_window_one_lossless_frame_counted_500() -> None:
+    queue = CoalescingQueue("book")
+    updates = [
+        {"symbol": "BTCUSDT", "xu": i, "bids": [[str(100 + i % 7), str(i % 3)]], "asks": []}
+        for i in range(500)
+    ]
+    for update in updates:
+        queue.offer(update)
+    [frame] = queue.take()
+    assert frame.coalesced_count == 500
+    assert frame.part is None
+    assert _state(_apply_book, [frame.body]) == _state(_apply_book, updates)
+
+
+def test_coalescer_200_prints_one_window_all_in_order_unmerged() -> None:
+    queue = CoalescingQueue("trades")
+    prints = [{"id": f"t{i}", "price": "1", "size": "1", "side": "buy"} for i in range(200)]
+    for p in prints:
+        queue.offer({"symbol": "BTCUSDT", "trades": [p]})
+    [frame] = queue.take()
+    assert frame.body["trades"] == prints
+    assert frame.coalesced_count == 1  # appended, never merged: nothing to disclose
+
+
+@pytest.mark.parametrize("family", ["orders", "executions"])
+def test_coalescer_orders_and_executions_cannot_be_queued(family: str) -> None:
+    with pytest.raises(ValueError, match="never coalesced"):
+        CoalescingQueue(family)
+
+
+def test_coalescer_unknown_family_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown topic family"):
+        CoalescingQueue("nope")
+
+
+# -- emission contract ---------------------------------------------------------------------------
+
+
+def test_coalescer_single_update_leaves_verbatim_with_its_binary_part() -> None:
+    queue = CoalescingQueue("book")
+    part = Frame(BOOK_DELTA)
+    body = {"symbol": "BTCUSDT", "bids": [["100", "1"]], "asks": [], "coalesced": False}
+    queue.offer(body, part, ts_ms=7)
+    [frame] = queue.take()
+    assert frame == Emission({"symbol": "BTCUSDT", "bids": [["100", "1"]], "asks": []}, part, 1, 7)
+    assert frame.body is not body
+    assert queue.take() == []
+
+
+def test_coalescer_merged_book_frame_is_sorted_without_binary_part() -> None:
+    queue = CoalescingQueue("book")
+    queue.offer({"symbol": "X", "bids": [["100", "1"]], "asks": [["103", "1"]]}, Frame(BOOK_DELTA))
+    queue.offer({"symbol": "X", "bids": [["100.0", "0"], ["99", "2"]], "asks": [["101", "2"]]})
+    [frame] = queue.take()
+    assert frame.part is None
+    assert frame.coalesced_count == 2
+    assert frame.body == {
+        "symbol": "X",
+        "bids": [["100.0", "0"], ["99", "2"]],
+        "asks": [["101", "2"], ["103", "1"]],
+    }
+
+
+def test_coalescer_replay_time_is_kept_per_frame_and_latest_when_merged() -> None:
+    whole = CoalescingQueue("profile")
+    whole.offer({"symbol": "X", "kind": "volume", "profiles": []}, ts_ms=1)
+    whole.offer({"symbol": "X", "kind": "volume", "profiles": []}, ts_ms=2)
+    assert [f.ts_ms for f in whole.take()] == [1, 2]
+    merged = CoalescingQueue("book")
+    for ts_ms, price in ((5, "1"), (9, "2"), (8, "3")):
+        merged.offer({"bids": [[price, "1"]], "asks": []}, ts_ms=ts_ms)
+    assert [f.ts_ms for f in merged.take()] == [8]
+
+
+def test_coalescer_private_update_shares_nothing_between_connections() -> None:
+    """SR-190: two subscriptions fed the same private update get independent copies."""
+    body = {"trade_groups": [{"id": "g1", "status": "open", "updated_at_ms": 1}]}
+    a, b = CoalescingQueue("trade_groups"), CoalescingQueue("trade_groups")
+    for queue in (a, b):
+        queue.offer(body)
+    [fa], [fb] = a.take(), b.take()
+    fa.body["trade_groups"][0]["status"] = "closed"
+    assert fb.body["trade_groups"][0]["status"] == "open"
+    assert body["trade_groups"][0]["status"] == "open"
+
+
+# -- bounds, refusals and modes ------------------------------------------------------------------
+
+
+def test_coalescer_book_level_bound_refuses_until_cleared() -> None:
+    queue = CoalescingQueue("book", max_keys=2)
+    assert queue.offer({"bids": [["1", "1"], ["2", "1"]], "asks": []})
+    assert queue.offer({"bids": [["1", "5"]], "asks": []})  # an existing level never grows it
+    assert not queue.offer({"bids": [], "asks": [["3", "1"]]})
+    assert queue.overflowed
+    assert not queue.pending
+    assert not queue.offer({"bids": [["1", "1"]], "asks": []})
+    assert queue.take() == []
+    queue.clear()
+    assert not queue.overflowed
+    assert queue.offer({"bids": [["9", "1"]], "asks": []})
+    assert [f.body["bids"] for f in queue.take()] == [[["9", "1"]]]
+
+
+@pytest.mark.parametrize(
+    ("family", "malformed"),
+    [
+        ("book", {"bids": [["100", "1"], ["abc", "1"]], "asks": []}),
+        ("book", {"bids": [["NaN", "1"]], "asks": []}),
+        ("book", {"bids": [["100", "1", "2"]], "asks": []}),
+        ("trades", {"trades": 7}),
+    ],
+)
+def test_coalescer_unmergeable_update_is_refused_like_an_overflow(
+    family: str, malformed: Body
+) -> None:
+    """A malformed producer payload never escapes as an exception or leaves half-applied: the
+    queue refuses it and the topic is re-snapshotted."""
+    queue = CoalescingQueue(family)
+    assert not queue.offer(malformed)
+    assert queue.overflowed
+    assert queue.take() == []
+    queue.clear()
+    assert not queue.pending
+
+
+def test_coalescer_unmerged_family_queues_whole_frames_in_order() -> None:
+    queue = CoalescingQueue("profile")
+    bodies = [
+        {"symbol": "X", "kind": "volume", "profiles": [{"period_start_ms": i}]} for i in (1, 2)
+    ]
+    for body in bodies:
+        queue.offer(body)
+    assert [(f.body, f.coalesced_count) for f in queue.take()] == [(b, 1) for b in bodies]
+
+
+def test_coalescer_unmerged_family_overflows_at_its_frame_bound() -> None:
+    queue = CoalescingQueue("alerts")
+    for _ in range(MAX_PENDING_FRAMES):
+        assert queue.offer({"deliveries": []})
+    assert not queue.offer({"deliveries": []})
+    assert queue.overflowed
+
+
+def _level(price: str) -> Body:
+    return {"symbol": "X", "bids": [[price, "1"]], "asks": []}
+
+
+def test_coalescer_coalesce_false_emits_each_update_individually() -> None:
+    queue = CoalescingQueue("book", coalesce=False)
+    for price in ("1", "2"):
+        queue.offer(_level(price))
+    assert [f.body for f in queue.take()] == [_level("1"), _level("2")]
+
+
+def test_coalescer_coalesce_false_folds_at_the_frame_bound_instead_of_overflowing() -> None:
+    queue = CoalescingQueue("book", coalesce=False, max_frames=2)
+    for price in ("1", "2", "3"):
+        assert queue.offer(_level(price))
+    [frame] = queue.take()
+    assert frame.coalesced_count == 3
+    queue.offer(_level("4"))
+    queue.offer(_level("5"))
+    assert len(queue.take()) == 2  # back to whole frames once the fold has left
+
+
+def test_coalescer_forced_coalesce_folds_queued_frames_into_one_merge() -> None:
+    queue = CoalescingQueue("book", coalesce=False)
+    for price in ("1", "2", "3"):
+        queue.offer(_level(price))
+    queue.set_coalesce(True)
+    [frame] = queue.take()
+    assert frame.coalesced_count == 3
+    assert frame.body == {"symbol": "X", "bids": [["3", "1"], ["2", "1"], ["1", "1"]], "asks": []}
+
+
+def test_coalescer_coalesce_off_waits_for_the_pending_merge() -> None:
+    queue = CoalescingQueue("book")
+    queue.offer(_level("1"))
+    queue.set_coalesce(False)
+    queue.offer(_level("2"))
+    assert [f.coalesced_count for f in queue.take()] == [2]
+    for price in ("3", "4"):
+        queue.offer(_level(price))
+    assert len(queue.take()) == 2
+
+
+def test_coalescer_pending_bytes_track_state_not_updates() -> None:
+    queue = CoalescingQueue("book")
+    assert queue.pending_bytes == 0
+    queue.offer(_level("100"))
+    one_level = queue.pending_bytes
+    for _ in range(50):
+        queue.offer(_level("100"))  # overwrites never grow it
+    assert queue.pending_bytes == one_level
+    queue.offer(_level("101"))
+    assert queue.pending_bytes > one_level
+    queue.take()
+    assert queue.pending_bytes == 0
+    frames = CoalescingQueue("profile")
+    frames.offer({"symbol": "X", "kind": "volume", "profiles": []})
+    assert frames.pending_bytes > 0
+
+
+# -- family rules ------------------------------------------------------------------------------
+
+
+def test_coalescer_trades_dropped_counts_add_up() -> None:
+    queue = CoalescingQueue("trades")
+    queue.offer({"symbol": "X", "trades": [], "dropped": 2})
+    queue.offer({"symbol": "X", "trades": [{"id": "1"}], "dropped": 3})
+    [frame] = queue.take()
+    assert frame.body == {"symbol": "X", "trades": [{"id": "1"}], "dropped": 5}
+
+
+def test_coalescer_fold_refused_by_the_key_bound_overflows() -> None:
+    queue = CoalescingQueue("book", coalesce=False, max_frames=2, max_keys=1)
+    assert queue.offer(_level("1"))
+    assert queue.offer(_level("2"))
+    assert not queue.offer(_level("3"))  # the fold itself hits the one-level bound
+    assert queue.overflowed
+
+
+def test_coalescer_clear_resets_a_frame_queue_after_overflow() -> None:
+    queue = CoalescingQueue("rules", max_frames=1)
+    queue.offer({"rules": []})
+    assert not queue.offer({"rules": []})
+    queue.clear()
+    assert not queue.overflowed
+    assert queue.offer({"rules": []})
+
+
+def test_coalescer_trades_item_bound_sets_overflowed() -> None:
+    queue = CoalescingQueue("trades", max_items=1)
+    assert queue.offer({"trades": [{"id": "1"}]})
+    assert not queue.offer({"trades": [{"id": "2"}]})
+    assert queue.overflowed
