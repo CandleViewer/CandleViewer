@@ -765,6 +765,33 @@ the 30-minute canary meanwhile.
 - **Trigger** — An execution or order with no OMS intent; a sub-UID balance above its strategy's sizing; the first live key about to be stored while neither SR-E27-19 nor #2279 has shipped; D8 still open when E29-T06 (#914) merges.
 - **Contingency** — S1 incident under C-12.12: FREEZE, set read-only mode, revoke the key and delete it in the exchange dashboard, rotate the KEK, and audit every order in the exposure window against the exchange.
 
+### RSK-069 · Replay load starves the shared event loop and delays the order path (availability)
+
+`Risk: R8` · Category **Security** · L 3 · I 4 · **Score 12 — High** · Owner **Backend lead** · Epics E26, E29 · Status **Open**
+
+- **Description** — Introduced by E26-X01 (`docs/security/threat-models/E26-replay.md`, RP-D06, RP-D12, RP-D14). Replay speed does not cap CPU: a dense recorded day at 100x cannot keep up, so the replay clock slows instead of dropping events and takes all the time it can on the event loop the OMS shares. A long step, a seek storm or a rule simulation over a replay session adds to it. Nothing bounds a replay turn or the aggregate replay share today.
+- **Mitigation** — A replay work budget (#2668, G1): each injector, step or seek turn ≤ 50 ms (C-2.17), yielding between batches, with a deployment-wide replay rate or loop-share cap, or replay in its own process; E26-Q03 measures loop lag and order latency under replay on a recorded day (#2225); rule simulation counts against the same budget (#2677).
+- **Trigger** — Event-loop lag or order-path latency above budget while any replay session is playing; E26-Q03 showing a 100x session on the dense day over 50 ms per turn; #2668 still open at the R2 gate.
+- **Contingency** — Cap replay speed and concurrent sessions via config; pause replay while orders are working; Owner sign-off in 04 §16 is the only way to ship R2 without G1.
+
+### RSK-070 · A replay-origin order reaches an exchange adapter
+
+`Risk: R4` · Category **Security** · L 2 · I 5 · **Score 10 — High** · Owner **Security engineer** · Epics E26, E29, E38 · Status **Open**
+
+- **Description** — Introduced by E26-X01 (RP-E01, RP-R03; the model rates RP-E01 Critical as inherent risk). Replay presents a trading interface over stale data (E26-S07), but the API contract has no route or field for a replay order and no E29 ticket owns refusing one at the order system. A replay ticket that reuses the live order path, or a client field the server trusts, would send a real order priced on historical data. L 2 reflects that no replay order path exists yet and E26-S07 is unbuilt; the Trigger "E26-S07 starting while #2669 is open" re-scores this entry to L 3, Score 15, Critical.
+- **Mitigation** — Contract-first replay order path, with the replay origin bound to server-side session state and refused synchronously at the E29-T04 submission boundary before any adapter call, proven by adapter-method spies (#2669, G2; requirement (b) in the model's section 12); E38-S03's no-transport interlock and routing, re-checked by E38-X02, keep the simulator from reaching a transport but do not refuse a replay-origin order on the live path; the `source="replay"` injection invariant (E26-T03); abuse cases AC-06 and AC-28 in E26-X02.
+- **Trigger** — Any adapter call carrying a replay-origin intent (must be zero); E26-S07 starting while #2669 is open.
+- **Contingency** — Disable replay trading by config, run the kill switch on the affected account, and audit the exposure window against the exchange.
+
+### RSK-071 · Simulated replay fills feed a real account's risk, reconciliation or grantees
+
+`Risk: R4` · Category **Security** · L 3 · I 4 · **Score 12 — High** · Owner **Security engineer** · Epics E26, E38, E39 · Status **Open**
+
+- **Description** — Introduced by E26-X01 (RP-I04, RP-E05, RP-R01). If replay paper fills are attributed to a real account, its other grantees see them, and its risk caps, reconciliation, rules and alerts act on fills that never happened; without a constrained simulated marker, journals and exports cannot tell them apart.
+- **Mitigation** — Replay fills visible only to the session owner and excluded from the real account's consumers, or attributed to a paper ledger (#2671, G4); a CHECKed simulated marker on every replay-originated row and export (#2670, G3); the demo `is_paper` conflict resolved in `21-database-schema.md` and E38-S01.
+- **Trigger** — A replay-originated row in any real account's risk, reconciliation or alert input; a journal or export row without the marker; E26-S07 starting while #2671 is open.
+- **Contingency** — Stop replay trading; purge the simulated rows from the affected consumers and re-run reconciliation from the exchange.
+
 ---
 
 ## 10. Register summary
@@ -772,11 +799,11 @@ the 30-minute canary meanwhile.
 | Score band           | Count  | IDs                                                                                                                                                                                                                                                                          |
 | -------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Critical (15–25)** | 9      | RSK-053, RSK-001, RSK-004, RSK-010, RSK-013, RSK-014, RSK-031, RSK-037, RSK-060                                                                                                                                                                                              |
-| **High (10–14)**     | 24     | RSK-056, RSK-002, RSK-011, RSK-016, RSK-017, RSK-018, RSK-019, RSK-020, RSK-022, RSK-023, RSK-026, RSK-028, RSK-029, RSK-032, RSK-036, RSK-039, RSK-041, RSK-043, RSK-046, RSK-047, RSK-049, RSK-065, RSK-066, RSK-068                                                       |
+| **High (10–14)**     | 27     | RSK-056, RSK-002, RSK-011, RSK-016, RSK-017, RSK-018, RSK-019, RSK-020, RSK-022, RSK-023, RSK-026, RSK-028, RSK-029, RSK-032, RSK-036, RSK-039, RSK-041, RSK-043, RSK-046, RSK-047, RSK-049, RSK-065, RSK-066, RSK-068, RSK-069, RSK-070, RSK-071                            |
 | **Medium (5–9)**     | 30     | RSK-003, RSK-005, RSK-012, RSK-015, RSK-021, RSK-024, RSK-025, RSK-027, RSK-030, RSK-033, RSK-034, RSK-035, RSK-038, RSK-040, RSK-042, RSK-044, RSK-048, RSK-050, RSK-051, RSK-052, RSK-054, RSK-055, RSK-057, RSK-058, RSK-059, RSK-061, RSK-062, RSK-063, RSK-064, RSK-067 |
-| **Total entries**    | **63** | RSK-001 … RSK-068 (non-contiguous numbering, grouped by category block; numbers are never reused)                                                                                                                                                                            |
+| **Total entries**    | **66** | RSK-001 … RSK-071 (non-contiguous numbering, grouped by category block; numbers are never reused)                                                                                                                                                                            |
 
-Band arithmetic (corrected by E49-T03; the earlier text said 47 and predated RSK-051…057): 9 Critical + 24 High + 30 Medium = **63**, equal to the 63 `### RSK-nnn` entries in §3–§9 (RSK-053 moved High→Critical on its provisional re-score). There are no Low-band entries: anything that scored ≤4 during drafting was not carried into the register as a tracked risk (see §10.1.2). RSK-012 moved High->Medium in an earlier PR (E07-K01 spike evidence, partial retirement); its narrative was corrected in this PR after QA bug #1562 found the spike's original shape-B result was not reproducible (see §4 entry) — the band/score is unchanged, only the evidence text.
+Band arithmetic (corrected by E49-T03; the earlier text said 47 and predated RSK-051…057): 9 Critical + 27 High + 30 Medium = **66**, equal to the 66 `### RSK-nnn` entries in §3–§9 (RSK-053 moved High→Critical on its provisional re-score). There are no Low-band entries: anything that scored ≤4 during drafting was not carried into the register as a tracked risk (see §10.1.2). RSK-012 moved High->Medium in an earlier PR (E07-K01 spike evidence, partial retirement); its narrative was corrected in this PR after QA bug #1562 found the spike's original shape-B result was not reproducible (see §4 entry) — the band/score is unchanged, only the evidence text.
 
 #### 10.0.1 ID allocation — which numbers exist and which never will
 
@@ -798,6 +825,7 @@ IDs are assigned in **category blocks of ten** so a reader can infer a risk's fa
 | 062          | Market data & storage (R7), added by E12-K01      | 062                        | none — single-entry extension of the market-data/storage block (010–012, 026–030) rather than a new block: the E12-K01 spike evidence gap (production-path rebuild budget) is a Technical/R7 risk, and 013–025 and 026–030 are occupied, so the next free number after 061 is used. 052–061 were issued to other categories by earlier tickets; 062 is the next unallocated ID. |
 | 063–064      | Client WS gateway security (R2/R6), by E17-X01    | 063, 064                   | none — two Security entries from the E17-X01 STRIDE model, numbered after 062 because every earlier block is full or reserved                                                                                                                                                                                                                                                   |
 | 065–068      | Accounts & key-vault security (R4/R5), E27-X01    | 065, 066, 067, 068         | none — four Security entries from the E27-X01 STRIDE model, numbered after 064 for the same reason                                                                                                                                                                                                                                                                              |
+| 069–071      | Replay security (R4/R8), E26-X01                  | 069, 070, 071              | none — three Security entries from the E26-X01 STRIDE model, numbered after 068 for the same reason                                                                                                                                                                                                                                                                             |
 
 **E49-T03 (2026-10-06):** no ID was retired in the re-review — no risk's mitigation is fully shipped (the storage-writer and unwired-component clusters in `e49-root-cause-clusters.md` are defect clusters, not register entries; RSK-012 stays _largely retired_ until E07-S07). Nothing was reused or back-filled.
 
@@ -805,35 +833,35 @@ IDs are assigned in **category blocks of ten** so a reader can infer a risk's fa
 
 ### 10.1 Risks by category
 
-Each of the 63 entries appears in **exactly one** category row below — the categories are a partition, not overlapping tags. IDs are listed in ascending order so a reader can verify membership by scanning.
+Each of the 66 entries appears in **exactly one** category row below — the categories are a partition, not overlapping tags. IDs are listed in ascending order so a reader can verify membership by scanning.
 
-| Category                                                                            | Count  | IDs (ascending)                                                                                                            |
-| ----------------------------------------------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
-| Technical (rendering, market data, storage, concurrency, quality-of-rendering a11y) | 17     | RSK-001, 002, 003, 004, 005, 010, 011, 012, 017, 026, 027, 028, 040, 044, 050, 052, 062                                    |
-| Security                                                                            | 24     | RSK-016, 018, 019, 020, 021, 022, 029, 030, 043, 051, 053, 055, 056, 057, 058, 059, 060, 061, 063, 064, 065, 066, 067, 068 |
-| Vendor/Bybit                                                                        | 6      | RSK-013, 014, 015, 023, 024, 025                                                                                           |
-| Schedule                                                                            | 5      | RSK-031, 032, 033, 036, 039                                                                                                |
-| Team                                                                                | 4      | RSK-037, 038, 041, 042                                                                                                     |
-| Operational                                                                         | 4      | RSK-046, 047, 048, 054                                                                                                     |
-| Scope & compliance                                                                  | 3      | RSK-034, 035, 049                                                                                                          |
-| **Total**                                                                           | **63** | —                                                                                                                          |
+| Category                                                                            | Count  | IDs (ascending)                                                                                                                           |
+| ----------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Technical (rendering, market data, storage, concurrency, quality-of-rendering a11y) | 17     | RSK-001, 002, 003, 004, 005, 010, 011, 012, 017, 026, 027, 028, 040, 044, 050, 052, 062                                                   |
+| Security                                                                            | 27     | RSK-016, 018, 019, 020, 021, 022, 029, 030, 043, 051, 053, 055, 056, 057, 058, 059, 060, 061, 063, 064, 065, 066, 067, 068, 069, 070, 071 |
+| Vendor/Bybit                                                                        | 6      | RSK-013, 014, 015, 023, 024, 025                                                                                                          |
+| Schedule                                                                            | 5      | RSK-031, 032, 033, 036, 039                                                                                                               |
+| Team                                                                                | 4      | RSK-037, 038, 041, 042                                                                                                                    |
+| Operational                                                                         | 4      | RSK-046, 047, 048, 054                                                                                                                    |
+| Scope & compliance                                                                  | 3      | RSK-034, 035, 049                                                                                                                         |
+| **Total**                                                                           | **66** | —                                                                                                                                         |
 
 #### 10.1.1 Numeric reconciliation (auditor's check)
 
-This subsection exists so an auditor does not have to re-derive the arithmetic. Three independent partitions of the same 63 entries are published in this document; all three were checked to sum to 63 with **no ID appearing twice within a partition and no ID missing from any partition**:
+This subsection exists so an auditor does not have to re-derive the arithmetic. Three independent partitions of the same 66 entries are published in this document; all three were checked to sum to 66 with **no ID appearing twice within a partition and no ID missing from any partition**:
 
 | Partition                  | Rows                     | Sum                                    | Duplicates within the partition | Entries not covered |
 | -------------------------- | ------------------------ | -------------------------------------- | ------------------------------- | ------------------- |
-| Score band (§10)           | 3 (Critical/High/Medium) | 9 + 24 + 30 = **63**                   | none                            | none                |
-| Category (§10.1)           | 7                        | 17 + 24 + 6 + 5 + 4 + 4 + 3 = **63**   | none                            | none                |
-| `Risk` field value (§10.2) | 15 (R1–R15)              | 5+6+6+4+5+5+7+2+4+2+2+3+4+3+5 = **63** | none                            | none                |
+| Score band (§10)           | 3 (Critical/High/Medium) | 9 + 27 + 30 = **66**                   | none                            | none                |
+| Category (§10.1)           | 7                        | 17 + 27 + 6 + 5 + 4 + 4 + 3 = **66**   | none                            | none                |
+| `Risk` field value (§10.2) | 15 (R1–R15)              | 5+6+6+6+5+5+7+3+4+2+2+3+4+3+5 = **66** | none                            | none                |
 
 Two specific double-count traps, explicitly cleared:
 
 1. **RSK-001…005 (rendering)** are counted **once**, inside the Technical category row (which totals 17: five rendering + twelve non-rendering; the earlier "15" predated RSK-052 and RSK-062). They are _not_ additionally counted anywhere else in §10.1. Their appearance in §10.3 ("Risks gating each release train") is a **gating reference, not a count** — §10.3 is deliberately non-exhaustive and deliberately repeats IDs across trains (e.g. RSK-013/014 gate both R3 and R4), so §10.3 must never be summed. A note to that effect is repeated at the head of §10.3.
 2. **RSK-026 and RSK-044** sit in the Technical category (disk exhaustion is a storage-technical risk; colour-encoding failure is scored as a rendering/technical defect class) while simultaneously carrying `Risk` field values R7 and R10 respectively in §10.2. Category and `Risk` field are **two different axes**; an entry has exactly one of each. Reading a `Risk` value as a category, or vice versa, is the only way to produce an off-by-one here.
 
-The invariant to preserve on every edit: **count of `### RSK-nnn` headings in §3–§9 == 63 == sum of §10 bands == sum of §10.1 categories == sum of §10.2 `Risk` values.** Any PR that adds or retires a risk must update all four places in the same commit; the risk-register review at each train boundary (§1.3) re-checks this equality out loud.
+The invariant to preserve on every edit: **count of `### RSK-nnn` headings in §3–§9 == 66 == sum of §10 bands == sum of §10.1 categories == sum of §10.2 `Risk` values.** Any PR that adds or retires a risk must update all four places in the same commit; the risk-register review at each train boundary (§1.3) re-checks this equality out loud.
 
 #### 10.1.2 Why there is no Low band
 
@@ -841,18 +869,18 @@ Candidate risks that scored ≤4 (L×I) during drafting were resolved one of thr
 
 ### 10.2 Risks by `Risk` field value
 
-This is the second of the three partitions reconciled in §10.1.1. Each of the 63 entries carries **exactly one** `Risk` field value, and the counts below sum to 63. Note that `Risk` value ≠ Category: e.g. RSK-026 is Category _Technical_ but `Risk` value _R7_.
+This is the second of the three partitions reconciled in §10.1.1. Each of the 66 entries carries **exactly one** `Risk` field value, and the counts below sum to 66. Note that `Risk` value ≠ Category: e.g. RSK-026 is Category _Technical_ but `Risk` value _R7_.
 
 | Value                           | Count  | IDs                                   |
 | ------------------------------- | ------ | ------------------------------------- |
 | R1 Rendering & frame budget     | 5      | RSK-001, 002, 003, 004, 005           |
 | R2 Market-data integrity        | 6      | RSK-010, 011, 057, 059, 061, 063      |
 | R3 Exchange API dependency      | 6      | RSK-013, 014, 015, 023, 024, 025      |
-| R4 Order-execution safety       | 4      | RSK-016, 017, 056, 067                |
+| R4 Order-execution safety       | 6      | RSK-016, 017, 056, 067, 070, 071      |
 | R5 Credential & key security    | 5      | RSK-018, 019, 065, 066, 068           |
 | R6 AuthN/AuthZ                  | 5      | RSK-020, 021, 022, 043, 064           |
 | R7 Data persistence & retention | 7      | RSK-012, 026, 027, 052, 058, 060, 062 |
-| R8 Concurrency & state machines | 2      | RSK-028, 050                          |
+| R8 Concurrency & state machines | 3      | RSK-028, 050, 069                     |
 | R9 Schedule & capacity          | 4      | RSK-031, 032, 033, 039                |
 | R10 Accessibility               | 2      | RSK-040, 044                          |
 | R11 Supply chain & tooling      | 2      | RSK-029, 051                          |
@@ -860,7 +888,7 @@ This is the second of the three partitions reconciled in §10.1.1. Each of the 6
 | R13 Team & knowledge            | 4      | RSK-037, 038, 041, 042                |
 | R14 Operability                 | 3      | RSK-046, 047, 048                     |
 | R15 Legal & compliance          | 5      | RSK-030, 035, 053, 054, 055           |
-| **Total**                       | **63** | —                                     |
+| **Total**                       | **66** | —                                     |
 
 ### 10.3 Risks gating each release train
 
@@ -870,12 +898,12 @@ This is the second of the three partitions reconciled in §10.1.1. Each of the 6
 | ----- | ---------------------------------------------------------------------------------------------------- |
 | R0    | RSK-001 (spike result), RSK-012 (hot-tier decision), RSK-003, RSK-029                                |
 | R1    | RSK-001, RSK-002, RSK-004, RSK-011, RSK-026, RSK-040                                                 |
-| R2    | RSK-004, RSK-005, RSK-010, RSK-027, RSK-028, RSK-044, RSK-049                                        |
+| R2    | RSK-004, RSK-005, RSK-010, RSK-027, RSK-028, RSK-044, RSK-049, RSK-069, RSK-070, RSK-071             |
 | R3    | RSK-013, RSK-014, RSK-016, RSK-017, RSK-018, RSK-019, RSK-020, RSK-034, RSK-050, RSK-056             |
 | R4    | RSK-013, RSK-014, RSK-016, RSK-019, RSK-020, RSK-022, RSK-023, RSK-043, RSK-046, RSK-047             |
 | R5    | RSK-040, RSK-044, RSK-046, RSK-047, RSK-048, plus every accepted risk re-reviewed against its expiry |
 
-Distinct IDs referenced at least once as a gating item: 30 of 46. The remaining 16 are tracked and reviewed per §1.3 but do not by themselves hold a train gate closed; they are RSK-015, 021, 024, 025, 030, 031, 032, 033, 035, 036, 037, 038, 039, 041, 042, 051 — predominantly schedule, team and vendor-contingency risks whose consequence is a date or a contingency plan, not a gate, and gates are never waived for dates (`33-raci.md` §10, `07-release-and-prr.md`).
+Distinct IDs referenced at least once as a gating item: 34 of 66. The remaining 32 are tracked and reviewed per §1.3 but do not by themselves hold a train gate closed; they are RSK-015, 021, 024, 025, 030, 031, 032, 033, 035, 036, 037, 038, 039, 041, 042, 051, 052, 053, 054, 055, 057, 058, 059, 060, 061, 062, 063, 064, 065, 066, 067, 068 — the schedule, team, scope and vendor-contingency risks, whose consequence is a date or a contingency plan, not a gate (RSK-015, 024, 025, 031–033, 035–039, 041, 042), and the security, technical and operational risks that no train row names (RSK-021, 030, 051–055, 057–068). Gates are never waived for dates (`33-raci.md` §10, `07-release-and-prr.md`).
 
 ---
 
