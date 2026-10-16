@@ -1,9 +1,7 @@
 """Contract (#837 Q5, E42-T03): the `403 trading_disabled` problem carries the order-entry gate's
-`reason` extension member. `OrderEntryRefusalReason` is the closed server set that
-`24-internal-schemas.md` 8.10 lists, open-ended for readers; `TradingDisabledProblem` is `Problem`
-with `code` pinned to `trading_disabled` plus a required `reason`, and the shared `Forbidden`
-response is `anyOf: [Problem, TradingDisabledProblem]`. Additive only (C-6.3): two new schemas,
-one new example, a wider `Forbidden` schema, and `Problem` itself is unchanged."""
+`reason`, from the closed server set `OrderEntryRefusalReason` (`24-internal-schemas.md` 8.10;
+open-ended for readers). `TradingDisabledProblem` is `Problem` with `code` pinned plus a required
+`reason`; `Forbidden` is `anyOf: [Problem, TradingDisabledProblem]`. Additive (C-6.3)."""
 
 from __future__ import annotations
 
@@ -14,25 +12,14 @@ from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openap
 
 _SPEC = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
-_FORBIDDEN = _SPEC["components"]["responses"]["Forbidden"]
-_REASONS = [
-    "maintenance",
-    "account_disabled_by_policy",
-    "no_active_key",
-    "account_unhealthy",
-]
+_BODY = _SPEC["components"]["responses"]["Forbidden"]["content"]["application/problem+json"]
+_EXAMPLE: dict[str, Any] = _BODY["examples"]["tradingDisabled"]["value"]
+_REASONS = ["maintenance", "account_disabled_by_policy", "no_active_key", "account_unhealthy"]
 _DOC = OPENAPI_SPEC_PATH.parent / "24-internal-schemas.md"
 
 
 def _ref(name: str) -> dict[str, str]:
     return {"$ref": f"#/components/schemas/{name}"}
-
-
-def _example() -> dict[str, Any]:
-    value: dict[str, Any] = _FORBIDDEN["content"]["application/problem+json"]["examples"][
-        "tradingDisabled"
-    ]["value"]
-    return value
 
 
 def test_the_reason_set_is_closed_for_the_server_and_open_for_readers() -> None:
@@ -43,37 +30,25 @@ def test_the_reason_set_is_closed_for_the_server_and_open_for_readers() -> None:
 
 def test_trading_disabled_problem_is_problem_plus_a_required_reason() -> None:
     problem, extra = _SCHEMAS["TradingDisabledProblem"]["allOf"]
-    assert problem == _ref("Problem")
-    assert extra["required"] == ["reason"]
+    assert (problem, extra["required"]) == (_ref("Problem"), ["reason"])
     assert extra["properties"]["code"] == {"const": "trading_disabled"}
     assert extra["properties"]["reason"] == _ref("OrderEntryRefusalReason")
     assert "reason" not in _SCHEMAS["Problem"]["properties"]
-
-
-def test_the_forbidden_response_admits_the_gate_refusal() -> None:
-    schema = _FORBIDDEN["content"]["application/problem+json"]["schema"]
-    assert schema == {"anyOf": [_ref("Problem"), _ref("TradingDisabledProblem")]}
-
-
-def test_the_example_round_trips_and_uses_the_registry_title() -> None:
-    example = _example()
-    model = api.TradingDisabledProblem.model_validate(example)
-    assert model.model_dump(mode="json", exclude_unset=True) == example
-    entry = next(e for e in _SPEC["x-error-codes"] if e["code"] == "trading_disabled")
-    assert (example["title"], example["status"], example["code"]) == (
-        entry["title"],
-        403,
-        entry["code"],
-    )
-    assert "maintenance mode" in entry["title"]
-    # Neutral: the order kill switch and an unreadable store engage the gate too.
-    assert example["detail"] == "Order entry is paused."
-
-
-def test_the_generated_model_mirrors_the_schema() -> None:
     assert set(api.TradingDisabledProblem.model_fields) == set(api.Problem.model_fields) | {
         "reason"
     }
+    assert _BODY["schema"] == {"anyOf": [_ref("Problem"), _ref("TradingDisabledProblem")]}
+
+
+def test_the_example_round_trips_with_the_neutral_registry_title() -> None:
+    model = api.TradingDisabledProblem.model_validate(_EXAMPLE)
+    assert model.model_dump(mode="json", exclude_unset=True) == _EXAMPLE
+    entry = next(e for e in _SPEC["x-error-codes"] if e["code"] == "trading_disabled")
+    # Neutral (C-6.3 note): the code also covers the account reasons, not only maintenance.
+    assert entry["title"] == _EXAMPLE["title"] == "Order entry refused"
+    assert (_EXAMPLE["status"], _EXAMPLE["code"]) == (403, "trading_disabled")
+    # Neutral too: the order kill switch and an unreadable store engage the gate.
+    assert _EXAMPLE["detail"] == "Order entry is paused."
 
 
 def test_the_internal_schema_lists_the_same_closed_set() -> None:
