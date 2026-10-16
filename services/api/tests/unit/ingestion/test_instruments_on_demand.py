@@ -77,8 +77,18 @@ async def _park(_delay: float) -> None:
     await asyncio.Event().wait()
 
 
+#: `asyncio.timeout` runs on the loop's wall clock: callers that must not hit the on-demand
+#: deadline get one a stalled runner never reaches, not the 3 s default (C-13.7). The deadline
+#: test passes its own bound.
+_NO_DEADLINE_S = 1e9
+
+
 def _scheduler(
-    fetch: InstrumentsFetcher, repo: MemoryRepo | None = None, **bounds: Any
+    fetch: InstrumentsFetcher,
+    repo: MemoryRepo | None = None,
+    *,
+    on_demand_timeout_s: float = _NO_DEADLINE_S,
+    **bounds: Any,
 ) -> instruments_refresh.InstrumentsRefreshScheduler:
     return instruments_refresh.InstrumentsRefreshScheduler(
         fetch_instruments_info=fetch,
@@ -86,6 +96,7 @@ def _scheduler(
         now_us=lambda: _NOW,
         sleep=_park,
         random_fn=lambda: 0.0,
+        on_demand_timeout_s=on_demand_timeout_s,
         **bounds,
     )
 
