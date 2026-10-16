@@ -16172,3 +16172,4 @@ export interface operations {
     };
   };
 }
+export type HandEdited = true;
