@@ -246,6 +246,31 @@ async def test_recovery_code_use_forces_totp_reenrollment() -> None:
     assert method.confirmed_at is None
 
 
+@pytest.mark.parametrize("unused_before", [10, 4, 3, 2, 1])
+async def test_recovery_code_use_forces_reenrollment_however_many_codes_remain(
+    unused_before: int,
+) -> None:
+    """#2296: there is no remaining-codes threshold. A recovery sign-in forces
+    re-enrolment whether it leaves nine codes or none (E09-S02 "Recovery code
+    use forces re-enrolment", US-ONB-003)."""
+    repo = FakeMfaRepository()
+    service = _service(repo)
+    user_id = uuid.uuid4()
+    await _enroll_and_confirm(service, repo, user_id)
+    codes = generate_recovery_codes(count=unused_before)
+    await repo.replace_recovery_codes(
+        str(user_id), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
+    )
+    token = await _make_login_challenge(repo, user_id)
+
+    result = await service.recover(token, codes[0])
+
+    assert result.forced_totp_reenroll is True
+    assert await repo.count_unused_recovery_codes(str(user_id)) == unused_before - 1
+    method = next(iter(repo.methods.values()))
+    assert method.confirmed_at is None
+
+
 async def test_recovery_codes_exhausted_raises_and_creates_no_session() -> None:
     """ "Recovery codes exhausted": "I am told to contact the owner and no
     session is created"."""

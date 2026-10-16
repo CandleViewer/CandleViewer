@@ -11,6 +11,7 @@ import re
 
 import pytest
 
+from candleviewer.auth import recovery_codes as recovery_codes_module
 from candleviewer.auth.recovery_codes import (
     CODE_LENGTH,
     ENTROPY_BITS,
@@ -93,3 +94,10 @@ def test_recovery_code_cannot_be_verified_without_the_key() -> None:
     code = generate_recovery_code()
     stored = hash_recovery_code(code, key=_KEY)
     assert recovery_code_matches(code, stored, key=_OTHER_KEY) is False
+
+
+def test_recovery_codes_module_defines_no_remaining_codes_threshold() -> None:
+    """#2296: re-enrolment after a recovery sign-in is unconditional (E09-S02
+    "Recovery code use forces re-enrolment", US-ONB-003), so this module must
+    not carry a "low codes" threshold that reads like a gate nothing enforces."""
+    assert not hasattr(recovery_codes_module, "LOW_CODE_THRESHOLD")

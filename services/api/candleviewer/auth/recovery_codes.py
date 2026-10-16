@@ -32,10 +32,6 @@ _ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 #: Ticket "Scope / Deliverables": "10 single-use codes generated at enrolment".
 RECOVERY_CODE_COUNT = 10
 
-#: Ticket "recovery code use ... forces re-enrolment ... when fewer than
-#: three codes remain" (`22-api-openapi.yaml` /auth/mfa/recovery description).
-LOW_CODE_THRESHOLD = 3
-
 _GROUP_LEN = 4
 _GROUPS = 7  # 28 alphabet characters total -> ~138.7 bits
 CODE_LENGTH = _GROUP_LEN * _GROUPS
