@@ -35,8 +35,9 @@ class MfaRepository(Protocol):
     async def find_pending_method(self, method_id: str, user_id: str) -> MfaMethodRecord | None:
         """The confirmable method `method_id` of `user_id`, or `None` (#2295): never
         confirmed (no accepted time step), not revoked, and the user's latest method, so
-        only the one the latest enrolment created qualifies. A method a recovery sign-in
-        un-confirmed has an accepted step and never qualifies again."""
+        only the one the latest enrolment created qualifies. A recovery sign-in revokes
+        every method (#2344); one it un-confirmed before that has an accepted step, so
+        neither qualifies again."""
         ...
 
     async def supersede_pending_methods(self, user_id: str, *, now: datetime) -> None:
@@ -139,22 +140,16 @@ class MfaRepository(Protocol):
         `None`."""
         ...
 
-    async def consume_recovery_code(self, code_id: str, *, now: datetime) -> bool:
-        """Conditional `UPDATE ... WHERE used_at IS NULL`, stamping
-        `used_at = now`, returning whether *this call* won the race.
-        PR #1618 review finding 2 (high): `find_unused_recovery_code` then
-        `consume_recovery_code` is check-then-act; without this the code
-        is single-use only in appearance and two concurrent requests with
-        the same recovery code can both be accepted (and, worse, both go
-        on to try to satisfy the same challenge). The caller must treat
-        `False` as `RecoveryCodeInvalid`."""
-        ...
-
     async def count_unused_recovery_codes(self, user_id: str) -> int: ...
 
-    async def set_mfa_required_reenroll(self, user_id: str) -> None:
-        """Clear every confirmed TOTP method's `confirmed_at` (force
-        re-enrolment) after a recovery-code sign-in (ticket "forces
-        re-enrolment of TOTP"). Implemented as a targeted UPDATE, not a
-        revoke, so the method row (and its audit history) is retained."""
+    async def complete_recovery(
+        self, user_id: str, *, challenge_id: str, code_id: str, now: datetime
+    ) -> bool:
+        """#2344, ONE transaction: mark the recovery code `code_id` of `user_id` used and
+        satisfy its login challenge `challenge_id`, each only while unused and unsatisfied
+        (conditional `UPDATE`s), then revoke (`revoked_at = now`) every unrevoked MFA method
+        of `user_id`, which forces TOTP re-enrolment: `find_pending_method` never returns a
+        revoked method. Returns whether this call won both; when it did not, it rolls back,
+        so a lost race spends no code. PR #1618 review finding 2 (high): the conditions are
+        what make one code, and one challenge, sign in at most once."""
         ...

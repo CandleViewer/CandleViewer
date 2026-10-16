@@ -105,16 +105,22 @@ _RC_FIND = sa.text(
     "SELECT id::text AS id FROM recovery_codes WHERE user_id = CAST(:u AS uuid) "
     "AND code_hash = :h AND used_at IS NULL"
 )
-_RC_CONSUME = sa.text(
+#: #2344: the recovery sign-in's unit of work. Each conditional update wins at most once and
+#: only for the code's and the challenge's own user.
+_RC_USE = sa.text(
     "UPDATE recovery_codes SET used_at = :now WHERE id = CAST(:id AS uuid) "
-    "AND used_at IS NULL RETURNING 1"
+    "AND user_id = CAST(:u AS uuid) AND used_at IS NULL RETURNING 1"
+)
+_CH_SATISFY_OWN = sa.text(
+    "UPDATE mfa_challenges SET satisfied_at = :now WHERE id = CAST(:id AS uuid) "
+    "AND user_id = CAST(:u AS uuid) AND satisfied_at IS NULL RETURNING 1"
+)
+_REVOKE_ALL = sa.text(
+    "UPDATE mfa_methods SET revoked_at = :now WHERE user_id = CAST(:u AS uuid) "
+    "AND revoked_at IS NULL"
 )
 _RC_COUNT = sa.text(
     "SELECT count(*) AS n FROM recovery_codes WHERE user_id = CAST(:u AS uuid) AND used_at IS NULL"
-)
-_REENROLL = sa.text(
-    "UPDATE mfa_methods SET confirmed_at = NULL WHERE user_id = CAST(:u AS uuid) "
-    "AND kind = 'totp' AND confirmed_at IS NOT NULL AND revoked_at IS NULL"
 )
 
 
@@ -246,12 +252,24 @@ class SqlAlchemyMfaRepository:
         rows = await self._run(_RC_FIND, {"u": user_id, "h": code_hash})
         return str(rows[0]._mapping["id"]) if rows else None
 
-    async def consume_recovery_code(self, code_id: str, *, now: datetime) -> bool:
-        return bool(await self._run(_RC_CONSUME, {"id": code_id, "now": now}))
-
     async def count_unused_recovery_codes(self, user_id: str) -> int:
         rows = await self._run(_RC_COUNT, {"u": user_id})
         return int(rows[0]._mapping["n"])
 
-    async def set_mfa_required_reenroll(self, user_id: str) -> None:
-        await self._run_no_rows(_REENROLL, {"u": user_id})
+    async def complete_recovery(
+        self, user_id: str, *, challenge_id: str, code_id: str, now: datetime
+    ) -> bool:
+        """One unit of work (#2344): spend the code, satisfy the challenge, revoke every method;
+        a lost race on either rolls back."""
+        async with self._relational.unit_of_work() as uow:
+            run = uow.session.execute
+            won = (await run(_RC_USE, {"id": code_id, "u": user_id, "now": now})).first()
+            if won is not None:
+                satisfy = {"id": challenge_id, "u": user_id, "now": now}
+                won = (await run(_CH_SATISFY_OWN, satisfy)).first()
+            if won is None:
+                await uow.rollback()
+                return False
+            await run(_REVOKE_ALL, {"u": user_id, "now": now})
+            await uow.commit()
+        return True

@@ -52,7 +52,7 @@ LOCKOUT_DURATION = timedelta(minutes=15)
 
 #: E09-S02 "Technical notes": "expires_at 5 min" — the `mfa_challenges` row
 #: this service persists (when an `MfaRepository` is injected) so
-#: `MfaService.verify()`/`recover()` can look the opaque `mfa_token` up.
+#: `MfaService.verify()`/`check_recovery()` can look the opaque `mfa_token` up.
 MFA_CHALLENGE_TTL = timedelta(minutes=5)
 
 Clock = Callable[[], datetime]
@@ -170,7 +170,7 @@ class LoginService:
         mfa_token = self._mfa_token_factory()
         if self._mfa_repository is not None:
             # E09-S02: persist the challenge so `MfaService.verify()` /
-            # `.recover()` can look up `mfa_token` (hashed — never stored in
+            # `.check_recovery()` can look up `mfa_token` (hashed — never stored in
             # the clear, same rationale as `sessions.refresh_token_hash`).
             # `mfa_repository` is `None` on the fake/CI-default backend
             # (mirrors `UserRepository`'s own optionality in `AuthService`);

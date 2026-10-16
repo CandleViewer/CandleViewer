@@ -133,7 +133,7 @@ curl -s -X POST "$API/auth/mfa/recovery" -H 'Content-Type: application/json' \
 ```
 
 Expected `200` `{"status":"authenticated","forced_totp_reenroll":true}`. This route mints no
-session, token or cookie yet (recovery-session gap: #2344), but it un-confirms the old TOTP, so
+session, token or cookie yet (recovery-session gap: #2344), but it revokes every MFA method, so
 the next password sign-in gets an enrolment-only session: re-enrol as in §2 step 4 (#2295). A code is single use;
 `auth.recovery_code_used` is written, and `auth.recovery_codes_exhausted` when none remain.
 Re-enrolment is forced after every recovery sign-in, however many codes remain

@@ -25,6 +25,7 @@ from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP, MfaService, _ha
 from candleviewer.auth.models import (
     MfaEnrollRequest,
     MfaMethodKind,
+    MfaRecoveryCheck,
     MfaVerifyRequest,
 )
 from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recovery_code
@@ -225,25 +226,41 @@ async def test_confirm_enrollment_unknown_method_raises_not_found() -> None:
         )
 
 
-# -- recover() -------------------------------------------------------------
+# -- check_recovery() / complete_recovery() (#2344) -----------------------------------------
+
+
+async def _recover(service: MfaService, token: str, code: str) -> MfaRecoveryCheck:
+    """Both halves, as `POST /auth/mfa/recovery` runs them around its audit records."""
+    check = await service.check_recovery(token, code)
+    await service.complete_recovery(check)
+    return check
+
+
+async def _with_recovery_codes(
+    repo: FakeMfaRepository, user_id: uuid.UUID, count: int
+) -> list[str]:
+    codes = generate_recovery_codes(count=count)
+    await repo.replace_recovery_codes(
+        str(user_id), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
+    )
+    return codes
 
 
 async def test_recovery_code_use_forces_totp_reenrollment() -> None:
-    """ "Recovery code use forces re-enrolment"."""
+    """ "Recovery code use forces re-enrolment": every method is revoked, for good (#2344)."""
     repo = FakeMfaRepository()
     service = _service(repo)
     user_id = uuid.uuid4()
     await _enroll_and_confirm(service, repo, user_id)
-    codes = generate_recovery_codes()
-    await repo.replace_recovery_codes(
-        str(user_id), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
-    )
+    codes = await _with_recovery_codes(repo, user_id, 10)
     token = await _make_login_challenge(repo, user_id)
 
-    result = await service.recover(token, codes[0])
-    assert result.forced_totp_reenroll is True
+    check = await _recover(service, token, codes[0])
+
+    assert check.user_id == user_id
     method = next(iter(repo.methods.values()))
-    assert method.confirmed_at is None
+    assert (method.confirmed_at is not None, method.revoked_at) == (True, _NOW)
+    assert next(iter(repo.challenges.values())).satisfied_at == _NOW
 
 
 @pytest.mark.parametrize("unused_before", [10, 4, 3, 2, 1])
@@ -257,18 +274,54 @@ async def test_recovery_code_use_forces_reenrollment_however_many_codes_remain(
     service = _service(repo)
     user_id = uuid.uuid4()
     await _enroll_and_confirm(service, repo, user_id)
-    codes = generate_recovery_codes(count=unused_before)
-    await repo.replace_recovery_codes(
-        str(user_id), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
-    )
+    codes = await _with_recovery_codes(repo, user_id, unused_before)
     token = await _make_login_challenge(repo, user_id)
 
-    result = await service.recover(token, codes[0])
+    await _recover(service, token, codes[0])
 
-    assert result.forced_totp_reenroll is True
     assert await repo.count_unused_recovery_codes(str(user_id)) == unused_before - 1
-    method = next(iter(repo.methods.values()))
-    assert method.confirmed_at is None
+    assert await repo.find_active_methods(str(user_id)) == ()
+
+
+async def test_check_recovery_changes_nothing_but_names_what_completion_spends() -> None:
+    """The read-only half (C-2.9): the audit records go between it and `complete_recovery`."""
+    repo = FakeMfaRepository()
+    service = _service(repo)
+    user_id = uuid.uuid4()
+    await _enroll_and_confirm(service, repo, user_id)
+    codes = await _with_recovery_codes(repo, user_id, 10)
+    token = await _make_login_challenge(repo, user_id)
+    methods = dict(repo.methods)
+
+    check = await service.check_recovery(token, codes[0])
+
+    challenge = next(iter(repo.challenges.values()))
+    assert (check.user_id, check.challenge_id) == (user_id, challenge.id)
+    assert repo.recovery_codes[check.code_id]["used_at"] is None
+    assert (challenge.satisfied_at, challenge.attempts) == (None, 0)
+    assert repo.methods == methods
+    assert await repo.count_unused_recovery_codes(str(user_id)) == 10
+
+
+async def test_complete_recovery_revokes_every_method_of_that_user_only() -> None:
+    """Confirmed and pending methods alike, so none can be confirmed again; another user's stay."""
+    repo = FakeMfaRepository()
+    service = _service(repo)
+    user_id, other = uuid.uuid4(), uuid.uuid4()
+    await _enroll_and_confirm(service, repo, user_id)
+    await _enroll_and_confirm(service, repo, other)
+    pending = await service.enroll(
+        str(user_id), MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="a"
+    )
+    codes = await _with_recovery_codes(repo, user_id, 10)
+    token = await _make_login_challenge(repo, user_id)
+
+    await _recover(service, token, codes[0])
+
+    mine = [m for m in repo.methods.values() if m.user_id == user_id]
+    assert len(mine) == 2 and {m.revoked_at for m in mine} == {_NOW}
+    assert await repo.find_pending_method(str(pending.method_id), str(user_id)) is None
+    assert [m.revoked_at for m in repo.methods.values() if m.user_id == other] == [None]
 
 
 async def test_recovery_codes_exhausted_raises_and_creates_no_session() -> None:
@@ -284,7 +337,8 @@ async def test_recovery_codes_exhausted_raises_and_creates_no_session() -> None:
     token = await _make_login_challenge(repo, user_id)
 
     with pytest.raises(RecoveryCodesExhausted):
-        await service.recover(token, "0000-0000-0000")
+        await service.check_recovery(token, "0000-0000-0000")
+    assert next(iter(repo.challenges.values())).attempts == 1
 
 
 async def test_recover_rejects_invalid_recovery_code() -> None:
@@ -292,14 +346,12 @@ async def test_recover_rejects_invalid_recovery_code() -> None:
     service = _service(repo)
     user_id = uuid.uuid4()
     await _enroll_and_confirm(service, repo, user_id)
-    codes = generate_recovery_codes()
-    await repo.replace_recovery_codes(
-        str(user_id), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
-    )
+    await _with_recovery_codes(repo, user_id, 10)
     token = await _make_login_challenge(repo, user_id)
 
     with pytest.raises(RecoveryCodeInvalid):
-        await service.recover(token, "ZZZZ-ZZZZ-ZZZZ")
+        await service.check_recovery(token, "ZZZZ-ZZZZ-ZZZZ")
+    assert next(iter(repo.challenges.values())).attempts == 1
 
 
 async def test_recover_rejects_already_used_recovery_code() -> None:
@@ -307,16 +359,13 @@ async def test_recover_rejects_already_used_recovery_code() -> None:
     service = _service(repo)
     user_id = uuid.uuid4()
     await _enroll_and_confirm(service, repo, user_id)
-    codes = generate_recovery_codes()
-    await repo.replace_recovery_codes(
-        str(user_id), code_hashes=tuple(hash_recovery_code(c, key=_RC_KEY) for c in codes)
-    )
+    codes = await _with_recovery_codes(repo, user_id, 10)
     token = await _make_login_challenge(repo, user_id)
-    await service.recover(token, codes[0])
+    await _recover(service, token, codes[0])
 
     token2 = await _make_login_challenge(repo, user_id)
     with pytest.raises(RecoveryCodeInvalid):
-        await service.recover(token2, codes[0])
+        await service.check_recovery(token2, codes[0])
 
 
 # -- regenerate_recovery_codes() ------------------------------------------

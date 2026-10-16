@@ -55,6 +55,17 @@ def _rec(model: Any) -> Callable[..., Any]:
     return lambda **f: model.model_validate(f)
 
 
+async def _login_challenge(mfa: SqlAlchemyMfaRepository, uid: str) -> str:
+    """The id of a new, open login challenge of *uid*."""
+    challenge = await mfa.create_challenge(
+        uid,
+        purpose="login",
+        mfa_token_hash="rc" + uuid.uuid4().hex,
+        expires_at=_NOW + timedelta(minutes=5),
+    )
+    return str(challenge.id)
+
+
 async def test_login_lockout_and_reset_round_trip(pg_dsn: str) -> None:
     await seed(pg_dsn, "alice", "correct horse battery")
     rel = SqlAlchemyRelationalRepository(pg_dsn)
@@ -109,8 +120,9 @@ async def test_mfa_challenge_replay_and_single_use_recovery_code(pg_dsn: str) ->
         await mfa.replace_recovery_codes(uid, code_hashes=(h,))
         cid = await mfa.find_unused_recovery_code(uid, code_hash=h)
         assert cid is not None
-        assert await mfa.consume_recovery_code(cid, now=_NOW) is True
-        assert await mfa.consume_recovery_code(cid, now=_NOW) is False
+        fresh = await _login_challenge(mfa, uid)
+        assert await mfa.complete_recovery(uid, challenge_id=fresh, code_id=cid, now=_NOW) is True
+        assert await mfa.complete_recovery(uid, challenge_id=fresh, code_id=cid, now=_NOW) is False
         assert await mfa.count_unused_recovery_codes(uid) == 0
     finally:
         await rel.dispose()
@@ -119,7 +131,7 @@ async def test_mfa_challenge_replay_and_single_use_recovery_code(pg_dsn: str) ->
 async def test_enrolment_completes_in_one_transaction_and_only_the_latest_method(
     pg_dsn: str,
 ) -> None:
-    """#2295 (Q8, Q9): a method a recovery sign-in un-confirmed never confirms again; a new
+    """#2295 (Q8, Q9): a method a recovery sign-in revoked (#2344) never confirms again; a new
     enrolment supersedes the pending one; completion confirms, revokes the other TOTP methods and
     swaps the codes in one transaction; a second completion changes nothing."""
     await seed(pg_dsn, "carol", "correct horse battery", allow_no_mfa=True)
@@ -134,7 +146,10 @@ async def test_enrolment_completes_in_one_transaction_and_only_the_latest_method
         assert await mfa.complete_enrollment(
             uid, method_id=str(old.id), time_step=1, now=_NOW, code_hashes=old_codes
         )
-        await mfa.set_mfa_required_reenroll(uid)  # a recovery sign-in un-confirms it
+        spent = await mfa.find_unused_recovery_code(uid, code_hash=old_codes[0])
+        assert spent is not None
+        challenge = await _login_challenge(mfa, uid)
+        assert await mfa.complete_recovery(uid, challenge_id=challenge, code_id=spent, now=_NOW)
         assert await mfa.find_pending_method(str(old.id), uid) is None
         first = await mfa.create_pending_method(uid, secret_enc=b"1", **ref, label="")
         await mfa.supersede_pending_methods(uid, now=_NOW)
@@ -157,5 +172,48 @@ async def test_enrolment_completes_in_one_transaction_and_only_the_latest_method
         await users.set_mfa_required(uid)
         carol = await users.find_by_id(uid)
         assert carol is not None and carol.mfa_required is True
+    finally:
+        await rel.dispose()
+
+
+async def test_recovery_spends_once_revokes_every_method_and_rolls_back_a_lost_race(
+    pg_dsn: str,
+) -> None:
+    """#2344, one transaction: the code is spent and its challenge satisfied at most once, only
+    as the user's own, and every method of the user is revoked with them; a lost race (a spent
+    code, a satisfied challenge, another user's code) changes nothing."""
+    await seed(pg_dsn, "dave", "correct horse battery")
+    await seed(pg_dsn, "erin", "correct horse battery")
+    rel = SqlAlchemyRelationalRepository(pg_dsn)
+    users = SqlAlchemyUserRepository(rel, _rec(UserRecord), clock=lambda: _NOW)
+    mfa = SqlAlchemyMfaRepository(rel, _rec(MfaMethodRecord), _rec(MfaChallengeRecord))
+    try:
+        uid = str((await users.find_by_identifier("dave")).id)
+        erin = str((await users.find_by_identifier("erin")).id)
+        ref = {"secret_key_ref": "k"}
+        method = await mfa.create_pending_method(uid, secret_enc=b"0", **ref, label="")
+        codes = ("d" * 64, "e" * 64)
+        assert await mfa.complete_enrollment(
+            uid, method_id=str(method.id), time_step=1, now=_NOW, code_hashes=codes
+        )
+        await mfa.replace_recovery_codes(erin, code_hashes=("f" * 64,))
+        first, second = await _login_challenge(mfa, uid), await _login_challenge(mfa, uid)
+        code = await mfa.find_unused_recovery_code(uid, code_hash=codes[0])
+        other = await mfa.find_unused_recovery_code(uid, code_hash=codes[1])
+        foreign = await mfa.find_unused_recovery_code(erin, code_hash="f" * 64)
+        assert code is not None and other is not None and foreign is not None
+
+        assert await mfa.complete_recovery(uid, challenge_id=first, code_id=code, now=_NOW)
+
+        assert await mfa.find_active_methods(uid) == ()
+        assert await mfa.find_pending_method(str(method.id), uid) is None
+        for challenge_id, code_id in ((second, code), (first, other), (second, foreign)):
+            lost = await mfa.complete_recovery(
+                uid, challenge_id=challenge_id, code_id=code_id, now=_NOW
+            )
+            assert lost is False, (challenge_id, code_id)
+        assert await mfa.count_unused_recovery_codes(uid) == 1
+        assert await mfa.count_unused_recovery_codes(erin) == 1
+        assert await mfa.satisfy_challenge(second, now=_NOW) is True  # still open
     finally:
         await rel.dispose()
