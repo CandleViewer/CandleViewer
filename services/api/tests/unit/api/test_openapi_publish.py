@@ -10,6 +10,7 @@ as generated, and let FastAPI own the cache.
 from __future__ import annotations
 
 import copy
+import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -284,7 +285,7 @@ def test_openapi_json_serves_the_published_operation() -> None:
 def test_the_app_publishes_only_its_schema_routes_and_validates() -> None:
     """The real app: the raw-body operations in its document are exactly the served routes
     FastAPI puts in the schema (`include_in_schema=False` ones excluded), each carrying the
-    contract's operation (on `main` no raw-body router is mounted yet, so none is published)."""
+    contract's operation (the drawings router is mounted, so its operations are published)."""
     app = create_app(Settings(git_sha="test", version="0.0.0-test"))
     doc = app.openapi()
     assert_spec_is_valid(doc)
@@ -355,12 +356,21 @@ def test_openapi_json_is_a_redacted_500_for_a_refused_or_failed_publish_then_rec
 
     refused = client.get("/openapi.json")
 
-    assert refused.status_code == 500, refused.text
+    assert refused.status_code == 500, refused.text[:300]
     assert refused.headers["content-type"].startswith("application/problem+json")
     problem = refused.json()
     Problem.model_validate(problem)
     assert (problem["status"], problem["code"]) == (500, "internal_error")
     assert set(problem) <= {"type", "title", "status", "code", "instance"}, "free text echoed"
+    instance = problem.pop("instance", None)  # contract: urn:cv:req:{uuid}
+    assert instance is None or re.fullmatch(r"urn:cv:req:[0-9a-f-]{36}", instance)
+    assert problem == {
+        "type": "https://candleviewer.local/errors/internal_error",
+        "title": "Internal server error",
+        "status": 500,
+        "code": "internal_error",
+    }
+    assert set(refused.headers) <= {"content-length", "content-type"}
     list_drawings = SUBSET["paths"]["/drawings"]["get"]["operationId"]
     for fragment in (*leaks, "/drawings", list_drawings):
         assert fragment not in refused.text, fragment
@@ -370,7 +380,7 @@ def test_openapi_json_is_a_redacted_500_for_a_refused_or_failed_publish_then_rec
     contract.update(copy.deepcopy(SUBSET))  # the fault clears
     served = client.get("/openapi.json")
 
-    assert served.status_code == 200, served.text
+    assert served.status_code == 200, served.text[:300]
     doc = served.json()
     assert_spec_is_valid(doc)
     published = [
