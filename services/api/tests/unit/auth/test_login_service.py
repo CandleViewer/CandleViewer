@@ -10,7 +10,7 @@ import pytest
 
 from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, LoginService
+from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, EnrolmentOnlyLogin, LoginService
 from candleviewer.auth.models import LoginRequest, MfaMethodKind, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
@@ -291,3 +291,45 @@ async def test_successful_login_persists_hashed_mfa_challenge_when_repository_in
     assert challenge.purpose == "login"
     assert challenge.mfa_token_hash != result.mfa_token
     assert str(challenge.user_id) == str(user.id)
+
+
+# -- #2295 (Q6): a user who must enrol TOTP first --------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_user_who_must_enrol_gets_an_enrolment_only_login_and_no_challenge() -> None:
+    repo = FakeUserRepository()
+    mfa_repo = FakeMfaRepository()
+    hasher = Hasher(pepper="test-pepper")
+    user = make_user(
+        password_hash=await hasher.hash(PASSWORD), mfa_methods=(), failed_login_count=2
+    )
+    repo.add(user)
+    service = LoginService(
+        repo, hasher, per_ip_throttle=PerIpLoginThrottle(max_attempts=1000), mfa_repository=mfa_repo
+    )
+
+    result = await service.login(
+        LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1"
+    )
+
+    assert result == EnrolmentOnlyLogin(user_id=user.id)
+    assert mfa_repo.challenges == {}
+    assert repo.users[str(user.id)].failed_login_count == 0  # a real password match
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("methods", [(), (MfaMethodKind.TOTP,)])
+async def test_user_not_required_to_use_mfa_still_fails_closed(
+    methods: tuple[MfaMethodKind, ...],
+) -> None:
+    """C-12.2 forbids the state (#965 refuses it); a password-only session is not specified."""
+    repo = FakeUserRepository()
+    hasher = Hasher(pepper="test-pepper")
+    password_hash = await hasher.hash(PASSWORD)
+    repo.add(make_user(password_hash=password_hash, mfa_required=False, mfa_methods=methods))
+
+    with pytest.raises(NotImplementedError):
+        await _service(repo).login(
+            LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1"
+        )

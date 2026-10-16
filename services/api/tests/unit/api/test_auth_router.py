@@ -20,6 +20,7 @@ from candleviewer.auth.errors import (
     MfaChallengeInvalid,
     RecoveryCodesExhausted,
 )
+from candleviewer.auth.login_service import EnrolmentOnlyLogin
 from candleviewer.auth.models import (
     LoginRequest,
     MfaChallengeResult,
@@ -39,10 +40,12 @@ class _FakeLoginService:
     def __init__(self, outcome: object) -> None:
         self._outcome = outcome
 
-    async def login(self, request: LoginRequest, *, source_ip: str) -> MfaChallengeResult:
+    async def login(
+        self, request: LoginRequest, *, source_ip: str
+    ) -> MfaChallengeResult | EnrolmentOnlyLogin:
         if isinstance(self._outcome, Exception):
             raise self._outcome
-        assert isinstance(self._outcome, MfaChallengeResult)
+        assert isinstance(self._outcome, MfaChallengeResult | EnrolmentOnlyLogin)
         return self._outcome
 
 
@@ -333,59 +336,51 @@ def test_mfa_recovery_exhausted_returns_401_and_audits_denied() -> None:
     assert call["outcome"] == AuditOutcome.DENIED
 
 
-# -- /auth/mfa/enroll --------------------------------------------------------
-# PR #1618 review finding 1: enrolment is disabled (`501`) until E09-S03
-# wires real session/principal resolution — trusting the client-supplied
-# `X-User-Id`/`X-Username` headers with no verification would let anyone
-# enrol (and read the one-time recovery codes for) any account.
+# -- /auth/mfa/enroll and /auth/mfa/enroll/confirm (#2295) -----------------------------------
+# PR #1618 review finding 1 still holds: `X-User-Id`/`X-Username` name nobody. Only the bearer
+# session names the caller; the composed-app cases are in
+# tests/security/auth/test_enrolment_only_endpoints.py.
+
+_ENROL_CALLS = (
+    ("/auth/mfa/enroll", {"method": "totp", "label": "phone"}),
+    ("/auth/mfa/enroll/confirm", {"method_id": str(uuid.uuid4()), "code": "123456"}),
+)
+_FOREIGN = {"X-User-Id": str(uuid.uuid4()), "X-Username": "alice"}
 
 
-def test_mfa_enroll_disabled_returns_501_regardless_of_headers() -> None:
-    method_id = uuid.uuid4()
-    client = TestClient(
-        _mfa_app(
-            MfaEnrollResult(
-                method_id=method_id,
-                method=MfaMethodKind.TOTP,
-                otpauth_uri="otpauth://totp/x",
-                secret_base32="ABC",
-            )
+def _enrol_app(*, audit: bool) -> FastAPI:
+    app = FastAPI()
+    app.include_router(
+        make_auth_router(
+            _MintingAuthService(None),
+            audit_service=_RecordingAuditService() if audit else None,
+            identity=_FakeIdentity(),
+            csrf=_CSRF_CODEC,
         )
     )
-    response = client.post(
-        "/auth/mfa/enroll",
-        json={"method": "totp", "label": "phone"},
-        headers={"X-User-Id": str(uuid.uuid4()), "X-Username": "alice"},
-    )
-    assert response.status_code == 501
+    return app
 
 
-def test_mfa_enroll_disabled_even_without_headers() -> None:
-    client = TestClient(_mfa_app(None))
-    response = client.post("/auth/mfa/enroll", json={"method": "totp", "label": "phone"})
-    assert response.status_code == 501
+def test_mfa_enroll_and_confirm_fail_closed_until_every_backend_is_wired() -> None:
+    """No session backend (the fake/CI default), or no audit sink: 503, nothing changes."""
+    for app in (_mfa_app(None), _enrol_app(audit=False)):
+        client = TestClient(app)
+        for path, body in _ENROL_CALLS:
+            assert client.post(path, json=body, headers=_FOREIGN).status_code == 503, path
 
 
-# -- /auth/mfa/enroll/confirm -------------------------------------------------
-# Same rationale as `/auth/mfa/enroll` above.
+def test_mfa_enroll_and_confirm_trust_no_header_only_a_bearer_session() -> None:
+    client = TestClient(_enrol_app(audit=True))
+    for path, body in _ENROL_CALLS:
+        response = client.post(path, json=body, headers=_FOREIGN)
+        assert (response.status_code, response.json()["code"]) == (401, "unauthenticated")
 
 
-def test_mfa_enroll_confirm_disabled_returns_501_regardless_of_headers() -> None:
-    client = TestClient(_mfa_app((MfaMethodKind.TOTP, ("7F2A-91BC-4DE0",))))
-    response = client.post(
-        "/auth/mfa/enroll/confirm",
-        json={"method_id": str(uuid.uuid4()), "code": "123456"},
-        headers={"X-User-Id": str(uuid.uuid4())},
-    )
-    assert response.status_code == 501
-
-
-def test_mfa_enroll_confirm_disabled_even_without_headers() -> None:
-    client = TestClient(_mfa_app(None))
-    response = client.post(
-        "/auth/mfa/enroll/confirm", json={"method_id": str(uuid.uuid4()), "code": "123456"}
-    )
-    assert response.status_code == 501
+def test_login_of_a_user_who_must_enrol_fails_closed_without_a_session_backend() -> None:
+    """#2295: never a challenge, a 501 or a session nobody can audit."""
+    client = TestClient(_app(EnrolmentOnlyLogin(user_id=uuid.uuid4())))
+    response = client.post("/auth/login", json={"identifier": "basiltt", "password": "x"})
+    assert response.status_code == 503
 
 
 @pytest.mark.parametrize("code", NON_ASCII_DIGIT_CODES)

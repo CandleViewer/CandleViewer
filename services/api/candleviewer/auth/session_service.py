@@ -268,6 +268,7 @@ class SessionService:
         idle_timeout_s: int = DEFAULT_IDLE_TIMEOUT_S,
         mfa_satisfied: bool = True,
         expires_at: datetime | None = None,
+        session_id: uuid.UUID | None = None,
     ) -> MintedSession:
         """Issue a brand-new session — session fixation is prevented by
         always minting a fresh `session_id`/refresh token here, never
@@ -279,12 +280,16 @@ class SessionService:
         high: rotation must not reset the 12 h absolute lifetime). First-
         login callers never pass it, so a brand-new session still gets
         `now + ABSOLUTE_LIFETIME`.
+
+        *session_id* is an id the caller drew server-side (`uuid4`) to name the
+        session in its write-ahead audit record before minting (C-2.9, #2295);
+        it never comes from a request.
         """
         now = self._clock()
         raw_token = self._refresh_token_factory()
         raw_access = secrets.token_urlsafe(32)
         session = SessionRecord(
-            id=uuid.uuid4(),
+            id=session_id if session_id is not None else uuid.uuid4(),
             user_id=uuid.UUID(user_id),
             refresh_token_hash=_hash_refresh_token(raw_token),
             access_token_jti=hash_access_token(raw_access),
@@ -309,6 +314,26 @@ class SessionService:
             refresh_token=raw_token,
             issued_at=created.issued_at,
             expires_at=created.expires_at,
+        )
+
+    async def mint_enrolment_only(
+        self,
+        user_id: str,
+        *,
+        session_id: uuid.UUID,
+        ip: str | None = None,
+        user_agent: str | None = None,
+    ) -> MintedSession:
+        """#2295 (Q6, Q7): a session minted on the password alone (`mfa_satisfied_at`
+        unset) that lives at most `ENROLMENT_ONLY_LIFETIME`; `refresh()` hands both on,
+        so it never turns full and never outlives that lifetime."""
+        return await self.mint(
+            user_id,
+            ip=ip,
+            user_agent=user_agent,
+            mfa_satisfied=False,
+            expires_at=self._clock() + ENROLMENT_ONLY_LIFETIME,
+            session_id=session_id,
         )
 
     # -- refresh / rotation ----------------------------------------------

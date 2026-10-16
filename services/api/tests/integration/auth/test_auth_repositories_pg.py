@@ -110,3 +110,48 @@ async def test_mfa_challenge_replay_and_single_use_recovery_code(pg_dsn: str) ->
         assert await mfa.count_unused_recovery_codes(uid) == 0
     finally:
         await rel.dispose()
+
+
+async def test_enrolment_completes_in_one_transaction_and_only_the_latest_method(
+    pg_dsn: str,
+) -> None:
+    """#2295 (Q8, Q9): a method a recovery sign-in un-confirmed never confirms again; a new
+    enrolment supersedes the pending one; completion confirms, revokes the other TOTP methods and
+    swaps the codes in one transaction; a second completion changes nothing."""
+    await seed(pg_dsn, "carol", "correct horse battery", allow_no_mfa=True)
+    rel = SqlAlchemyRelationalRepository(pg_dsn)
+    users = SqlAlchemyUserRepository(rel, _rec(UserRecord), clock=lambda: _NOW)
+    mfa = SqlAlchemyMfaRepository(rel, _rec(MfaMethodRecord), _rec(MfaChallengeRecord))
+    ref = {"secret_key_ref": "k"}
+    old_codes, new_codes = ("a" * 64,), ("b" * 64,)
+    try:
+        uid = str((await users.find_by_identifier("carol")).id)
+        old = await mfa.create_pending_method(uid, secret_enc=b"0", **ref, label="")
+        assert await mfa.complete_enrollment(
+            uid, method_id=str(old.id), time_step=1, now=_NOW, code_hashes=old_codes
+        )
+        await mfa.set_mfa_required_reenroll(uid)  # a recovery sign-in un-confirms it
+        assert await mfa.find_pending_method(str(old.id), uid) is None
+        first = await mfa.create_pending_method(uid, secret_enc=b"1", **ref, label="")
+        await mfa.supersede_pending_methods(uid, now=_NOW)
+        new = await mfa.create_pending_method(uid, secret_enc=b"2", **ref, label="")
+        assert await mfa.find_pending_method(str(first.id), uid) is None
+
+        got = await mfa.complete_enrollment(
+            uid, method_id=str(new.id), time_step=2, now=_NOW, code_hashes=new_codes
+        )
+
+        assert got is not None and (got.id, got.last_accepted_time_step) == (new.id, 2)
+        assert [m.id for m in await mfa.find_active_totp_methods(uid)] == [new.id]
+        assert await mfa.find_unused_recovery_code(uid, code_hash=old_codes[0]) is None
+        assert await mfa.find_unused_recovery_code(uid, code_hash=new_codes[0]) is not None
+        again = await mfa.complete_enrollment(
+            uid, method_id=str(new.id), time_step=3, now=_NOW, code_hashes=("c" * 64,)
+        )
+        assert again is None
+        assert await mfa.find_unused_recovery_code(uid, code_hash=new_codes[0]) is not None
+        await users.set_mfa_required(uid)
+        carol = await users.find_by_id(uid)
+        assert carol is not None and carol.mfa_required is True
+    finally:
+        await rel.dispose()

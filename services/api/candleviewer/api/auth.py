@@ -13,26 +13,17 @@ to import `candleviewer.audit`; `auth` itself is not (see
 the audit calls live in this router. On the fake/CI default backend
 (`audit_writer=None`) the routes still work; they just skip the audit call.
 
-**Deviation 1 (PR #1618 review finding 1 — security, blocking until
-resolved as below):** `/auth/mfa/enroll`, `/auth/mfa/enroll/confirm` and
-`/auth/mfa/recovery`'s regeneration sibling are `x-rbac scope: self` per
-`22-api-openapi.yaml`, which normally means "the authenticated caller,
-resolved from their session". Real session authentication (the
-`cv_refresh` cookie / bearer access token / RBAC middleware) is E09-S03
-scope, not yet merged, so there is today no way to verify that an
-`X-User-Id`/`X-Username` header actually belongs to the caller — trusting
-it would let anyone enrol (and read the one-time recovery codes for) any
-account, an MFA takeover. Per this repo's multi-agent protocol §5 this is
-not a "minor gap" (it touches security/money-adjacent identity), so rather
-than guessing at an undocumented trust boundary, `/auth/mfa/enroll` and
-`/auth/mfa/enroll/confirm` are **disabled** (`501 Not Implemented`) until
-E09-S03 wires real session/principal resolution — mirroring exactly how
-`api/audit.py`'s `principal_resolver=None` path already fails closed with
-`501` for the same reason (see that module's docstring). `/auth/login`,
-`/auth/mfa/verify` and `/auth/mfa/recovery`'s login path need no such
-header: they resolve the user from the `mfa_token` challenge alone,
-exactly like `/auth/login` needs no prior session — so those three stay
-enabled.
+**Enrolment (#2295; formerly Deviation 1, PR #1618 review finding 1):**
+`/auth/mfa/enroll` and `/auth/mfa/enroll/confirm` act only for the user of
+the caller's bearer session (`x-rbac scope: self`, SR-026): no header and
+no query parameter can name another user. A user who already has a
+confirmed method gets `409` (voluntary re-enrolment is not specified yet).
+Confirm checks the code first, writes its audit records ahead of any change
+(C-2.9), then completes the enrolment in one repository transaction,
+revokes every session of the user and mints a full one (SR-013).
+`/auth/login` answers a user with `mfa_required` and no confirmed method
+with an enrolment-only session (`22-api-openapi.yaml` "Enrolment-only
+session"); `api/enrolment_guard.py` confines it to five operations.
 
 **Deviation 2 (PR #1618 review finding 2 — acceptance criterion):** the
 ticket's "Valid code creates a session" scenario is not fully met by this
@@ -57,11 +48,12 @@ import uuid
 from typing import Any, Protocol
 
 import structlog
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from candleviewer.api.csrf import set_csrf_cookie
 from candleviewer.api.csrf import source_ip as admitted_source_ip
+from candleviewer.api.query_allowlist import undeclared_query_refusal
 from candleviewer.api.sessions import (
     REFRESH_COOKIE,
     REFRESH_EXPIRES_IN_S,
@@ -69,6 +61,7 @@ from candleviewer.api.sessions import (
     _bearer,
     _set_refresh_cookie,
     _tokens,
+    refresh_lifetime_s,
 )
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -76,14 +69,17 @@ from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.errors import (
     AccountDisabled,
     AccountLocked,
+    AuthError,
     InvalidCredentials,
     MfaChallengeInvalid,
     MfaChallengeLocked,
     MfaCodeInvalid,
     MfaCodeReused,
+    MfaEnrollmentNotFound,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
 )
+from candleviewer.auth.login_service import EnrolmentOnlyLogin
 from candleviewer.auth.metrics import auth_session_fixation_attempts_total
 from candleviewer.auth.models import (
     LoginRequest,
@@ -92,12 +88,28 @@ from candleviewer.auth.models import (
     MfaEnrollRequest,
     MfaEnrollResult,
     MfaMethodKind,
+    MfaMethodRecord,
+    MfaMethodView,
     MfaRecoveryRequest,
     MfaVerifiedResult,
     MfaVerifyRequest,
     MintedSession,
     SessionRecord,
+    SessionView,
+    UserRecord,
 )
+from candleviewer.auth.recovery_codes import RECOVERY_CODE_COUNT
+
+#: `sessions.revoked_reason` and audit `reason` of the sessions a confirmed enrolment ends:
+#: every session of the user, the caller's own included (rotation, SR-013) (#2295).
+ENROLLED_REASON = "mfa_enrolled"
+#: Titles of the catalogue codes (`x-error-codes`) the enrolment routes answer with.
+_UNAUTHENTICATED = "Missing, malformed or expired access token"
+_CONFLICT = "Concurrent modification or state conflict"
+_INVALID = "Request body or parameters failed schema validation"
+_FAILED = AuditOutcome.FAILURE
+#: The `MfaMethodRecord` fields the `MfaMethod` response shows (never the secret).
+_METHOD_FIELDS = {"id", "kind", "label", "created_at", "last_used_at"}
 
 
 class LoginServiceLike(Protocol):
@@ -105,7 +117,9 @@ class LoginServiceLike(Protocol):
     (no import edge needed beyond the one `auth.models`/`auth.errors`
     already require for the request/response/error shapes)."""
 
-    async def login(self, request: LoginRequest, *, source_ip: str) -> MfaChallengeResult: ...
+    async def login(
+        self, request: LoginRequest, *, source_ip: str
+    ) -> MfaChallengeResult | EnrolmentOnlyLogin: ...
 
 
 class MfaServiceLike(Protocol):
@@ -117,21 +131,45 @@ class MfaServiceLike(Protocol):
         self, user_id: str, request: MfaEnrollRequest, *, account_name: str
     ) -> MfaEnrollResult: ...
 
-    async def confirm_enrollment(
-        self, user_id: str, *, method_id: str, code: str
-    ) -> tuple[MfaMethodKind, tuple[str, ...]]: ...
+    async def check_enrollment(self, user_id: str, *, method_id: str, code: str) -> int: ...
+
+    async def complete_enrollment(
+        self, user_id: str, *, method_id: str, time_step: int
+    ) -> tuple[MfaMethodRecord, tuple[str, ...]]: ...
 
     async def recover(self, mfa_token: str, recovery_code: str) -> MfaVerifiedResult: ...
 
 
 class SessionMinterLike(Protocol):
     async def mint(
-        self, user_id: str, *, ip: str | None = None, user_agent: str | None = None
+        self,
+        user_id: str,
+        *,
+        ip: str | None = None,
+        user_agent: str | None = None,
+        session_id: uuid.UUID | None = None,
+    ) -> MintedSession: ...
+
+    async def mint_enrolment_only(
+        self,
+        user_id: str,
+        *,
+        session_id: uuid.UUID,
+        ip: str | None = None,
+        user_agent: str | None = None,
     ) -> MintedSession: ...
 
     async def peek_refresh(self, raw_refresh_token: str) -> SessionRecord | None: ...
 
     async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None: ...
+
+    async def authenticate_access_token(
+        self, raw_access_token: str, *, touch: bool = False
+    ) -> SessionRecord: ...
+
+    async def list_sessions(self, user_id: str) -> tuple[SessionView, ...]: ...
+
+    async def revoke_all(self, user_id: str, *, reason: str) -> tuple[SessionRecord, ...]: ...
 
 
 class AuthServiceLike(Protocol):
@@ -152,6 +190,8 @@ class AuthServiceLike(Protocol):
 
     @property
     def mfa(self) -> MfaServiceLike: ...
+
+    async def find_user(self, user_id: str) -> UserRecord | None: ...
 
 
 class AuditWriterLike(Protocol):
@@ -197,10 +237,13 @@ async def _audit(
     )
 
 
-def _problem(status_code: int, title: str, detail: str) -> JSONResponse:
+def _problem(status_code: int, title: str, detail: str, *, code: str | None = None) -> JSONResponse:
+    content: dict[str, Any] = {"type": "about:blank", "title": title, "status": status_code}
+    if code is not None:  # the catalogue code (`x-error-codes`) and its type URI
+        content.update(type=f"https://candleviewer.local/errors/{code}", code=code)
     return JSONResponse(
         status_code=status_code,
-        content={"type": "about:blank", "title": title, "status": status_code, "detail": detail},
+        content={**content, "detail": detail},
         media_type="application/problem+json",
     )
 
@@ -287,6 +330,92 @@ def make_auth_router(
                 return False
         return True
 
+    def _enrolment_ready(*, mfa: bool) -> tuple[AuditWriterLike, IdentityProvider] | JSONResponse:
+        """The audit writer and the identity provider when every backend an enrolment-only
+        sign-in (*mfa* False) or an enrolment step (*mfa* True) needs is wired, else a 503:
+        nothing here is minted or changed without its write-ahead audit record (C-2.9)."""
+        wired = auth_service.is_active and auth_service.sessions_is_active
+        if identity is None or not wired or (mfa and not auth_service.mfa_is_active):
+            return _problem(503, "Service unavailable", "enrolment backend is not wired")
+        if audit_service is None or not audit_service.is_active:
+            return _problem(503, "Service unavailable", "audit sink not active")
+        return audit_service.writer, identity
+
+    def _signed_in(
+        minted: MintedSession, user: dict[str, Any], *, lifetime_s: int, **extra: Any
+    ) -> JSONResponse:
+        """`AuthenticatedResponse` (plus *extra*) with the `cv_refresh` and SR-041 cookies of
+        the session just minted, each living *lifetime_s* seconds."""
+        tokens = _tokens(minted, include_refresh=False, refresh_expires_in=lifetime_s)
+        response = JSONResponse(
+            status_code=200,
+            content={"status": "authenticated", "tokens": tokens, "user": user, **extra},
+        )
+        _set_refresh_cookie(response, minted.refresh_token, max_age=lifetime_s)
+        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=lifetime_s)
+        return response
+
+    async def _enrolment_only_sign_in(
+        request: Request, identifier: str, user_id: uuid.UUID
+    ) -> JSONResponse:
+        """#2295 (Q6, Q7): the session of a user who must enrol TOTP is enrolment-only: minted
+        on the password alone for 15 minutes. Write-ahead (C-2.9): `auth.login` and
+        `auth.session_created` (`enrolment_only: true`) precede it; a failed write mints none."""
+        ready = _enrolment_ready(mfa=False)
+        if isinstance(ready, JSONResponse):
+            return ready
+        writer, ident = ready
+        ip, session_id, only = _client_ip(request), uuid.uuid4(), {"enrolment_only": True}
+        try:
+            await writer.emit(
+                "auth.login", actor_label=identifier, actor_user_id=user_id, actor_ip=ip
+            )
+            await writer.emit(
+                "auth.session_created",
+                actor_label=str(user_id),
+                actor_user_id=user_id,
+                actor_ip=ip,
+                session_id=session_id,
+                after_state={**only, "mfa_satisfied": False},
+            )
+        except AuditError:
+            return _problem(503, "Service unavailable", "audit sink not active")
+        minted = await auth_service.sessions.mint_enrolment_only(
+            str(user_id), session_id=session_id, ip=ip, user_agent=request.headers.get("user-agent")
+        )
+        user = await ident.user(str(user_id))
+        return _signed_in(minted, user, lifetime_s=refresh_lifetime_s(minted, password_only=True))
+
+    async def _enrolling_caller(
+        request: Request,
+    ) -> tuple[AuditWriterLike, IdentityProvider, SessionRecord, UserRecord] | JSONResponse:
+        """The caller of enrol or confirm (#2295): the live session of the bearer and its
+        user, read now. Only the bearer names the user (SR-026: no header and no query
+        parameter can). A user who already has a confirmed method gets 409 (Q10: voluntary
+        re-enrolment is not specified yet), and nothing changes."""
+        ready = _enrolment_ready(mfa=True)
+        if isinstance(ready, JSONResponse):
+            return ready
+        unauthenticated = _problem(
+            401, _UNAUTHENTICATED, "authentication required", code="unauthenticated"
+        )
+        token = _bearer(request)
+        if token is None:
+            return unauthenticated
+        try:
+            record = await auth_service.sessions.authenticate_access_token(token, touch=True)
+        except AuthError:
+            return unauthenticated  # unknown, expired, revoked or idle-locked: one answer
+        if (refusal := undeclared_query_refusal(request, frozenset())) is not None:
+            return refusal  # SR-026: before the user is read or anything changes
+        user = await auth_service.find_user(str(record.user_id))
+        if user is None:
+            return unauthenticated
+        if user.mfa_methods:
+            detail = "a confirmed MFA method exists; re-enrolment is not available yet"
+            return _problem(409, _CONFLICT, detail, code="conflict")
+        return (*ready, record, user)
+
     @router.post("/auth/login")
     async def login(request: Request, body: LoginRequest) -> JSONResponse:
         if not auth_service.is_active:
@@ -336,6 +465,8 @@ def make_auth_router(
             # generic detail is all a caller needs.
             return _problem(501, "Not implemented", "this login path is not yet available")
 
+        if isinstance(result, EnrolmentOnlyLogin):
+            return await _enrolment_only_sign_in(request, body.identifier, result.user_id)
         await _audit(
             audit_service,
             "auth.login",
@@ -473,41 +604,98 @@ def make_auth_router(
             },
         )
 
-    @router.post("/auth/mfa/enroll", status_code=201)  # nosem: audit-write-required reason=fail-closed-501-stub-no-mutation-removed-by-E09-S03-#230 owner=@CandleViewer/security review=2026-12-31  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
-    async def mfa_enroll(
-        body: MfaEnrollRequest,
-        x_user_id: str | None = Header(default=None),
-        x_username: str | None = Header(default=None),
-    ) -> JSONResponse:
-        # PR #1618 review finding 1 (security, blocking): no session/RBAC
-        # middleware exists yet to verify `X-User-Id`/`X-Username` actually
-        # belong to the caller (E09-S03 scope). Trusting them would let any
-        # caller enrol MFA (and read the one-time recovery codes) for any
-        # account — an MFA takeover. This route fails closed with `501`
-        # (mirroring `api/audit.py`'s `principal_resolver=None` path) until
-        # E09-S03 lands a real principal resolver here. See the module
-        # docstring's "Deviation 1".
-        del x_user_id, x_username
-        return _problem(
-            501,
-            "Not implemented",
-            "enrolment requires session authentication (E09-S03); disabled until then",
-        )
+    @router.post("/auth/mfa/enroll", status_code=201)
+    async def mfa_enroll(request: Request, body: MfaEnrollRequest) -> JSONResponse:
+        """#2295: start a TOTP enrolment for the caller's own user. Earlier pending methods
+        are superseded; the response carries the provisioning URI once and never recovery
+        codes. `auth.mfa_enroll` is written ahead of any change (C-2.9)."""
+        caller = await _enrolling_caller(request)
+        if isinstance(caller, JSONResponse):
+            return caller
+        writer, _ident, record, user = caller
+        if body.method is not MfaMethodKind.TOTP:
+            return _problem(
+                422, _INVALID, "only method=totp can be enrolled", code="validation_failed"
+            )
+        try:
+            await writer.emit(
+                "auth.mfa_enroll",
+                actor_label=str(user.id),
+                actor_user_id=user.id,
+                actor_ip=_client_ip(request),
+                session_id=record.id,
+                after_state={"method": MfaMethodKind.TOTP.value},
+            )
+        except AuditError:
+            return _problem(503, "Service unavailable", "audit sink not active")
+        result = await auth_service.mfa.enroll(str(user.id), body, account_name=user.username)
+        content = {
+            "method_id": str(result.method_id),
+            "method": result.method.value,
+            "otpauth_uri": result.otpauth_uri,
+            "webauthn_creation_options": None,
+        }
+        return JSONResponse(status_code=201, content=content)
 
-    @router.post("/auth/mfa/enroll/confirm")  # nosem: audit-write-required reason=fail-closed-501-stub-no-mutation-removed-by-E09-S03-#230 owner=@CandleViewer/security review=2026-12-31  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
-    async def mfa_enroll_confirm(
-        body: MfaEnrollConfirmRequest,
-        x_user_id: str | None = Header(default=None),
-    ) -> JSONResponse:
-        # Same rationale as `/auth/mfa/enroll` above (Deviation 1): trusting
-        # an unauthenticated `X-User-Id` here would let anyone confirm
-        # (and thereby activate) a TOTP method — and mint that account's
-        # recovery codes — for any user id. Disabled until E09-S03.
-        del x_user_id
-        return _problem(
-            501,
-            "Not implemented",
-            "enrolment confirmation requires session authentication (E09-S03); disabled until then",
+    @router.post("/auth/mfa/enroll/confirm")
+    async def mfa_enroll_confirm(request: Request, body: MfaEnrollConfirmRequest) -> JSONResponse:
+        """#2295 (Q8): the code is checked first (no change), the audit records are written
+        next (C-2.9), then one transaction confirms the method, revokes the user's other TOTP
+        methods and replaces the recovery codes; every session of the user is revoked and a
+        full one minted (SR-013). The 10 new codes appear in this response only."""
+        caller = await _enrolling_caller(request)
+        if isinstance(caller, JSONResponse):
+            return caller
+        writer, ident, record, user = caller
+        uid, method_id, ip = str(user.id), str(body.method_id), _client_ip(request)
+        mfa, sessions = auth_service.mfa, auth_service.sessions
+        try:
+            step = await mfa.check_enrollment(uid, method_id=method_id, code=body.code)
+            new_id = uuid.uuid4()  # named by the write-ahead record
+            planned: list[tuple[str, uuid.UUID, dict[str, Any] | None, str | None]] = [
+                ("auth.mfa_enrolled", record.id, {"method_id": method_id}, None),
+                (
+                    "auth.recovery_codes_regenerated",
+                    record.id,
+                    {"count": RECOVERY_CODE_COUNT},
+                    None,
+                ),
+                *(
+                    ("auth.session_revoked", view.id, None, ENROLLED_REASON)
+                    for view in await sessions.list_sessions(uid)  # the caller's too: rotation
+                ),
+                ("auth.session_created", new_id, {"rotated_from": str(record.id)}, None),
+            ]
+            for action, sid, after, reason in planned:
+                await writer.emit(
+                    action,
+                    actor_label=uid,
+                    actor_user_id=user.id,
+                    actor_ip=ip,
+                    session_id=sid,
+                    reason=reason,
+                    after_state=after,
+                )
+            method, codes = await mfa.complete_enrollment(uid, method_id=method_id, time_step=step)
+        except AuditError:
+            return _problem(503, "Service unavailable", "audit sink not active")
+        except (MfaEnrollmentNotFound, MfaCodeInvalid):  # wrong code, other method, lost race
+            await _audit(
+                audit_service, "auth.mfa_failed", actor_label=uid, actor_ip=ip, outcome=_FAILED
+            )
+            detail = "invalid or expired enrolment code"
+            return _problem(422, _INVALID, detail, code="validation_failed")
+        await sessions.revoke_all(uid, reason=ENROLLED_REASON)
+        minted = await sessions.mint(
+            uid, ip=ip, user_agent=request.headers.get("user-agent"), session_id=new_id
+        )
+        activated = MfaMethodView(active=True, **method.model_dump(include=_METHOD_FIELDS))
+        return _signed_in(
+            minted,
+            await ident.user(uid),
+            lifetime_s=REFRESH_EXPIRES_IN_S,
+            mfa_method=activated.model_dump(mode="json"),
+            recovery_codes=list(codes),
         )
 
     return router

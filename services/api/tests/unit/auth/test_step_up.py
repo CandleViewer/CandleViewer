@@ -221,6 +221,23 @@ async def test_owner_cannot_reset_self() -> None:
         )
 
 
+async def test_owner_reset_sets_the_targets_mfa_required() -> None:
+    """#2295 (Q9): the target's next sign-in must enrol TOTP, even if MFA was not required."""
+    svc, clock, seed, owner, _ = await _setup()
+    users = svc._users
+    assert isinstance(users, FakeUserRepository)
+    target = make_user(password_hash="unused", username="t", email="t@example.test")
+    users.add(target.model_copy(update={"mfa_required": False}))
+    await svc.step_up(str(owner), "o1", "users", _code(seed, clock), PASSWORD)
+
+    await svc.reset_totp(
+        actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(target.id), audit=_noop
+    )
+
+    stored = await users.find_by_id(str(target.id))
+    assert stored is not None and stored.mfa_required is True
+
+
 async def test_preview_with_no_position_store_reports_unknown_not_zero() -> None:
     svc, *_ = await _setup()
     preview = await svc.preview_reset(str(uuid.uuid4()), _NoStore())

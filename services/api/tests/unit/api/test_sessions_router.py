@@ -4,6 +4,7 @@ reuse detection, logout, listing, IDOR and unauthenticated access. No DB/network
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -127,6 +128,29 @@ def _h(token: str) -> dict[str, str]:
 @pytest.fixture()
 def env() -> _Env:
     return _Env()
+
+
+async def test_session_info_of_an_unclassifiable_session_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2295: when the enrolment-only class cannot be read, 503, never the full grants."""
+
+    class _Unreadable(_Auth):
+        def __init__(self, sessions: SessionService) -> None:
+            super().__init__(sessions)
+            self.enrolment_gate_is_active = True
+
+        async def classify(self, session: SessionRecord) -> SessionClass:
+            raise OSError("user store unreachable")
+
+    monkeypatch.setattr(sys.modules[__name__], "_Auth", _Unreadable)
+    env = _Env()
+    minted = await env.mint(uuid.uuid4())
+
+    response = env.client.get("/api/v1/auth/session", headers=_h(minted.access_token))
+
+    assert response.status_code == 503
+    assert "permissions" not in response.text and "unreachable" not in response.text
 
 
 async def test_unauthenticated_routes_return_401(env: _Env) -> None:

@@ -55,10 +55,49 @@ class FakeMfaRepository:
         return method
 
     async def find_pending_method(self, method_id: str, user_id: str) -> MfaMethodRecord | None:
+        """The SQL `_CONFIRMABLE` rule: never confirmed, not revoked, the user's latest
+        method (insertion order stands in for `created_at`)."""
         method = self.methods.get(method_id)
-        if method is None or str(method.user_id) != user_id or method.confirmed_at is not None:
+        own = [m for m in self.methods.values() if str(m.user_id) == user_id]
+        if (
+            method is None
+            or not own
+            or own[-1].id != method.id
+            or method.confirmed_at is not None
+            or method.revoked_at is not None
+            or method.last_accepted_time_step is not None
+        ):
             return None
         return method
+
+    async def supersede_pending_methods(self, user_id: str, *, now: datetime) -> None:
+        for method_id, m in list(self.methods.items()):
+            if str(m.user_id) == user_id and m.confirmed_at is None and m.revoked_at is None:
+                self.methods[method_id] = m.model_copy(update={"revoked_at": now})
+
+    async def complete_enrollment(
+        self,
+        user_id: str,
+        *,
+        method_id: str,
+        time_step: int,
+        now: datetime,
+        code_hashes: tuple[str, ...],
+    ) -> MfaMethodRecord | None:
+        """Single-threaded fake: the claim, the revocations and the code swap happen in
+        one synchronous step, the atomicity the SQL unit of work provides."""
+        if await self.find_pending_method(method_id, user_id) is None:
+            return None
+        claimed = self.methods[method_id].model_copy(
+            update={"confirmed_at": now, "last_accepted_time_step": time_step}
+        )
+        self.methods[method_id] = claimed
+        for other_id, m in list(self.methods.items()):
+            mine = str(m.user_id) == user_id and other_id != method_id
+            if mine and m.kind == MfaMethodKind.TOTP and m.revoked_at is None:
+                self.methods[other_id] = m.model_copy(update={"revoked_at": now})
+        await self.replace_recovery_codes(user_id, code_hashes=code_hashes)
+        return claimed
 
     async def confirm_method(self, method_id: str, *, now: datetime) -> MfaMethodRecord:
         method = self.methods[method_id]

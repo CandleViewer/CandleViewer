@@ -105,9 +105,9 @@ curl -s -X POST "$API/auth/mfa/recovery" -H 'Content-Type: application/json' \
   -d '{"mfa_token":"<mfa_token>","recovery_code":"<code>"}'
 ```
 
-Expected `200` `{"status":"authenticated","forced_totp_reenroll":true}`. **BLOCKED — not
-implemented:** this route mints no session, token or cookie (`api/auth.py`), and
-`/auth/mfa/enroll[/confirm]` are `501` stubs (re-enrolment: #2295; recovery-session gap: #2344). So recovery codes do **not** currently get the Owner back in. A code is single use;
+Expected `200` `{"status":"authenticated","forced_totp_reenroll":true}`. This route mints no
+session, token or cookie yet (recovery-session gap: #2344), but it un-confirms the old TOTP, so
+the next password sign-in gets an enrolment-only session: re-enrol as in §2 step 4 (#2295). A code is single use;
 `auth.recovery_code_used` is written, and `auth.recovery_codes_exhausted` when none remain.
 Re-enrolment is forced after every recovery sign-in, however many codes remain
 (`auth/mfa_service.py`); there is no remaining-codes threshold (#2296).
@@ -163,11 +163,15 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    another way. Expected `200` with `target_user_id`, `methods_revoked`, `sessions_revoked`. The reply
    contains no secret.
 
-4. **BLOCKED — re-enrolment is not possible today.** `reset_totp` revokes every method; a user with
-   no active method gets `501` from `POST /auth/login` (`login_service.py`), and
-   `/auth/mfa/enroll[/confirm]` are `501` stubs (`api/auth.py`). After a reset the user
-   cannot log back in until #2295 (session-authenticated enrolment and a no-method
-   login path) lands. Do not reset a TOTP you cannot afford to leave locked out.
+4. The user re-enrols on their next sign-in (#2295). The reset also sets their `mfa_required`, so
+   `POST /auth/login` with the password answers `200` with an **enrolment-only** session: it lives
+   15 minutes and may only call `POST /auth/mfa/enroll`, `POST /auth/mfa/enroll/confirm`,
+   `GET /auth/session`, `POST /auth/refresh` and `POST /auth/logout` (anything else is
+   `403 mfa_enrollment_required`; the WebSocket closes with `4403`). The user enrols a new TOTP, then
+   confirms a code: that revokes their other methods and sessions, replaces their recovery codes
+   with 10 new ones (shown once) and returns a full session. If the 15 minutes run out, they sign
+   in again. Verify: audit `auth.session_created` with `enrolment_only: true`, then
+   `auth.mfa_enrolled` and `auth.recovery_codes_regenerated` for the user.
 5. Verify from telemetry: audit action `auth.mfa_reset_by_owner` (severity critical) with the
    target user:
    `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.mfa_reset_by_owner"`;

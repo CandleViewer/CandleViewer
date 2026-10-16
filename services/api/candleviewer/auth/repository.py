@@ -66,3 +66,8 @@ class UserRepository(Protocol):
         a successful verification against out-of-date Argon2id parameters
         (ticket "transparent rehash-on-login when parameters change")."""
         ...
+
+    async def set_mfa_required(self, user_id: str) -> None:
+        """Set `users.mfa_required = true` (#2295, Q9: an owner TOTP reset makes the
+        target's next sign-in enrolment-only, even for a user exempted from MFA)."""
+        ...

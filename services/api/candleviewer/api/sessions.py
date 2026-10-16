@@ -28,7 +28,9 @@ This router publishes nothing itself.
 Enrolment-only session (#2295): refresh classifies the presented session as the enrolment
 guard classifies a bearer (`AuthService.classify`). One that would outlive its 15-minute
 lifetime (Q7) gets the uniform `401 refresh_token_invalid` before any audit write or rotation,
-so the client signs in again; one that cannot be classified gets a 503 (fail closed).
+so the client signs in again; one that cannot be classified gets a 503 (fail closed). Its
+successor's `refresh_expires_in` and cookie `Max-Age` count down to the unchanged expiry, and
+`GET /auth/session` gives it empty grants and no `kill_switch` (contract).
 
 Session fixation (U6/SR-013, E09-X02 AC2): a bearer or refresh token that was
 never issued here is refused with the same 401 as any other, and counted
@@ -292,14 +294,30 @@ def _view_json(view: SessionView) -> dict[str, Any]:
     }
 
 
-def _tokens(minted: MintedSession, *, include_refresh: bool) -> dict[str, Any]:
+def _tokens(
+    minted: MintedSession, *, include_refresh: bool, refresh_expires_in: int = REFRESH_EXPIRES_IN_S
+) -> dict[str, Any]:
     return {
         "access_token": minted.access_token,
         "token_type": "Bearer",
         "expires_in": ACCESS_TOKEN_EXPIRES_IN_S,
-        "refresh_expires_in": REFRESH_EXPIRES_IN_S,
+        "refresh_expires_in": refresh_expires_in,
         "refresh_token": minted.refresh_token if include_refresh else None,
     }
+
+
+def refresh_lifetime_s(minted: MintedSession, *, password_only: bool) -> int:
+    """`refresh_expires_in` and the cookies' `Max-Age` (#2295, Q7): a session minted on the
+    password alone (enrolment-only) counts down to its absolute expiry, at most 15 minutes;
+    any other session keeps `REFRESH_EXPIRES_IN_S`."""
+    if not password_only:
+        return REFRESH_EXPIRES_IN_S
+    return max(0, int((minted.expires_at - minted.issued_at).total_seconds()))
+
+
+#: The `SessionInfo` grants an enrolment-only session gets empty (#2295): it may use nothing
+#: they describe, and `kill_switch` is omitted.
+ENROLMENT_ONLY_EMPTY_GRANTS = ("permissions", "account_scope", "allowed_environments")
 
 
 class AuditUnavailableError(RuntimeError):
@@ -596,18 +614,23 @@ def make_session_router(
         except (SessionNotFound, SessionRevoked, SessionIdleLocked):
             return _unauthorized("refresh_token_invalid")
         minted = outcome.minted
+        lifetime = refresh_lifetime_s(
+            minted, password_only=presented_record.mfa_satisfied_at is None
+        )
         user = await identity.user(str(presented_record.user_id))
         response = JSONResponse(
             status_code=200,
             content={
                 "status": "authenticated",
-                "tokens": _tokens(minted, include_refresh=cookie_token is None),
+                "tokens": _tokens(
+                    minted, include_refresh=cookie_token is None, refresh_expires_in=lifetime
+                ),
                 "user": user,
             },
         )
-        _set_refresh_cookie(response, minted.refresh_token, max_age=REFRESH_EXPIRES_IN_S)
+        _set_refresh_cookie(response, minted.refresh_token, max_age=lifetime)
         # SR-041: validated above, rotated with the session
-        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=REFRESH_EXPIRES_IN_S)
+        set_csrf_cookie(response, csrf.issue(str(minted.session_id)), max_age=lifetime)
         return response
 
     @router.get("/auth/session")
@@ -623,7 +646,21 @@ def make_session_router(
             return _problem(
                 501, "Not implemented", "identity provider not wired (E09-T03); disabled"
             )
-        info = await identity.session_info(str(record.user_id))
+        try:
+            enrolment_only = auth_service.enrolment_gate_is_active and (
+                await auth_service.classify(record) is not SessionClass.FULL
+            )
+        except Exception as exc:  # fail closed, as refresh does: never the full grants
+            auth_enrolment_refused_total.labels(channel="http", reason="unclassified").inc()
+            _log().error(
+                "auth.enrolment_only.unclassified", path="/auth/session", error=type(exc).__name__
+            )
+            return _problem(503, "Service unavailable", "the session could not be checked")
+        info = (
+            {grant: [] for grant in ENROLMENT_ONLY_EMPTY_GRANTS}
+            if enrolment_only
+            else await identity.session_info(str(record.user_id))
+        )
 
         response = JSONResponse(
             {

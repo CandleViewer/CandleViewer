@@ -33,7 +33,32 @@ class MfaRepository(Protocol):
         ...
 
     async def find_pending_method(self, method_id: str, user_id: str) -> MfaMethodRecord | None:
-        """Look up an unconfirmed method owned by `user_id`, or `None`."""
+        """The confirmable method `method_id` of `user_id`, or `None` (#2295): never
+        confirmed (no accepted time step), not revoked, and the user's latest method, so
+        only the one the latest enrolment created qualifies. A method a recovery sign-in
+        un-confirmed has an accepted step and never qualifies again."""
+        ...
+
+    async def supersede_pending_methods(self, user_id: str, *, now: datetime) -> None:
+        """Revoke (`revoked_at = now`) every unconfirmed, unrevoked method of `user_id`
+        before a new enrolment starts (#2295: at most one method is pending)."""
+        ...
+
+    async def complete_enrollment(
+        self,
+        user_id: str,
+        *,
+        method_id: str,
+        time_step: int,
+        now: datetime,
+        code_hashes: tuple[str, ...],
+    ) -> MfaMethodRecord | None:
+        """#2295, ONE transaction: confirm `method_id` (`confirmed_at = now`, accepted
+        `time_step`) only while `find_pending_method` would still return it, revoke every
+        other unrevoked TOTP method of `user_id`, and replace the user's recovery codes
+        with `code_hashes`, so the old method and codes stop working at the instant the
+        new ones start. Returns the confirmed method, or `None` after rolling back when
+        the method is no longer confirmable (a concurrent confirm or enrolment won)."""
         ...
 
     async def confirm_method(self, method_id: str, *, now: datetime) -> MfaMethodRecord:

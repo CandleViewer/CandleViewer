@@ -58,6 +58,7 @@ _REHASH_SQL = sa.text(
     "UPDATE users SET password_hash = :h, password_algo_params = CAST(:p AS jsonb), "
     "password_changed_at = now() WHERE id = CAST(:id AS uuid)"
 )
+_REQUIRE_MFA_SQL = sa.text("UPDATE users SET mfa_required = true WHERE id = CAST(:id AS uuid)")
 
 
 class SqlAlchemyUserRepository:
@@ -131,4 +132,9 @@ class SqlAlchemyUserRepository:
                 _REHASH_SQL,
                 {"id": user_id, "h": password_hash, "p": json.dumps(algo_params)},
             )
+            await uow.commit()
+
+    async def set_mfa_required(self, user_id: str) -> None:
+        async with self._relational.unit_of_work() as uow:
+            await uow.session.execute(_REQUIRE_MFA_SQL, {"id": user_id})
             await uow.commit()

@@ -41,9 +41,14 @@ class _Rel:
             return _Result(self.rows)
 
         async def commit() -> None:
-            return None
+            self.calls.append(("COMMIT", {}))
 
-        yield SimpleNamespace(session=SimpleNamespace(execute=execute), commit=commit)
+        async def rollback() -> None:
+            self.calls.append(("ROLLBACK", {}))
+
+        yield SimpleNamespace(
+            session=SimpleNamespace(execute=execute), commit=commit, rollback=rollback
+        )
 
 
 def _row(**m: Any) -> Any:
@@ -101,6 +106,46 @@ async def test_time_step_replay_rejected_when_no_row_updated() -> None:
     repo = SqlAlchemyMfaRepository(rel, dict, dict)  # type: ignore[arg-type]  # fake
     assert await repo.record_time_step("m", time_step=5) is False
     assert "last_accepted_time_step < :step" in rel.calls[0][0]
+
+
+async def test_complete_enrollment_claims_revokes_and_swaps_codes_in_one_unit_of_work() -> None:
+    """#2295: the old method and codes stop working at the instant the new ones start."""
+    rel = _Rel([_row(id="m", kind="totp")])
+    repo = SqlAlchemyMfaRepository(rel, dict, dict)  # type: ignore[arg-type]  # fake
+    got = await repo.complete_enrollment(
+        "u", method_id="m", time_step=7, now=_NOW, code_hashes=("h1", "h2")
+    )
+    sql = [statement for statement, _ in rel.calls]
+    assert got == {"id": "m", "kind": "totp"}
+    for rule in ("m.confirmed_at IS NULL", "m.last_accepted_time_step IS NULL", "NOT EXISTS"):
+        assert rule in sql[0] and sql[0].startswith("UPDATE mfa_methods m SET confirmed_at")
+    assert rel.calls[0][1] == {"id": "m", "u": "u", "now": _NOW, "step": 7}
+    assert "id <> CAST(:id AS uuid) AND kind = 'totp' AND revoked_at IS NULL" in sql[1]
+    assert sql[2].startswith("DELETE FROM recovery_codes")
+    assert [params["h"] for _, params in rel.calls[3:5]] == ["h1", "h2"]
+    assert sql[5:] == ["COMMIT"]  # one commit, after every statement
+
+
+async def test_complete_enrollment_rolls_back_when_the_method_is_no_longer_confirmable() -> None:
+    rel = _Rel([])
+    repo = SqlAlchemyMfaRepository(rel, dict, dict)  # type: ignore[arg-type]  # fake
+    got = await repo.complete_enrollment("u", method_id="m", time_step=7, now=_NOW, code_hashes=())
+    assert got is None
+    assert [statement for statement, _ in rel.calls][1:] == ["ROLLBACK"]
+
+
+async def test_pending_lookup_supersede_and_mfa_required_are_parameterised() -> None:
+    rel = _Rel([])
+    mfa = SqlAlchemyMfaRepository(rel, dict, dict)  # type: ignore[arg-type]  # fake
+    users = SqlAlchemyUserRepository(rel, dict, clock=lambda: _NOW)  # type: ignore[arg-type]  # fake
+    assert await mfa.find_pending_method("m", "u") is None
+    await mfa.supersede_pending_methods("u", now=_NOW)
+    await users.set_mfa_required("u")
+    (find, p1), (supersede, p2), (require, p3) = [c for c in rel.calls if c[0] != "COMMIT"]
+    assert "m.last_accepted_time_step IS NULL" in find and p1 == {"id": "m", "u": "u"}
+    assert "confirmed_at IS NULL AND revoked_at IS NULL" in supersede
+    assert p2 == {"u": "u", "now": _NOW}
+    assert "SET mfa_required = true" in require and p3 == {"id": "u"}
 
 
 def test_build_auth_service_fake_backend_is_scaffold() -> None:

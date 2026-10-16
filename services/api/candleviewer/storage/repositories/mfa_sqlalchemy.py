@@ -31,19 +31,39 @@ _CHALLENGE_COLS = (
     "id::text AS id, user_id::text AS user_id, convert_from(nonce, 'UTF8') AS mfa_token_hash, "
     "purpose, attempts, satisfied_at, expires_at, created_at"
 )
+#: #2295: a method `m` that may still be confirmed: never confirmed (every confirmation
+#: records the accepted step), not revoked, and its user's latest method.
+_CONFIRMABLE = (
+    "m.user_id = CAST(:u AS uuid) AND m.confirmed_at IS NULL AND m.revoked_at IS NULL "
+    "AND m.last_accepted_time_step IS NULL AND NOT EXISTS (SELECT 1 FROM mfa_methods n "
+    "WHERE n.user_id = m.user_id AND n.created_at > m.created_at)"
+)
 
 
 def _sql(template: str) -> sa.TextClause:
-    # Only the static column lists above are substituted, never caller data.
-    return sa.text(template.replace("@M@", _METHOD_COLS).replace("@C@", _CHALLENGE_COLS))
+    # Only the static fragments above are substituted, never caller data.
+    return sa.text(
+        template.replace("@M@", _METHOD_COLS)
+        .replace("@C@", _CHALLENGE_COLS)
+        .replace("@P@", _CONFIRMABLE)
+    )
 
 
 _CREATE_METHOD = _sql(
     "INSERT INTO mfa_methods (id, user_id, kind, label, secret_enc, secret_key_ref) "
     "VALUES (CAST(:id AS uuid), CAST(:u AS uuid), 'totp', :label, :enc, :ref) RETURNING @M@"
 )
-_FIND_PENDING = _sql(
-    "SELECT @M@ FROM mfa_methods WHERE id = CAST(:id AS uuid) AND user_id = CAST(:u AS uuid) "
+_FIND_PENDING = _sql("SELECT @M@ FROM mfa_methods m WHERE m.id = CAST(:id AS uuid) AND @P@")
+_CLAIM = _sql(
+    "UPDATE mfa_methods m SET confirmed_at = :now, last_accepted_time_step = :step "
+    "WHERE m.id = CAST(:id AS uuid) AND @P@ RETURNING @M@"
+)
+_REVOKE_OTHER_TOTP = sa.text(
+    "UPDATE mfa_methods SET revoked_at = :now WHERE user_id = CAST(:u AS uuid) "
+    "AND id <> CAST(:id AS uuid) AND kind = 'totp' AND revoked_at IS NULL"
+)
+_SUPERSEDE = sa.text(
+    "UPDATE mfa_methods SET revoked_at = :now WHERE user_id = CAST(:u AS uuid) "
     "AND confirmed_at IS NULL AND revoked_at IS NULL"
 )
 _CONFIRM = _sql(
@@ -146,6 +166,33 @@ class SqlAlchemyMfaRepository:
 
     async def find_pending_method(self, method_id: str, user_id: str) -> Any:
         return await self._one(_FIND_PENDING, {"id": method_id, "u": user_id}, self._method)
+
+    async def supersede_pending_methods(self, user_id: str, *, now: datetime) -> None:
+        await self._run_no_rows(_SUPERSEDE, {"u": user_id, "now": now})
+
+    async def complete_enrollment(
+        self,
+        user_id: str,
+        *,
+        method_id: str,
+        time_step: int,
+        now: datetime,
+        code_hashes: tuple[str, ...],
+    ) -> Any:
+        """One unit of work (#2295): claim, revoke the other TOTP methods, replace the codes."""
+        async with self._relational.unit_of_work() as uow:
+            run = uow.session.execute
+            claim = {"id": method_id, "u": user_id, "now": now, "step": time_step}
+            claimed = (await run(_CLAIM, claim)).first()
+            if claimed is None:
+                await uow.rollback()
+                return None
+            await run(_REVOKE_OTHER_TOTP, {"id": method_id, "u": user_id, "now": now})
+            await run(_RC_DELETE, {"u": user_id})
+            for h in code_hashes:
+                await run(_RC_INSERT, {"id": str(uuid.uuid4()), "u": user_id, "h": h})
+            await uow.commit()
+        return self._method(**dict(claimed._mapping))
 
     async def confirm_method(self, method_id: str, *, now: datetime) -> Any:
         return await self._one(_CONFIRM, {"id": method_id, "now": now}, self._method)

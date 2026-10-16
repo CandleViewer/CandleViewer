@@ -57,6 +57,11 @@ class FakeUserRepository(UserRepository):
             update={"password_hash": password_hash, "password_algo_params": algo_params}
         )
 
+    async def set_mfa_required(self, user_id: str) -> None:
+        user = self.users.get(user_id)
+        if user is not None:  # an unknown id changes no row, like the SQL UPDATE
+            self.users[user_id] = user.model_copy(update={"mfa_required": True})
+
 
 def make_user(
     *,

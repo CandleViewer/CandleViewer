@@ -25,7 +25,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import InviteService
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.mfa_service import MfaService
-from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.models import SessionRecord, UserRecord
 from candleviewer.auth.session_service import (
     RevocationSink,
     SessionClass,
@@ -167,6 +167,14 @@ class AuthService:
             raise AuthServiceUnavailable("no user store wired; the session cannot be classified")
         user = await self._repository.find_by_id(str(session.user_id))
         return classify_session(session, user, now=self._clock())
+
+    async def find_user(self, user_id: str) -> UserRecord | None:
+        """The live user *user_id* as the store reads it now (#2295: enrolment checks the
+        caller's confirmed methods here, never a cached copy). Raises when no user store
+        is wired."""
+        if self._repository is None:
+            raise AuthServiceUnavailable("no user store wired")
+        return await self._repository.find_by_id(user_id)
 
     def attach_revocation_sink(self, sink: RevocationSink) -> None:
         """Publish every session this module revokes to *sink*
