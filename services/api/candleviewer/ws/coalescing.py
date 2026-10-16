@@ -757,7 +757,7 @@ def _book_delta(body: Payload, like: Frame) -> Frame | None:
 
 def _scaled(value: Any, scale: int) -> int | None:
     try:
-        scaled = Decimal(str(value)).scaleb(scale)
+        scaled = Decimal(str(value)).scaleb(scale, _EXACT)  # raises `Inexact`, never rounds
     except ArithmeticError:
         return None
     exact = scaled.is_finite() and scaled == scaled.to_integral_value()

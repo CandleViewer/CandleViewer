@@ -1068,6 +1068,7 @@ _OTHER_KIND = replace(_PART, body_kind=HEATMAP_COLUMN)
         pytest.param(_PART, _BID, replace(_PART, qty_scale=2), id="other-qty-scale"),
         pytest.param(_PART, ["100.55", "1"], _PART, id="inexact-price"),
         pytest.param(_PART, ["101", "1.0005"], _PART, id="inexact-size"),
+        pytest.param(_PART, ["100.0000000000000000000000000001", "1"], _PART, id="over-28-digits"),
         pytest.param(_PART, ["101", "abc"], _PART, id="size-not-a-number"),
         pytest.param(_PART, ["101", "Infinity"], _PART, id="size-infinite"),
         pytest.param(_PART, ["922337203685477580.8", "1"], _PART, id="price-above-i64"),
