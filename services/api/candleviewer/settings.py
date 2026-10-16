@@ -827,8 +827,10 @@ class Settings(BaseSettings):
     @classmethod
     def _refuse_auth_perf_outside_keyless_testnet(cls, value: bool, info: ValidationInfo) -> bool:
         """#2097 Q1, the #2086 gate: perf instrumentation never runs in live or demo, or next
-        to an exchange key; startup fails before any module starts. A field validator, so the
-        refusal echoes only this flag, never another field's input (C-12.6)."""
+        to an exchange key; startup fails before any module starts. A field validator, not a
+        model one: `hide_input_in_errors` hides input only from the message, and a model
+        validator's `ValidationError.errors()` would still carry the whole input, the raw
+        `CV_BYBIT_API_KEY` included (C-12.6). `info.data` holds the fields declared above."""
         if not value:
             return value
         refusal = _keyless_testnet_refusal(

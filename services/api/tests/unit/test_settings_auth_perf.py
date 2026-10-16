@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
+from candleviewer import settings as settings_module
 from candleviewer.settings import Environment, Settings
 
 #: An inert marker standing in for an exchange key value; never a credential.
@@ -71,22 +72,11 @@ def test_settings_auth_perf_on_a_keyless_testnet_is_accepted(
     assert settings.auth_perf_refusal() is None
 
 
-@pytest.mark.parametrize(
-    ("environment", "key", "reason"),
-    [
-        (Environment.LIVE, None, "unless CV_ENVIRONMENT=testnet"),
-        (Environment.DEMO, None, "unless CV_ENVIRONMENT=testnet"),
-        (Environment.TESTNET, _KEY_MARKER, "while an exchange key"),
-    ],
-)
-def test_settings_auth_perf_refusal_names_the_rule_for_unvalidated_settings(
-    environment: Environment, key: str | None, reason: str
+def test_settings_test_clock_and_auth_perf_refusals_share_one_rule(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`model_construct` skips validation; the refusal still reads the same rule, so the app
-    can check again at build time (`api.auth_perf.auth_perf_enabled`)."""
-    unvalidated = Settings.model_construct(
-        environment=environment, auth_perf_enabled=True, bybit_api_key=key
-    )
-    refusal = unvalidated.auth_perf_refusal()
-    assert refusal is not None
-    assert reason in refusal
+    """One function owns the #2086 rule, so tightening it reaches every test or perf switch."""
+    monkeypatch.setattr(settings_module, "_keyless_testnet_refusal", lambda switch, *_: switch)
+    unvalidated = Settings.model_construct()
+    assert unvalidated.test_clock_refusal() == "CV_TEST_CLOCK"
+    assert unvalidated.auth_perf_refusal() == "CV_AUTH_PERF_ENABLED"
