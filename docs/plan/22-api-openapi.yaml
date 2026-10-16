@@ -363,6 +363,10 @@ x-error-codes:
     title: Local store is behind the exchange beyond the freshness SLO
     retryable: true
     surface: [rest, ws] # same slug, same meaning on the WS (23-ws-protocol.md §10.2)
+  - code: auth_unavailable
+    status: 503
+    title: Second factor unavailable — the KEK or the needed auth key is not loaded
+    retryable: true
   - code: timeout
     status: 504
     title: Upstream exchange call exceeded the deadline
@@ -733,7 +737,7 @@ paths:
                     expires_in: 300
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
-        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+        "503": { $ref: "#/components/responses/AuthUnavailable" }
 
   /auth/mfa/verify:
     post:
@@ -777,6 +781,7 @@ paths:
               schema: { $ref: "#/components/schemas/AuthenticatedResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/AuthUnavailable" }
 
   /auth/mfa/enroll:
     post:
@@ -810,6 +815,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/AuthUnavailable" }
 
   /auth/mfa/enroll/confirm:
     post:
@@ -833,6 +839,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "503": { $ref: "#/components/responses/AuthUnavailable" }
 
   /auth/mfa/methods/{methodId}:
     parameters:
@@ -8841,6 +8848,7 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/AuthUnavailable" }
 
   /users/{userId}/mfa/reset-preview:
     parameters: [{ $ref: "#/components/parameters/UserId" }]
@@ -8953,6 +8961,7 @@ paths:
               }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/AuthUnavailable" }
 
   /onboarding/checklist:
     get:
@@ -9065,6 +9074,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { description: Password violates the policy. }
         "429": { description: Too many invalid attempts from this address. }
+        "503": { $ref: "#/components/responses/AuthUnavailable" }
 
   /invites/{inviteToken}/confirm:
     parameters:
@@ -9106,6 +9116,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "422": { description: Invalid TOTP code. }
         "429": { description: Too many invalid attempts from this address. }
+        "503": { $ref: "#/components/responses/AuthUnavailable" }
 
   /users/invites:
     get:
@@ -10998,6 +11009,43 @@ components:
                   instance: "urn:cv:req:0193f2bb-eeee",
                   code: degraded_data,
                   retry_after_seconds: 2,
+                }
+    AuthUnavailable:
+      description: >
+        `code: auth_unavailable` (#2152, ADR-0009 Amendment 4). The second factor cannot be
+        checked or sealed: the KEK is unavailable (any reason in `docs/plan/spikes/e27-kek.md`
+        section 6), this environment's auth keyring is missing, mismatched or stranded, or the
+        user's TOTP method is sealed under a key this process does not hold. MFA then fails
+        closed on exactly eight operations: `POST /auth/login`, `POST /auth/mfa/verify`,
+        `POST /auth/mfa/recovery`, `POST /auth/mfa/enroll`, `POST /auth/mfa/enroll/confirm`,
+        `POST /auth/step-up`, `POST /invites/{inviteToken}` and
+        `POST /invites/{inviteToken}/confirm`. `POST /auth/login` answers it only for a user with
+        a confirmed MFA method and only after the password verified, in place of the
+        `mfa_required` challenge; a wrong password is still `401 unauthenticated`. The answer
+        counts, consumes and changes nothing: no session or `mfa_token` is minted, nothing is
+        revoked, and no MFA attempt, failed-login count, lockout, recovery-code use, invite
+        redemption or enrolment is recorded, so the client may send the same request again after
+        `Retry-After`. A method this process cannot open never counts as "no method": it never
+        leads to an enrolment-only session or a new enrolment. Users without an MFA method still
+        sign in, and existing sessions keep working. `detail` is generic: it names no cause, key,
+        key reference or KEK version (the cause is the `secrets` health reason). Audited as
+        `auth.mfa_unavailable`.
+      headers:
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+          examples:
+            mfaUnavailable:
+              value:
+                {
+                  type: "https://candleviewer.local/errors/auth_unavailable",
+                  title: "Second factor unavailable — the KEK or the needed auth key is not loaded",
+                  status: 503,
+                  detail: "Two-factor authentication is temporarily unavailable; try again later.",
+                  instance: "urn:cv:req:0193f2bb-5031",
+                  code: auth_unavailable,
+                  retry_after_seconds: 30,
                 }
   # ---------------------------------------------------------------------------
   schemas:

@@ -45,11 +45,13 @@ Design:
 ### Consequences
 
 Positive:
+
 - Database theft (stolen laptop, leaked dump, misconfigured backup) does not yield usable keys, because the KEK is not in the database, not in WSL and not in any volume.
 - Per-record DEKs make rotation and revocation surgical.
 - The startup assertions convert two silent, catastrophic misconfigurations (withdrawal enabled, no IP allowlist) into a loud, blocking error.
 
 Negative / risks:
+
 - The KEK's availability is now a dependency of starting the service; losing it means re-entering every API key. Accepted and documented, with an owner-held offline backup and a runbook.
 - The host-side launcher is a small piece of bespoke tooling that must be maintained across Windows and, later, the VPS (where the KEK moves to a systemd credential or an `age`-encrypted file with restrictive permissions). Documented in `04-security-program.md`.
 - IP allowlist changes remain manual because Bybit made them browser-only; the VPS migration runbook has an explicit step for this.
@@ -71,6 +73,7 @@ Negative / risks:
 ## Amendment 1 (2026-10-10, E27-K01 #832)
 
 Refines Design §1; does not reverse it. Detail: `docs/plan/spikes/e27-kek.md`.
+
 - Injection is a **handle** (`CV_KEK_HANDLE`, default `/run/secrets/cv_kek`), not an environment
   variable (env values are visible via `docker inspect` and `/proc/*/environ`).
 - WSL mechanism: the Windows launcher reads Credential Manager and pipes the KEK on stdin into
@@ -94,6 +97,7 @@ Refines Design §1; does not reverse it. Detail: `docs/plan/spikes/e27-kek.md`.
 
 Supersedes Design §3's "plaintext keys exist only inside the exchange adapter". It conforms to
 C-2.7: credentials are plaintext only inside `secrets` (M2), at the moment of request signing.
+
 - The exchange adapter builds its venue's string-to-sign as byte segments and marks where the key
   id goes (`KEY_ID_SLOT`). It owns that format (C-2.2).
 - M2's capability `CredentialBorrower.sign(key_id, message, purpose=...)` decrypts, splices the
@@ -129,3 +133,55 @@ rules. This does not decide the E38 topology, and the custody rules themselves a
 - Environment-free `v1:` wraps fail closed. Nothing re-wraps them: the migration refuses while
   usable `api_keys` rows exist, and rows enrolled before it join `demo`, never `live`. The first
   live boot enrols a fresh live lineage (residual KV-S03, Owner check SR-E27-15).
+
+## Amendment 4 (2026-10-16, #2152; rulings D1–D7 under the owner's delegation, veto venue #2701)
+
+Implements Design §8 for the two E09 keys, the TOTP sealing key and the recovery-code HMAC key.
+Until now they were env-provided (`CV_AUTH_TOTP_KEY_HEX`, `CV_AUTH_RECOVERY_HMAC_KEY_HEX`) with no
+KEK behind them. Table and formats: `21-database-schema.md` §3.1.5a. Slices S1–S6 on #2152.
+
+- **One auth keyring per environment.** Both keys are generated inside M2 and stored only as wraps
+  under that environment's KEK, with their `kek_version`, in `auth_keys`. The keyring follows the
+  process environment, like `api_keys` (Amendment 3): MFA material sealed by one environment's
+  process never opens in another's, and nothing is generated over it. Moving a demo user base to
+  live is an E38/R4 question; there is no carry-over tool.
+- **Bindings.** The wrap AAD binds environment, purpose, row id and `kek_version` under its own
+  label and `dek_ref` prefix, so neither a credential wrap nor a swapped row opens as an auth key.
+  New TOTP seals and recovery-code digests bind the user, so a database writer cannot transplant one
+  user's seed or unused code into another user's rows.
+- **Provisioning, in `SecretsService.start()` after the KEK is verified.** Rows exist: unwrap them.
+  No rows on `demo` or `testnet` with both env keys set: import them once (`imported_env`). No rows,
+  no env keys and no MFA material that needs a key: generate both. Anything else generates nothing
+  and leaves MFA unavailable (`auth_keyring_missing`); an unwrap failure is `auth_keyring_mismatch`
+  and is never regenerated over. Either env key in `live` refuses start-up
+  (`auth_key_env_forbidden`); on `demo` and `testnet` a later boot that still has them warns and
+  ignores them. The old formats (no AAD, an HMAC without the user) are read only on an imported
+  keyring, never on a generated one and never in `live`; there is no re-seal job.
+- **KEK rotation.** At a rotation boot M2 re-wraps the environment's `auth_keys` rows itself, each
+  new wrap verified before a compare-and-set on `kek_version` and audited; seeds and code hashes
+  never change. The KCV trial unwrap covers `auth_keys`, and `kek_rotated` waits until no auth row
+  is left at the old version. Auth rows left at an old version with no previous handle make MFA
+  unavailable (`auth_keyring_stranded`) until a restart with `CV_KEK_PREV_HANDLE`.
+- **Injected capability, no import edge (C-3.4).** `auth` (M18) imports neither `secrets` nor
+  `admin`, and the import-linter contracts do not change. M2's `AuthKeyring` capability holds only
+  closures, like `CredentialBorrower` (Amendment 2), and offers `available()`, `seal_totp_seed`,
+  `open_totp_seed` and `recovery_code_digests` with plain-data inputs and outputs, so #2279 can
+  serve it out of process. It is minted once in `admin/wiring.py`, a site the M2 AST guard pins,
+  and adapted there to auth's own `MfaKeyring` protocol. Key bytes never leave M2.
+- **Seed plaintext in M18 (ruling D7).** An opened TOTP seed exists only inside the M18 MFA
+  verifier, as a `bytearray` zeroed after use, and is never logged, snapshotted or returned
+  (C-12.6). A new seed is shown once at enrolment, before it is sealed, as today. C-2.7 governs
+  exchange API credentials.
+- **Unavailable means fail closed (ruling D4).** Without the KEK or the needed auth key, the eight
+  MFA operations answer `503 auth_unavailable` (`22-api-openapi.yaml`, `AuthUnavailable`);
+  `authLogin` does so only for a user with a confirmed method and only after the password verified.
+  Nothing is counted or consumed, and a method this process cannot open never counts as "no
+  method". A keyring failure alone reports `secrets` degraded and pages but adds no trading latch;
+  a KEK failure still latches it (Amendment 1).
+- **Break-glass (#2119, ruling D5).** The offline KEK proof keeps its single custody pass and, in
+  the same pass, returns a digest-only session for the environment's recovery key. M21 receives
+  only digests, which count as C-3.2 metadata; without a proven KEK the CLI refuses before any
+  digest is computed. If O3 on #2119 removes the live recovery code, this shrinks to deleting the
+  key-bytes port.
+- **Unchanged.** `CV_AUTH_PEPPER` and `CV_AUTH_CSRF_KEY_HEX` stay env-provided, and there is no
+  tool to re-key the auth keys themselves.

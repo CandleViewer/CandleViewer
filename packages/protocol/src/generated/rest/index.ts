@@ -8479,6 +8479,16 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
+    /** @description `code: auth_unavailable` (#2152, ADR-0009 Amendment 4). The second factor cannot be checked or sealed: the KEK is unavailable (any reason in `docs/plan/spikes/e27-kek.md` section 6), this environment's auth keyring is missing, mismatched or stranded, or the user's TOTP method is sealed under a key this process does not hold. MFA then fails closed on exactly eight operations: `POST /auth/login`, `POST /auth/mfa/verify`, `POST /auth/mfa/recovery`, `POST /auth/mfa/enroll`, `POST /auth/mfa/enroll/confirm`, `POST /auth/step-up`, `POST /invites/{inviteToken}` and `POST /invites/{inviteToken}/confirm`. `POST /auth/login` answers it only for a user with a confirmed MFA method and only after the password verified, in place of the `mfa_required` challenge; a wrong password is still `401 unauthenticated`. The answer counts, consumes and changes nothing: no session or `mfa_token` is minted, nothing is revoked, and no MFA attempt, failed-login count, lockout, recovery-code use, invite redemption or enrolment is recorded, so the client may send the same request again after `Retry-After`. A method this process cannot open never counts as "no method": it never leads to an enrolment-only session or a new enrolment. Users without an MFA method still sign in, and existing sessions keep working. `detail` is generic: it names no cause, key, key reference or KEK version (the cause is the `secrets` health reason). Audited as `auth.mfa_unavailable`. */
+    AuthUnavailable: {
+      headers: {
+        "Retry-After": components["headers"]["RetryAfter"];
+        [name: string]: unknown;
+      };
+      content: {
+        "application/problem+json": components["schemas"]["Problem"];
+      };
+    };
     /** @description Malformed request. */
     BadRequest: {
       headers: {
@@ -10216,7 +10226,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       429: components["responses"]["RateLimited"];
-      503: components["responses"]["ServiceUnavailable"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   authLogout: {
@@ -10295,6 +10305,7 @@ export interface operations {
       400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   authMfaEnrollConfirm: {
@@ -10331,6 +10342,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["CsrfTokenInvalid"];
       422: components["responses"]["UnprocessableEntity"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   authMfaDeleteMethod: {
@@ -10396,6 +10408,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   authMfaVerify: {
@@ -10424,6 +10437,7 @@ export interface operations {
       };
       401: components["responses"]["Unauthorized"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   authChangePassword: {
@@ -10624,6 +10638,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       422: components["responses"]["UnprocessableEntity"];
       429: components["responses"]["RateLimited"];
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   listChartTemplates: {
@@ -12132,6 +12147,7 @@ export interface operations {
         };
         content?: never;
       };
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   confirmInvite: {
@@ -12188,6 +12204,7 @@ export interface operations {
         };
         content?: never;
       };
+      503: components["responses"]["AuthUnavailable"];
     };
   };
   getJournalAnalytics: {
