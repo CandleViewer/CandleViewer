@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import random
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
+
+from candleviewer.accounts.health import HealthTransition
+from candleviewer.observability.context import get_context
 
 T0 = datetime(2026, 10, 15, 12, tzinfo=UTC)
 
@@ -25,3 +31,57 @@ class FakeClock:
 
 
 ACC = UUID("a1000000-0000-4000-8000-000000000001")
+ACC_B = UUID("a1000000-0000-4000-8000-000000000002")
+
+
+class Dms:
+    """Dead-man's-switch hook: records every call with the correlation context and task name it
+    ran under (and its monotonic time, given a clock), raises for the `failing` accounts, and
+    while `hold` is set keeps each call waiting until the test sets it (a slow hook). `entered`
+    is set once a call starts and `exited` once one has returned or raised."""
+
+    def __init__(self, *failing: UUID, clock: FakeClock | None = None) -> None:
+        self.transitions: list[HealthTransition] = []
+        self.contexts: list[dict[str, Any]] = []
+        self.task_names: list[str] = []
+        self.called_at: list[float] = []
+        self.failing = set(failing)
+        self.hold: asyncio.Event | None = None
+        self.entered = asyncio.Event()
+        self.exited = asyncio.Event()
+        self._clock = clock
+
+    @property
+    def calls(self) -> list[tuple[UUID, str]]:
+        return [(t.account_id, t.reason) for t in self.transitions]
+
+    async def account_down(self, transition: HealthTransition) -> None:
+        self.transitions.append(transition)
+        self.contexts.append(get_context())
+        task = asyncio.current_task()
+        assert task is not None
+        self.task_names.append(task.get_name())
+        if self._clock is not None:
+            self.called_at.append(self._clock.monotonic())
+        self.entered.set()
+        try:
+            if self.hold is not None:
+                await self.hold.wait()
+            if transition.account_id in self.failing:
+                raise RuntimeError("echoed exchange text: invalid key")
+        finally:
+            self.exited.set()
+
+
+class Jitter(random.Random):
+    """The retry-jitter RNG: each draw lands `fraction` of the way through the range it is asked
+    for (1.0, the default, is no jitter), and every range is recorded."""
+
+    def __init__(self, fraction: float = 1.0) -> None:
+        super().__init__(0)
+        self.fraction = fraction
+        self.ranges: list[tuple[float, float]] = []
+
+    def uniform(self, a: float, b: float) -> float:
+        self.ranges.append((a, b))
+        return a + (b - a) * self.fraction
