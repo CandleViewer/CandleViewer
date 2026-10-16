@@ -361,7 +361,7 @@ x-error-codes:
     retryable: false
   - code: exposure_unknown
     status: 409
-    title: The account's open exposure cannot be read because its key is dead at the exchange; the account can be disabled, never deleted
+    title: The account's open exposure cannot be read because the exchange refuses every one of its keys
     retryable: false
   - code: version_conflict
     status: 412
@@ -1956,13 +1956,9 @@ paths:
         **Disable** (`enabled: false`, SCR-129): when the account holds open positions, working
         orders or running emulated algos, the request must carry an `open_exposure` choice
         (SR-E27-07). Without it the answer is `409 open_exposure` with the consequence summary,
-        and nothing changes. `open_exposure=leave_positions` is refused with `409 open_exposure`
-        while any open position has `native_stop_present: false` (C-2.6); resend with
-        `flatten_first`. When the account's key is dead at the exchange its exposure is unknown:
-        `flatten_first`, or no choice, is answered `409 exposure_unknown`, and
-        `open_exposure=leave_positions` disables the account without the stop-loss refusal (a
-        dead-key account is disabled, never deleted). The choice applies only to disabling,
-        never to a mode change.
+        and nothing changes. The choices, the `leave_positions` stop-loss refusal, unknown
+        exposure and a failed read are defined once, at `components.parameters.OpenExposure`.
+        The choice applies only to disabling, never to a mode change.
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
@@ -1987,6 +1983,7 @@ paths:
         "409": { $ref: "#/components/responses/OpenExposureConflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
         "502": { $ref: "#/components/responses/ExchangeError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [exchange-accounts]
       operationId: deleteExchangeAccount
@@ -2000,10 +1997,11 @@ paths:
         With it, the account is flattened first (as the `flatten_first` choice of
         `components.parameters.OpenExposure` describes) and deleted only once it is flat.
 
-        An account whose key is dead at the exchange is never deleted: its exposure cannot be
-        read and nothing can be flattened, so it is not known to be flat. Whatever
-        `open_exposure` the request carries, the answer is `409 exposure_unknown` and nothing
-        changes; disable the account instead (`updateExchangeAccount` with `enabled: false`).
+        An account whose exposure is unknown is never deleted: it is not known to be flat.
+        Whatever `open_exposure` the request carries, the answer is `409 exposure_unknown` and
+        nothing changes; `components.parameters.OpenExposure` says when the account can be
+        disabled instead (`updateExchangeAccount` with `enabled: false`), and what a failed
+        read is answered with.
       x-rbac: { permissions: [accounts:write], scope: none }
       x-idempotency: optional
       parameters:
@@ -2021,6 +2019,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/OpenExposureConflict" }
+        "502": { $ref: "#/components/responses/ExchangeError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /exchange-accounts/{accountId}/keys:
     parameters: [{ $ref: "#/components/parameters/AccountId" }]
@@ -2178,12 +2178,10 @@ paths:
         When no other `active` key remains and the account holds open positions, working orders
         or running emulated algos, the request must carry an `open_exposure` choice (SR-E27-07).
         Without it the answer is `409 open_exposure` with the consequence summary, and nothing
-        is revoked. `open_exposure=leave_positions` is refused with `409 open_exposure` while any
-        open position has `native_stop_present: false` (C-2.6): once the last key is revoked
-        nothing can re-assert the stop; resend with `flatten_first`. When that key is dead at the
-        exchange the exposure is unknown: `flatten_first`, or no choice, is answered
-        `409 exposure_unknown`, and `open_exposure=leave_positions` revokes it without the
-        stop-loss refusal.
+        is revoked. The choices, the `leave_positions` stop-loss refusal, unknown exposure and a
+        failed read are defined once, at `components.parameters.OpenExposure`. Every key of the
+        account counts in that definition, a `rotating` key too: while a `rotating` key is
+        usable the account is not dead, whatever the key being revoked answers.
       x-rbac: { permissions: [keys:manage], scope: none }
       x-idempotency: optional
       parameters:
@@ -2196,6 +2194,8 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/OpenExposureConflict" }
+        "502": { $ref: "#/components/responses/ExchangeError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /exchange-accounts/{accountId}/keys/{keyId}/rotate:
     parameters:
@@ -11364,31 +11364,67 @@ components:
       name: open_exposure
       in: query
       required: false
-      description: >
+      description: |
         The explicit choice SR-E27-07 requires before revoking an account's last active key or
         disabling the account while it holds open positions, working orders or running emulated
-        algos. `leave_positions`: act now; positions and orders stay on the exchange untouched,
-        each position keeps the native stop-loss it carries (C-2.6), and
+        algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
+        exposure and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
+        `deleteExchangeAccount` point here and add only what is specific to them.
+
+        `leave_positions`: act now; positions and orders stay on the exchange untouched, each
+        position keeps the native stop-loss it carries (C-2.6), and
         `consequences.open_positions[].native_stop_present` shows any that has none, while the
         account's emulated algos stop and its rules are disarmed. It is refused with
-        `409 open_exposure` while any open position has none: once the last key is revoked or
-        the account is disabled nothing can re-assert a missing stop, so that position would
-        stay unprotected (C-2.6), and the caller resends with `flatten_first`. The Owner's
-        confirmation of this refusal is tracked on #2903; relaxing it later is non-breaking.
+        `409 open_exposure` while any open position has no native stop-loss
+        (`native_stop_present: false`): once the last key is revoked or the account is disabled
+        nothing can re-assert a missing stop, so that position would stay unprotected (C-2.6),
+        and the caller resends with `flatten_first`. The Owner's confirmation of this refusal is
+        tracked on #2903; relaxing it later is non-breaking.
+
         `flatten_first`: flatten the account first (cancel its working orders, stop its algos,
         close its positions reduce-only), then act; if the account is still not flat, the action
         is not carried out and the answer is `409 open_exposure` with what remains. Without the
         parameter such a request is `409 open_exposure` with the consequence summary, and
         nothing changes. Ignored when the account holds no exposure.
 
-        **Unknown exposure.** When the exchange rejects every key of the account (`auth_error`,
-        `permission_denied` or `ip_not_allowed` in `KeyProbeError`) the account's key is dead
-        there, whatever `key_status` still says: its positions and orders cannot be read and
-        nothing can be flattened, so its exposure is unknown, not none. `flatten_first`, or no
-        choice, is then `409 exposure_unknown` and nothing changes. `leave_positions` is not
-        subject to the stop-loss refusal there, because no stop can be re-asserted and
-        `flatten_first` cannot run whichever choice is made: it is how a dead-key account is
-        disabled. `deleteExchangeAccount` is refused whatever it carries.
+        **Unknown exposure.** The exposure is read from the exchange for each request, whatever
+        `key_status` still says, with the account's keys, every key counted (a `rotating` key
+        too, a `revoked` one never). While a key can read it, the choices work as above. When
+        the account has keys and the exchange refuses every one of them (`auth_error`,
+        `ip_not_allowed` or `permission_denied` in `KeyProbeError`), its positions and orders
+        cannot be read and nothing can be flattened, so its exposure is unknown, not none.
+        Whether the Owner can fix the refusal decides the answer:
+
+        - **Dead.** Only a credential the exchange no longer accepts (`auth_error`) makes a key
+          dead, and an account is dead when every one of its keys is dead. `flatten_first`, or
+          no choice, is then `409 exposure_unknown` and nothing changes. `leave_positions` is
+          carried out: it is how a dead account is disabled or its last key revoked, and the
+          stop-loss refusal is lifted only for an account whose every key is dead, because no
+          stop can be re-asserted there and `flatten_first` cannot run. A dead account is
+          disabled, never deleted.
+        - **Fixable.** `ip_not_allowed` (the egress IP drifted from the key's whitelist, SR-033)
+          and `permission_denied` are put right at the Bybit dashboard, so such a key is not
+          dead. While every key is refused and any key answers one of them, revoke, disable
+          and delete answer `409 exposure_unknown` for every `open_exposure` choice,
+          `leave_positions` included, and nothing changes: fix the key first, then the OMS
+          re-asserts the stop and `flatten_first` can run.
+
+        `deleteExchangeAccount` takes only `flatten_first`, so in both cases it answers
+        `409 exposure_unknown`, whatever it carries.
+
+        `exposure_unknown` is not the `409 positions_unknown` of the user lifecycle (E42), whose
+        remedy is to resend with `acknowledge_unknown_positions=true`: these operations have no
+        acknowledge parameter and delete never proceeds, so that remedy does not exist here.
+
+        **A failed read.** A transient failure to read the exposure is never "no exposure" and
+        never "dead". Every other `KeyProbeError` (`clock_drift`, `rate_limited`,
+        `service_unavailable`, `transport_error`, `timeout` or `exchange_unknown`) is a failed
+        read: it says nothing about the key, so an account is not dead while any of its keys
+        answers one of them. Such an answer is not a refusal, so while any key gives one neither
+        the dead nor the fixable rule applies. The request fails closed: it is refused with its
+        own retryable error, `503 exchange_unavailable` with `Retry-After` when the exchange gave
+        no answer in time and `502 exchange_error` when it answered with an error, and nothing is
+        revoked, disabled or deleted. The caller retries.
 
         The `Idempotency-Key` replay fingerprint covers this value as well as the method, path
         and body, so the same key with another choice, or with none, is
@@ -11728,10 +11764,12 @@ components:
         algos that the request does not resolve, or the request asks for `leave_positions` while
         a position has no native stop-loss; it always carries `consequences`, the summary the
         caller shows before it resends with an `open_exposure` choice. `exposure_unknown`: the
-        account's key is dead at the exchange, so its exposure cannot be read; it carries no
-        `consequences`. It is the answer of `deleteExchangeAccount` whatever the request carries,
-        and of `updateExchangeAccount` (disable) and `revokeApiKey` when the request carries
-        `flatten_first` or no choice.
+        exposure cannot be read because the exchange refuses every key of the account
+        (`components.parameters.OpenExposure`); it carries no `consequences`.
+        `deleteExchangeAccount` answers it whatever the request carries.
+        `updateExchangeAccount` (disable) and `revokeApiKey` answer it when the request carries
+        `flatten_first` or no choice, and for `leave_positions` too while a key can still be
+        fixed.
       content:
         application/problem+json:
           schema: { $ref: "#/components/schemas/OpenExposureProblem" }
@@ -11795,10 +11833,10 @@ components:
                   armed_rules:
                     - { rule_id: "91000000-0000-4000-8000-000000000003", name: "BTC breakout long" }
             exposureUnknown:
-              summary: deleteExchangeAccount, updateExchangeAccount and revokeApiKey - the key is dead at the exchange, no consequence summary
+              summary: deleteExchangeAccount, updateExchangeAccount and revokeApiKey - the exchange refuses every key, no consequence summary
               value:
                 type: "https://candleviewer.local/errors/exposure_unknown"
-                title: "The account's open exposure cannot be read because its key is dead at the exchange; the account can be disabled, never deleted"
+                title: "The account's open exposure cannot be read because the exchange refuses every one of its keys"
                 status: 409
                 detail: "The exchange rejects every key of this account, so its positions and orders cannot be read or flattened."
                 instance: "urn:cv:req:0193f2bb-5858"

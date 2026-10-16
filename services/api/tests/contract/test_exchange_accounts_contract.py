@@ -1,9 +1,9 @@
 """Contract (#2417, E27-X01 proposal P-2): the `exchange-accounts` paths say what C-2.8, SR-030a and
 SR-005 require before E27-T03 and E27-S02 to E27-S04 mount their routes (C-6.1). One group per
 scope item of #2417: the key gate (SR-E27-04), the key-id mask (SR-E27-03), the open-exposure
-choice and local-only revocation (SR-E27-06, SR-E27-07), the fixed result vocabulary (SR-E27-08),
-the single rotation overlap (SR-E27-10) and no reveal path (SR-E27-11), plus the cadence the key
-gate re-runs on (C-12.2)."""
+choice, unknown exposure, failed reads and local-only revocation (SR-E27-06, SR-E27-07), the fixed
+result vocabulary (SR-E27-08), the single rotation overlap (SR-E27-10) and no reveal path
+(SR-E27-11), plus the cadence the key gate re-runs on (C-12.2)."""
 
 from __future__ import annotations
 
@@ -59,8 +59,6 @@ _ANSWERED_BY = {
     "leavePositionsRefused": ("updateExchangeAccount", "revokeApiKey"),
     "exposureUnknown": ("deleteExchangeAccount", "updateExchangeAccount", "revokeApiKey"),
 }
-#: D3 of #2417: the probe errors by which a key is dead at the exchange.
-_DEAD_KEY_ERRORS = ("auth_error", "permission_denied", "ip_not_allowed")
 #: SR-E27-03: a key id is shown as `...` plus its last 4 characters, nothing more.
 _MASK = r"^\.\.\.[A-Za-z0-9]{4}$"
 
@@ -105,6 +103,15 @@ _PROBE_ERRORS = [
     "timeout",
     "exchange_unknown",
 ]
+#: D3 of #2417, round 2: only a credential the exchange no longer accepts makes a key dead.
+_DEAD_KEY_ERRORS = ("auth_error",)
+#: Refusals the Owner puts right at the Bybit dashboard (the egress IP, SR-033; the key's rights):
+#: such a key is not dead.
+_FIXABLE_KEY_ERRORS = ("ip_not_allowed", "permission_denied")
+#: Every other probe error is a failed read: it says nothing about the key.
+_FAILED_READ_ERRORS = tuple(
+    error for error in _PROBE_ERRORS if error not in _DEAD_KEY_ERRORS + _FIXABLE_KEY_ERRORS
+)
 _WARNINGS = ["key_expiring_soon", "clock_skew"]
 #: Plaintext or envelope fields (C-2.7, 21-database-schema.md §3.2.2) no response may carry.
 _SECRET_FIELDS = frozenset(
@@ -134,6 +141,30 @@ def _fold(text: str) -> str:
 def _text(path: str, method: str) -> str:
     """The operation description, folded."""
     return _fold(_op(path, method)["description"])
+
+
+def _open_exposure() -> str:
+    """The canonical `open_exposure` description, folded."""
+    return _fold(_SPEC["components"]["parameters"]["OpenExposure"]["description"])
+
+
+def _section(lead: str) -> str:
+    """The folded paragraph or bullet of the canonical description that begins with `lead`."""
+    raw = _SPEC["components"]["parameters"]["OpenExposure"]["description"]
+    [block] = [
+        part for part in re.split(r"\n\n|\n(?=- )", raw) if part.removeprefix("- ").startswith(lead)
+    ]
+    return _fold(block)
+
+
+def _conflict() -> str:
+    """The `OpenExposureConflict` response description, folded."""
+    return _fold(_SPEC["components"]["responses"]["OpenExposureConflict"]["description"])
+
+
+def _registered() -> dict[str, Any]:
+    """The `x-error-codes` registry, by code."""
+    return {entry["code"]: entry for entry in _SPEC["x-error-codes"]}
 
 
 def _steps(description: str) -> dict[int, str]:
@@ -420,16 +451,14 @@ def _operation_ids() -> dict[str, tuple[str, str]]:
 
 
 @pytest.mark.parametrize(("path", "method"), _LEAVE_OPS)
-def test_leave_positions_is_refused_while_a_position_has_no_native_stop(
+def test_leave_positions_refusal_is_defined_once_and_the_operation_points_at_it(
     path: str, method: str
 ) -> None:
     assert "leave_positions" in _accepted(path, method)
     text = _text(path, method)
-    assert (
-        "`open_exposure=leave_positions` is refused with `409 open_exposure` while any open "
-        "position has `native_stop_present: false` (C-2.6)"
-    ) in text
-    assert "resend with `flatten_first`" in text
+    assert "the `leave_positions` stop-loss refusal" in text
+    assert "are defined once, at `components.parameters.OpenExposure`" in text
+    assert "is refused with `409 open_exposure` while" not in text
 
 
 def test_delete_never_meets_the_stop_loss_refusal_because_it_cannot_leave_positions() -> None:
@@ -438,8 +467,12 @@ def test_delete_never_meets_the_stop_loss_refusal_because_it_cannot_leave_positi
 
 
 def test_open_exposure_parameter_refuses_leave_positions_for_an_unprotected_position() -> None:
-    choice = _fold(_SPEC["components"]["parameters"]["OpenExposure"]["description"])
-    assert "It is refused with `409 open_exposure` while any open position has none" in choice
+    choice = _open_exposure()
+    assert (
+        "It is refused with `409 open_exposure` while any open position has no native "
+        "stop-loss (`native_stop_present: false`)"
+    ) in choice
+    assert "has none:" not in choice  # "none" could be read as "no position"
     assert "nothing can re-assert a missing stop" in choice
     assert "the caller resends with `flatten_first`" in choice
     assert f"confirmation of this refusal is tracked on {_STOP_LOSS_DECISION}" in choice
@@ -474,33 +507,209 @@ def test_each_open_exposure_example_names_the_operations_that_can_return_it() ->
             assert named <= _accepted(*operations[operation]), (name, operation)
 
 
-# --- A dead key: the account is disabled, never deleted (D3 of #2417) ---------------------------
+# --- Unknown exposure and a failed read (D3 of #2417, round 2) ----------------------------------
 
 
-def test_dead_key_account_is_disabled_never_deleted() -> None:
-    delete = _text(_ACCOUNT, "delete")
-    assert "An account whose key is dead at the exchange is never deleted" in delete
-    assert "the answer is `409 exposure_unknown` and nothing changes" in delete
-    assert "disable the account instead (`updateExchangeAccount` with `enabled: false`)" in delete
-    disable = _text(_ACCOUNT, "patch")
-    assert "(a dead-key account is disabled, never deleted)" in disable
-    assert "`open_exposure=leave_positions` disables the account without the stop-loss" in disable
-    revoke = _text(_KEY, "delete")
-    assert "`open_exposure=leave_positions` revokes it without the stop-loss refusal" in revoke
+def _restating_texts() -> dict[str, str]:
+    """Every text outside the canonical definition that bears on unknown exposure."""
+    texts = {f"{method} {path}": _text(path, method) for path, method in _EXPOSURE_OPS}
+    texts["OpenExposureConflict"] = _conflict()
+    texts["exposure_unknown title"] = _registered()["exposure_unknown"]["title"]
+    texts["OpenExposureProblem"] = _fold(_SCHEMAS["OpenExposureProblem"]["description"])
+    for name, example in _conflict_examples().items():
+        value = example["value"]
+        texts[f"example {name}"] = _fold(f"{example['summary']} {value['title']} {value['detail']}")
+    return texts
 
 
-def test_dead_key_is_defined_by_the_probe_errors_the_exchange_answers_with() -> None:
-    choice = _fold(_SPEC["components"]["parameters"]["OpenExposure"]["description"])
-    assert set(_DEAD_KEY_ERRORS) <= set(_SCHEMAS["KeyProbeError"]["enum"])
+def test_open_exposure_is_the_one_definition_and_the_operations_point_at_it() -> None:
     assert (
-        "When the exchange rejects every key of the account (`auth_error`, `permission_denied` "
-        "or `ip_not_allowed` in `KeyProbeError`) the account's key is dead there, whatever "
-        "`key_status` still says"
-    ) in choice
-    assert "its exposure is unknown, not none" in choice
-    assert "`flatten_first`, or no choice, is then `409 exposure_unknown`" in choice
-    assert "`leave_positions` is not subject to the stop-loss refusal there" in choice
-    assert "`deleteExchangeAccount` is refused whatever it carries" in choice
+        "This is the one definition of the choice, of the stop-loss refusal, of unknown exposure "
+        "and of a failed read"
+    ) in _open_exposure()
+    for path, method in _EXPOSURE_OPS:
+        assert "`components.parameters.OpenExposure`" in _text(path, method)
+    # What makes a key or an account dead is stated there and nowhere else: no other text names
+    # the probe errors that decide it, defines "dead" again or calls anything dead (the one use
+    # is revoke's "the account is not dead", which applies the definition to a rotating key).
+    defining = ("auth_error", "ip_not_allowed", "permission_denied", "makes a key dead")
+    for where, text in _restating_texts().items():
+        for term in defining:
+            assert term not in text, (where, term)
+        assert "dead" not in text.replace("the account is not dead", ""), where
+
+
+def test_a_key_is_dead_only_when_the_exchange_no_longer_accepts_its_credential() -> None:
+    assert set(_DEAD_KEY_ERRORS) <= set(_SCHEMAS["KeyProbeError"]["enum"])
+    dead = _section("**Dead.**")
+    assert (
+        "Only a credential the exchange no longer accepts (`auth_error`) makes a key dead, and "
+        "an account is dead when every one of its keys is dead"
+    ) in dead
+    assert not any(f"`{error}`" in dead for error in _FIXABLE_KEY_ERRORS + _FAILED_READ_ERRORS)
+    unknown = _section("**Unknown exposure.**")
+    assert "whatever `key_status` still says" in unknown
+    assert "every key counted (a `rotating` key too, a `revoked` one never)" in unknown
+    assert {"rotating", "revoked"} <= set(_SCHEMAS["KeyStatus"]["enum"])
+    assert "its exposure is unknown, not none" in unknown
+
+
+def test_a_fixable_refusal_answers_exposure_unknown_for_every_choice() -> None:
+    fixable = _section("**Fixable.**")
+    assert (
+        "`ip_not_allowed` (the egress IP drifted from the key's whitelist, SR-033) and "
+        "`permission_denied` are put right at the Bybit dashboard, so such a key is not dead"
+    ) in fixable
+    # "any key", not "every key": one fixable key keeps a mixed account (with a dead one) fixable.
+    # "every key is refused", not "no key can read it": a failed read is not a refusal.
+    assert "While every key is refused and any key answers one of them" in fixable
+    assert (
+        "revoke, disable and delete answer `409 exposure_unknown` for every `open_exposure` "
+        "choice, `leave_positions` included"
+    ) in fixable
+    assert (
+        "fix the key first, then the OMS re-asserts the stop and `flatten_first` can run"
+    ) in fixable
+    assert not any(f"`{error}`" in fixable for error in _DEAD_KEY_ERRORS + _FAILED_READ_ERRORS)
+
+
+def test_the_stop_loss_refusal_is_lifted_only_for_an_account_whose_every_key_is_dead() -> None:
+    dead = _section("**Dead.**")
+    assert (
+        "`flatten_first`, or no choice, is then `409 exposure_unknown` and nothing changes" in dead
+    )
+    assert (
+        "`leave_positions` is carried out: it is how a dead account is disabled or its last key "
+        "revoked"
+    ) in dead
+    assert (
+        "the stop-loss refusal is lifted only for an account whose every key is dead, because no "
+        "stop can be re-asserted there and `flatten_first` cannot run"
+    ) in dead
+    assert "stop-loss refusal" not in _section("**Fixable.**")
+
+
+def test_every_probe_error_is_named_in_exactly_one_of_dead_fixable_or_failed_read() -> None:
+    probe = _SCHEMAS["KeyProbeError"]["enum"]
+
+    def named(section: str) -> set[str]:
+        return {error for error in probe if f"`{error}`" in section}
+
+    assert named(_section("**Dead.**")) == set(_DEAD_KEY_ERRORS)
+    assert named(_section("**Fixable.**")) == set(_FIXABLE_KEY_ERRORS)
+    assert named(_section("**A failed read.**")) == set(_FAILED_READ_ERRORS)
+    assert named(_section("**Unknown exposure.**")) == set(_DEAD_KEY_ERRORS + _FIXABLE_KEY_ERRORS)
+    groups = (_DEAD_KEY_ERRORS, _FIXABLE_KEY_ERRORS, _FAILED_READ_ERRORS)
+    assert sorted(error for group in groups for error in group) == sorted(probe)
+
+
+def test_a_transient_read_failure_is_never_no_exposure_and_never_dead() -> None:
+    failed = _section("**A failed read.**")
+    assert (
+        'A transient failure to read the exposure is never "no exposure" and never "dead"'
+    ) in failed
+    assert "so an account is not dead while any of its keys answers one of them" in failed
+    assert (
+        "Such an answer is not a refusal, so while any key gives one neither the dead nor the "
+        "fixable rule applies"
+    ) in failed
+    assert "refused with its own retryable error" in failed
+    assert "`503 exchange_unavailable`" in failed
+    assert "`502 exchange_error`" in failed
+    assert "nothing is revoked, disabled or deleted" in failed
+
+
+@pytest.mark.parametrize(("path", "method"), _EXPOSURE_OPS)
+def test_the_operations_declare_the_retryable_answers_of_a_failed_read(
+    path: str, method: str
+) -> None:
+    responses = _op(path, method)["responses"]
+    assert responses["502"] == {"$ref": "#/components/responses/ExchangeError"}
+    assert responses["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
+
+
+def test_the_failed_read_answers_are_the_existing_retryable_problem_shapes() -> None:
+    registered = _registered()
+    for code, status in (("exchange_error", 502), ("exchange_unavailable", 503)):
+        assert (registered[code]["status"], registered[code]["retryable"]) == (status, True)
+    components = _SPEC["components"]["responses"]
+    bad_gateway = components["ExchangeError"]["content"]["application/problem+json"]
+    assert bad_gateway["examples"]["bybitReject"]["value"]["code"] == "exchange_error"
+    unavailable = components["ServiceUnavailable"]
+    assert "Retry-After" in unavailable["headers"]
+    shapes = unavailable["content"]["application/problem+json"]["examples"]
+    assert shapes["wsDown"]["value"]["code"] == "exchange_unavailable"
+
+
+def test_delete_answers_exposure_unknown_whatever_open_exposure_is_sent() -> None:
+    delete = _text(_ACCOUNT, "delete")
+    assert (
+        "Whatever `open_exposure` the request carries, the answer is `409 exposure_unknown` and "
+        "nothing changes"
+    ) in delete
+    assert _accepted(_ACCOUNT, "delete") == {"flatten_first"}  # no choice gets past it
+    assert _section("`deleteExchangeAccount` takes only `flatten_first`") == (
+        "`deleteExchangeAccount` takes only `flatten_first`, so in both cases it answers "
+        "`409 exposure_unknown`, whatever it carries."
+    )
+
+
+def test_an_account_with_unknown_exposure_is_never_deleted() -> None:
+    delete = _text(_ACCOUNT, "delete")
+    assert (
+        "An account whose exposure is unknown is never deleted: it is not known to be flat"
+        in delete
+    )
+    assert (
+        "`components.parameters.OpenExposure` says when the account can be disabled instead "
+        "(`updateExchangeAccount` with `enabled: false`)"
+    ) in delete
+    assert "A dead account is disabled, never deleted" in _section("**Dead.**")
+
+
+def test_conflict_answers_exposure_unknown_for_flatten_first_or_no_choice() -> None:
+    conflict = _conflict()
+    assert "`deleteExchangeAccount` answers it whatever the request carries" in conflict
+    assert (
+        "`updateExchangeAccount` (disable) and `revokeApiKey` answer it when the request carries "
+        "`flatten_first` or no choice, and for `leave_positions` too while a key can still be fixed"
+    ) in conflict
+    assert "it carries no `consequences`" in conflict
+
+
+def test_revoke_counts_a_rotating_key_and_a_usable_one_means_the_account_is_not_dead() -> None:
+    assert "rotating" in _SCHEMAS["KeyStatus"]["enum"]
+    revoke = _text(_KEY, "delete")
+    assert (
+        "Every key of the account counts in that definition, a `rotating` key too: while a "
+        "`rotating` key is usable the account is not dead, whatever the key being revoked answers"
+    ) in revoke
+
+
+def test_exposure_unknown_is_not_positions_unknown_and_the_contract_says_why() -> None:
+    registered = _registered()
+    assert registered["positions_unknown"]["status"] == 409
+    assert "acknowledge_unknown_positions" in registered["positions_unknown"]["title"]
+    reset = _SPEC["paths"]["/users/{userId}/mfa/reset"]["post"]
+    flag = reset["requestBody"]["content"]["application/json"]["schema"]["properties"]
+    assert "acknowledge_unknown_positions" in flag  # the E42 user lifecycle takes the flag
+    # The operations here take none: not as a query parameter, not in the one request body.
+    for path, method in _EXPOSURE_OPS:
+        parameters = [
+            _deref(p["$ref"]) if "$ref" in p else p for p in _op(path, method)["parameters"]
+        ]
+        assert "acknowledge_unknown_positions" not in {p["name"] for p in parameters}
+    assert (
+        "acknowledge_unknown_positions"
+        not in _SCHEMAS["UpdateExchangeAccountRequest"]["properties"]
+    )
+    why = _section("`exposure_unknown` is not")
+    assert ". " not in why  # one sentence
+    assert why == (
+        "`exposure_unknown` is not the `409 positions_unknown` of the user lifecycle (E42), whose "
+        "remedy is to resend with `acknowledge_unknown_positions=true`: these operations have no "
+        "acknowledge parameter and delete never proceeds, so that remedy does not exist here."
+    )
 
 
 def test_exposure_unknown_is_a_registered_409_with_an_example_and_no_summary() -> None:
@@ -521,13 +730,13 @@ def test_exposure_unknown_is_a_registered_409_with_an_example_and_no_summary() -
 
 
 def test_exposure_unknown_is_answered_only_by_revoke_disable_and_delete() -> None:
-    for path, method in _EXPOSURE_OPS:
-        assert "`409 exposure_unknown`" in _text(path, method)
-    conflict = _fold(_SPEC["components"]["responses"]["OpenExposureConflict"]["description"])
+    conflict = _conflict()
     for operation in _operation_ids():
         assert f"`{operation}`" in conflict
-    assert "`exposure_unknown`: the account's key is dead at the exchange" in conflict
-    assert "it carries no `consequences`" in conflict
+    assert (
+        "`exposure_unknown`: the exposure cannot be read because the exchange refuses every key "
+        "of the account"
+    ) in conflict
     others = [
         operation.get("description", "")
         for path, item in _PATHS.items()
@@ -695,6 +904,20 @@ def test_security_program_rotation_overlap_is_the_contract_value() -> None:
     story = stories[stories.index("#### US-ACCT-004") :].split("\n#### ")[0]
     assert "15-minute drain window" in story
     assert timedelta(minutes=15) == timedelta(seconds=grace)
+
+
+def test_security_program_key_id_mask_is_the_last_four_characters_the_contract_uses() -> None:
+    lines = _SECURITY_PROGRAM.read_text(encoding="utf-8").splitlines()
+    [row] = [_fold(line) for line in lines if line.startswith("| SR-005 ")]
+    assert "first 4" not in row
+    assert "prefix" not in row
+    assert (
+        "may return a secret or any part of the key id beyond its last 4 characters "
+        "(`...` plus those 4, `key_id_masked` in `22-api-openapi.yaml`)"
+    ) in row
+    assert "A contract test MUST assert that no response schema contains a secret field" in row
+    # The contract's mask is exactly that: `...` plus the last 4, nothing before it.
+    assert _SCHEMAS["ApiKey"]["properties"]["key_id_masked"]["pattern"] == _MASK
 
 
 def test_adr_0009_amendment_supersedes_the_24_h_soak_with_the_contract_overlap() -> None:

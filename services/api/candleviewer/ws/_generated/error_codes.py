@@ -118,7 +118,7 @@ ERROR_META: Final[dict[ErrorCode, ErrorMeta]] = {
     ErrorCode.IDEMPOTENCY_KEY_REUSE: ErrorMeta(("rest",), None, False, None, None, "Idempotency-Key reused with a different request payload"),
     ErrorCode.IDEMPOTENCY_IN_FLIGHT: ErrorMeta(("rest",), None, True, None, None, "A request with this Idempotency-Key is still being processed"),
     ErrorCode.OPEN_EXPOSURE: ErrorMeta(("rest",), None, False, None, None, "The account holds open positions, working orders or running algos that the request does not resolve; resend with an open_exposure choice"),
-    ErrorCode.EXPOSURE_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "The account's open exposure cannot be read because its key is dead at the exchange; the account can be disabled, never deleted"),
+    ErrorCode.EXPOSURE_UNKNOWN: ErrorMeta(("rest",), None, False, None, None, "The account's open exposure cannot be read because the exchange refuses every one of its keys"),
     ErrorCode.VERSION_CONFLICT: ErrorMeta(("rest",), None, False, None, None, "If-Match / ETag precondition failed"),
     ErrorCode.PAYLOAD_TOO_LARGE: ErrorMeta(("rest",), None, False, None, None, "Request body or batch exceeds the operation's size ceiling"),
     ErrorCode.GONE: ErrorMeta(("rest",), None, False, None, None, "Resource existed but was purged by retention, or a one-time link that expired or was used"),
