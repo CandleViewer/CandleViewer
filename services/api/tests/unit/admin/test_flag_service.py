@@ -29,14 +29,22 @@ _OWNER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0001")
 _STORED = {"key", "kind", "description", "value"}
 
 
-async def _service() -> tuple[FlagService, FakeFlagStore, Clock]:
+async def _service(budget_ms: int = 500) -> tuple[FlagService, FakeFlagStore, Clock]:
     store, clock = FakeFlagStore(), Clock()
-    service = FlagService(default_registry(), store, clock=clock)
+    service = FlagService(default_registry(), store, clock=clock, read_budget_ms=budget_ms)
     with capture_logs() as logs:
         await service.start()
     assert logs[0]["event"] == "feature_flag_registry"
     assert set(store.rows) == set(service.registry)
     return service, store, clock
+
+
+def _overtake_once(service: FlagService, store: FakeFlagStore) -> None:
+    def once() -> None:  # a write (`invalidate()`) lands right after the next load's snapshot
+        store.on_load = None
+        service.invalidate()
+
+    store.on_load = once
 
 
 async def test_killswitch_flag_changed_in_the_database_is_reflected_within_5_s() -> None:
@@ -76,6 +84,30 @@ async def test_unreachable_store_fails_closed_and_is_retried_after_1_s() -> None
     store.down = False
     clock.now += 0.5
     assert await service.value(MAINTENANCE_MODE) is False
+
+
+async def test_a_failed_load_is_retried_1_s_after_it_failed_whatever_the_budget() -> None:
+    service, store, clock = await _service(2000)
+
+    def spend_the_budget() -> None:
+        clock.now += 2.0
+
+    store.on_load, store.down, loads = spend_the_budget, True, store.loads
+    clock.now += 30
+    assert await service.value(MAINTENANCE_MODE) is True
+    clock.now += 0.9
+    assert await service.value(MAINTENANCE_MODE) is True
+    assert store.loads == loads + 1
+
+
+async def test_an_outage_a_list_detects_at_5_s_fails_the_cached_live_gate_closed() -> None:
+    service, store, clock = await _service()
+    store.rows[LIVE_ENABLED] = replace(store.rows[LIVE_ENABLED], value=True)
+    assert await service.value(LIVE_ENABLED) is True
+    store.down, clock.now = True, clock.now + 5
+    listed = await service.visible(_OWNER, frozenset({"owner"}))
+    assert listed.resolution is Resolution.FAIL_CLOSED  # the list reloads at the 5 s bound
+    assert await service.value(LIVE_ENABLED) is False  # not the 5 s old snapshot's True
 
 
 async def test_invalidate_forces_a_reload() -> None:
@@ -132,16 +164,27 @@ async def test_concurrent_reads_share_one_load() -> None:
 
 async def test_a_load_started_before_invalidate_is_dropped() -> None:
     service, store, _ = await _service()
-    service.invalidate()
-    store.hold = asyncio.Event()
-    loads = store.loads
-    reader = asyncio.create_task(service.value(MAINTENANCE_MODE))
-    await asyncio.sleep(0)
     store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=True)
+    store.hold, loads = asyncio.Event(), store.loads
+    reader = asyncio.create_task(service.value(MAINTENANCE_MODE))
+    await asyncio.sleep(0)  # the reader spawns the load,
+    await asyncio.sleep(0)  # which takes its snapshot (True) and waits
+    store.rows[MAINTENANCE_MODE] = replace(store.rows[MAINTENANCE_MODE], value=False)
     service.invalidate()  # a write committed while the first load was in flight
     store.hold.set()
-    assert await reader is True  # the stale snapshot (value False) was never installed
+    assert await reader is False  # the retried load's value: the stale True was never installed
     assert store.loads == loads + 2
+
+
+async def test_a_read_overtaken_once_answers_from_its_retried_load() -> None:
+    service, store, _ = await _service()
+    key = "rules.graph_editor"  # its fail-closed value is True
+    store.rows[key] = replace(store.rows[key], value=False)
+    _overtake_once(service, store)
+    assert await service.value(key) is False
+    service.invalidate()
+    _overtake_once(service, store)
+    assert (await service.visible(_OWNER, frozenset({"owner"}))).resolution is Resolution.STORED
 
 
 async def test_a_read_overtaken_twice_fails_closed_instead_of_looping() -> None:

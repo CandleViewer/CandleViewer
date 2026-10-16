@@ -127,12 +127,14 @@ class FlagService:
         return None if rows is None else rows.get(spec.key) or StoredFlag(spec.default)
 
     async def _rows(self, ttl: float) -> Mapping[str, StoredFlag] | None:
-        for _ in range(2):  # a load overtaken by invalidate() is dropped, then retried once
+        # Check, load, check, load, check: a load overtaken by invalidate() is dropped and the
+        # read retries once; overtaken again, it fails closed rather than loop.
+        for attempt in range(3):
             snapshot = self._snapshot
             if snapshot is not None and self._clock() - self._loaded_at < ttl:
                 return snapshot
-            if self._clock() < self._retry_at:
-                return None
+            if attempt == 2 or self._clock() < self._retry_at:
+                break
             await self._reload()
         return None
 
@@ -149,7 +151,7 @@ class FlagService:
             async with asyncio.timeout(self._timeout):
                 snapshot = await self.store.load()
         except Exception as exc:  # timeout or store failure (CancelledError is not an Exception)
-            self._snapshot, self._retry_at = None, started + RETRY_S
+            self._snapshot, self._retry_at = None, self._clock() + RETRY_S
             logger().warning("feature_flag_store_unavailable", error=type(exc).__name__)
             return
         if generation == self._generation:
