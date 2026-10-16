@@ -5,11 +5,14 @@ port at start-up (bounded) and then every minute, never per connection, and the 
 first-`auth_ok` hook reads only the cached flag. The S9 tests drive the real `create_app()` wiring
 through a socket with the store faked; the SQL statement is checked here against a scripted unit
 of work and on real Postgres in tests/integration/auth/test_break_glass_reset_pg.py (CI only).
+The S9 tests replace `build_auth_service`, so the `test_deployed_app_*` pair runs the one the
+process deploys: it must wire the read-only reader on the real backend, and only there.
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -20,9 +23,11 @@ from typing import Any, cast
 import pytest
 import structlog
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from candleviewer import app as app_module
 from candleviewer.app import AppContext, create_app
+from candleviewer.auth import service as service_module
 from candleviewer.auth.break_glass_notice import (
     BREAK_GLASS_NOTICE_REASON,
     REFRESH_INTERVAL_S,
@@ -58,6 +63,26 @@ class _Events:
         return self.answer
 
 
+class _Ticks:
+    """The refresher's interval clock: each `sleep` parks until `tick()` lets one interval pass."""
+
+    def __init__(self) -> None:
+        self._parked, self._wake = asyncio.Event(), asyncio.Event()
+
+    async def sleep(self, _seconds: float) -> None:
+        self._parked.set()
+        await self._wake.wait()
+        self._wake.clear()
+
+    async def tick(self) -> None:
+        """One interval passes; returns once the refresher has read and parks for the next."""
+        async with asyncio.timeout(5):  # a refresher that was never spawned fails here
+            await self._parked.wait()
+            self._parked.clear()
+            self._wake.set()
+            await self._parked.wait()
+
+
 async def _authenticate(token: str) -> tuple[str, uuid.UUID, datetime]:
     if token != "tok":
         raise PermissionError("bad token")
@@ -86,6 +111,38 @@ def _app(
             yield client, auth
         finally:
             client.portal.call(auth.stop, 1.0)
+
+
+#: What the real backend needs to start auth (TOTP keys, pepper, CSRF key); none of it is real.
+_REAL: dict[str, Any] = {
+    "storage_backend": "real",
+    "auth_pepper": SecretStr("pepper"),
+    "auth_totp_key_hex": SecretStr("11" * 32),
+    "auth_recovery_hmac_key_hex": SecretStr("22" * 32),
+    "auth_csrf_key_hex": SecretStr("33" * 32),
+}
+
+
+@contextmanager
+def _deployed(**fields: Any) -> Iterator[TestClient]:
+    """`create_app()` with nothing injected but the WS token seams, so `build_auth_service` is the
+    one the process deploys. Its auth module is started as the supervisor starts it."""
+
+    async def principal(user_id: uuid.UUID) -> PrincipalSnapshot:
+        return PrincipalSnapshot(user_id, frozenset({"manager"}), frozenset())
+
+    settings = Settings(
+        environment=Environment.DEMO, ws_shutdown_grace_ms=0, allowed_origins=_ORIGIN, **fields
+    )
+    app = create_app(settings, ws_authenticate=_authenticate, snapshot_loader=principal)
+    ctx = app.state.app_context
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        assert client.portal is not None
+        client.portal.call(ctx.auth.start, ctx)
+        try:
+            yield client
+        finally:
+            client.portal.call(ctx.auth.stop, 1.0)
 
 
 @contextmanager
@@ -154,6 +211,59 @@ def test_state_read_failure_never_blocks_auth_ok_and_is_counted(
     assert "10.0.0.5" not in repr(logs)  # the class only, never the message
 
 
+def test_failed_startup_read_is_counted_and_the_refresher_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ticks = _Ticks()
+    # `AuthService` builds its own `BreakGlassNotice`: give it a refresher the test can tick.
+    monkeypatch.setattr(
+        service_module, "BreakGlassNotice", functools.partial(BreakGlassNotice, sleep=ticks.sleep)
+    )
+    events = _Events(ConnectionRefusedError("db down"))
+    with _app(monkeypatch, events) as (client, auth):
+        assert client.portal is not None
+        notice = auth.break_glass_notice
+        assert (notice.read_failures, notice.unresolved) == (1, None)  # counted, nothing guessed
+        with _authenticated(client) as ws:
+            assert _queued(ws) == []  # auth_ok arrived, with no notice
+        events.answer = True  # the store is back ...
+        client.portal.call(ticks.tick)  # ... and the refresher's next read finds the event
+        assert (notice.read_failures, notice.unresolved) == (1, True)
+        with _authenticated(client) as ws:  # the next first authentication carries the notice
+            assert [f["p"]["reason"] for f in _queued(ws)] == [BREAK_GLASS_NOTICE_REASON]
+
+
+@pytest.fixture
+def store_reads(monkeypatch: pytest.MonkeyPatch) -> list[SqlAlchemyBreakGlassEvents]:
+    """The read-only reader's one SQL edge, faked to answer "unresolved" and to record each call.
+    Like the composition guards in tests/unit/architecture, only the SQL edge is faked."""
+    reads: list[SqlAlchemyBreakGlassEvents] = []
+
+    async def unresolved(self: SqlAlchemyBreakGlassEvents) -> bool:
+        reads.append(self)
+        return True
+
+    monkeypatch.setattr(SqlAlchemyBreakGlassEvents, "has_unresolved_break_glass", unresolved)
+    return reads
+
+
+def test_deployed_app_wires_the_read_only_reader_on_the_real_backend(
+    store_reads: list[SqlAlchemyBreakGlassEvents],
+) -> None:
+    with _deployed(**_REAL) as client, _authenticated(client) as ws:
+        frames = _queued(ws)
+    assert [f["p"]["reason"] for f in frames] == [BREAK_GLASS_NOTICE_REASON]
+    assert len(store_reads) == 1  # one read at start-up, none for this connection
+
+
+def test_deployed_app_wires_no_reader_on_the_fake_backend(
+    store_reads: list[SqlAlchemyBreakGlassEvents],
+) -> None:
+    with _deployed() as client, _authenticated(client) as ws:
+        assert _queued(ws) == []
+    assert store_reads == []  # no `system_events` table behind the fake backend: nothing is read
+
+
 async def test_failed_refresh_keeps_the_last_state_read() -> None:
     events = _Events(True)
     source = BreakGlassNotice(events)
@@ -210,6 +320,17 @@ async def test_auth_module_starts_and_stops_the_refresh() -> None:
     assert len(auth.break_glass_notice.notices()) == 1
     await auth.stop(1.0)
     assert task.cancelled()
+
+
+async def test_a_second_start_neither_reads_nor_spawns_a_second_refresher() -> None:
+    events = _Events(True)
+    source = BreakGlassNotice(events)
+    await source.start()
+    await source.start()
+    assert events.reads == 1  # not read again ...
+    assert len([t for t in asyncio.all_tasks() if t.get_name() == _TASK]) == 1  # ... nor doubled
+    await source.stop()
+    assert not [t for t in asyncio.all_tasks() if t.get_name() == _TASK]  # nothing outlives stop()
 
 
 async def test_without_a_store_nothing_is_read_or_sent() -> None:
