@@ -7524,7 +7524,7 @@ export interface components {
       | "liquidations"
       | "open_interest"
       | "funding";
-    /** @description Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact (setting `accounts.subaccount_tier`, `21-database-schema.md` §3.9), never inferred from counts or `max_sub_accounts_hint`; `tier` and `cap` are `null` iff `tier_source` is `unrecorded`. If the tier read itself fails, the slice reports `status: error` and the four tier fields (`tier`, `cap`, `tier_source`, `recorded_at`) are omitted, never defaulted. */
+    /** @description Bybit sub-account capacity (US-ADMIN-014). The tier is a recorded fact (setting `accounts.subaccount_tier`, `21-database-schema.md` §3.9), never inferred from counts or `max_sub_accounts_hint`; `tier` and `cap` are `null` iff `tier_source` is `unrecorded`. If the tier read itself fails, the slice status is not `ok` and the four tier fields (`tier`, `cap`, `tier_source`, `recorded_at`) are omitted, never defaulted. */
     SubaccountCapacity: {
       /** @description 5 for `regular`, 20 for `business_kyc`, `null` while unrecorded. */
       cap?: number | null;
