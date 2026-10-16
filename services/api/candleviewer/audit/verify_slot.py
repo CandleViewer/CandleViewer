@@ -3,10 +3,11 @@ time, the scheduled (start-up and nightly) job included.
 
 An on-demand run tries (`try_acquire`) and is refused with `409` while the slot is held or a
 scheduled run is waiting for it. A scheduled run waits (`acquire`), first come first served,
-so it is never skipped. No scheduler exists yet: the start-up and nightly verify job takes
+so it is never skipped. The start-up and nightly verify job (`verify_job.py`, #2111) takes
 `AuditService.query.verify_slot` with `acquire()` and gives it back with `release()` in a
-`finally`. The slot is handed straight to the next waiter, so an on-demand run never slips in
-between.
+`finally`; it is inert until the real runner is wired (#2966), so until then only on-demand runs
+take the slot. The slot is handed straight to the next waiter, so an on-demand run never slips
+in between.
 """
 
 from __future__ import annotations

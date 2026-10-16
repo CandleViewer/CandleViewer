@@ -831,6 +831,8 @@ docker system df
 | 6. Escalation         | Owner and security reviewer immediately.                                                                                                                                                                                                                                |
 | 7. Verify recovery    | A known break is re-found, and paged again, at every start-up and every nightly run while it stands. Recovery is IR-06's restore path (`04-security-program.md` §10.3): the next whole-chain run passes on the restored chain, and the cause is in the incident record. |
 
+**Interim state (#2111, until #2966).** The start-up and nightly verify job ships inert: no `VerifyRunner` is wired yet, so no run happens and the API logs `audit.verify_job_not_wired` at boot. Its two series sit at rest (`cv_audit_verify_last_ok_timestamp_seconds` reads 0 and `cv_audit_verify_runs_total` has no series). The check fails open: a missing run raises no alert. Nothing walks the chain on a schedule, so the verification control in `04-security-program.md` §8.1 is not yet in force, and row 7's re-detection at every start-up and nightly run begins only when #2966 wires the runner. One residual outlasts that: the no-pass page rule (added by the next slice) reads the gauge within one process and the counter across restarts, so if the API restarts more often than every 26 hours and no run ever ends, both clauses of the page stay silent. That is a double fault, and it can arise only once #2966 wires the runner: until then the job is inert.
+
 **4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
 
 ```bash

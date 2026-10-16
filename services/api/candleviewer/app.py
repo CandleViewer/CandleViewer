@@ -35,10 +35,12 @@ from candleviewer.admin.overview.metrics import export_overview_metrics
 from candleviewer.admin.service import AdminService
 from candleviewer.admin.wiring import (
     AuditHandle,
+    AuditVerifyRunner,
     SecretsBundle,
     SecretsHandle,
     audit_writer_sink,
     build_audit_service,
+    build_audit_verify_job,
     build_secrets_service,
     export_secrets_metrics,
 )
@@ -949,6 +951,7 @@ def create_app(
     onboarding_store: Any = None,
     bars_now_us: Callable[[], int] | None = None,
     secrets_bundle: SecretsBundle | None = None,
+    audit_verify_runner: AuditVerifyRunner | None = None,
 ) -> FastAPI:
     """Build the FastAPI application without touching Postgres/QuestDB/network.
 
@@ -1356,6 +1359,11 @@ def create_app(
             metrics_facade.get("cv_api_keys_rows"),
             env=resolved.environment.value,
         )
+    # #2111: the start-up and nightly audit chain verify job (lifespan-started). None until #2966
+    # wires the real runner (E42-T02): no job, and its gauge stays 0 (never pages).
+    app.state.audit_verify_job = build_audit_verify_job(
+        ctx.audit, resolved, metrics_facade, audit_verify_runner
+    )
     app.include_router(
         make_telemetry_router(
             TelemetrySink(metrics_facade),

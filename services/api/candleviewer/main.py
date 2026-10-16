@@ -73,6 +73,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     scrub_task = getattr(app.state, "scrub_task", None)
     if scrub_task is not None:
         scrub_task.start()
+    audit_verify = getattr(app.state, "audit_verify_job", None)
+    if audit_verify is not None:  # #2111: after `start_all`, so the audit writer is up
+        audit_verify.start()
+    else:  # #2111: no verify runner is wired (#2966), so nothing checks the audit chain
+        logger().warning("audit.verify_job_not_wired")
     disk_budget = getattr(app.state, "disk_budget", None)
     if disk_budget is not None:  # E16-T07: one supervised sampling task
         disk_budget.start()
@@ -155,6 +160,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             await t.stop()
         if scrub_task is not None:
             await scrub_task.stop()
+        if audit_verify is not None:  # #2111: a run writes through the audit writer (stop_all)
+            await audit_verify.stop()
         admin_jobs = getattr(app.state, "admin_jobs", None)
         if admin_jobs is not None:
             await admin_jobs.stop()  # E16-T05: tracked compaction tasks never outlive the app

@@ -1769,6 +1769,29 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=32,
         exported=True,
     ),
+    # --- Audit verify job (#2111, E09-X04 R-5) ------------------------------
+    _s(
+        "cv_audit_verify_last_ok_timestamp_seconds",
+        "gauge",
+        "seconds",
+        (),
+        "Unix time the last start-up or nightly audit chain verify run passed; the job's start "
+        "until one does; 0 while no verify runner is wired.",
+        "page rule: added by the next slice (no pass for 26 h; 0 never pages)",
+        _L,
+        "E09",
+    ),
+    _s(
+        "cv_audit_verify_runs_total",
+        "counter",
+        "runs",
+        ("result",),
+        "Start-up and nightly audit chain verify runs that ended, by result (0 from the start).",
+        "page rule: added by the next slice (runs ended in 26 h and none passed, across restarts)",
+        _L,
+        "E09",
+        max_series=3,
+    ),
     # --- SR-125 security metrics --------------------------------------------
     _s(
         "auth_login_failures_total",
