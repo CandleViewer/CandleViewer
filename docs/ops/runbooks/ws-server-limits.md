@@ -47,3 +47,15 @@ local process, so any process on the host can then name an address through the h
 proxy its own address where the deployment allows it. Regression tests:
 `tests/unit/net/test_forwarded_header_trust.py` and
 `tests/security/auth/test_trusted_proxy_readers.py`.
+
+## Logging
+
+`candleviewer.server` passes `log_config=None`, so uvicorn installs no handlers of its own. Its
+`uvicorn`, `uvicorn.error` and `uvicorn.access` loggers propagate to the root handler that
+`configure_logging()` sets up: JSON lines on stdout, through the handler-level redaction filter
+(SR-121), at `CV_LOG_LEVEL`. uvicorn's startup, error and access lines are therefore JSON like the
+rest of the log, not uvicorn's text format. The access line is off whenever the `/metrics` listener
+runs (`CV_METRICS_ENABLED`, on by default): the listener's `access_log=False` clears the shared
+`uvicorn.access` logger. The bare `uvicorn` CLI applies uvicorn's own logging config instead, which
+is one more reason not to start a deployment with it. Regression test:
+`tests/unit/observability/test_uvicorn_log_routing.py`.

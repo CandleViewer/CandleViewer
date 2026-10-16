@@ -4,7 +4,8 @@ Builds the uvicorn configuration from `candleviewer.ws.limits` and
 `candleviewer.ws.lifecycle` so server-level WebSocket limits cannot drift from
 the protocol (`23-ws-protocol.md` §16.2). uvicorn's proxy-header handling is off
 (#2275): `MeshOnlyMiddleware` is the only reader of forwarded headers. The server runs the
-§9.4 planned WebSocket shutdown before uvicorn's own (`PlannedShutdownServer`).
+§9.4 planned WebSocket shutdown before uvicorn's own (`PlannedShutdownServer`). uvicorn installs
+no logging config of its own: its loggers use the root handler `configure_logging()` sets up.
 """
 
 from __future__ import annotations
@@ -38,12 +39,18 @@ def uvicorn_kwargs(settings: Settings | None = None) -> dict[str, Any]:
     from forwarded headers, whatever `FORWARDED_ALLOW_IPS` says, so `scope["client"]` is the
     TCP peer. The only forwarded-header setting is MeshOnly's trusted proxy
     (`CV_MESH_TRUSTED_PROXY_HEADER` and `CV_MESH_TRUSTED_PROXY_ADDRESS`).
+
+    `log_config=None`: uvicorn adds no handlers and no `propagate=False` of its own, so the
+    `uvicorn`, `uvicorn.error` and `uvicorn.access` loggers propagate to the root handler that
+    `configure_logging()` installs (JSON lines, `RedactionFilter`, `CV_LOG_LEVEL`), as the
+    `/metrics` listener already does (`observability/metrics_server.py`).
     """
     cfg = settings if settings is not None else get_settings()
     return {
         "host": cfg.bind_host,
         "port": cfg.bind_port,
         "proxy_headers": False,
+        "log_config": None,
         "ws_max_size": limits.SERVER_WS_MAX_SIZE,
         "ws_per_message_deflate": limits.SERVER_WS_PER_MESSAGE_DEFLATE,
         "ws_max_queue": limits.SERVER_WS_MAX_QUEUE,
