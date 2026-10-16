@@ -232,14 +232,12 @@ Standing assumptions for all areas: no public listener exists; all human actors 
 | O10 | Denial of service      | WS disconnect leaves orders unmanaged and stops unenforced                                  | M   | H   | **High**     | SR-059 Bybit dead-man's-switch where supported + native SL invariant (O4) + reconnect reconciliation                                   | Low      |
 | O11 | Elevation of privilege | XSS payload uses the live session to place orders silently                                  | L   | H   | **High**     | SR-112 CSP, SR-043 arm toggle + per-session live-trading confirmation, SR-025 step-up re-auth                                          | Low      |
 
-**E29 OMS core and order placement** (`docs/security/threat-models/E29-oms.md`, ticket E29-X01) re-derives O1-O11
-above against the unbuilt E29 design: the order, position and execution routes, the submission pipeline, the
-`orderLinkId` allocator, the B1 order machine, the private-stream consumer, the reconciler and the live WS-trade path.
-44 rows (OM-S01..OM-E06): 5 inherent Critical and 21 High. Main findings: the client's `intent` decides whether an
-opening order needs a native stop and which rate bucket pays; the `untracked` path and a mismatched duplicate-id lookup
-have no B1 contract; `order_events.payload` can keep headers or an `auth` frame behind deny-list redaction; cancel or
-background traffic can starve the `critical` reserve. Controls SR-E29-01..17 (model §10); abuse cases AC-01..AC-28
-go to E29-X02. Status Draft.
+**E29 OMS core and order placement** (`docs/security/threat-models/E29-oms.md`, ticket E29-X01, Draft) re-derives
+O1-O11 above for the unbuilt E29 order path, live WS trade included: 45 rows (OM-S01..OM-E06), 5 inherent Critical and
+21 High. Main findings: the client's `intent` decides whether an opening order needs a native stop and which rate
+bucket pays; the shipped REST client resends an order create after a timeout or 5xx with no lookup; the `untracked`
+path and a mismatched duplicate-id lookup have no B1 contract; `order_events.payload` can keep headers or an `auth`
+frame; cancel or background traffic can starve the `critical` reserve. SR-E29-01..17 (model §10); AC-01..AC-29.
 
 ### 5.3 Area 3 — Rule engine (A-07, AC-06)
 
