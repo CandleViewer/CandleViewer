@@ -110,8 +110,11 @@ info:
     therefore accept either credential (`bearerAuth` or `refreshCookie`): an access token inside
     its lifetime identifies the session, else the `cv_refresh` cookie does, but only while it is
     that session's current refresh token. A rotated-away or never-issued cookie is
-    `401 unauthenticated` and changes nothing (reuse detection stays with `POST /auth/refresh`);
-    a revoked or expired session answers as it would to its access token. A cookie-identified
+    `401 unauthenticated` and changes no session (the family revocation of reuse detection stays
+    with `POST /auth/refresh`); it is counted and, within a budget, audited
+    (`auth.refresh_reuse_detected` with outcome `denied` for a rotated-away cookie,
+    `auth.session_fixation_attempt` for a never-issued one). A revoked or expired session
+    answers as it would to its access token. A cookie-identified
     `POST /auth/logout` or `POST /auth/unlock` gets the SR-042 `Origin` check and the SR-041
     CSRF check of `POST /auth/refresh`; `GET /auth/session` stays a safe read. No other
     operation accepts the cookie, and none, unlock included, accepts an expired access token.
@@ -130,9 +133,10 @@ info:
     downgrade survives lock and unlock.
 
     Activity is explicit. Only `POST /auth/session/extend` and a successful `POST /auth/unlock`
-    record activity (`REQUEST` on B16 re-stamps `last_seen_at`), so only they move
-    `session.idle_deadline`. No other operation moves it, whatever it reads or writes, and
-    neither does client-side input or WS traffic. `POST /auth/refresh` is not activity: the
+    record activity (`REQUEST` for extend and `UNLOCK_OK` for unlock, on B16, re-stamp
+    `last_seen_at`), so only they move `session.idle_deadline`. No other operation moves it,
+    whatever it reads or writes, and neither does client-side input or WS traffic.
+    `POST /auth/refresh` is not activity: the
     rotated session inherits `last_seen_at` (as it inherits `expires_at`), so
     `session.idle_deadline` is unchanged and a client that refreshes on the
     `23-ws-protocol.md` section 4.3 schedule still locks on time. `GET /auth/session` is
@@ -1121,7 +1125,7 @@ paths:
       description: |
         Lifts the idle lock (SCR-005) with the **password only**. No TOTP is asked while the
         session is inside its 12 h absolute lifetime (US-ONB-004, E09-S03). On success
-        `last_seen_at` is re-stamped (`REQUEST` on B16), `session.idle_deadline` moves forward,
+        `last_seen_at` is re-stamped (`UNLOCK_OK` on B16), `session.idle_deadline` moves forward,
         `session.locked` is `false`, and the body is the same `SessionInfo` as
         `GET /auth/session`.
 
@@ -1156,7 +1160,8 @@ paths:
         (SR-015, SR-016): a wrong unlock password counts toward the account lockout, and a locked
         account fails like a wrong password. Audited write-ahead: `auth.session_unlocked` on
         success and `auth.unlock_failed` on every wrong password; the revoking failure also
-        writes `auth.session_revoked`. The password is never logged, audited or echoed.
+        writes `auth.session_revoked`, and the wrong password that locks the account (SR-016)
+        writes `auth.account_locked`. The password is never logged, audited or echoed.
       security:
         - bearerAuth: []
         - refreshCookie: []

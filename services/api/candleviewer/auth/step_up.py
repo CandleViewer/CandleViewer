@@ -93,6 +93,16 @@ class PositionStateProvider(Protocol):
 
 
 @dataclass(frozen=True)
+class PasswordVerdict:
+    """`verify_password`'s answer: whether the password verified, and, when this
+    failure is the one that locked the account (SR-016), until when. The caller
+    audits that lockout (`auth` may not import `audit`)."""
+
+    ok: bool
+    locked_until: datetime | None = None
+
+
+@dataclass(frozen=True)
 class StepUpGrant:
     action_class: str
     elevated_until: datetime
@@ -300,13 +310,14 @@ class StepUpService:
                 return key[len(_PENDING) :]
         return None
 
-    async def verify_password(self, user_id: str, password: str) -> bool:
+    async def verify_password(self, user_id: str, password: str) -> PasswordVerdict:
         """The account password on login's Argon2id path and lockout counters
         (SR-015, SR-016), as step-up checks it: a wrong password counts toward
         the account lockout, and a locked or unknown account fails like a wrong
-        password. `POST /auth/unlock` (#2300) re-authenticates with it."""
+        password. `POST /auth/unlock` (#2300) re-authenticates with it and audits
+        the lockout a wrong password applies (`locked_until`)."""
         user = await self._users.find_by_id(user_id)
-        return await self._password_ok(user, password, self._clock())
+        return await self._password_verdict(user, password, self._clock())
 
     async def _verify_both(self, user_id: str, code: str, password: str, now: datetime) -> bool:
         """Password first (login's hasher + lockout counters), then TOTP.
@@ -314,27 +325,30 @@ class StepUpService:
         The TOTP step (and its replay guard) is only reached with a correct
         password, so a wrong password never burns a valid time step."""
         user = await self._users.find_by_id(user_id)
-        if not await self._password_ok(user, password, now):
+        if not (await self._password_verdict(user, password, now)).ok:
             return False
         return await self._verify(user_id, code, now)
 
-    async def _password_ok(self, user: UserRecord | None, password: str, now: datetime) -> bool:
+    async def _password_verdict(
+        self, user: UserRecord | None, password: str, now: datetime
+    ) -> PasswordVerdict:
         if user is None:
             await self._hasher.verify_dummy(password)  # same Argon2id work as a real user
-            return False
+            return PasswordVerdict(ok=False)
         ok = await self._hasher.verify(user.password_hash, password)  # always, even if locked
         if user.locked_until is not None and user.locked_until > now:
-            return False  # locked accounts are refused like any other failure
-        if not ok:
-            locked_until = await self._users.record_login_failure(
-                str(user.id),
-                lockout_threshold=LOCKOUT_THRESHOLD,
-                lock_duration=LOCKOUT_DURATION,
-                now=now,
-            )
-            if locked_until is not None:
-                auth_lockouts_total.inc()  # SR-125: a wrong step-up password can lock the account
-        return ok
+            return PasswordVerdict(ok=False)  # locked accounts are refused like any other failure
+        if ok:
+            return PasswordVerdict(ok=True)
+        locked_until = await self._users.record_login_failure(
+            str(user.id),
+            lockout_threshold=LOCKOUT_THRESHOLD,
+            lock_duration=LOCKOUT_DURATION,
+            now=now,
+        )
+        if locked_until is not None:
+            auth_lockouts_total.inc()  # SR-125: a wrong step-up password can lock the account
+        return PasswordVerdict(ok=False, locked_until=locked_until)
 
     async def _verify(self, user_id: str, code: str, now: datetime) -> bool:
         for method in await self._mfa.find_active_totp_methods(user_id):

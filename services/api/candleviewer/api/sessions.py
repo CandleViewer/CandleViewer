@@ -35,9 +35,11 @@ tokens of real sessions are not attempts and stay silent.
 Idle lock (#2300, contract info "Idle lock"): activity is explicit, so no route
 here re-stamps `last_seen_at` except `POST /auth/session/extend` and a successful
 `POST /auth/unlock`, and a refresh carries the idle deadline over.
-`GET /auth/session` and `POST /auth/unlock` serve a locked session, identified by
-an access token inside its lifetime or else the current `cv_refresh` cookie; every
-other operation of a locked session is refused by `api.idle_lock`.
+`GET /auth/session`, `POST /auth/unlock` and `POST /auth/logout` serve a locked
+session, identified by an access token inside its lifetime or else the current
+`cv_refresh` cookie (a cookie-identified write gets the SR-042 Origin and SR-041
+checks here); every other operation of a locked session is refused by
+`api.idle_lock`, and a locked or cookie-identified logout ends only its own session.
 """
 
 from __future__ import annotations
@@ -55,7 +57,9 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from candleviewer.api import idle_lock
 from candleviewer.api.csrf import (
+    ANON_REFUSAL_WINDOW_S,
     AUDIT_TIMEOUT_S,
+    SESSION_REFUSALS_PER_WINDOW,
     RefusalAuditTracker,
     clear_csrf_cookie,
     csrf_problem,
@@ -63,6 +67,7 @@ from candleviewer.api.csrf import (
     source_ip,
     verify_refresh_csrf,
 )
+from candleviewer.api.csrf import REFRESH_COOKIE as REFRESH_COOKIE  # re-exported (contract name)
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec, CsrfVerdict
@@ -70,6 +75,7 @@ from candleviewer.auth.errors import (
     RefreshReuseDetected,
     SessionIdleLocked,
     SessionNotFound,
+    SessionNotLocked,
     SessionRevoked,
     UnlockPasswordInvalid,
 )
@@ -88,11 +94,10 @@ from candleviewer.auth.session_service import (
     UnlockWriteAhead,
     is_idle_locked_session,
 )
-from candleviewer.auth.step_up import grace_expires_at
+from candleviewer.auth.step_up import PasswordVerdict, grace_expires_at
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.observability.redaction import redact_text
 
-REFRESH_COOKIE = "cv_refresh"
 REFRESH_COOKIE_PATH = "/api/v1/auth"
 ACCESS_TOKEN_EXPIRES_IN_S = 720  # ADR-0020: 12 min
 REFRESH_EXPIRES_IN_S = 12 * 3600
@@ -126,9 +131,7 @@ class SessionServiceLike(Protocol):
         is_electron: bool = False,
     ) -> RefreshOutcome: ...
 
-    async def authenticate_access_token(
-        self, raw_access_token: str, *, allow_locked: bool = False
-    ) -> SessionRecord: ...
+    async def authenticate_access_token(self, raw_access_token: str) -> SessionRecord: ...
 
     async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None: ...
 
@@ -164,7 +167,7 @@ class UnlockAuthority(Protocol):
     @property
     def chart(self) -> SessionChart: ...
 
-    async def verify_password(self, user_id: str, password: str) -> bool: ...
+    async def verify_password(self, user_id: str, password: str) -> PasswordVerdict: ...
 
 
 class AuthServiceLike(Protocol):
@@ -439,6 +442,12 @@ def make_session_router(
         window_s=FIXATION_AUDIT_WINDOW_S,
         max_tracked_ips=1,
     )
+    #: Route-checked SR-041 refusals audited per session per window, as `CsrfMiddleware`
+    #: budgets its own (contract "CSRF", "Refusal"): a cookie-identified logout has no
+    #: request throttle of its own. Past it: the same 403 with `Retry-After`, no record.
+    by_csrf_session = PerIpLoginThrottle(
+        max_attempts=SESSION_REFUSALS_PER_WINDOW, window_s=ANON_REFUSAL_WINDOW_S
+    )
     tracker = audit_tracker if audit_tracker is not None else RefusalAuditTracker()
 
     def _audit_ready() -> bool:
@@ -467,15 +476,19 @@ def make_session_router(
             reason=reason,
         )
 
-    async def _fixation_attempt(request: Request, vector: str) -> None:
+    async def _fixation_attempt(
+        request: Request, vector: str, *, rotated: SessionRecord | None = None
+    ) -> None:
         """U6/SR-013 (E09-X02 AC2): a session credential this server never issued was
-        presented. The uniform 401 is unchanged (no oracle). The attempt is counted, and
-        audited within the per-IP and global budgets and the tracker's in-flight cap; the
-        write runs shielded, so a cancelled request never cuts it short (as the CSRF
-        guard). The token itself is never recorded; a slow or failed write never changes
-        the answer."""
+        presented, or, with *rotated*, the `cv_refresh` cookie of a session a refresh
+        rotated away was presented outside `/auth/refresh` (a reuse probe: it is not
+        revoked here, contract "Idle lock"). The uniform 401 is unchanged (no oracle).
+        The attempt is counted, and audited within the per-IP and global budgets and the
+        tracker's in-flight cap; the write runs shielded, so a cancelled request never
+        cuts it short (as the CSRF guard). The token itself is never recorded; a slow or
+        failed write never changes the answer."""
         fixation = auth_session_fixation_attempts_total
-        fixation.labels(reason="unknown_token").inc()
+        fixation.labels(reason="unknown_token" if rotated is None else "rotated").inc()
         ip = _source_ip(request)
         key = ip or "(unknown)"
         if (
@@ -487,32 +500,44 @@ def make_session_router(
             return
         by_fixation_ip.record_failure(key)
         by_fixation_all.record_failure(_ALL_SOURCES)
+        action = "auth.refresh_reuse_detected" if rotated else "auth.session_fixation_attempt"
         if audit_service is None or not audit_service.is_active:
             fixation.labels(reason="audit_unavailable").inc()
-            _log().error("auth.session_fixation_attempt.audit_unavailable", error="inactive")
+            _log().error(f"{action}.audit_unavailable", error="inactive")
             return
-        task = tracker.track(
-            audit_service.writer.emit(
-                "auth.session_fixation_attempt",
+        where = {"vector": vector, "path": _route_path(request)}
+        if rotated is None:
+            emitted = audit_service.writer.emit(
+                action,
                 actor_label="(unknown)",
                 actor_ip=ip,
                 outcome=AuditOutcome.DENIED,
                 severity=Severity.WARNING,
                 reason="unknown_token",
-                after_state={"vector": vector, "path": _route_path(request)},
+                after_state=where,
             )
-        )
+        else:
+            emitted = audit_service.writer.emit(
+                action,
+                actor_label=str(rotated.user_id),
+                actor_user_id=rotated.user_id,
+                actor_ip=ip,
+                session_id=rotated.id,
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason="rotation_reuse",
+                after_state={**where, "family_revoked": False},
+            )
+        task = tracker.track(emitted)
         try:
             await asyncio.wait_for(asyncio.shield(task), audit_timeout_s)
         except TimeoutError:
             tracker.mark_timed_out(task)  # left to finish; never cancelled mid-append
             fixation.labels(reason="audit_slow").inc()
-            _log().warning("auth.session_fixation_attempt.audit_slow")
+            _log().warning(f"{action}.audit_slow")
         except Exception as exc:
             fixation.labels(reason="audit_unavailable").inc()
-            _log().error(
-                "auth.session_fixation_attempt.audit_unavailable", error=type(exc).__name__
-            )
+            _log().error(f"{action}.audit_unavailable", error=type(exc).__name__)
 
     async def _propagate(session_id: str | uuid.UUID, reason: str) -> None:
         if publish_revocation is not None:
@@ -527,16 +552,14 @@ def make_session_router(
         response.headers["Retry-After"] = str(retry_after)
         return response
 
-    async def _authenticate(
-        request: Request, *, allow_locked: bool = False
-    ) -> SessionRecord | None:
+    async def _authenticate(request: Request) -> SessionRecord | None:
+        """A live, unlocked session's access token inside its lifetime (`require_active`);
+        the operations allowed while locked identify their session with `_identify`."""
         token = _bearer(request)
         if token is None:
             return None
         try:
-            return await auth_service.sessions.authenticate_access_token(
-                token, allow_locked=allow_locked
-            )
+            return await auth_service.sessions.authenticate_access_token(token)
         except SessionNotFound:
             # Unknown and expired handles share this error. Only a handle this server never
             # issued is an attempt; an expired one is the client's normal refresh trigger.
@@ -552,7 +575,9 @@ def make_session_router(
         does, while it is that session's current refresh token. Revoked, expired and
         locked sessions come back as they are: the operation decides. `None` is the
         uniform 401: no credential, a rotated-away one (reuse detection stays with
-        `/auth/refresh`) or one never issued (a fixation attempt). The flag is True when
+        `/auth/refresh`) or one never issued (a fixation attempt). A rotated-away cookie
+        is counted and audited as a reuse probe; a rotated-away access token is not (a tab
+        still holding it after another tab refreshed is normal). The flag is True when
         the cookie identified the session."""
         sessions = auth_service.sessions
         token = _bearer(request)
@@ -570,7 +595,10 @@ def make_session_router(
         if found is None:
             await _fixation_attempt(request, "refresh_cookie")
             return None
-        return None if found.revoked_reason == "rotated" else (found, True)
+        if found.revoked_reason == "rotated":
+            await _fixation_attempt(request, "refresh_cookie", rotated=found)
+            return None
+        return found, True
 
     async def _introspected(request: Request) -> SessionRecord | None:
         """`GET /auth/session`'s session, locked or not; a revoked or expired one gets
@@ -598,7 +626,9 @@ def make_session_router(
     ) -> JSONResponse | None:
         """SR-041 for the POSTs that check it themselves (`api.csrf`): against *record*,
         the session the route acts on, before any audit or state change. A refusal is
-        counted and audited; it is refused regardless (a 403, never a 500, #2238 r3)."""
+        counted and audited up to a per-session budget (past it: the same 403 with
+        `Retry-After` and no record); it is refused regardless (a 403, never a 500,
+        #2238 r3)."""
         refusal = verify_refresh_csrf(
             csrf,
             request.headers.get(CSRF_HEADER),
@@ -608,6 +638,13 @@ def make_session_router(
         if refusal is None:
             return None
         auth_csrf_refused_total.labels(reason=refusal.value).inc()
+        budget = str(record.id)
+        if by_csrf_session.is_blocked(budget):
+            auth_csrf_refused_total.labels(reason="audit_throttled").inc()
+            throttled = csrf_problem(refusal)
+            throttled.headers["Retry-After"] = str(by_csrf_session.retry_after_s(budget) or 1)
+            return throttled
+        by_csrf_session.record_failure(budget)
         try:
             await _audit(
                 "auth.csrf_refused",
@@ -648,17 +685,33 @@ def make_session_router(
             return None
         return body.password.get_secret_value()
 
-    async def _record_unlock(
-        chart: SessionChart, record: SessionRecord, at: datetime, event: str, **payload: Any
-    ) -> JSONResponse | None:
-        """Record an unlock event on B16 against the row as read while locked (B16.7). A
-        failed record answers 503: the edge never reports a step it could not record."""
+    async def _chart_step(event: str, step: Awaitable[None]) -> JSONResponse | None:
+        """Await an unlock step on B16 (*event* names it), against the row as read while
+        locked (B16.7). A failed record answers 503: the edge never reports a step it
+        could not record."""
         try:
-            await chart.record(record, at, event, **payload)
+            await step
         except SessionChartError as exc:
             _log().error("auth.unlock.chart_failed", b16_event=event, error=type(exc).__name__)
             return _problem(503, "Service unavailable", "session record unavailable")
         return None
+
+    async def _extension_refused(record: SessionRecord, ip: str | None, reason: str) -> None:
+        """`touch()` refused an extension its write-ahead record already announced (the
+        session locked or ended since the check), so a DENIED record follows (C-12.8), as
+        refresh follows its intent with the reuse record. A failed write is logged: the
+        answer is the refusal either way, and nothing changed."""
+        try:
+            await _audit(
+                "auth.session_extended",
+                record=record,
+                ip=ip,
+                outcome=AuditOutcome.DENIED,
+                severity=Severity.WARNING,
+                reason=reason,
+            )
+        except (AuditUnavailableError, AuditError) as exc:
+            _log().error("auth.session_extended.audit_unavailable", error=type(exc).__name__)
 
     @router.post("/auth/refresh")
     async def refresh(request: Request) -> Response:
@@ -801,16 +854,22 @@ def make_session_router(
         record = await _authenticate(request)
         if record is None:
             return await _unauthorized_or_locked(request)
+        ip = _source_ip(request)
         try:
             # C-2.9 write-ahead: audit down => 503 and the deadline does not move.
-            await _audit("auth.session_extended", record=record, ip=_source_ip(request))
+            await _audit("auth.session_extended", record=record, ip=ip)
         except (AuditUnavailableError, AuditError):
             return _audit_down()
         try:
             extended = await auth_service.sessions.touch(str(record.id))
         except SessionIdleLocked as exc:  # locked since the check: extend never lifts it
+            await _extension_refused(record, ip, "idle_locked")
             return idle_lock.idle_locked_problem(exc.idle_locked_at)
-        except (SessionNotFound, SessionRevoked):
+        except SessionRevoked:
+            await _extension_refused(record, ip, "revoked")
+            return _unauthorized()
+        except SessionNotFound:
+            await _extension_refused(record, ip, "not_found")
             return _unauthorized()
         at = now()
         return JSONResponse(
@@ -855,11 +914,20 @@ def make_session_router(
             return _audit_down()  # no password is checked
         chart = authority.chart
         # B16.7: the lock is recorded (`auth.idle_locked`) before `unlock()` runs, so a
-        # failed record answers 503 with the row still locked. A `replay` REQUEST only
-        # builds the chart and writes no row of its own.
-        if (down := await _record_unlock(chart, record, at, "REQUEST", replay=True)) is not None:
+        # failed record answers 503 with the row still locked. `observe` sends no event
+        # but the lock the row shows: the route never sends `REQUEST`.
+        if (down := await _chart_step("IDLE_DEADLINE", chart.observe(record, at))) is not None:
             return down
         decided: list[UnlockOutcome] = []
+        locked_account: list[datetime] = []
+        verify, user_id = authority.verify_password, str(record.user_id)
+
+        async def check(candidate: str) -> bool:
+            """The password on login's path (SR-015, SR-016); notes a lockout it applied."""
+            verdict = await verify(user_id, candidate)
+            if verdict.locked_until is not None:
+                locked_account.append(verdict.locked_until)
+            return verdict.ok
 
         async def write_ahead(outcome: UnlockOutcome) -> None:
             """C-2.9: each record precedes the change it describes (B16.7: the chart
@@ -876,6 +944,17 @@ def make_session_router(
                 severity=Severity.WARNING,
                 reason="invalid_password",
             )
+            if locked_account:
+                # SR-016: this wrong password locked the account (the check's own write,
+                # as on login); recorded before the answer, like login's lockout.
+                await _audit(
+                    "auth.account_locked",
+                    record=record,
+                    ip=ip,
+                    outcome=AuditOutcome.DENIED,
+                    severity=Severity.WARNING,
+                    reason="unlock_failed",
+                )
             if outcome is UnlockOutcome.REVOKED:
                 await _audit(
                     "auth.session_revoked",
@@ -885,34 +964,36 @@ def make_session_router(
                     reason="unlock_attempts_exceeded",
                 )
 
-        verify, user_id = authority.verify_password, str(record.user_id)
         try:
             unlocked = await auth_service.sessions.unlock(
-                str(record.id),
-                password=password,
-                check=lambda candidate: verify(user_id, candidate),
-                write_ahead=write_ahead,
+                str(record.id), password=password, check=check, write_ahead=write_ahead
             )
         except (AuditUnavailableError, AuditError) as exc:
             _log().error("auth.unlock.audit_unavailable", error=type(exc).__name__)
             return _audit_down()  # the lock stays and nothing was revoked
         except UnlockPasswordInvalid:
-            failed = await _record_unlock(chart, record, at, "UNLOCK_FAILED")
+            failed = await _chart_step("UNLOCK_FAILED", chart.record(record, at, "UNLOCK_FAILED"))
             return failed or idle_lock.unlock_invalid_problem()
+        except SessionNotLocked:  # lifted by another request since the check above
+            return idle_lock.not_locked_problem()
         except SessionRevoked as exc:
             if UnlockOutcome.REVOKED not in decided:  # revoked by something else meanwhile
                 return idle_lock.session_revoked_problem(exc.reason)
             await _propagate(record.id, "session_revoked")  # sockets close with 4401 (#2272)
             # B16.7: `revoked` carries this decision to the chart's guard; `replay` keeps the
             # chart from writing a second `auth.session_revoked`.
-            failed = await _record_unlock(
-                chart, record, at, "UNLOCK_FAILED", revoked=True, replay=True
+            failed = await _chart_step(
+                "UNLOCK_FAILED",
+                chart.record(record, at, "UNLOCK_FAILED", revoked=True, replay=True),
             )
             return failed or idle_lock.session_revoked_problem("unlock_attempts_exceeded")
         except SessionNotFound:
             return _unauthorized()
-        lifted = await _record_unlock(
-            chart, record, at, "UNLOCK_OK", idle_expires_at_us=to_us(unlocked.idle_deadline())
+        lifted = await _chart_step(
+            "UNLOCK_OK",
+            chart.record(
+                record, at, "UNLOCK_OK", idle_expires_at_us=to_us(unlocked.idle_deadline())
+            ),
         )
         return lifted or JSONResponse(await _session_info(identity, unlocked, now()))
 
@@ -955,13 +1036,29 @@ def make_session_router(
 
     @router.post("/auth/logout")
     async def logout(request: Request) -> Response:
+        """Ends the calling session, or with `all_sessions` every session of the user
+        (contract `authLogout`). The session is identified as in "Idle lock": an access
+        token inside its lifetime (`CsrfMiddleware` binds the SR-041 token to it), else
+        the current `cv_refresh` cookie, checked here (SR-042 Origin, SR-041 against the
+        cookie's session). A locked session, and a cookie-identified one, may end only
+        itself (#2290 ruling, rule 3b): `all_sessions` is then refused before any record."""
         if not _audit_ready():
             return _problem(503, "Service unavailable", "audit sink not active")
         if not auth_service.sessions_is_active:
             return _problem(503, "Service unavailable", "session backend is not wired")
-        record = await _authenticate(request, allow_locked=True)
-        if record is None:
+        caller = await _identify(request)
+        if caller is None:
             return _unauthorized()
+        record, by_cookie = caller
+        at = now()
+        if record.is_revoked or record.is_absolute_expired(now=at):
+            return _unauthorized()  # uniform, as to its access token: no session oracle
+        ip = _source_ip(request)
+        if by_cookie:
+            if not _origin_ok(request, allowed_origins):
+                return _problem(403, "Forbidden", "cross-origin logout refused")  # SR-042
+            if (refusal := await _csrf_refusal(request, record, ip)) is not None:
+                return refusal
         all_sessions = False
         if await request.body():
             try:
@@ -974,7 +1071,12 @@ def make_session_router(
             if not isinstance(flag, bool):
                 return _problem(422, "Unprocessable", "all_sessions must be boolean")
             all_sessions = flag
-        ip = _source_ip(request)
+        if all_sessions and record.is_idle_locked(now=at):
+            # Contract "Idle lock": whoever is at a locked terminal has not proved who they
+            # are. Nothing is revoked, audited or cleared, the calling session included.
+            return idle_lock.idle_locked_problem(record.idle_deadline())
+        if all_sessions and by_cookie:
+            return _unauthorized()  # ending every session needs an access token
         # C-2.9 write-ahead: record the logout (and every targeted session)
         # before revoking; audit down => 503, nothing revoked.
         reason = "logout_all" if all_sessions else "logout"
@@ -1012,9 +1114,11 @@ def make_session_router(
             return _problem(503, "Service unavailable", "audit sink not active")
         if not auth_service.sessions_is_active:
             return _problem(503, "Service unavailable", "session backend is not wired")
-        record = await _authenticate(request, allow_locked=True)
+        # Not allowed while idle-locked (contract "Idle lock"): refused here too, not only
+        # by `IdleLockMiddleware`, so the router never relies on how it is mounted.
+        record = await _authenticate(request)
         if record is None:
-            return _unauthorized()
+            return await _unauthorized_or_locked(request)
         # IDOR guard: only sessions of the caller's own user are addressable;
         # anything else is indistinguishable from "does not exist" (404).
         own = await auth_service.sessions.list_sessions(

@@ -126,6 +126,12 @@ class SessionIdleLocked(AuthError):
         self.idle_locked_at = idle_locked_at
 
 
+class SessionNotLocked(AuthError):
+    """`unlock()` was called for a live session that is not idle-locked (#2300). No
+    password is checked, no failure is counted and no activity is recorded: unlock is
+    never a password check on an unlocked session (the route answers `409 conflict`)."""
+
+
 class UnlockPasswordInvalid(AuthError):
     """`unlock()` was called with a password that failed verification. Kept
     distinct from `SessionRevoked` (a wrong password does not, by itself,

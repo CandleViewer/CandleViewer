@@ -23,12 +23,16 @@ from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.csrf import SESSION_REFUSALS_PER_WINDOW
 from candleviewer.api.sessions import REFRESH_COOKIE, UnlockBody, make_session_router
+from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.csrf import CSRF_COOKIE, CSRF_HEADER, CsrfCodec
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import StepUpRequired
 from candleviewer.auth.hashing import Hasher
+from candleviewer.auth.login_service import LOCKOUT_THRESHOLD
+from candleviewer.auth.metrics import auth_session_fixation_attempts_total
 from candleviewer.auth.models import MintedSession, SessionRecord
 from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import SessionService
@@ -347,7 +351,11 @@ async def test_fifth_wrong_password_revokes_and_publishes_then_unlock_is_session
     )
     assert (await w.row(minted)).revoked_reason == "unlock_attempts_exceeded"
     assert w.published == [(str(minted.session_id), "session_revoked")]
-    assert w.audit.writer.actions() == ["auth.unlock_failed"] * 5 + ["auth.session_revoked"]
+    # The fifth wrong password is also the account's fifth (SR-016): it locks the account.
+    assert w.audit.writer.actions() == ["auth.unlock_failed"] * 5 + [
+        "auth.account_locked",
+        "auth.session_revoked",
+    ]
     assert w.b16.actions() == ["auth.idle_locked"]  # no second `auth.session_revoked` (replay)
     assert w.chart_state(minted) >= {"auth.revoked", "elevation.dead"}
     later = await _unlock(w, _bearer(minted))  # even the right password
@@ -651,7 +659,11 @@ async def test_unlock_audit_records_precede_the_change_they_describe(
     order.clear()
     for _ in range(5):
         await _unlock(w, _bearer(second), _WRONG)
-    assert order == ["auth.unlock_failed"] * 5 + ["auth.session_revoked", "revoke"]
+    assert order == ["auth.unlock_failed"] * 5 + [
+        "auth.account_locked",
+        "auth.session_revoked",
+        "revoke",
+    ]
 
 
 async def test_unlock_never_logs_returns_or_audits_the_password(
@@ -673,6 +685,52 @@ async def test_unlock_never_logs_returns_or_audits_the_password(
     seen = repr(logs) + repr(w.audit.writer.records) + repr(w.b16.calls)
     seen += "".join(r.text for r in replies) + "".join(capsys.readouterr())
     assert _PW not in seen and _WRONG not in seen
+
+
+async def test_unlock_brings_b16_up_to_the_lock_and_never_sends_request(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B16.7 ("the route records `UNLOCK_OK` or `UNLOCK_FAILED`, never `REQUEST`"): the lock
+    is recorded by `observe` before `unlock()` runs, then the unlock itself."""
+    minted = await w.mint(await w.add_user())
+    w.lock()
+    events: list[str] = []
+    record = w.step_up.chart.record
+
+    async def spy(row: SessionRecord, at: datetime, event: str, **payload: Any) -> None:
+        events.append(event)
+        await record(row, at, event, **payload)
+
+    monkeypatch.setattr(w.step_up.chart, "record", spy)
+    assert (await _unlock(w, _bearer(minted))).status_code == 200
+    assert events == ["UNLOCK_OK"]
+    assert w.b16.actions() == ["auth.idle_locked"]
+    assert w.chart_state(minted) >= {"auth.active", "elevation.normal"}
+
+
+async def test_the_wrong_unlock_password_that_locks_the_account_writes_account_locked(
+    w: World,
+) -> None:
+    """SR-016: a wrong unlock password counts toward the account lockout, and the one that
+    locks the account is audited; the next unlock, right password included, fails like a
+    wrong one and locks nothing new."""
+    uid = await w.add_user()
+    w.users.users[str(uid)] = w.users.users[str(uid)].model_copy(
+        update={"failed_login_count": LOCKOUT_THRESHOLD - 1}
+    )
+    minted = await w.mint(uid)
+    w.lock()
+    r = await _unlock(w, _bearer(minted), _WRONG)
+    assert (r.status_code, r.json()["code"]) == (401, "unlock_invalid")
+    assert w.audit.writer.actions() == ["auth.unlock_failed", "auth.account_locked"]
+    locked = w.audit.writer.records[-1]
+    assert (locked["outcome"], locked["severity"]) == (AuditOutcome.DENIED, Severity.WARNING)
+    assert locked["session_id"] == minted.session_id
+    assert w.users.users[str(uid)].locked_until is not None
+    again = await _unlock(w, _bearer(minted))
+    assert (again.status_code, again.json()["code"]) == (401, "unlock_invalid")
+    assert w.audit.writer.actions()[2:] == ["auth.unlock_failed"]
+    assert (await w.row(minted)).is_idle_locked(now=w.clock.now)
 
 
 # -- activity is explicit: extend, introspection, refresh ------------------------------------
@@ -708,6 +766,35 @@ async def test_extend_with_the_audit_sink_down_is_503_and_the_deadline_does_not_
     w.audit.writer.fail_on = {"auth.session_extended"}
     assert (await _extend(w, minted)).status_code == 503
     assert (await w.row(minted)).last_seen_at == _T0
+
+
+async def test_an_extend_refused_after_its_record_is_followed_by_a_denied_record(
+    w: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """C-12.8: the session locked after the route let the request in, so `touch()` refuses
+    it; the write-ahead `auth.session_extended` is followed by a DENIED one, and the lock
+    stays (activity never lifts it)."""
+    minted = await w.mint(await w.add_user())
+    deadline = _T0 + timedelta(seconds=_IDLE_S)
+    w.clock.now = deadline - timedelta(seconds=1)
+    touch = w.sessions.touch
+
+    async def deadline_passes(session_id: str) -> SessionRecord:
+        w.clock.now = deadline  # after the route authenticated and wrote its record
+        return await touch(session_id)
+
+    monkeypatch.setattr(w.sessions, "touch", deadline_passes)
+    r = await _extend(w, minted)
+    assert (r.status_code, r.json()["code"]) == (401, "session_idle_locked")
+    assert r.json()["idle_locked_at"] == deadline.isoformat()
+    assert (await w.row(minted)).last_seen_at == _T0
+    intent, refused = w.audit.writer.records
+    assert (intent["action"], intent["outcome"]) == ("auth.session_extended", AuditOutcome.SUCCESS)
+    assert (refused["action"], refused["outcome"], refused["reason"]) == (
+        "auth.session_extended",
+        AuditOutcome.DENIED,
+        "idle_locked",
+    )
 
 
 async def test_activity_never_lifts_the_lock(w: World) -> None:
@@ -818,3 +905,150 @@ async def test_logout_of_a_session_past_its_lifetime_is_the_uniform_401(w: World
     w.clock.now = _T0 + timedelta(minutes=5)
     r = await w.client.post("/api/v1/auth/logout", headers=_bearer(minted))
     assert r.status_code == 401 and w.audit.writer.records == [] and w.published == []
+
+
+# -- the other operations of a locked session: logout, revoke, the cookie ------------------
+
+
+async def _logout(
+    w: World, headers: dict[str, str], body: dict[str, Any] | None = None
+) -> httpx.Response:
+    return await w.client.post("/api/v1/auth/logout", json=body, headers=headers)
+
+
+async def test_a_locked_session_cannot_sign_out_every_session(w: World) -> None:
+    """#2389 gap H / decision 8 (#2290 ruling, rule 3b): whoever is at a locked terminal has
+    not proved who they are. `all_sessions` is `401 session_idle_locked`: no session ends,
+    nothing is audited or published, no cookie is cleared. Ending itself still works."""
+    uid = await w.add_user()
+    locked = await w.mint(uid)
+    elsewhere = await w.mint(uid, idle_timeout_s=3600)  # the owner's live session elsewhere
+    w.lock()
+    r = await _logout(w, _bearer(locked), {"all_sessions": True})
+    assert (r.status_code, r.json()["code"]) == (401, "session_idle_locked")
+    assert r.json()["idle_locked_at"] == (_T0 + timedelta(seconds=_IDLE_S)).isoformat()
+    assert not (await w.row(locked)).is_revoked and not (await w.row(elsewhere)).is_revoked
+    assert w.audit.writer.records == [] and w.published == []
+    assert "set-cookie" not in r.headers
+    alone = await _logout(w, _bearer(locked))  # SCR-005 "Sign out instead"
+    assert alone.status_code == 204, alone.text
+    assert (await w.row(locked)).revoked_reason == "logout"
+    assert not (await w.row(elsewhere)).is_revoked
+
+
+async def test_after_a_reload_the_refresh_cookie_alone_signs_the_locked_session_out(
+    w: World,
+) -> None:
+    """#2389 decision 9: with no access token inside its lifetime, `cv_refresh` identifies the
+    session, so "Sign out instead" works for the whole lock: it revokes the session, writes
+    `auth.logout` and `auth.session_revoked` and clears both cookies."""
+    minted = await w.mint(await w.add_user(), idle_timeout_s=900)
+    w.lock(900)  # 15 min: the 12 min access token is gone too
+    assert (await _logout(w, _bearer(minted))).status_code == 401
+    r = await _logout(w, _cookie(minted))
+    assert r.status_code == 204, r.text
+    assert w.audit.writer.actions() == ["auth.logout", "auth.session_revoked"]
+    assert (await w.row(minted)).revoked_reason == "logout"
+    assert w.published == [(str(minted.session_id), "session_revoked")]
+    cleared = r.headers.get_list("set-cookie")
+    for name in (REFRESH_COOKIE, CSRF_COOKIE):
+        (cookie,) = [c for c in cleared if c.startswith(f"{name}=")]
+        assert "max-age=0" in cookie.lower()
+
+
+async def test_the_refresh_cookie_alone_never_signs_out_every_session(w: World) -> None:
+    """Ending every session needs an access token: with only the cookie, `all_sessions` is
+    `session_idle_locked` for a locked session, else the uniform 401, and revokes nothing."""
+    uid = await w.add_user()
+    locked = await w.mint(uid, idle_timeout_s=900)
+    unlocked = await w.mint(uid, idle_timeout_s=3600)
+    w.lock(900)
+    for minted, code in ((locked, "session_idle_locked"), (unlocked, None)):
+        r = await _logout(w, _cookie(minted), {"all_sessions": True})
+        assert (r.status_code, r.json().get("code")) == (401, code)
+    assert not (await w.row(locked)).is_revoked and not (await w.row(unlocked)).is_revoked
+    assert w.audit.writer.records == [] and w.published == []
+
+
+async def test_cookie_logout_without_an_allowed_origin_is_refused_before_any_record(
+    w: World,
+) -> None:
+    minted = await w.mint(await w.add_user(), idle_timeout_s=900)
+    w.lock(900)
+    for origin in (None, "https://evil.example"):
+        assert (await _logout(w, _cookie(minted, origin=origin))).status_code == 403  # SR-042
+    assert not (await w.row(minted)).is_revoked and w.audit.writer.records == []
+
+
+async def test_cookie_logout_with_a_csrf_token_of_another_session_is_refused_and_audited(
+    w: World,
+) -> None:
+    """SR-041 against the session the cookie identifies (the contract's CSRF "Validation")."""
+    uid = await w.add_user()
+    minted = await w.mint(uid, idle_timeout_s=900)
+    other = await w.mint(uid, idle_timeout_s=900)
+    w.lock(900)
+    r = await _logout(w, _cookie(minted, csrf_for=other.session_id))
+    assert (r.status_code, r.json()["code"]) == (403, "csrf_token_invalid")
+    (refused,) = w.audit.writer.records
+    assert (refused["action"], refused["reason"]) == ("auth.csrf_refused", "wrong_session")
+    assert refused["session_id"] == minted.session_id
+    assert not (await w.row(minted)).is_revoked and not (await w.row(other)).is_revoked
+
+
+async def test_route_checked_csrf_refusals_are_audited_within_a_per_session_budget(
+    w: World,
+) -> None:
+    """Contract "CSRF", "Refusal": a cookie-identified logout has no request throttle, so its
+    refusals are audited up to the per-session budget; past it the same 403, no record."""
+    minted = await w.mint(await w.add_user(), idle_timeout_s=900)
+    w.lock(900)
+    forged = _cookie(minted, csrf_for=uuid.uuid4())
+    replies = [await _logout(w, forged) for _ in range(SESSION_REFUSALS_PER_WINDOW + 1)]
+    assert {(r.status_code, r.json()["code"]) for r in replies} == {(403, "csrf_token_invalid")}
+    assert w.audit.writer.actions() == ["auth.csrf_refused"] * SESSION_REFUSALS_PER_WINDOW
+    assert "retry-after" not in replies[0].headers
+    assert int(replies[-1].headers["retry-after"]) >= 1
+    assert not (await w.row(minted)).is_revoked
+
+
+async def test_a_locked_session_cannot_revoke_another_session(w: World) -> None:
+    """#2389 gap F: refused by the route itself, not only by `IdleLockMiddleware` (absent
+    here), so the router never relies on how it is mounted; nothing is audited."""
+    uid = await w.add_user()
+    locked = await w.mint(uid)
+    elsewhere = await w.mint(uid, idle_timeout_s=3600)
+    w.lock()
+    r = await w.client.delete(
+        f"/api/v1/me/sessions/{elsewhere.session_id}", headers=_bearer(locked)
+    )
+    assert (r.status_code, r.json()["code"]) == (401, "session_idle_locked")
+    assert not (await w.row(elsewhere)).is_revoked
+    assert w.audit.writer.records == [] and w.published == []
+
+
+async def test_a_rotated_away_refresh_cookie_is_audited_as_a_reuse_probe(w: World) -> None:
+    """Outside `/auth/refresh` a rotated-away cookie stays the uniform 401 and revokes no
+    family, but it is counted and audited (`auth.refresh_reuse_detected`, denied), so probing
+    whether a stolen refresh token is still current is not silent."""
+    minted = await w.mint(await w.add_user(), idle_timeout_s=900)
+    successor = await w.sessions.refresh(minted.refresh_token)
+    probes = auth_session_fixation_attempts_total.labels(reason="rotated")
+    before = probes._value.get()
+    r = await _session(w, {"Cookie": f"{REFRESH_COOKIE}={minted.refresh_token}"})
+    assert r.status_code == 401 and r.json().get("code") is None
+    assert probes._value.get() == before + 1
+    (probe,) = w.audit.writer.records
+    assert (probe["action"], probe["outcome"], probe["severity"]) == (
+        "auth.refresh_reuse_detected",
+        AuditOutcome.DENIED,
+        Severity.WARNING,
+    )
+    assert probe["session_id"] == minted.session_id
+    assert probe["after_state"] == {
+        "vector": "refresh_cookie",
+        "path": "/auth/session",  # the route template, never the raw path
+        "family_revoked": False,
+    }
+    assert minted.refresh_token not in repr(probe)
+    assert not (await w.row(successor.minted)).is_revoked

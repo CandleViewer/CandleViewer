@@ -64,8 +64,10 @@ authz_denied_total = Counter(
 )
 auth_session_fixation_attempts_total = Counter(
     "auth_session_fixation_attempts_total",
-    "Session credentials never issued here, or another user's, presented (U6/SR-013), by reason.",
-    # closed set: unknown_token | foreign_session (attempts)
+    "Session credentials never issued here, another user's, or rotated away, presented"
+    " (U6/SR-013), by reason.",
+    # closed set: unknown_token | foreign_session | rotated (attempts; `rotated` is a
+    #             rotated-away `cv_refresh` presented outside `/auth/refresh`, #2300)
     #             | audit_throttled | audit_slow | audit_unavailable | audit_failed (bookkeeping)
     ["reason"],
 )

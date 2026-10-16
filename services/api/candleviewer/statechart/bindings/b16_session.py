@@ -409,9 +409,11 @@ async def disarm_one_click(
     _interp: Any, context: dict[str, Any], event: dict[str, Any], _action_def: Any
 ) -> None:
     """Lock entry records the one-click disarm; unlock never re-arms it (#2290
-    rule 2d). Chart context only: the OMS validator reads the session's arm
-    record, never this chart, and `SessionService.unlock()` invalidates that
-    record when it lifts a lock (B16.5/B16.7, C-2.20, C-2.21)."""
+    rule 2d). Chart context only: the OMS validator will read the session's arm
+    record, never this chart, and `SessionService.unlock()` will invalidate that
+    record when it lifts a lock (owner #2305; no arm record exists yet, and a
+    guard test keeps `POST /settings/arm` unserved until it does; B16.5/B16.7,
+    C-2.20, C-2.21)."""
     context["one_click_armed"] = False
 
 

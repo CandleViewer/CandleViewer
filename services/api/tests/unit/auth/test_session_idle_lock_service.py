@@ -17,12 +17,14 @@ import pytest
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
     SessionIdleLocked,
+    SessionNotLocked,
     SessionRevoked,
     StepUpRequired,
     UnlockPasswordInvalid,
 )
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD
+from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import (
     ACCESS_TOKEN_TTL,
     MAX_UNLOCK_ATTEMPTS,
@@ -32,6 +34,7 @@ from candleviewer.auth.session_service import (
     is_idle_locked_session,
 )
 from candleviewer.auth.step_up import StepUpService
+from tests.conftest import RecordingAuditSink
 
 from .auth_fakes import FakeUserRepository, make_user
 from .mfa_fakes import FakeMfaRepository
@@ -148,6 +151,67 @@ async def test_unlock_needs_a_password_hash_or_a_check() -> None:
         await svc.unlock(sid, password=_PW)
 
 
+async def test_unlock_of_a_session_that_is_not_locked_checks_no_password() -> None:
+    """#2300: whoever calls the service, unlock is never a password check (an oracle) nor
+    activity on an unlocked session: `SessionNotLocked` before the check is awaited."""
+    svc, repo, clock = _svc()
+    minted = await svc.mint(_USER, idle_timeout_s=int(_IDLE.total_seconds()))
+    sid = str(minted.session_id)
+    clock.now = _T0 + _IDLE - timedelta(seconds=1)
+    checked: list[str] = []
+    decided: list[UnlockOutcome] = []
+
+    async def check(candidate: str) -> bool:
+        checked.append(candidate)
+        return True
+
+    async def ahead(outcome: UnlockOutcome) -> None:
+        decided.append(outcome)
+
+    with pytest.raises(SessionNotLocked):
+        await svc.unlock(sid, password=_PW, check=check, write_ahead=ahead)
+    assert checked == [] and decided == []
+    row = await repo.find_by_id(sid)
+    assert row is not None and row.last_seen_at == _T0
+
+
+async def test_touch_never_lifts_a_lock_that_engages_between_the_check_and_the_write() -> None:
+    """B16.7 (activity never lifts a lock): the deadline passes after `require_active` let
+    the request in; the conditional write refuses the locked row, which is refused as such."""
+    svc, repo, _clock = _svc()
+    minted = await svc.mint(_USER, idle_timeout_s=int(_IDLE.total_seconds()))
+    deadline = _T0 + _IDLE
+    reads = iter([deadline - timedelta(seconds=1)])  # the check's read; every later one: D
+    racing = SessionService(repo, Hasher(), clock=lambda: next(reads, deadline))
+    with pytest.raises(SessionIdleLocked) as locked:
+        await racing.touch(str(minted.session_id))
+    assert locked.value.idle_locked_at == deadline
+    row = await repo.find_by_id(str(minted.session_id))
+    assert row is not None and row.last_seen_at == _T0
+
+
+async def test_observe_brings_the_chart_up_to_the_row_and_records_nothing_else(
+    b16_audit: RecordingAuditSink,
+) -> None:
+    """`SessionChart.observe` (the unlock route's first B16 step): builds and hydrates the
+    chart, records `IDLE_DEADLINE` once while the row is locked, and sends no other event."""
+    svc, repo, clock = _svc()
+    minted = await svc.mint(_USER, idle_timeout_s=int(_IDLE.total_seconds()))
+    row = await repo.find_by_id(str(minted.session_id))
+    assert row is not None
+    sid, chart = str(row.id), SessionChart()
+    try:
+        await chart.observe(row, clock.now)
+        assert chart.in_state(sid, "active") and b16_audit.calls == []
+        clock.now += _IDLE
+        for _ in range(2):
+            await chart.observe(row, clock.now)
+        assert b16_audit.actions() == ["auth.idle_locked"]
+        assert chart.in_state(sid, "idle_locked")
+    finally:
+        await chart.stop()
+
+
 async def test_refresh_is_not_activity_the_successor_keeps_the_idle_deadline() -> None:
     svc, repo, clock = _svc()
     minted = await svc.mint(_USER, idle_timeout_s=int(_IDLE.total_seconds()))
@@ -208,12 +272,20 @@ async def test_verify_password_uses_the_login_lockout_counters() -> None:
     users.add(user)
     svc = await _step_up(users)
     try:
-        assert await svc.verify_password(str(user.id), _PW)
-        for _ in range(LOCKOUT_THRESHOLD):
-            assert not await svc.verify_password(str(user.id), "wrong")
-        assert users.users[str(user.id)].locked_until is not None
-        assert not await svc.verify_password(str(user.id), _PW)  # locked: fails like a wrong one
-        assert not await svc.verify_password(str(uuid.uuid4()), _PW)  # unknown account
+        assert (await svc.verify_password(str(user.id), _PW)).ok
+        verdicts = [
+            await svc.verify_password(str(user.id), "wrong") for _ in range(LOCKOUT_THRESHOLD)
+        ]
+        assert not any(v.ok for v in verdicts)
+        locked_until = users.users[str(user.id)].locked_until
+        assert locked_until is not None
+        # Only the failure that locked the account reports it (SR-016: the caller audits it).
+        assert [v.locked_until for v in verdicts] == [None] * (LOCKOUT_THRESHOLD - 1) + [
+            locked_until
+        ]
+        locked = await svc.verify_password(str(user.id), _PW)  # fails like a wrong one
+        assert (locked.ok, locked.locked_until) == (False, None)
+        assert not (await svc.verify_password(str(uuid.uuid4()), _PW)).ok  # unknown account
     finally:
         await svc.stop()
 

@@ -150,3 +150,16 @@ async def test_lift_idle_lock_restamps_and_clears_elevations_in_one_conditional_
     assert "revoked_at IS NULL" in sql and "RETURNING" in sql
     assert params == {"id": "sid", "now": _NOW}
     assert rel.commits == 1 and got["step_up_failures"] == 2
+
+
+async def test_touch_last_seen_is_conditional_on_the_lock() -> None:
+    """#2300 (B16.7): activity never lifts a lock, not even one that engaged after the
+    caller's own check: the write keeps only a row still unlocked at `:now`."""
+    repo, rel = _repo([_row()])
+    await repo.touch_last_seen("sid", now=_NOW)
+    ((sql, params),) = rel.session.calls
+    assignments, condition = sql.split("WHERE", 1)
+    assert "last_seen_at = :now" in assignments
+    assert "revoked_at IS NULL" in condition and "RETURNING" in condition
+    assert "last_seen_at + make_interval(secs => idle_timeout_s) > :now" in condition
+    assert params == {"id": "sid", "now": _NOW}

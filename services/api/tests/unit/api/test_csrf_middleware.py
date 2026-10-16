@@ -227,6 +227,58 @@ def test_refresh_is_delegated_whole_to_the_route() -> None:
     assert _code(r) == "csrf_token_invalid"  # SR-042 still applies first
 
 
+# -- logout: the route binds only a cookie-identified one (contract "Idle lock", #2300) ---------
+
+
+def _with_logout(client: TestClient) -> TestClient:
+    async def logout() -> dict[str, str]:
+        return {"route": "logout"}  # the real route binds a cookie-identified logout itself
+
+    app = client.app
+    assert isinstance(app, FastAPI)  # TestClient.app is typed as bare ASGI
+    app.add_api_route("/auth/logout", logout, methods=["POST"])
+    return client
+
+
+def _refresh_cookie(pair: dict[str, str]) -> dict[str, str]:
+    return {**pair, "Cookie": f"{pair['Cookie']}; cv_refresh=opaque"}
+
+
+def test_a_logout_identified_by_its_refresh_cookie_is_bound_by_the_route() -> None:
+    """No access token inside its lifetime (none, or past `ACCESS_TOKEN_TTL`) and the
+    `cv_refresh` cookie present: the route binds the token to the cookie's session. The
+    session-independent checks (presence, equality, shape) still run here."""
+    client, audit = _app(_Sessions())
+    _with_logout(client)
+    other = _refresh_cookie(_pair(uuid.uuid4()))
+    for bearer in (None, "Bearer ttl_expired"):
+        headers = other if bearer is None else {**other, "Authorization": bearer}
+        assert client.post("/auth/logout", headers=headers).json() == {"route": "logout"}
+    assert not audit.calls
+    r = client.post("/auth/logout", headers={"Cookie": "cv_refresh=opaque"})
+    assert _code(r) == "csrf_token_invalid" and audit.calls[-1]["reason"] == "missing"
+
+
+@pytest.mark.parametrize("bearer", ["Bearer good", "Bearer bad"])
+def test_a_logout_with_a_live_or_unknown_access_token_is_bound_here(bearer: str) -> None:
+    """A live access token identifies the logout, so another session's cookie cannot move
+    the binding; a never-issued one resolves no session and is refused as before."""
+    client, audit = _app(_Sessions())
+    _with_logout(client)
+    other = _refresh_cookie(_pair(uuid.uuid4()))
+    r = client.post("/auth/logout", headers={**other, "Authorization": bearer})
+    assert r.status_code == 403 and _code(r) == "csrf_token_invalid"
+    assert audit.calls[-1]["reason"] == "wrong_session"
+
+
+def test_a_bearer_logout_bound_to_its_own_session_passes_with_the_cookie_present() -> None:
+    client, audit = _app(_Sessions())
+    _with_logout(client)
+    headers = {**_refresh_cookie(_pair()), "Authorization": "Bearer good"}
+    assert client.post("/auth/logout", headers=headers).json() == {"route": "logout"}
+    assert not audit.calls
+
+
 def test_verify_refresh_csrf_reasons() -> None:
     t = _CODEC.issue(str(_SID))
     assert verify_refresh_csrf(_CODEC, t, t, str(_SID)) is None

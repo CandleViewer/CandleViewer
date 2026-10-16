@@ -14,8 +14,11 @@ from typing import Any, cast
 from fastapi import FastAPI
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.csrf import route_path
+from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.idle_lock import ungated_operations
 from candleviewer.api.sessions import REFRESH_COOKIE
+from candleviewer.auth.csrf import CSRF_COOKIE
 from candleviewer.auth.models import MintedSession
 from candleviewer.auth.session_service import ACCESS_TOKEN_TTL
 from tests.csrf_helpers import csrf_headers
@@ -182,3 +185,89 @@ def test_sign_out_instead_still_ends_the_locked_session(stack: Stack) -> None:
     assert r.status_code == 204, r.text
     row = stack.call(stack.auth.sessions.peek_access_token, minted.access_token)
     assert row is not None and row.revoked_reason == "logout"
+
+
+def _cookie_only(stack: Stack, minted: MintedSession, csrf_for: MintedSession) -> dict[str, str]:
+    """A reloaded lock screen: no access token, the `cv_refresh` cookie, the Origin and the
+    SR-041 pair (bound to *csrf_for*'s session)."""
+    csrf = csrf_headers(stack.state.csrf_codec, csrf_for.session_id)
+    stack.client.cookies.clear()
+    cookie = f"{csrf['Cookie']}; {REFRESH_COOKIE}={minted.refresh_token}"
+    return {**csrf, "Cookie": cookie, "Origin": ORIGIN}
+
+
+def _live(stack: Stack, minted: MintedSession) -> bool:
+    row = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+    return row is not None and not row.is_revoked
+
+
+def test_a_locked_session_cannot_sign_out_every_session(stack: Stack) -> None:
+    """#2389 gap H through the deployed stack (#2290 ruling, rule 3b): `all_sessions` from a
+    locked session is `401 session_idle_locked`; no session ends, nothing is audited, no
+    cookie is cleared. The calling session can still end itself."""
+    uid, _ = stack.add_user("desk")
+    locked = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=_IDLE_S)
+    elsewhere = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=3600)
+    _lock(stack)
+    r = stack.client.post(
+        "/auth/logout", headers=_headers(stack, locked), json={"all_sessions": True}
+    )
+    assert (r.status_code, _code(r)) == (401, "session_idle_locked")
+    assert stack.audit.records == [] and "set-cookie" not in r.headers
+    assert _live(stack, locked) and _live(stack, elsewhere)
+    alone = stack.client.post("/auth/logout", headers=_headers(stack, locked))
+    assert alone.status_code == 204, alone.text
+    assert not _live(stack, locked) and _live(stack, elsewhere)
+
+
+def test_after_a_reload_the_cookie_alone_signs_out_through_the_csrf_guard(stack: Stack) -> None:
+    """#2389 decision 9: "Sign out instead" works for the whole lock and after a reload; the
+    guard leaves the binding to the cookie's session to the route."""
+    minted = _session(stack, "signing-out")
+    stack.clock.now += ACCESS_TOKEN_TTL  # locked, and the access token is gone
+    r = stack.client.post("/auth/logout", headers=_cookie_only(stack, minted, minted))
+    assert r.status_code == 204, r.text
+    assert [rec["action"] for rec in stack.audit.records] == ["auth.logout", "auth.session_revoked"]
+    row = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+    assert row is not None and row.revoked_reason == "logout"
+    cleared = {c.split("=", 1)[0] for c in r.headers.get_list("set-cookie")}
+    assert {REFRESH_COOKIE, CSRF_COOKIE} <= cleared
+
+
+def test_a_cookie_logout_bound_to_another_session_is_refused(stack: Stack) -> None:
+    mine = _session(stack, "mine")
+    theirs = _session(stack, "theirs")
+    stack.clock.now += ACCESS_TOKEN_TTL
+    r = stack.client.post("/auth/logout", headers=_cookie_only(stack, mine, theirs))
+    assert (r.status_code, _code(r)) == (403, "csrf_token_invalid")
+    assert [rec["action"] for rec in stack.audit.records] == ["auth.csrf_refused"]
+    assert _live(stack, mine) and _live(stack, theirs)
+
+
+def test_a_live_access_token_binds_logout_to_its_own_session_whatever_the_cookie(
+    stack: Stack,
+) -> None:
+    """With an access token inside its lifetime the guard binds to that token's session, so
+    another session's `cv_refresh` cookie and CSRF pair cannot redirect a logout."""
+    mine = _session(stack, "mine")
+    theirs = _session(stack, "theirs")
+    headers = {
+        **_cookie_only(stack, theirs, theirs),
+        "Authorization": f"Bearer {mine.access_token}",
+    }
+    r = stack.client.post("/auth/logout", headers=headers)
+    assert (r.status_code, _code(r)) == (403, "csrf_token_invalid")
+    assert _live(stack, mine) and _live(stack, theirs)
+
+
+def test_no_one_click_arm_route_is_served_while_unlock_cannot_invalidate_an_arm_record(
+    stack: Stack,
+) -> None:
+    """Catalogue B16.7 ordering (#2305): an `arm_token` must never outlive an unlock. This app
+    serves `POST /auth/unlock` and has no arm record, so `POST /settings/arm` is not served.
+    #2305 adds the record, its invalidation in the write that lifts a lock
+    (`lift_idle_lock`) and its regression test, and only then replaces this guard."""
+    app = cast(FastAPI, stack.client.app)
+    served = {(method, route_path(path)) for method, path in served_operations(app)}
+    assert ("POST", "/auth/unlock") in served
+    assert not [op for op in served if op[1] == "/settings/arm"]

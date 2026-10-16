@@ -45,9 +45,12 @@ class SessionRepository(Protocol):
         ...
 
     async def touch_last_seen(self, session_id: str, *, now: datetime) -> SessionRecord | None:
-        """Stamp `last_seen_at = now` (idle-deadline reset on activity).
-        Returns `None` if the session no longer exists or is already
-        revoked (caller must not resurrect a dead session's idle clock)."""
+        """Stamp `last_seen_at = now` (idle-deadline reset on activity) iff the
+        row is neither revoked nor idle-locked at *now* (`last_seen_at +
+        idle_timeout_s > now`), in one conditional write. Returns `None`
+        otherwise, or if the session no longer exists (caller must not
+        resurrect a dead session's idle clock, nor lift a lock that engaged
+        after its own check: activity never lifts a lock, #2300)."""
         ...
 
     async def lift_idle_lock(self, session_id: str, *, now: datetime) -> SessionRecord | None:

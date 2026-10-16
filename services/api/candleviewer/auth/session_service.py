@@ -40,6 +40,7 @@ from candleviewer.auth.errors import (
     RefreshReuseDetected,
     SessionIdleLocked,
     SessionNotFound,
+    SessionNotLocked,
     SessionRevoked,
     UnlockPasswordInvalid,
 )
@@ -425,9 +426,8 @@ class SessionService:
         if self._clock() >= found.issued_at + ACCESS_TOKEN_TTL:
             raise SessionNotFound("access token expired")
         if allow_locked:
-            # Logout / revoke must work on an idle-locked session (the lock
-            # is cosmetic on the client; the server still lets the owner end it).
-            # A revoked or expired session is refused like any other (#2389 gap J).
+            # For a caller that serves an idle-locked session. A revoked or
+            # expired session is refused like any other (#2389 gap J).
             if found.is_revoked:
                 raise SessionRevoked(found.revoked_reason or "revoked")
             if found.is_absolute_expired(now=self._clock()):
@@ -438,11 +438,15 @@ class SessionService:
     async def touch(self, session_id: str) -> SessionRecord:
         """The `REQUEST` event on B16: re-stamp `last_seen_at`, extending
         the idle deadline. Raises the same errors as `require_active` —
-        activity on a dead/locked session never resurrects it."""
+        activity on a dead/locked session never resurrects it. The write is
+        conditional on the row being neither revoked nor idle-locked at `now`,
+        so a lock that engages between the check and the write is not lifted
+        (B16.7: activity never lifts a lock); the row is then refused as it is."""
         await self.require_active(session_id)
         now = self._clock()
         touched = await self._repository.touch_last_seen(session_id, now=now)
         if touched is None:
+            await self.require_active(session_id)  # locked or revoked since the check
             raise SessionNotFound("session disappeared between check and touch")
         return touched
 
@@ -477,13 +481,17 @@ class SessionService:
         `UnlockPasswordInvalid` for a wrong password that has not yet hit
         `MAX_UNLOCK_ATTEMPTS` (at which point the session is revoked and
         `SessionRevoked` is raised instead — review finding, PR #1628,
-        low: unlock attempts must be throttled)."""
+        low: unlock attempts must be throttled). A session that is not
+        idle-locked raises `SessionNotLocked` before any password check
+        (#2300: unlock is never a password check on an unlocked session)."""
         session = await self._repository.find_by_id(session_id)
         if session is None:
             raise SessionNotFound("no such session")
         now = self._clock()
         if session.is_revoked or session.is_absolute_expired(now=now):
             raise SessionRevoked(session.revoked_reason or "expired")
+        if not session.is_idle_locked(now=now):
+            raise SessionNotLocked("session is not idle-locked")
 
         if check is not None:
             password_ok = await check(password)
@@ -507,14 +515,11 @@ class SessionService:
 
         await _write_ahead(write_ahead, UnlockOutcome.UNLOCKED)
         self._unlock_failures.pop(session_id, None)
-        if session.is_idle_locked(now=now):
-            # B16.7 (C-2.12, C-2.21; PR #2290 ruling rule 4d): lifting the lock
-            # drops every step-up elevation in the same write that re-stamps
-            # `last_seen_at`, so a password-only unlock never inherits a grace
-            # window, a one-shot grant or a pending challenge taken before it.
-            touched = await self._repository.lift_idle_lock(session_id, now=now)
-        else:
-            touched = await self._repository.touch_last_seen(session_id, now=now)
+        # B16.7 (C-2.12, C-2.21; PR #2290 ruling rule 4d): lifting the lock drops every
+        # step-up elevation in the same write that re-stamps `last_seen_at`, so a
+        # password-only unlock never inherits a grace window, a one-shot grant or a
+        # pending challenge taken before it.
+        touched = await self._repository.lift_idle_lock(session_id, now=now)
         if touched is None:
             raise SessionNotFound("session disappeared during unlock")
         return touched

@@ -56,9 +56,12 @@ _LIVE_BY_USER_SQL = _sql(
     "SELECT @COLS@ FROM sessions WHERE user_id = CAST(:u AS uuid) "
     "AND revoked_at IS NULL ORDER BY issued_at DESC"
 )
+#: Activity never lifts a lock (#2300): the row must still be unlocked at `:now`
+#: (`SessionRecord.is_idle_locked` is `last_seen_at + idle_timeout_s <= now`).
 _TOUCH_SQL = _sql(
     "UPDATE sessions SET last_seen_at = :now WHERE id = CAST(:id AS uuid) "
-    "AND revoked_at IS NULL RETURNING @COLS@"
+    "AND revoked_at IS NULL AND last_seen_at + make_interval(secs => idle_timeout_s) > :now "
+    "RETURNING @COLS@"
 )
 _LIFT_IDLE_LOCK_SQL = _sql(
     "UPDATE sessions SET last_seen_at = :now, step_up_elevations = '{}'::jsonb "
