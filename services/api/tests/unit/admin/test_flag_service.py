@@ -5,6 +5,7 @@ fail closed on an outage (D1a) or one unreadable row (D1b), overrides ignored on
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import replace
 from uuid import UUID
 
@@ -74,9 +75,11 @@ async def test_unreachable_store_fails_closed_and_is_retried_after_1_s() -> None
     store.down = True
     clock.now += 30
     with capture_logs() as logs:
+        await service.start()  # a boot that cannot ensure the rows is logged and goes on
         assert await service.value(MAINTENANCE_MODE) is True
         assert await service.value("trading.live_enabled") is False
-    assert logs[0]["event"] == "feature_flag_store_unavailable"
+    events = [e["event"] for e in logs][1:3]
+    assert events == ["feature_flag_rows_not_ensured", "feature_flag_store_unavailable"]
     loads = store.loads
     clock.now += 0.5
     assert await service.value(MAINTENANCE_MODE) is True
@@ -122,8 +125,9 @@ async def test_invalidate_forces_a_reload() -> None:
 async def test_a_flag_without_a_row_resolves_to_its_default_not_its_fail_closed_value() -> None:
     service, store, _ = await _service()
     del store.rows[MAINTENANCE_MODE]
-    service.invalidate()
     assert await service.value(MAINTENANCE_MODE) is False
+    listed = {f.spec.key: f for f in (await service.visible(_OWNER, frozenset({"owner"}))).items}
+    assert listed[MAINTENANCE_MODE].value is False  # the list applies the same rule
 
 
 async def test_a_hung_store_times_out_and_fails_closed() -> None:
@@ -238,8 +242,6 @@ def test_flag_series_are_exported_with_the_env_label() -> None:
 
 @pytest.mark.perf
 async def test_cached_resolution_is_under_1_ms_p99() -> None:
-    import time
-
     service, _, _ = await _service()
     samples = []
     for _ in range(2000):

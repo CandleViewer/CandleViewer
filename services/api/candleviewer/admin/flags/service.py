@@ -1,16 +1,19 @@
 """Feature-flag service, read path (E42-T03, module M21): cached server-side resolution.
 
 Reads come from one cached snapshot of the store. A kill-switch-class flag is served from it for
-at most 5 s and every other flag for at most 30 s (`21-database-schema.md` 3.9), so a value
-changed directly in the database is reflected within 5 s without a restart; `trading.live_enabled`
-is not kill-switch-class, so the 30 s cache applies to it. A load is bounded by the read budget,
-the system setting `flags.read_budget_ms` (default 500 ms, 50-2000 ms, refused at startup
-outside that). A store that fails or exceeds the budget is an outage (D1a): every flag resolves
-to its fail-closed value, the list answers `resolution: fail_closed`, and the store is retried
-after 1 s rather than on every request. One unreadable row (D1b) is not an outage: that flag
-alone fails closed and is marked `unreadable`, and an unreadable override row on a non-safety
-flag is ignored and counted. Reloads are single-flight, and a load that started before
-`invalidate()` is dropped rather than installed. Resolution itself is the pure `resolve`.
+at most 5 s and every other flag, `trading.live_enabled` included, for at most 30 s
+(`21-database-schema.md` 3.9), so a value changed directly in the database is reflected within
+that bound without a restart. A load is bounded by the read budget, the system setting
+`flags.read_budget_ms` (default 500 ms, 50-2000 ms, refused at startup outside that). A store
+that fails or exceeds the budget is an outage (D1a): every flag resolves to its fail-closed value,
+the list answers `resolution: fail_closed`, and the store is retried 1 s after the failure rather
+than on every request. One unreadable row (D1b) is not an outage: that flag alone fails closed
+and is marked `unreadable`, and an unreadable override row on a non-safety flag is ignored and
+counted. A flag with no row at all (`start()` gives each one) resolves to its default, not its
+fail-closed value; the contract does not cover a row lost at runtime. Reloads are single-flight;
+a load that started before `invalidate()` is dropped, and the read retries once. Resolution
+itself is the pure `resolve`. D1a, D1b, D2a and D6a are decisions of the flag contract (#2592),
+stated in `22-api-openapi.yaml` `listFeatureFlags`.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ import enum
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, cast
 from uuid import UUID
 
 import structlog
@@ -34,6 +37,8 @@ from candleviewer.observability import spawn
 TTL_S: Final = 30.0
 KILLSWITCH_TTL_S: Final = 5.0
 RETRY_S: Final = 1.0
+#: The bound on `start()`'s `ensure`, as on the other boot-time store reads (the klines boundary).
+ENSURE_TIMEOUT_S: Final = 5.0
 #: The system setting that holds the store's read budget, its default and its bounds (D1b).
 READ_BUDGET_SETTING: Final = "flags.read_budget_ms"
 DEFAULT_READ_BUDGET_MS: Final = 500
@@ -42,7 +47,7 @@ READ_BUDGET_BOUNDS_MS: Final = (50, 2000)
 
 def logger() -> structlog.stdlib.BoundLogger:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
-    return structlog.get_logger(__name__)  # type: ignore[no-any-return]  # structlog returns Any
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(__name__))
 
 
 class Resolution(enum.StrEnum):
@@ -88,6 +93,9 @@ class FlagList:
 
 
 class FlagService:
+    """Resolves the registry's flags server-side from the cached snapshot: `value()` for one flag
+    (unfiltered), `visible()` for a caller's list and `resolved()` for one row and one caller."""
+
     def __init__(
         self,
         registry: FlagRegistry,
@@ -111,9 +119,15 @@ class FlagService:
 
     async def start(self) -> None:
         """Log the registry and give every flag a stored row; the registry itself was already
-        validated when it was built, so an unsafe definition never gets this far."""
+        validated when it was built, so an unsafe definition never gets this far. `ensure` is
+        bounded like the other boot-time store reads: a failure is logged and boot goes on, with
+        every read failing closed while the store stays unreachable."""
         self.registry.log_startup()
-        await self.store.ensure(self.registry.values())
+        try:
+            async with asyncio.timeout(ENSURE_TIMEOUT_S):
+                await self.store.ensure(self.registry.values())
+        except Exception as exc:  # incl. TimeoutError; CancelledError still propagates
+            logger().warning("feature_flag_rows_not_ensured", error=type(exc).__name__)
 
     def invalidate(self) -> None:
         """Drop the snapshot; the next read reloads, and an in-flight load is not installed."""
@@ -123,8 +137,7 @@ class FlagService:
 
     async def stored(self, spec: FlagSpec) -> StoredFlag | None:
         """The stored row for `spec`, or `None` while the store cannot be read (fail closed)."""
-        rows = await self._rows(KILLSWITCH_TTL_S if spec.is_killswitch else TTL_S)
-        return None if rows is None else rows.get(spec.key) or StoredFlag(spec.default)
+        return _row(await self._rows(KILLSWITCH_TTL_S if spec.is_killswitch else TTL_S), spec)
 
     async def _rows(self, ttl: float) -> Mapping[str, StoredFlag] | None:
         # Check, load, check, load, check: a load overtaken by invalidate() is dropped and the
@@ -146,6 +159,9 @@ class FlagService:
         await asyncio.shield(task)
 
     async def _load(self, generation: int) -> None:
+        # A copy of the first reader's context: its request ids must not label the shared load.
+        ids = structlog.contextvars.get_contextvars().keys() - {"env"}
+        structlog.contextvars.unbind_contextvars(*ids)
         started = self._clock()
         try:
             async with asyncio.timeout(self._timeout):
@@ -170,12 +186,11 @@ class FlagService:
         """Every flag the caller may see (`FlagSpec.visible_to` its roles), resolved for the
         caller from one snapshot no older than the kill-switch bound."""
         rows = await self._rows(KILLSWITCH_TTL_S)
-        items: list[ResolvedFlag] = []
-        for key, spec in self.registry.items():
-            if not spec.visible_to(roles):
-                continue
-            row = None if rows is None else rows.get(key) or StoredFlag(spec.default)
-            items.append(self.resolved(spec, row, user_id, roles))
+        items = [
+            self.resolved(spec, _row(rows, spec), user_id, roles)
+            for spec in self.registry.values()
+            if spec.visible_to(roles)
+        ]
         return FlagList(Resolution.FAIL_CLOSED if rows is None else Resolution.STORED, tuple(items))
 
     def resolved(
@@ -192,3 +207,8 @@ class FlagService:
             if unreadable := sum(not override_matches(spec, v) for v in applied):
                 unreadable_overrides_total.labels(spec.key).inc(unreadable)  # ignored (D1b)
         return ResolvedFlag(spec, resolve(spec, row, user_id=user_id, roles=roles), row)
+
+
+def _row(rows: Mapping[str, StoredFlag] | None, spec: FlagSpec) -> StoredFlag | None:
+    """`spec`'s row, `None` in an outage; a flag with no row is its default (module docstring)."""
+    return None if rows is None else rows.get(spec.key) or StoredFlag(spec.default)

@@ -24,6 +24,8 @@ class FakeFlagStore:
         self.on_load: Callable[[], None] | None = None
 
     async def ensure(self, specs: Iterable[FlagSpec]) -> None:
+        if self.down:
+            raise StoreUnavailableError("down")
         for spec in specs:
             self.rows.setdefault(spec.key, StoredFlag(spec.default, updated_at=T0))
 
