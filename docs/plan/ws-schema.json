@@ -1309,8 +1309,18 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["t_ms", "cells"],
+            "required": ["generation", "index", "t_ms", "cells"],
             "properties": {
+              "generation": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "ADR-0033 series generation (= epoch); 0 until ratified. Part of the bar key (§8.2)."
+              },
+              "index": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Bar index, strictly increasing within a generation; with generation, the bar key (§8.2), which also joins this bar to the same bar on the series' bars topic (§6.1). t_ms may repeat for non-time bars."
+              },
               "t_ms": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs"
               },

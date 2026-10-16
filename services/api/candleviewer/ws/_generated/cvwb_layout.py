@@ -76,11 +76,11 @@ KINDS: Final[dict[int, Kind]] = {
     5: Kind(
         5,
         "footprint",
-        1,
+        2,
         "min",
         Part(33, "<qQQIB4x", ("price", "bid_volume", "ask_volume", "trades", "flags"), {"price": 0, "bid_volume": 8, "ask_volume": 16, "trades": 24, "flags": 28}, {}),
         None,
-        Part(8, "<II", ("ts_offset_ms", "cell_count"), {"ts_offset_ms": 0, "cell_count": 4}, {}),
+        Part(28, "<QQIIB3x", ("generation", "index", "ts_offset_ms", "cell_count", "flags"), {"generation": 0, "index": 8, "ts_offset_ms": 16, "cell_count": 20, "flags": 24}, {}),
         None,
     ),
     6: Kind(

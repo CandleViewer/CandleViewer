@@ -978,6 +978,11 @@
               "delta": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
               },
+              "generation": {
+                "description": "ADR-0033 series generation (= epoch); 0 until ratified. Part of the bar key (§8.2).",
+                "minimum": 0,
+                "type": "integer"
+              },
               "imbalances": {
                 "items": {
                   "additionalProperties": false,
@@ -1013,6 +1018,11 @@
                 },
                 "type": "array"
               },
+              "index": {
+                "description": "Bar index, strictly increasing within a generation; with generation, the bar key (§8.2), which also joins this bar to the same bar on the series' bars topic (§6.1). t_ms may repeat for non-time bars.",
+                "minimum": 0,
+                "type": "integer"
+              },
               "poc_price": {
                 "$ref": "cv://ws/v1/common.schema.json#/$defs/decimal"
               },
@@ -1039,6 +1049,8 @@
               }
             },
             "required": [
+              "generation",
+              "index",
               "t_ms",
               "cells"
             ],

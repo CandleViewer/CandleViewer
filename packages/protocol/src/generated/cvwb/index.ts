@@ -102,7 +102,7 @@ export const CVWB_KINDS = {
   },
   footprint: {
     id: 5,
-    formatVersion: 1,
+    formatVersion: 2,
     lengthRule: "min",
     record: {
       bytes: 33,
@@ -110,9 +110,9 @@ export const CVWB_KINDS = {
       types: { price: "i64", bidVolume: "u64", askVolume: "u64", trades: "u32", flags: "u8" },
     },
     groupPrefix: {
-      bytes: 8,
-      offsets: { tsOffsetMs: 0, cellCount: 4 },
-      types: { tsOffsetMs: "u32", cellCount: "u32" },
+      bytes: 28,
+      offsets: { generation: 0, index: 8, tsOffsetMs: 16, cellCount: 20, flags: 24 },
+      types: { generation: "u64", index: "u64", tsOffsetMs: "u32", cellCount: "u32", flags: "u8" },
     },
   },
   heatmapColumn: {

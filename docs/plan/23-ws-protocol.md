@@ -193,7 +193,7 @@ All integers are **little-endian**. Prices and sizes are transported as **scaled
 | Offset | Size | Type  | Field            | Notes                                                                           |
 | ------ | ---- | ----- | ---------------- | ------------------------------------------------------------------------------- |
 | 0      | 4    | `u32` | `magic`          | `0x43565742` (`"CVWB"`). Rejects accidental mis-routing.                        |
-| 4      | 1    | `u8`  | `format_version` | `1`; `2` for body_kind 4 (bars, #2014).                                         |
+| 4      | 1    | `u8`  | `format_version` | `1`; `2` for body_kind 4 (bars, #2014) and 5 (footprint, #2529).                |
 | 5      | 1    | `u8`  | `body_kind`      | 1=book_snapshot, 2=book_delta, 3=trades, 4=bars, 5=footprint, 6=heatmap_column. |
 | 6      | 1    | `u8`  | `flags`          | bit0 `estimated`, bit1 `coalesced`, bit2 `replay`, bit3 `partial`.              |
 | 7      | 1    | `u8`  | `price_scale`    | Decimal exponent: real = int / 10^price_scale.                                  |
@@ -222,13 +222,13 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 | 1    | `u8`  | `side` (0 = buy/taker-lift, 1 = sell/taker-hit) — Bybit gives the aggressor side directly |
 | 1    | `u8`  | `flags` (bit0 block trade, bit1 liquidation-origin, bit2 cluster-aggregated)              |
 
-**body_kind 4 — bars.** Requires header `format_version = 2` (#2014); a `format_version = 1` bars body (69-byte records without identity) is no longer sent. `record_count` records of 85 bytes, little-endian like every field here: `u64 generation`, `u64 index` (the §8.2 bar key), `u32 ts_offset_ms`, `i64 o,h,l,c`, `u64 v`, `u64 turnover`, `u32 trades`, `i64 delta`, `u8 flags` (bit0 `confirm`). `o`, `h`, `l`, `c` are scaled by `price_scale`; `v`, `turnover` and `delta` by `qty_scale`, as both reference decoders read them. Every scaled field except `turnover` is exact at its frame's scales, which the server picks to hold every bar it sends; `turnover` (price × qty) is rounded half-even to `qty_scale`, and REST carries it exactly. `delta` is 0 unless the subscription set `include_delta`, which the frame's `meta.include_delta` echoes (§6.1). The version is bumped rather than the fields appended because records have a fixed stride: a v1 decoder reading 69-byte records from an 85-byte body would misread every record after the first without noticing. Other body kinds stay at `format_version = 1`.
+**body_kind 4 — bars.** Requires header `format_version = 2` (#2014); a `format_version = 1` bars body (69-byte records without identity) is no longer sent. `record_count` records of 85 bytes, little-endian like every field here: `u64 generation`, `u64 index` (the §8.2 bar key), `u32 ts_offset_ms`, `i64 o,h,l,c`, `u64 v`, `u64 turnover`, `u32 trades`, `i64 delta`, `u8 flags` (bit0 `confirm`). `o`, `h`, `l`, `c` are scaled by `price_scale`; `v`, `turnover` and `delta` by `qty_scale`, as both reference decoders read them. Every scaled field except `turnover` is exact at its frame's scales, which the server picks to hold every bar it sends; `turnover` (price × qty) is rounded half-even to `qty_scale`, and REST carries it exactly. `delta` is 0 unless the subscription set `include_delta`, which the frame's `meta.include_delta` echoes (§6.1). The version is bumped rather than the fields appended because records have a fixed stride: a v1 decoder reading 69-byte records from an 85-byte body would misread every record after the first without noticing.
 
-**body_kind 5 — footprint.** Per-bar group: `u32 ts_offset_ms`, `u32 cell_count`, then `cell_count` × 33 bytes: `i64 price`, `u64 bid_volume`, `u64 ask_volume`, `u32 trades`, `u8 flags` (bit0 buy-imbalance, bit1 sell-imbalance, bit2 in-stack, bit3 POC).
+**body_kind 5 — footprint.** Requires header `format_version = 2` (#2529); a `format_version = 1` footprint body (8-byte group prefixes without identity) is no longer sent. `record_count` per-bar groups, each opening with a 28-byte prefix, little-endian like every field here: `u64 generation`, `u64 index` (the §8.2 bar key), `u32 ts_offset_ms`, `u32 cell_count`, `u8 flags`, then 3 reserved zero bytes; then `cell_count` × 33 bytes: `i64 price`, `u64 bid_volume`, `u64 ask_volume`, `u32 trades`, `u8 flags` (bit0 buy-imbalance, bit1 sell-imbalance, bit2 in-stack, bit3 POC). The group `flags` byte works like kind 4's: bit0 `confirm` (1 = the bar is closed, 0 = still forming), the binary twin of §14.4 `confirm`; bits 1–7 are reserved, 0 on send and ignored on receive, so a later flag is additive. The version is bumped rather than the fields appended because the group prefix has a fixed stride: a v1 decoder reading 8-byte prefixes from a body with 28-byte prefixes would take `generation` for `ts_offset_ms` and `cell_count` and misread every group without noticing. v2 replaces v1 with no deprecation entry and no dual-serve release (C-6.3) because no footprint frame was ever produced (the footprint snapshot source is still pending in `ws_wiring.PENDING_ADAPTERS`, #2197), as with the precedents #2019, #2380 and #2400. Body kinds 1–3 and 6 stay at `format_version = 1`.
 
 **body_kind 6 — heatmap column.** One time-bucket column: `u32 ts_offset_ms`, `i64 price_min`, `i64 price_step`, `u32 row_count`, then `row_count` × 16 bytes: `u64 bid_size`, `u64 ask_size`. The renderer uploads this straight into a texture row.
 
-**Reserved record bytes.** Bars (85 B) and footprint cells (33 B) records end in 4 reserved zero bytes after `flags` (the listed fields total 81 B / 29 B); the encoder writes zeros and decoders ignore them. The byte layout of every kind is declared once in `packages/protocol/cvwb-layout.json` (E17-T02).
+**Reserved record bytes.** Bars (85 B) and footprint cells (33 B) records end in 4 reserved zero bytes after `flags` (the listed fields total 81 B / 29 B), and each footprint group prefix (28 B) ends in 3 after its `flags` (25 B listed); the encoder writes zeros and decoders ignore them. The byte layout of every kind is declared once in `packages/protocol/cvwb-layout.json` (E17-T02).
 
 **Client obligations.** A client MUST validate `magic` and `format_version` (and MUST reject, as `frame_malformed`, a `(body_kind, format_version)` pair it does not know — e.g. a v1 decoder receiving v2 bars; the code is `frame_malformed` on the wire and decoders MAY surface the more specific diagnostic `unsupported_format_version` locally, which maps to `frame_malformed` in §10), and MUST treat a body whose length disagrees with `record_count` as a protocol error (`frame_malformed`, §10) and resync. For fixed-stride bodies (body_kind 4, bars) the rule is exact: body length MUST equal `24 + record_count × record_size`; both a short body and trailing bytes are `frame_malformed`. Forward compatibility is carried by `format_version`, not by trailing bytes. Variable-layout body kinds continue to ignore trailing bytes after the last declared record.
 
@@ -248,6 +248,8 @@ Snapshots carry every level within the subscribed depth, bid side descending the
 | Max connections per user           | 8       | Oldest idle connection is closed with `bye` when exceeded.                                                                                                                                                                                                                                                                                                                    |
 
 Snapshot chunking: a `snap` larger than 4 MiB is sent as N frames sharing one `id`, each with `partial` set, the last one clearing it. All chunks consume **one** sequence number in total, assigned to the final chunk; intermediate chunks carry `s: null`.
+
+Time span of a bars or footprint frame: per-bar times are `u32` offsets from the header's `ts_base_ms` (§3.4), so one frame spans at most 2³²−1 ms (about 49.7 days). Footprint (body_kind 5) follows the bars rule (body_kind 4, §6.1): a new frame starts when a bar's open time is more than 2³²−1 ms after the frame's `ts_base_ms`, and inside a snapshot those frames are `partial` chunks as above, each with its own `ts_base_ms` (200 daily footprint bars span about 1.7 × 10¹⁰ ms). Clients key bars by `(generation, index)` (§8.2), never by frame or chunk.
 
 ---
 
@@ -624,7 +626,7 @@ Notes that bite if ignored:
 
 - **`book` depth is in the topic name, not the options**, because changing depth changes the identity of the state. `book.BTCUSDT.50` and `book.BTCUSDT.200` are two independent subscriptions with independent sequences.
 - **`bars` `param` follows the REST convention** of `22-api-openapi.yaml` `/market/bars`: `time` → interval code (`1`,`5`,`60`,`D`…), `tick` → trades per bar, `volume` → base volume, `range` → ticks, `delta` → signed volume, `renko` → ticks or `atr:14`, `pnf` → `box:reversal`, `heikin_ashi` → underlying interval. Dots are illegal in `param`; `atr:14` and `10:3` use a colon for exactly this reason.
-- **`footprint` and `bars` for the same `(symbol, bar_type, param)` are separate subscriptions** and each carries its own sequence. They are guaranteed _consistent_ (both derived from the same builder) but not _synchronised_ frame-for-frame; the client joins them by `(generation, index)` (§8.2; footprint gains the key with #2529).
+- **`footprint` and `bars` for the same `(symbol, bar_type, param)` are separate subscriptions** and each carries its own sequence. They are guaranteed _consistent_ (both derived from the same builder) but not _synchronised_ frame-for-frame; the client joins them by `(generation, index)` (§8.2; footprint bars carry the key, §14.4).
 - **Unconfirmed bars.** The last bar in any `bars`/`footprint` frame may have `confirm: false`. A client MUST NOT treat it as closed — this is the flicker bug Bybit's own `confirm` flag exists to prevent.
 - **`bars` snapshot and options (E12-T06, #399).**
   - **What the topic carries.** Only bars built from the recorded tape (row source `tape` or `parquet`), each keyed by `(generation, index)` (§8.2). Kline-backfilled rows have no builder index and no order flow, so they are never sent on WS; REST `/market/bars` and `/market/klines` serve them. A `bars` snapshot therefore carries no `meta.sources`.
@@ -947,7 +949,7 @@ The server accepts this **only** when it can prove continuity: it holds state co
 | `trades`, `liquidations`        | **Append, never merge** — throttling batches them into arrays.                                                                                                | Every print matters for the tape and CVD.                      |
 | `orders`, `executions`          | **Never coalesced, never throttled.**                                                                                                                         | State-machine transitions and fills must be seen individually. |
 
-**Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts when ADR-0033 starts a new generation/epoch. A channel streams one generation at a time; a generation swap arrives as a new snapshot (ADR-0033 client ingestion). Clients key their bar stores the same way. **Footprint bars will take the same key (planned, #2529; decided with E12-T06):** §14.4 bar items and each CVWB kind-5 group gain `generation` and `index` before any footprint producer ships (#2197), so two footprint bars that share an open time are never merged.
+**Bar key (#2014).** Within a channel (one `spec_hash`) every bar — of every `bar_type`, time bars included — is keyed by `(generation, index)` (24 §3.1), never by `t_ms`: non-time bars can share an open time, and `index` restarts when ADR-0033 starts a new generation/epoch. A channel streams one generation at a time; a generation swap arrives as a new snapshot (ADR-0033 client ingestion). Clients key their bar stores the same way. **Footprint bars take the same key (#2529; decided with E12-T06):** §14.4 bar items carry `generation` and `index`, and so does each CVWB kind-5 group prefix (`format_version = 2`, §3.4), so two footprint bars that share an open time are never merged.
 
 **Amended bars (#2018, 24 §3.2).** A late trade can re-close an already-confirmed bar; the server then emits a `confirm: true` item with `amended: true` at the same `(generation, index)`. This is the one carve-out to "confirmed is final": a confirmed→confirmed replacement is permitted (and coalesced last-write-wins) only when the incoming item sets `amended`. A confirmed→unconfirmed replacement is never permitted. Clients replace the stored bar by key and re-render it.
 
@@ -2291,8 +2293,18 @@ result against these schemas, which is what keeps the two representations from d
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["t_ms", "cells"],
+        "required": ["generation", "index", "t_ms", "cells"],
         "properties": {
+          "generation": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "ADR-0033 series generation (= epoch); 0 until ratified. Part of the bar key (§8.2)."
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Bar index, strictly increasing within a generation; with generation, the bar key (§8.2), which also joins this bar to the same bar on the series' bars topic (§6.1). t_ms may repeat for non-time bars."
+          },
           "t_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
           "close_t_ms": { "$ref": "cv://ws/v1/common.schema.json#/$defs/epochMs" },
           "confirm": { "type": "boolean" },
