@@ -8,13 +8,16 @@ The xstate nightly gate must be environment-independent:
 * a check script that needs an upstream dev venv it cannot find exits 77,
   which ``run_gate.classify_exit`` records as ``SKIP-ENV`` ("skipped
   (environment)"), and ``tools/statechart/nightly_gate.py`` never counts it
-  as a regression (nor as a fix).
+  as a regression (nor as a fix);
+* the nightly workflow builds the two upstream dev venvs those scripts look
+  for, and ``run_gate`` can read BENCH-6's bare-JSON wrapper output (#579).
 """
 
 from __future__ import annotations
 
 import ast
 import importlib
+import json
 import re
 import subprocess
 import sys
@@ -114,7 +117,7 @@ def test_nightly_gate_flags_baseline_pass_now_skipped_as_coverage_loss() -> None
     assert nightly_gate.coverage_lost(result, baseline) == ["verifyM3:142"]
 
 
-def test_render_coverage_loss_and_skip_ratio_warning_stay_non_blocking() -> None:
+def test_render_skip_ratio_warning_stays_non_blocking() -> None:
     report = nightly_gate.render(
         mode="pinned",
         date="2026-10-07",
@@ -125,10 +128,8 @@ def test_render_coverage_loss_and_skip_ratio_warning_stay_non_blocking() -> None
         p99=None,
         threshold=100.0,
         skipped=["verifyM3:142"],
-        lost=["verifyM3:142"],
         ratio=0.5,
     )
-    assert "COVERAGE LOSS: verifyM3:142" in report
     assert "WARNING: 50% of checks skipped" in report
     assert "**GREEN**" in report
 
@@ -188,6 +189,98 @@ def test_ci_upstream_default_matches_workflow_checkout_path() -> None:
     )
     assert "path: _upstream" in workflow
     assert _paths.CI_UPSTREAM == _REPO_ROOT / "_upstream"
+
+
+def test_nightly_workflow_builds_the_upstream_dev_venvs_the_env_rows_need() -> None:
+    # #579: without these the 13 env rows (e.g. verifyM3:142, verify:LC-53) are SKIP-ENV.
+    workflow = (_REPO_ROOT / ".github" / "workflows" / "xstate-nightly.yml").read_text(
+        encoding="utf-8"
+    )
+    for venv in (".venv-main", ".venv-gate"):
+        assert f"_upstream/{venv}" in workflow, venv
+
+
+_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "xstate-nightly.yml"
+
+
+def test_notify_job_runs_after_a_timeout_and_comments_on_the_named_tracker() -> None:
+    # A pinned job that hits timeout-minutes ends 'cancelled' (GitHub cancels it), not 'failure'.
+    workflow = _WORKFLOW.read_text(encoding="utf-8")
+    assert "if: ${{ always() && needs.pinned.result != 'success' }}" in workflow
+    assert "vars.CV_XSTATE_TRACKER_ISSUE || '2472'" in workflow and "gh issue list" not in workflow
+
+
+def test_workflow_regressions_output_is_empty_for_a_bench6_only_red(tmp_path: Path) -> None:
+    # #579: "- none" is a placeholder, not a regression. If it reached notify as "none", its
+    # "none listed" fallback could never fire on a red run caused by BENCH-6 alone.
+    found = re.search(r"awk '(/\^## Regressions[^']+)'", _WORKFLOW.read_text(encoding="utf-8"))
+    assert found is not None
+
+    def listed(new: list[str]) -> str:
+        report = tmp_path / "report.md"
+        report.write_text(
+            nightly_gate.render(
+                mode="pinned",
+                date="d",
+                result={},
+                new=new,
+                gone=[],
+                bench_ok=False,
+                p99=150.0,
+                threshold=100.0,
+            ),
+            encoding="utf-8",
+        )
+        run = subprocess.run(  # noqa: S603 - fixed argv, no user input
+            ["awk", found.group(1), str(report)],  # noqa: S607
+            capture_output=True,
+            text=True,
+        )
+        return run.stdout
+
+    assert listed([]) == ""
+    assert listed(["bench:BENCH-2", "verify:LC-02"]) == "bench:BENCH-2, verify:LC-02"
+
+
+def test_parse_bare_json_reads_the_bench6_wrapper_output() -> None:
+    # bench_c_timers_v2.py prints one bare JSON document, never `=== name ===` blocks (#579).
+    out = json.dumps({"summary_by_busy_level": {"500": {"p99": 28.7}}}, indent=2) + "\nlog\n"
+    spec = next(s for s in run_gate.THRESHOLDS if s["id"] == "BENCH-6")
+    assert run_gate.parse_bench_blocks(out) == {}
+    assert run_gate.dig(run_gate.parse_bare_json(out), spec["path"]) == 28.7
+
+
+def test_parse_bare_json_without_a_json_object_is_empty() -> None:
+    for text in ("no json here", "{ broken", "[1, 2]", ""):
+        assert run_gate.parse_bare_json(text) == {}, text
+
+
+def test_parse_bare_json_skips_braces_that_do_not_start_the_document() -> None:
+    doc = {"summary_by_busy_level": {"500": {"p99": 28.7}}}
+    out = "starting {worker}\nconfig {oops\n" + json.dumps(doc, indent=2) + "\n"
+    assert run_gate.parse_bare_json(out) == doc
+
+
+_BENCH6_OUT = json.dumps({"summary_by_busy_level": {"500": {"p99": 28.7}}}, indent=2)
+_BENCH7_OUT = '=== a_single_interpreter_throughput ===\n{"burst_50000": {"events_per_sec": 31000}}'
+
+
+@pytest.mark.parametrize(
+    ("bench_id", "output", "shown"),
+    [("BENCH-6", _BENCH6_OUT, "28.70 ms"), ("BENCH-7", _BENCH7_OUT, "31,000.00 ev/s")],
+)
+def test_run_benches_reads_bare_json_and_block_output(
+    monkeypatch: pytest.MonkeyPatch, bench_id: str, output: str, shown: str
+) -> None:
+    # #579: BENCH-6 prints one bare JSON document, every other bench `=== name ===` blocks.
+    # Without `parse_bench_blocks(out) or parse_bare_json(out)` the BENCH-6 row is an ERROR.
+    spec = next(s for s in run_gate.THRESHOLDS if s["id"] == bench_id)
+    monkeypatch.setattr(run_gate, "BENCH_SCRIPTS", [spec["bench"]])
+    monkeypatch.setattr(run_gate, "THRESHOLDS", [spec])
+    monkeypatch.setattr(run_gate, "run_script", lambda path, cwd, timeout: (0, output))
+    (check,) = run_gate.run_benches(timeout=1)
+    assert (check.id, check.status) == (bench_id, run_gate.PASS), check.detail
+    assert check.detail.startswith(shown)
 
 
 def test_upstream_dev_python_missing_venv_exits_skip_env(

@@ -3,9 +3,14 @@ name: xstate-nightly
 # E50-T04 (29-statechart-adoption-plan.md §1.7 Nightly, P3-G6).
 #  * pinned   - docs/research/xstate/gate/run_gate.py --with-bench against the
 #               hash-locked xstate-statemachine==0.9.1 wheel (uv sync --frozen).
-#               GATES: a blocking check failing that is not in the committed
-#               baseline (result-v0.9.1.json), or BENCH-6 p99 > 100 ms at 500
-#               busy machines, turns the run red and opens an E50-C17 issue.
+#               GATES: a blocking check failing that is neither in the committed
+#               baseline (result-v0.9.1.json) nor a documented delta in
+#               tools/statechart/nightly_gate.py, BENCH-6 p99 > 100 ms at 500
+#               busy machines, or a baseline PASS that is now skipped (lost
+#               coverage), turns the run red.
+#  * notify   - on a red or failed pinned run, comments on the one E50-C17 tracker issue
+#               (repo variable CV_XSTATE_TRACKER_ISSUE, default 2472; named, never searched
+#               for). The only job that can write.
 #  * upstream - the same gate against the latest PyPI release. Informational:
 #               continue-on-error, never gates, only publishes a note.
 # BENCH-6 must be measured on target hardware: set the repo variable
@@ -33,9 +38,13 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
-      issues: write
+    outputs:
+      verdict-rc: ${{ steps.verdict.outputs.rc }}
+      regressions: ${{ steps.verdict.outputs.regressions }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
@@ -58,6 +67,27 @@ jobs:
           repository: ${{ env.UPSTREAM_REPO }}
           ref: v0.9.1
           path: _upstream
+          persist-credentials: false
+
+      - name: Upstream dev venvs for the env rows (pinned wheel, hash-locked)
+        # #579: 13 rows need _upstream/.venv-main (pytest + upstream's own suite) or
+        # _upstream/.venv-gate (library only) and were SKIP-ENV here. Both venvs get the
+        # PINNED wheel with its sha256 from services/api/uv.lock (the single source that
+        # check_pin.py verified above); .venv-main adds upstream's `test` group from the
+        # tag's own uv.lock. --require-hashes and --no-build: nothing unpinned, no sdist.
+        run: |
+          pin="$RUNNER_TEMP/xstate-pin.txt"
+          (cd services/api && uv export --frozen --no-emit-project --format requirements-txt) \
+            | awk '/^xstate-statemachine==/ {p = 1} p {print} p && !/\\$/ {p = 0}' > "$pin"
+          grep -q '^xstate-statemachine==' "$pin"
+          (cd _upstream && uv export --frozen --no-dev --group test --no-emit-project \
+            --format requirements-txt) > "$RUNNER_TEMP/upstream-test.txt"
+          uv venv _upstream/.venv-gate
+          uv venv _upstream/.venv-main
+          uv pip install --python _upstream/.venv-gate/bin/python \
+            --require-hashes --no-deps --no-build -r "$pin"
+          uv pip install --python _upstream/.venv-main/bin/python \
+            --require-hashes --no-build -r "$RUNNER_TEMP/upstream-test.txt" -r "$pin"
 
       - name: run_gate.py (pinned, with benchmarks)
         id: gate
@@ -75,10 +105,18 @@ jobs:
 
       - name: Verdict + report
         id: verdict
-        run: >
-          python tools/statechart/nightly_gate.py --mode pinned
-          --result gate-result.json --baseline "$BASELINE" --bench bench6.json
-          --date "$(date -u +%F)" --out "artifacts/xstate-gate/$(date -u +%F).md"
+        run: |
+          day=$(date -u +%F)
+          report="artifacts/xstate-gate/$day.md"
+          rc=0
+          python tools/statechart/nightly_gate.py --mode pinned \
+            --result gate-result.json --baseline "$BASELINE" --bench bench6.json \
+            --date "$day" --out "$report" || rc=$?
+          regressions=$(awk '/^## Regressions/ {f = 1; next} /^## / {f = 0}
+            f && /^- / && !/^- none$/ {sub(/^- /, ""); printf "%s%s", sep, $0; sep = ", "}' \
+            "$report" || true)
+          { echo "rc=$rc"; echo "regressions=$regressions"; } >> "$GITHUB_OUTPUT"
+          exit "$rc"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -90,14 +128,39 @@ jobs:
             bench6.json
           retention-days: 30
 
-      - name: Notify E50-C17 (pinned regression)
-        if: failure() && steps.verdict.conclusion == 'failure'
+  notify:
+    name: xstate-nightly-notify (E50-C17 tracker)
+    needs: pinned
+    # always(), not !cancelled(): a pinned job that hits timeout-minutes is cancelled by GitHub
+    # (result 'cancelled', not 'failure') and must still notify; a manual cancel notifies once.
+    if: ${{ always() && needs.pinned.result != 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    steps:
+      - name: Comment on the E50-C17 tracker issue
+        # #579: one tracker instead of a new issue every night. The issue is named, not
+        # searched for: set the repo variable CV_XSTATE_TRACKER_ISSUE to move it. No checkout
+        # and no third-party code runs in this job; it only calls the preinstalled gh CLI.
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >
-          gh issue create --title "xstate-nightly: pinned 0.9.1 gate regression $(date -u +%F)"
-          --label "area/backend-platform" --label "priority/p1"
-          --body "E50-C17 (upstream liaison): the pinned gate went red. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          GH_REPO: ${{ github.repository }}
+          TRACKER_ISSUE: ${{ vars.CV_XSTATE_TRACKER_ISSUE || '2472' }}
+          PINNED_RESULT: ${{ needs.pinned.result }}
+          VERDICT_RC: ${{ needs.pinned.outputs.verdict-rc }}
+          REGRESSIONS: ${{ needs.pinned.outputs.regressions }}
+        run: |
+          day=$(date -u +%F)
+          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          none="none listed (BENCH-6 over budget, or coverage lost); see the report"
+          if [ "$VERDICT_RC" = "1" ]; then
+            what="the pinned gate is red. Regressions: ${REGRESSIONS:-$none}"
+          else
+            what="the pinned job ended $PINNED_RESULT (nightly_gate exit: ${VERDICT_RC:-not reached})"
+          fi
+          body="E50-C17 (upstream liaison), $day: $what. Run: $run_url (artifact xstate-gate-pinned)."
+          gh issue comment "$TRACKER_ISSUE" --body "$body"
 
   upstream:
     name: xstate-nightly-upstream (informational)
@@ -106,6 +169,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0

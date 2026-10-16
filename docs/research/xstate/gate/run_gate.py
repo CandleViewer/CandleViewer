@@ -1328,6 +1328,26 @@ def parse_bench_blocks(text: str) -> dict[str, Any]:
     return blocks
 
 
+def parse_bare_json(text: str) -> dict[str, Any]:
+    """The first JSON object in ``text`` that parses, or ``{}`` (#579).
+
+    `bench_c_timers_v2.py` (BENCH-6) prints one bare JSON document rather than
+    `=== name ===` blocks, so its THRESHOLDS path starts at that object's top
+    level. Without this fallback the row could never find its metric and was an
+    ERROR on every `--with-bench` run. Every `{` is tried in turn, so a log line
+    such as `starting {worker}` ahead of the document does not hide it.
+    """
+    decoder = json.JSONDecoder()
+    for brace in re.finditer(r"\{", text):
+        try:
+            obj, _ = decoder.raw_decode(text, brace.start())
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):  # always true after a `{`; narrows the type for mypy
+            return obj
+    return {}
+
+
 def dig(blocks: dict[str, Any], path: list[str]) -> float | None:
     node: Any = blocks
     for key in path:
@@ -1356,7 +1376,7 @@ def run_benches(timeout: int) -> list[Check]:
         rc, out = run_script(path, BENCH_DIR, timeout)
         if rc != 0:
             errors[script] = f"exit {rc}: {_last_line(out)}"
-        outputs[script] = parse_bench_blocks(out)
+        outputs[script] = parse_bench_blocks(out) or parse_bare_json(out)
 
     for spec in THRESHOLDS:
         chk = Check(spec["id"], "bench", spec["label"])
