@@ -91,15 +91,13 @@ from candleviewer.api.sessions import make_session_router
 from candleviewer.api.step_up import (
     make_read_only_guard,
     make_step_up_router,
-    require_elevation_for,
-    required_problem,
+    require_session_elevation,
 )
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.users import SnapshotResolver, UserRoleStore, make_users_router
 from candleviewer.api.workspaces import make_workspaces_router
 from candleviewer.auth.csrf import CsrfCodec
-from candleviewer.auth.errors import StepUpRequired
 from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.models import (
     InviteRecord,
@@ -1429,11 +1427,8 @@ def create_app(
 
     async def _purge_elevation(request: Request, action_class: str) -> JSONResponse | None:
         principal = await audit_resolver.resolve(request) if audit_resolver else None
-        if principal is None or principal.session_id is None:
-            return required_problem(StepUpRequired(action_class))
-        if not ctx.auth.step_up_is_active:
-            return required_problem(StepUpRequired(action_class))
-        return await require_elevation_for(ctx.auth, str(principal.session_id), action_class)
+        session_id = None if principal is None else principal.session_id
+        return await require_session_elevation(ctx.auth, session_id, action_class)
 
     app.include_router(
         make_recorder_purge_router(

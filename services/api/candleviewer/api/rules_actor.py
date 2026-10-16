@@ -8,6 +8,7 @@ exactly once by the transition that uses it).
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -106,7 +107,9 @@ class SessionRulesActorResolver:
             try:
                 await step_up().consume_single_use(session_id, STEP_UP_CLASS)
             except StepUpRequired:
-                await step_up().record_pending(session_id, STEP_UP_CLASS)
+                # #2304: issuing the challenge refuses a session revoked meanwhile; so is this.
+                with contextlib.suppress(AuthError):
+                    await step_up().record_pending(session_id, STEP_UP_CLASS)
                 return False
             except AuthError:
                 return False

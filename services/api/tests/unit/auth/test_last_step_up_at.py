@@ -81,8 +81,8 @@ async def test_a_token_refresh_starts_the_successor_row_without_a_step_up_record
 async def test_a_pending_challenge_is_not_a_step_up() -> None:
     """A 403 challenge is stored with the same `now + GRACE_WINDOW` expiry as a grant."""
     svc, clock, seed, user, sessions = await _setup()
-    await svc.record_pending("s1", "keys")
-    assert "pending:keys" in sessions.sessions["s1"].step_up_elevations
+    challenge = await svc.record_pending("s1", "keys")
+    assert challenge.key() in sessions.sessions["s1"].step_up_elevations
     assert last_step_up_at(sessions.sessions["s1"].step_up_elevations) is None
     await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
     stepped = clock.now

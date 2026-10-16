@@ -11,6 +11,7 @@ import pytest
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import (
     SessionReadOnly,
+    SessionRevoked,
     StepUpCodeInvalid,
     StepUpRequired,
     UnknownActionClass,
@@ -166,7 +167,7 @@ async def test_unknown_action_class_rejected() -> None:
     svc, clock, seed, user, _ = await _setup()
     with pytest.raises(UnknownActionClass):
         await svc.step_up(str(user), "s1", "bogus", _code(seed, clock), PASSWORD)
-    with pytest.raises(StepUpRequired):
+    with pytest.raises(UnknownActionClass):  # #2304: a server defect, never a challenge
         await svc.require_elevation("s1", "bogus")
 
 
@@ -355,7 +356,7 @@ async def test_step_up_refused_before_verification_does_not_move_the_failure_cou
     before = _sample("auth_stepup_failures_total")
     with pytest.raises(UnknownActionClass):
         await svc.step_up(str(user), "s1", "not-a-class", "000000", PASSWORD)
-    with pytest.raises(StepUpRequired):  # no live session row for this id
+    with pytest.raises(SessionRevoked):  # no live session row for this id
         await svc.step_up(str(user), "no-such-session", "keys", "000000", PASSWORD)
     assert _sample("auth_stepup_failures_total") == before
 

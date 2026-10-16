@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
@@ -18,6 +19,7 @@ from candleviewer.auth.errors import SessionNotFound, StepUpRequired
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.owner_floor import assert_owner_floor
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.storage.errors import WriteAheadTimeout
 
 OWNER = uuid.uuid4()
@@ -83,8 +85,9 @@ class _StepUp:
         if not self.elevated:
             raise StepUpRequired(action_class)
 
-    async def record_pending(self, session_id: str, action_class: str) -> None:
+    async def record_pending(self, session_id: str, action_class: str) -> StepUpChallenge:
         self.pending.append((session_id, action_class))
+        return StepUpChallenge(uuid.uuid4(), action_class, datetime.now(UTC) + CHALLENGE_WINDOW)
 
 
 class _Sessions:

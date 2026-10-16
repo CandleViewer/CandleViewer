@@ -15,6 +15,10 @@ After each enforcement decision is persisted, the matching B16 event is sent
 to the session's chart (`SessionChart`); the chart's audit actions write the
 step-up audit records (`auth` itself may not import `audit`).
 
+Challenges (#2304; PR #2290 ruling, rule 4): every refusal issues one live
+challenge per session (`record_pending`), stored on the row with its id,
+class and 5-minute expiry; `step_up()` answers the live one.
+
 Writes (#2304, #2798): a no-grace class's one-shot grant is used by one
 conditional write (`consume_step_up_key`), and every other write of the
 step-up columns is a pure change applied to the row as it is under its lock
@@ -33,6 +37,8 @@ from typing import Protocol
 
 from candleviewer.auth.errors import (
     SessionReadOnly,
+    SessionRevoked,
+    StepUpChallengeRefused,
     StepUpCodeInvalid,
     StepUpRequired,
     UnknownActionClass,
@@ -77,6 +83,8 @@ _PENDING = "pending:"
 #: Key prefix (in `step_up_elevations`) of a one-shot grant: a no-grace class is stored as
 #: `once:<class>` by `step_up()` and removed by `consume_single_use`.
 _ONCE = "once:"
+#: #2304: a challenge expires 5 minutes after issue.
+CHALLENGE_WINDOW = timedelta(minutes=5)
 
 
 def grace_expires_at(elevations: dict[str, datetime], now: datetime) -> datetime | None:
@@ -136,6 +144,59 @@ class StepUpGrant:
     #: True for no-grace classes: no window is opened; the grant authorises
     #: exactly the one action it was obtained for.
     single_use: bool
+    #: #2304: the challenge the step-up answered, if any.
+    challenge_id: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
+class StepUpChallenge:
+    """A challenge a `403 step_up_required` issued (#2304), stored on the session row
+    as `pending:<class>:<challenge_id>` -> expiry."""
+
+    challenge_id: uuid.UUID
+    action_class: str
+    expires_at: datetime
+
+    def key(self) -> str:
+        return f"{_PENDING}{self.action_class}:{self.challenge_id}"
+
+    @classmethod
+    def parse(cls, key: str, expires_at: datetime) -> StepUpChallenge | None:
+        """The challenge stored under `key`, or None for any other key (including the
+        class-only keys written before #2304)."""
+        parts = key.removeprefix(_PENDING).split(":") if key.startswith(_PENDING) else []
+        if len(parts) != 2 or parts[0] not in ACTION_CLASSES:
+            return None
+        try:
+            return cls(uuid.UUID(parts[1]), parts[0], expires_at)
+        except ValueError:
+            return None
+
+
+def _live_challenge(record: SessionRecord, now: datetime) -> StepUpChallenge | None:
+    """The session's one live challenge (a newer refusal supersedes it)."""
+    found = (
+        StepUpChallenge.parse(key, until)
+        for key, until in record.step_up_elevations.items()
+        if until > now
+    )
+    return next((entry for entry in found if entry is not None), None)
+
+
+def _answered(
+    record: SessionRecord, now: datetime, action_class: str | None, challenge_id: uuid.UUID | None
+) -> tuple[str, StepUpChallenge | None]:
+    """The class a step-up elevates and the live challenge it answers (#2304). Every
+    refusal is decided here, before any factor is checked."""
+    live = _live_challenge(record, now)
+    if challenge_id is not None and (live is None or live.challenge_id != challenge_id):
+        raise StepUpChallengeRefused("challenge_id", "challenge_expired")
+    if live is not None and action_class is not None and action_class != live.action_class:
+        raise StepUpChallengeRefused("action_class", "challenge_mismatch")
+    resolved = live.action_class if live is not None else action_class
+    if resolved is None:
+        raise StepUpChallengeRefused("action_class", "required")
+    return resolved, live
 
 
 # Every write of the step-up columns is one of these pure changes, applied by
@@ -285,8 +346,8 @@ class StepUpService:
     async def _update(self, session_id: str, change: StepUpChange) -> SessionRecord:
         """Apply `change` to the step-up columns as the row holds them now (#2304)."""
         saved = await self._sessions.update_step_up_state(session_id, change)
-        if saved is None:  # revoked meanwhile: fail closed
-            raise StepUpRequired("session")
+        if saved is None:  # revoked meanwhile: fail closed (401, never a challenge)
+            raise SessionRevoked("step_up")
         return saved
 
     # -- read-only downgrade ---------------------------------------------
@@ -310,19 +371,30 @@ class StepUpService:
     # -- step-up -----------------------------------------------------------
 
     async def step_up(
-        self, user_id: str, session_id: str, action_class: str, code: str, password: str
+        self,
+        user_id: str,
+        session_id: str,
+        action_class: str | None,
+        code: str,
+        password: str,
+        *,
+        challenge_id: uuid.UUID | None = None,
     ) -> StepUpGrant:
         """Re-authenticate with password **and** TOTP (owner decision #1778 AE).
 
-        Every failure - wrong password, locked account, wrong/replayed code -
-        raises the same `StepUpCodeInvalid` and is counted identically."""
-        if action_class not in ACTION_CLASSES:
+        Elevates the class of the session's live challenge; `action_class` is a
+        cross-check, or names a grace class when no challenge is live (#2304).
+        `StepUpChallengeRefused` is decided before any factor is checked. Every
+        failure - wrong password, locked account, wrong/replayed code - raises
+        the same `StepUpCodeInvalid` and is counted identically."""
+        if action_class is not None and action_class not in ACTION_CLASSES:
             raise UnknownActionClass(action_class)
         await self.assert_writable(session_id)
         record = await self._live(session_id)
         if record is None:
-            raise StepUpRequired(action_class)
+            raise SessionRevoked("step_up")
         now = self._clock()
+        action_class, challenge = _answered(record, now, action_class, challenge_id)
         if not await self._verify_both(user_id, code, password, now):
             auth_step_up_failures_total.labels(action_class=action_class).inc()
             auth_stepup_failures_total.inc()  # SR-125 catalogue series (scraped, no label)
@@ -342,39 +414,52 @@ class StepUpService:
         saved = await self._update(session_id, _elevate(action_class, grant_key, until, now))
         if saved.readonly_until is not None:  # downgraded during the factor check
             raise SessionReadOnly(saved.readonly_until)
+        cid = None if challenge is None else challenge.challenge_id
         await self._record(
             record,
             now,
             "STEP_UP_OK",
             action_class=action_class,
             elevated_until_us=to_us(until),
+            **({} if cid is None else {"challenge_id": str(cid)}),
         )
         auth_step_up_total.labels(action_class=action_class).inc()
-        return StepUpGrant(action_class, until, single_use=single_use)
+        return StepUpGrant(action_class, until, single_use=single_use, challenge_id=cid)
 
-    async def record_pending(self, session_id: str, action_class: str) -> None:
-        """Remember which action class the last 403 step_up_required challenged,
-        so `POST /auth/step-up` with only `{code}` (the merged M-020 modal)
-        elevates the class the server itself demanded. Server-side only."""
+    async def record_pending(self, session_id: str, action_class: str) -> StepUpChallenge:
+        """Issue the challenge for the request a `403 step_up_required` refuses (#2304): a
+        random id scoped to this session, expiring in 5 minutes. It supersedes the session's
+        live challenge, so `POST /auth/step-up` elevates the class the server itself
+        demanded. Server-side only."""
+        if action_class not in ACTION_CLASSES:
+            raise UnknownActionClass(action_class)
         record = await self._live(session_id)
-        if record is None or action_class not in ACTION_CLASSES:
-            return
+        if record is None:
+            raise SessionRevoked("step_up")
         now = self._clock()
-        await self._update(session_id, _issue(_PENDING + action_class, now + GRACE_WINDOW, now))
+        challenge = StepUpChallenge(uuid.uuid4(), action_class, now + CHALLENGE_WINDOW)
+        await self._update(session_id, _issue(challenge.key(), challenge.expires_at, now))
         # Challenge issued (the 403 is decided): B16 audits `step_up_required`.
         await self._record(
-            record, now, "ACTION_REQUEST", action_class=action_class, now_us=to_us(now)
+            record,
+            now,
+            "ACTION_REQUEST",
+            action_class=action_class,
+            now_us=to_us(now),
+            challenge_id=str(challenge.challenge_id),
         )
+        return challenge
 
-    async def pending_action_class(self, session_id: str) -> str | None:
+    async def live_challenge(self, session_id: str) -> StepUpChallenge | None:
+        """The session's one live challenge, if any (#2304)."""
         record = await self._live(session_id)
         if record is None:
             return None
-        now = self._clock()
-        for key, until in record.step_up_elevations.items():
-            if key.startswith(_PENDING) and until > now:
-                return key[len(_PENDING) :]
-        return None
+        return _live_challenge(record, self._clock())
+
+    async def pending_action_class(self, session_id: str) -> str | None:
+        challenge = await self.live_challenge(session_id)
+        return None if challenge is None else challenge.action_class
 
     async def _verify_both(self, user_id: str, code: str, password: str, now: datetime) -> bool:
         """Password first (login's hasher + lockout counters), then TOTP.
@@ -446,10 +531,11 @@ class StepUpService:
     async def require_elevation(self, session_id: str, action_class: str) -> None:
         """Server-side gate for `is_dangerous` routes (the E09-T03 decision
         point calls this). No-grace classes always raise: those actions must
-        carry a fresh code (`step_up()` -> `StepUpGrant.single_use`)."""
+        carry a fresh code (`step_up()` -> `StepUpGrant.single_use`). An
+        unregistered class is a server defect, never a challenge (#2304)."""
         await self.assert_writable(session_id)
         if action_class not in ACTION_CLASSES:
-            raise StepUpRequired(action_class)
+            raise UnknownActionClass(action_class)
         if await self.remaining_grace(session_id, action_class) is None:
             raise StepUpRequired(action_class)
         record = await self._live(session_id)
