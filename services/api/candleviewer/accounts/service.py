@@ -17,9 +17,9 @@ and the two catalogue gauges, and `start()` runs ONE supervised loop that refres
 
 `attach_key_selfcheck()` takes the stored-key self-check (E27-T03, `accounts.selfcheck`). Nothing
 attaches it yet: its Postgres adapter, exchange calls and wiring are #836 slice 2b. Once attached,
-`start()` awaits its boot assertion, so it ends before the app serves, `stop()` stops its loop,
-and `health()` reads DEGRADED while a key fails it, the job holds a fail-closed latch or its loop
-has ended.
+`start()` awaits its bounded boot assertion, so it ends before the app serves, `stop()` stops its
+loop and then releases what it holds, and `health()` reads DEGRADED while a key fails it, the job
+holds a fail-closed latch or its loop has ended; `/readyz` shows that as a failing `accounts` check.
 """
 
 from __future__ import annotations
@@ -88,6 +88,7 @@ class AccountsService:
         self._last_ok: float | None = None
         self._failures = 0
         self._selfcheck: KeySelfCheck | None = None
+        self._release: Callable[[], Awaitable[None]] | None = None
 
     def attach_row_gauges(
         self,
@@ -102,9 +103,12 @@ class AccountsService:
         self._gauges = (accounts_rows, api_keys_rows)
         self._env = env
 
-    def attach_key_selfcheck(self, selfcheck: KeySelfCheck) -> None:
-        """Wire the stored-key self-check (the wiring of #836 slice 2b; nothing calls it yet)."""
-        self._selfcheck = selfcheck
+    def attach_key_selfcheck(
+        self, selfcheck: KeySelfCheck, *, release: Callable[[], Awaitable[None]] | None = None
+    ) -> None:
+        """Wire the stored-key self-check (the wiring of #836 slice 2b; nothing calls it yet);
+        `release` frees what it holds once its loop has stopped."""
+        self._selfcheck, self._release = selfcheck, release
 
     async def start(self, ctx: AppContext) -> None:
         """Run the key self-check's boot assertion, then start the loops that are wired."""
@@ -116,11 +120,17 @@ class AccountsService:
             self._task.add_done_callback(_log_loop_exit)
 
     async def stop(self, grace_s: float) -> None:
-        """Stop the key self-check's loop, then cancel the refresh loop and wait for it (it only
-        awaits a read or the sleep)."""
+        """Stop the key self-check's loop and release what it holds (bounded, never raised),
+        then cancel the refresh loop and wait for it (it only awaits a read or the sleep)."""
         self._started = False
         if self._selfcheck is not None:
             await self._selfcheck.stop()
+        if self._release is not None:
+            try:
+                async with asyncio.timeout(self._timeout_s):
+                    await self._release()
+            except Exception as exc:  # TimeoutError included; cancellation propagates
+                logger().warning("key_selfcheck_release_failed", error=type(exc).__name__)
         task, self._task = self._task, None
         if task is not None:
             task.cancel()

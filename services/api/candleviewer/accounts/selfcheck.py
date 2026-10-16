@@ -70,6 +70,8 @@ from candleviewer.storage.repositories.accounts import (
 
 #: C-12.2: withdrawal rights and the allowlist are re-checked at least hourly.
 MAX_INTERVAL_S: Final = 3600.0
+#: Each pass audits and signs for every key: a shorter cadence floods both, so it is refused.
+MIN_INTERVAL_S: Final = 60.0
 #: SR-E27-18: how long a key stays green past one interval without a fresh pass.
 FRESHNESS_GRACE: Final = timedelta(minutes=15)
 #: Ticket performance notes: 12 s overall per key; each signed call has its own 5 s bound.
@@ -79,6 +81,10 @@ READ_TIMEOUT_S: Final = 10.0
 #: One key's whole check: `verify()`, the close and at most four audit or store steps, plus one
 #: step of margin. The deadline derives from the wired bounds, so it cuts only an unbounded await.
 CHECK_STEPS: Final = 6
+#: The boot assertion as a whole: past it the job fails closed and start-up goes on (#836). It
+#: is fixed, not scaled by the key count: in an outage each key waits out a 5 s call bound, so
+#: past about ten keys an outage at start-up latches `UNAVAILABLE` until a restart (runbook).
+BOOT_DEADLINE_S: Final = 60.0
 ACTOR: Final = "system:key-selfcheck"
 DISABLED_BY_POLICY: Final = "account.disabled_by_policy"
 FAILED: Final = "accounts.key_selfcheck_failed"
@@ -177,13 +183,17 @@ class KeySelfCheck:
         timeout_s: float = READ_TIMEOUT_S,
         key_deadline_s: float = KEY_DEADLINE_S,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        boot_deadline_s: float = BOOT_DEADLINE_S,
     ) -> None:
-        if not 0 < interval_s <= MAX_INTERVAL_S:
+        if not interval_s <= MAX_INTERVAL_S:
             raise ValueError("the key self-check runs at least hourly (C-12.2)")
+        if not interval_s >= MIN_INTERVAL_S:
+            raise ValueError("the key self-check runs at most once a minute")
         self._store, self._calls, self._gate, self._audit = store, calls, gate, audit
         self._policy, self._env, self._clock, self._sleep = policy, env, clock, sleep
         self._interval_s, self._deadline_s = interval_s, key_deadline_s + CHECK_STEPS * timeout_s
         self._timeout_s, self._key_deadline_s = timeout_s, key_deadline_s
+        self._boot_deadline_s = boot_deadline_s
         self._window = timedelta(seconds=interval_s) + FRESHNESS_GRACE
         self._lock = asyncio.Lock()
         self._task: asyncio.Task[None] | None = None
@@ -210,9 +220,15 @@ class KeySelfCheck:
         return None
 
     async def start(self) -> None:
-        """The boot assertion, awaited so it ends before the app serves, then the loop."""
+        """The boot assertion, awaited so it ends before the app serves, then the loop. The whole
+        boot pass is bounded: past `boot_deadline_s` the job fails closed and start-up goes on."""
         if self._task is None:
-            await self.run_once()
+            try:
+                async with asyncio.timeout(self._boot_deadline_s):
+                    await self.run_once()
+            except TimeoutError:
+                logger().critical("key_selfcheck_boot_unfinished")
+                self._latch(UNAVAILABLE)
             self._task = spawn(self._loop(), name="key-selfcheck")
             self._task.add_done_callback(self._loop_ended)
 

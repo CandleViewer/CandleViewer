@@ -22,9 +22,19 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
-from candleviewer.accounts.selfcheck import FAILED, KEY_DEADLINE_S, STALE, UNAVAILABLE, KeySelfCheck
+from candleviewer.accounts.selfcheck import (
+    BOOT_DEADLINE_S,
+    FAILED,
+    KEY_DEADLINE_S,
+    MIN_INTERVAL_S,
+    STALE,
+    UNAVAILABLE,
+    KeySelfCheck,
+)
 from candleviewer.accounts.service import AccountsService
 from candleviewer.accounts.verification import (
     KeyRefused,
@@ -32,7 +42,8 @@ from candleviewer.accounts.verification import (
     VerificationInconclusive,
     VerificationPolicy,
 )
-from candleviewer.app import AppContext
+from candleviewer.api.health import make_health_router
+from candleviewer.app import AppContext, create_app
 from candleviewer.audit.actions import validate_action
 from candleviewer.audit.models import AuditEmission
 from candleviewer.audit.writer import AuditWriter
@@ -44,6 +55,7 @@ from candleviewer.exchange.bybit.key_info import (
 )
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.observability.health import HealthStatus
+from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import (
     ExchangeAccountRow,
     SelfCheckTargetRow,
@@ -110,7 +122,7 @@ class World:
         self, *rows: SelfCheckTargetRow, info: object = None, timeout_s: float = 10.0,
         key_deadline_s: float = KEY_DEADLINE_S, probe: object = None, egress: str | None = EGRESS,
         interval_s: float = 3600.0, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-        held: str | None = None,
+        held: str | None = None, boot_deadline_s: float = BOOT_DEADLINE_S,
     ) -> None:  # fmt: skip
         self.rows, self.now, self.fail_audit, self.written = list(rows), NOW, False, True
         self.fail: Exception | None = None
@@ -131,6 +143,7 @@ class World:
             self, self.calls, gate=self.gate, audit=self, env="demo", clock=lambda: self.now,
             policy=VerificationPolicy(egress_ip=egress), timeout_s=timeout_s,
             key_deadline_s=key_deadline_s, interval_s=interval_s, sleep=sleep,
+            boot_deadline_s=boot_deadline_s,
         )  # fmt: skip
 
     async def _io(self, name: str) -> None:
@@ -694,6 +707,27 @@ async def test_health_reads_degraded_while_the_job_holds_a_fail_closed_latch(
         assert (w.gate.reason_code, w.check.failing, svc.health().status) == (latch, 0, status)
 
 
+async def test_readyz_lists_a_failing_key_as_a_degraded_accounts_check() -> None:
+    w, app = World(target(), info=facts(permissions=WITHDRAW)), FastAPI()
+    async with serving(w) as svc:
+        app.include_router(make_health_router(Settings(), accounts_health=svc.health))
+        body = TestClient(app).get("/readyz").json()
+    accounts = {"name": "accounts", "ok": False, "detail": "1 stored key(s) fail the self-check"}
+    assert (body["status"], body["checks"]) == ("degraded", [accounts])
+
+
+async def test_the_app_lists_its_started_accounts_module_on_readyz_ok_with_no_detail() -> None:
+    app = create_app(Settings(environment=Environment.DEMO))  # fake backend: no self-check
+    ctx = app.state.app_context
+    await within(ctx.accounts.start(ctx))
+    try:
+        body = TestClient(app, client=("127.0.0.1", 50000)).get("/readyz").json()
+    finally:
+        await within(ctx.accounts.stop(1.0))
+    accounts = {"name": "accounts", "ok": True, "detail": ""}
+    assert (body["status"], body["checks"]) == ("ok", [accounts])
+
+
 async def test_health_stays_degraded_once_a_failed_key_passes_again() -> None:
     w = World(target(), info=facts(permissions=WITHDRAW))
     async with serving(w) as svc:
@@ -738,7 +772,56 @@ async def test_the_boot_assertion_runs_once_and_stop_is_idempotent() -> None:
     assert len(w.of("pass")) == 1
 
 
-@pytest.mark.parametrize("interval_s", [0.0, 3600.5])
-def test_the_interval_is_positive_and_at_most_hourly(interval_s: float) -> None:
-    with pytest.raises(ValueError, match="hourly"):
+async def test_a_boot_pass_past_its_overall_bound_fails_closed_and_the_loop_still_starts() -> None:
+    # A zero bound is below every per-key bound: only the boot bound cuts the hang.
+    w = World(target(), target(key=KEY2, acct=ACCT2), sleep=Ticks(0), boot_deadline_s=0.0)
+    w.hang.add("key_info")
+    with capture_logs() as logs:
+        await within(w.check.start())
+    task = w.check._task
+    await within(w.check.stop())
+    assert (w.gate.reason_code, w.built) == (UNAVAILABLE, [(KEY, "1000001")])  # KEY2 never ran
+    assert w.of("aclose") == [("aclose",)] and task is not None and task.cancelled()
+    assert {"event": "key_selfcheck_boot_unfinished", "log_level": "critical"} in logs
+
+
+def test_the_boot_pass_is_bounded_at_sixty_seconds_unless_told_otherwise() -> None:
+    default = inspect.signature(KeySelfCheck).parameters["boot_deadline_s"].default
+    assert default == BOOT_DEADLINE_S == 60.0  # the bound the runbook and 20 §7 state
+
+
+@pytest.mark.parametrize(
+    ("interval_s", "refusal"),
+    [(0.0, "once a minute"), (MIN_INTERVAL_S - 0.1, "once a minute"), (3600.5, "hourly")],
+)
+def test_the_interval_is_at_least_a_minute_and_at_most_an_hour(
+    interval_s: float, refusal: str
+) -> None:
+    with pytest.raises(ValueError, match=refusal):
         World(interval_s=interval_s)
+
+
+async def test_stop_releases_what_the_job_holds_once_its_loop_has_stopped() -> None:
+    w, released = World(target(), sleep=Ticks(0)), list[bool]()
+
+    async def release() -> None:
+        released.append(w.check._task is None)
+
+    svc = AccountsService()
+    svc.attach_key_selfcheck(w.check, release=release)
+    await within(svc.start(cast(AppContext, object())))
+    await within(svc.stop(1.0))
+    assert released == [True]
+
+
+async def test_a_failed_release_is_logged_and_stop_still_completes() -> None:
+    async def release() -> None:
+        raise OSError("pool")
+
+    svc = AccountsService()
+    svc.attach_key_selfcheck(World(target(), sleep=Ticks(0)).check, release=release)
+    await within(svc.start(cast(AppContext, object())))
+    with capture_logs() as logs:
+        await within(svc.stop(1.0))
+    failed = {"event": "key_selfcheck_release_failed", "error": "OSError", "log_level": "warning"}
+    assert failed in logs

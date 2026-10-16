@@ -9,9 +9,9 @@ runtime/per-user layers are owned by M21 `admin`.
 
 Security: `__repr__`/`__str__` never print secret values (redacting `__str__`
 below) — an early instance of M24's redaction-filter requirement. Any field
-whose name matches `(key|secret|token|password|dsn)` (case-insensitive) is a
-`SecretStr` so it can never leak into logs, tracebacks or `repr()` by
-accident.
+whose name matches `(key|secret|token|password|dsn)` (case-insensitive) is
+redacted from `repr()`, and every such field that holds a secret is a
+`SecretStr`, so none can leak into logs, tracebacks or `repr()` by accident.
 """
 
 from __future__ import annotations
@@ -299,7 +299,16 @@ class Settings(BaseSettings):
     # `CV_LOG_BODIES_UNTIL` error rather than silently becoming `None`.
     log_bodies_until: str | None = None
 
-    recv_window_ms: int = 5000
+    # The exchange's receive window for signed calls; the REST client takes (0, 10000] only, so
+    # anything else fails startup instead of leaving every stored key's self-check inconclusive.
+    recv_window_ms: int = Field(default=5000, gt=0, le=10_000)
+    # E27-T03 (#836): the deployment's egress IP, the one address a stored key's whitelist may
+    # hold (SR-E27-04); configuration only, never a request header. Unset while keys are stored,
+    # the key self-check latches order entry off.
+    egress_ip: str | None = None
+    # E27-T03: stored-key self-check cadence. C-12.2 asks for start-up and hourly, so no value
+    # may lengthen it (C-4.14); the floor keeps a typo from flooding the audit log and the venue.
+    key_selfcheck_interval_s: float = Field(default=3600.0, ge=60.0, le=3600.0)
     max_ws_topics_per_conn: int = 64
     heatmap_cadence_ms: int = 100
     book_depth: int = 200
@@ -629,6 +638,19 @@ class Settings(BaseSettings):
         if _FIELD_NAME_RE.fullmatch(name) is None:
             raise ValueError(f"CV_MESH_TRUSTED_PROXY_HEADER {value!r} is not an HTTP header name")
         return name
+
+    @field_validator("egress_ip")
+    @classmethod
+    def _egress_ip_is_one_address(cls, value: str | None) -> str | None:
+        """E27-T03: one IP literal, normalised; blank means unset. A typo fails startup instead
+        of failing every stored key's whitelist check."""
+        text = (value or "").strip()
+        if not text:
+            return None
+        try:
+            return str(ipaddress.ip_address(text))
+        except ValueError:
+            raise ValueError(f"CV_EGRESS_IP {value!r} is not an IP address") from None
 
     @field_validator("mesh_trusted_proxy_address")
     @classmethod
