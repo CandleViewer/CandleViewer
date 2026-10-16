@@ -99,11 +99,15 @@ def is_serialised_origin(entry: str) -> bool:
 
 
 def _keyless_testnet_refusal(
-    switch: str, environment: object, bybit_api_key: object, bybit_api_secret: object
+    switch: str,
+    environment: Environment | None,
+    bybit_api_key: SecretStr | None,
+    bybit_api_secret: SecretStr | None,
 ) -> str | None:
-    """#2097, the #2086 rule for a test or perf switch: why *switch* may not be on, or None on
-    testnet with no exchange key (`CV_BYBIT_API_KEY` and `CV_BYBIT_API_SECRET` both unset).
-    The message names the switch and the rule only, never a value."""
+    """The one rule for every test or perf switch (#2086 `CV_TEST_CLOCK`, #2097
+    `CV_AUTH_PERF_ENABLED`): why *switch* may not be on, or None on testnet with no exchange
+    key (`CV_BYBIT_API_KEY` and `CV_BYBIT_API_SECRET` both unset). The message names the
+    switch and the rule only, never a value."""
     if environment is not Environment.TESTNET:
         return f"{switch} is refused unless CV_ENVIRONMENT=testnet"
     if bybit_api_key is not None or bybit_api_secret is not None:
@@ -400,11 +404,9 @@ class Settings(BaseSettings):
 
     def test_clock_refusal(self) -> str | None:
         """#2086: why the server test clock may not run here, or None on a keyless testnet."""
-        if self.environment is not Environment.TESTNET:
-            return "CV_TEST_CLOCK is refused unless CV_ENVIRONMENT=testnet"
-        if self.bybit_api_key is not None or self.bybit_api_secret is not None:
-            return "CV_TEST_CLOCK is refused while an exchange key (CV_BYBIT_API_*) is configured"
-        return None
+        return _keyless_testnet_refusal(
+            "CV_TEST_CLOCK", self.environment, self.bybit_api_key, self.bybit_api_secret
+        )
 
     @model_validator(mode="after")
     def _refuse_test_clock_outside_keyless_testnet(self) -> Settings:
@@ -464,8 +466,10 @@ class Settings(BaseSettings):
     @classmethod
     def _refuse_auth_perf_outside_keyless_testnet(cls, value: bool, info: ValidationInfo) -> bool:
         """#2097 Q1, the #2086 gate: perf instrumentation never runs in live or demo, or next
-        to an exchange key; startup fails before any module starts. A field validator, so the
-        refusal echoes only this flag, never another field's input (C-12.6)."""
+        to an exchange key; startup fails before any module starts. A field validator, not a
+        model one: `hide_input_in_errors` hides input only from the message, and a model
+        validator's `ValidationError.errors()` would still carry the whole input, the raw
+        `CV_BYBIT_API_KEY` included (C-12.6). `info.data` holds the fields declared above."""
         if not value:
             return value
         refusal = _keyless_testnet_refusal(
