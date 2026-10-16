@@ -771,9 +771,11 @@ export interface paths {
      *     an owner TOTP reset or a recovery sign-in), the response is `200` with
      *     `status: authenticated` and the `cv_refresh` and `__Host-cv_csrf` cookies are set, but
      *     the session is **enrolment-only** (see "Enrolment-only session" above): it may only enrol
-     *     and confirm a TOTP method, and it lives at most 15 minutes. A user with `mfa_required`
-     *     false and no confirmed method keeps getting `501`; C-12.2 makes TOTP mandatory for every
-     *     user, so production never has one.
+     *     and confirm a TOTP method, and it lives at most 15 minutes. Its `auth.session_created`
+     *     audit record carries `enrolment_only: true`, so a sign-in on the password alone stands
+     *     out in the audit log. For a user with `mfa_required` false and no confirmed method the
+     *     login fails closed and mints no session (C-12.2 forbids such a user; see "Enrolment-only
+     *     session").
      *
      *     Failures are deliberately uniform (`unauthenticated`) whether the user is unknown,
      *     the password is wrong, or the account is disabled — no user enumeration.
@@ -816,12 +818,17 @@ export interface paths {
      * Begin enrolment of a new MFA method for the current user
      * @description Returns a TOTP provisioning URI + QR payload, or a WebAuthn creation challenge.
      *     The method stays `pending` until confirmed via `POST /auth/mfa/enroll/confirm`, which
-     *     is also where the recovery codes are issued; this response never carries them.
+     *     is also where the recovery codes are issued; this response never carries them. Each
+     *     call supersedes the user's earlier pending methods: they are revoked, so at most one
+     *     method is pending and only the latest can be confirmed.
      *
      *     Every role may enrol its own method: no permission is needed, and the route takes no
      *     target user (SR-026). An enrolment-only session may call it (see "Enrolment-only
-     *     session"). If the caller's user already has a confirmed MFA method the answer is
-     *     `409 conflict` and nothing changes: voluntary re-enrolment is not specified yet.
+     *     session") with `method: totp` only; any other method answers `422` and nothing changes.
+     *     If the caller's user already has a confirmed MFA method the answer is `409 conflict` and
+     *     nothing changes: voluntary re-enrolment is not specified yet. `Idempotency-Key` is
+     *     ignored: the response carries the TOTP provisioning secret, which is never stored for a
+     *     replay.
      */
     post: operations["authMfaEnroll"];
     delete?: never;
@@ -841,18 +848,25 @@ export interface paths {
     put?: never;
     /**
      * Confirm a pending MFA enrolment and rotate to a full session
-     * @description Activates the pending method once its code verifies. In the same step the server revokes
+     * @description Activates the pending method once its code verifies. Only the user's pending method can
+     *     be confirmed: the one their latest `POST /auth/mfa/enroll` created, never confirmed and
+     *     not revoked. Any other `method_id`, such as a method that a recovery sign-in or an owner
+     *     reset revoked, answers `422` and nothing changes. In the same step the server revokes
      *     every other TOTP method of the user and replaces the user's recovery codes with 10 new
      *     ones: the old method and the old codes stop working at the instant the new ones start
-     *     (SR-022). It then rotates the session (SR-013): the calling session, enrolment-only
-     *     until now (see "Enrolment-only session"), is revoked, so its access and refresh tokens
-     *     stop working at once, and a full session replaces it with the lifetimes of a
-     *     `POST /auth/mfa/verify` sign-in. The `200` carries the new access token in `tokens`
-     *     (the refresh token travels only in the cookie, so `refresh_token` is null), the user
-     *     (`mfa_enabled` is now true), the activated method and the 10 recovery codes, which are
-     *     shown exactly once. Audited (C-2.9): `auth.mfa_enrolled`,
-     *     `auth.recovery_codes_regenerated`, and the rotation as `auth.session_revoked` and
-     *     `auth.session_created`.
+     *     (SR-022). It also revokes every other session of the user (revoke-all on a TOTP change,
+     *     ADR-0010 decision 2), so no session minted on the password alone becomes a full one;
+     *     their sockets close as for any revoked session (`23-ws-protocol.md` section 4.3). It then
+     *     rotates the session (SR-013): the calling session, enrolment-only until now (see
+     *     "Enrolment-only session"), is revoked, so its access and refresh tokens stop working at
+     *     once, and a full session replaces it with the lifetimes of a `POST /auth/mfa/verify`
+     *     sign-in. The `200` sets the rotated `cv_refresh` and `__Host-cv_csrf` cookies, bound to
+     *     the new session (SR-041). It carries the new access token in `tokens` (the refresh token
+     *     travels only in the cookie, so `refresh_token` is null), the user (`mfa_enabled` is now
+     *     true), the activated method and the 10 recovery codes, which are shown exactly once.
+     *     Audited (C-2.9): `auth.mfa_enrolled`, `auth.recovery_codes_regenerated`, one
+     *     `auth.session_revoked` per revoked session, and the rotation as `auth.session_revoked`
+     *     and `auth.session_created`.
      *
      *     Every role may confirm its own enrolment: no permission is needed, and the route takes
      *     no target user (SR-026). If the caller's user already has a confirmed MFA method the
@@ -899,7 +913,7 @@ export interface paths {
     put?: never;
     /**
      * Complete an MFA challenge with a single-use recovery code
-     * @description Completes the `POST /auth/login` challenge with a recovery code instead of the second factor. Consumes one `recovery_codes` row. Consumption is audited and raises a `security.mfa_recovery_used` system event. Every recovery sign-in forces TOTP re-enrolment, however many codes remain: the user is left without a confirmed MFA method, and the `200` mints an **enrolment-only** session (see "Enrolment-only session") with the `cv_refresh` and `__Host-cv_csrf` cookies. That session may only enrol and confirm a new TOTP method; the confirmation issues 10 new recovery codes and invalidates what is left of the old set. A user with `mfa_required` false gets `501` and nothing is consumed (production has no such user, C-12.2). Runs before any session exists, like `POST /auth/mfa/verify`.
+     * @description Completes the `POST /auth/login` challenge with a recovery code instead of the second factor. Consumes one `recovery_codes` row. Consumption is audited and raises a `security.mfa_recovery_used` system event. Every recovery sign-in forces TOTP re-enrolment, however many codes remain. It revokes every MFA method of the user, terminally, so no old method can be confirmed again, and every other session of the user (revoke-all on a TOTP change, ADR-0010 decision 2; each audited as `auth.session_revoked`, and their sockets close). The `200` then mints an **enrolment-only** session (see "Enrolment-only session") with the `cv_refresh` and `__Host-cv_csrf` cookies. That session may only enrol and confirm a new TOTP method; the confirmation issues 10 new recovery codes and invalidates what is left of the old set. For a user with `mfa_required` false the call fails closed: no session is minted and nothing is consumed (C-12.2 forbids such a user). `Idempotency-Key` is ignored, as on `POST /auth/mfa/verify`: the response holds tokens, which are never stored for a replay. Runs before any session exists, like `POST /auth/mfa/verify`.
      */
     post: operations["authMfaRecovery"];
     delete?: never;
@@ -7774,7 +7788,7 @@ export interface components {
       access_token: string;
       /** @description Access-token lifetime in seconds (600). */
       expires_in: number;
-      /** @description Refresh-token lifetime in seconds (2592000). */
+      /** @description Refresh-token lifetime in seconds (2592000). For an enrolment-only session it counts down to that session's absolute expiry, at most 900 (see "Enrolment-only session"). */
       refresh_expires_in?: number;
       /** @description Returned only to non-cookie clients that set `cookie_auth:false` on login. */
       refresh_token?: string | null;
@@ -7993,9 +8007,9 @@ export interface components {
       id: string;
       /** Format: date-time */
       last_login_at?: string | null;
-      /** @description The user has at least one confirmed, unrevoked MFA method. */
+      /** @description The user has at least one confirmed, unrevoked MFA method. Always present in `AuthenticatedResponse` and `SessionInfo`. */
       mfa_enabled?: boolean;
-      /** @description MFA is mandatory for this user (C-12.2: every user in production). With `mfa_enabled` false, every session of the user is enrolment-only (see "Enrolment-only session"). */
+      /** @description MFA is mandatory for this user; C-12.2 requires it for every user. Always present in `AuthenticatedResponse` and `SessionInfo`. While `mfa_enabled` is false, every session of the user is enrolment-only (see "Enrolment-only session"): clients test exactly `mfa_required === true && mfa_enabled === false`. */
       mfa_required?: boolean;
       roles: components["schemas"]["RoleName"][];
       status: components["schemas"]["UserStatus"];
@@ -9701,6 +9715,7 @@ export interface operations {
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
+      422: components["responses"]["UnprocessableEntity"];
     };
   };
   authMfaEnrollConfirm: {
@@ -9891,7 +9906,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description New token bundle issued. */
+      /** @description New token bundle issued. An enrolment-only session's successor keeps the session's absolute expiry, so refresh never extends it (see "Enrolment-only session"). */
       200: {
         headers: {
           /** @description Rotated `cv_refresh` cookie and a rotated `__Host-cv_csrf` cookie bound to the new session (SR-041) */
@@ -9917,7 +9932,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Current session. */
+      /** @description Current session. For an enrolment-only session (see "Enrolment-only session") `permissions`, `account_scope` and `allowed_environments` are empty and `kill_switch` is omitted: the session may use nothing they describe. */
       200: {
         headers: {
           /** @description `__Host-cv_csrf` re-issued for the current session when absent or not verifying (SR-041 recovery path); otherwise absent. */
