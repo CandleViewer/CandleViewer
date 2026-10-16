@@ -32,16 +32,21 @@ _REDACT_NAME_RE = re.compile(r"(key|secret|token|password|dsn)", re.IGNORECASE)
 #: QuestDB PGWire default port, for a `questdb_pg` `host[:port]` that omits the port.
 QUESTDB_PG_DEFAULT_PORT = 8812
 
-# #2565: two terms of the planned-shutdown budget are code constants, not settings. They live in
-# M1 because `Settings` sums them with the configured terms (`_refuse_unfittable_stop_budget`) and
-# M1 may not import `ws` or `app`; the code that spends them imports them from here, so the check
-# and the shutdown share one value.
+# #2565: three timings of the planned shutdown are code constants, not settings. They live in M1
+# because `Settings` checks them against the configured terms (`_refuse_unfittable_stop_budget` sums
+# two, `_refuse_a_drain_that_cuts_off_the_close_audit` bounds the drain below by the third) and M1
+# may not import `ws` or `app`; the code that spends them imports them from here, so the check and
+# the shutdown share one value.
 #: The grace `Supervisor.stop_all` gives each module's `stop()`: one module's allowance, not the
 #: sum over modules (each stop is bounded at this plus one second).
 TEARDOWN_BUDGET_S: Final = 15.0
 #: How long a closing WS connection, and `WsRuntime.stop`, wait for `bye` and the close frame to
 #: flush.
 CLOSE_FLUSH_TIMEOUT_S: Final = 2.0
+#: Upper bound on writing a closing WS connection's `ws.connection.closed` row; the teardown never
+#: waits longer on the audit sink. uvicorn's drain may not be shorter (a floor, not a budget term),
+#: so a close that stays within its bounds writes its row before the drain can cancel its handler.
+CLOSE_AUDIT_TIMEOUT_S: Final = 2.0
 
 
 class Environment(StrEnum):
@@ -318,7 +323,7 @@ class Settings(BaseSettings):
     # #2565: the api container's SIGTERM -> SIGKILL budget (`CV_API_STOP_BUDGET_S`; the compose
     # files set `stop_grace_period` to the same value) and the bound on uvicorn's drain of open
     # connections (`timeout_graceful_shutdown`). With the WS grace they are the terms
-    # `_refuse_unfittable_stop_budget` sums.
+    # `_refuse_unfittable_stop_budget` sums. The drain also has a floor, `CLOSE_AUDIT_TIMEOUT_S`.
     api_stop_budget_s: int = Field(default=30, ge=10, le=120)
     uvicorn_drain_timeout_s: int = Field(default=5, ge=1, le=30)
     # E12 #2031: run the BarBuilderSet + BarWriter in the app (C-4.13: off by default; removal
@@ -487,6 +492,24 @@ class Settings(BaseSettings):
             raise ValueError("CV_TEST_CLOCK_FILE must not be a symlink")
         if os.path.realpath(path) != str(path):
             raise ValueError("CV_TEST_CLOCK_FILE must not be under a symlinked directory")
+        return value
+
+    @field_validator("uvicorn_drain_timeout_s")
+    @classmethod
+    def _refuse_a_drain_that_cuts_off_the_close_audit(cls, value: int) -> int:
+        """#2565: refuse a uvicorn drain shorter than a closing WS socket's audit write. When the
+        drain ends uvicorn cancels what is still running and sends the lifespan `shutdown` without
+        awaiting the cancelled handlers. A socket writes its `ws.connection.closed` row last,
+        bounded by `CLOSE_AUDIT_TIMEOUT_S`, and `WsRuntime.stop()` has already waited the flush
+        before the drain starts, so with the drain at least that long a close within its bounds
+        writes its row before anything is cancelled. Names and numbers only in the message."""
+        if value < CLOSE_AUDIT_TIMEOUT_S:
+            raise ValueError(
+                f"CV_UVICORN_DRAIN_TIMEOUT_S={value} is shorter than the "
+                f"{CLOSE_AUDIT_TIMEOUT_S:g} s bound on a closing WS socket's audit write "
+                "(CLOSE_AUDIT_TIMEOUT_S): uvicorn would cancel a handler that is still writing "
+                "its ws.connection.closed row"
+            )
         return value
 
     @model_validator(mode="after")

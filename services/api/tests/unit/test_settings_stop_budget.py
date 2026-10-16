@@ -20,7 +20,13 @@ from pydantic import SecretStr, ValidationError
 
 from candleviewer import ws_wiring
 from candleviewer.app import Supervisor
-from candleviewer.settings import CLOSE_FLUSH_TIMEOUT_S, TEARDOWN_BUDGET_S, Settings, get_settings
+from candleviewer.settings import (
+    CLOSE_AUDIT_TIMEOUT_S,
+    CLOSE_FLUSH_TIMEOUT_S,
+    TEARDOWN_BUDGET_S,
+    Settings,
+    get_settings,
+)
 from candleviewer.ws import gateway
 
 _COMPOSE_DIR = Path(__file__).resolve().parents[4] / "infra" / "compose"
@@ -84,6 +90,45 @@ def test_the_drain_timeout_is_a_term_of_the_sum() -> None:
     assert Settings(uvicorn_drain_timeout_s=30, api_stop_budget_s=60).uvicorn_drain_timeout_s == 30
 
 
+# --- the drain floor: a close's audit write is never cut off --------------------------------
+# uvicorn cancels what is still running when its drain ends and sends the lifespan `shutdown`
+# without awaiting the cancelled handlers. A closing socket writes its `ws.connection.closed` row
+# last, bounded by CLOSE_AUDIT_TIMEOUT_S, so the drain may not be shorter than that.
+
+
+def test_a_drain_shorter_than_the_close_audit_write_is_refused_and_the_message_names_both() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(uvicorn_drain_timeout_s=1)
+    (error,) = exc_info.value.errors()
+    assert error["loc"] == ("uvicorn_drain_timeout_s",)
+    for term in (
+        "CV_UVICORN_DRAIN_TIMEOUT_S=1",
+        "CLOSE_AUDIT_TIMEOUT_S",
+        "2 s",
+        "ws.connection.closed",
+    ):
+        assert term in error["msg"]
+
+
+@pytest.mark.parametrize("drain_s", [2, 3, 5, 30])
+def test_a_drain_at_or_above_the_close_audit_write_is_accepted(drain_s: int) -> None:
+    s = Settings(uvicorn_drain_timeout_s=drain_s, api_stop_budget_s=120)
+    assert s.uvicorn_drain_timeout_s == drain_s
+    assert drain_s >= CLOSE_AUDIT_TIMEOUT_S
+
+
+def test_the_default_drain_covers_the_close_audit_write() -> None:
+    assert Settings().uvicorn_drain_timeout_s >= CLOSE_AUDIT_TIMEOUT_S
+
+
+def test_a_drain_below_the_floor_is_refused_from_the_environment_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CV_UVICORN_DRAIN_TIMEOUT_S", "1")
+    with pytest.raises(ValidationError, match="CLOSE_AUDIT_TIMEOUT_S"):
+        get_settings()
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -142,6 +187,13 @@ def test_the_supervisors_per_module_grace_is_the_teardown_term() -> None:
 @pytest.mark.parametrize("module", [gateway, ws_wiring], ids=lambda m: m.__name__)
 def test_the_ws_close_flush_is_the_term_the_budget_sums(module: Any) -> None:
     assert vars(module)["CLOSE_FLUSH_TIMEOUT_S"] == CLOSE_FLUSH_TIMEOUT_S == 2.0
+
+
+def test_the_ws_close_audit_bound_is_the_floor_the_gateway_spends() -> None:
+    """One value for the check and the teardown. The gateway reads it as a module global when it
+    writes the close row (`test_lifecycle_socket` patches it there), so a literal in its place
+    would break that test."""
+    assert vars(gateway)["CLOSE_AUDIT_TIMEOUT_S"] == CLOSE_AUDIT_TIMEOUT_S == 2.0
 
 
 # --- compose: `stop_grace_period` carries the budget ---------------------------------------

@@ -2,8 +2,9 @@
 
 Without `timeout_graceful_shutdown`, `Server.shutdown` waits for every open request to finish. One
 that never does keeps the lifespan `shutdown` from running until the container runtime SIGKILLs
-the process. A real loopback server, one request that never answers, a drain timeout of 1 s.
-No network beyond 127.0.0.1; the wait is bounded by `asyncio.timeout`.
+the process. A real loopback server, one request that never answers, the shortest drain `Settings`
+accepts (its floor, `CLOSE_AUDIT_TIMEOUT_S`, 2 s). No network beyond 127.0.0.1; the wait is bounded
+by `asyncio.timeout`.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import uvicorn
 from uvicorn.lifespan.off import LifespanOff
 
 from candleviewer.server import PlannedShutdownServer, uvicorn_kwargs
-from candleviewer.settings import Settings
+from candleviewer.settings import CLOSE_AUDIT_TIMEOUT_S, Settings
 
 _DEADLINE_S = 10.0
 
@@ -42,7 +43,7 @@ async def test_a_hung_request_cannot_keep_the_lifespan_shutdown_from_running() -
             cancelled.set()
             raise
 
-    kwargs = uvicorn_kwargs(Settings(uvicorn_drain_timeout_s=1))
+    kwargs = uvicorn_kwargs(Settings(uvicorn_drain_timeout_s=int(CLOSE_AUDIT_TIMEOUT_S)))
     del kwargs["host"], kwargs["port"]  # the pre-bound loopback socket below
     config = uvicorn.Config(app, lifespan="off", log_level="critical", **kwargs)
     config.load()
