@@ -1606,31 +1606,6 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _P,
         "E43",
     ),
-    # --- User lifecycle (E42-T04, #965) ---------------------------------------
-    _s(
-        "cv_user_lifecycle_total",
-        "counter",
-        "calls",
-        ("action", "result"),
-        "User lifecycle calls by action and result (refusals and failures included).",
-        "none yet (diagnostic; refusals are audited)",
-        _L,
-        "E42",
-        max_series=64,
-        exported=True,
-    ),
-    _s(
-        "cv_user_lifecycle_steps_total",
-        "counter",
-        "steps",
-        ("step", "outcome"),
-        "User lifecycle cascade steps after the transaction, by outcome (R7).",
-        'none yet (R7 asks to alert on outcome="failed"; the rule is a follow-up)',
-        _L,
-        "E42",
-        max_series=32,
-        exported=True,
-    ),
     # --- Latency budget (E04-T06, US-OBS-002) -------------------------------
     _s(
         "ingest_stage_seconds",
