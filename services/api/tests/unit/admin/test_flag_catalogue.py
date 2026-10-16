@@ -3,7 +3,7 @@ safety-relevant ones fail closed to the restrictive value."""
 
 from __future__ import annotations
 
-from candleviewer.admin.flags import Visibility, default_registry
+from candleviewer.admin.flags import default_registry
 
 _B, _ALL, _OWN = "boolean", "all_roles", "owner_only"
 #: 10.7 as `(key, kind, default, is_killswitch, visibility)`. `engine.fallback_lightweight_charts`
@@ -32,18 +32,13 @@ def test_the_catalogue_is_10_7_row_for_row() -> None:
     r = default_registry()
     rows = {(k, s.kind.value, s.default, s.is_killswitch, s.visibility.value) for k, s in r.items()}
     assert rows == _SECTION_10_7
-    owner_only = {"killswitch.ingestion", "storage.cold_tier", "recorder.auto_record"}
-    owner_only.add("maintenance.keep_recorder")
-    assert {k for k, s in r.items() if s.visibility is Visibility.OWNER_ONLY} == owner_only
-    kill_switches = {"killswitch.ingestion", "killswitch.order_entry", "maintenance.mode"}
-    assert {k for k, s in r.items() if s.is_killswitch} == kill_switches
 
 
 def test_safety_relevant_flags_fail_closed() -> None:
-    """The live gate and every kill switch: the only flags without overrides (D2a), each with the
-    value it takes while the store cannot be read; only the live gate needs evidence."""
+    """While the store cannot be read every flag takes its default, but the two kill switches that
+    stop trading are engaged; only the live gate needs evidence."""
     r = default_registry()
-    expected = {"trading.live_enabled": False, "maintenance.mode": True}
-    expected |= {"killswitch.order_entry": True, "killswitch.ingestion": False}
-    assert {k: s.fail_closed_value for k, s in r.items() if not s.overridable} == expected
+    engaged = {"maintenance.mode": True, "killswitch.order_entry": True}
+    fail_closed = {k: s.fail_closed_value for k, s in r.items()}
+    assert fail_closed == {k: s.default for k, s in r.items()} | engaged
     assert [k for k, s in r.items() if s.requires_evidence] == ["trading.live_enabled"]

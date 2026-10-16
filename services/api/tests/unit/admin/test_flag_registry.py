@@ -66,7 +66,7 @@ def test_the_denied_category_truth_table() -> None:
         except UnsafeFlagDefinitionError as exc:
             denied = [str(m.name).lower() for m in chosen if m.name not in _ALLOWED]
             assert not gates or (denied and "C-4.14" in str(exc) and "'ui.sneaky'" in str(exc))
-            assert all(name in str(exc) for name in denied)
+            assert all(name in str(exc) for name in denied), gates
         else:
             assert chosen and all(m.name in _ALLOWED for m in chosen), gates
 
@@ -131,6 +131,10 @@ def test_duplicate_keys_are_refused() -> None:
         (FlagKind.PERCENTAGE, -1, False),
         (FlagKind.VARIANT, "a", True),
         (FlagKind.VARIANT, "z", False),
+        (_B, None, False),
+        (FlagKind.PERCENTAGE, None, False),
+        (FlagKind.PERCENTAGE, 50.0, False),
+        (FlagKind.VARIANT, None, False),
     ],
 )
 def test_value_matches_the_kind_strictly(kind: FlagKind, value: object, ok: bool) -> None:

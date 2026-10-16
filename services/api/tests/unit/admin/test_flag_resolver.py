@@ -87,7 +87,7 @@ def test_role_overrides_rank_owner_then_manager_then_viewer(roles: set[str], exp
 @given(st.uuids(), st.integers(0, 100), st.integers(0, 100))
 def test_rollout_is_monotonic_in_the_percentage(user: UUID, a: int, b: int) -> None:
     in_low, in_high = (resolve(_PCT, StoredFlag(p), user_id=user) for p in sorted((a, b)))
-    assert in_low <= in_high
+    assert in_high or not in_low  # in the lower rollout implies in the higher one
 
 
 @given(
@@ -103,7 +103,8 @@ def test_resolution_is_total_and_of_the_flags_kind(
     assert value in spec.variants if spec.kind is FlagKind.VARIANT else isinstance(value, bool)
 
 
-@given(st.sampled_from(_SAFETY), st.booleans(), _USERS, _BY_ROLE)
+@pytest.mark.parametrize("spec", _SAFETY, ids=lambda spec: spec.key)
+@given(st.booleans(), _USERS, _BY_ROLE)
 def test_safety_flags_ignore_every_override_and_fail_closed(
     spec: FlagSpec, value: bool, users: dict[UUID, FlagValue], roles: dict[str, FlagValue]
 ) -> None:
