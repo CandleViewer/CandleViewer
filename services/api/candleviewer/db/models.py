@@ -1828,7 +1828,7 @@ backups = Table(
 
 #: OMS core (E29-T01, revision 0029_oms_core): Sec.1.2 enums and Sec.3.3.4-3.3.7. Both
 #: `trade_group_leg_id` columns carry no FK until E28-T01 (#905) creates `trade_group_legs`; the
-#: append-only triggers and the SR-E29-05 grants are asserted by the 0029 tests, not autogenerate.
+#: append-only triggers and the C-5.7 revocations are asserted by the 0029 tests, not autogenerate.
 ORDER_INTENTS = (
     "entry", "stop_loss", "take_profit", "scale_in", "scale_out", "flatten", "reverse",
     "algo_child",
@@ -1848,7 +1848,7 @@ order_event_kind = ENUM(
     *ORDER_EVENT_KINDS, name="order_event_kind", metadata=metadata, create_type=False
 )
 
-#: C-5.9 / Sec.12 class P1 on every numeric(38,18) column of orders, executions and positions;
+#: C-5.9 / Sec.12 class P1 on every numeric(38,18) column of the OMS tables (all but order_events);
 #: byte-identical to the 0029 COMMENT statements (`alembic check` diffs column comments).
 OMS_MONEY_COMMENT = (
     "PII: financial personal data (21 Sec.12, class P1); never sent to third parties"
@@ -1914,6 +1914,8 @@ orders = Table(
         "trigger_by IS NULL OR trigger_by IN ('LastPrice','MarkPrice','IndexPrice')",
         name="ord_trigby",
     ),
+    CheckConstraint("take_profit IS NULL OR take_profit > 0", name="ord_tp_px"),
+    CheckConstraint("stop_loss IS NULL OR stop_loss > 0", name="ord_sl_px"),
     CheckConstraint("tpsl_mode IN ('Full','Partial')", name="ord_tpslmode"),
     CheckConstraint("submit_attempts BETWEEN 0 AND 10", name="ord_attempts"),
     CheckConstraint(
@@ -2093,13 +2095,13 @@ position_snapshots = Table(
     ),
     Column("symbol", symbol_code, nullable=False),
     Column("position_idx", SmallInteger, nullable=False, server_default=text("0")),
-    Column("size", _MONEY, nullable=False),
-    Column("avg_price", _MONEY),
-    Column("mark_price", _MONEY),
-    Column("unrealised_pnl", _MONEY),
-    Column("cum_realised_pnl", _MONEY),
-    Column("liq_price", _MONEY),
-    Column("equity_usd", _MONEY),
+    Column("size", _MONEY, nullable=False, comment=_P1),
+    Column("avg_price", _MONEY, comment=_P1),
+    Column("mark_price", _MONEY, comment=_P1),
+    Column("unrealised_pnl", _MONEY, comment=_P1),
+    Column("cum_realised_pnl", _MONEY, comment=_P1),
+    Column("liq_price", _MONEY, comment=_P1),
+    Column("equity_usd", _MONEY, comment=_P1),
     Column("reason", Text, nullable=False),
     Column("snap_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     CheckConstraint(
