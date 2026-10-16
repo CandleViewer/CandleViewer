@@ -292,8 +292,13 @@ def test_unlock_restores_no_step_up_elevation(spec: dict[str, Any]) -> None:
     assert "`403 step_up_required`" in _flat(op["description"])
     section = _idle_lock_section(spec)
     assert "Step-up elevation never survives the lock (#2290 ruling, rule 4d" in section
+    # The ruling's "lock clears elevation": grants are void from the lock itself, so no
+    # password-only unlock can carry one, whenever the row is physically cleaned.
+    assert "Step-up grants are cleared at lock:" in section
+    assert "A password-only `POST /auth/unlock` therefore never carries elevation" in section
     # Enforced on the session row by synchronous code, not only by B16 (C-2.21).
-    row = "clears them from the session row no later than the write that lifts the lock"
+    assert "The synchronous step-up check enforces this from the session row" in section
+    row = "deletes the grants from the row no later than the write that lifts the lock"
     assert row in section and "C-2.21" in section
 
 

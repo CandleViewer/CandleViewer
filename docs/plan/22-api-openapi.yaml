@@ -119,12 +119,15 @@ info:
     session, clears both cookies and writes `auth.logout` and `auth.session_revoked`.
 
     Step-up elevation never survives the lock (#2290 ruling, rule 4d: a one-factor unlock must
-    never inherit a two-factor grace). The lock voids every grace window, one-shot grant and
-    pending challenge of the session: while locked `GET /auth/session` reports
-    `step_up_expires_at: null`, and unlock clears them from the session row no later than the
-    write that lifts the lock (C-2.21: the synchronous step-up check enforces this; B16 only
-    records it). After an unlock every dangerous action answers `403 step_up_required` until a
-    fresh password + TOTP `POST /auth/step-up`. A read-only downgrade survives lock and unlock.
+    never inherit a two-factor grace). Step-up grants are cleared at lock: from the moment the
+    session locks, every grace window, one-shot grant and pending challenge of the session is
+    void and authorizes nothing, and while locked `GET /auth/session` reports
+    `step_up_expires_at: null`. The synchronous step-up check enforces this from the session
+    row, not B16 alone (C-2.21: B16 only records it), and the server deletes the grants from the
+    row no later than the write that lifts the lock. A password-only `POST /auth/unlock`
+    therefore never carries elevation: after an unlock every dangerous action answers
+    `403 step_up_required` until a fresh password + TOTP `POST /auth/step-up`. A read-only
+    downgrade survives lock and unlock.
 
     Activity is explicit. Only `POST /auth/session/extend` and a successful `POST /auth/unlock`
     record activity (`REQUEST` on B16 re-stamps `last_seen_at`), so only they move
