@@ -387,7 +387,7 @@ def test_upstream_reconnect_and_replay_seek_reasons() -> None:
     hub = SequencingHub()
     conn = Conn(src)
     hub.register(conn.authz, conn.emitter)
-    _, live = conn.sub("book.BTCUSDT.50")
+    _, _live = conn.sub("book.BTCUSDT.50")
     _, _replay = conn.sub("book.BTCUSDT.50", replay_session_id=RS)
     conn.take()
     assert hub.upstream_reconnect("BTCUSDT") == 1
@@ -395,13 +395,18 @@ def test_upstream_reconnect_and_replay_seek_reasons() -> None:
     a, b = conn.take()
     assert (a["meta"]["reason"], "rs" in a) == ("upstream_reconnect", False)
     assert (b["meta"]["reason"], b["rs"]) == ("replay_seek", RS)
-    assert hub.backpressure(conn.authz, live.ch) == 2  # live and replay share the ch
-    assert [f["meta"]["reason"] for f in conn.take()] == ["backpressure", "backpressure"]
     with pytest.raises(ValueError, match="unknown snap reason"):
         hub.resnapshot(lambda s: True, "nope")
     hub.unregister(conn.authz)
-    assert hub.backpressure(conn.authz, live.ch) == 0 and len(hub) == 0
+    assert len(hub) == 0
     assert set(SNAP_REASONS) >= {"initial", "client_resync"}
+
+
+def test_hub_has_no_backpressure_trigger() -> None:
+    """#2830: the hub's `backpressure` trigger matched subscriptions by equality, so it could
+    re-snapshot another connection's equal one. It is retired, not fixed: the overflow ladder's
+    `drain` (`ws/outbound.py`) is the only sender of `backpressure` snapshots."""
+    assert not hasattr(SequencingHub, "backpressure")
 
 
 # -- Scenario: large snapshots are chunked, not truncated --------------------------------------
