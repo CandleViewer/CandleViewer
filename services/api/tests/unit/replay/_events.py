@@ -2,7 +2,8 @@
 
 Time is given as integer microsecond offsets from `T0` (2026-10-01 00:00 UTC) so tests read as
 arithmetic on the replay window; every builder returns the storage-side `RecordedEvent` the
-in-memory tiers serve.
+in-memory tiers serve. The harness tiers are `BoundedTier`s: a merge that stops making
+progress fails the test after `MAX_READS` reads instead of hanging it.
 """
 
 from __future__ import annotations
@@ -12,11 +13,11 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from candleviewer.replay import ReplayItem, ReplayRequest, ReplayTiers, SourceTier
-from candleviewer.replay.merge import RecordedMerge
+from candleviewer.replay import ReplayError, ReplayItem, ReplayRequest, ReplayTiers, SourceTier
+from candleviewer.replay.merge import DEFAULT_MAX_WINDOW_US, RecordedMerge
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import (
-    ArchiveCoverage,
+    ManifestCoverage,
     RecordedBookDelta,
     RecordedBookSnapshot,
     RecordedEvent,
@@ -26,16 +27,18 @@ from candleviewer.storage.repositories.recorded import (
 )
 from candleviewer.storage.testing import (
     InMemoryRecordedTier,
-    StaticArchiveCoverage,
     StaticGapReader,
+    StaticManifestCoverage,
 )
 
 SYM = "BTCUSDT"
 EPOCH = datetime(2026, 10, 1, tzinfo=UTC)
 T0 = (EPOCH - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
 SECOND = 1_000_000
-#: Large enough that no default read is ever capped.
+#: Large enough that no default read is ever capped by the budget.
 ROOMY = 1 << 30
+#: Reads after which a `BoundedTier` declares the merge stuck.
+MAX_READS = 2_000
 
 
 def at(offset_us: int) -> datetime:
@@ -68,12 +71,18 @@ def delta(
 
 
 def snapshot(
-    offset_us: int, *, update_id: int = 1, depth: int = 200, symbol: str = SYM
+    offset_us: int,
+    *,
+    update_id: int = 1,
+    cross_seq: int | None = None,
+    depth: int = 200,
+    symbol: str = SYM,
 ) -> RecordedEvent:
     level = (Decimal("100"), Decimal("1"))
-    payload = RecordedBookSnapshot(depth, update_id, None, (level,), (level,))
-    stream = StreamKind.ORDERBOOK_SNAPSHOT
-    return RecordedEvent(T0 + offset_us, update_id, symbol, stream, (update_id, depth, -1), payload)
+    payload = RecordedBookSnapshot(depth, update_id, cross_seq, (level,), (level,))
+    seq = update_id if cross_seq is None else cross_seq
+    stream, key = StreamKind.ORDERBOOK_SNAPSHOT, (update_id, depth, -1)
+    return RecordedEvent(T0 + offset_us, seq, symbol, stream, key, payload)
 
 
 def ticker(offset_us: int, *, symbol: str = SYM) -> RecordedEvent:
@@ -102,9 +111,29 @@ def request(
     )
 
 
+class BoundedTier(InMemoryRecordedTier):
+    """An in-memory tier that records every read's `[lo, hi)` (offsets from `T0`) and `limit`,
+    and fails the test once a merge has read `max_reads` times without finishing."""
+
+    def __init__(self, events: Iterable[RecordedEvent] = (), *, max_reads: int = MAX_READS):
+        super().__init__(events)
+        self.max_reads = max_reads
+        self.windows: list[tuple[int, int]] = []
+        self.limits: list[int] = []
+
+    async def read(
+        self, symbol: str, stream: StreamKind, rng: TimeRange, *, depth: int, limit: int
+    ) -> list[RecordedEvent]:
+        if self.reads >= self.max_reads:
+            raise AssertionError(f"the merge did not finish within {self.max_reads} reads")
+        self.windows.append((rng.start_us - T0, rng.end_us - T0))
+        self.limits.append(limit)
+        return await super().read(symbol, stream, rng, depth=depth, limit=limit)
+
+
 class Harness:
-    """In-memory tiers plus a request; the tiers stay inspectable after a read. Nothing is
-    archived unless `archived` says so, so `auto` reads QuestDB (`hot`) by default."""
+    """Bounded in-memory tiers plus a request; the tiers stay inspectable after a read. Nothing
+    is archived unless `archived` says so, so `auto` reads QuestDB (`hot`) by default."""
 
     def __init__(
         self,
@@ -114,9 +143,9 @@ class Harness:
         archived: bool = False,
         req: ReplayRequest | None = None,
     ) -> None:
-        self.cold = InMemoryRecordedTier(cold)
-        self.hot = InMemoryRecordedTier(hot)
-        self.coverage = StaticArchiveCoverage()
+        self.cold = BoundedTier(cold)
+        self.hot = BoundedTier(hot)
+        self.coverage = StaticManifestCoverage()
         self.gaps = StaticGapReader()
         self.tiers = ReplayTiers(
             hot=self.hot, cold=self.cold, coverage=self.coverage, gaps=self.gaps
@@ -140,7 +169,7 @@ class Harness:
         *,
         hot: RecordedStreamReader | None = None,
         cold: RecordedStreamReader | None = None,
-        coverage: ArchiveCoverage | None = None,
+        coverage: ManifestCoverage | None = None,
     ) -> Harness:
         self.tiers = ReplayTiers(
             hot=hot or self.hot,
@@ -151,21 +180,45 @@ class Harness:
         return self
 
     def merge(
-        self, *, budget_bytes: int = ROOMY, window_us: int = 30 * SECOND, timeout_s: float = 5.0
+        self,
+        *,
+        budget_bytes: int = ROOMY,
+        window_us: int = 30 * SECOND,
+        max_window_us: int = DEFAULT_MAX_WINDOW_US,
+        timeout_s: float = 5.0,
     ) -> RecordedMerge:
         return RecordedMerge(
             self.req,
             self.tiers,
             budget_bytes=budget_bytes,
             window_us=window_us,
+            max_window_us=max_window_us,
             io_timeout_s=timeout_s,
         )
 
     async def read_all(
-        self, *, batch: int = 64, budget_bytes: int = ROOMY, window_us: int = 30 * SECOND
+        self,
+        *,
+        batch: int = 64,
+        budget_bytes: int = ROOMY,
+        window_us: int = 30 * SECOND,
+        max_window_us: int = DEFAULT_MAX_WINDOW_US,
     ) -> list[ReplayItem]:
-        merge = self.merge(budget_bytes=budget_bytes, window_us=window_us)
+        merge = self.merge(
+            budget_bytes=budget_bytes, window_us=window_us, max_window_us=max_window_us
+        )
         return [item async for b in merge.batches(max_events=batch, max_bytes=ROOMY) for item in b]
+
+
+async def drain(merge: RecordedMerge, *, batch: int) -> tuple[list[ReplayItem], ReplayError | None]:
+    """Every item the merge delivered before it ended, and the replay error that ended it."""
+    delivered: list[ReplayItem] = []
+    try:
+        async for items in merge.batches(max_events=batch, max_bytes=ROOMY):
+            delivered.extend(items)
+    except ReplayError as exc:
+        return delivered, exc
+    return delivered, None
 
 
 def digest(items: Iterable[ReplayItem]) -> str:

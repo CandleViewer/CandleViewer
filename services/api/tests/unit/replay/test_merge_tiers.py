@@ -17,8 +17,17 @@ from candleviewer.replay import (
 )
 from candleviewer.storage.models import StreamKind, TimeRange
 from candleviewer.storage.repositories.recorded import RecordedEvent
-from candleviewer.storage.testing import StaticArchiveCoverage
-from tests.unit.replay._events import SECOND, T0, Harness, digest, request, ticker, trade
+from candleviewer.storage.testing import StaticManifestCoverage
+from tests.unit.replay._events import (
+    SECOND,
+    T0,
+    Harness,
+    digest,
+    drain,
+    request,
+    ticker,
+    trade,
+)
 
 
 def ids(items: Sequence[ReplayItem]) -> list[str]:
@@ -72,7 +81,7 @@ async def test_streams_archived_unevenly_are_refused_naming_the_first_mismatch()
     assert (raised.value.stream, raised.value.archived) == (StreamKind.TICKERS, ())
 
 
-class _RolledOffDuringRead(StaticArchiveCoverage):
+class _RolledOffDuringRead(StaticManifestCoverage):
     """A roll-off manifests the whole range while QuestDB serves the session's second read."""
 
     async def archived(self, symbol: str, stream: StreamKind, rng: TimeRange) -> list[TimeRange]:
@@ -82,12 +91,14 @@ class _RolledOffDuringRead(StaticArchiveCoverage):
 
 
 async def test_a_span_archived_mid_session_ends_the_questdb_replay_with_a_typed_error() -> None:
+    """After the events already merged (24 Sec.13.7): the first read's ten, never a hole."""
     harness = Harness(hot=recording()).replace_ports(coverage=_RolledOffDuringRead())
 
-    with pytest.raises(ReplaySourceUnavailable) as raised:
-        await harness.read_all(batch=1, window_us=10 * SECOND)
+    delivered, error = await drain(harness.merge(window_us=10 * SECOND), batch=64)
 
-    assert (raised.value.tier, raised.value.reason) == ("questdb", "archived_during_replay")
+    assert ids(delivered) == [f"r{t:02}" for t in range(10)]
+    assert isinstance(error, ReplaySourceUnavailable)
+    assert (error.tier, error.reason) == ("questdb", "archived_during_replay")
     assert harness.hot.reads == 2
 
 
@@ -108,6 +119,7 @@ async def test_an_explicit_tier_never_consults_the_manifests(
 async def test_the_session_tier_is_resolved_and_logged_once_and_reads_are_counted() -> None:
     labels = {"stream": "trades", "tier": "parquet"}
     before = REGISTRY.get_sample_value("replay_events_read_total", labels) or 0.0
+    timed = REGISTRY.get_sample_value("replay_source_read_seconds_count", {"tier": "parquet"})
     harness = Harness(cold=recording(), archived=True)
 
     with capture_logs() as logs:
@@ -116,3 +128,6 @@ async def test_the_session_tier_is_resolved_and_logged_once_and_reads_are_counte
     tiers = [entry["tier"] for entry in logs if entry["event"] == "replay_source_tier"]
     assert tiers == ["parquet"] and harness.coverage.calls == 1
     assert REGISTRY.get_sample_value("replay_events_read_total", labels) == before + 60
+    assert REGISTRY.get_sample_value("replay_source_read_seconds_count", {"tier": "parquet"}) == (
+        (timed or 0.0) + harness.cold.reads
+    )
