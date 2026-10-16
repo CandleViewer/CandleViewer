@@ -1071,7 +1071,7 @@ export interface paths {
      * Lift the idle lock with the password only
      * @description Lifts the idle lock (SCR-005) with the **password only**. No TOTP is asked while the
      *     session is inside its 12 h absolute lifetime (US-ONB-004, E09-S03). On success
-     *     `last_seen_at` is re-stamped (`REQUEST` on B16), `session.idle_deadline` moves forward,
+     *     `last_seen_at` is re-stamped (`UNLOCK_OK` on B16), `session.idle_deadline` moves forward,
      *     `session.locked` is `false`, and the body is the same `SessionInfo` as
      *     `GET /auth/session`.
      *
@@ -1106,7 +1106,8 @@ export interface paths {
      *     (SR-015, SR-016): a wrong unlock password counts toward the account lockout, and a locked
      *     account fails like a wrong password. Audited write-ahead: `auth.session_unlocked` on
      *     success and `auth.unlock_failed` on every wrong password; the revoking failure also
-     *     writes `auth.session_revoked`. The password is never logged, audited or echoed.
+     *     writes `auth.session_revoked`, and the wrong password that locks the account (SR-016)
+     *     writes `auth.account_locked`. The password is never logged, audited or echoed.
      */
     post: operations["authUnlock"];
     delete?: never;

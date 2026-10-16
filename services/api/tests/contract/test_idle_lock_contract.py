@@ -133,9 +133,32 @@ def test_unlock_contract_session_revoked_carries_the_reason(spec: dict[str, Any]
 
 def test_unlock_contract_audit_actions_are_registered(spec: dict[str, Any]) -> None:
     description = _op(spec, "post", "/auth/unlock")["description"]
-    for action in ("auth.session_unlocked", "auth.unlock_failed"):
+    for action in ("auth.session_unlocked", "auth.unlock_failed", "auth.account_locked"):
         assert f"`{action}`" in description
         assert action in AUDIT_ACTIONS
+    # SR-016: the wrong password that locks the account is recorded as on any other path.
+    assert "the wrong password that locks the account (SR-016)" in _flat(description)
+
+
+def test_unlock_contract_records_unlock_ok_on_b16_never_request(spec: dict[str, Any]) -> None:
+    # Catalogue B16.7: the route records `UNLOCK_OK` / `UNLOCK_FAILED`, never `REQUEST`;
+    # extend is the only `REQUEST` (#2389 review record, aligned once #2390 merged).
+    unlock = _flat(_op(spec, "post", "/auth/unlock")["description"])
+    assert "`last_seen_at` is re-stamped (`UNLOCK_OK` on B16)" in unlock
+    assert "`REQUEST`" not in unlock
+    extend = _flat(_op(spec, "post", "/auth/session/extend")["description"])
+    assert "It re-stamps `last_seen_at` (`REQUEST` on B16)" in extend
+    assert "(`REQUEST` for extend and `UNLOCK_OK` for unlock, on B16" in _idle_lock_section(spec)
+
+
+def test_a_rotated_away_cookie_is_audited_outside_refresh(spec: dict[str, Any]) -> None:
+    # The uniform 401 changes no session, but probing a stolen refresh token is not silent.
+    section = _idle_lock_section(spec)
+    assert "`401 unauthenticated` and changes no session" in section
+    assert "(`auth.refresh_reuse_detected` with outcome `denied` for a rotated-away cookie" in (
+        section
+    )
+    assert {"auth.refresh_reuse_detected", "auth.session_fixation_attempt"} <= AUDIT_ACTIONS
 
 
 def test_unlock_contract_checks_the_audit_sink_before_the_password(spec: dict[str, Any]) -> None:
