@@ -24,14 +24,16 @@ from candleviewer.accounts.errors import WithdrawPermissionError
 from candleviewer.accounts.models import ApiKeyMetadata, ApiKeyRotation
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
+from candleviewer.audit.actions import AUDIT_ACTIONS
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.secrets._permissions import reject_withdraw as m2_reject_withdraw
+from candleviewer.secrets.broker import _SIGNABLE
 from candleviewer.secrets.errors import WithdrawPermissionRejected
 from candleviewer.ws._generated.error_codes import ErrorCode
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
-_SPEC = load_openapi_spec()
+_SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
 _PATHS: dict[str, Any] = {
     path: item for path, item in _SPEC["paths"].items() if path.startswith("/exchange-accounts")
@@ -45,6 +47,7 @@ _CHOICES = ("leave_positions", "flatten_first")
 _MIGRATION_0017 = (
     _REPO_ROOT / "services/api/candleviewer/migrations/versions/0017_exchange_accounts_api_keys.py"
 )
+_DB_SCHEMA = _REPO_ROOT / "docs/plan/21-database-schema.md"
 _INTERNAL_SCHEMAS = _REPO_ROOT / "docs/plan/24-internal-schemas.md"
 _SECURITY_PROGRAM = _REPO_ROOT / "docs/plan/04-security-program.md"
 _ADR_0009 = _REPO_ROOT / "docs/plan/27-adrs/ADR-0009-secrets-and-key-management.md"
@@ -112,6 +115,16 @@ _FIXABLE_KEY_ERRORS = ("ip_not_allowed", "permission_denied")
 _FAILED_READ_ERRORS = tuple(
     error for error in _PROBE_ERRORS if error not in _DEAD_KEY_ERRORS + _FIXABLE_KEY_ERRORS
 )
+#: What a failed read is answered with: no answer at all is a 503, an error answer a 502.
+_FAILED_READ_UNAVAILABLE = ("timeout", "transport_error")
+_FAILED_READ_BAD_GATEWAY = (
+    "clock_drift",
+    "rate_limited",
+    "service_unavailable",
+    "exchange_unknown",
+)
+#: The only key statuses a signed call may use (21-database-schema.md §3.2.3a, secrets/broker.py).
+_SIGNABLE_STATUSES = ("active", "rotating")
 _WARNINGS = ["key_expiring_soon", "clock_skew"]
 #: Plaintext or envelope fields (C-2.7, 21-database-schema.md §3.2.2) no response may carry.
 _SECRET_FIELDS = frozenset(
@@ -544,14 +557,41 @@ def test_a_key_is_dead_only_when_the_exchange_no_longer_accepts_its_credential()
     dead = _section("**Dead.**")
     assert (
         "Only a credential the exchange no longer accepts (`auth_error`) makes a key dead, and "
-        "an account is dead when every one of its keys is dead"
+        "an account is dead when every one of its signable keys is dead, or when it has none"
     ) in dead
     assert not any(f"`{error}`" in dead for error in _FIXABLE_KEY_ERRORS + _FAILED_READ_ERRORS)
+    assert "its exposure is unknown, not none" in _section("**Unknown exposure.**")
+
+
+def test_the_exposure_is_read_only_with_signable_keys_and_the_other_statuses_are_named() -> None:
+    # A pending, expired, invalid or revoked key is never signed with: the broker refuses it
+    # (`secrets/broker.py`), so the contract may not probe with it either.
+    assert set(_SIGNABLE_STATUSES) == set(_SIGNABLE)
+    statuses = _SCHEMAS["KeyStatus"]["enum"]
+    excluded = [status for status in statuses if status not in _SIGNABLE_STATUSES]
+    assert sorted(excluded) == ["expired", "invalid", "pending", "revoked"]
     unknown = _section("**Unknown exposure.**")
-    assert "whatever `key_status` still says" in unknown
-    assert "every key counted (a `rotating` key too, a `revoked` one never)" in unknown
-    assert {"rotating", "revoked"} <= set(_SCHEMAS["KeyStatus"]["enum"])
-    assert "its exposure is unknown, not none" in unknown
+    assert (
+        "The exposure is read from the exchange for each request with the account's signable "
+        "keys, `active` and `rotating` (`21-database-schema.md` §3.2.3a), whatever the exchange "
+        "last said about them"
+    ) in unknown
+    assert "a `pending`, `expired`, `invalid` or `revoked` key is never used to read it" in unknown
+    assert {status for status in statuses if f"`{status}`" in unknown} == set(statuses)
+    assert "every key counted" not in unknown
+    doc = _DB_SCHEMA.read_text(encoding="utf-8")
+    keys = doc[doc.index("#### 3.2.3a") : doc.index("#### 3.2.4")]
+    assert "Only `status IN ('active','rotating')` rows are signable" in _fold(keys)
+
+
+def test_an_account_with_no_signable_key_has_unknown_exposure_and_counts_as_dead() -> None:
+    unknown = _section("**Unknown exposure.**")
+    assert (
+        "An account with no signable key cannot read its exposure: it is unknown and counts as "
+        "dead (disabled with `leave_positions`, never deleted)"
+    ) in unknown
+    assert "missing" in _SCHEMAS["ExchangeAccount"]["properties"]["key_status"]["enum"]
+    assert "A dead account is disabled, never deleted" in _section("**Dead.**")
 
 
 def test_a_fixable_refusal_answers_exposure_unknown_for_every_choice() -> None:
@@ -560,9 +600,9 @@ def test_a_fixable_refusal_answers_exposure_unknown_for_every_choice() -> None:
         "`ip_not_allowed` (the egress IP drifted from the key's whitelist, SR-033) and "
         "`permission_denied` are put right at the Bybit dashboard, so such a key is not dead"
     ) in fixable
-    # "any key", not "every key": one fixable key keeps a mixed account (with a dead one) fixable.
-    # "every key is refused", not "no key can read it": a failed read is not a refusal.
-    assert "While every key is refused and any key answers one of them" in fixable
+    # "any", not "every": one fixable key keeps a mixed account (with a dead one) fixable.
+    # "every signable key is refused", not "no key can read it": a failed read is not a refusal.
+    assert "While every signable key is refused and any answers one of them" in fixable
     assert (
         "revoke, disable and delete answer `409 exposure_unknown` for every `open_exposure` "
         "choice, `leave_positions` included"
@@ -573,7 +613,7 @@ def test_a_fixable_refusal_answers_exposure_unknown_for_every_choice() -> None:
     assert not any(f"`{error}`" in fixable for error in _DEAD_KEY_ERRORS + _FAILED_READ_ERRORS)
 
 
-def test_the_stop_loss_refusal_is_lifted_only_for_an_account_whose_every_key_is_dead() -> None:
+def test_the_stop_loss_refusal_is_lifted_only_for_a_dead_account() -> None:
     dead = _section("**Dead.**")
     assert (
         "`flatten_first`, or no choice, is then `409 exposure_unknown` and nothing changes" in dead
@@ -583,10 +623,24 @@ def test_the_stop_loss_refusal_is_lifted_only_for_an_account_whose_every_key_is_
         "revoked"
     ) in dead
     assert (
-        "the stop-loss refusal is lifted only for an account whose every key is dead, because no "
-        "stop can be re-asserted there and `flatten_first` cannot run"
+        "the stop-loss refusal is lifted only for a dead account, because no stop can be "
+        "re-asserted there and `flatten_first` cannot run"
     ) in dead
     assert "stop-loss refusal" not in _section("**Fixable.**")
+
+
+def test_the_dead_path_audits_why_the_stop_loss_refusal_was_lifted() -> None:
+    # It is the only path that lifts a C-2.6 refusal, so its audit record says why (C-2.9).
+    dead = _section("**Dead.**")
+    assert (
+        "The audit record of that disable or revoke (`accounts.disable` or `api_key.revoke`, "
+        "written ahead of the change, C-2.9) carries the code `exposure_unknown`, the "
+        "`KeyProbeError` of each signable key (none for an account without one) and that the "
+        "stop-loss refusal was lifted"
+    ) in dead
+    # The registry's own spelling: `api_key.revoke` is registered; `accounts.disable` follows
+    # `users.disable` and `accounts.create`, and the ticket that mounts the route registers it.
+    assert {"api_key.revoke", "accounts.create", "users.disable"} <= AUDIT_ACTIONS
 
 
 def test_every_probe_error_is_named_in_exactly_one_of_dead_fixable_or_failed_read() -> None:
@@ -608,15 +662,60 @@ def test_a_transient_read_failure_is_never_no_exposure_and_never_dead() -> None:
     assert (
         'A transient failure to read the exposure is never "no exposure" and never "dead"'
     ) in failed
-    assert "so an account is not dead while any of its keys answers one of them" in failed
     assert (
-        "Such an answer is not a refusal, so while any key gives one neither the dead nor the "
-        "fixable rule applies"
+        "so an account is not dead while any of its signable keys answers one of them"
     ) in failed
-    assert "refused with its own retryable error" in failed
+    assert (
+        "Such an answer is not a refusal, so while any signable key gives one neither the dead "
+        "nor the fixable rule applies"
+    ) in failed
+    assert (
+        "When no signable key reads the exposure, the request fails closed: it is refused with "
+        "its own retryable error"
+    ) in failed
     assert "`503 exchange_unavailable`" in failed
     assert "`502 exchange_error`" in failed
     assert "nothing is revoked, disabled or deleted" in failed
+
+
+def test_the_rules_apply_in_one_stated_order_a_successful_read_first_dead_last() -> None:
+    assert _open_exposure().count("**Order.**") == 1
+    order = _section("**Order.**")
+    clauses = (
+        "(1) a signable key reads the exposure, and the choices work as above, whatever another "
+        "key answers",
+        "(2) else any signable key gives a failed read, and the request fails closed",
+        "(3) else any signable key answers a fixable refusal",
+        "(4) else the account is dead",
+    )
+    found = [order.find(clause) for clause in clauses]
+    assert -1 not in found, [clause for clause, at in zip(clauses, found, strict=True) if at < 0]
+    assert found == sorted(found)
+    assert "the first of these decides" in order
+
+
+def test_a_failed_read_names_the_answer_each_probe_error_gets_and_echoes_no_exchange_text() -> None:
+    failed = _section("**A failed read.**")
+    assert set(_FAILED_READ_UNAVAILABLE) | set(_FAILED_READ_BAD_GATEWAY) == set(_FAILED_READ_ERRORS)
+    assert not set(_FAILED_READ_UNAVAILABLE) & set(_FAILED_READ_BAD_GATEWAY)
+    assert (
+        "`503 exchange_unavailable` with `Retry-After` when the exchange gave no answer "
+        "(`timeout`, `transport_error`) and `502 exchange_error` when it answered with an error "
+        "(`clock_drift`, `rate_limited`, `service_unavailable`, `exchange_unknown`)"
+    ) in failed
+    assert "Keys that fail both ways give the `503`" in failed
+    # "No answer" is what the probe vocabulary says of exactly these two errors.
+    probe = _fold(_SCHEMAS["KeyProbeError"]["description"])
+    assert "`transport_error`: the connection failed or was reset" in probe
+    assert "`timeout`, which refines §8.6's `TRANSPORT_ERROR`: no answer before the" in probe
+    # Problem.exchange also holds ret_msg, Bybit's free text; a probe never echoes it (SR-E27-08).
+    exchange = _SCHEMAS["Problem"]["properties"]["exchange"]["properties"]
+    assert set(exchange) == {"ret_code", "ret_msg", "endpoint", "request_id"}
+    assert (
+        "`Problem.exchange` holds `ret_code` only (omitted when the exchange sent none), never "
+        "`ret_msg`, `endpoint`, `request_id` or any other exchange text, header, URL or request "
+        "fragment (SR-E27-08)"
+    ) in failed
 
 
 @pytest.mark.parametrize(("path", "method"), _EXPOSURE_OPS)
@@ -626,6 +725,20 @@ def test_the_operations_declare_the_retryable_answers_of_a_failed_read(
     responses = _op(path, method)["responses"]
     assert responses["502"] == {"$ref": "#/components/responses/ExchangeError"}
     assert responses["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
+
+
+@pytest.mark.parametrize(("path", "method"), _EXPOSURE_OPS)
+def test_a_failed_read_is_never_stored_for_replay_so_the_same_key_retries_the_read(
+    path: str, method: str
+) -> None:
+    # The global rule stores "the original response" for 24 h with no status restriction, so a
+    # stored 503 would make the account un-disableable under that key.
+    choice = _fold(_choice(path, method)["description"])
+    assert "A `502` or `503` of a failed read is never stored for replay" in choice
+    assert (
+        "A `502` or `503` of a failed read is never stored for replay: the same `Idempotency-Key` "
+        "retries the read"
+    ) in _open_exposure()
 
 
 def test_the_failed_read_answers_are_the_existing_retryable_problem_shapes() -> None:
@@ -681,8 +794,9 @@ def test_revoke_counts_a_rotating_key_and_a_usable_one_means_the_account_is_not_
     assert "rotating" in _SCHEMAS["KeyStatus"]["enum"]
     revoke = _text(_KEY, "delete")
     assert (
-        "Every key of the account counts in that definition, a `rotating` key too: while a "
-        "`rotating` key is usable the account is not dead, whatever the key being revoked answers"
+        "Every signable key of the account counts in that definition, a `rotating` key too: "
+        "while a `rotating` key is usable the account is not dead, whatever the key being "
+        "revoked answers"
     ) in revoke
 
 
@@ -722,6 +836,10 @@ def test_exposure_unknown_is_a_registered_409_with_an_example_and_no_summary() -
     assert (problem.code, problem.status) == ("exposure_unknown", 409)
     assert example["type"].endswith("/errors/exposure_unknown")
     assert example["title"] == entry["title"]
+    # The title holds for every way the exposure cannot be read: the exchange refuses each
+    # signable key, or the account has none (a key that is not signable is never probed).
+    assert "none of its keys can be used to read it" in entry["title"]
+    assert "the exchange refuses" not in entry["title"]
     assert problem.consequences is None
     assert "consequences" not in example
     schema = _fold(_SCHEMAS["OpenExposureProblem"]["description"])
@@ -734,8 +852,8 @@ def test_exposure_unknown_is_answered_only_by_revoke_disable_and_delete() -> Non
     for operation in _operation_ids():
         assert f"`{operation}`" in conflict
     assert (
-        "`exposure_unknown`: the exposure cannot be read because the exchange refuses every key "
-        "of the account"
+        "`exposure_unknown`: the exposure cannot be read because the exchange refuses every "
+        "signable key of the account, or the account has none"
     ) in conflict
     others = [
         operation.get("description", "")
