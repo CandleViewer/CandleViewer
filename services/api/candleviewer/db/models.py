@@ -26,6 +26,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Computed,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -1823,4 +1824,287 @@ backups = Table(
     ),
     Index("ix_backups_kind_time", "kind", text("started_at DESC")),
     Index("ix_backups_failed", text("started_at DESC"), postgresql_where=text("status = 'failed'")),
+)
+
+#: OMS core (E29-T01, revision 0029_oms_core): Sec.1.2 enums and Sec.3.3.4-3.3.7. Both
+#: `trade_group_leg_id` columns carry no FK until E28-T01 (#905) creates `trade_group_legs`; the
+#: append-only triggers and the SR-E29-05 grants are asserted by the 0029 tests, not autogenerate.
+ORDER_INTENTS = (
+    "entry", "stop_loss", "take_profit", "scale_in", "scale_out", "flatten", "reverse",
+    "algo_child",
+)  # fmt: skip
+ORDER_STATES = (
+    "new", "pending_submit", "submitted", "accepted", "partially_filled", "filled",
+    "pending_cancel", "cancelled", "pending_amend", "rejected", "expired", "untracked",
+)  # fmt: skip
+ORDER_EVENT_KINDS = (
+    "local_create", "submit_attempt", "ack", "reject", "fill", "partial_fill", "amend_request",
+    "amend_ack", "cancel_request", "cancel_ack", "expire", "exchange_push", "reconcile_diff",
+    "error",
+)  # fmt: skip
+order_intent = ENUM(*ORDER_INTENTS, name="order_intent", metadata=metadata, create_type=False)
+order_state = ENUM(*ORDER_STATES, name="order_state", metadata=metadata, create_type=False)
+order_event_kind = ENUM(
+    *ORDER_EVENT_KINDS, name="order_event_kind", metadata=metadata, create_type=False
+)
+
+#: C-5.9 / Sec.12 class P1 on every numeric(38,18) column of orders, executions and positions;
+#: byte-identical to the 0029 COMMENT statements (`alembic check` diffs column comments).
+OMS_MONEY_COMMENT = (
+    "PII: financial personal data (21 Sec.12, class P1); never sent to third parties"
+)
+_P1 = OMS_MONEY_COMMENT
+_MONEY = Numeric(38, 18)
+
+orders = Table(
+    "orders",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("trade_group_leg_id", UUID(as_uuid=True)),
+    Column(
+        "exchange_account_id",
+        ForeignKey("exchange_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("parent_order_id", ForeignKey("orders.id", ondelete="SET NULL")),
+    Column("oco_group_ref", Text),
+    Column("order_link_id", Text, nullable=False),
+    Column("exchange_order_id", Text),
+    Column("symbol", symbol_code, nullable=False),
+    Column("side", Text, nullable=False),
+    Column("intent", order_intent, nullable=False),
+    Column("order_type", Text, nullable=False),
+    Column("qty", _MONEY, nullable=False, comment=_P1),
+    Column("price", _MONEY, comment=_P1),
+    Column("trigger_price", _MONEY, comment=_P1),
+    Column("trigger_by", Text),
+    Column("trigger_direction", SmallInteger),
+    Column("take_profit", _MONEY, comment=_P1),
+    Column("stop_loss", _MONEY, comment=_P1),
+    Column("tpsl_mode", Text, nullable=False, server_default=text("'Full'")),
+    Column("time_in_force", Text, nullable=False, server_default=text("'GTC'")),
+    Column("reduce_only", Boolean, nullable=False, server_default=text("false")),
+    Column("close_on_trigger", Boolean, nullable=False, server_default=text("false")),
+    Column("position_idx", SmallInteger, nullable=False, server_default=text("0")),
+    Column("state", order_state, nullable=False, server_default=text("'new'")),
+    Column("cum_exec_qty", _MONEY, nullable=False, server_default=text("0"), comment=_P1),
+    Column("cum_exec_value", _MONEY, nullable=False, server_default=text("0"), comment=_P1),
+    Column("avg_price", _MONEY, comment=_P1),
+    Column("leaves_qty", _MONEY, Computed("qty - cum_exec_qty", persisted=True), comment=_P1),
+    Column("fee_paid", _MONEY, nullable=False, server_default=text("0"), comment=_P1),
+    Column("reject_code", Text),
+    Column("reject_message", Text),
+    Column("submit_attempts", SmallInteger, nullable=False, server_default=text("0")),
+    Column("idempotency_state", Text, nullable=False, server_default=text("'unsent'")),
+    Column("created_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("submitted_ts", TIMESTAMP(timezone=True)),
+    Column("exchange_created_ts", TIMESTAMP(timezone=True)),
+    Column("exchange_updated_ts", TIMESTAMP(timezone=True)),
+    Column("last_reconciled_at", TIMESTAMP(timezone=True)),
+    Column("is_paper", Boolean, nullable=False, server_default=text("false")),
+    CheckConstraint("side IN ('Buy','Sell')", name="ord_side"),
+    CheckConstraint("order_type IN ('Market','Limit')", name="ord_type"),
+    CheckConstraint("qty > 0", name="ord_qty"),
+    CheckConstraint("order_type <> 'Limit' OR price > 0", name="ord_limit_px"),
+    CheckConstraint("cum_exec_qty >= 0 AND cum_exec_qty <= qty", name="ord_cum"),
+    CheckConstraint("time_in_force IN ('GTC','IOC','FOK','PostOnly')", name="ord_tif"),
+    CheckConstraint("position_idx IN (0,1,2)", name="ord_posidx"),
+    CheckConstraint("trigger_direction IS NULL OR trigger_direction IN (1,2)", name="ord_trigdir"),
+    CheckConstraint(
+        "trigger_by IS NULL OR trigger_by IN ('LastPrice','MarkPrice','IndexPrice')",
+        name="ord_trigby",
+    ),
+    CheckConstraint("tpsl_mode IN ('Full','Partial')", name="ord_tpslmode"),
+    CheckConstraint("submit_attempts BETWEEN 0 AND 10", name="ord_attempts"),
+    CheckConstraint(
+        "idempotency_state IN ('unsent','in_flight','acked','failed')", name="ord_idem"
+    ),
+    CheckConstraint(
+        "order_link_id ~ "
+        "'^cv[ldtp]-[0-7][0-9A-Za-z]{21}-[0-9A-Za-z]{4}-[0-9A-Za-z]{2}(en|sl|tp|sc|fl|ac)$' "
+        "OR order_link_id ~ '^ext-[0-9a-f]{32}$'",
+        name="ord_link_fmt",
+    ),
+    CheckConstraint("parent_order_id IS DISTINCT FROM id", name="ord_no_self"),
+    Index("ux_orders_link", "order_link_id", unique=True),
+    Index(
+        "ux_orders_exch_id",
+        "exchange_account_id",
+        "exchange_order_id",
+        unique=True,
+        postgresql_where=text("exchange_order_id IS NOT NULL"),
+    ),
+    Index(
+        "ix_orders_open",
+        "exchange_account_id",
+        "symbol",
+        postgresql_where=text(
+            "state IN ('pending_submit','submitted','accepted','partially_filled',"
+            "'pending_cancel','pending_amend')"
+        ),
+    ),
+    Index("ix_orders_leg", "trade_group_leg_id"),
+    Index(
+        "ix_orders_parent", "parent_order_id", postgresql_where=text("parent_order_id IS NOT NULL")
+    ),
+    Index("ix_orders_oco", "oco_group_ref", postgresql_where=text("oco_group_ref IS NOT NULL")),
+    Index("ix_orders_recent", "exchange_account_id", text("created_ts DESC")),
+    Index(
+        "ix_orders_inflight", "created_ts", postgresql_where=text("idempotency_state = 'in_flight'")
+    ),
+    Index(
+        "ix_orders_untracked", "exchange_account_id", postgresql_where=text("state = 'untracked'")
+    ),
+)
+order_events = Table(
+    "order_events",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column("order_id", ForeignKey("orders.id", ondelete="CASCADE"), nullable=False),
+    Column("seq", Integer, nullable=False),
+    Column("kind", order_event_kind, nullable=False),
+    Column("from_state", order_state),
+    Column("to_state", order_state),
+    Column("source", Text, nullable=False),
+    Column("payload", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    Column("ret_code", Text),
+    Column("ret_msg", Text),
+    Column("latency_ms", Integer),
+    Column("event_ts", TIMESTAMP(timezone=True), nullable=False),
+    Column("recv_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint(
+        "source IN ('local','rest','ws_private','reconcile','paper')", name="oe_source"
+    ),
+    CheckConstraint("seq >= 0", name="oe_seq"),
+    CheckConstraint("latency_ms IS NULL OR latency_ms >= 0", name="oe_latency"),
+    UniqueConstraint("order_id", "seq", name="order_events_order_id_seq_key"),
+    Index("ix_oe_order_time", "order_id", "event_ts"),
+    Index("ix_oe_time", text("event_ts DESC")),
+    Index("ix_oe_kind_time", "kind", text("event_ts DESC")),
+)
+executions = Table(
+    "executions",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("order_id", ForeignKey("orders.id", ondelete="SET NULL")),
+    Column(
+        "exchange_account_id",
+        ForeignKey("exchange_accounts.id", ondelete="RESTRICT"),
+        nullable=False,
+    ),
+    Column("trade_group_leg_id", UUID(as_uuid=True)),
+    Column("exec_id", Text, nullable=False),
+    Column("order_link_id", Text),
+    Column("symbol", symbol_code, nullable=False),
+    Column("side", Text, nullable=False),
+    Column("exec_qty", _MONEY, nullable=False, comment=_P1),
+    Column("exec_price", _MONEY, nullable=False, comment=_P1),
+    Column("exec_value", _MONEY, nullable=False, comment=_P1),
+    Column("exec_type", Text, nullable=False),
+    Column("exec_fee", _MONEY, nullable=False, server_default=text("0"), comment=_P1),
+    Column("fee_rate", Numeric(18, 10)),
+    Column("fee_currency", Text, nullable=False, server_default=text("'USDT'")),
+    Column("is_maker", Boolean, nullable=False),
+    Column("closed_pnl", _MONEY, comment=_P1),
+    Column("mark_price", _MONEY, comment=_P1),
+    Column("underlying_price", _MONEY, comment=_P1),
+    Column("block_trade_id", Text),
+    Column("position_idx", SmallInteger, nullable=False, server_default=text("0")),
+    Column("is_paper", Boolean, nullable=False, server_default=text("false")),
+    Column("exec_ts", TIMESTAMP(timezone=True), nullable=False),
+    Column("recv_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("exec_qty > 0", name="ex_qty"),
+    CheckConstraint("exec_price > 0", name="ex_px"),
+    CheckConstraint("side IN ('Buy','Sell')", name="ex_side"),
+    CheckConstraint(
+        "exec_type IN ('Trade','AdlTrade','Funding','BustTrade','Settle','SessionSettlePnl')",
+        name="ex_type",
+    ),
+    CheckConstraint("position_idx IN (0,1,2)", name="ex_posidx"),
+    Index("ux_exec_id", "exchange_account_id", "exec_id", unique=True),
+    Index("ix_exec_order", "order_id", "exec_ts"),
+    Index("ix_exec_acct_time", "exchange_account_id", text("exec_ts DESC")),
+    Index("ix_exec_symbol_time", "symbol", text("exec_ts DESC")),
+    Index(
+        "ix_exec_leg", "trade_group_leg_id", postgresql_where=text("trade_group_leg_id IS NOT NULL")
+    ),
+)
+positions = Table(
+    "positions",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column(
+        "exchange_account_id",
+        ForeignKey("exchange_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("symbol", symbol_code, nullable=False),
+    Column("position_idx", SmallInteger, nullable=False, server_default=text("0")),
+    Column("side", Text),
+    Column("size", _MONEY, nullable=False, server_default=text("0"), comment=_P1),
+    Column("avg_price", _MONEY, comment=_P1),
+    Column("position_value", _MONEY, comment=_P1),
+    Column("leverage", Numeric(10, 2)),
+    Column("mark_price", _MONEY, comment=_P1),
+    Column("liq_price", _MONEY, comment=_P1),
+    Column("bust_price", _MONEY, comment=_P1),
+    Column("position_im", _MONEY, comment=_P1),
+    Column("position_mm", _MONEY, comment=_P1),
+    Column("unrealised_pnl", _MONEY, comment=_P1),
+    Column("cur_realised_pnl", _MONEY, comment=_P1),
+    Column("cum_realised_pnl", _MONEY, comment=_P1),
+    Column("take_profit", _MONEY, comment=_P1),
+    Column("stop_loss", _MONEY, comment=_P1),
+    Column("trailing_stop", _MONEY, comment=_P1),
+    Column("tpsl_mode", Text),
+    Column("adl_rank_indicator", SmallInteger),
+    Column("auto_add_margin", Boolean, nullable=False, server_default=text("false")),
+    Column("is_paper", Boolean, nullable=False, server_default=text("false")),
+    Column("exchange_updated_ts", TIMESTAMP(timezone=True)),
+    Column("recv_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("size >= 0", name="pos_size"),
+    CheckConstraint("side IS NULL OR side IN ('Buy','Sell','None')", name="pos_side"),
+    CheckConstraint("position_idx IN (0,1,2)", name="pos_posidx"),
+    CheckConstraint("tpsl_mode IS NULL OR tpsl_mode IN ('Full','Partial')", name="pos_tpslmode"),
+    UniqueConstraint(
+        "exchange_account_id",
+        "symbol",
+        "position_idx",
+        name="positions_exchange_account_id_symbol_position_idx_key",
+    ),
+    Index("ix_pos_open", "exchange_account_id", postgresql_where=text("size > 0")),
+    Index("ix_pos_symbol", "symbol", postgresql_where=text("size > 0")),
+    Index(
+        "ix_pos_no_sl",
+        "exchange_account_id",
+        "symbol",
+        postgresql_where=text("size > 0 AND stop_loss IS NULL"),
+    ),
+)
+position_snapshots = Table(
+    "position_snapshots",
+    metadata,
+    Column("id", BigInteger, primary_key=True),
+    Column(
+        "exchange_account_id",
+        ForeignKey("exchange_accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("symbol", symbol_code, nullable=False),
+    Column("position_idx", SmallInteger, nullable=False, server_default=text("0")),
+    Column("size", _MONEY, nullable=False),
+    Column("avg_price", _MONEY),
+    Column("mark_price", _MONEY),
+    Column("unrealised_pnl", _MONEY),
+    Column("cum_realised_pnl", _MONEY),
+    Column("liq_price", _MONEY),
+    Column("equity_usd", _MONEY),
+    Column("reason", Text, nullable=False),
+    Column("snap_ts", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint(
+        "reason IN ('ws_push','rest_reconcile','minute_tick','risk_eval')", name="psnap_reason"
+    ),
+    Index("ix_psnap_acct_time", "exchange_account_id", text("snap_ts DESC")),
+    Index("ix_psnap_sym_time", "symbol", text("snap_ts DESC")),
 )

@@ -1207,6 +1207,9 @@ Every order we ever intend to place gets a row **before** the network call, with
 | `trigger_price`       | numeric(38,18) | yes  | NULL       | Conditional / SL / TP                                             |
 | `trigger_by`          | text           | yes  | NULL       | LastPrice / MarkPrice / IndexPrice                                |
 | `trigger_direction`   | smallint       | yes  | NULL       | 1 rise, 2 fall (Bybit)                                            |
+| `take_profit`         | numeric(38,18) | yes  | NULL       | TP attached on create (`24-internal-schemas.md` §8.1 `Order`)     |
+| `stop_loss`           | numeric(38,18) | yes  | NULL       | Native SL on create (`24-internal-schemas.md` §8.8 rule 1)        |
+| `tpsl_mode`           | text           | no   | `'Full'`   | Full / Partial, as `positions.tpsl_mode` (Bybit `tpslMode`)       |
 | `time_in_force`       | text           | no   | `'GTC'`    | GTC/IOC/FOK/PostOnly                                              |
 | `reduce_only`         | boolean        | no   | `false`    |                                                                   |
 | `close_on_trigger`    | boolean        | no   | `false`    |                                                                   |
@@ -1246,6 +1249,9 @@ CREATE TABLE orders (
   trigger_price        numeric(38,18),
   trigger_by           text,
   trigger_direction    smallint,
+  take_profit          numeric(38,18),
+  stop_loss            numeric(38,18),
+  tpsl_mode            text NOT NULL DEFAULT 'Full',
   time_in_force        text NOT NULL DEFAULT 'GTC',
   reduce_only          boolean NOT NULL DEFAULT false,
   close_on_trigger     boolean NOT NULL DEFAULT false,
@@ -1275,6 +1281,7 @@ CREATE TABLE orders (
   CONSTRAINT ord_posidx    CHECK (position_idx IN (0,1,2)),
   CONSTRAINT ord_trigdir   CHECK (trigger_direction IS NULL OR trigger_direction IN (1,2)),
   CONSTRAINT ord_trigby    CHECK (trigger_by IS NULL OR trigger_by IN ('LastPrice','MarkPrice','IndexPrice')),
+  CONSTRAINT ord_tpslmode  CHECK (tpsl_mode IN ('Full','Partial')),
   CONSTRAINT ord_attempts  CHECK (submit_attempts BETWEEN 0 AND 10),
   CONSTRAINT ord_idem      CHECK (idempotency_state IN ('unsent','in_flight','acked','failed')),
   CONSTRAINT ord_link_fmt  CHECK (
@@ -1297,6 +1304,10 @@ CREATE INDEX ix_orders_untracked ON orders (exchange_account_id) WHERE state = '
 `order_link_id` construction is owned by `24-internal-schemas.md` §8.3. The id is generated once, stored here before the first send and reused unchanged on every retry, so a retry after an ambiguous timeout is a no-op at the exchange. `ord_link_fmt` admits exactly the two shapes that section defines, both 36 chars: our own id and the `ext-` key an adopted order gets in place of a foreign or empty `orderLinkId`. It has no `state` term, because `state` changes and the id never does.
 
 **Adopted rows.** Reconciliation inserts an exchange order that no row holds (`24-internal-schemas.md` §8.5 step 3c) with `state = 'untracked'` and the id the adapter normalised (`24-internal-schemas.md` §14.2 rule 11) as `order_link_id`: our own id when Bybit reports one (an order of ours whose row was lost, for example by a restore, this document's §8.3), otherwise the `ext-` key of its Bybit `orderId`. So the column stays NOT NULL and unique over all rows, and a foreign or empty `orderLinkId` is never stored in it; it stays only in the `payload` (the raw exchange message) of the adoption's `order_events` row. An `ext-` key marks such a row for its whole life: the id never changes (`24-internal-schemas.md` §8.3 rules 1 and 4), so the row keeps it, and still passes `ord_link_fmt`, through `untracked → accepted | cancelled` (§3.3.1) and through adoption under management (E45-S01), even when that binds it to a trade group. Adoption never inserts a second row for a Bybit order that `ux_orders_exch_id` already holds.
+
+**Native stop-loss fields.** `take_profit`, `stop_loss` and `tpsl_mode` hold the TP/SL attached on create (`24-internal-schemas.md` §8.1 `Order`, §8.8 rule 1), so an order row records its native stop from its first insert (C-2.6; main-orchestrator ruling on #845, 2026-10-16). `tpsl_mode` takes the values of `positions.tpsl_mode` (§3.3.7), in Bybit casing like every enumerated text column of this table; §8.1's `full` and `partial` map onto them.
+
+**Implementation note (E29-T01, revision `0029_oms_core`).** `trade_group_leg_id`, here and in `executions` (§3.3.6), is created without its FK because `trade_group_legs` (§3.3.3) does not exist yet. The later of the two migrations adds the cross-epic FKs (E28-T01 #905, "Dependencies"), so the revision that creates `trade_group_legs` adds both; `ix_orders_leg` and `ix_exec_leg` exist already. The monetary columns of `orders`, `executions` and `positions` (§12, class P1: every `numeric(38,18)` column) carry a `PII:` column comment (C-5.9).
 
 #### 3.3.5 `order_events` — append-only audit of the order lifecycle
 
@@ -1325,6 +1336,9 @@ CREATE INDEX ix_oe_time       ON order_events (event_ts DESC);
 CREATE INDEX ix_oe_kind_time  ON order_events (kind, event_ts DESC);
 CREATE TRIGGER trg_oe_append BEFORE UPDATE OR DELETE ON order_events
   FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
+CREATE TRIGGER trg_oe_no_truncate BEFORE TRUNCATE ON order_events
+  FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();
+-- REVOKE UPDATE, DELETE, TRUNCATE ON order_events FROM cv_app, cv_ro;
 ```
 
 Partitioned by month (`PARTITION BY RANGE (event_ts)`) once volume exceeds 20 M rows; partitions older than 24 months are detached and exported to Parquet (§5).
@@ -1370,9 +1384,14 @@ CREATE INDEX ix_exec_symbol_time   ON executions (symbol, exec_ts DESC);
 CREATE INDEX ix_exec_leg           ON executions (trade_group_leg_id) WHERE trade_group_leg_id IS NOT NULL;
 CREATE TRIGGER trg_exec_append BEFORE UPDATE OR DELETE ON executions
   FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
+CREATE TRIGGER trg_exec_no_truncate BEFORE TRUNCATE ON executions
+  FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();
+-- REVOKE UPDATE, DELETE, TRUNCATE ON executions FROM cv_app, cv_ro;
 ```
 
 The unique `(exchange_account_id, exec_id)` is the **dedup key** — the private WS `execution` and `execution.fast` streams plus REST backfill all insert with `ON CONFLICT DO NOTHING`, which makes gap-backfill after a reconnect safe and repeatable.
+
+`order_events` and `executions` carry the `audit_log` guards of §3.10.1 beside their row triggers (E29 threat model SR-E29-05, E29-X01 #849): a `BEFORE TRUNCATE` statement trigger and no `UPDATE`, `DELETE` or `TRUNCATE` grant for `cv_app` or `cv_ro`, revoked by the migration wherever the role exists.
 
 #### 3.3.7 `positions` — latest snapshot + history
 
@@ -3238,7 +3257,7 @@ NAMING_CONVENTION = {
 | `0009_sessions_step_up_state` | `sessions.step_up_elevations`, `step_up_failures`, `readonly_until` (step-up state on the session row, B16) — **E09-S04**                                                                                                                  |
 | `0005_api_keys`               | `api_keys`, `api_key_rotations`, withdrawal-off constraint — landed as `0017_exchange_accounts_api_keys` (E27-T01); write-once trigger `0024_api_keys_write_once` (#2336)                                                                  |
 | `0005_profiles`               | `account_profiles` + ladder trigger                                                                                                                                                                                                        |
-| `0006_trading_core`           | `trade_groups`, `trade_group_legs`, `orders`, `order_events`, `executions`, `positions`, `position_snapshots`, `wallet_balances`                                                                                                           |
+| `0006_trading_core`           | `trade_groups`, `trade_group_legs`, `orders`, `order_events`, `executions`, `positions`, `position_snapshots`, `wallet_balances` — `orders` to `position_snapshots` = `0029_oms_core` (E29-T01); rest pending                              |
 | `0007_recorder`               | `recorded_symbols`, `recording_sessions`, `recording_gaps`, `retention_policies` — landed as `0011_recorder` (E16-T01); `replay_sessions` landed in E26-T01 as `0023_replay_sessions` (#624)                                               |
 | `0008_rules`                  | `rules`, `rule_versions`, `rule_runs`, `rule_events`                                                                                                                                                                                       |
 | `0009_alerts`                 | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                     |

@@ -136,6 +136,11 @@
       "path": "services/api/candleviewer/migrations/versions/0028_incidents_backups.py",
       "sha256": "f4c683ac609c8643c5bb2553c5dfc4b3dc11821102c9aaf61c4a1e93ffdf5f6c",
       "down_revision": "0027_feature_flags"
+    },
+    "0029_oms_core": {
+      "path": "services/api/candleviewer/migrations/versions/0029_oms_core.py",
+      "sha256": "5c7413343a91bf8eb8f9d9b0a647efd2e4f06b5764f2019f2aaac2e5dbf1edf5",
+      "down_revision": "0028_incidents_backups"
     }
   }
 }

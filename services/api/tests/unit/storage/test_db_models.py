@@ -76,6 +76,12 @@ def test_metadata_declares_every_table_from_0001() -> None:
         # E42-T05 (0028_incidents_backups)
         "incidents",
         "backups",
+        # E29-T01 (0029_oms_core)
+        "orders",
+        "order_events",
+        "executions",
+        "positions",
+        "position_snapshots",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected
