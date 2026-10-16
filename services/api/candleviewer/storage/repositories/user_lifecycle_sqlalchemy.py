@@ -10,8 +10,9 @@ deferred constraints (23514 maps onto the floor refusal); await the caller's aud
 by `audit_timeout_s` (C-2.9); commit. A raise before the commit rolls all of it back; if the hook
 had started, its record may be durable, and the caller closes it. The post-commit steps (B16
 REVOKE, sockets, rule disarm, invite revoke) are slice S4's. The session revoke sees only its
-statement's snapshot, so a successor that an in-flight refresh mints after it stays live: slice
-S4 must close that window.
+statement's snapshot, so a successor that an in-flight refresh mints after it stays live. No
+slice of E42-T04 removes that window (S4's post-commit sweep only narrows it): refresh, mint and
+require_active read no `users.status`, which #2911 tracks.
 """
 
 from __future__ import annotations
