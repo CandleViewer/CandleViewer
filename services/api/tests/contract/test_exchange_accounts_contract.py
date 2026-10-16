@@ -28,6 +28,7 @@ from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.secrets._permissions import reject_withdraw as m2_reject_withdraw
 from candleviewer.secrets.errors import WithdrawPermissionRejected
+from candleviewer.ws._generated.error_codes import ErrorCode
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _SPEC = load_openapi_spec()
@@ -45,6 +46,21 @@ _MIGRATION_0017 = (
     _REPO_ROOT / "services/api/candleviewer/migrations/versions/0017_exchange_accounts_api_keys.py"
 )
 _INTERNAL_SCHEMAS = _REPO_ROOT / "docs/plan/24-internal-schemas.md"
+_SECURITY_PROGRAM = _REPO_ROOT / "docs/plan/04-security-program.md"
+_ADR_0009 = _REPO_ROOT / "docs/plan/27-adrs/ADR-0009-secrets-and-key-management.md"
+_USER_STORIES = _REPO_ROOT / "docs/plan/11-user-stories.md"
+#: D4 of #2417: the Owner's confirmation of the `leave_positions` refusal is tracked here.
+_STOP_LOSS_DECISION = "#2903"
+#: The operations that accept `leave_positions`; delete takes `flatten_first` only.
+_LEAVE_OPS = [(_KEY, "delete"), (_ACCOUNT, "patch")]
+#: The `409` examples of `OpenExposureConflict`, with the operations that can return each.
+_ANSWERED_BY = {
+    "openExposure": ("deleteExchangeAccount", "updateExchangeAccount", "revokeApiKey"),
+    "leavePositionsRefused": ("updateExchangeAccount", "revokeApiKey"),
+    "exposureUnknown": ("deleteExchangeAccount", "updateExchangeAccount", "revokeApiKey"),
+}
+#: D3 of #2417: the probe errors by which a key is dead at the exchange.
+_DEAD_KEY_ERRORS = ("auth_error", "permission_denied", "ip_not_allowed")
 #: SR-E27-03: a key id is shown as `...` plus its last 4 characters, nothing more.
 _MASK = r"^\.\.\.[A-Za-z0-9]{4}$"
 
@@ -391,7 +407,135 @@ def test_leave_positions_promises_no_stop_loss_a_position_lacks() -> None:
     assert "keeps the native stop-loss it carries (C-2.6)" in choice
     assert "`consequences.open_positions[].native_stop_present` shows any that has none" in choice
     assert "native_stop_present" in _SCHEMAS["Position"]["properties"]
-    assert "open Owner/Security decision recorded on #2417" in choice
+
+
+def _conflict_examples() -> dict[str, Any]:
+    response = _SPEC["components"]["responses"]["OpenExposureConflict"]
+    examples: dict[str, Any] = response["content"]["application/problem+json"]["examples"]
+    return examples
+
+
+def _operation_ids() -> dict[str, tuple[str, str]]:
+    return {_op(path, method)["operationId"]: (path, method) for path, method in _EXPOSURE_OPS}
+
+
+@pytest.mark.parametrize(("path", "method"), _LEAVE_OPS)
+def test_leave_positions_is_refused_while_a_position_has_no_native_stop(
+    path: str, method: str
+) -> None:
+    assert "leave_positions" in _accepted(path, method)
+    text = _text(path, method)
+    assert (
+        "`open_exposure=leave_positions` is refused with `409 open_exposure` while any open "
+        "position has `native_stop_present: false` (C-2.6)"
+    ) in text
+    assert "resend with `flatten_first`" in text
+
+
+def test_delete_never_meets_the_stop_loss_refusal_because_it_cannot_leave_positions() -> None:
+    assert "leave_positions" not in _accepted(_ACCOUNT, "delete")
+    assert "is refused with `409 open_exposure` while" not in _text(_ACCOUNT, "delete")
+
+
+def test_open_exposure_parameter_refuses_leave_positions_for_an_unprotected_position() -> None:
+    choice = _fold(_SPEC["components"]["parameters"]["OpenExposure"]["description"])
+    assert "It is refused with `409 open_exposure` while any open position has none" in choice
+    assert "nothing can re-assert a missing stop" in choice
+    assert "the caller resends with `flatten_first`" in choice
+    assert f"confirmation of this refusal is tracked on {_STOP_LOSS_DECISION}" in choice
+    assert "relaxing it later is non-breaking" in choice
+    assert "recorded on #2417" not in choice
+    assert "open Owner/Security decision" not in choice
+
+
+def test_leave_positions_refusal_example_lists_the_position_without_a_stop() -> None:
+    example = _conflict_examples()["leavePositionsRefused"]["value"]
+    problem = api.OpenExposureProblem.model_validate(example)
+    assert (problem.code, problem.status) == ("open_exposure", 409)
+    assert example["type"].endswith("/errors/open_exposure")
+    registered = {entry["code"]: entry for entry in _SPEC["x-error-codes"]}
+    assert example["title"] == registered["open_exposure"]["title"]
+    assert problem.consequences is not None
+    unprotected = [p for p in problem.consequences.open_positions if p.native_stop_present is False]
+    assert unprotected
+    assert all(p.stop_loss is None for p in unprotected)
+    assert "open_exposure=flatten_first" in example["detail"]
+
+
+def test_each_open_exposure_example_names_the_operations_that_can_return_it() -> None:
+    examples = _conflict_examples()
+    assert set(examples) == set(_ANSWERED_BY)
+    operations = _operation_ids()
+    for name, answering in _ANSWERED_BY.items():
+        summary = examples[name]["summary"]
+        assert {operation for operation in operations if operation in summary} == set(answering)
+        named = {choice for choice in _CHOICES if choice in examples[name]["value"]["detail"]}
+        for operation in answering:
+            assert named <= _accepted(*operations[operation]), (name, operation)
+
+
+# --- A dead key: the account is disabled, never deleted (D3 of #2417) ---------------------------
+
+
+def test_dead_key_account_is_disabled_never_deleted() -> None:
+    delete = _text(_ACCOUNT, "delete")
+    assert "An account whose key is dead at the exchange is never deleted" in delete
+    assert "the answer is `409 exposure_unknown` and nothing changes" in delete
+    assert "disable the account instead (`updateExchangeAccount` with `enabled: false`)" in delete
+    disable = _text(_ACCOUNT, "patch")
+    assert "(a dead-key account is disabled, never deleted)" in disable
+    assert "`open_exposure=leave_positions` disables the account without the stop-loss" in disable
+    revoke = _text(_KEY, "delete")
+    assert "`open_exposure=leave_positions` revokes it without the stop-loss refusal" in revoke
+
+
+def test_dead_key_is_defined_by_the_probe_errors_the_exchange_answers_with() -> None:
+    choice = _fold(_SPEC["components"]["parameters"]["OpenExposure"]["description"])
+    assert set(_DEAD_KEY_ERRORS) <= set(_SCHEMAS["KeyProbeError"]["enum"])
+    assert (
+        "When the exchange rejects every key of the account (`auth_error`, `permission_denied` "
+        "or `ip_not_allowed` in `KeyProbeError`) the account's key is dead there, whatever "
+        "`key_status` still says"
+    ) in choice
+    assert "its exposure is unknown, not none" in choice
+    assert "`flatten_first`, or no choice, is then `409 exposure_unknown`" in choice
+    assert "`leave_positions` is not subject to the stop-loss refusal there" in choice
+    assert "`deleteExchangeAccount` is refused whatever it carries" in choice
+
+
+def test_exposure_unknown_is_a_registered_409_with_an_example_and_no_summary() -> None:
+    registered = {entry["code"]: entry for entry in _SPEC["x-error-codes"]}
+    entry = registered["exposure_unknown"]
+    assert (entry["status"], entry["retryable"]) == (409, False)
+    assert ErrorCode.EXPOSURE_UNKNOWN.value == "exposure_unknown"
+    example = _conflict_examples()["exposureUnknown"]["value"]
+    problem = api.OpenExposureProblem.model_validate(example)
+    assert (problem.code, problem.status) == ("exposure_unknown", 409)
+    assert example["type"].endswith("/errors/exposure_unknown")
+    assert example["title"] == entry["title"]
+    assert problem.consequences is None
+    assert "consequences" not in example
+    schema = _fold(_SCHEMAS["OpenExposureProblem"]["description"])
+    assert "`consequences` is present exactly when `code` is `open_exposure`" in schema
+    assert "an `exposure_unknown` problem carries none" in schema
+
+
+def test_exposure_unknown_is_answered_only_by_revoke_disable_and_delete() -> None:
+    for path, method in _EXPOSURE_OPS:
+        assert "`409 exposure_unknown`" in _text(path, method)
+    conflict = _fold(_SPEC["components"]["responses"]["OpenExposureConflict"]["description"])
+    for operation in _operation_ids():
+        assert f"`{operation}`" in conflict
+    assert "`exposure_unknown`: the account's key is dead at the exchange" in conflict
+    assert "it carries no `consequences`" in conflict
+    others = [
+        operation.get("description", "")
+        for path, item in _PATHS.items()
+        for method, operation in item.items()
+        if method != "parameters" and (path, method) not in _EXPOSURE_OPS
+    ]
+    assert len(others) >= 8
+    assert [text for text in others if "exposure_unknown" in text] == []
 
 
 def test_consequence_summary_names_the_ticket_that_adds_its_up_front_read() -> None:
@@ -535,6 +679,37 @@ def test_suspected_compromise_takes_the_revoke_path_never_an_overlap() -> None:
     rotate = _text(f"{_KEY}/rotate", "post")
     assert "compromise" in rotate
     assert "`revokeApiKey`" in rotate
+
+
+def test_security_program_rotation_overlap_is_the_contract_value() -> None:
+    grace = _grace_seconds_default()
+    lines = _SECURITY_PROGRAM.read_text(encoding="utf-8").splitlines()
+    [row] = [_fold(line) for line in lines if line.startswith("| SR-035 ")]
+    assert "24 h" not in row
+    assert f"the one fixed overlap of {grace} s" in row
+    assert "US-ACCT-004" in row
+    assert "`rotateApiKey`" in row
+    assert "`rotating`" in row  # the key_status of the old key, not `retiring`
+    assert "`retiring`" not in row
+    stories = _USER_STORIES.read_text(encoding="utf-8")
+    story = stories[stories.index("#### US-ACCT-004") :].split("\n#### ")[0]
+    assert "15-minute drain window" in story
+    assert timedelta(minutes=15) == timedelta(seconds=grace)
+
+
+def test_adr_0009_amendment_supersedes_the_24_h_soak_with_the_contract_overlap() -> None:
+    grace = _grace_seconds_default()
+    adr = _ADR_0009.read_text(encoding="utf-8")
+    [amendment] = re.findall(
+        r"^## Amendment \d+ \(2026-10-16, #2417;[^\n]*\n(.*?)(?=^## |\Z)", adr, flags=re.M | re.S
+    )
+    text = _fold(amendment)
+    assert "Supersedes Design §5's" in text
+    assert "soak for 24 h" in text
+    assert f"one fixed {grace} s" in text
+    assert "US-ACCT-004" in text
+    assert "`rotateApiKey`" in text
+    assert "E27-T05" in text
 
 
 # --- No reveal path (SR-E27-11) -----------------------------------------------------------------
