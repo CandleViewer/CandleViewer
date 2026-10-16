@@ -18,6 +18,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.accounts.health import (
     CONNECTION_STATE,
+    DMS_RETRY_MIN_S,
     AccountHealthMonitor,
     HealthState,
     HealthThresholds,
@@ -230,7 +231,7 @@ _EVALUATIONS: dict[str, Callable[[AccountHealthMonitor], object]] = {
 
 
 @pytest.mark.parametrize("evaluate", list(_EVALUATIONS.values()), ids=list(_EVALUATIONS))
-async def test_a_failed_hook_call_is_made_again_at_the_next_evaluation_until_it_returns(
+async def test_a_failed_hook_call_is_made_again_by_the_first_evaluation_after_its_delay(
     evaluate: Callable[[AccountHealthMonitor], object],
 ) -> None:
     clock, dms = FakeClock(), Dms(ACC)
@@ -241,11 +242,50 @@ async def test_a_failed_hook_call_is_made_again_at_the_next_evaluation_until_it_
     (down,) = monitor.tick()
     await monitor.drain()
     dms.failing.clear()
+    evaluate(monitor)  # inside the retry delay: no call
+    await monitor.drain()
+    assert dms.transitions == [down]
+    clock.advance(DMS_RETRY_MIN_S)
     evaluate(monitor)
     await monitor.drain()
     evaluate(monitor)
     await monitor.drain()
     assert dms.transitions == [down, down]
+
+
+async def test_a_failing_hook_is_retried_at_doubling_delays_capped_at_the_down_window() -> None:
+    clock = FakeClock()
+    dms = Dms(ACC, clock=clock)
+    monitor = AccountHealthMonitor(clock, dms)
+    monitor.track(ACC)
+    monitor.rest_ok(ACC)
+    clock.advance(30)
+    down_at = clock.mono
+    for _ in range(121):  # two minutes of ticks at the 1 s cadence
+        monitor.tick()
+        await monitor.drain()
+        clock.advance(1)
+    assert [at - down_at for at in dms.called_at] == [0, 1, 3, 7, 15, 31, 61, 91]
+
+
+async def test_a_new_down_episode_restarts_the_retry_delay_from_the_shortest() -> None:
+    clock = FakeClock()
+    dms = Dms(ACC, clock=clock)
+    monitor = AccountHealthMonitor(clock, dms)
+    monitor.track(ACC)
+    monitor.rest_ok(ACC)
+    for step in (30, 1, 2):  # down, then two failed retries: the next delay is 4 s
+        clock.advance(step)
+        monitor.tick()
+        await monitor.drain()
+    monitor.rest_ok(ACC)  # recovered while the old episode backs off
+    for step in (30, 1):  # silent for the down window: a new episode, then 1 s later
+        clock.advance(step)
+        monitor.tick()
+        await monitor.drain()
+    assert [at - dms.called_at[0] for at in dms.called_at] == [0, 1, 3, 33, 34]
+    episodes = [t.at - T0 for t in dms.transitions]
+    assert episodes == [timedelta(seconds=30)] * 3 + [timedelta(seconds=63)] * 2
 
 
 async def test_a_slow_hook_blocks_neither_evidence_nor_tick_and_is_never_doubled() -> None:
@@ -280,14 +320,17 @@ async def test_a_hook_call_that_outlives_its_timeout_is_logged_and_made_again() 
     errors = [(e["event"], e["error"]) for e in logs if e["log_level"] == "error"]
     assert errors == [("account.dms_hook_failed", "TimeoutError")]
     dms.hold = None
+    clock.advance(DMS_RETRY_MIN_S)
     for _ in range(2):
         monitor.tick()
         await monitor.drain()
     assert dms.transitions == [down, down]
 
 
-async def test_a_down_episode_during_a_call_in_flight_is_delivered_after_it() -> None:
+@pytest.mark.parametrize("fails", [False, True], ids=["returns", "raises"])
+async def test_a_down_episode_during_a_call_in_flight_is_delivered_after_it(fails: bool) -> None:
     monitor, clock, dms = _monitor()
+    dms.failing = {ACC} if fails else set()
     dms.hold = asyncio.Event()
     monitor.rest_ok(ACC)
     clock.advance(30)
@@ -298,7 +341,7 @@ async def test_a_down_episode_during_a_call_in_flight_is_delivered_after_it() ->
     (second,) = monitor.tick()  # down again while the first call is still in flight
     dms.hold.set()
     await monitor.drain()
-    monitor.tick()
+    monitor.tick()  # the first call's failure does not delay the newer episode
     await monitor.drain()
     assert dms.transitions == [first, second]
 

@@ -13,6 +13,7 @@ past the window resumes `down`.
 from __future__ import annotations
 
 import asyncio
+import math
 import sys
 import time
 from collections.abc import Mapping
@@ -48,6 +49,10 @@ CONNECTION_STATE: Final[Mapping[HealthState, str]] = {
 
 #: How long one dead-man's-switch hook call may run before it counts as failed and is retried.
 DMS_HOOK_TIMEOUT_S: Final = 5.0
+#: The delay before a failed hook call is made again. Each further failure of the same call
+#: doubles it, up to the down window, so a broken hook costs one error log per `down_s` per
+#: account, not one per tick.
+DMS_RETRY_MIN_S: Final = 1.0
 
 
 def epoch_ms(value: datetime) -> int:
@@ -119,12 +124,14 @@ class DeadMansSwitch(Protocol):
     into `down`. The monitor makes each call as its own task under `DMS_HOOK_TIMEOUT_S`, so the
     hook can neither block nor abort an evidence call or `tick()`. The task runs in the caller's
     correlation context with `account_id` bound, so the hook's logs carry the account. A call
-    that raises or times out is logged and made again at the account's next evaluation until one
-    returns, so the hook must be idempotent, and a retry may land after the account recovered
+    that raises or times out is logged and made again by the account's first evaluation after a
+    retry delay, `DMS_RETRY_MIN_S` doubling per failure up to the down window, until one returns.
+    So the hook must be idempotent, and a retry may land after the account recovered
     (`transition.at` dates the episode). An account has at most one call in flight and one owed:
-    a newer transition into `down` replaces an older one whose call never succeeded. A call still
-    owed at shutdown is logged and listed by `owed()`; replaying it after a restart is the
-    wiring's job (E39), as a restarted monitor starts every account `down` owing nothing."""
+    a newer transition into `down` replaces an older one whose call never succeeded, and does not
+    wait out the older one's retry delay. A call still owed at shutdown is logged and listed by
+    `owed()`; replaying it after a restart is the wiring's job (E39), as a restarted monitor
+    starts every account `down` owing nothing."""
 
     async def account_down(self, transition: HealthTransition) -> None: ...
 
@@ -140,6 +147,8 @@ class _Account:
     rest_at: float | None = None
     dms_owed: HealthTransition | None = None  # no hook call for it has returned yet
     dms_call: asyncio.Task[None] | None = None
+    dms_delay: float = 0.0  # the last retry delay for `dms_owed`; 0 until a call for it fails
+    dms_retry_at: float = -math.inf  # monotonic; no call for `dms_owed` starts before it
 
     def last_success(self) -> float | None:
         return max((t for t in (self.ws_at, self.rest_at) if t is not None), default=None)
@@ -289,17 +298,20 @@ class AccountHealthMonitor:
 
     def _evaluate(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
         """Commit the account's transition, if any, then start the owed hook call unless one is
-        in flight. The call is a task bound to the account's correlation context, on top of the
+        in flight or its retry delay is still running; a new transition into `down` starts with
+        no delay. The call is a task bound to the account's correlation context, on top of the
         caller's: nothing here waits for the hook or sees it raise."""
         moved = self._commit(account_id, acc)
         if moved is not None and moved.to_state is HealthState.DOWN:
-            acc.dms_owed = moved
-        if acc.dms_owed is not None and (acc.dms_call is None or acc.dms_call.done()):
-            with bind_context(account_id=account_id):
-                call = spawn(self._call_dms(acc, acc.dms_owed), name=f"account-dms:{account_id}")
-            acc.dms_call = call
-            self._dms_calls.add(call)
-            call.add_done_callback(self._dms_calls.discard)
+            acc.dms_owed, acc.dms_delay, acc.dms_retry_at = moved, 0.0, -math.inf
+        busy = acc.dms_call is not None and not acc.dms_call.done()
+        if acc.dms_owed is None or busy or self._clock.monotonic() < acc.dms_retry_at:
+            return moved
+        with bind_context(account_id=account_id):
+            call = spawn(self._call_dms(acc, acc.dms_owed), name=f"account-dms:{account_id}")
+        acc.dms_call = call
+        self._dms_calls.add(call)
+        call.add_done_callback(self._dms_calls.discard)
         return moved
 
     def _commit(self, account_id: UUID, acc: _Account) -> HealthTransition | None:
@@ -317,8 +329,12 @@ class AccountHealthMonitor:
             async with asyncio.timeout(self._dms_timeout_s):
                 await self._dms.account_down(owed)
         except Exception as exc:  # incl. TimeoutError; CancelledError still propagates
-            # The call stays owed and the next evaluation makes it again. Log the type only: a
-            # message may echo an exchange response (C-12.6).
+            # Still owed: the first evaluation after the doubled delay makes it again. A newer
+            # episode that replaced it meanwhile is not delayed. Log the type only: a message may
+            # echo an exchange response (C-12.6).
+            if acc.dms_owed is owed:
+                acc.dms_delay = min(self._th.down_s, max(DMS_RETRY_MIN_S, 2 * acc.dms_delay))
+                acc.dms_retry_at = self._clock.monotonic() + acc.dms_delay
             log = structlog.get_logger(__name__)
             log.error(
                 "account.dms_hook_failed",
