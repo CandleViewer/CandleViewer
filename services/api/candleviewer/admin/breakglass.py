@@ -89,8 +89,10 @@ class BreakGlassExit(IntEnum):
 
 class RunCancelled(asyncio.CancelledError):
     """The run was cancelled (Ctrl-C), raised once the summary is shown. `exit` is how the run
-    ended, the status the CLI exits with: OPERATOR_CANCELLED if the cancel stopped it before a
-    reset began, else the status already under way, so a reset that applied stays RESET."""
+    ended: OPERATOR_CANCELLED if the cancel stopped it before a reset began, else the status
+    already under way, so a reset that applied stays RESET. The CLI exits with it by catching
+    this inside the coroutine it gives `asyncio.run`: one that escapes turns into KeyboardInterrupt
+    there and its `exit` is lost."""
 
     def __init__(self, status: BreakGlassExit) -> None:
         super().__init__(status)  # `args` alone rebuild it (copy, pickle)

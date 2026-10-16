@@ -132,6 +132,8 @@ class _Host:
     cut: list[BaseException] = dataclasses.field(default_factory=list)  # what ended a park
 
     def __post_init__(self) -> None:
+        if isinstance(self.api_up, list):  # this host's copy: `probe` consumes it, not the case
+            self.api_up = list(self.api_up)
         park: dict[str, Any] = {"release": self.release, "entered": self.entered}  # one per test
         self.journal = _Trail(self.calls, self.pending, self.refuse, self.hang, self.lock, **park)
         self.direct = _Trail(self.calls, **self.direct_trail, **park)
@@ -347,6 +349,14 @@ async def test_refuses_while_api_running(kw: dict[str, Any], ran: list[str]) -> 
     assert (w.calls, w.seen) == (ran, [])
     written = [(r["action"], r["reason"]) for r in w.direct.records + w.journal.records]
     assert written == [(ATTEMPT, None), (REFUSED, "api_running")]
+
+
+async def test_probe_answer_list_copied_per_host() -> None:
+    # C-13.7: a host takes its own copy of the probe answers, so a case's list stays whole and
+    # the file reruns in one process (pytest.main twice, a repeat or rerun plugin).
+    answers = [False, True]
+    assert await _Host(LIVE, api_up=answers).run(live_flag=True) is X.API_RUNNING
+    assert answers == [False, True]
 
 
 async def test_second_run_refused() -> None:
