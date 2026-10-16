@@ -95,9 +95,10 @@ def test_contract_the_largest_unsub_the_frame_cap_allows_gets_one_small_err() ->
     reply was one `unsub_ok` of about 2.1 MB (65 526 results); it is one `err` of a few hundred
     bytes, and the socket is still served."""
     frame = {"t": "unsub", "id": "u", "p": {"topics": ["a"] * 65_526}}
-    assert len(json.dumps(frame, separators=(",", ":"))) <= MAX_INBOUND_FRAME_BYTES
+    text = json.dumps(frame, separators=(",", ":"))  # the very text that is sent below
+    assert len(text.encode()) <= MAX_INBOUND_FRAME_BYTES
     with connect(World()) as c:
-        c.send(frame, conform=False)
+        c.send_text(text)
         f = c.recv()
         assert (f["t"], f["id"], f["p"]["code"], f["p"]["field"]) == (
             ("err", "u", "invalid_options", "topics")

@@ -6,8 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import Iterator
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from structlog.testing import capture_logs
@@ -414,10 +413,12 @@ _BAD_UNSUB_SHAPES = [
     pytest.param({"topics": [{"ch": _T[0]}]}, "topics[0]", id="entry-object"),  # names, not entries
     pytest.param({"topics": ["Bad Topic"]}, "topics[0]", id="bad-name"),
     pytest.param({"topics": ["t" * 10_000]}, "topics[0]", id="10000-chars"),
-    # #2875: §13.5 `maxItems`. 51 well-formed names, the first one subscribed; and 51 entries that
-    # are not names, which the length check refuses before reading any: `topics`, not `topics[0]`
+    # #2875: §13.5 `maxItems`. 51 well-formed names, the first one subscribed; 51 entries that are
+    # not names, which the length check refuses before reading any (`topics`, not `topics[0]`);
+    # and the cap with an unknown key, where the first way in §5.3's list names the field (`p`)
     pytest.param({"topics": [*_T, *_names(_CAP)]}, "topics", id="over-the-cap"),
     pytest.param({"topics": [7] * (_CAP + 1)}, "topics", id="over-the-cap-bad-names"),
+    pytest.param({"topics": [*_T, *_names(_CAP)], "bogus": 1}, "p", id="over-the-cap-unknown-key"),
 ]
 
 
@@ -452,16 +453,21 @@ def test_unsub_at_the_cap_is_answered_entry_by_entry() -> None:
 
 
 class _NoEntryRead(list[str]):
-    """A `topics` array that fails the test as soon as one of its entries is read."""
+    """A `topics` array that fails the test as soon as one of its entries is read, however it
+    is read: iterated or reversed, indexed or sliced, searched (`in`, `index`) or counted. Its
+    length, which the cap check needs, stays readable."""
 
-    def __iter__(self) -> Iterator[str]:
+    def _read(self, *_args: Any, **_kwargs: Any) -> NoReturn:
         raise AssertionError("an entry was read")
+
+    __iter__ = __reversed__ = __getitem__ = __contains__ = index = count = _read
 
 
 def test_unsub_over_the_cap_is_refused_before_any_entry_is_read() -> None:
-    """#2875: the length is checked first, so a frame over the cap costs O(1) however long it is.
-    This one holds 65 536 entries (the 256 KiB frame cap lets through 65 526 one-character names):
-    any per-entry work, such as the shape check, reads one and fails the test. No timing."""
+    """#2875: the length is checked first, so the shape check does not depend on how long the
+    array is. This one holds 65 536 entries (the 256 KiB frame cap lets through 65 526
+    one-character names): any read of an entry, by the shape check or a scan of any kind, fails
+    the test. No timing."""
     conn = ConnectionAuthz(_mgr(A), _services())
     reply = _unsub(conn, {"topics": _NoEntryRead(["a"] * 65_536)})
     assert (reply["t"], reply["p"]["code"], reply["p"]["field"]) == (

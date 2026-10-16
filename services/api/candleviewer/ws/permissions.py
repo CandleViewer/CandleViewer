@@ -807,9 +807,10 @@ def sub_shape_error(body: Any) -> TopicError | None:
 def unsub_shape_error(body: Any) -> TopicError | None:
     """#2572, #2875: what breaks an `unsub` frame's §13.5 shape, refused whole like a `sub`: a
     payload that is not an object or has an unknown key, `topics` that is not a non-empty array of
-    at most `MAX_TOPICS_PER_SUB` entries, or an entry that is not a topic name. The length is
-    checked before any entry is read, so a frame over the cap costs O(1) however long it is.
-    `field` is built here and never echoes client input."""
+    at most `MAX_TOPICS_PER_SUB` entries, or an entry that is not a topic name. The first that
+    applies, in that order, names the `field`, which is built here and never echoes client
+    input. The length is checked before any entry is read, so that check costs the same
+    however long the array is."""
     if not isinstance(body, dict):
         return TopicError("invalid_options", "unsub needs an object payload.", "p")
     if not set(body) <= UNSUB_KEYS:
