@@ -1,4 +1,4 @@
-"""E17-T03 (#412, S1): `create_app` and the backpressure flag (`CV_WS_BACKPRESSURE_ENABLED`).
+"""E17-T03 (#412): `create_app` and the backpressure flag (`CV_WS_BACKPRESSURE_ENABLED`).
 
 The composition root hands `make_ws_router` a `BackpressureConfig`, built from the budget settings,
 only while the flag is on; off (the default) it passes none and the gateway keeps today's path.

@@ -428,9 +428,10 @@ class ConnectRateLimiter:
 def welcome_features(*, coalescing: bool) -> dict[str, bool]:
     """The §4.2 `features` block: `FEATURES` plus `coalescing`, which mirrors
     `CV_WS_BACKPRESSURE_ENABLED` (`23-ws-protocol.md` §4.2): advertised when the flag is on.
-    The flag must stay off until the pipeline is complete (#412 S4; removal ticket #2900), so a
-    welcome from a build that has it on earlier advertises ahead of what that build does. That
-    rollout precondition is the operator's; nothing here checks it. Hands out a fresh dict."""
+    The flag must stay off until the backpressure wiring is complete (#412; removal ticket
+    #2900), so a welcome from a build that has it on earlier advertises ahead of what that build
+    does. That rollout precondition is the operator's; nothing here checks it. Hands out a fresh
+    dict."""
     return {**FEATURES, "coalescing": coalescing}
 
 

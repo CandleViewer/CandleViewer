@@ -1,4 +1,4 @@
-"""E17-T03 (#412, S1): the backpressure flag and the outbound budget settings.
+"""E17-T03 (#412): the backpressure flag and the outbound budget settings.
 
 `CV_WS_BACKPRESSURE_ENABLED` (C-4.13: off by default, removal ticket #2900) and the three
 `CV_WS_*` budget settings of `23-ws-protocol.md` §4.3. The queue budget may be lowered, never
@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from candleviewer.settings import Settings
 from candleviewer.ws.lifecycle import LIMITS_BLOCK
 from candleviewer.ws.limits import MAX_SUBSCRIPTIONS
-from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES
+from candleviewer.ws.outbound import QUEUE_BYTES, QUEUE_FRAMES, OutboundQueue, Queued
 from candleviewer.ws.pacing import CLASSIFY_INTERVAL_S
 
 #: The lowest accepted byte budget: one maximum outbound frame. A typo guard: it promises that one
@@ -35,6 +35,22 @@ _ENV = (
 #: The contract ceiling and the floor of each queue budget setting, by field.
 _CEILING = {"ws_queue_bytes": QUEUE_BYTES, "ws_queue_frames": QUEUE_FRAMES}
 _FLOOR = {"ws_queue_bytes": FLOOR_BYTES, "ws_queue_frames": FLOOR_FRAMES}
+#: Accepted: each queue budget setting at the contract value, midway and at the floor.
+_ACCEPTED = [
+    pytest.param(field, value, id=f"{field}-{where}")
+    for field in _CEILING
+    for where, value in (
+        ("contract_value", _CEILING[field]),
+        ("midway", (_CEILING[field] + _FLOOR[field]) // 2),
+        ("floor", _FLOOR[field]),
+    )
+]
+#: Refused: each queue budget setting one below its floor, and at zero.
+_BELOW_THE_FLOOR = [
+    pytest.param(field, value, id=f"{field}-{where}")
+    for field in _FLOOR
+    for where, value in (("one_below_the_floor", _FLOOR[field] - 1), ("zero", 0))
+]
 
 
 @pytest.fixture(autouse=True)
@@ -90,32 +106,29 @@ def test_queue_budget_settings_cannot_exceed_the_contract(
     )
 
 
-@pytest.mark.parametrize("field", _CEILING)
+@pytest.mark.parametrize(("field", "value"), _ACCEPTED)
 def test_queue_budget_settings_accept_the_contract_value_and_any_lower_one_to_the_floor(
-    monkeypatch: pytest.MonkeyPatch, field: str
+    monkeypatch: pytest.MonkeyPatch, field: str, value: int
 ) -> None:
-    ceiling, floor = _CEILING[field], _FLOOR[field]
-    for value in (ceiling, (ceiling + floor) // 2, floor):
-        monkeypatch.setenv(_env(field), str(value))
+    monkeypatch.setenv(_env(field), str(value))
 
-        assert getattr(Settings(), field) == value
+    assert getattr(Settings(), field) == value
 
 
-@pytest.mark.parametrize("field", _CEILING)
+@pytest.mark.parametrize(("field", "value"), _BELOW_THE_FLOOR)
 def test_queue_budget_settings_are_refused_below_the_floor(
-    monkeypatch: pytest.MonkeyPatch, field: str
+    monkeypatch: pytest.MonkeyPatch, field: str, value: int
 ) -> None:
     """A budget under the floor would close connections at their first large frame or round of
     snapshots, so a typo (`CV_WS_QUEUE_BYTES=800`) is refused at startup instead."""
-    for value in (_FLOOR[field] - 1, 0):
-        refused = _refusal(monkeypatch, _env(field), str(value))
+    refused = _refusal(monkeypatch, _env(field), str(value))
 
-        (error,) = refused.errors()
-        assert (error["loc"], error["type"], error["ctx"]) == (
-            (field,),
-            "greater_than_equal",
-            {"ge": _FLOOR[field]},
-        )
+    (error,) = refused.errors()
+    assert (error["loc"], error["type"], error["ctx"]) == (
+        (field,),
+        "greater_than_equal",
+        {"ge": _FLOOR[field]},
+    )
 
 
 def _declared_bounds(field: str) -> tuple[object, object]:
@@ -141,6 +154,15 @@ def test_the_declared_bounds_come_from_the_contract() -> None:
     assert _declared_bounds("ws_queue_frames") == (FLOOR_FRAMES, QUEUE_FRAMES)
     assert FLOOR_FRAMES > MAX_SUBSCRIPTIONS
     assert _declared_bounds("ws_classify_interval_ms") == (500, 10_000)
+
+
+def test_one_maximum_outbound_frame_fits_at_the_floors() -> None:
+    """The floors' one promise (`settings.py`): a queue at both floors holds a maximum frame."""
+    queue = OutboundQueue(max_bytes=FLOOR_BYTES, max_frames=FLOOR_FRAMES)
+
+    queue.push(Queued("x" * LIMITS_BLOCK["max_outbound_frame_bytes"]))
+
+    assert not queue.over_budget()
 
 
 @pytest.mark.parametrize("value", [500, 2_000, 10_000])

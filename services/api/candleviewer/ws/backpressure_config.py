@@ -8,8 +8,11 @@ removes the bound (C-2.18).
 
 The defaults are the contract values. `Settings` owns the ceilings (the same numbers as `le=`: the
 budget may be lowered, never raised, E17 threat model §6) and the floors, so this class only holds
-values and enforces nothing: a harness may build one with a small budget, and the wiring slices
-must not take a hand-built config for a checked one. Plain data: no I/O, no clock.
+values and enforces nothing: a harness may build one with a small budget. The code that first
+consumes a config must therefore check it (`0 < max_bytes <= QUEUE_BYTES`, `0 < max_frames <=
+QUEUE_FRAMES`, `classify_interval_ms > 0`) or accept only `Settings`-built ones: a hand-built
+config must not stand in for a checked one (carried review finding, #412). Plain data: no I/O, no
+clock.
 """
 
 from __future__ import annotations
