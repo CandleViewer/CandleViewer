@@ -1149,7 +1149,7 @@ Every order we ever intend to place gets a row **before** the network call, with
 | `exchange_account_id` | uuid           | no   | —          | FK RESTRICT; denormalised for account-scoped queries              |
 | `parent_order_id`     | uuid           | yes  | NULL       | FK self — algo children (TWAP slices, scaled rungs, OCO siblings) |
 | `oco_group_ref`       | text           | yes  | NULL       | Emulated OCO pairing key (Bybit has no API OCO)                   |
-| `order_link_id`       | text           | no   | —          | **UNIQUE**; `cv-<env>-<leg8>-<intent>-<seq>` ≤ 36 chars           |
+| `order_link_id`       | text           | no   | —          | **UNIQUE**; `24-internal-schemas.md` §8.3 (`untracked`: below)    |
 | `exchange_order_id`   | text           | yes  | NULL       | Bybit `orderId`; UNIQUE per account when present                  |
 | `symbol`              | symbol_code    | no   | —          |                                                                   |
 | `side`                | text           | no   | —          | Buy / Sell                                                        |
@@ -1230,7 +1230,8 @@ CREATE TABLE orders (
   CONSTRAINT ord_trigby    CHECK (trigger_by IS NULL OR trigger_by IN ('LastPrice','MarkPrice','IndexPrice')),
   CONSTRAINT ord_attempts  CHECK (submit_attempts BETWEEN 0 AND 10),
   CONSTRAINT ord_idem      CHECK (idempotency_state IN ('unsent','in_flight','acked','failed')),
-  CONSTRAINT ord_link_fmt  CHECK (order_link_id ~ '^cv-[a-z0-9_-]{1,33}$'),
+  CONSTRAINT ord_link_fmt  CHECK (state = 'untracked' OR order_link_id ~
+    '^cv[ldtp]-[0-9A-Za-z]{22}-[0-9A-Za-z]{4}-[0-9A-Za-z]{2}(en|sl|tp|sc|fl|ac)$'),
   CONSTRAINT ord_no_self   CHECK (parent_order_id IS DISTINCT FROM id)
 );
 CREATE UNIQUE INDEX ux_orders_link     ON orders (order_link_id);
@@ -1245,8 +1246,9 @@ CREATE INDEX ix_orders_inflight  ON orders (created_ts) WHERE idempotency_state 
 CREATE INDEX ix_orders_untracked ON orders (exchange_account_id) WHERE state = 'untracked';
 ```
 
-`order_link_id` construction (deterministic, ≤ 36 chars, Bybit-safe charset):
-`cv-<env1><leg8>-<intent3>-<nn>` — e.g. `cv-l7f3a91c2-ent-00`, `cv-l7f3a91c2-stp-00`. Regenerating the same leg+intent+sequence yields the same id, so a retry after an ambiguous timeout is a no-op at the exchange.
+`order_link_id` construction is owned by `24-internal-schemas.md` §8.3 (36 chars, Bybit-safe charset); `ord_link_fmt` checks its shape. The id is generated once, stored here before the first send and reused unchanged on every retry, so a retry after an ambiguous timeout is a no-op at the exchange.
+
+**Adopted `untracked` rows.** Reconciliation inserts an order it finds on the exchange without a local row (`24-internal-schemas.md` §8.5 step 3c) with `state = 'untracked'`. `order_link_id` stays NOT NULL and unique over all rows: the row stores Bybit's `orderLinkId` verbatim when it is non-empty, otherwise `ext-<Bybit orderId>`, which stays unique because Bybit order ids are unique. Only `untracked` rows are exempt from the `ord_link_fmt` shape check. An `ext-` id exists only in this table; Bybit knows that order by `exchange_order_id` alone.
 
 #### 3.3.5 `order_events` — append-only audit of the order lifecycle
 

@@ -1376,19 +1376,23 @@ stateDiagram-v2
 Bybit deduplicates `orderLinkId` within its retention window, which makes it a genuine idempotency primitive. Limit: **≤36 chars**, alphanumeric plus `-` and `_`.
 
 ```
-order_link_id = "{prefix}{env}-{group36}-{acct4}-{seq2}{suffix}"
+order_link_id = "{prefix}{env}-{group22}-{acct4}-{seq2}{suffix}"
 ```
 
 | Segment   | Width | Content                                                                                         |
 | --------- | ----- | ----------------------------------------------------------------------------------------------- |
 | `prefix`  | 2     | `cv` — namespace, so a manual Bybit-app order is never confused with ours                       |
 | `env`     | 1     | `l` live, `d` demo, `t` testnet, `p` paper                                                      |
-| `group36` | 22    | base62 of the trade-group UUID (122 bits → 21 chars, padded to 22)                              |
-| `acct4`   | 4     | base62 of `crc32(account_id)` — stable per account                                              |
+| `group22` | 22    | base62 of the trade-group UUID as a 128-bit integer, zero-padded left to 22                     |
+| `acct4`   | 4     | `base62(crc32(str(account_id).lower()) mod 62^4)`, zero-padded to 4 — diagnostic tag only       |
 | `seq2`    | 2     | base62 leg/child sequence, 0–3843                                                               |
 | `suffix`  | 2     | purpose tag: `en` entry, `sl` stop, `tp` take-profit, `sc` scale, `fl` flatten, `ac` algo child |
 
-Total `2+1+1+22+1+4+1+2+2 = 36` including three `-` separators. Example: `cvl-3KtQ8fZ1nR0aB7cD2eF9g-1a2B-0Ten`.
+Base62 digits are `0-9A-Za-z` in value order. `crc32` is `zlib.crc32` over the ASCII bytes of `str(account_id).lower()`. A full crc32 needs up to six base62 digits, so `mod 62^4` keeps the low four: `acct4` only labels the account for diagnostics, and uniqueness comes from `group22`, `seq2` and the collision check (rule 5).
+
+`OrderIntent.purpose` (§8.1) maps to `suffix` as follows: `entry` and `reverse` → `en` (a reverse opens the new side, so it carries the native SL, C-2.6); `stop_loss` → `sl`; `take_profit` → `tp`; `scale_in` and `scale_out` → `sc`; `flatten` → `fl`; `algo_child` → `ac`. There is no seventh tag.
+
+Total `2+1+1+22+1+4+1+2+2 = 36` including three `-` separators; `ord_link_fmt` (`21-database-schema.md` §3.3.4) checks the shape. Example: live, trade group `0f8e2b6c-3d4a-4b5c-9e7f-1a2b3c4d5e6f`, account `5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d`, `seq2` 0, entry → `cvl-0TLr6mSAQFGvyfsJ0nLDCh-d0hb-00en` (the group value has 21 base62 digits, so padding adds one leading `0`).
 
 Rules:
 
