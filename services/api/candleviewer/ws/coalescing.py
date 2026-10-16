@@ -13,18 +13,18 @@ or more leave as one merged structured payload with `coalesced_count` and the la
 emitter adds the §8.2 disclosure). A merged `book` window is also re-encoded as one CVWB book delta
 (§3.4 kind 2, flagged `coalesced` by the emitter) when every update in it carried one at the same
 scales; any other merged frame is structured, even for a binary subscriber. An update that carries
-nothing new is discarded as the client would discard it: an entity older than the pending one (§15
-`updated_at_ms`), or a column for a heatmap bucket already sent complete.
+nothing new is discarded
+as the client would discard it: an entity older than the pending one (§15 `updated_at_ms`), or a
+column for a heatmap bucket already sent complete.
 
 `pending_bytes` estimates the JSON size of what `take()` would emit, so the connection budget
-(§8.4) counts pending state as well as queued frames; every buffer is also bounded by count, and
-the queue as a whole by `max_bytes` (defence in depth). A queue that hits a bound (`refusal`
-`full`), meets a valid update its merge cannot represent (`unmergeable`: footprint bars sharing
-an open time, until #2529), or one it cannot merge or size (`malformed`: a non-finite price, a
-missing key, or anything else a producer's payload raises, `RecursionError` included), refuses it,
-reports `overflowed` and drops every buffer at once: its pending state no longer equals the
-applied stream, so the caller re-snapshots the topic (§8.4) and `clear()`s the queue to accept
-updates again. Nothing raises out of `offer`, `set_coalesce` or `take` (fail closed).
+(§8.4) counts pending state as well as queued frames; every buffer is also bounded by count. A
+queue that hits a bound (`refusal` `full`), gets a valid update its merge cannot represent
+(`unmergeable`: footprint bars sharing an open time, until #2529) or one it cannot merge or size
+(`malformed`: a non-finite price, a missing key, anything a payload raises), refuses it, reports
+`overflowed` and drops every buffer at once: its pending state no longer equals the applied stream,
+so the caller must `clear()` it and re-snapshot the topic (§8.4) instead of emitting it. Nothing
+raises out of `offer`, `set_coalesce` or `take` (fail closed); `max_bytes` bounds the whole queue.
 
 A queue belongs to one connection and never mutates its input. It copies the top level of what it
 keeps and every merged entity; nested values of a public family's verbatim update are shared, as
@@ -171,8 +171,8 @@ class _Merge(ABC):
         return False
 
     def validate(self, body: Payload) -> None:
-        """Raise if `body` is queued as a whole frame that `emitted` cannot read. The merge path
-        checks the same fields as it merges."""
+        """Raise if `body` is queued as a whole frame that `emitted` cannot
+        read. The merge path checks the same fields as it merges."""
         return None
 
     def emitted(self, body: Payload) -> None:
@@ -578,6 +578,8 @@ class CoalescingQueue:
         self._delta: Frame | None = None
         #: Why the queue refused an update, until `clear()`; None while it accepts updates.
         self.refusal: Refusal | None = None
+        #: The class (never the message, which may quote the payload) of the error behind it.
+        self.error: str | None = None
 
     @property
     def merging(self) -> bool:
@@ -602,9 +604,8 @@ class CoalescingQueue:
         return self._frame_bytes + merged
 
     def set_coalesce(self, coalesce: bool) -> None:
-        """Turning coalescing on folds any whole frames queued meanwhile into one merge at once
-        (which can overflow); turning it off takes effect once the pending merge has been taken,
-        so it leaves whole."""
+        """Turning coalescing on folds any whole frames queued meanwhile into one merge at once;
+        turning it off takes effect once the pending merge has been taken, so it leaves whole."""
         if coalesce == self._coalesce:
             return
         self._coalesce = coalesce
@@ -679,7 +680,7 @@ class CoalescingQueue:
         if self._rule is not None:
             self._merge = self._rule(*self._bounds)
         self.clear()
-        self.refusal = _CAUSES.get(type(exc), "malformed")
+        self.refusal, self.error = _CAUSES.get(type(exc), "malformed"), type(exc).__name__
 
     def take(self) -> list[Emission]:
         """The frames to emit now (none after a refusal), resetting the pending state. They count
@@ -719,14 +720,13 @@ class CoalescingQueue:
 
     def clear(self) -> None:
         """Drop the pending window (§8.4 step 1) and accept updates again. What a merge remembers
-        across windows (the heatmap's sent buckets, keyed by `t_ms` only, and root fields) is
-        kept: it holds only until the topic's next snapshot, after which `Pacer` builds a new
-        queue."""
+        across windows (the heatmap's sent buckets, keyed by `t_ms`) is kept: it holds only until
+        the topic's next snapshot, after which `Pacer` builds a new queue."""
         self._frames, self._frame_bytes = [], 0
         self._count, self._first, self._ts_ms = 0, None, None
         if self._merge is not None:
             self._merge.reset()
-        self.refusal = None
+        self.refusal = self.error = None
 
 
 def _next_delta(delta: Frame, part: Frame | None) -> Frame | None:

@@ -504,9 +504,6 @@ def test_backpressure_drain_sends_each_snapshot_before_queuing_the_next() -> Non
     assert sent == ["book.BTCUSDT.50", "book.ETHUSDT.50"] and ladder._redrops == {}
 
 
-# -- #2552 follow-ups ---------------------------------------------------------------------------
-
-
 def _overflow(reason: str) -> float:
     value: float = cv_ws_overflow_total.labels(reason=reason)._value.get()
     return value

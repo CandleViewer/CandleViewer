@@ -6,20 +6,20 @@ throttled topic lands in that subscription's `CoalescingQueue`, and at most one 
 effective `throttle_ms` leaves through `TopicEmitter.delta`, so a coalesced frame still consumes
 exactly one sequence number. The first update after a quiet window leaves at once; later ones
 leave when the window closes (`tick`). `orders` and `executions` bypass the pacer, frame by frame
-(S4). A queue that refuses an update is dropped and its topic marked for a `backpressure` snapshot
-(§8.4 step 1); the outbound budget decides when that snapshot may go (step 2). A full queue, or an
-update its merge cannot represent (footprint bars sharing an open time, #2529), counts as
-`cv_ws_overflow_total{reason="drop"}`; a malformed update is a producer bug, counted in
-`cv_ws_malformed_updates_total` and logged (family and topic only), never as an overflow.
+(S4). A queue that overflows is dropped and its topic marked for a `backpressure` snapshot (§8.4
+step 1); the outbound budget decides when that snapshot may go (step 2).
+A full queue counts as `cv_ws_overflow_total{reason="drop"}`, an update its merge cannot represent
+(footprint bars sharing an open time, #2529) as `reason="unmergeable"`; a malformed update is a
+producer bug, counted in `cv_ws_malformed_updates_total` and logged (family, topic and error class
+only), never as an overflow.
 
 `Classifier` turns the outbound queue depth and the RTT (`RttProbe`, §9.1) into a class every
 `CLASSIFY_INTERVAL_S`: a class worsens at once and improves only after two consecutive better
 samples. `Pacer.apply` enforces it: `lagging` doubles throttles and forces coalescing; `saturated`
 and `overflowing` quadruple them and hold `heatmap` and `profile` to at most one frame a second.
 
-Plain synchronous code on the hot path (C-2.20). There is one clock domain, the emitter's
-monotonic `TopicEmitter.clock`: `offer` reads it, and `tick`, `classify` and `apply` default `now`
-to it (a caller passing `now` must take it from that clock).
+Plain synchronous code on the hot path (C-2.20). One clock domain, the emitter's monotonic
+`TopicEmitter.clock`: `offer` reads it; `tick`, `classify` and `apply` default `now` to it.
 """
 
 from __future__ import annotations
@@ -292,12 +292,13 @@ class Pacer:
 
     def _refused(self, lane: _Lane) -> None:
         """A lane's queue refused an update: count why, then drop the topic (§8.4 step 1)."""
-        family = lane.sub.topic.family.family
-        if lane.queue.refusal == "malformed":  # a producer bug, not an overflow
+        queue, family = lane.queue, lane.sub.topic.family.family
+        if queue.refusal == "malformed":  # a producer bug, not an overflow
             cv_ws_malformed_updates_total.labels(topic=family).inc()
-            _log().warning("ws producer update malformed", family=family, topic=lane.sub.ch)
-        else:
-            cv_ws_overflow_total.labels(reason="drop").inc()
+            _log().warning("ws update malformed", family=family, ch=lane.sub.ch, error=queue.error)
+        else:  # `unmergeable` counts apart from a slow consumer's drops (a producer loop, #2529)
+            reason = "drop" if queue.refusal == "full" else "unmergeable"
+            cv_ws_overflow_total.labels(reason=reason).inc()
         self.drop(lane.sub)
 
     def drop(self, sub: Subscription) -> None:
@@ -372,7 +373,8 @@ class Pacer:
 
 
 def _held(sub: Subscription) -> bool:
-    """Its deltas are held: it awaits a `snap` (another sender's or the ladder's) or is paused."""
+    """Its deltas are held: it awaits a `snap` (another sender's or the ladder's) or is paused. A
+    pause ends in a re-snapshot (`Subscriptions.ctl`, §5.4): a window shed meanwhile is not lost."""
     return sub.snapshot_pending or sub.effective.get("paused") is True
 
 

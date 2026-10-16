@@ -1322,11 +1322,11 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "steps",
         ("reason",),
-        "WS 23 section 8.4 ladder steps: per topic for drop/resnapshot, per close_budget/redrop.",
+        "WS 23 section 8.4: per topic drop/unmergeable/resnapshot, per close_budget/close_redrop.",
         "client health",
         _L,
         "E17",
-        max_series=4,
+        max_series=5,
         exported=True,
     ),
     _s(

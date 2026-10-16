@@ -22,12 +22,13 @@ market-data frames (`d` / `snap` of a throttled topic) can be dropped; control f
 
 Every step counts in `cv_ws_overflow_total{reason}` (step 4, `LadderEvent.reason`) and comes back
 as a `LadderEvent`; the caller writes the warning audit entry when step 3 fires (with the close's
-`trigger`) and performs the close. A close fires and counts once: `check` and `drain` return
-nothing after it, so the `bye` push that runs `check` again is harmless. The bound holds only if
-the caller runs `check` after every push and every pacer update; recovery needs `drain` after
-every send and after every `check` that dropped. `drain` queues one snapshot per call; a `check`
-from its pushes runs once it is whole, its events returned by `drain` (a drop is whole, and a
-redrop). `drain` is the only sender of `backpressure` snapshots: the wiring must keep
+`trigger`) and performs the close. A close fires and counts once, and `check` and `drain` return
+nothing after it: the caller must close at once and push nothing but the `bye`, or the 8 MiB
+bound is gone. Otherwise the bound holds only if the
+caller runs `check` after every push and every pacer update; recovery needs `drain` after every
+send and after every `check` that dropped. `drain` queues one snapshot per call; a `check` from its
+pushes runs once it is whole, its events returned by `drain` (a drop is whole, and a redrop).
+`drain` is the only sender of `backpressure` snapshots: the wiring must keep
 `TopicEmitter.flush_pending` and `SequencingHub.resnapshot` off them.
 """
 

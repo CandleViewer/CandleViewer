@@ -1122,7 +1122,7 @@ On overflow the server acts in this order:
 3. Send `bye` with `slow_consumer` and close `4429` when either:
    - the queue is still over budget after the drop, because what remains cannot be dropped: `orders` or `executions`, or a backlog of control or `system` frames (S6); or
    - three drops in a row each remove a topic's `backpressure` snapshot before it was sent: the client drains too slowly for that topic to recover (a snapshot larger than the budget never could).
-4. Record `cv_ws_overflow_total{reason}`, where `reason` is `drop` (step 1), `resnapshot` (step 2), or `close_budget` / `close_redrop` (the two step-3 triggers), and, if step 3 fires, write a `warning` audit entry: the connection's close audit, `ws.connection.closed` with reason `slow_consumer` (#2486), not a second action.
+4. Record `cv_ws_overflow_total{reason}`, where `reason` is `drop` (step 1), `unmergeable` (step 1 for a topic whose update cannot be merged, such as footprint bars sharing an open time, #2529), `resnapshot` (step 2), or `close_budget` / `close_redrop` (the two step-3 triggers), and, if step 3 fires, write a `warning` audit entry: the connection's close audit, `ws.connection.closed` with reason `slow_consumer` (#2486), not a second action.
 
 A client that is closed as a slow consumer should reconnect with backoff and _reduce its subscription set_ — the `bye` payload names the topics that were most expensive (up to five, by queued plus pending bytes when the overflow began, largest first; empty when no topic held any):
 

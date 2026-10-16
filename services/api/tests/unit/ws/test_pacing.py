@@ -422,9 +422,6 @@ def test_pacer_window_of_a_paused_subscription_frees_its_pending_bytes() -> None
     assert pacer.pending_bytes == 0
 
 
-# -- #2552 follow-ups ---------------------------------------------------------------------------
-
-
 def _count(counter: Any, **labels: str) -> float:
     value: float = counter.labels(**labels)._value.get()
     return value
@@ -435,10 +432,13 @@ class _GetRaises(dict[str, Any]):
         raise RuntimeError("producer bug")
 
 
-def _refusals(family: str) -> tuple[float, float]:
-    """(`cv_ws_malformed_updates_total{topic=family}`, `cv_ws_overflow_total{reason="drop"}`)"""
-    malformed = _count(cv_ws_malformed_updates_total, topic=family)
-    return malformed, _count(cv_ws_overflow_total, reason="drop")
+def _refusals(family: str) -> dict[str, float]:
+    """The malformed counter of `family` and the overflow counter of each refusal reason."""
+    return {
+        "malformed": _count(cv_ws_malformed_updates_total, topic=family),
+        "drop": _count(cv_ws_overflow_total, reason="drop"),
+        "unmergeable": _count(cv_ws_overflow_total, reason="unmergeable"),
+    }
 
 
 @pytest.mark.parametrize(
@@ -465,13 +465,15 @@ def test_pacer_forced_coalescing_past_the_key_bound(stale: str) -> None:
     dropped = not stale
     assert (pacer.resnapshot_required == {sub.sub_id: sub}) is dropped
     assert (sub.pending_reason == "backpressure") is dropped
-    assert _refusals("book") == (before[0], before[1] + dropped)
+    assert _refusals("book") == {**before, "drop": before["drop"] + dropped}
     assert pacer.pending_bytes == 0
+    if stale == "paused":  # the shed window is not lost: the resume `ctl` re-snapshots (§5.4)
+        assert conn.authz.ctl(sub.ch, {"paused": False})[1] and sub.snapshot_pending
 
 
 def test_pacer_malformed_update_is_counted_and_logged_apart_from_overflow() -> None:
-    """A producer bug drops the topic like an overflow but counts apart, logging only the
-    family and topic; a refusal by `take` is caught at the flush."""
+    """A producer bug drops the topic like an overflow but counts apart, logging the family,
+    topic and error class only; a refusal by `take` is caught at the flush."""
     conn, pacer = _conn()
     heatmap = _sub(conn, "heatmap.BTCUSDT", coalesce=False)
     before = _refusals("heatmap")
@@ -479,23 +481,22 @@ def test_pacer_malformed_update_is_counted_and_logged_apart_from_overflow() -> N
     with capture_logs() as logs:
         pacer.offer(heatmap, body)
     assert conn.take() == [] and pacer.resnapshot_required == {heatmap.sub_id: heatmap}
-    assert _refusals("heatmap") == (before[0] + 1, before[1])
-    event = "ws producer update malformed"
-    assert logs == [
-        {"event": event, "family": "heatmap", "topic": heatmap.ch, "log_level": "warning"}
-    ]
+    assert _refusals("heatmap") == {**before, "malformed": before["malformed"] + 1}
+    event = {"event": "ws update malformed", "family": "heatmap", "ch": heatmap.ch}
+    assert logs == [{**event, "error": "RuntimeError", "log_level": "warning"}]  # never its message
 
 
-def test_pacer_unmergeable_footprint_update_is_a_drop_not_a_producer_bug() -> None:
+def test_pacer_unmergeable_footprint_update_resnapshots_under_its_own_reason() -> None:
     """Non-time bars may share an open time until §14.4 carries the bar key (#2529): such an
-    update re-snapshots the topic and counts as a drop, never as a malformed update."""
+    update re-snapshots the topic, counted as neither a slow consumer's drop nor a producer bug."""
     conn, pacer = _conn()
     sub = _sub(conn, "footprint.BTCUSDT.tick.1000")
     bar = {"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1", "ask_volume": "0"}]}
     before = _refusals("footprint")
     with capture_logs() as logs:
         assert not pacer.offer(sub, {**_FOOTPRINT, "bars": [bar, dict(bar)]})
-    assert (_refusals("footprint"), logs) == ((before[0], before[1] + 1), [])
+    after = {**before, "unmergeable": before["unmergeable"] + 1}
+    assert (_refusals("footprint"), logs) == (after, [])
     assert pacer.resnapshot_required == {sub.sub_id: sub}
 
 
