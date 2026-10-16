@@ -3731,6 +3731,13 @@ class AuditEvent(BaseModel):
 
 **Tamper evidence:** each row's `hash` covers its own canonical JSON plus the previous row's hash. A nightly verifier walks the chain and alerts at `critical` on any break. The daily head hash is exported to the backup bundle, so tampering that rewrites the whole chain is still detectable against an offline copy.
 
+**Nightly verification (E09-X04 R-5, #2111).** A supervised scheduled job (`cv-audit-verify`, `21-database-schema.md` §3.10.1) runs `AuditQueryService.verify()` once a day over the **whole chain, genesis to head**, because a forward-only walk never rechecks rows it has already passed (`04-security-program.md` §8.1 owns the control, including the on-start walk). The job ships in a later slice of #2111; its two settings are fixed here first. Both become `candleviewer.settings.Settings` fields with the `CV_` env prefix when the job lands, and are described in prose only (no manifest slot):
+
+- `audit_verify_nightly_hour_utc` (`CV_AUDIT_VERIFY_NIGHTLY_HOUR_UTC`): integer 0-23, default `4`. The UTC hour of the daily run. 04:00 falls after the declared 02:15 export (`21-database-schema.md` §5.3) and 03:00 retention (§13.4) runs. The loop sleeps to the next slot through an injected clock and sleep. The first run is at least 5 minutes after start-up, so Prometheus has scraped `audit_chain_verification_failures_total` at 0 before it can move (`increase()` cannot fire on a series whose first sample is already 1).
+- `audit_verify_nightly_deadline_s` (`CV_AUDIT_VERIFY_NIGHTLY_DEADLINE_S`): seconds, positive, default `1800`. The deadline of one nightly run. The on-demand `verifyAuditChain` limits (`audit_verify_deadline_s` and `audit_verify_max_span`, contracts #2392 and #2446) are sized for one request, not a whole-chain walk: for example, 10 million rows at the E42-T02 target of 100,000 rows/s take about 100 s. Batches stay bounded. A run that hits the deadline, or raises, is a **stopped run**: it is recorded as stopped and never reported as a success.
+
+A scheduled run waits for the verify slot and is never skipped; the loop is sequential, so a run that overruns does not queue another. This section covers detection only: what a detected break does to trading is the Owner's decision (#2904; `04-security-program.md` §8.1).
+
 **Redaction:** `before`/`after` pass through a redactor that removes secrets (`secret`, `api_key`, `password`, `token`, `dek`) and truncates large blobs to a hash. Redaction is unit-tested with a fixture containing every secret-ish key name used in the codebase.
 
 ### 15.5 Audited action vocabulary (closed set)
