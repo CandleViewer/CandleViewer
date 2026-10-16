@@ -36,7 +36,7 @@ class _PgError(Exception):
 
 class _Rel:
     """Fake unit of work keyed by statement: records what ran (and the hook), the commit, and
-    raises `error` at the step `fail_at` (`"enter"`, a statement, or `"commit"`)."""
+    raises `error` at the step `fail_at`: `"enter"`, a statement, `"hook"` or `"commit"`."""
 
     def __init__(self, before: dict[str, Any] | None = _BEFORE) -> None:
         after = {"value": "business_kyc", "updated_at": _T2}
@@ -75,6 +75,8 @@ def _store(rel: _Rel, **kw: Any) -> m.SqlAlchemySystemSettings:
 async def _put(rel: _Rel, hook: Any = None, **kw: Any) -> StoredSetting:
     async def record(before: StoredSetting | None) -> None:
         rel.ran.append(("HOOK", before))
+        if rel.fail_at == "hook":  # an `OSError` here is what `WriteAhead` warns hooks not to raise
+            raise rel.error
 
     write_ahead = hook or record
     return await _store(rel, **kw).put_string(
@@ -196,7 +198,7 @@ async def test_any_other_error_is_a_bug_and_keeps_its_type(error: BaseException)
     assert not rel.committed
 
 
-@pytest.mark.parametrize("step", ["enter", m._LOCK, m._UPSERT, "commit"])
+@pytest.mark.parametrize("step", ["enter", m._LOCK, m._UPSERT, "hook", "commit"])
 async def test_an_outage_at_any_step_of_a_write_is_a_fixed_store_outage(step: Any) -> None:
     rel = _Rel()
     rel.fail_at, rel.error = step, _OUTAGES[0]
