@@ -6,7 +6,13 @@
 - **Scope:** the durable in-process subset: the service-level cases, plus the HTTP, WS and
   observability cases of #2144 driven through the real `create_app()` stack. Rows marked **NOT RUN**
   have no observed result and are NOT claimed as defended; the remaining ones need real Postgres
-  roles or a DB-wired stack and are tracked in #2105.
+  roles or a DB-wired stack and are tracked in #2105, except the nightly chain verifier, which waits
+  for its job (F-6, #2111).
+- **Integration lane:** AC-AUD-01/02 are the exception to "in-process". They log in as the real
+  `cv_app` role on Postgres 16, created by `infra/scripts/pg_bootstrap.sql` on a schema migrated as
+  `cv_owner`, in `services/api/tests/integration/audit/test_audit_guard_cv_app.py`. CI's integration
+  lane is the proof. The local runs recorded here used a native PostgreSQL 16.2 through an
+  out-of-repo stand-in for `PostgresContainer`, not the `postgres:16-alpine` image CI pulls.
 - Rule ids (verified present in `CONSTITUTION.md`): C-2.9 (audit), C-2.12 and C-12.4 (server-side RBAC),
   C-2.18 (bounded/off-loop work), C-12.6 (redaction), C-13.7 (deterministic tests, no sleeps/network).
 - Verdict key: DEFENDED (attack failed as designed) · DESIGN-DECISION (accepted behaviour, confirm) ·
@@ -37,6 +43,26 @@ Each control was disabled on the scratch worktree and the named case failed, the
 | `auth.mfa_failed` row not written (verify and recovery routes)         | `test_obs_mfa_*`                                                                       |
 | refresh-reuse row severity lowered from `critical`                     | `test_obs_refresh_*`                                                                   |
 | `CsrfRefusalsHigh` edited to read another series                       | `test_obs_alert_rules_read_exactly_the_recorded_signals`                               |
+
+AC-AUD-01/02 attack the real `cv_app`, so their controls are the shipped files that give it its
+rights. Each was changed on a scratch copy of `0003_audit_log` or `pg_bootstrap.sql`, except the last
+two rows, which change the module itself; the module (57 cases, all passing unchanged) was run as
+described under "Integration lane", and the cases named failed; the copy was then discarded. A premise
+is a case that pins what `cv_app` holds or what owns the guard.
+
+| Shipped control disabled                                                                                | Failing cases                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `pg_bootstrap.sql`: default privileges also grant `cv_app` TRIGGER                                      | AC-AUD-02 `add-competing-trigger` on both tables; the privilege premise for both                                                       |
+| `0003_audit_log`: `REVOKE UPDATE, DELETE, TRUNCATE ... FROM cv_app` removed for `audit_log`             | AC-AUD-01 `audit_log-update` and `-delete`; its privilege premise                                                                      |
+| the same `REVOKE` removed for `audit_checkpoints`                                                       | AC-AUD-01 `audit_checkpoints-update` and `-delete`; its privilege premise                                                              |
+| `pg_bootstrap.sql`: `cv_app` made a member of `cv_owner`, so it owns the tables and the guard functions | AC-AUD-01/02 except `replica-mode-session`; the privilege, plain-role and schema premises                                              |
+| `pg_bootstrap.sql`: `cv_app` granted CREATE on schema `public`                                          | the four `replace-*` cases (no longer refused for the missing CREATE); the schema premise                                              |
+| `pg_bootstrap.sql`: `cv_app` made a superuser                                                           | AC-AUD-01/02; the privilege, plain-role and schema premises                                                                            |
+| `forbid_mutation()` replaced by a no-op (`0003_audit_log`)                                              | every AC-AUD-02 case: the guard no longer fires                                                                                        |
+| `trg_audit_chain` never created (`0003_audit_log`)                                                      | every AC-AUD-02 case; the guard-shape premise; the append check; AC-AUD-01 on `audit_log` (no row can be chained, so none is appended) |
+| `trg_audit_ckpt_append` or `trg_audit_ckpt_no_truncate` never created (`0003_audit_log`)                | every AC-AUD-02 case; the guard-shape premise (AC-AUD-01 still holds: it is refused on the missing privilege)                          |
+| `audit_field(text)` handed to `cv_app` (a fixture edit: no shipped file does this)                      | the plain-role and owner premises; `drop-field-function`; `replace-field-function` with CREATE on the schema                           |
+| a misspelt trigger name in the test's guard list (a test edit)                                          | the guard-shape premise; the three attacks naming it, at their own existence check; every other AC-AUD-02 case, at the shape check     |
 
 ## Cases
 
@@ -96,19 +122,44 @@ Each control was disabled on the scratch worktree and the named case failed, the
 | AC-WS-02      | U13               | Captured `auth` frame (bearer access token)         | Replay it on a second socket while the session is live; again after logout                            | Rejected without a live session (U13 text)                                                                                                                                   | Live: `auth_ok` for the victim's session; logout closes both (4401); later replays fail                        | **FINDING F-4** (Architect/Owner: extend F-2 or fix)                      |
 | AC-WS-03      | U32 §9.5          | Manager socket on `orders` for a granted account    | Revoke the grant; re-auth with the same token; subscribe again                                        | Dropped live; not regained                                                                                                                                                   | `permission_change` + `revoked` (`account_scope_changed`); re-sub `account_scope_denied`                       | DEFENDED (re-auth snapshot race: fixed by #2318)                          |
 | AC-WS-04      | §5.2 §6 registry  | Authenticated socket                                | `sub` per name: `../admin`, `orders.*`, `/../`, control chars, case, 300 chars; mixed; unknown names  | Refused, nothing attached, socket stays open: a name that is not a topic name refuses its whole `sub` (§5.2, #2567); an unknown but well-formed name is refused per topic    | Malformed: `err invalid_options`, `topics[i]`; granted topic beside one not attached. Unknown: per topic       | DEFENDED                                                                  |
+| AC-AUD-01     | U14 SR-066        | `cv_app`: SELECT, INSERT only, on both audit tables | `UPDATE`, `DELETE`, `TRUNCATE` on `audit_log` and on `audit_checkpoints` as `cv_app`                  | `insufficient_privilege` for the missing table privilege; every row unchanged afterwards                                                                                     | Local PG 16.2: refused x6, rows unchanged (`test_cv_app_cannot_rewrite_audit_history`)                         | DEFENDED (integration lane: `pytest tests/integration -m integration`)    |
+| AC-AUD-02     | U14 SR-063 SR-066 | Same role, own login per attempt; owns nothing      | Drop, disable or replace each guard trigger and function; take ownership; replica mode; add a trigger | Each attempt `insufficient_privilege`; guard unchanged (triggers, enabled, function bodies, owners), still firing: owner UPDATE, DELETE, TRUNCATE refused, new row chained   | Local PG 16.2: refused x44 (4 with CREATE on the schema), guard intact: see the evidence note                  | DEFENDED (integration lane: `pytest tests/integration -m integration`)    |
+
+Evidence for AC-AUD-01/02, all in the CI integration lane (`pytest tests/integration -m integration`):
+
+- `services/api/tests/integration/audit/test_audit_guard_cv_app.py` runs 57 cases against the real
+  `cv_app`: 7 premises, the 6 AC-AUD-01 cases and the 44 AC-AUD-02 cases (15 trigger attacks, 25 table,
+  function and session attacks, and 4 function replacements with CREATE on the schema granted, so only
+  ownership can refuse them). Every AC-AUD-02 case first reads the guard as the owner, so a trigger
+  that an attack names but that does not exist fails there instead of being "refused": PostgreSQL
+  refuses a non-owner of the table before it looks an `ALTER TABLE ... TRIGGER` name up.
+- The owner's own `TRUNCATE` refusal is asserted by that module after every AC-AUD-02 attack, and on its own by
+  `test_truncate_refused_even_for_owner` in `services/api/tests/integration/audit/test_audit_repository.py`.
 
 ## NOT RUN (no observed result; env-only, tracked in #2105)
 
 | Area            | Cases                                                                                                                                          | Why                                                                    |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Audit attacks   | UPDATE/DELETE as app role, trigger drop, crafted migration, chain verifier, silent-action (U14, U17, U19, U20)                                 | Needs real Postgres roles; integration stack not available to this run |
+| Audit attacks   | crafted migration that blanks a row or widens a grant (U17); AC-AUD-01 pins `cv_app`'s rights on the two audit tables only                     | Needs real Postgres roles; integration stack not available to this run |
+| Audit attacks   | audited action that writes no audit row (U19)                                                                                                  | Needs the DB-wired HTTP stack                                          |
 | Real DB checks  | Argon2id params from DB row; atomic MFA/recovery consume; Alertmanager delivery of the lockout alert (SR-016; its series: #2628)               | Fakes only here                                                        |
 | HTTP RBAC sweep | Every admin/owner route as Manager/Viewer; body/query/path account_id; list probes; self-service `user_id` (D5); role change with live session | Needs full app wiring                                                  |
+
+## NOT RUN (no observed result; blocked by a missing job, not by the environment)
+
+| Area          | Cases                                                             | Why                                                |
+| ------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
+| Audit attacks | the nightly chain verifier detects an out-of-band edit (U14, U20) | There is no scheduled verifier job yet: F-6, #2111 |
+
+The on-demand verifier already locates such an edit: `test_superuser_tamper_is_located` in
+`services/api/tests/integration/audit/test_audit_repository.py` edits a row as a superuser with the
+append-only trigger disabled, and `verify()` returns that row as the first bad one. Only the scheduled
+run waits for #2111; an environment would not unblock it.
 
 ## X01 threat cross-check (#298 AC1)
 
 These ids from `docs/security/threat-models/e09-auth-rbac.md` have no "Cases" row of their own; every
-other id is in that table's threat column or, for U14, U17 and U20, in "NOT RUN" above. "Not
+other id is in that table's threat column or, for U17 and U20, in a "NOT RUN" table above. "Not
 executable" means this harness has no way to attempt the attack; the reason says where the check
 lives instead.
 
@@ -118,7 +169,7 @@ lives instead.
 | U10    | Not executable: the SR-023 break-glass CLI is not runnable yet (E09-S11, #2119: its flow is on main, the slice that composes it is not; E09-X04 R-6, Owner item AB on #1778) and by design needs host filesystem and KEK access; the drill is #300                                                                    |
 | U15    | AC-AUTHZ-02 (foreign `account_id`: `ACCOUNT_NOT_GRANTED`) and AC-WS-03 (grant revoked under a live socket); the every-route body, query and path sweep is env-only (#2105)                                                                                                                                            |
 | U16    | Not an attack: vocabulary drift fails `tests/contract/test_rbac_conformance.py::test_rbac_vocabulary_single_source`                                                                                                                                                                                                   |
-| U21    | Not executable: the chain is the Postgres `audit_chain()` BEFORE INSERT trigger (ordered by `id`, not by time), so the skew property needs a real database and clock control; with the chain-verifier cases in #2105                                                                                                  |
+| U21    | Not executable: the chain is the Postgres `audit_chain()` BEFORE INSERT trigger (ordered by `id`, not by time), so the skew property needs a real database and clock control; with the chain-verifier case (#2111)                                                                                                    |
 | U22    | Logs: `test_no_token_in_logs.py` (login, MFA, refresh and step-up through `create_app()`, every sink scanned). Audit: fixation rows hold the vector and route, never the token (AC-SES-01, `test_session_fixation_audit.py`)                                                                                          |
 | U23    | Not executable here: DOM, URL and browser-storage persistence (SR-054) is a browser property, owned by the E09-Q02 Playwright suite (#293, `enrolment.spec.ts`; SCR-003 is not built yet). Server side: AC-MFA-03/04                                                                                                  |
 | U24    | `POST /admin/audit/export` is Owner-only (Manager and Viewer get 403, executed in `tests/contract/rbac/matrix.yaml`). The PII projection on rows a Manager may query needs the DB-wired audit stack (#2105)                                                                                                           |
@@ -134,7 +185,8 @@ are checked against the audit action registry, as the real writer does). "Scrape
 the registry Prometheus scrapes; "in-process" series are invisible to Prometheus, so no alert can
 read them. The alert column is mirrored by `ALERTING` in `test_observability.py`, which
 `test_obs_alert_rules_read_exactly_the_recorded_signals` asserts against `infra/prometheus/alerts`:
-change the column and `ALERTING` together.
+change the column and `ALERTING` together. AC-AUD-01/02 are the exception: they run on Postgres,
+not through `create_app()`.
 
 | Cases                                  | Audit row                                                                                                                                    | Metric                                                                          | Alert                                                                                | Asserted by                                                                               |
 | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
@@ -154,6 +206,7 @@ change the column and `ALERTING` together.
 | AC-WS-02                               | live replay: none (F-4); then `ws.connection.closed` per socket (#2528); 3rd failed `auth`: `auth.login_failed` (`ws_auth_failed`, warning)  | `cv_ws_auth_failures_total{reason}`, scraped                                    | none                                                                                 | `test_ac_ws_02_*`                                                                         |
 | AC-WS-03                               | `ws.subscription.revoked`, then `ws.subscribe.denied` (`account_scope_denied`)                                                               | `cv_ws_revoked_total{reason}`, scraped                                          | none                                                                                 | `test_ac_ws_03_*`                                                                         |
 | AC-WS-04                               | none for a malformed name (refused before any topic is read); `ws.subscribe.denied` for a well-formed private one (`orders.admin`)           | well-formed: `cv_ws_subscribe_total`; malformed: unscraped `cv_ws_errors_total` | none; none possible for the malformed ones (O-2)                                     | `test_ac_ws_04_*`                                                                         |
+| AC-AUD-01, AC-AUD-02                   | none: Postgres refuses the statement itself (its own `42501` error) before any product code runs, so no audit row is written                 | none: no product code runs, so nothing is counted                               | none possible: there is no product signal to read                                    | the refusals: `test_audit_guard_cv_app.py`; the absence of a signal is not asserted       |
 
 Every authenticated WS connection also writes one `ws.connection.closed` row when it ends (#2528;
 `reason` is the `bye` reason, else `internal_error`, `shutdown` or `client_closed`); an
