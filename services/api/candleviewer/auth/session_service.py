@@ -482,7 +482,14 @@ class SessionService:
             raise UnlockPasswordInvalid("invalid_password")
 
         self._unlock_failures.pop(session_id, None)
-        touched = await self._repository.touch_last_seen(session_id, now=now)
+        if session.is_idle_locked(now=now):
+            # B16.7 (C-2.12, C-2.21; PR #2290 ruling rule 4d): lifting the lock
+            # drops every step-up elevation in the same write that re-stamps
+            # `last_seen_at`, so a password-only unlock never inherits a grace
+            # window, a one-shot grant or a pending challenge taken before it.
+            touched = await self._repository.lift_idle_lock(session_id, now=now)
+        else:
+            touched = await self._repository.touch_last_seen(session_id, now=now)
         if touched is None:
             raise SessionNotFound("session disappeared during unlock")
         return touched

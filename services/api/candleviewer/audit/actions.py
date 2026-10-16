@@ -48,6 +48,9 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "auth.step_up_required",
         "auth.step_up_grace_used",
         "auth.session_readonly_downgrade",
+        # #2301: the B16 chart records activity on an idle-locked session, a step-up
+        # it refuses to record as elevation, and an unlock outside a lock.
+        "auth.request_ignored",
         "auth.mfa_reset_by_owner",
         "auth.mfa_verified",
         "auth.mfa_failed",

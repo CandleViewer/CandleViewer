@@ -33,6 +33,16 @@ _US = 1_000_000
 #: Await each event's macrostep receipt so a failed audit action surfaces to
 #: the caller (C-2.9). Safe: see `_send` (not an action; CV-C51 n/a).
 _AWAIT_STEP = True
+#: B16.7 (C-2.9): the state each of these events must reach. A step that moves
+#: both regions can roll one back while the receipt reads `error=None` (CV-C06),
+#: so the configuration, not the receipt, proves that the region holding the
+#: event's audit action (`auth.idle_locked`, `auth.session_revoked`) committed.
+_MUST_REACH: dict[str, str] = {
+    "IDLE_DEADLINE": "auth.idle_locked",
+    "LOGOUT": "auth.revoked",
+    "ABSOLUTE_DEADLINE": "auth.revoked",
+    "REVOKE": "auth.revoked",
+}
 
 
 class SessionChartError(RuntimeError):
@@ -92,12 +102,16 @@ class SessionChart:
         wait for this event's macrostep. A receipt is read only through
         `receipt_is_conclusive` (CV-C06): an action error (e.g. audit down)
         fails loud; a deferred/no-op receipt is not an error here — the
-        chart records, it never gates (C-2.21)."""
+        chart records, it never gates (C-2.21). An event in `_MUST_REACH`
+        also fails loud unless the chart reached its state (B16.7)."""
         # Called from request handlers only - never from a B16 action - so the
         # CV-C51 self-receipt hang cannot arise (no action awaits this chart).
         receipt = await self._gateway.send(sid, {"type": event, **payload}, wait=_AWAIT_STEP)
         if receipt_is_conclusive(receipt) and receipt.error is not None:
             raise SessionChartError(f"B16 {event}: {type(receipt.error).__name__}")
+        must_reach = _MUST_REACH.get(event)
+        if must_reach is not None and not self.in_state(sid, must_reach):
+            raise SessionChartError(f"B16 {event}: {must_reach} not reached")
 
     async def _hydrate(self, sid: str, record: SessionRecord, now: datetime) -> None:
         await self._send(sid, "MFA_OK", replay=True)
@@ -152,10 +166,16 @@ class SessionChart:
         """Send *event* to the session's chart, after enforcement already ran.
 
         `before` (the elevation view prior to the event) rides on the payload
-        so the audit action can write before/after state (C-12.8)."""
+        so the audit action can write before/after state (C-12.8). An idle
+        lock the row shows but the chart has not seen yet is recorded first
+        (INV-B16-e, #2301): an unlock is recorded against the still-locked row."""
         interp = await self._get(record, now)
+        sid = str(record.id)
+        if record.is_idle_locked(now=now) and self.in_state(sid, "active"):
+            before = b16_session.elevation_view(dict(interp.context))
+            await self._send(sid, "IDLE_DEADLINE", before=before)
         before = b16_session.elevation_view(dict(interp.context))
-        await self._send(str(record.id), event, before=before, **payload)
+        await self._send(sid, event, before=before, **payload)
 
     async def revoke(self, record: SessionRecord, now: datetime, reason: str) -> None:
         """Session revoked by sync code: record `REVOKE`, then drop the chart."""
