@@ -134,7 +134,7 @@
     },
     "0028_incidents_backups": {
       "path": "services/api/candleviewer/migrations/versions/0028_incidents_backups.py",
-      "sha256": "2ebc790d7ef12f8b3231544d1dce41d532633a6ce059e009c1613dfd4ab36423",
+      "sha256": "f4c683ac609c8643c5bb2553c5dfc4b3dc11821102c9aaf61c4a1e93ffdf5f6c",
       "down_revision": "0027_feature_flags"
     }
   }

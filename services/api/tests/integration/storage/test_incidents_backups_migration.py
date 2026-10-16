@@ -200,7 +200,7 @@ def test_downgrade_refuses_while_either_table_holds_rows(pg_dsn: str, table: str
         try:
             refused = _alembic(pg_dsn, "downgrade", _PREV)
             assert refused.returncode != 0
-            assert "0028_incidents_backups downgrade refused" in refused.stderr
+            assert "downgrade refused: incidents and/or backups hold rows" in refused.stderr
             assert c.execute("SELECT to_regclass(%s)", (table,)).fetchone() == (table,)
         finally:
             _heal(pg_dsn)  # a regressed guard would have dropped the tables; keep that local

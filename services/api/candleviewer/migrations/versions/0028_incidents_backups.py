@@ -14,7 +14,7 @@ had no earlier owner, so they are created here; `severity` comes from 0003.
   the model mirrors its `SECRET:` comment verbatim. No seed, trigger or GRANT (`pg_bootstrap.sql`).
 * `SET LOCAL lock_timeout = '5s'` brackets both directions (0019/0022/0025 pattern, C-5.6): the
   FKs lock `users` on the way in and the drops on the way out, so each wait is bounded.
-* Downgrade locks both tables, refuses while either holds rows, then drops tables and types.
+* Downgrade locks both tables, refuses with advice while either holds rows, then drops tables/types.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ LOCK TABLE incidents, backups IN SHARE MODE;
 DO $BODY$
 BEGIN
   IF EXISTS (SELECT 1 FROM incidents) OR EXISTS (SELECT 1 FROM backups) THEN
-    RAISE EXCEPTION '0028_incidents_backups downgrade refused: incidents or backups hold data';
+    RAISE EXCEPTION '0028_incidents_backups downgrade refused: incidents and/or backups hold rows. Prefer fixing forward. If you must downgrade, export both tables first, because backups is the artefact catalogue, so deleting its rows orphans the metadata of real backup artefacts (the catalogue is kept forever). Then empty both tables and retry';
   END IF;
 END $BODY$;
 DROP TABLE backups;
