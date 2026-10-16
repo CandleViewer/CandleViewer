@@ -200,6 +200,48 @@ def test_nightly_workflow_builds_the_upstream_dev_venvs_the_env_rows_need() -> N
         assert f"_upstream/{venv}" in workflow, venv
 
 
+_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "xstate-nightly.yml"
+
+
+def test_notify_job_runs_after_a_timeout_and_comments_on_the_named_tracker() -> None:
+    # A pinned job that hits timeout-minutes ends 'cancelled' (GitHub cancels it), not 'failure'.
+    workflow = _WORKFLOW.read_text(encoding="utf-8")
+    assert "if: ${{ always() && needs.pinned.result != 'success' }}" in workflow
+    assert "vars.CV_XSTATE_TRACKER_ISSUE || '2472'" in workflow and "gh issue list" not in workflow
+
+
+def test_workflow_regressions_output_is_empty_for_a_bench6_only_red(tmp_path: Path) -> None:
+    # #579: "- none" is a placeholder, not a regression. If it reached notify as "none", its
+    # "none listed" fallback could never fire on a red run caused by BENCH-6 alone.
+    found = re.search(r"awk '(/\^## Regressions[^']+)'", _WORKFLOW.read_text(encoding="utf-8"))
+    assert found is not None
+
+    def listed(new: list[str]) -> str:
+        report = tmp_path / "report.md"
+        report.write_text(
+            nightly_gate.render(
+                mode="pinned",
+                date="d",
+                result={},
+                new=new,
+                gone=[],
+                bench_ok=False,
+                p99=150.0,
+                threshold=100.0,
+            ),
+            encoding="utf-8",
+        )
+        run = subprocess.run(  # noqa: S603 - fixed argv, no user input
+            ["awk", found.group(1), str(report)],  # noqa: S607
+            capture_output=True,
+            text=True,
+        )
+        return run.stdout
+
+    assert listed([]) == ""
+    assert listed(["bench:BENCH-2", "verify:LC-02"]) == "bench:BENCH-2, verify:LC-02"
+
+
 def test_parse_bare_json_reads_the_bench6_wrapper_output() -> None:
     # bench_c_timers_v2.py prints one bare JSON document, never `=== name ===` blocks (#579).
     out = json.dumps({"summary_by_busy_level": {"500": {"p99": 28.7}}}, indent=2) + "\nlog\n"

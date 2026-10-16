@@ -5,8 +5,9 @@ name: xstate-nightly
 #               hash-locked xstate-statemachine==0.9.1 wheel (uv sync --frozen).
 #               GATES: a blocking check failing that is neither in the committed
 #               baseline (result-v0.9.1.json) nor a documented delta in
-#               tools/statechart/nightly_gate.py, or BENCH-6 p99 > 100 ms at 500
-#               busy machines, turns the run red.
+#               tools/statechart/nightly_gate.py, BENCH-6 p99 > 100 ms at 500
+#               busy machines, or a baseline PASS that is now skipped (lost
+#               coverage), turns the run red.
 #  * notify   - on a red or failed pinned run, comments on the one E50-C17 tracker issue
 #               (repo variable CV_XSTATE_TRACKER_ISSUE, default 2472; named, never searched
 #               for). The only job that can write.
@@ -112,7 +113,8 @@ jobs:
             --result gate-result.json --baseline "$BASELINE" --bench bench6.json \
             --date "$day" --out "$report" || rc=$?
           regressions=$(awk '/^## Regressions/ {f = 1; next} /^## / {f = 0}
-            f && /^- / {sub(/^- /, ""); printf "%s%s", sep, $0; sep = ", "}' "$report" || true)
+            f && /^- / && !/^- none$/ {sub(/^- /, ""); printf "%s%s", sep, $0; sep = ", "}' \
+            "$report" || true)
           { echo "rc=$rc"; echo "regressions=$regressions"; } >> "$GITHUB_OUTPUT"
           exit "$rc"
 
@@ -129,7 +131,9 @@ jobs:
   notify:
     name: xstate-nightly-notify (E50-C17 tracker)
     needs: pinned
-    if: ${{ !cancelled() && needs.pinned.result == 'failure' }}
+    # always(), not !cancelled(): a pinned job that hits timeout-minutes is cancelled by GitHub
+    # (result 'cancelled', not 'failure') and must still notify; a manual cancel notifies once.
+    if: ${{ always() && needs.pinned.result != 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -143,15 +147,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TRACKER_ISSUE: ${{ vars.CV_XSTATE_TRACKER_ISSUE || '2472' }}
+          PINNED_RESULT: ${{ needs.pinned.result }}
           VERDICT_RC: ${{ needs.pinned.outputs.verdict-rc }}
           REGRESSIONS: ${{ needs.pinned.outputs.regressions }}
         run: |
           day=$(date -u +%F)
           run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          none="none listed (BENCH-6 over budget, or coverage lost); see the report"
           if [ "$VERDICT_RC" = "1" ]; then
-            what="the pinned gate is red. Regressions: ${REGRESSIONS:-none listed, see BENCH-6}"
+            what="the pinned gate is red. Regressions: ${REGRESSIONS:-$none}"
           else
-            what="the pinned job failed (nightly_gate exit: ${VERDICT_RC:-not reached})"
+            what="the pinned job ended $PINNED_RESULT (nightly_gate exit: ${VERDICT_RC:-not reached})"
           fi
           body="E50-C17 (upstream liaison), $day: $what. Run: $run_url (artifact xstate-gate-pinned)."
           gh issue comment "$TRACKER_ISSUE" --body "$body"
