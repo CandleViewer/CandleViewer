@@ -34,7 +34,9 @@ async def test_start_with_kek_is_ok_and_audited_with_enrolment() -> None:
     await svc.start(ctx)
     assert svc.health().status is HealthStatus.OK and not ctx.oms_read_only_gate.is_read_only
     assert audit.actions() == ["security.kek_enrolled", "security.kek_loaded"]
-    assert audit.records[1][1]["kcv"] == LoadedKek(bytearray(KEK_V1), 1).kcv().hex()
+    loaded = audit.records[1][1]
+    assert loaded["env"] == "demo"
+    assert loaded["kcv"] == LoadedKek(bytearray(KEK_V1), 1, env_name="demo").kcv().hex()
     res = await svc.verify_kek_possession()
     assert (res.version, res.kcv_ok, res.reason) == (1, True, None)
     meta = await _store_one(svc)
@@ -126,7 +128,7 @@ async def test_abandoned_path_source_never_acks(tmp_path: Path) -> None:
     k = tmp_path / "k"
     k.write_bytes(KEK_V1)
     k.chmod(0o400)
-    src = PathKekSource(k, 1, allow_fifo=False)
+    src = PathKekSource(k, 1, allow_fifo=False, env_name="demo")
     src.abandoned.set()
     with pytest.raises(KekLoadError):
         src.load()

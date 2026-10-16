@@ -18,12 +18,13 @@ class RotatingBroker(CredentialBroker):
     """The broker the service runs: borrow/store/destroy plus KCV and KEK re-wrap."""
 
     async def verify_kcv(self, kek: LoadedKek, kcvs: KcvStore, *, must_exist: bool) -> bool:
-        """No trust-on-first-use. Returns True iff this call enrolled a new KCV.
+        """No trust-on-first-use, inside this process's environment lineage (#2338). Returns
+        True iff this call enrolled a new KCV.
 
         An unknown KCV is recorded only if no live row exists at that version, or after a
         trial unwrap of one such row succeeds; `must_exist` (previous KEK) refuses unknown.
         """
-        expected = await self._io(kcvs.kcv_for(kek.version), "kcv_store_unavailable")
+        expected = await self._io(kcvs.kcv_for(self._env, kek.version), "kcv_store_unavailable")
         enrolled = False
         if expected is None:
             if must_exist:
@@ -37,7 +38,7 @@ class RotatingBroker(CredentialBroker):
                     env.zero(kek.unwrap_dek(row.dek_ref, credential_id=row.id))
                 except (InvalidTag, ValueError):
                     raise KekLoadError("kek_mismatch") from None
-            stored = kcvs.record_kcv(kek.version, kek.kcv())
+            stored = kcvs.record_kcv(self._env, kek.version, kek.kcv())
             expected = await self._io(stored, "kcv_store_unavailable")
             enrolled = True
         if not kcv_matches(kek, expected):

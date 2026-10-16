@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from candleviewer.secrets import KEY_ID_SLOT
+from candleviewer.secrets._kek import LoadedKek
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.errors import (
     CredentialUnavailable,
@@ -24,6 +25,8 @@ from tests.unit.credentials_m2._vectors import (
     ACCOUNT,
     API_KEY,
     API_SECRET,
+    KEK_LIVE,
+    KEK_V2,
     SNAPSHOT,
     AuditLog,
     FakeClock,
@@ -199,10 +202,26 @@ async def test_store_refuses_other_environment(store: Any) -> None:
     assert str(ei.value) == "environment_mismatch" and not store.rows
 
 
+def _rewrap_for(store: Any, key_id: Any, to: LoadedKek) -> None:
+    """Re-wrap a live row's DEK for `to`, as only a holder of both KEKs could, to test the
+    layers behind the environment-bound wrap (#2338)."""
+    row = store.rows[key_id]
+    dek = kek(KEK_LIVE, 1, "live").unwrap_dek(row["dek_ref"], credential_id=key_id)
+    row["dek_ref"] = to.wrap_dek(dek, credential_id=key_id)
+
+
+def test_broker_refuses_a_kek_loaded_for_another_environment(store: Any) -> None:
+    with pytest.raises(ValueError, match="another environment"):
+        CredentialBroker(store, AuditLog(), kek(env="live"), env_name="demo")
+    with pytest.raises(ValueError, match="another environment"):
+        CredentialBroker(store, AuditLog(), kek(KEK_V2, 2), prev_kek=kek(env="testnet"))
+
+
 async def test_demo_bound_broker_never_reads_a_live_row(store: Any) -> None:
-    live = CredentialBroker(store, AuditLog(), kek(), env_name="live")
+    live = CredentialBroker(store, AuditLog(), kek(KEK_LIVE, 1, "live"), env_name="live")
     meta = await live.store("live", ACCOUNT, "l", Secret(API_KEY), Secret(API_SECRET), SNAPSHOT)
     store.activate(meta.key_id)
+    _rewrap_for(store, meta.key_id, kek())  # the wrap opens for demo: only the env fences remain
     demo = CredentialBroker(store, AuditLog(), kek(), env_name="demo")
     with pytest.raises(CredentialUnavailable):
         await _borrow(demo, meta.key_id)  # env-namespaced read: the row is invisible
@@ -314,7 +333,7 @@ async def test_broker_has_no_separate_decrypt_method(broker: CredentialBroker) -
 async def test_env_layers_refuse_a_live_row_without_relabelling(store: Any) -> None:
     """A demo broker whose store *ignores* the env filter still refuses a live row it reads
     unmodified: `_check_row` refuses the env mismatch before any audit or decrypt."""
-    live = CredentialBroker(store, AuditLog(), kek(), env_name="live")
+    live = CredentialBroker(store, AuditLog(), kek(KEK_LIVE, 1, "live"), env_name="live")
     meta = await live.store("live", ACCOUNT, "l", Secret(API_KEY), Secret(API_SECRET), SNAPSHOT)
     store.activate(meta.key_id)
 
@@ -331,11 +350,12 @@ async def test_env_layers_refuse_a_live_row_without_relabelling(store: Any) -> N
 
 
 async def test_aad_binds_the_sealing_env(store: Any) -> None:
-    """With both env checks satisfied by a relabelled row (DB writer), the AAD still binds
-    the environment the row was sealed for, so GCM refuses it."""
-    live = CredentialBroker(store, AuditLog(), kek(), env_name="live")
+    """With both env checks satisfied by a relabelled row (DB writer) whose wrap even opens for
+    demo, the data AAD still binds the environment the row was sealed for, so GCM refuses it."""
+    live = CredentialBroker(store, AuditLog(), kek(KEK_LIVE, 1, "live"), env_name="live")
     meta = await live.store("live", ACCOUNT, "l", Secret(API_KEY), Secret(API_SECRET), SNAPSHOT)
     store.activate(meta.key_id)
+    _rewrap_for(store, meta.key_id, kek())
     store.rows[meta.key_id]["env"] = "demo"  # relabelled: passes read filter and row check
     demo = CredentialBroker(store, AuditLog(), kek(), env_name="demo")
     with pytest.raises(CredentialUnavailable):

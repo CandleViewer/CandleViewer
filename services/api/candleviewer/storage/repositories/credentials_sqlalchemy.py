@@ -49,10 +49,14 @@ _REWRAP = sa.text(
     "WHERE id = :id AND kek_version = :from_v AND revoked_at IS NULL"
 )
 _TOUCH = sa.text("UPDATE api_keys SET last_used_at = now() WHERE id = :id")
-_KCV_GET = sa.text("SELECT kcv FROM kek_versions WHERE version = :v")
-_KCV_ALL = sa.text("SELECT version, kcv, (retired_at IS NOT NULL) AS retired FROM kek_versions")
+# `kek_versions` is keyed (env, version) since 0026 (#2338); `kv_kcv_unique` stays global.
+_KCV_GET = sa.text("SELECT kcv FROM kek_versions WHERE env::text = :env AND version = :v")
+_KCV_ALL = sa.text(
+    "SELECT env::text AS env, version, kcv, (retired_at IS NOT NULL) AS retired FROM kek_versions"
+)
 _KCV_PUT = sa.text(
-    "INSERT INTO kek_versions (version, kcv) VALUES (:v, :kcv) ON CONFLICT (version) DO NOTHING"
+    "INSERT INTO kek_versions (env, version, kcv) VALUES (CAST(:env AS exchange_env), :v, :kcv) "
+    "ON CONFLICT (env, version) DO NOTHING"
 )
 
 
@@ -104,18 +108,21 @@ class SqlAlchemyCredentialStore:
     async def touch_last_used(self, key_id: UUID) -> None:
         await self._exec(_TOUCH, {"id": key_id})
 
-    async def kcv_for(self, version: int) -> bytes | None:
-        rows = await self._exec(_KCV_GET, {"v": version})
+    async def kcv_for(self, env: str, version: int) -> bytes | None:
+        rows = await self._exec(_KCV_GET, {"env": env, "v": version})
         return bytes(rows[0]["kcv"]) if rows else None
 
-    async def kcv_versions(self) -> list[tuple[int, bytes, bool]]:
+    async def kcv_versions(self) -> list[tuple[str, int, bytes, bool]]:
         rows = await self._exec(_KCV_ALL, {})
-        return [(int(r["version"]), bytes(r["kcv"]), bool(r["retired"])) for r in rows]
+        return [
+            (str(r["env"]), int(r["version"]), bytes(r["kcv"]), bool(r["retired"])) for r in rows
+        ]
 
-    async def record_kcv(self, version: int, kcv: bytes) -> bytes:
-        """Insert-if-absent, then re-read: concurrent boots converge on one stored KCV."""
-        await self._exec(_KCV_PUT, {"v": version, "kcv": kcv})
-        stored = await self.kcv_for(version)
+    async def record_kcv(self, env: str, version: int, kcv: bytes) -> bytes:
+        """Insert-if-absent, then re-read: concurrent boots converge on one stored KCV. One KCV
+        under two environments violates `kv_kcv_unique` and propagates (the boot degrades)."""
+        await self._exec(_KCV_PUT, {"env": env, "v": version, "kcv": kcv})
+        stored = await self.kcv_for(env, version)
         if stored is None:  # pragma: no cover - row was just inserted or already present
             raise RuntimeError("kek_versions row missing after insert")
         return stored

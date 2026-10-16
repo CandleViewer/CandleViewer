@@ -69,8 +69,8 @@ async def _audit(action: str, fields: dict[str, str]) -> None:
     return None
 
 
-def _kek(seed: int, version: int) -> LoadedKek:
-    return LoadedKek(bytearray(range(seed, seed + 32)), version)
+def _kek(seed: int, version: int, env: str = "demo") -> LoadedKek:
+    return LoadedKek(bytearray(range(seed, seed + 32)), version, env_name=env)
 
 
 async def _seed(store: SqlAlchemyCredentialStore, acct: UUID, n: int) -> list[UUID]:
@@ -191,11 +191,14 @@ async def test_rewrap_cas_with_concurrent_writer(pg_dsn: str) -> None:
 async def test_kcv_record_and_reread(pg_dsn: str) -> None:
     rel, store = _store(pg_dsn)
     try:
-        assert await store.kcv_for(77) is None
+        assert await store.kcv_for("demo", 77) is None
         first, second = await asyncio.gather(
-            store.record_kcv(77, b"A" * 8), store.record_kcv(77, b"B" * 8)
+            store.record_kcv("demo", 77, b"A" * 8), store.record_kcv("demo", 77, b"B" * 8)
         )
-        assert first == second and await store.kcv_for(77) == first
+        assert first == second and await store.kcv_for("demo", 77) == first
+        # #2338: (live, 77) is another lineage's key; it neither conflicts nor shadows demo's
+        assert await store.record_kcv("live", 77, b"C" * 8) == b"C" * 8
+        assert await store.kcv_for("demo", 77) == first
     finally:
         await rel.dispose()
 
@@ -214,7 +217,7 @@ async def test_status_env_and_flags_from_real_rows(pg_dsn: str) -> None:
         with pytest.raises(CredentialUnavailable) as ei:  # M2 refuses another env up front
             await b.store("live", acct, "x", Secret("KEYXABCD"), Secret("S"), _SNAP)
         assert str(ei.value) == "environment_mismatch"
-        live = CredentialBroker(store, _audit, _kek(0, 1), env_name="live")
+        live = CredentialBroker(store, _audit, _kek(50, 1, "live"), env_name="live")
         with pytest.raises(CredentialUnavailable) as ei:  # and the M10 insert refuses too
             await live.store("live", acct, "x", Secret("KEYXABCD"), Secret("S"), _SNAP)
         assert str(ei.value) == "store_unavailable"
@@ -225,10 +228,10 @@ async def test_status_env_and_flags_from_real_rows(pg_dsn: str) -> None:
 async def test_kcv_unique_and_versions(pg_dsn: str) -> None:
     rel, store = _store(pg_dsn)
     try:
-        await store.record_kcv(90, b"U" * 8)
+        await store.record_kcv("demo", 90, b"U" * 8)
         with pytest.raises(Exception):  # noqa: B017 -- kv_kcv_unique IntegrityError
-            await store.record_kcv(91, b"U" * 8)
-        assert (90, b"U" * 8, False) in await store.kcv_versions()
+            await store.record_kcv("live", 91, b"U" * 8)  # one KEK, two environments (#2338)
+        assert ("demo", 90, b"U" * 8, False) in await store.kcv_versions()
     finally:
         await rel.dispose()
 

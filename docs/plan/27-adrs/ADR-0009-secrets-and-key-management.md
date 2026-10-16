@@ -111,3 +111,21 @@ C-2.7: credentials are plaintext only inside `secrets` (M2), at the moment of re
   the plaintext borrow and `.reveal()` outside `secrets/` (one reviewed site: the returned key id
   for the header). In `exchange/` it also refuses any `hmac` import, `SecretStr` and
   `get_secret_value`.
+
+## Amendment 3 (2026-10-15, #2338; owner decision 2026-10-14, #1778 comment 6174148616)
+
+Refines Amendment 1. Each environment (`live`, `demo`, `testnet`) has its own KEK lineage in the
+shared Postgres, so a KEK that can unwrap a live DEK is only ever loaded under the live custody
+rules. This does not decide the E38 topology, and the custody rules themselves are unchanged.
+
+- `kek_versions` is keyed `(env, version)` (`0026_kek_versions_env`) and each lineage is numbered
+  from 1. The KCV label stays environment-independent and `kv_kcv_unique` stays global, so one KEK
+  is never enrolled in two environments: the boot refuses it as `kek_reused`.
+- KCV enrolment and the retired and sequence checks run inside the process's environment; the
+  reuse check spans every environment. A non-live boot never changes what a live boot accepts.
+- The wrap AAD binds the environment: `cv-dek-v2 ‖ environment ‖ credential_id ‖ kek_version`,
+  `dek_ref` prefix `v2:`. The environment is bound into the KEK at load from the process settings,
+  never taken from a row or a request; the broker refuses a KEK loaded for another environment.
+- Environment-free `v1:` wraps fail closed. Nothing re-wraps them: the migration refuses while
+  usable `api_keys` rows exist, and rows enrolled before it join `demo`, never `live`. The first
+  live boot enrols a fresh live lineage (residual KV-S03, Owner check SR-E27-15).

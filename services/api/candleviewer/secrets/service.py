@@ -228,10 +228,11 @@ class SecretsService:
             raise KekLoadError("kek_unavailable") from None
 
     async def _check_versions(
-        self, kek: _kek.LoadedKek, prev: _kek.LoadedKek | None
+        self, env_name: str, kek: _kek.LoadedKek, prev: _kek.LoadedKek | None
     ) -> dict[int, tuple[bytes, bool]]:
-        """Version policy: no KCV reused across versions, no retired KEK, current is max or
-        max+1 (then prev must be max). Returns the `kek_versions` rows it checked against."""
+        """Version policy, per environment lineage (#2338): no KCV reused across versions or
+        environments, no retired KEK, current is max or max+1 (then prev must be max). Returns
+        the `env_name` lineage's `kek_versions` rows it checked against, keyed by version."""
         if self._kcv is None:  # pragma: no cover - start() checked
             raise KekLoadError("kcv_store_unavailable")
         try:
@@ -239,9 +240,12 @@ class SecretsService:
                 rows = await self._kcv.kcv_versions()
         except Exception:
             raise KekLoadError("kcv_store_unavailable") from None
-        known = {v: (kcv, retired) for v, kcv, retired in rows}
+        known = {v: (kcv, retired) for e, v, kcv, retired in rows if e == env_name}
         for k in filter(None, (kek, prev)):
-            if any(v != k.version and _kek.kcv_matches(k, kcv) for v, (kcv, _) in known.items()):
+            if any(
+                (e, v) != (env_name, k.version) and _kek.kcv_matches(k, kcv)
+                for e, v, kcv, _ in rows
+            ):
                 raise KekLoadError("kek_reused")
             if known.get(k.version, (b"", False))[1]:
                 raise KekLoadError("kek_retired")
@@ -287,7 +291,8 @@ class SecretsService:
 
     async def start(self, ctx: AppContext) -> None:
         settings = ctx.settings
-        live = settings.environment.value == "live"
+        env_name = settings.environment.value
+        live = env_name == "live"
         srcs = self._sources(settings)  # KekSourceNotPermitted propagates: fatal
         self._started = True
         if self._store is None or self._kcv is None:
@@ -299,7 +304,7 @@ class SecretsService:
         started = time.perf_counter()
         try:
             kek, prev = await self._acquire_keks(settings, srcs, held)
-            await self._check_versions(kek, prev)
+            await self._check_versions(env_name, kek, prev)
             broker = RotatingBroker(
                 self._store, self._audit, kek, prev_kek=prev,
                 dek_cache_ttl_s=settings.dek_cache_ttl_s, env_name=settings.environment.value,
@@ -312,7 +317,7 @@ class SecretsService:
                 raise
             except Exception:
                 raise KekLoadError("kcv_store_unavailable") from None
-            fields = {"kek_version": str(kek.version), "kcv": kek.kcv().hex()}
+            fields = {"env": env_name, "kek_version": str(kek.version), "kcv": kek.kcv().hex()}
             if enrolled:
                 await self._audit("security.kek_enrolled", fields)
             await self._audit("security.kek_loaded", fields)
@@ -354,7 +359,8 @@ class SecretsService:
         m.kek_version.set(0)
         _log().critical("secrets.kek_unavailable", reason=reason, remediation=text)
         try:
-            await self._audit("security.kek_load_failed", {"reason": reason})
+            fields = {"reason": reason, "env": ctx.settings.environment.value}
+            await self._audit("security.kek_load_failed", fields)
         except Exception:  # audit outage must not un-degrade; already fail closed
             _log().exception("secrets.kek_load_failed_audit_error", reason=reason)
 
@@ -374,7 +380,7 @@ class SecretsService:
         held: list[_kek.LoadedKek] = []
         try:
             kek, prev = await self._acquire_keks(settings, self._sources(settings), held)
-            known = await self._check_versions(kek, prev)
+            known = await self._check_versions(settings.environment.value, kek, prev)
             for k in held:
                 if k.version not in known:
                     raise KekLoadError("kek_not_enrolled")
@@ -435,11 +441,13 @@ async def prove_kek_possession(
     """Offline break-glass proof of KEK possession (E09-S11 #2119, decision O1); `admin` only.
 
     Runs `start()`'s custody path in the calling process, then requires the KCV of every KEK
-    supplied to be enrolled in `kek_versions` already: an unknown one is `kek_not_enrolled` in
-    every environment (where `start()` would enrol it). Metadata only: nothing is enrolled,
-    audited, latched or published (the caller audits), and every KEK loaded is zeroed before
-    this returns. Refusals come back as `reason`, never raised; cancellation propagates.
-    `sources`, `harden` and `load_timeout_s` are the `SecretsService` seams.
+    supplied to be enrolled already in the `kek_versions` lineage of `settings.environment`
+    (#2338; a KEK enrolled for another environment is `kek_reused`, as at boot): an unknown one
+    is `kek_not_enrolled` in every environment (where `start()` would enrol it). Metadata only:
+    nothing is enrolled, audited, latched or published (the caller audits), and every KEK
+    loaded is zeroed before this returns. Refusals come back as `reason`, never raised;
+    cancellation propagates. `sources`, `harden` and `load_timeout_s` are the `SecretsService`
+    seams.
     """
     svc = SecretsService(
         kcv_store=kcv_store, sources=sources, harden=harden, load_timeout_s=load_timeout_s

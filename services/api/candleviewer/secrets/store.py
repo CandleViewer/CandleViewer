@@ -38,13 +38,16 @@ class CredentialStore(Protocol):
 
 
 class KcvStore(Protocol):
-    async def kcv_for(self, version: int) -> bytes | None: ...
-    async def kcv_versions(self) -> list[tuple[int, bytes, bool]]:
-        """All `(version, kcv, retired)` rows of `kek_versions`."""
+    """`kek_versions`: one KEK lineage per environment, keyed `(env, version)` (#2338)."""
+
+    async def kcv_for(self, env: str, version: int) -> bytes | None: ...
+    async def kcv_versions(self) -> list[tuple[str, int, bytes, bool]]:
+        """All `(env, version, kcv, retired)` rows, every environment (KCVs are not secret)."""
         ...
 
-    async def record_kcv(self, version: int, kcv: bytes) -> bytes:
-        """Insert-if-absent; return the KCV now stored for `version` (re-read after conflict)."""
+    async def record_kcv(self, env: str, version: int, kcv: bytes) -> bytes:
+        """Insert-if-absent; return the KCV now stored for `(env, version)` (re-read after
+        conflict). A KCV already stored under another key raises (`kv_kcv_unique`)."""
         ...
 
 
@@ -53,8 +56,8 @@ class InMemoryCredentialStore:
 
     def __init__(self) -> None:
         self.rows: dict[UUID, dict[str, Any]] = {}
-        self.kcvs: dict[int, bytes] = {}
-        self.retired: set[int] = set()
+        self.kcvs: dict[tuple[str, int], bytes] = {}
+        self.retired: set[tuple[str, int]] = set()
 
     async def insert(self, record: dict[str, Any]) -> None:
         self.rows[record["id"]] = dict(record)
@@ -96,13 +99,13 @@ class InMemoryCredentialStore:
     async def touch_last_used(self, key_id: UUID) -> None:
         return None
 
-    async def kcv_for(self, version: int) -> bytes | None:
-        return self.kcvs.get(version)
+    async def kcv_for(self, env: str, version: int) -> bytes | None:
+        return self.kcvs.get((env, version))
 
-    async def kcv_versions(self) -> list[tuple[int, bytes, bool]]:
-        return [(v, k, v in self.retired) for v, k in sorted(self.kcvs.items())]
+    async def kcv_versions(self) -> list[tuple[str, int, bytes, bool]]:
+        return [(e, v, k, (e, v) in self.retired) for (e, v), k in sorted(self.kcvs.items())]
 
-    async def record_kcv(self, version: int, kcv: bytes) -> bytes:
-        if version not in self.kcvs and kcv in self.kcvs.values():
-            raise ValueError("kv_kcv_unique")  # mirrors the 0020 UNIQUE(kcv)
-        return self.kcvs.setdefault(version, kcv)
+    async def record_kcv(self, env: str, version: int, kcv: bytes) -> bytes:
+        if (env, version) not in self.kcvs and kcv in self.kcvs.values():
+            raise ValueError("kv_kcv_unique")  # mirrors the global UNIQUE(kcv) of 0020
+        return self.kcvs.setdefault((env, version), kcv)

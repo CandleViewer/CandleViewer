@@ -7,6 +7,7 @@ no such tool is pinned in `uv.lock` (adding one is a dependency decision, not ma
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -19,14 +20,16 @@ from candleviewer.secrets import _permissions as perms
 from candleviewer.secrets._rotation import RotatingBroker
 from candleviewer.secrets.broker import CredentialBroker
 from candleviewer.secrets.errors import CredentialUnavailable, WithdrawPermissionRejected
+from candleviewer.secrets.service import SecretsService
 from candleviewer.secrets.store import InMemoryCredentialStore
 from tests.unit.credentials_m2 import test_broker_safety as safety_oracle
 from tests.unit.credentials_m2 import test_envelope_rows as env_oracle
 from tests.unit.credentials_m2 import test_kek as kek_oracle
+from tests.unit.credentials_m2 import test_kek_lineage_per_env as lineage_oracle
 from tests.unit.credentials_m2 import test_permissions as perm_oracle
 from tests.unit.credentials_m2 import test_rotation as rot_oracle
 from tests.unit.credentials_m2 import test_service_boot as svc_oracle
-from tests.unit.credentials_m2._vectors import AuditLog, FakeClock, kek
+from tests.unit.credentials_m2._vectors import KEK_LIVE, AuditLog, FakeClock, kek
 
 _KILLED = (AssertionError, pytest.fail.Exception)
 #: Round 3 adds custody/boundary mutants at the end of the file (each killed by an oracle).
@@ -100,8 +103,8 @@ async def test_mutant_no_prev_kek_fallback_killed(monkeypatch: pytest.MonkeyPatc
 
 async def test_mutant_tofu_kcv_killed(monkeypatch: pytest.MonkeyPatch) -> None:
     async def tofu(self: RotatingBroker, k: Any, kcvs: Any, *, must_exist: bool) -> bool:
-        if await kcvs.kcv_for(k.version) is None:
-            await kcvs.record_kcv(k.version, k.kcv())
+        if await kcvs.kcv_for(self._env, k.version) is None:
+            await kcvs.record_kcv(self._env, k.version, k.kcv())
         return False
 
     monkeypatch.setattr(RotatingBroker, "verify_kcv", tofu)
@@ -163,3 +166,45 @@ async def test_mutant_fence_recheck_dropped_killed(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(CredentialBroker, "_check_row", once)
     with pytest.raises(_KILLED):
         await safety_oracle.test_destroy_fences_in_flight_borrow(InMemoryCredentialStore())
+
+
+# --- #2338: the environment comparisons of the KEK lineage (each killed by its oracle) ------
+
+
+@pytest.mark.parametrize(
+    "oracle",
+    [
+        lambda: lineage_oracle.test_live_kek_refused_outside_live("demo", (KEK_LIVE, 1), None),
+        lineage_oracle.test_other_environment_versions_do_not_affect_a_live_boot,
+    ],
+    ids=["AC-02", "AC-31"],
+)
+async def test_mutant_version_policy_ignores_environment_killed(
+    monkeypatch: pytest.MonkeyPatch, oracle: Callable[[], Awaitable[None]]
+) -> None:
+    """Mutant: `_check_versions` reads every row as its own environment's (one lineage)."""
+    real = SecretsService._check_versions
+
+    async def one_lineage(self: SecretsService, env_name: str, kek: Any, prev: Any) -> None:
+        store: Any = self._kcv
+        rows = await store.kcv_versions()
+
+        async def relabelled() -> list[Any]:
+            return [(env_name, v, kcv, retired) for _, v, kcv, retired in rows]
+
+        store.kcv_versions = relabelled
+        try:
+            await real(self, env_name, kek, prev)
+        finally:
+            del store.kcv_versions
+
+    monkeypatch.setattr(SecretsService, "_check_versions", one_lineage)
+    with pytest.raises(_KILLED):
+        await oracle()
+
+
+async def test_mutant_dek_aad_ignores_environment_killed(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = env.dek_aad
+    monkeypatch.setattr(env, "dek_aad", lambda e, c, v: real("demo", c, v))
+    with pytest.raises(_KILLED):
+        await lineage_oracle.test_wrap_binds_the_process_environment()

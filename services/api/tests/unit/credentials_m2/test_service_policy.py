@@ -79,7 +79,7 @@ async def test_downgrade_to_retired_kek_degrades() -> None:
     store = InMemoryCredentialStore()
     await _boot(store, _Src(KEK_V1, 1))
     await _boot(store, _Src(KEK_V2, 2), _Src(KEK_V1, 1))
-    store.retired.add(1)
+    store.retired.add(("demo", 1))
     assert (await _boot(store, _Src(KEK_V1, 1))).health().detail == "kek_retired"
     rot = await _boot(store, _Src(KEK_V3, 3), _Src(KEK_V1, 1))
     assert rot.health().detail in {"kek_retired", "kek_version_out_of_sequence"}
@@ -142,6 +142,15 @@ def test_previous_source_version() -> None:
     s = sources_from_settings(_settings(kek_source="file", kek_prev_handle="/p", kek_version=2))
     assert isinstance(s.previous, PathKekSource) and s.previous.version == 1
     assert s.ack_path is None
+
+
+def test_sources_bind_the_process_environment() -> None:
+    """#2338: every KEK is loaded for the process environment, current and previous alike."""
+    s = sources_from_settings(
+        _settings(environment="testnet", kek_source="file", kek_prev_handle="/p", kek_version=2)
+    )
+    assert isinstance(s.current, PathKekSource) and isinstance(s.previous, PathKekSource)
+    assert (s.current.env_name, s.previous.env_name) == ("testnet", "testnet")
 
 
 def test_live_flag_propagates() -> None:

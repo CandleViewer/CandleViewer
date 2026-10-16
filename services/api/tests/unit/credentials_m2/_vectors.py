@@ -11,6 +11,8 @@ from candleviewer.secrets._kek import LoadedKek
 
 KEK_V1 = bytes(range(32))
 KEK_V2 = bytes(range(100, 132))
+#: The live lineage's KEK in two-environment tests: never shared with a non-live process (#2338).
+KEK_LIVE = bytes(range(50, 82))
 ACCOUNT = UUID("00000000-0000-4000-8000-000000000001")
 # Synthetic, deliberately low-entropy vectors (not secret-shaped; gitleaks-clean without any
 # allowlist): a key of 13 zeros + "WXYZ", a secret of 24 "x". Never a real credential.
@@ -30,8 +32,8 @@ def fixture_snapshot() -> dict[str, Any]:
 SNAPSHOT: dict[str, Any] = fixture_snapshot()
 
 
-def kek(raw: bytes = KEK_V1, version: int = 1) -> LoadedKek:
-    return LoadedKek(bytearray(raw), version)
+def kek(raw: bytes = KEK_V1, version: int = 1, env: str = "demo") -> LoadedKek:
+    return LoadedKek(bytearray(raw), version, env_name=env)
 
 
 class AuditLog:

@@ -111,6 +111,11 @@ Hard rules (startup, before any module starts):
 
 ## 5. Key hierarchy and rotation (re-wrap)
 
+> **Superseded in part by #2338 (ADR-0009 Amendment 3):** the KEK lineage is per environment.
+> `kek_versions` is keyed `(env, version)` and the wrap-layer AAD below is now
+> `cv-dek-v2 ‖ environment ‖ credential_id ‖ kek_version` (`dek_ref` prefix `v2:`); see
+> `21-database-schema.md` §3.2.3a.
+
 Rows (`21-database-schema.md` §3.2.2): `key_id_enc`, `secret_enc` (AES-256-GCM under the DEK),
 `enc_nonce`, `enc_alg`, `dek_ref`, `kek_version ≥ 1`, index `ix_api_keys_kek`.
 

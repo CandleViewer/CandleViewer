@@ -10,7 +10,7 @@ launcher/systemd steps marked **FU-1** are not yet drilled on a real host (#2151
 |---|---|
 | `CV_KEK_SOURCE` | `handle` (prod), `file` (dev/ci only — **cv-api refuses to start in `live`** with `kek_source_not_permitted`), `none` |
 | `CV_KEK_HANDLE` | path yielding exactly 32 raw bytes: the read-once FIFO (`0600`, WSL launcher) or the systemd credential file (`0400`, VPS); owned by the service uid, never a symlink. **In `live` a regular file is accepted only if the opened descriptor is on tmpfs/ramfs (`fstatfs`) *and* the path is under `/run/credentials/`** (systemd `LoadCredential*=`). A Docker Compose `secrets: file:` bind mount is disk-backed and is refused (`kek_handle_permissions`) |
-| `CV_KEK_VERSION` | version of the supplied KEK; its KCV must match `kek_versions` |
+| `CV_KEK_VERSION` | version of the supplied KEK in this process's environment (`CV_ENV`); its KCV must match that environment's `kek_versions` row. **One KEK per environment:** live, demo and testnet each keep their own lineage, numbered from 1 (#2338). Never give a live KEK to a non-live process, or one KEK to two environments |
 | `CV_KEK_PREV_HANDLE` | previous KEK, **only** during a rotation window |
 | `CV_KEK_ACK_PATH` | writable path (outside the read-only handoff dir) where cv-api echoes the launcher's nonce **once, after every FIFO handle (current and previous) has been drained**. **Mandatory in `live` when any handle is a FIFO** (missing ⇒ Degraded `kek_handle_permissions`). Not used for systemd credential files (not read-once; no handoff record) |
 
@@ -67,18 +67,20 @@ credential operation raises `kek_unavailable`. The log line contains this remedi
 | `kek_unavailable` | handle missing, timed out (10 s), or not exactly 32 bytes; handoff nonce missing or ack already present |
 | `kek_handle_permissions` | mode is not `0400` (file) / `0600` (FIFO), wrong owner, or a symlink |
 | `kek_mismatch` | wrong KEK for `CV_KEK_VERSION` (KCV differs, or no KCV yet and a trial unwrap of an existing row failed; the previous KEK's KCV must already be recorded) — do **not** retry with other keys |
-| `kek_reused` | the presented KEK's KCV is already recorded for another version (e.g. the same bytes supplied as current and previous) |
-| `kek_retired` | `CV_KEK_VERSION` (or the previous version) has `kek_versions.retired_at` set — a downgrade |
-| `kek_version_out_of_sequence` | version is neither the max recorded nor max+1 with the previous KEK = max |
+| `kek_reused` | the presented KEK's KCV is already recorded for another version or another environment (e.g. the same bytes supplied as current and previous, or the live KEK given to a demo or testnet process) |
+| `kek_retired` | `CV_KEK_VERSION` (or the previous version) has `kek_versions.retired_at` set in this environment — a downgrade |
+| `kek_version_out_of_sequence` | version is neither this environment's max recorded nor max+1 with the previous KEK = max; other environments' versions never count |
 | `process_hardening_failed` | (`live`) core-dump limit or `PR_SET_DUMPABLE` could not be applied — check container/systemd limits |
-| `kcv_store_unavailable` | `kek_versions` unreadable (Postgres down, schema older than `0020_kek_versions`) — not a custody problem |
+| `kcv_store_unavailable` | `kek_versions` unreadable (Postgres down, schema older than `0026_kek_versions_env`) — not a custody problem; or two environments raced to enrol one KEK (`kv_kcv_unique`) — a custody problem, see `kek_reused` |
 | `audit_unavailable` | the audit writer refused `security.kek_loaded`; the KEK was zeroed — fix the audit WAL/DB first |
 | `no_credential_store` | (`live`) started without the Postgres credential store |
 
 Enrolment: the first boot at a new version with no rows records its KCV and writes
 `security.kek_enrolled` (with the KCV). A wrongly enrolled KCV can be re-enrolled **only while
 zero `api_keys` rows exist at that version**: delete that `kek_versions` row in a maintenance
-window under change control (owner + security reviewer), then restart with the correct KEK.
+window under change control (owner + security reviewer), then restart with the correct KEK. Every
+manual statement names the environment (`DELETE FROM kek_versions WHERE env = 'demo' AND
+version = 3`); a version number alone matches every lineage.
 
 Recovery: fix custody, then restart cv-api **via the launcher**. There is no runtime reload; a passing
 mesh self-check never clears the KEK latch.
@@ -103,8 +105,22 @@ mesh self-check never clears the KEK latch.
    v(n) are unwrapped with the previous KEK). A row that cannot be unwrapped is reported, audited as
    `security.kek_rotation_failed` (`key_id`, `done`) and left at v(n) — investigate before
    retiring v(n).
-3. Verify the report shows `remaining = 0`, then set `kek_versions.retired_at` for v(n), retire v(n)
-   from custody and restart without `CV_KEK_PREV_HANDLE`.
+3. Verify the report shows `remaining = 0`, then set `kek_versions.retired_at` for v(n) of this
+   environment only (`WHERE env = '<env>' AND version = <n>`), retire v(n) from custody and restart
+   without `CV_KEK_PREV_HANDLE`.
+
+## Upgrading to per-environment KEK lineages
+
+Migration `0026_kek_versions_env` (#2338) keys `kek_versions` by `(env, version)`.
+
+- It refuses while any `api_keys` row is usable (`revoked_at IS NULL AND status <> 'revoked'`).
+  Those rows hold environment-free `v1:` wraps that cv-api no longer opens, and a migration never
+  holds the KEK to re-wrap them. Revoke each such key through the audited key-management flow
+  (never edit `api_keys` by hand), then run the upgrade again.
+- Rows enrolled before it join `demo`. The first live boot afterwards enrols a fresh live lineage:
+  compare the KCV in its `security.kek_enrolled` record (`env=live`) with the offline copy's KCV
+  (SR-E27-15) before any live key is stored.
+- Its downgrade refuses while one version is enrolled under two environments.
 
 ## Restore drill
 

@@ -133,6 +133,9 @@ class CredentialBroker:
         clock: Clock = time.monotonic,
         env_name: str = "demo",
     ) -> None:
+        if any(k is not None and k.env_name != env_name for k in (kek, prev_kek)):
+            # #2338: a KEK opens only its own environment's wraps; never re-bind one here.
+            raise ValueError("KEK loaded for another environment")
         self._store, self._audit_sink = store, audit
         self._kek, self._prev = kek, prev_kek
         self._cache = _DekCache(dek_cache_ttl_s, clock)

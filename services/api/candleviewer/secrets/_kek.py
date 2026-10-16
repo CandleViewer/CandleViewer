@@ -38,15 +38,20 @@ _PR_SET_DUMPABLE, _PR_GET_DUMPABLE = 4, 3
 
 
 class LoadedKek:
-    """32 KEK bytes in memory. Renders as `***`; not picklable; `close()` zeroes."""
+    """32 KEK bytes in memory, bound at load to the environment whose DEKs it wraps (#2338).
+    Renders as `***`; not picklable; `close()` zeroes."""
 
-    __slots__ = ("_closed", "_key", "is_fifo", "version")
+    __slots__ = ("_closed", "_key", "env_name", "is_fifo", "version")
 
-    def __init__(self, key: bytearray, version: int, *, is_fifo: bool = False) -> None:
-        if len(key) != env.KEY_LEN:
+    def __init__(
+        self, key: bytearray, version: int, *, env_name: str, is_fifo: bool = False
+    ) -> None:
+        if len(key) != env.KEY_LEN or env_name not in env.ENVIRONMENTS:
+            env.zero(key)
             raise KekLoadError("kek_unavailable")
         self._key = key
         self.version = version
+        self.env_name = env_name
         self.is_fifo = is_fifo
         self._closed = False
 
@@ -67,16 +72,16 @@ class LoadedKek:
         return hmac.new(bytes(self._live_key()), _KCV_LABEL, hashlib.sha256).digest()[:8]
 
     def wrap_dek(self, dek: bytearray, *, credential_id: UUID) -> str:
-        return (
-            "v1:" + env.seal(self._live_key(), dek, env.dek_aad(credential_id, self.version)).hex()
-        )
+        aad = env.dek_aad(self.env_name, credential_id, self.version)
+        return "v2:" + env.seal(self._live_key(), dek, aad).hex()
 
     def unwrap_dek(self, dek_ref: str, *, credential_id: UUID) -> bytearray:
-        """`InvalidTag` on wrong KEK / row / version; `ValueError` on shape."""
+        """`InvalidTag` on wrong KEK / environment / row / version; `ValueError` on shape,
+        including the environment-free `v1:` wrap (#2338)."""
         prefix, _, body = dek_ref.partition(":")
-        if prefix != "v1":
+        if prefix != "v2":
             raise ValueError("unsupported dek_ref")
-        aad = env.dek_aad(credential_id, self.version)
+        aad = env.dek_aad(self.env_name, credential_id, self.version)
         return env.open_(self._live_key(), bytes.fromhex(body), aad)
 
     def close(self) -> None:
@@ -177,11 +182,13 @@ class PathKekSource:
     `fstatfs` on the opened fd, *and* under `/run/credentials/`. FIFOs (the WSL read-once
     launcher handoff) are acked by the service once every handle is drained (`write_ack`).
     `abandoned` is set by the caller on timeout/cancel: the bytes are then zeroed, not returned.
+    `env_name` is the process environment, bound into every KEK it loads (#2338).
     """
 
     path: Path
     version: int
     allow_fifo: bool
+    env_name: str = field(kw_only=True)
     live: bool = False
     timeout_s: float = 10.0
     clock: Callable[[], float] = time.monotonic
@@ -206,7 +213,7 @@ class PathKekSource:
         if self.abandoned.is_set():
             env.zero(key)
             raise KekLoadError("kek_unavailable")
-        return LoadedKek(key, self.version, is_fifo=is_fifo)
+        return LoadedKek(key, self.version, env_name=self.env_name, is_fifo=is_fifo)
 
 
 def is_fifo(path: str) -> bool:
