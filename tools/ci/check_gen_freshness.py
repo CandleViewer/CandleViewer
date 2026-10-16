@@ -11,6 +11,8 @@ This script is the single implementation invoked by
 
 1. Runs the generator (``pnpm generate``, i.e. ``make gen``) twice in a row
    on the current checkout and hashes the generated tree after each run.
+   Each run sets ``TURBO_FORCE=true``, so the generators really execute and a
+   turbo cache entry is never replayed as fresh output (#2783).
    If the two hashes differ, generation is non-deterministic (CI-GEN-003)
    and we fail *before* even looking at git diff, so a flaky generator never
    masquerades as a "someone forgot to regenerate" freshness failure.
@@ -33,6 +35,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -68,6 +71,13 @@ CONTRACT_REGENERATE = (
 )
 # shutil.which resolves pnpm.cmd on Windows (a bare "pnpm" is not executable there).
 GENERATE_CMD = [shutil.which("pnpm") or "pnpm", "generate"]
+# #2783: the gate judges what the generators produce from this checkout, never a
+# turbo cache entry (the local cache is shared by every worktree on a machine).
+# TURBO_FORCE=true skips cache reads only: turbo still stores the run under the task
+# hash, which is sound because the generate inputs (packages/protocol/turbo.json)
+# list every repo-level file the generators read. The overrides are merged last, so
+# an exported TURBO_FORCE=false cannot switch the bypass off.
+GENERATE_ENV_OVERRIDES: dict[str, str] = {"TURBO_FORCE": "true"}
 
 
 class GenGateError(Exception):
@@ -78,11 +88,12 @@ class GenGateError(Exception):
 
 
 def _run(
-    cmd: list[str], *, cwd: Path | None = None
+    cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
         check=False,
@@ -116,7 +127,7 @@ def _hash_generated_tree(roots: tuple[Path, ...]) -> str:
 
 
 def run_generator() -> None:
-    result = _run(GENERATE_CMD)
+    result = _run(GENERATE_CMD, env={**os.environ, **GENERATE_ENV_OVERRIDES})
     if result.returncode != 0:
         raise GenGateError(
             "CI-GEN-004",
