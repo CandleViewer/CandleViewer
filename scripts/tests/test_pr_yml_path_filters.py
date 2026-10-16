@@ -1,4 +1,6 @@
-"""#2915: `pr.yml` runs the `security` job when only a Semgrep gate path changes.
+"""`pr.yml` path filters: a PR that edits only what a gate checks still runs that gate.
+
+#2915: the `security` job runs when only a Semgrep gate path changes.
 
 `.semgrep/**` (the cv-* rules and their rule-test fixtures), `.semgrep-fixtures/**`,
 `.semgrepignore` and `tools/ci/check_semgrep_rule_tests.py` are what the Semgrep rule-test checker
@@ -9,7 +11,10 @@ gates built to check exactly that change.
 The `ci-required` resolver restates the `security` condition by hand, and
 scripts/ci_gate_resolver.mjs treats a lane that ran while "not applicable" as fine. A Semgrep-only
 run that failed would therefore stay green in `ci-required` unless the resolver names the same
-filters as the job, so these tests pin the filter, the job condition and the resolver together."""
+filters as the job, so these tests pin the filter, the job condition and the resolver together.
+
+#2963: the tests that pin `.github/workflows/xstate-nightly.yml` (#2807) run in the `py` lane, but
+its filter did not name the workflow, so a PR that edited only the workflow skipped them."""
 
 from __future__ import annotations
 
@@ -29,6 +34,7 @@ SEMGREP_PATHS = (
     "tools/ci/check_semgrep_rule_tests.py",
 )
 RESOLVER_STEP = "Resolve ci-required conclusion"
+XSTATE_NIGHTLY = ".github/workflows/xstate-nightly.yml"
 
 
 def _jobs() -> dict[str, Any]:
@@ -133,3 +139,10 @@ def test_pr_yml_resolver_reads_each_security_filter_from_its_changed_paths_outpu
     for name in sorted(_resolver_security_filters()):
         expected = "${{ needs.changed-paths.outputs." + name + " }}"
         assert env.get("FILTER_" + name.upper()) == expected, name
+
+
+def test_pr_yml_py_filter_covers_the_xstate_nightly_workflow() -> None:
+    # services/api/tests/unit/statechart/test_xstate_gate_env_skip.py pins that workflow (#2807)
+    # and runs in the `py` lane, so a PR that edits only the workflow must start the lane.
+    assert (ROOT / XSTATE_NIGHTLY).is_file()
+    assert XSTATE_NIGHTLY in _filters()["py"]

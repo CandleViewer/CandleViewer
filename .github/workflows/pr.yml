@@ -84,6 +84,9 @@ jobs:
               - 'docs/research/xstate/gate/run_gate.py'
               - 'docs/research/xstate/gate/_paths.py'
               - 'tools/statechart/nightly_gate.py'
+              # The tests that pin xstate-nightly.yml (#2807) run in this lane; a PR that edits
+              # only the workflow must run them (#2963).
+              - '.github/workflows/xstate-nightly.yml'
             engine:
               - 'packages/chart-engine/**'
             protocol:
