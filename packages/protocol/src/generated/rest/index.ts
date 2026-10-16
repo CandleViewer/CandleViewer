@@ -6271,7 +6271,12 @@ export interface components {
      * @description Why the shared order-entry gate refused an order (#837 Q5; E42-T03 and E27-T04). The server's set is closed and listed in `24-internal-schemas.md` 8.10. **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3).
      * @enum {string}
      */
-    OrderEntryRefusalReason: "maintenance" | "account_unhealthy" | "key_rotation_overdue";
+    OrderEntryRefusalReason:
+      | "maintenance"
+      | "account_disabled_by_policy"
+      | "no_active_key"
+      | "account_unhealthy"
+      | "balance_stale";
     OrderEvent: {
       /** Format: date-time */
       event_ts?: string;

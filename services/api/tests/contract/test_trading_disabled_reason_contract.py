@@ -14,7 +14,13 @@ from candleviewer.api.contract_conformance import REPO_ROOT, load_openapi_spec
 _SPEC = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
 _FORBIDDEN = _SPEC["components"]["responses"]["Forbidden"]
-_REASONS = ["maintenance", "account_unhealthy", "key_rotation_overdue"]
+_REASONS = [
+    "maintenance",
+    "account_disabled_by_policy",
+    "no_active_key",
+    "account_unhealthy",
+    "balance_stale",
+]
 _DOC = REPO_ROOT / "docs/plan/24-internal-schemas.md"
 
 
