@@ -26,7 +26,7 @@ describe("password-change error codes (#2330)", () => {
   });
 
   // Type-level: enforced by `tsc` (this package typechecks test/), a no-op at runtime.
-  it("types the 403 and 422 refusals as problem+json and keeps 401 for the session", () => {
+  it("types the 403 and 422 refusals as problem+json, 401 for the session, 429 for the lock", () => {
     expectTypeOf<
       ChangePasswordResponses[403]["content"]["application/problem+json"]
     >().toEqualTypeOf<Problem>();
@@ -35,6 +35,9 @@ describe("password-change error codes (#2330)", () => {
     >().toEqualTypeOf<Problem>();
     expectTypeOf<ChangePasswordResponses[401]>().toEqualTypeOf<
       components["responses"]["Unauthorized"]
+    >();
+    expectTypeOf<ChangePasswordResponses[429]>().toEqualTypeOf<
+      components["responses"]["RateLimited"]
     >();
   });
 });
