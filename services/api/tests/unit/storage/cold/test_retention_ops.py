@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from candleviewer.storage.cold import rolloff_ops
 from candleviewer.storage.cold.layout import DatasetNotRegistered, DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore
 from candleviewer.storage.cold.partition_lock import is_locked
@@ -26,6 +27,7 @@ from candleviewer.storage.cold.retention_ops import (
     RetentionCheckpointCorrupt,
     partition_range,
 )
+from candleviewer.storage.errors import StoragePartitionDropNotApplied
 from candleviewer.storage.models import StreamKind
 
 T = StreamKind.TRADES
@@ -129,27 +131,47 @@ def test_partition_range_keys() -> None:
 
 class _Pg:
     """QuestDB fake with WAL semantics: the DROP bumps `sequencerTxn`; the partition only
-    disappears after `apply_after` more `wal_tables()` polls (async WAL apply)."""
+    disappears after `apply_after` more `wal_tables()` polls (async WAL apply), whichever wait
+    polls it: the shared drop (`SELECT suspended ...`, which since #2566 waits for the apply
+    itself) or the store's own `SELECT writerTxn ...` check.
 
-    def __init__(self, *, apply_after: int = 0, wal: bool = True) -> None:
+    `lag`: the partition applies but the table writer never catches up with its sequencer (other
+    pending transactions). `suspended`: the WAL is suspended from the start. `suspend_after_apply`:
+    it suspends right after the drop applied (the shared wait has already returned by then)."""
+
+    def __init__(
+        self,
+        *,
+        apply_after: int = 0,
+        wal: bool = True,
+        lag: bool = False,
+        suspended: bool = False,
+        suspend_after_apply: bool = False,
+    ) -> None:
         self.parts = {"2026-08-01": 4096, "2026-08-02": 10}
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.writer, self.seq, self.apply_after, self.wal = 1, 1, apply_after, wal
+        self.lag, self.suspended, self.suspend_after_apply = lag, suspended, suspend_after_apply
         self.pending: str | None = None
         self.ghosts: list[str] = []  # dropped but still listed, empty (real QuestDB behaviour)
 
     async def fetch(self, sql: str, *params: object) -> list[dict[str, object]]:
         self.calls.append((sql, params))
-        if sql.startswith("SELECT writerTxn"):
+        if "wal_tables" in sql:
             assert params == ("trades",)
             if not self.wal:
                 return []
+            suspended = self.suspended  # what THIS poll reports (before a later suspension)
             if self.pending and self.apply_after <= 0:
                 self.parts.pop(self.pending)
                 self.ghosts.append(self.pending)
-                self.pending, self.writer = None, self.seq
+                self.pending = None
+                self.writer = self.writer if self.lag else self.seq
+                self.suspended = self.suspended or self.suspend_after_apply
             self.apply_after -= 1
-            return [{"writerTxn": self.writer, "sequencerTxn": self.seq, "suspended": False}]
+            if sql.startswith("SELECT suspended"):  # the shared drop reads only the flag
+                return [{"suspended": suspended}]
+            return [{"writerTxn": self.writer, "sequencerTxn": self.seq, "suspended": suspended}]
         if "table_partitions" in sql:
             live = [
                 {"name": n, "diskSize": s, "numRows": 5, "minTimestamp": "x"}
@@ -168,8 +190,17 @@ class _Pg:
         return [{"symbol": "BTCUSDT", "n": 7}, {"symbol": "ETHUSDT", "n": 2}]
 
 
-def _store(pg: _Pg) -> QuestDbRetentionHotStore:
-    return QuestDbRetentionHotStore(pg, apply_timeout_s=1.0, poll_s=0.001)
+@pytest.fixture(autouse=True)
+def _fast_drop_polls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#2566: the shared `QuestDbHotPartitions.drop_day` now waits for the apply itself with a
+    20 -> 200 ms backoff; shrink it so the unit tests stay fast (the module constants are read
+    on every wait)."""
+    monkeypatch.setattr(rolloff_ops, "DROP_POLL_MIN_S", 0.001)
+    monkeypatch.setattr(rolloff_ops, "DROP_POLL_MAX_S", 0.002)
+
+
+def _store(pg: _Pg, *, apply_timeout_s: float = 1.0) -> QuestDbRetentionHotStore:
+    return QuestDbRetentionHotStore(pg, apply_timeout_s=apply_timeout_s, poll_s=0.001)
 
 
 async def test_hot_store_days_counts_sizes() -> None:
@@ -193,30 +224,39 @@ async def test_hot_drop_statement_targets_exact_utc_day_partition_name() -> None
 
 async def test_hot_drop_waits_for_wal_apply_before_reporting_success() -> None:
     """Regression (#2229 integration): on a WAL table the DROP returns before it is applied;
-    reporting success then left the partition visible. Now the store waits for
-    writerTxn == sequencerTxn AND the partition gone from `table_partitions()`."""
+    reporting success then left the partition visible. The store only reports success once the
+    partition is gone: the shared drop (#2566) polls `wal_tables()` / `table_partitions()` until
+    then, and the store's own writerTxn == sequencerTxn check follows."""
     pg = _Pg(apply_after=3)
     assert await _store(pg).drop_day(T, DAY_US) is True
     assert "2026-08-01" not in pg.parts
-    assert sum(1 for c, _ in pg.calls if c.startswith("SELECT writerTxn")) >= 4
+    assert sum(1 for c, _ in pg.calls if "wal_tables" in c) >= 4
 
 
-async def test_hot_drop_never_applied_raises_timeout_keeps_item_retryable() -> None:
-    pg = _Pg(apply_after=10**9)
+async def test_hot_drop_lagging_writer_raises_timeout_keeps_item_retryable() -> None:
+    """The partition is gone but the table writer never catches up with its sequencer (other
+    pending transactions): the store's own check refuses to report success, so the reaper keeps
+    the item `pending` and retries."""
+    pg = _Pg(lag=True)
     with pytest.raises(TimeoutError):
+        await _store(pg, apply_timeout_s=0.05).drop_day(T, DAY_US)
+    assert "2026-08-01" not in pg.parts
+
+
+async def test_hot_drop_suspended_wal_raises_the_typed_drop_error() -> None:
+    """A suspended WAL can never apply the drop: the shared wait (#2566) fails fast with the typed
+    error the reaper handles like a timeout, and nothing is reported dropped."""
+    pg = _Pg(apply_after=10**9, suspended=True)
+    with pytest.raises(StoragePartitionDropNotApplied) as exc:
         await _store(pg).drop_day(T, DAY_US)
+    assert exc.value.reason == "suspended" and "2026-08-01" in pg.parts
 
 
-async def test_hot_drop_suspended_wal_raises() -> None:
-    pg = _Pg(apply_after=10**9)
-
-    async def suspended(sql: str, *params: object) -> list[dict[str, object]]:
-        if sql.startswith("SELECT writerTxn"):
-            return [{"writerTxn": 1, "sequencerTxn": 2, "suspended": True}]
-        return await _Pg.fetch(pg, sql, *params)
-
-    pg.fetch = suspended  # type: ignore[method-assign]  # inject a suspended WAL row
-    with pytest.raises(RuntimeError):
+async def test_hot_drop_wal_suspended_after_the_apply_raises() -> None:
+    """The WAL suspends right after the drop applied (the shared wait has returned): the store's
+    own check still refuses to report success."""
+    pg = _Pg(suspend_after_apply=True)
+    with pytest.raises(RuntimeError, match="suspended"):
         await _store(pg).drop_day(T, DAY_US)
 
 
