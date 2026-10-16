@@ -18,6 +18,7 @@ from pydantic import SecretStr
 import candleviewer.app as appmod
 from candleviewer.exchange.base.instruments import InstrumentsFetchResult
 from candleviewer.exchange.bybit.instruments import parse_instruments
+from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.ingestion.instruments_refresh import InstrumentsRefreshScheduler
 from candleviewer.settings import FeedMode, Settings
 from candleviewer.storage.repositories.instruments_sqlalchemy import (
@@ -48,6 +49,7 @@ _LIVE: dict[str, Any] = {
         pytest.param({}, False, id="dev-defaults"),
         pytest.param(_LIVE, True, id="live-feed"),
         pytest.param({"ingestion_ws_enabled": True}, True, id="public-ws"),
+        pytest.param({**_LIVE, "ingestion_ws_enabled": True}, True, id="live-feed-and-public-ws"),
         pytest.param({**_LIVE, "storage_backend": "fake"}, False, id="fake-backend-live"),
         pytest.param(
             {"storage_backend": "fake", "ingestion_ws_enabled": True}, False, id="fake-backend-ws"
@@ -59,11 +61,39 @@ def test_deployed_app_attaches_the_catalogue_when_it_talks_to_the_exchange(
 ) -> None:
     ingestion = appmod.create_app(Settings(**{**_REAL, **overrides})).state.app_context.ingestion
     assert isinstance(ingestion.instruments, InstrumentsRefreshScheduler) is attached
-    # Its client and pool are released when ingestion stops (the public WS has its own client).
+    # Its pool is released when ingestion stops. #2599: it shares the public WS's REST client
+    # (one governor, C-12.7), so there is one client whenever either talks to the exchange.
     closers = [getattr(close, "__qualname__", "") for close in ingestion._closers]
-    public_ws = int(bool(overrides.get("ingestion_ws_enabled")))
+    public_ws = bool(overrides.get("ingestion_ws_enabled"))
     assert closers.count("SqlAlchemyRelationalRepository.dispose") == int(attached)
-    assert closers.count("BybitRestClient.aclose") == int(attached) + public_ws
+    assert closers.count("BybitRestClient.aclose") == int(attached or public_ws)
+
+
+def test_live_feed_and_public_ws_share_one_public_rest_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2599: with `CV_FEED=live` and the public WS together, the catalogue and the public WS
+    (clock probe, klines, recent trades) use one credential-less REST client, so one
+    token-bucket governor (C-12.7): the app builds exactly one and closes it exactly once."""
+    built: list[Any] = []
+    real = ExchangeBybitService.public_rest_client
+
+    def _counting(env: str) -> Any:
+        built.append(real(env))
+        return built[-1]
+
+    monkeypatch.setattr(ExchangeBybitService, "public_rest_client", staticmethod(_counting))
+    settings = Settings(**{**_REAL, **_LIVE, "ingestion_ws_enabled": True})
+    ingestion = appmod.create_app(settings).state.app_context.ingestion
+    assert isinstance(ingestion.instruments, InstrumentsRefreshScheduler)
+    assert ingestion.clock is not None  # the public WS's clock probe is wired too
+    assert len(built) == 1
+    closed = [
+        getattr(close, "__self__", None)
+        for close in ingestion._closers
+        if getattr(close, "__qualname__", "") == "BybitRestClient.aclose"
+    ]
+    assert closed == built
 
 
 def _recorded_page(_now_us: Callable[[], int]) -> Awaitable[InstrumentsFetchResult]:

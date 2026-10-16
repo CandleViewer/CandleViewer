@@ -1,10 +1,10 @@
 """Lifecycle contract for the ingestion module (M6).
 
 Every module implements the lifecycle contract from
-`docs/plan/20-architecture.md` Sec.3: `start`, `stop`, `health`. This ticket
-(E02-T12) adds the *synthetic* feed path only (`CV_FEED=synthetic`): the real
-exchange ingestion path (`CV_FEED=live`) is scaffolded but not implemented until
-E08 lands.
+`docs/plan/20-architecture.md` Sec.3: `start`, `stop`, `health`. The module
+starts the *synthetic* feed (`CV_FEED=synthetic`, E02-T12) and whatever E08
+exchange components the composition root attached: the instrument catalogue,
+the clock guard, the public WS and its streams.
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from candleviewer.exchange.base import Ticker, Trade
 from candleviewer.exchange.base.frame_guard import FrameRejectedError, json_depth_exceeds
+from candleviewer.ingestion._logging import get_logger
 from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.ingestion.connection import PHASE_OPEN, ConnectionManager
 from candleviewer.ingestion.dispatch import FrameRoute, LaneSet
@@ -82,7 +83,8 @@ class BookSink(Protocol):
 
 
 class IngestionService:
-    """M6 `ingestion` module lifecycle: synthetic feed only (E02-T12)."""
+    """M6 `ingestion` module lifecycle: the synthetic feed (E02-T12) and the attached E08
+    exchange components."""
 
     def __init__(
         self,
@@ -303,10 +305,13 @@ class IngestionService:
         """Start the module.
 
         `CV_FEED=synthetic` (the dev/CI default) starts the replay generator
-        against a bounded queue. `CV_FEED=live` is a scaffold no-op here —
-        `Settings` already refuses to construct in that mode without
-        credentials (fail-fast, acceptance criterion 3); the real adapter
-        wiring is E08's.
+        against a bounded queue; `CV_FEED=live` starts no generator (`Settings`
+        refuses that mode without credentials, fail-fast). Either way the
+        components the composition root attached start next: the instrument
+        catalogue (with `CV_FEED=live` or the public WS on the real backend;
+        its startup fetch is bounded, so boot never waits long on the exchange,
+        #2599), the clock guard, and the public WS with its streams
+        (`ingestion_ws_enabled`).
         """
         settings = ctx.settings
         if settings.feed is FeedMode.SYNTHETIC:
@@ -340,7 +345,32 @@ class IngestionService:
         self._started = True
 
     async def stop(self, grace_s: float) -> None:
-        """Stop the module within `grace_s` seconds."""
+        """Stop the module within `grace_s` seconds. The closers (REST clients,
+        pools) and the generator are released even if a stop step raises, each
+        best effort: one that raises is logged and the rest still run (#2599)."""
+        try:
+            await self._stop_components(grace_s)
+        finally:
+            await self._release()
+
+    async def _release(self) -> None:
+        releases, self._closers = self._closers, []
+        generator, self._generator = self._generator, None
+        if generator is not None:
+            releases.append(generator.stop)
+        try:
+            for release in releases:
+                try:
+                    await release()
+                except Exception:  # never skips the rest; a CancelledError still propagates
+                    get_logger(__name__).exception(
+                        "ingestion_release_failed",
+                        resource=getattr(release, "__qualname__", type(release).__name__),
+                    )
+        finally:
+            self._started = False
+
+    async def _stop_components(self, grace_s: float) -> None:
         pump, self._pump = self._pump, None
         if pump is not None:
             pump.cancel()
@@ -358,13 +388,6 @@ class IngestionService:
             await self.clock.stop()
         if self.instruments is not None:  # before the closers: it uses their client and pool
             await self.instruments.stop(grace_s)
-        for close in self._closers:
-            await close()
-        self._closers.clear()
-        if self._generator is not None:
-            await self._generator.stop()
-            self._generator = None
-        self._started = False
 
     def degraded_reasons(self) -> list[HealthReason]:
         """#1919: reasons the feed is impaired, from published plain signals only

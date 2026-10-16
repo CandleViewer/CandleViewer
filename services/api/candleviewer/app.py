@@ -883,8 +883,10 @@ def create_app(
         kline_policy_loader(SqlAlchemyRecorderRepository(_kb_pg) if _kb_pg is not None else None),
         float(resolved.kline_boundary_refresh_s),
     )
-    if resolved.ingestion_ws_enabled:
-        wire_public_ws(ctx, kline_boundary)
+    # #2599: the public WS and the instrument catalogue share one public REST client (C-12.7).
+    public_rest = PublicRest(ctx) if resolved.ingestion_ws_enabled else None
+    if public_rest is not None:
+        wire_public_ws(ctx, kline_boundary, public_rest)
     # E12 #2031 (flag `bars_enabled`, default off - C-4.13; removal with #398/#399): the set
     # and its writer are started/stopped by the lifespan (set first, then writer).
     bars_reader: BarReader | None = None
@@ -1269,7 +1271,7 @@ def create_app(
             lambda: ctx.ingestion.instruments, principal_resolver=audit_resolver
         )
     )
-    _compose_instrument_catalogue(ctx, resolved)
+    _compose_instrument_catalogue(ctx, resolved, public_rest)
     # E08-S03: merged ticker snapshot; session-backed resolver (501 only without identity).
     app.include_router(
         make_ticker_router(lambda: ctx.ingestion.tickers, principal_resolver=audit_resolver)
@@ -1553,22 +1555,24 @@ def _compose_funding(ctx: AppContext, settings: Settings) -> Any:
     )
 
 
-def _compose_instrument_catalogue(ctx: AppContext, settings: Settings) -> None:
+def _compose_instrument_catalogue(
+    ctx: AppContext, settings: Settings, public_rest: PublicRest | None = None
+) -> None:
     """#2561: attach the E08-S01-2 catalogue on the real backend whenever the app talks to the
     exchange: `CV_FEED=live`, or the public WS behind `ingestion_ws_enabled`, which admits only
     catalogue symbols. The dev and CI defaults (synthetic feed, flag off) make no exchange call
-    (C-13.5), and `/instruments` keeps answering 503 there. Ingestion stops the scheduler, then
-    closes its client and pool."""
+    (C-13.5); `/instruments` answers 503 there, or 501 without an identity provider. #2599: the
+    catalogue fetches through the public WS's REST client when there is one, so one governor
+    (C-12.7). Ingestion stops the scheduler, then closes the client and the pool."""
     if settings.storage_backend != "real" or not (
         settings.feed is FeedMode.LIVE or settings.ingestion_ws_enabled
     ):
         return
-    rest = ctx.exchange_bybit.public_rest_client(settings.environment.value)
+    rest = (public_rest or PublicRest(ctx)).client
     relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "instruments")
     wire_instrument_catalogue(
         ctx, fetch_instruments=ctx.exchange_bybit.instruments_fetcher(rest), relational=relational
     )
-    ctx.ingestion.attach_closer(rest.aclose)
     ctx.ingestion.attach_closer(relational.dispose)
 
 
@@ -1646,8 +1650,21 @@ def kline_policy_loader(
     return load
 
 
+class PublicRest:
+    """#2599: a credential-less public REST client, and so one token-bucket governor (C-12.7),
+    shared by every public consumer of one app (the public WS's clock probe, klines and recent
+    trades, and the instrument catalogue). Ingestion closes it on stop, after the components
+    that use it. A holder, so this composition root never names the adapter's client type."""
+
+    def __init__(self, ctx: AppContext) -> None:
+        self.client = ctx.exchange_bybit.public_rest_client(ctx.settings.environment.value)
+        ctx.ingestion.attach_closer(self.client.aclose)
+
+
 def wire_public_ws(
-    ctx: AppContext, kline_boundary: KlineHotBoundary | None = None
+    ctx: AppContext,
+    kline_boundary: KlineHotBoundary | None = None,
+    public_rest: PublicRest | None = None,
 ) -> ConnectionManager:
     """E08-T04 (flag `ingestion_ws_enabled`, default off — C-4.13): compose the
     public WS skeleton. The exchange adapter (M4) supplies the socket factory and
@@ -1674,9 +1691,8 @@ def wire_public_ws(
     # credentials) so the exchange latency stage is available; started and
     # stopped with ingestion. Public data always uses the live host (demo has
     # no separate public feed).
-    rest = adapter.public_rest_client(env)
+    rest = (public_rest or PublicRest(ctx)).client
     guard = wire_clock_offset(ctx, rest_client_fetcher(rest))
-    ctx.ingestion.attach_closer(rest.aclose)
 
     def _is_listed(symbol: str) -> bool:
         # Only catalogue symbols may become topics (E08-S03 security note).
