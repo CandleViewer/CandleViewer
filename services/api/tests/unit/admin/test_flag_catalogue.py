@@ -1,5 +1,5 @@
-"""E42-T03: the shipped flag definitions are `21-database-schema.md` 10.7 row for row, and the
-safety-relevant ones fail closed to the restrictive value."""
+"""E42-T03: the shipped flag definitions are `21-database-schema.md` 10.7 row for row, and every
+flag's outage value is its default but for the two engaged order-entry switches."""
 
 from __future__ import annotations
 
@@ -34,11 +34,12 @@ def test_the_catalogue_is_10_7_row_for_row() -> None:
     assert rows == _SECTION_10_7
 
 
-def test_safety_relevant_flags_fail_closed() -> None:
-    """While the store cannot be read every flag takes its default, but the two kill switches that
-    stop trading are engaged; only the live gate needs evidence."""
+def test_every_flag_fails_closed_to_its_default_but_two_engaged_switches() -> None:
+    """While the store cannot be read every flag takes its default, but the two switches that
+    refuse order entry are engaged; only the live gate needs evidence."""
     r = default_registry()
     engaged = {"maintenance.mode": True, "killswitch.order_entry": True}
     fail_closed = {k: s.fail_closed_value for k, s in r.items()}
     assert fail_closed == {k: s.default for k, s in r.items()} | engaged
+    assert all(s.overridable != (s.is_killswitch or s.requires_evidence) for s in r.values())
     assert [k for k, s in r.items() if s.requires_evidence] == ["trading.live_enabled"]

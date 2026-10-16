@@ -84,10 +84,10 @@ def test_role_overrides_rank_owner_then_manager_then_viewer(roles: set[str], exp
     assert resolve(_ORDER, stored, user_id=_U1, roles=frozenset(roles)) == expected
 
 
-@given(st.uuids(), st.integers(0, 100), st.integers(0, 100))
-def test_rollout_is_monotonic_in_the_percentage(user: UUID, a: int, b: int) -> None:
-    in_low, in_high = (resolve(_PCT, StoredFlag(p), user_id=user) for p in sorted((a, b)))
-    assert in_high or not in_low  # in the lower rollout implies in the higher one
+@given(st.uuids())
+def test_rollout_is_monotonic_in_the_percentage(user: UUID) -> None:
+    members = [bool(resolve(_PCT, StoredFlag(pct), user_id=user)) for pct in range(101)]
+    assert members == sorted(members)  # once in at some percentage, in at every higher one
 
 
 @given(
