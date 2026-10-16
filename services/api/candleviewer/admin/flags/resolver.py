@@ -4,9 +4,10 @@ The order is fixed by `21-database-schema.md` 3.9: user override, then role over
 percentage rollout (`hash(user_id || flag_key)`), then the stored deployment value. Resolution is
 server-side only; a client copy is advisory for the UI and never enforces anything.
 
-Fail closed: `stored is None` means the store could not be read, and a stored value or override
-that does not fit the kind (a hand-edited row) is ignored. Both fall back to the spec's
-`fail_closed_value`, which is the restrictive value for safety-relevant flags.
+Fail closed: `stored is None` means the store could not be read, and a stored value that does
+not fit the kind (an unreadable row) fails that flag closed, overrides included. Both fall back
+to the spec's `fail_closed_value`, the restrictive value for safety-relevant flags. An override
+that does not fit the kind is ignored.
 """
 
 from __future__ import annotations
@@ -71,13 +72,13 @@ def resolve(
     roles: frozenset[str] = frozenset(),
 ) -> FlagValue:
     """The value `spec` resolves to for one caller (`user_id=None`: a system read, no rollout)."""
-    if stored is None:
-        value = spec.fail_closed_value
+    if stored is None or not value_matches(spec, stored.value):
+        value = spec.fail_closed_value  # an outage or an unreadable row: no override applies
     else:
         pinned = _override(spec, stored, user_id, roles)
         if pinned is not None:
             return pinned
-        value = stored.value if value_matches(spec, stored.value) else spec.fail_closed_value
+        value = stored.value
     if spec.kind is FlagKind.PERCENTAGE:
         pct = int(value)
         if user_id is None:
