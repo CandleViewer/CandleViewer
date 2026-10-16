@@ -21,6 +21,7 @@ from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.session_service import SessionService
+from candleviewer.auth.step_up import StepUpChallenge
 from candleviewer.settings import Environment
 from tests.openapi_helpers import deref
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -322,21 +323,58 @@ async def test_me_permissions_are_sorted_and_only_from_the_closed_vocabulary(env
     ]
 
 
-async def test_me_elevated_until_is_the_live_step_up_grace_expiry(env: _Env) -> None:
-    _, headers, minted = await env.sign_in()
-    live, lapsed = env.now + timedelta(minutes=4), env.now - timedelta(minutes=1)
+def _wire(instant: datetime) -> str:
+    """A UTC instant as the contract's `date-time` carries it."""
+    return instant.isoformat().replace("+00:00", "Z")
+
+
+async def _seed_step_up(env: _Env, minted: Any, elevations: dict[str, datetime]) -> None:
+    """Put `elevations` on the signed-in session's row the way `StepUpService` keeps them: a
+    grace window under its action class, a one-shot grant under `once:<class>`, a challenge
+    under `StepUpChallenge.key()`."""
     await env.repo.save_step_up_state(
-        str(minted.session_id),
-        elevations={
-            "users": live,
-            "keys": lapsed,
-            "once:killswitch": env.now + timedelta(minutes=1),
-        },
-        failures=0,
-        readonly_until=None,
+        str(minted.session_id), elevations=elevations, failures=0, readonly_until=None
+    )
+
+
+async def test_me_elevated_until_is_the_live_step_up_grace_expiry(env: _Env) -> None:
+    """The latest live grace window, and nothing else. The one-shot grant and the pending
+    challenge are newer than both windows and so expire after them: counting either of them, or
+    answering with the earlier window, changes the answer."""
+    _, headers, minted = await env.sign_in()
+    latest = env.now + timedelta(minutes=4)
+    earlier = env.now + timedelta(minutes=2)
+    newest = env.now + timedelta(minutes=5)
+    challenge = StepUpChallenge(uuid.UUID(int=7), "keys", newest)
+    await _seed_step_up(
+        env,
+        minted,
+        {"users": latest, "recorder": earlier, "once:killswitch": newest, challenge.key(): newest},
     )
     session = env.client.get(_ME, headers=headers).json()["session"]
-    assert session["elevated_until"] == live.isoformat().replace("+00:00", "Z")
+    assert session["elevated_until"] == _wire(latest)
+
+
+async def test_me_elevated_until_is_null_when_no_grace_window_is_live(env: _Env) -> None:
+    """None of these is an elevation: a lapsed window, a window that ends at this very instant
+    (`remaining_grace` refuses it too), a live one-shot grant and a live pending challenge. A
+    lapsed window can never outlast a live one, so only a row with no live window can show that
+    a lapsed one is not counted."""
+    _, headers, minted = await env.sign_in()
+    newest = env.now + timedelta(minutes=5)
+    challenge = StepUpChallenge(uuid.UUID(int=7), "keys", newest)
+    await _seed_step_up(
+        env,
+        minted,
+        {
+            "keys": env.now - timedelta(minutes=1),
+            "audit": env.now,
+            "once:killswitch": newest,
+            challenge.key(): newest,
+        },
+    )
+    session = env.client.get(_ME, headers=headers).json()["session"]
+    assert session["elevated_until"] is None
 
 
 async def test_me_serves_an_address_the_contract_email_format_would_refuse(env: _Env) -> None:
