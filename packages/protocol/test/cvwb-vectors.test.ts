@@ -33,7 +33,8 @@ interface Vector {
   records: string[][];
   trailer: string[] | null;
   prefix: string[] | null;
-  groups: [string, string[][]][] | null;
+  /** body_kind 5: `[[generation, index, ts_offset_ms, flags], cells]` per group (v2, #2529). */
+  groups: [string[], string[][]][] | null;
 }
 
 const vectors = readJson<Vector[]>("packages/fixtures/golden/cvwb/vectors.json");
@@ -127,11 +128,18 @@ function normalise(v: Vector): Pick<Vector, "records" | "trailer" | "prefix" | "
     }
     case CVWB_KINDS.footprint.id: {
       const d = decodeFootprint(buf);
-      const groups = d.groups.map((g, gi): [string, string[][]] => {
-        const [ts, cells] = v.groups![gi]!;
-        expect(g.tsMs).toBe(t(ts));
+      const groups = d.groups.map((g, gi): [string[], string[][]] => {
+        const [prefix, cells] = v.groups![gi]!;
+        const [generation, index, ts, flags] = prefix;
+        expect([g.generation, g.index, g.tsMs, g.confirmed]).toEqual([
+          BigInt(generation!),
+          BigInt(index!),
+          t(ts!),
+          (Number(flags) & 1) === 1,
+        ]);
         return [
-          ts,
+          // Vectors send reserved flag bits as 0 (§3.4), so bit0 alone rebuilds the byte.
+          [String(g.generation), String(g.index), ts!, g.confirmed ? "1" : "0"],
           g.cells.map((c, ci) => {
             const s = cells[ci]!;
             expect([c.price, c.bidVolume, c.askVolume, c.trades]).toEqual([

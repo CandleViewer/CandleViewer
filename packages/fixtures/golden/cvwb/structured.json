@@ -134,7 +134,10 @@
     "structured": {
       "bars": [
         {
+          "generation": 7,
+          "index": 42,
           "t_ms": 1789132200000,
+          "confirm": true,
           "cells": [
             {
               "price": "650000.0",
@@ -153,11 +156,53 @@
           ]
         },
         {
+          "generation": 7,
+          "index": 43,
           "t_ms": 1789132260000,
+          "confirm": false,
           "cells": []
         }
       ],
       "coalesced": false
+    }
+  },
+  {
+    "name": "footprint_shared_open_time",
+    "body_kind": 5,
+    "structured": {
+      "bars": [
+        {
+          "generation": 0,
+          "index": 1000,
+          "t_ms": 1789132259999,
+          "confirm": true,
+          "cells": [
+            {
+              "price": "650001.0",
+              "bid_volume": "0.005",
+              "ask_volume": "0.000",
+              "trades": 1,
+              "is_poc": false
+            }
+          ]
+        },
+        {
+          "generation": 0,
+          "index": 1001,
+          "t_ms": 1789132259999,
+          "confirm": false,
+          "cells": [
+            {
+              "price": "650001.0",
+              "bid_volume": "0.000",
+              "ask_volume": "0.007",
+              "trades": 1,
+              "is_poc": false
+            }
+          ]
+        }
+      ],
+      "coalesced": true
     }
   },
   {

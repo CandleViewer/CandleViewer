@@ -75,6 +75,9 @@ export const COMMON_HEADER_BYTES: number = CVWB_HEADER.bytes;
 /** body_kind 4 (bars) format_version (#2014/#2018): v2 adds generation + index. */
 export const BARS_FORMAT_VERSION: number = K.bars.formatVersion;
 
+/** body_kind 5 (footprint) format_version (#2529): v2 adds generation + index to each group. */
+export const FOOTPRINT_FORMAT_VERSION: number = K.footprint.formatVersion;
+
 /** Thrown by every decoder below on any malformed input (§3.4 "Client obligations"). */
 export class BinaryFrameError extends Error {
   constructor(
@@ -439,7 +442,12 @@ export interface FootprintCell {
 }
 
 export interface FootprintGroup {
+  /** ADR-0033 series generation; with `index`, the §8.2 bar key (#2529). */
+  generation: bigint;
+  index: bigint;
   tsMs: bigint;
+  /** Group flags bit0 `confirm`: this bar is closed. Reserved bits 1-7 are ignored (§3.4). */
+  confirmed: boolean;
   cells: FootprintCell[];
 }
 
@@ -449,7 +457,12 @@ export interface DecodedFootprint {
 }
 
 const FP = K.footprint;
-const FOOTPRINT_GROUP_PREFIX_BYTES = FP.groupPrefix.bytes;
+const GP = FP.groupPrefix.offsets;
+/**
+ * One group prefix (v2): u64 generation, u64 index, u32 ts_offset_ms, u32 cell_count, u8 flags,
+ * then 3 reserved bytes.
+ */
+export const FOOTPRINT_GROUP_PREFIX_BYTES: number = FP.groupPrefix.bytes;
 const FOOTPRINT_CELL_BYTES = FP.record.bytes;
 
 /**
@@ -479,8 +492,11 @@ export function decodeFootprint(buf: ArrayBufferView): DecodedFootprint {
         `footprint group ${g} prefix runs past the buffer (record_count=${header.recordCount})`,
       );
     }
-    const tsOffsetMs = view.getUint32(cursor + FP.groupPrefix.offsets.tsOffsetMs, true);
-    const cellCount = view.getUint32(cursor + FP.groupPrefix.offsets.cellCount, true);
+    const generation = view.getBigUint64(cursor + GP.generation, true);
+    const index = view.getBigUint64(cursor + GP.index, true);
+    const tsOffsetMs = view.getUint32(cursor + GP.tsOffsetMs, true);
+    const cellCount = view.getUint32(cursor + GP.cellCount, true);
+    const groupFlags = view.getUint8(cursor + GP.flags);
     cursor += FOOTPRINT_GROUP_PREFIX_BYTES;
     assertFits(cellCount, FOOTPRINT_CELL_BYTES, view.byteLength - cursor, `footprint group ${g}`);
     const cells: FootprintCell[] = [];
@@ -510,7 +526,13 @@ export function decodeFootprint(buf: ArrayBufferView): DecodedFootprint {
       });
       cursor += FOOTPRINT_CELL_BYTES;
     }
-    groups.push({ tsMs: header.tsBaseMs + BigInt(tsOffsetMs), cells });
+    groups.push({
+      generation,
+      index,
+      tsMs: header.tsBaseMs + BigInt(tsOffsetMs),
+      confirmed: (groupFlags & 0b0001) !== 0,
+      cells,
+    });
   }
   return { header, groups };
 }
@@ -708,7 +730,10 @@ export function toStructured(
     case BODY_KIND.FOOTPRINT:
       return {
         bars: (d as DecodedFootprint).groups.map((g) => ({
+          generation: safeInt("generation", g.generation),
+          index: safeInt("index", g.index),
           t_ms: safeInt("t_ms", g.tsMs),
+          confirm: g.confirmed,
           cells: g.cells.map((c) => ({
             price: c.price,
             bid_volume: c.bidVolume,

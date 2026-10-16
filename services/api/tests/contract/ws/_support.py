@@ -62,6 +62,7 @@ _U = "00000000-0000-4000-8000-0000000000aa"
 _A = "00000000-0000-0000-0000-0000000000a1"
 _SER = {"symbol": _S, "bar_type": "time", "param": "1"}
 _BAR = {"generation": 0, "index": 1, "t_ms": 1, "o": "1", "h": "2", "l": "1", "c": "2"}
+_FP_BAR = {"generation": 0, "index": 1, "t_ms": 1, "cells": []}
 _TRADE = {"ts_ms": 1, "price": "100.0", "size": "1", "side": "buy"}
 _ORD = {"id": _U, "exchange_account_id": _A, "symbol": _S, "state": "new", "updated_at_ms": 1}
 #: family -> (snapshot body, delta body)
@@ -72,7 +73,7 @@ SAMPLES: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {
     ),
     "trades": ({"symbol": _S, "trades": []}, {"symbol": _S, "trades": [_TRADE]}),
     "bars": ({**_SER, "bars": []}, {**_SER, "bars": [{**_BAR, "v": "3", "confirm": False}]}),
-    "footprint": ({**_SER, "bars": []}, {**_SER, "bars": [{"t_ms": 1, "cells": []}]}),
+    "footprint": ({**_SER, "bars": []}, {**_SER, "bars": [_FP_BAR]}),
     "heatmap": (
         {"symbol": _S, "time_bucket_ms": 500, "columns": []},
         {

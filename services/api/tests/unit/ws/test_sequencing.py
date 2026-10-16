@@ -409,7 +409,8 @@ def test_upstream_reconnect_and_replay_seek_reasons() -> None:
 
 def _footprint_body(cells_per_bar: int, bars: int) -> SnapshotBody:
     groups = tuple(
-        (b * 1000, tuple((p, 1, 2, 3, 0) for p in range(cells_per_bar))) for b in range(bars)
+        ((0, b, b * 1000, 1), tuple((p, 1, 2, 3, 0) for p in range(cells_per_bar)))
+        for b in range(bars)
     )
     structured = {
         "symbol": "BTCUSDT",
@@ -417,6 +418,8 @@ def _footprint_body(cells_per_bar: int, bars: int) -> SnapshotBody:
         "param": "1",
         "bars": [
             {
+                "generation": 0,
+                "index": b,
                 "t_ms": 1_789_000_000_000 + b,
                 "cells": [
                     {"price": f"{p}.0", "bid_volume": "1", "ask_volume": "2"}

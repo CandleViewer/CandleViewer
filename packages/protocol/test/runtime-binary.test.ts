@@ -5,6 +5,8 @@ import {
   BODY_KIND,
   COMMON_HEADER_BYTES,
   BAR_RECORD_BYTES,
+  FOOTPRINT_FORMAT_VERSION,
+  FOOTPRINT_GROUP_PREFIX_BYTES,
   decodeBars,
   decodeBookDelta,
   decodeBookSnapshot,
@@ -12,6 +14,7 @@ import {
   decodeHeatmapColumn,
   decodeTrades,
   parseBinaryFrameHeader,
+  toStructured,
   unscale,
 } from "../src/runtime/index.js";
 
@@ -281,32 +284,70 @@ describe("decodeBars", () => {
   });
 });
 
+/** The `BinaryFrameError` code `fn` throws, `"untyped"` for any other throw, `undefined` if none. */
+function errorCode(fn: () => unknown): string | undefined {
+  try {
+    fn();
+  } catch (e) {
+    return e instanceof BinaryFrameError ? e.code : "untyped";
+  }
+  return undefined;
+}
+
+function footprintCell(price: bigint, bid: bigint, ask: bigint, flags: number): Uint8Array {
+  const buf = new ArrayBuffer(33);
+  const v = new DataView(buf);
+  v.setBigInt64(0, price, true);
+  v.setBigUint64(8, bid, true);
+  v.setBigUint64(16, ask, true);
+  v.setUint32(24, 10, true); // trades
+  v.setUint8(28, flags);
+  return new Uint8Array(buf);
+}
+
+/**
+ * One v2 group (#2529): u64 generation, u64 index, u32 ts_offset_ms, u32 cell_count, u8 flags
+ * (bit0 confirm), 3 reserved zero bytes, then the cells.
+ */
+function footprintGroup(
+  generation: bigint,
+  index: bigint,
+  tsOffsetMs: number,
+  cells: Uint8Array[],
+  flags = 0,
+): Uint8Array {
+  const prefix = new ArrayBuffer(28);
+  const gv = new DataView(prefix);
+  gv.setBigUint64(0, generation, true);
+  gv.setBigUint64(8, index, true);
+  gv.setUint32(16, tsOffsetMs, true);
+  gv.setUint32(20, cells.length, true);
+  gv.setUint8(24, flags);
+  return concatBuffers(new Uint8Array(prefix), ...cells);
+}
+
+function footprintHeader(groupCount: number, version = 2): DataView {
+  const header = buildHeader({ bodyKind: BODY_KIND.FOOTPRINT, recordCount: groupCount });
+  header.setUint8(4, version);
+  return header;
+}
+
 describe("decodeFootprint", () => {
-  it("decodes one bar group with two cells", () => {
-    const header = buildHeader({ bodyKind: BODY_KIND.FOOTPRINT, recordCount: 1, tsBaseMs: 0n });
-    const groupPrefix = new ArrayBuffer(8);
-    const gv = new DataView(groupPrefix);
-    gv.setUint32(0, 60000, true); // ts_offset_ms
-    gv.setUint32(4, 2, true); // cell_count
+  it("uses format_version 2 and 28-byte group prefixes", () => {
+    expect(FOOTPRINT_FORMAT_VERSION).toBe(2);
+    expect(FOOTPRINT_GROUP_PREFIX_BYTES).toBe(28);
+  });
 
-    function buildCell(price: bigint, bid: bigint, ask: bigint, flags: number): Uint8Array {
-      const buf = new ArrayBuffer(33);
-      const v = new DataView(buf);
-      v.setBigInt64(0, price, true);
-      v.setBigUint64(8, bid, true);
-      v.setBigUint64(16, ask, true);
-      v.setUint32(24, 10, true);
-      v.setUint8(28, flags);
-      return new Uint8Array(buf);
-    }
-
-    const cell1 = buildCell(100000n, 5000n, 1000n, 0b1000); // POC
-    const cell2 = buildCell(100100n, 500n, 6000n, 0b0010); // sell imbalance
-    const frame = concatBuffers(header, new Uint8Array(groupPrefix), cell1, cell2);
-
-    const decoded = decodeFootprint(frame);
+  it("round-trips generation/index and decodes one bar group with two cells", () => {
+    const cell1 = footprintCell(100000n, 5000n, 1000n, 0b1000); // POC
+    const cell2 = footprintCell(100100n, 500n, 6000n, 0b0010); // sell imbalance
+    const group = footprintGroup(7n, 2n ** 40n, 60000, [cell1, cell2], 1); // closed
+    const decoded = decodeFootprint(concatBuffers(footprintHeader(1), group));
     expect(decoded.groups).toHaveLength(1);
+    expect(decoded.groups[0]?.generation).toBe(7n);
+    expect(decoded.groups[0]?.index).toBe(2n ** 40n);
     expect(decoded.groups[0]?.tsMs).toBe(60000n);
+    expect(decoded.groups[0]?.confirmed).toBe(true);
     expect(decoded.groups[0]?.cells).toEqual([
       {
         price: "1000.00",
@@ -323,6 +364,89 @@ describe("decodeFootprint", () => {
         flags: { buyImbalance: false, sellImbalance: true, inStack: false, poc: false },
       },
     ]);
+  });
+
+  it("reads u64-extreme generation and index exactly, per group", () => {
+    const frame = concatBuffers(
+      footprintHeader(2),
+      footprintGroup(2n ** 64n - 1n, 2n ** 63n, 1, []),
+      footprintGroup(1n, 2n ** 64n - 1n, 2, [footprintCell(1n, 1n, 1n, 0)]),
+    );
+    const { groups } = decodeFootprint(frame);
+    expect(groups.map((g) => [g.generation, g.index, g.tsMs])).toEqual([
+      [2n ** 64n - 1n, 2n ** 63n, 1n],
+      [1n, 2n ** 64n - 1n, 2n],
+    ]);
+  });
+
+  it("keeps same-open-time bars distinct by index (#2529)", () => {
+    const frame = concatBuffers(
+      footprintHeader(2),
+      footprintGroup(0n, 5n, 900, [footprintCell(100000n, 5000n, 0n, 0)], 1), // bar N, closed
+      footprintGroup(0n, 6n, 900, [footprintCell(100000n, 0n, 7000n, 0)], 0), // bar N+1, forming
+    );
+    const { groups } = decodeFootprint(frame);
+    expect(groups.map((g) => g.index)).toEqual([5n, 6n]);
+    expect(groups[0]?.tsMs).toBe(groups[1]?.tsMs);
+    const { bars } = toStructured(decodeFootprint(frame));
+    expect(bars.map((b) => [b.generation, b.index, b.t_ms, b.confirm, b.cells.length])).toEqual([
+      [0, 5, 900, true, 1],
+      [0, 6, 900, false, 1],
+    ]);
+  });
+
+  it("maps group flags bit0 to confirmed and ignores reserved bits 1-7 (§3.4)", () => {
+    const frame = concatBuffers(
+      footprintHeader(4),
+      footprintGroup(0n, 1n, 0, [], 0b0000_0000),
+      footprintGroup(0n, 2n, 0, [], 0b0000_0001),
+      footprintGroup(0n, 3n, 0, [], 0b1111_1110),
+      footprintGroup(0n, 4n, 0, [], 0b1111_1111),
+    );
+    const decoded = decodeFootprint(frame);
+    expect(decoded.groups.map((g) => g.confirmed)).toEqual([false, true, false, true]);
+    expect(toStructured(decoded).bars.map((b) => b.confirm)).toEqual([false, true, false, true]);
+  });
+
+  it("rejects a v1 footprint body (8-byte group prefix) with a typed error", () => {
+    const v1 = new DataView(new ArrayBuffer(8));
+    v1.setUint32(0, 60000, true); // ts_offset_ms
+    v1.setUint32(4, 1, true); // cell_count
+    const cell = footprintCell(100000n, 1n, 1n, 0);
+    const frame = concatBuffers(footprintHeader(1, 1), v1, cell);
+    expect(errorCode(() => decodeFootprint(frame))).toBe("unsupported_format_version");
+  });
+
+  it("rejects an unknown format_version", () => {
+    const frame = concatBuffers(footprintHeader(1, 9), footprintGroup(0n, 0n, 0, []));
+    expect(() => decodeFootprint(frame)).toThrow(/format_version/);
+  });
+
+  it("rejects a truncated group prefix, a v1-sized group and a truncated cell", () => {
+    const group = footprintGroup(0n, 7n, 60000, [footprintCell(1n, 1n, 1n, 0)]);
+    const prefix27 = concatBuffers(footprintHeader(1), group.subarray(0, 27));
+    expect(errorCode(() => decodeFootprint(prefix27))).toBe("frame_malformed");
+    const v1Sized = concatBuffers(footprintHeader(1), new Uint8Array(8));
+    expect(errorCode(() => decodeFootprint(v1Sized))).toBe("frame_malformed");
+    const shortCell = concatBuffers(footprintHeader(1), group.subarray(0, group.byteLength - 1));
+    expect(errorCode(() => decodeFootprint(shortCell))).toBe("frame_malformed");
+  });
+
+  it("refuses the group count up front at the 28-byte v2 stride (SR-128)", () => {
+    // Two groups in 48 bytes would pass a 24-byte (pre-flags) or 8-byte (v1) stride and only fail
+    // later, per group, with "prefix runs past the buffer"; the message names the up-front check.
+    const frame = concatBuffers(footprintHeader(2), new Uint8Array(48));
+    expect(() => decodeFootprint(frame)).toThrow(/footprint groups: count=2 x 28 bytes exceeds/);
+  });
+
+  it("ignores trailing bytes after the last group (variable layout, §3.4)", () => {
+    const frame = concatBuffers(
+      footprintHeader(1),
+      footprintGroup(3n, 4n, 5, []),
+      new Uint8Array(8),
+    );
+    const { groups } = decodeFootprint(frame);
+    expect(groups).toEqual([{ generation: 3n, index: 4n, tsMs: 5n, confirmed: false, cells: [] }]);
   });
 });
 

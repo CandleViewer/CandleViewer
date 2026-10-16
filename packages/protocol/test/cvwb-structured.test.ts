@@ -112,4 +112,17 @@ describe("toStructured() range checks", () => {
     const bad = patchU64(bars.hex, 24, BigInt(Number.MAX_SAFE_INTEGER) + 1n);
     expect(() => toStructured(decodeBars(bad))).toThrow(StructuredRangeError);
   });
+  const footprint = vectors.find((x) => x.name === "footprint");
+  // first group prefix (v2, #2529): u64 generation at 24, u64 index at 32.
+  it.each([
+    ["generation", 24],
+    ["index", 32],
+  ] as const)("accepts MAX_SAFE_INTEGER and rejects one above for footprint %s", (key, at) => {
+    if (footprint === undefined) throw new Error("no footprint vector");
+    const max = BigInt(Number.MAX_SAFE_INTEGER);
+    const ok = toStructured(decodeFootprint(patchU64(footprint.hex, at, max)));
+    expect(ok.bars[0]?.[key]).toBe(Number.MAX_SAFE_INTEGER);
+    const bad = patchU64(footprint.hex, at, max + 1n);
+    expect(() => toStructured(decodeFootprint(bad))).toThrow(StructuredRangeError);
+  });
 });
