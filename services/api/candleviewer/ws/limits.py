@@ -19,8 +19,10 @@ Single home for every bound the gateway enforces. Overflow policy:
 - `permission_change` / `revoked` fan-out: each socket's frame is sent under
   `FANOUT_SEND_TIMEOUT_S`; a stalled or failing socket is dropped from the
   registry and closed (`4429` slow consumer) so it cannot block the role-change
-  request or the other sockets. Its now-forbidden subscriptions are already
-  removed synchronously before any send.
+  request or the other sockets. Every socket's now-forbidden subscriptions are
+  removed synchronously before any send, and the fan-out's audit rows are
+  written only once every socket has its frames, each under
+  `FANOUT_AUDIT_TIMEOUT_S` (#2824).
 """
 
 from __future__ import annotations
@@ -59,6 +61,8 @@ MAX_BARS_SUBSCRIPTIONS = 16
 MACHINE_ENTRIES_MAX = 20_000
 AUTH_TIMEOUT_S = 10.0
 FANOUT_SEND_TIMEOUT_S = 2.0
+#: Bound on each audit row of that fan-out, like `CLOSE_AUDIT_TIMEOUT_S` on a close's row.
+FANOUT_AUDIT_TIMEOUT_S = 2.0
 
 CLOSE_TOO_BIG = 1009
 CLOSE_SLOW_CONSUMER = 4429
