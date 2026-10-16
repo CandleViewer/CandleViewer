@@ -88,7 +88,7 @@ async def relational(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepositor
 
 @pytest.fixture
 def store(relational: SqlAlchemyRelationalRepository) -> SqlAlchemySystemSettings:
-    return SqlAlchemySystemSettings(relational)
+    return SqlAlchemySystemSettings(relational, audit_timeout_s=60)  # outlasts the lock test's poll
 
 
 @pytest.fixture
