@@ -134,7 +134,7 @@ Reconnect policy by close code (C7): do not auto-reconnect on `1002`, `4400`, `4
 | F4  | Spec says a `sub` entry that is not a string/object is an error result; the server **silently drops** it, so `results` has fewer entries than `topics` (S1 "exactly one result per requested topic"). Repro: `topics:[123,{"opts":{}},null,"ticker.BTCUSDT"]` → 1 result. | `permissions.handle_sub` (`continue`)                                                        | Closed by #2567 (#2399).                                                                       |
 | F5  | **`alerts` and `recorder` deltas can never be delivered** through `SequencingHub.publish`: `account_matches` requires an account for every private family, but these hold no accounts.                                                                                    | `sequencing.account_matches`                                                                 | Closed by #2521 (#2398).                                                                       |
 | F6  | `sub` with an unknown key in `p` (e.g. `bogus`) is accepted and ignored (S12 covers _option_ keys; §13.5 `sub` has `additionalProperties:false`).                                                                                                                         | `permissions.handle_sub`                                                                     | Closed by #2567 (#2399).                                                                       |
-| F7  | `cv.v1.msgpack` is not served (`SUPPORTED_SUBPROTOCOLS` is JSON-only), so the ticket AC "runs under cv.v1.msgpack" cannot execute.                                                                                                                                        | `lifecycle.py`                                                                               | Closed by #PRNUM (#377).                                                                       |
+| F7  | `cv.v1.msgpack` is not served (`SUPPORTED_SUBPROTOCOLS` is JSON-only), so the ticket AC "runs under cv.v1.msgpack" cannot execute.                                                                                                                                        | `lifecycle.py`                                                                               | Closed by #2897 (#377).                                                                        |
 
 ## 8. Automation map and coverage matrix
 
@@ -172,7 +172,7 @@ test directory). Result is the first failing tests.
 - CI wiring as a required check on `contracts` and `integration`: **not done here** (workflow files are out of scope for this PR).
 - Cross-references: E17-Q02 (chaos), E17-Q03 (load), E17-Q04 (E2E, C1–C12), E17-X02 (adversarial security), E26 (replay end).
 
-F1-F6 were each pinned by one `xfail(strict=True)` test (`test_*_xfail_fN_*`) until the gateway was fixed, and the PR that fixed each finding removed its marker. F1 (#2520), F2, F4 and F6 (#2567), F3 (#2569) and F5 (#2521) are closed: their tests now assert the fixed behaviour (F4 expects `err invalid_options`). F7 (#PRNUM) is closed too: `test_s13_f7_msgpack_only_offer_negotiates_cv_v1_msgpack` asserts the msgpack-only offer, and the `msgpack-preferred` runs speak MessagePack.
+F1-F6 were each pinned by one `xfail(strict=True)` test (`test_*_xfail_fN_*`) until the gateway was fixed, and the PR that fixed each finding removed its marker. F1 (#2520), F2, F4 and F6 (#2567), F3 (#2569) and F5 (#2521) are closed: their tests now assert the fixed behaviour (F4 expects `err invalid_options`). F7 (#2897) is closed too: `test_s13_f7_msgpack_only_offer_negotiates_cv_v1_msgpack` asserts the msgpack-only offer, and the `msgpack-preferred` runs speak MessagePack.
 
 ## 11. Delivery in stacked parts
 
@@ -180,7 +180,7 @@ F1-F6 were each pinned by one `xfail(strict=True)` test (`test_*_xfail_fN_*`) un
 | --------- | ------------------------------------------------------------ | ----------------------------------------------------------- |
 | 1 (#2393) | `_support.py`, `_harness.py`, `conftest.py`, `test_ws_s1.py` | S1; F2, F4, F6 closed by #2567                              |
 | 2 (#2401) | `test_ws_s2_s9.py`                                           | S2-S9; xfails #2409, #2410; F3 closed by #2569, F5 by #2521 |
-| 3 (#2402) | `test_ws_s10_s13.py`                                         | S10-S13; F1 closed by #2520, F7 by #PRNUM                   |
+| 3 (#2402) | `test_ws_s10_s13.py`                                         | S10-S13; F1 closed by #2520, F7 by #2897                    |
 | 4 (#2403) | `test_ws_contract.py`                                        | §16.4 rows                                                  |
 
 Sections 1-5 and 9 describe the suite once all parts have landed.
@@ -195,7 +195,7 @@ Sections 1-5 and 9 describe the suite once all parts have landed.
   itself. `alerts` and `recorder` were the undeliverable ones, until #2521 closed F5.
 - **Outbound frames.** The harness validates frames it SENDS against §13 (`sub.schema.json` etc.) unless a test passes
   `conform=False` for a deliberately invalid one. `sub` entries use the `{ch, opts}` object form; the schema does not allow bare strings.
-- **F7 / msgpack (closed by #PRNUM, #377).** The `cv.v1.msgpack` subprotocol is the preferred transport (§2.2) and is served. The harness speaks whichever
+- **F7 / msgpack (closed by #2897, #377).** The `cv.v1.msgpack` subprotocol is the preferred transport (§2.2) and is served. The harness speaks whichever
   subprotocol the server echoed and decodes every frame before it checks it: binary MessagePack frames with raw `e: "b"` CVWB payloads (§3.2), a `bin` standing
   for its `contentEncoding: binary` string. So the AC "runs under both subprotocols" now runs: the `msgpack-preferred` cases execute under `cv.v1.msgpack`.
 
@@ -205,4 +205,4 @@ Sections 1-5 and 9 describe the suite once all parts have landed.
 - **S6 bound, #2410.** The gateway bound is 1 024 frames, not the spec's 2 000 (§16.2); pinned by `test_s6_xfail_coalescable_topic_is_not_cut_below_the_spec_budget`.
 - **S8** is asserted for `heatmap` (structured and binary) and `metrics` (structured `estimated` per series). Other families have no
   heuristic fields in §14.
-- **Not in this suite (cross-referenced):** §16.4 coalescer and book-delta unit rows belong to E17-T03 and E17-S03; F7 is closed by #PRNUM (`test_s13_f7_msgpack_only_offer_negotiates_cv_v1_msgpack`).
+- **Not in this suite (cross-referenced):** §16.4 coalescer and book-delta unit rows belong to E17-T03 and E17-S03; F7 is closed by #2897 (`test_s13_f7_msgpack_only_offer_negotiates_cv_v1_msgpack`).
