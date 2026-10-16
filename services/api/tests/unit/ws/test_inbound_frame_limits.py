@@ -65,6 +65,9 @@ _BOTH: Final = pytest.mark.parametrize("subprotocols", [JSON, MSGPACK], ids=["js
 _AUTHED: Final = pytest.mark.parametrize(
     "authed", [False, True], ids=["before-auth_ok", "after-auth_ok"]
 )
+#: The numbers `23-ws-protocol.md` §3.6 states, spelled out: a limit that changes value fails the
+#: boundary tests that use them (the E17 threat model §6 asks for a security review of the change).
+_STATED_CAP, _STATED_VALUES, _STATED_CONTAINERS = 8192, 72, 1024
 
 
 def _schema(name: str) -> dict[str, Any]:
@@ -207,11 +210,11 @@ def test_decode_before_auth_ok_cap_exact_is_decoded_and_one_over_is_refused_unre
     handed: _Handed, subprotocols: list[str], decoder: str
 ) -> None:
     conn = _connection(subprotocols[0])
-    exact = _padded(subprotocols, "hello", MAX_PREAUTH_FRAME_BYTES, "client")
+    exact = _padded(subprotocols, "hello", _STATED_CAP, "client")
     assert _decode(conn, exact)["t"] == "hello"
-    assert handed.decoded == [(decoder, MAX_PREAUTH_FRAME_BYTES)]
+    assert handed.decoded == [(decoder, _STATED_CAP)]
     handed.clear()
-    over = _padded(subprotocols, "hello", MAX_PREAUTH_FRAME_BYTES + 1, "client")
+    over = _padded(subprotocols, "hello", _STATED_CAP + 1, "client")
     assert _decode(conn, over) is _OVERSIZE
     assert handed.nothing
     assert conn.bye_frame is not None
@@ -264,6 +267,26 @@ def test_decode_after_auth_ok_cap_is_the_inbound_cap_not_the_pre_auth_cap(
     assert handed.decoded == sizes
     over = _padded(subprotocols, "ping", MAX_INBOUND_FRAME_BYTES + 1)
     assert _decode(conn, over) is _OVERSIZE
+
+
+@pytest.mark.parametrize(
+    ("make", "decoded"),
+    [(bytes, True), (bytearray, True), (memoryview, False)],
+    ids=["bytes", "bytearray", "memoryview"],
+)
+def test_decode_sizes_a_binary_payload_by_its_length_whatever_its_buffer_type(
+    make: Callable[[bytes], Any], decoded: bool
+) -> None:
+    """The size check measures a `bytes`, a `bytearray` and a `memoryview` alike, by length. The
+    codec then reads the first two and refuses the last (`[]`); past the cap each is over."""
+    conn = _connection(MSGPACK[0])
+
+    def decode(size: int) -> Any:
+        msg = {"type": "websocket.receive", "bytes": make(_padded_msgpack("ping", size))}
+        return conn.decode(msg, MAX_INBOUND_FRAME_BYTES)
+
+    assert bool(decode(_STATED_CAP)) is decoded
+    assert decode(_STATED_CAP + 1) is _OVERSIZE
 
 
 def _cut(unit: str, n: int) -> str:
@@ -325,7 +348,7 @@ def test_decode_of_a_frame_with_no_more_openers_than_the_depth_limit_is_never_wa
 
 
 @_AUTHED
-@pytest.mark.parametrize("openers", [MAX_JSON_DEPTH + 1, MAX_JSON_CONTAINERS])
+@pytest.mark.parametrize("openers", [MAX_JSON_DEPTH + 1, _STATED_CONTAINERS])
 def test_decode_of_a_frame_between_the_depth_limit_and_the_container_cap_is_walked(
     openers: int, authed: bool
 ) -> None:
@@ -340,7 +363,7 @@ def test_decode_of_a_frame_one_over_the_container_cap_is_malformed_and_never_wal
     handed: _Handed, opener: str, authed: bool
 ) -> None:
     conn = _connection(JSON[0], authed=authed)
-    assert _decode(conn, _Unwalkable(opener * (MAX_JSON_CONTAINERS + 1))) == []
+    assert _decode(conn, _Unwalkable(opener * (_STATED_CONTAINERS + 1))) == []
     assert not conn.closing
     assert handed.nothing
 
@@ -356,19 +379,19 @@ def _ping_of(values: int) -> bytes:
     return packed
 
 
-#: MessagePack frames within the frame cap before `auth_ok` that the SR-185 budget alone lets the
-#: decoder charge thousands of values for (the count is in each comment).
+#: MessagePack frames within the pre-auth size cap whose value count is over the pre-auth budget
+#: and within the SR-185 budget.
 _VALUE_SHAPES: Final[dict[str, bytes]] = {
-    "empty-arrays": msgpack.packb([[[]] * 128] * 62),  # 8 125 B, 15 997
-    "one-entry-maps": msgpack.packb([[{"": None}] * 128] * 21),  # 8 130 B, 10 795
-    "nils": msgpack.packb([[None] * 127] * 62),  # 8 063 B, 7 999
+    "empty-arrays": msgpack.packb([[[]] * 128] * 62),
+    "one-entry-maps": msgpack.packb([[{"": None}] * 128] * 21),
+    "nils": msgpack.packb([[None] * 127] * 62),
 }
 
 
 def test_decode_msgpack_before_auth_ok_value_budget_exact_is_decoded_one_over_malformed() -> None:
     conn = _connection(MSGPACK[0])
-    assert _decode(conn, _ping_of(MAX_PREAUTH_MSGPACK_VALUES))["t"] == "ping"
-    assert _decode(conn, _ping_of(MAX_PREAUTH_MSGPACK_VALUES + 1)) == []
+    assert _decode(conn, _ping_of(_STATED_VALUES))["t"] == "ping"
+    assert _decode(conn, _ping_of(_STATED_VALUES + 1)) == []
     assert not conn.closing  # a strike, counted by `dispatch`, not a close
 
 

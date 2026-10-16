@@ -397,7 +397,7 @@ The client sends `hello` immediately on open. The server replies `welcome` with 
 Rules:
 
 - The token is **never** sent in the URL query string (it would land in proxy logs and browser history). Header auth is impossible for browser WebSockets, so the first-frame `auth` pattern is used.
-- Until `auth_ok`, the only accepted frames are `auth` and `ping`. Anything else → `err` with `not_authenticated` and the connection closes after 3 such frames.
+- Until `auth_ok`, the only accepted frames are `auth` and `ping`; a `pong` (the reply to a server `ping`) is dropped without a reply and counts toward the inbound rate (§8.5). Anything else → `err` with `not_authenticated` and the connection closes after 3 such frames.
 - `auth_timeout_ms` (10 s) without a successful `auth` → `bye` with `auth_timeout`, close code `4401`.
 - Three failed `auth` attempts → `bye` with `auth_failed`, close `4401`, and a `warning` audit entry.
 - `token_expires_at_ms` tells the client when to re-`auth`. The client SHOULD refresh at `expires_at - 60 s`. If the token expires without re-auth, the server sends `bye` (`token_expired`, `4401`) and closes — subscriptions are not silently continued on an expired identity.
@@ -526,7 +526,7 @@ Every requested topic gets exactly one result. Partial success is normal — one
 - an entry is neither an object nor a string, or a string that is not a topic name (`field`: `topics[i]`);
 - an entry object's `ch` is missing or not a topic name (`field`: `topics[i].ch`).
 
-A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what the client sent. Every other §13.5 violation stays per topic: an unknown key in a topic entry, a `snapshot` that is not a boolean or a `replay_session_id` that is not a uuid gives that topic `invalid_options`, and entries beyond 50 get `too_many_topics`. So every `sub_ok.results[].ch` is a valid topic name. A well-formed topic the server cannot serve (unknown, unsupported symbol, bad `opts`, denied) still gets its own result. This is an orchestrator contract decision (2026-10-15); the owner may override it.
+A topic name is `common.schema.json#/$defs/topic`, and `field` never echoes what the client sent. Every other §13.5 violation stays per topic: an unknown key in a topic entry, a `snapshot` that is not a boolean or a `replay_session_id` that is not a uuid gives that topic `invalid_options`, and entries beyond 50 get `too_many_topics` (in a frame within the §3.6 limits). So every `sub_ok.results[].ch` is a valid topic name. A well-formed topic the server cannot serve (unknown, unsupported symbol, bad `opts`, denied) still gets its own result. This is an orchestrator contract decision (2026-10-15); the owner may override it.
 
 ```jsonc
 {
@@ -1190,7 +1190,7 @@ A client that is closed as a slow consumer should reconnect with backoff and _re
 - **Backgrounded windows.** When the Electron window or browser tab is hidden, the client MUST `ctl` all visual topics to ≥1 000 ms. It MUST NOT unsubscribe (that would force a full re-snapshot on return).
 - **Off-screen panes.** A pane scrolled out of view goes to 1 000 ms; a collapsed pane unsubscribes from its visual topics entirely.
 - **Render decoupling.** The renderer runs off `requestAnimationFrame`, never off frame arrival. Feed cadence (10–200 ms upstream) and render cadence (60 fps) are independent — this is explicitly called out because coupling them is the classic cause of jank under burst (digest 06 §19).
-- **Inbound rate limit.** Clients may send at most 30 frames/second and 300 frames/minute (excluding `pong`). Exceeding yields `err` `client_rate_limited`, then close `4429`. Before `auth_ok` a `pong` counts toward this rate like any other frame.
+- **Inbound rate limit.** Clients may send at most 30 frames/second and 300 frames/minute (excluding `pong` once `auth_ok` is sent; before that a `pong` counts like any other frame). Exceeding yields `err` `client_rate_limited`, then close `4429`.
 
 ---
 

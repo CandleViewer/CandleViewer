@@ -564,10 +564,11 @@ class _Connection:
         cap, values = max_frame_bytes, MAX_MSGPACK_VALUES
         if self.user_id is None:
             cap, values = min(cap, MAX_PREAUTH_FRAME_BYTES), MAX_PREAUTH_MSGPACK_VALUES
-        if isinstance(raw, bytes):
-            size = len(raw)
-        else:  # a character is at least one byte: a text past `cap` in characters is not encoded
-            size = len(raw) if len(raw) > cap else len(raw.encode())
+        # A binary payload (`bytes`, `bytearray`, `memoryview`) is sized by its length. A character
+        # is at least one byte, so a text past `cap` in characters is over it and is not encoded.
+        size = len(raw)
+        if isinstance(raw, str) and size <= cap:
+            size = len(raw.encode())
         if size > cap:
             self.close_with("frame_too_big")
             return _OVERSIZE
