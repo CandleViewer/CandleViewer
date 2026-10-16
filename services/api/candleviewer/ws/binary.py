@@ -148,6 +148,8 @@ def encode(frame: Frame) -> bytes:
         raise FrameEncodeError(f"{kind.name}: groups must be given iff the kind declares them")
     if kind.group_prefix is not None and frame.records:
         raise FrameEncodeError(f"{kind.name}: records live inside groups")
+    if kind.group_prefix is not None:
+        _check_groups(frame.groups, kind.group_prefix, kind.name)
     out = bytearray(HEADER.size + _body_size(frame, kind))
     rec = _st(kind.record)
     try:
@@ -170,9 +172,7 @@ def encode(frame: Frame) -> bytes:
         if kind.group_prefix is not None:
             gp = _st(kind.group_prefix)
             ci = _count_at(kind.group_prefix)
-            prefix_fields = kind.group_prefix.fields[:ci] + kind.group_prefix.fields[ci + 1 :]
             for group_prefix, cells in frame.groups or ():
-                _check_group_prefix(group_prefix, prefix_fields, kind.name)
                 gp.pack_into(out, off, *group_prefix[:ci], len(cells), *group_prefix[ci:])
                 off += kind.group_prefix.size
                 for cell in cells:
@@ -186,6 +186,8 @@ def encode(frame: Frame) -> bytes:
             _st(kind.trailer).pack_into(out, off, *frame.trailer)
     except struct.error as exc:
         raise FrameEncodeError(f"{kind.name}: value out of range for section 3.4: {exc}") from exc
+    except TypeError as exc:  # a record that is not a tuple: `*record` cannot expand it
+        raise FrameEncodeError(f"{kind.name}: a record is not a tuple of ints: {exc}") from exc
     frames, nbytes = ENCODED[kind.id]  # O(1) per frame; success path only
     frames.inc()
     nbytes.inc(len(out))
@@ -197,16 +199,28 @@ def _count_at(part: Part) -> int:
     return part.fields.index(_GROUP_COUNT)
 
 
-def _check_group_prefix(prefix: object, fields: tuple[str, ...], name: str) -> None:
-    """A group prefix is one int per prefix field except ``cell_count``: ``(generation, index,
-    ts_offset_ms, flags)`` since kind 5 v2 (#2529). The v1 shape, a bare ``ts_offset_ms``, or a
-    prefix of the wrong length is refused here as a typed error, never as the bare ``TypeError``
-    that unpacking a non-tuple would raise. So are reserved ``flags`` bits, which are 0 on send."""
-    if not isinstance(prefix, tuple) or len(prefix) != len(fields):
-        raise FrameEncodeError(f"{name}: a group prefix is ({', '.join(fields)})")
-    group_flags = prefix[fields.index("flags")] if "flags" in fields else 0
-    if isinstance(group_flags, int) and group_flags & ~_GROUP_KNOWN_FLAGS:
-        raise FrameEncodeError(f"{name}: reserved group flag bits are 0 on send, got {group_flags}")
+def _check_groups(groups: object, part: Part, name: str) -> None:
+    """Refuse a malformed ``groups`` before anything is sized or unpacked from it: a tuple of
+    ``(prefix, cells)`` tuples, each prefix one int per field but the derived ``cell_count``, i.e.
+    ``(generation, index, ts_offset_ms, flags)`` since kind 5 v2 (#2529). A v1-shaped group (a bare
+    ``ts_offset_ms``) or any other loose shape is a typed error, never the bare ValueError or
+    TypeError that unpacking it would raise. So are reserved ``flags`` bits, which are 0 on send."""
+    fields = tuple(f for f in part.fields if f != _GROUP_COUNT)
+    shape = f"{name}: groups are a tuple of (({', '.join(fields)}), cells)"
+    if not isinstance(groups, tuple):
+        raise FrameEncodeError(shape)
+    for group in groups:
+        if not (
+            isinstance(group, tuple)
+            and len(group) == 2
+            and isinstance(group[0], tuple)
+            and len(group[0]) == len(fields)
+            and isinstance(group[1], tuple)
+        ):
+            raise FrameEncodeError(shape)
+        flags = group[0][fields.index("flags")] if "flags" in fields else 0
+        if isinstance(flags, int) and flags & ~_GROUP_KNOWN_FLAGS:
+            raise FrameEncodeError(f"{name}: reserved group flag bits are 0 on send, got {flags}")
 
 
 def _check_enums(part: Part, record: Record) -> None:

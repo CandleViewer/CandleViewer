@@ -108,9 +108,8 @@ def vector_frames() -> list[tuple[str, Frame]]:
             ),
         ),
         (
-            # #2529: one trade closes bar N and opens bar N+1 in the same millisecond, so both
-            # bars share an open time (and here a price); only (generation, index) tells them apart.
-            # Bar N is closed and bar N+1 forming, as the confirm bit says.
+            # #2529: one trade closes bar N and opens bar N+1 in the same millisecond, so both share
+            # an open time (and here a price); only (generation, index) tells them apart.
             "footprint_shared_open_time",
             Frame(
                 FOOTPRINT,
@@ -120,8 +119,8 @@ def vector_frames() -> list[tuple[str, Frame]]:
                 3,
                 1_789_132_200_000,
                 groups=(
-                    ((0, 1_000, 59_999, 1), ((6_500_010, 5, 0, 1, 0b0001),)),
-                    ((0, 1_001, 59_999, 0), ((6_500_010, 0, 7, 1, 0b0010),)),
+                    ((0, 1_000, 59_999, 1), ((6_500_010, 5, 0, 1, 0b0001),)),  # bar N, closed
+                    ((0, 1_001, 59_999, 0), ((6_500_010, 0, 7, 1, 0b0010),)),  # bar N+1, forming
                 ),
             ),
         ),
@@ -170,8 +169,7 @@ def render_vectors() -> str:
 
 _HDR = struct.Struct("<IBBBBB3xIQ")
 _MAGIC = 0x43565742
-#: kind 5 v2 group prefix (#2529): u64 generation, u64 index, u32 ts_offset_ms, u32 cell_count,
-#: u8 flags (bit0 confirm), 3 pad bytes: 28 bytes.
+#: kind 5 v2 group prefix (#2529): generation, index, ts_offset_ms, cell_count, flags, 3 pad bytes
 _FP_GROUP = struct.Struct("<QQIIB3x")
 _FP_CELL = struct.Struct("<qQQIB4x")
 

@@ -6,7 +6,7 @@ import json
 import struct
 import tracemalloc
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from hypothesis import given, settings
@@ -103,11 +103,6 @@ def _hdr(kind: int, count: int, ver: int = 1, magic: int = 0x43565742) -> bytes:
     return struct.pack("<IBBBBB3xIQ", magic, ver, kind, 0, 2, 3, count, 0)
 
 
-#: The pre-#2529 kind-5 group shape, ``(ts_offset_ms, cells)``: deliberately ill-typed (a bare int
-#: where v2 has the ``(generation, index, ts_offset_ms, flags)`` prefix), as loose data would be.
-_V1_GROUP: Any = (60_000, ())
-
-
 @pytest.mark.parametrize(
     ("data", "diagnostic"),
     [
@@ -176,11 +171,8 @@ def test_decode_b64_rejects_non_base64() -> None:
         Frame(HEATMAP_COLUMN),
         Frame(FOOTPRINT),
         Frame(FOOTPRINT, ((1, 2, 3, 4, 5),), groups=()),
-        Frame(FOOTPRINT, groups=(((60_000,), ()),)),
         Frame(FOOTPRINT, groups=(((0, 2**64, 0, 0), ()),)),
-        Frame(FOOTPRINT, groups=(_V1_GROUP,)),
-        Frame(FOOTPRINT, groups=(((0, 1, 2), ()),)),
-        Frame(FOOTPRINT, groups=(((0, 1, 2, 0b10), ()),)),
+        Frame(FOOTPRINT, groups=cast(Any, (((0, 1, 2, 0), (5,)),))),
     ],
     ids=[
         "kind",
@@ -192,11 +184,8 @@ def test_decode_b64_rejects_non_base64() -> None:
         "no-prefix",
         "no-groups",
         "records-outside-groups",
-        "fp-group-without-bar-key",
         "fp-index-over-u64",
-        "fp-v1-group-shape",
-        "fp-group-without-flags",
-        "fp-reserved-flag-bit",
+        "fp-cell-not-a-tuple",
     ],
 )
 def test_encode_unrepresentable_frame_raises(frame: Frame) -> None:
@@ -204,12 +193,23 @@ def test_encode_unrepresentable_frame_raises(frame: Frame) -> None:
         encode(frame)
 
 
-def test_encode_refuses_a_v1_shaped_footprint_group_with_a_typed_error() -> None:
-    """A pre-#2529 ``(ts_offset_ms, cells)`` group, or a prefix without ``flags``, is refused as
-    FrameEncodeError naming the v2 prefix, never as a bare TypeError from unpacking an int."""
-    for groups in ((_V1_GROUP,), (((0, 1, 2), ()),)):
-        with pytest.raises(FrameEncodeError, match=r"\(generation, index, ts_offset_ms, flags\)"):
-            encode(Frame(FOOTPRINT, groups=groups))
+@pytest.mark.parametrize(
+    "groups",
+    [
+        ((60_000, ()),),  # the pre-#2529 shape: a bare ts_offset_ms
+        (((0, 1, 2), ()),),  # a prefix without flags
+        (((0, 1, 2, 0),),),  # a group without cells
+        (((0, 1, 2, 0), (), ()),),  # a group with a third member
+        (60_000, ()),  # groups that are not nested
+        (((0, 1, 2, 0), 5),),  # cells that is not a tuple
+        5,  # groups that is not a tuple
+    ],
+)
+def test_encode_refuses_a_malformed_footprint_group_with_a_typed_error(groups: Any) -> None:
+    """Anything but ``((generation, index, ts_offset_ms, flags), cells)`` is a FrameEncodeError
+    naming that shape, never the bare TypeError or ValueError that unpacking it would raise."""
+    with pytest.raises(FrameEncodeError, match=r"\(generation, index, ts_offset_ms, flags\)"):
+        encode(Frame(FOOTPRINT, groups=groups))
 
 
 @pytest.mark.parametrize("group_flags", [0b10, 0b1000_0001, 0xFF])
@@ -219,12 +219,21 @@ def test_encode_refuses_reserved_group_flag_bits(group_flags: int) -> None:
         encode(Frame(FOOTPRINT, groups=(((0, 1, 2, group_flags), ()),)))
 
 
+def test_footprint_ts_offset_is_held_to_the_u32_span_rule_on_encode() -> None:
+    """Section 3.6: a bar opening more than 2**32-1 ms after ts_base_ms starts a new frame, so the
+    encoder refuses a wider offset (and a negative one), never wrapping or clamping it."""
+    edge = Frame(FOOTPRINT, groups=(((0, 1, 2**32 - 1, 0), ()),))
+    assert decode(encode(edge)) == edge
+    for ts_offset_ms in (2**32, -1):
+        with pytest.raises(FrameEncodeError):
+            encode(Frame(FOOTPRINT, groups=(((0, 1, ts_offset_ms, 0), ()),)))
+
+
 def test_encode_header_derives_version_and_counts() -> None:
     raw = encode(Frame(HEATMAP_COLUMN, ((1, 2),), prefix=(0, 0, 1)))
     assert raw[4] == 1 and raw[5] == HEATMAP_COLUMN
     assert struct.unpack_from("<I", raw, 12)[0] == 1
     assert encode(Frame(BARS))[4] == 2
-    assert encode(Frame(FOOTPRINT, groups=()))[4] == 2  # kind 5 v2 (#2529)
 
 
 # --- body_kind 5 v2: the bar key on every footprint group (#2529) ------------------------
@@ -303,15 +312,6 @@ def test_footprint_group_flags_map_bit0_to_confirm_and_ignore_reserved_bits(
     assert bar["confirm"] is confirm
 
 
-def test_footprint_v1_body_is_refused_as_unsupported_format_version() -> None:
-    cell = struct.pack("<qQQIB4x", *_CELL)
-    v1 = _hdr(FOOTPRINT, 1, ver=1) + struct.pack("<II", 60_000, 1) + cell
-    with pytest.raises(FrameMalformedError) as info:
-        decode(v1)
-    assert info.value.diagnostic == "unsupported_format_version"
-    assert info.value.code == "frame_malformed"
-
-
 def test_footprint_group_count_is_refused_up_front_at_the_28_byte_stride() -> None:
     """SR-128: the group count is checked against the 28-byte v2 prefix before any group is read.
     Two groups in 48 bytes would pass a 24-byte (pre-flags) or 8-byte (v1) stride and only fail
@@ -360,15 +360,9 @@ def test_generated_python_layout_matches_the_declaration() -> None:
                 assert got.size == sum(_SIZES[f["type"]] for f in fields)
                 assert got.size == struct.calcsize(got.fmt)
     footprint = cvwb_layout.KINDS[FOOTPRINT]
-    assert footprint.format_version == 2
-    assert footprint.group_prefix is not None and footprint.group_prefix.size == 28
-    assert footprint.group_prefix.fields == (
-        "generation",
-        "index",
-        "ts_offset_ms",
-        "cell_count",
-        "flags",
-    )
+    prefix = footprint.group_prefix
+    assert footprint.format_version == 2 and prefix is not None and prefix.size == 28
+    assert " ".join(prefix.fields) == "generation index ts_offset_ms cell_count flags"
 
 
 @pytest.mark.parametrize("name", ["vectors.json", "corpus.json"])
