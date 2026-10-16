@@ -339,16 +339,22 @@ def _recovery_app(mfa_outcome: object, audit_service: object) -> tuple[FastAPI, 
 
 def test_mfa_recovery_fails_closed_until_every_backend_is_wired() -> None:
     """#2344: a recovery that could not mint the session checks and spends nothing (it used to
-    answer 200 with no session while the code was spent)."""
+    answer 200 with no session while the code was spent). The refusal is the operation's
+    documented 401: `authMfaRecovery` declares no 503."""
     check = MfaRecoveryCheck(user_id=uuid.uuid4(), challenge_id=uuid.uuid4(), code_id="c")
     unwired = _FakeAuthService(InvalidCredentials("n/a"), mfa_outcome=check)
     app = FastAPI()
     app.include_router(make_auth_router(unwired, csrf=_CSRF_CODEC))  # no session backend
     no_audit, no_audit_mfa = _recovery_app(check, None)
+    cases = (
+        (TestClient(app), unwired.mfa, "enrolment backend is not wired"),
+        (TestClient(no_audit), no_audit_mfa, "audit sink not active"),
+    )
 
-    for client, mfa in ((TestClient(app), unwired.mfa), (TestClient(no_audit), no_audit_mfa)):
+    for client, mfa, detail in cases:
         response = client.post("/auth/mfa/recovery", json=_RECOVERY_BODY)
-        assert response.status_code == 503
+        assert (response.status_code, response.json()["detail"]) == (401, detail)
+        assert response.json()["title"] == "Recovery failed"
         assert (mfa.recovery_checks, mfa.completed) == (0, [])
 
 

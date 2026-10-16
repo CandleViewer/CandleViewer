@@ -38,6 +38,10 @@ writes its audit records (C-2.9), then one transaction spends the code,
 satisfies the challenge and revokes every MFA method of the user; every
 session of the user is revoked next and the new one minted. It used to answer
 200 with no session while it spent the code, which locked the user out.
+Every refusal is the contract's 401 (it declares no 503). When the session
+step fails after that transaction, the 401 tells the client to sign in again
+with the password, which is enrolment-only with no method left (error log
+`auth.recovery.completed_unminted`; runbook `auth-rbac.md` section 1).
 
 Audit `actor_ip`, the SR-015 per-address sign-in throttle key and the minted
 session's `ip` are `api.csrf.source_ip`: the address `MeshOnlyMiddleware`
@@ -121,6 +125,11 @@ _INVALID = "Request body or parameters failed schema validation"
 _FAILED = AuditOutcome.FAILURE
 #: The `detail` of a confirm whose enrolment committed but whose session rotation failed (#2295).
 _UNROTATED = "the new TOTP method is active but the session was not rotated; sign in again"
+#: The `title` of every refusal of `/auth/mfa/recovery`: its contract declares 401, never 503.
+_RECOVERY_FAILED = "Recovery failed"
+#: The `detail` of a recovery whose commit spent the code but whose session step failed (#2344):
+#: no method is left, so the password alone signs in, enrolment-only.
+_UNMINTED = "the recovery code was used but no session was minted; sign in again with your password"
 #: The `MfaMethodRecord` fields the `MfaMethod` response shows (never the secret).
 _METHOD_FIELDS = {"id", "kind", "label", "created_at", "last_used_at"}
 
@@ -347,15 +356,18 @@ def make_auth_router(
                 return False
         return True
 
-    def _enrolment_ready(*, mfa: bool) -> tuple[AuditWriterLike, IdentityProvider] | JSONResponse:
+    def _enrolment_ready(
+        *, mfa: bool, status: int = 503, title: str = "Service unavailable"
+    ) -> tuple[AuditWriterLike, IdentityProvider] | JSONResponse:
         """The audit writer and the identity provider when every backend an enrolment-only
-        sign-in (*mfa* False) or an enrolment step (*mfa* True) needs is wired, else a 503:
-        nothing here is minted or changed without its write-ahead audit record (C-2.9)."""
+        sign-in (*mfa* False) or an enrolment step or recovery (*mfa* True) needs is wired, else
+        a *status* refusal (503; 401 on recovery, whose contract declares no 503): nothing here
+        is minted or changed without its write-ahead audit record (C-2.9)."""
         wired = auth_service.is_active and auth_service.sessions_is_active
         if identity is None or not wired or (mfa and not auth_service.mfa_is_active):
-            return _problem(503, "Service unavailable", "enrolment backend is not wired")
+            return _problem(status, title, "enrolment backend is not wired")
         if audit_service is None or not audit_service.is_active:
-            return _problem(503, "Service unavailable", "audit sink not active")
+            return _problem(status, title, "audit sink not active")
         return audit_service.writer, identity
 
     def _signed_in(
@@ -585,13 +597,17 @@ def make_auth_router(
         read; a user without `mfa_required` is refused (C-12.2). The audit records come next
         (C-2.9): the code's use, one `auth.session_revoked` per live session of the user and
         the new session. Then one transaction spends the code, satisfies the challenge and
-        revokes every MFA method; every session of the user is revoked (their sockets close)
-        and an enrolment-only session minted (15 minutes, never a full one). Every refusal
-        spends nothing. A store failure after the commit mints nothing (500); the user, who
-        has no method left, then signs in with the password alone to enrol."""
-        ready = _enrolment_ready(mfa=True)
+        revokes every MFA method; every session of the user is revoked (their sockets close;
+        one the records could not name gets its own, `unplanned`) and an enrolment-only
+        session minted (15 minutes, never a full one). Every refusal spends nothing and is the
+        documented 401. A failure after the commit mints nothing: its 401 tells the client to
+        sign in again with the password, which is enrolment-only once no method is left, and
+        the error log `auth.recovery.completed_unminted` names the user and the sessions."""
+        # 401 is this operation's documented refusal (no 503 in its contract), as on
+        # `/auth/mfa/verify`: nothing is checked or spent that could not be audited and minted.
+        ready = _enrolment_ready(mfa=True, status=401, title=_RECOVERY_FAILED)
         if isinstance(ready, JSONResponse):
-            return ready  # nothing is checked or spent that could not be audited and minted
+            return ready
         writer, ident = ready
         mfa, sessions, ip = auth_service.mfa, auth_service.sessions, _client_ip(request)
         # PR #1618 review finding 4 (low): one detail whether the challenge was invalid,
@@ -599,10 +615,8 @@ def make_auth_router(
         # use the answer to narrow a brute-force search. `RecoveryCodesExhausted` stays
         # distinct: the ticket's Gherkin ("Recovery codes exhausted") requires a
         # contact-the-owner message the UI must render differently.
-        refused = _problem(401, "Recovery failed", "invalid or expired code")
-        # Fail closed (C-2.9 write-ahead): 401 is this operation's documented refusal (no 503
-        # in its contract), as on `/auth/mfa/verify`.
-        unaudited = _problem(401, "Recovery failed", "audit sink not active")
+        refused = _problem(401, _RECOVERY_FAILED, "invalid or expired code")
+        unaudited = _problem(401, _RECOVERY_FAILED, "audit sink not active")  # C-2.9 write-ahead
         try:
             check = await mfa.check_recovery(body.mfa_token, body.recovery_code)
         except RecoveryCodesExhausted as exc:
@@ -641,6 +655,7 @@ def make_auth_router(
             return unaudited
         profile = await ident.user(str(uid))  # before any change: one failure point fewer
         new_id = uuid.uuid4()  # named by the write-ahead records
+        ending = [view.id for view in await sessions.list_sessions(str(uid))]
         only = {"enrolment_only": True, "mfa_method": "recovery_code", "mfa_satisfied": False}
         planned: list[tuple[str, uuid.UUID, str | None, dict[str, Any] | None, Severity]] = [
             (
@@ -651,35 +666,69 @@ def make_auth_router(
                 Severity.WARNING,
             ),
             *(
-                ("auth.session_revoked", view.id, RECOVERED_REASON, None, Severity.INFO)
-                for view in await sessions.list_sessions(str(uid))
+                ("auth.session_revoked", sid, RECOVERED_REASON, None, Severity.INFO)
+                for sid in ending
             ),
             ("auth.session_created", new_id, None, only, Severity.INFO),
         ]
+
+        async def write(
+            action: str,
+            sid: uuid.UUID,
+            reason: str | None,
+            after: dict[str, Any] | None,
+            severity: Severity = Severity.INFO,
+            outcome: AuditOutcome = AuditOutcome.SUCCESS,
+        ) -> None:
+            await writer.emit(
+                action,
+                actor_label=str(uid),
+                actor_user_id=uid,
+                actor_ip=ip,
+                outcome=outcome,
+                severity=severity,
+                session_id=sid,
+                reason=reason,
+                after_state=after,
+            )
+
         try:
             for action, sid, reason, after, severity in planned:
-                await writer.emit(
-                    action,
-                    actor_label=str(uid),
-                    actor_user_id=uid,
-                    actor_ip=ip,
-                    severity=severity,
-                    session_id=sid,
-                    reason=reason,
-                    after_state=after,
-                )
+                await write(action, sid, reason, after, severity)
             await mfa.complete_recovery(check)
         except AuditError:
             return unaudited
         except RecoveryCodeInvalid:  # a concurrent request spent the code or the challenge
-            await _audit(
-                audit_service, "auth.mfa_failed", actor_label=str(uid), actor_ip=ip, outcome=_FAILED
-            )
+            # Nothing changed: this record voids the session and revocations announced above.
+            voided = {
+                "voids_session_created": str(new_id),
+                "voids_session_revoked": [str(sid) for sid in ending],
+            }
+            try:
+                await write("auth.mfa_failed", new_id, "lost_race", voided, outcome=_FAILED)
+            except AuditError:
+                return unaudited
             return refused
-        await sessions.revoke_all(str(uid), reason=RECOVERED_REASON)
-        minted = await sessions.mint_enrolment_only(
-            str(uid), session_id=new_id, ip=ip, user_agent=request.headers.get("user-agent")
-        )
+        try:
+            revoked = await sessions.revoke_all(str(uid), reason=RECOVERED_REASON)
+            for sid in [row.id for row in revoked if row.id not in ending]:  # minted since the plan
+                await write("auth.session_revoked", sid, RECOVERED_REASON, {"unplanned": True})
+            minted = await sessions.mint_enrolment_only(
+                str(uid), session_id=new_id, ip=ip, user_agent=request.headers.get("user-agent")
+            )
+        except Exception as exc:  # any failure: the committed recovery stands, nothing is minted
+            _log().error(
+                "auth.recovery.completed_unminted",
+                user_id=str(uid),
+                new_session_id=str(new_id),
+                revoked_session_ids=[str(sid) for sid in ending],
+                error=type(exc).__name__,
+            )
+            return _problem(401, _RECOVERY_FAILED, _UNMINTED)
+        # U33 (RR-15): an Owner's enrolment-only session is the series an alert pages on.
+        auth_enrolment_only_sessions_total.labels(
+            role=normalise_role(profile.get("roles") or ())
+        ).inc()
         # Read before the commit, which revoked every method: the client opens enrolment.
         shown = {**profile, "mfa_required": user.mfa_required, "mfa_enabled": False}
         return _signed_in(minted, shown, lifetime_s=refresh_lifetime_s(minted, password_only=True))

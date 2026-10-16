@@ -119,6 +119,17 @@ recovery sign-in, however many codes remain (`auth/mfa_service.py`); there is no
 threshold (#2296). If the 15 minutes run out before the confirm, sign in with the password alone:
 with no method left, that sign-in is enrolment-only too.
 
+If the answer is `401` with `sign in again with your password`, the code was spent and every method
+revoked, but no session was minted: the error log `auth.recovery.completed_unminted` names the
+`user_id`, the `new_session_id` and the `revoked_session_ids` the call meant to end. Those may still
+be live, but while the user has no method they reach only the enrolment operations, one with more
+than 15 minutes left answers `401` except to `POST /auth/logout`, and the confirm ends them. Sign in
+with the password alone (enrolment-only) and re-enrol. A session minted while the recovery ran ends
+with the others under its own `auth.session_revoked` with `unplanned: true`. A recovery that lost a
+race to a concurrent one changes nothing and writes `auth.mfa_failed` (reason `lost_race`) naming
+the records it voids. An Owner's recovery sign-in moves
+`auth_enrolment_only_sessions_total{role="owner"}` (§2 step 4).
+
 Not available today:
 
 - **Early unlock by an Owner: not implemented, no ticket.** Wait for expiry.
