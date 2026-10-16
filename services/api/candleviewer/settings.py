@@ -490,6 +490,14 @@ class Settings(BaseSettings):
     order_rate_per_uid: int = 8
     native_sl_deadline_ms: int = 3000
     killswitch_on_disconnect_s: int = 30
+    # E27-T04: account health windows (deployment config for v1, decision Q4 on #837). A heartbeat
+    # is the private WS's successful auth reply, then any pong or topic message on that socket;
+    # the client pings every account_heartbeat_s / 2 (5 s), not at the exchange's suggested 20 s.
+    # The caps are US-ACCT-010's NFRs, not tuning room: le=10 because a heartbeat older than 10 s
+    # must not show healthy, le=30 because order entry must close within 30 s of the last WS or
+    # REST success. No value switches either check off (C-4.14).
+    account_heartbeat_s: float = Field(default=10.0, gt=0.0, le=10.0)
+    account_down_s: float = Field(default=30.0, gt=0.0, le=30.0)
 
     git_sha: str = "unknown"
     version: str = "0.1.0"
@@ -728,6 +736,15 @@ class Settings(BaseSettings):
                 "with the api service's stop_grace_period (infra/compose)"
             )
         return drain_s
+
+    @model_validator(mode="after")
+    def _refuse_unordered_account_windows(self) -> Settings:
+        """E27-T04: the heartbeat window must end inside the down window, as `HealthThresholds`
+        requires. A bad pair refuses startup here rather than failing wherever the wiring first
+        builds one."""
+        if not 0 < self.account_heartbeat_s < self.account_down_s:
+            raise ValueError("CV_ACCOUNT_HEARTBEAT_S must be less than CV_ACCOUNT_DOWN_S")
+        return self
 
     @field_validator("bind_host")
     @classmethod

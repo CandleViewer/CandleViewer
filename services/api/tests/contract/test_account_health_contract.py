@@ -2,19 +2,27 @@
 (C-6.3): nothing pre-existing changes and nothing new is required; `connection_state` keeps its
 enum (decision Q2 on #837); the documented example round-trips; `wallet` frames validate, with
 health reported per account apart from balances, and every reason set is closed; the server's
-`wallet` merge keeps the latest health of every account and still validates.
+`wallet` merge keeps the latest health of every account and still validates. The code that
+serves these shapes agrees with them.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
+from candleviewer.accounts.health import (
+    CONNECTION_STATE,
+    AccountHealthMonitor,
+    HealthReason,
+    HealthState,
+)
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.ws.coalescing import CoalescingQueue
 from tests.contract.ws._harness import SCHEMAS, check_schema
+from tests.unit.accounts._fakes import ACC, FakeClock
 
 _SPEC: dict[str, Any] = load_openapi_spec()
 _SCHEMAS: dict[str, Any] = _SPEC["components"]["schemas"]
@@ -123,3 +131,33 @@ def test_a_merged_wallet_window_keeps_every_account_health_and_validates() -> No
     assert merged.body == {"balances": [_FULL], "health": [_ENTRY, other]}
     disclosed = merged.body | {"coalesced": True, "coalesced_count": merged.coalesced_count}
     check_schema(_WALLET, disclosed, "wallet")
+
+
+@pytest.mark.parametrize(
+    ("state", "wire"),
+    [
+        (HealthState.HEALTHY, "connected"),
+        (HealthState.DEGRADED, "degraded"),
+        (HealthState.DOWN, "disconnected"),
+    ],
+)
+def test_each_health_state_maps_to_its_documented_connection_state(
+    state: HealthState, wire: str
+) -> None:
+    enum = _SCHEMAS["ExchangeAccount"]["properties"]["connection_state"]["enum"]
+    assert CONNECTION_STATE[state] == wire and wire in enum
+
+
+def test_the_monitor_serves_exactly_the_contract_shapes() -> None:
+    monitor = AccountHealthMonitor(FakeClock())
+    monitor.track(ACC)
+    monitor.rest_ok(ACC)
+    view = monitor.view(ACC)
+    assert view is not None
+    rest, schema = view.model_dump(mode="json"), _SCHEMAS["AccountHealth"]["properties"]
+    assert set(rest) == set(schema) and [s.value for s in HealthState] == schema["state"]["enum"]
+    reasons = list(get_args(HealthReason))
+    assert reasons == schema["reason"]["enum"] == _WS_ENTRY["properties"]["reason"]["enum"]
+    assert api.AccountHealth.model_validate(rest).state == "degraded"
+    assert CONNECTION_STATE[view.state] == "degraded"
+    check_schema(_WALLET, {"balances": [], "health": [view.ws_entry(ACC)]}, "wallet")
