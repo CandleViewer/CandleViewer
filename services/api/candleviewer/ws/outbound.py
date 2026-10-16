@@ -10,7 +10,8 @@ market-data frames (`d` / `snap` of a throttled topic) can be dropped; control f
 
 1. drop the queued frames and pending state of every throttled topic that holds any, and mark it
    `resnapshot_required` (its deltas are held until then); queued frames of a topic already
-   awaiting its snapshot, or no longer subscribed, are dropped as well;
+   awaiting its snapshot, or no longer subscribed, are dropped as well, and so is the pacer
+   window of a topic awaiting another sender's snapshot (it predates that snapshot);
 2. once the queue has drained below 50 %, send one `snap` with reason `backpressure` per marked
    topic, one at a time while the queue stays below 50 %;
 3. if the queue is still over budget after the drop, what remains cannot be dropped (`orders` /
@@ -19,8 +20,11 @@ market-data frames (`d` / `snap` of a throttled topic) can be dropped; control f
    subscription whose `backpressure` snapshot is dropped `MAX_REDROPS` times in a row, each time
    before it was sent (a snapshot larger than the budget), ends in the same close.
 
-Every step comes back as a `LadderEvent`; the caller records step 4 (`cv_ws_overflow_total`, and
-the warning audit entry when step 3 fires) and performs the close. The bound holds only if the
+Every step counts in `cv_ws_overflow_total{reason}` (step 4, `LadderEvent.reason`) and comes back
+as a `LadderEvent`; the caller writes the warning audit entry when step 3 fires (with the close's
+`trigger`) and performs the close. A close fires and counts once, and `check` and `drain` return
+nothing after it: the caller must close at once and feed nothing after it but the `bye` (no push,
+no `Pacer.offer` or `tick`), or the 8 MiB bound is gone. Otherwise the bound holds only if the
 caller runs `check` after every push and every pacer update; recovery needs `drain` after every
 send and after every `check` that dropped. `drain` queues one snapshot per call; a `check` from its
 pushes runs once it is whole, its events returned by `drain` (a drop is whole, and a redrop).
@@ -37,6 +41,7 @@ from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
+from candleviewer.ws.metrics import cv_ws_overflow_total
 from candleviewer.ws.pacing import Pacer
 from candleviewer.ws.permissions import Subscription
 
@@ -95,6 +100,20 @@ class LadderEvent:
     action: str
     topics: tuple[str, ...]
     trigger: str | None = None
+
+    @property
+    def reason(self) -> str:
+        """The `cv_ws_overflow_total{reason}` label: `drop`, `resnapshot`, `close_budget` or
+        `close_redrop` (§8.4 step 4)."""
+        return self.action if self.trigger is None else f"{self.action}_{self.trigger}"
+
+
+def _record(events: list[LadderEvent]) -> list[LadderEvent]:
+    """Step 4: one count per topic dropped or re-snapshotted, one per close."""
+    for event in events:
+        n = 1 if event.action == "close" else len(event.topics)
+        cv_ws_overflow_total.labels(reason=event.reason).inc(n)
+    return events
 
 
 class OutboundQueue:
@@ -198,6 +217,8 @@ class Backpressure:
         #: While `drain` queues a snapshot, a `check` from its pushes is held here (module doc).
         self._draining = False
         self._deferred: list[Subscription] | None = None
+        #: Step 3 fired: the connection is going away, so nothing fires (or counts) again.
+        self._closed = False
 
     def over_budget(self) -> bool:
         return self.queue.over_budget(self.pacer.pending_bytes)
@@ -208,7 +229,7 @@ class Backpressure:
         if self._draining:
             self._deferred = list(subs)
             return []
-        if not self.over_budget():
+        if self._closed or not self.over_budget():
             return []
         subs = list(subs)
         self._settle()
@@ -234,6 +255,8 @@ class Backpressure:
         self.queue.drop(
             {topic for topic in queued if topic not in live} | {s.ch for s in offending}
         )
+        for sub in subs:
+            self.pacer.shed(sub)  # a window that predates another sender's pending `snap`
         events = []
         if offending:
             events.append(LadderEvent("drop", tuple(sorted(sub.ch for sub in offending))))
@@ -241,7 +264,8 @@ class Backpressure:
             events.append(LadderEvent("close", hint, "budget"))
         elif self._looping(offending):
             events.append(LadderEvent("close", hint, "redrop"))
-        return events
+        self._closed = any(event.action == "close" for event in events)
+        return _record(events)
 
     def _pending(self, sub: Subscription) -> bool:
         lane = self.pacer.lanes.get(sub.sub_id)
@@ -279,6 +303,8 @@ class Backpressure:
 
     def drain(self) -> list[LadderEvent]:
         """Step 2: below `DRAIN_PCT`, one `backpressure` snap per call (module docstring)."""
+        if self._closed:
+            return []
         self._settle()  # before a new snapshot replaces the record of a sent one
         sent: list[str] = []
         held: list[LadderEvent] = []
@@ -299,4 +325,4 @@ class Backpressure:
                 held += self.check(deferred)
             if queued:
                 break
-        return ([LadderEvent("resnapshot", tuple(sent))] if sent else []) + held
+        return _record([LadderEvent("resnapshot", tuple(sent))] if sent else []) + held

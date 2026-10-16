@@ -311,6 +311,21 @@ security review in the same PR.
 | Fan-out send timeout                   | 2 s                             | Revocation fan-out (D09)     | —                              | merged                                         |
 | Heartbeat interval / timeout           | 15 s / 45 s                     | Dead-socket reclamation      | Disconnect detection           | merged                                         |
 
+Memory outside the outbound budget (WS-D01, #2552): each `heatmap` subscription remembers up to 2 000
+complete buckets it sent (`SENT_COLUMNS_MEMORY`), about 150 to 210 KB measured (the review estimated 168 KB).
+It is bounded by count, fills only as complete columns are emitted (one per time bucket), and is not counted in
+`pending_bytes`. Heatmap subscriptions are per channel and replay session, so the bound is the 200-subscription
+cap, not the 40-symbol one: up to about 42 MB per connection (200 x 210 KB) and about 336 MB per user (8
+connections), on top of the 8 MiB outbound budget.
+
+Wiring requirements (WS-D01, #412): after a `close` event the ladder latches and returns nothing, so the 8 MiB
+budget holds only while the gateway closes the socket promptly. It must feed nothing after the event but the `bye`
+(no push, no `Pacer.offer` or `tick`) and close in a `finally` around the best-effort close audit, so a slow or
+failed audit write cannot leave the queue unbounded; the wiring tests (#412) must assert both. Until #2529,
+footprint bars that share an open time make every update `unmergeable`: the topic is re-snapshotted per window with
+no rate bound (the 5 / topic / min limit covers client resyncs only, WS-D03). It counts apart as
+`cv_ws_overflow_total{reason="unmergeable"}`: alert on its rate.
+
 Amplification (WS-D08): one authenticated user can hold 8 x 40 symbols with 200-depth books and 2 000-column
 heatmaps. Encode-once-send-many keeps CPU flat in client count, but per-user cost is real and unmeasured until
 E17-Q03. Tracked as **RSK-063**.
@@ -360,7 +375,7 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 | Signal                              | Audit action                         | Metric (no user-id label; per-identity in audit) | Rows     | Status                                   |
 | ----------------------------------- | ------------------------------------ | ------------------------------------------------ | -------- | ---------------------------------------- |
 | Repeated `auth_failed` per identity | auth-failure `warning` (3rd failure) | `cv_ws_errors_total{code="auth_failed"}`         | S03, R03 | merged; per-source aggregation SR-E17-05 |
-| Slow-consumer closes per identity   | slow-consumer `warning` (epic AC)    | `cv_ws_overflow_total{action}`                   | D01      | planned E17-T03/T06                      |
+| Slow-consumer closes per identity   | slow-consumer `warning` (epic AC)    | `cv_ws_overflow_total{reason}`                   | D01      | planned E17-T03/T06                      |
 | Resync-rate-limit revocations       | `ws.subscription.revoked`            | `ws_revoked_total{reason="resync_rate_limited"}` | D03      | planned E17-S03                          |
 | Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                  | E01, I03 | merged                                   |
 | Revocation close failures           | —                                    | `ws_revocation_close_failures_total` (alerts)    | E02      | merged                                   |

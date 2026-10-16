@@ -211,6 +211,18 @@ cv_ws_clock_skew_ms = Histogram(
     buckets=(10, 50, 100, 250, 500, 1000, 2000, 5000, 30000),
 )
 
+# -- E17-T03 backpressure (pacing.py, outbound.py) -----------------------------------------------
+cv_ws_overflow_total = Counter(
+    "cv_ws_overflow_total",
+    "23 section 8.4 ladder steps by reason: per topic drop, unmergeable, resnapshot; per close.",
+    labelnames=("reason",),
+)
+cv_ws_malformed_updates_total = Counter(
+    "cv_ws_malformed_updates_total",
+    "Producer updates a coalescing queue refused as malformed; the topic label is the family.",
+    labelnames=("topic",),
+)
+
 #: Bounded `cv_ws_auth_failures_total{reason}` values. `token_expired` counts
 #: tokens the session service accepted but the gateway clock had already passed
 #: (a sub-ms race in production); tokens the service refuses count as `rejected`.
@@ -250,6 +262,8 @@ CV_WS_NAMES: Final[frozenset[str]] = frozenset(
         "cv_ws_sequence_gaps_detected_total",
         "cv_ws_stale_topics_in_use",
         "cv_ws_fanout_seconds",
+        "cv_ws_overflow_total",
+        "cv_ws_malformed_updates_total",
     }
 )
 
@@ -272,7 +286,7 @@ FANOUT_SECONDS: Final = cv_ws_fanout_seconds.labels()
 
 def export_ws_metrics(registry: CollectorRegistry, *, env: str) -> ReexportCollector:
     """Serve every `cv_ws_*` series on `registry` (the scraped one) with `env`."""
-    # The owning modules declare their series at import; import them so all 16 families exist.
+    # The owning modules declare their series at import; import them so all 18 families exist.
     from candleviewer.ws import permissions, revocation, sequencing, upstream  # noqa: F401
 
     return ReexportCollector(registry, names=CV_WS_NAMES, const_labels={"env": env})

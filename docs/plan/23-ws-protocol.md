@@ -1137,7 +1137,7 @@ On overflow the server acts in this order:
 3. Send `bye` with `slow_consumer` and close `4429` when either:
    - the queue is still over budget after the drop, because what remains cannot be dropped: `orders` or `executions`, or a backlog of control or `system` frames (S6); or
    - three drops in a row each remove a topic's `backpressure` snapshot before it was sent: the client drains too slowly for that topic to recover (a snapshot larger than the budget never could).
-4. Record `cv_ws_overflow_total{reason}`, where `reason` is `drop` (step 1), `resnapshot` (step 2), or `close_budget` / `close_redrop` (the two step-3 triggers), and, if step 3 fires, write a `warning` audit entry: the connection's close audit, `ws.connection.closed` with reason `slow_consumer` (#2486), not a second action.
+4. Record `cv_ws_overflow_total{reason}`, where `reason` is `drop` (step 1), `unmergeable` (step 1 for a topic whose update cannot be merged, such as footprint bars sharing an open time, #2529), `resnapshot` (step 2), or `close_budget` / `close_redrop` (the two step-3 triggers), and, if step 3 fires, write a `warning` audit entry: the connection's close audit, `ws.connection.closed` with reason `slow_consumer` (#2486), not a second action.
 
 A client that is closed as a slow consumer should reconnect with backoff and _reduce its subscription set_ — the `bye` payload names the topics that were most expensive (up to five, by queued plus pending bytes when the overflow began, largest first; empty when no topic held any):
 
@@ -1161,6 +1161,8 @@ A client that is closed as a slow consumer should reconnect with backoff and _re
   },
 }
 ```
+
+**Snapshot size while the client drains (#2552).** Step 2 queues a `backpressure` snapshot as soon as the queue is below 50 %, so a snapshot queued while the client is still draining has only the rest of the budget: as little as about half of it (4 MiB or 1 000 frames). A larger one is dropped again by the next over-budget check and queued again at a later drain; it is delivered once the client has drained enough for it to fit, and a snapshot that never fits ends in the step-3 close.
 
 ### 8.5 Client-side obligations
 
@@ -1186,6 +1188,8 @@ A client that is closed as a slow consumer should reconnect with backoff and _re
 ```
 
 WebSocket-level ping/pong control frames are _also_ enabled at the transport layer for proxy keepalive, but application-level `ping` is what drives the RTT measurement used by adaptive throttling (§8.3) — transport pings are invisible to the application in browsers.
+
+**RTT probe (#2552).** The server keeps at most one RTT probe `ping` outstanding per connection and retires one left unanswered for 10 s (its age counts as one RTT sample, and a fresh probe follows). A `pong` whose `id` is not the outstanding probe's (unknown, already answered or retired) is ignored at the cost of one comparison; it creates no state.
 
 ### 9.2 Reconnection
 

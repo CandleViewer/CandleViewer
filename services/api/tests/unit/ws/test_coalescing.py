@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any
 
@@ -10,7 +11,7 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from candleviewer.ws.binary import BOOK_DELTA, HEATMAP_COLUMN, Frame
+from candleviewer.ws.binary import BOOK_DELTA, FLAG_ESTIMATED, FLAG_REPLAY, HEATMAP_COLUMN, Frame
 from candleviewer.ws.coalescing import (
     MAX_PENDING_FRAMES,
     MERGED_FAMILIES,
@@ -501,7 +502,7 @@ def test_coalescer_bound_reached_sets_overflowed(family: str, first: Body, grown
     queue = CoalescingQueue(family, max_keys=1, max_items=1)
     assert queue.offer(first)
     assert not queue.offer(grown)
-    assert queue.overflowed
+    assert queue.overflowed and queue.refusal == "full"
 
 
 @pytest.mark.parametrize(
@@ -523,7 +524,7 @@ def test_coalescer_unmergeable_update_is_refused_like_an_overflow(
     queue refuses it and the topic is re-snapshotted."""
     queue = CoalescingQueue(family)
     assert not queue.offer(malformed)
-    assert queue.overflowed
+    assert queue.overflowed and queue.refusal == "malformed"
     assert queue.take() == []
     queue.clear()
     assert not queue.pending
@@ -913,7 +914,7 @@ def test_coalescer_footprint_refuses_two_bars_with_one_open_time() -> None:
     queue = CoalescingQueue("footprint")
     bar = {"t_ms": 0, "cells": [{"price": "1", "bid_volume": "1"}]}
     assert not queue.offer({"bars": [bar, dict(bar)]})
-    assert queue.overflowed
+    assert queue.refusal == "unmergeable"  # re-snapshotted, not a producer bug (#2529)
 
 
 def test_coalescer_footprint_refuses_an_update_to_a_bar_confirmed_in_the_window() -> None:
@@ -921,7 +922,7 @@ def test_coalescer_footprint_refuses_an_update_to_a_bar_confirmed_in_the_window(
     cells = [{"price": "1", "bid_volume": "1"}]
     assert queue.offer({"bars": [{"t_ms": 0, "confirm": True, "cells": cells}]})
     assert not queue.offer({"bars": [{"t_ms": 0, "confirm": False, "cells": cells}]})
-    assert queue.overflowed
+    assert queue.refusal == "unmergeable"
 
 
 def test_coalescer_footprint_sums_exactly_or_refuses() -> None:
@@ -956,6 +957,8 @@ def test_coalescer_heatmap_root_fields_seen_are_bounded() -> None:
         queue.take()
     assert not queue.offer({"symbol": "X", "k8": 8})
     assert queue.overflowed
+    queue.clear()
+    assert queue.offer({"symbol": "X"})  # the refusal discarded the overgrown merge
 
 
 def test_coalescer_take_turns_an_unreadable_frame_into_an_overflow(
@@ -966,3 +969,119 @@ def test_coalescer_take_turns_an_unreadable_frame_into_an_overflow(
     monkeypatch.setattr(queue._merge, "validate", lambda body: None)
     assert queue.offer({"symbol": "X", "columns": [3]})
     assert queue.take() == [] and queue.overflowed
+
+
+class _Boom:
+    """A producer bug no merge rule anticipates: reading it raises."""
+
+    def __str__(self) -> str:
+        raise RuntimeError("producer bug")
+
+    def __deepcopy__(self, memo: Any) -> Any:
+        raise RuntimeError("producer bug")
+
+
+class _GetRaises(dict[str, Any]):
+    def get(self, key: str, default: Any = None) -> Any:
+        raise RuntimeError("producer bug")
+
+
+@pytest.mark.parametrize(
+    ("family", "body"),
+    [
+        ("book", {"bids": [["1", "1"]], "asks": [], "meta": _Boom()}),
+        ("profile", {"symbol": "X", "kind": "volume", "profiles": [_Boom()]}),
+        ("positions", {"positions": [{"id": "p1", "updated_at_ms": 1, "x": _Boom()}]}),
+    ],
+    ids=["merge-size", "frame-size", "private-deepcopy"],
+)
+def test_coalescer_any_error_a_payload_raises_is_refused_as_malformed(
+    family: str, body: Body
+) -> None:
+    queue = CoalescingQueue(family)
+    assert not queue.offer(body)
+    assert (queue.refusal, queue.error, queue.pending_bytes) == ("malformed", "RuntimeError", 0)
+
+
+def test_coalescer_take_refuses_a_frame_it_cannot_record_as_sent() -> None:
+    queue = CoalescingQueue("heatmap", coalesce=False)
+    assert queue.offer({"symbol": "X", "time_bucket_ms": 100, "columns": [_GetRaises(_column(0))]})
+    assert queue.take() == []
+    assert (queue.refusal, queue.error) == ("malformed", "RuntimeError")
+    queue.clear()
+    assert (queue.refusal, queue.error) == (None, None)
+
+
+def test_coalescer_byte_bound_refuses_and_frees_every_buffer_at_once() -> None:
+    queue = CoalescingQueue("book", max_bytes=40)
+    assert queue.offer(_level("1")) and queue.offer(_level("2"))  # 23 + 9 estimated bytes
+    assert not queue.offer(_level("3"))
+    assert (queue.refusal, queue.pending_bytes) == ("full", 0)  # before any `clear()`
+    frames = CoalescingQueue("profile", max_bytes=40)
+    assert not frames.offer({"symbol": "X", "kind": "volume", "profiles": [{"pad": "x" * 30}]})
+    assert frames.refusal == "full"
+
+
+def test_coalescer_metrics_params_key_is_canonical_json_for_any_params() -> None:
+    queue = CoalescingQueue("metrics")
+    for params, v in (
+        ({"k": Decimal("1.5"), "w": [Decimal("5")]}, "1"),
+        ({"w": (Decimal("5"),), "k": Decimal("1.5")}, "2"),  # the same series
+        ({"k": Decimal("2.5"), 1: "x"}, "3"),  # another series, with a non-string key
+    ):
+        item = {"metric": "atr", "t_ms": 1, "v": v, "params": params}
+        assert queue.offer({"symbol": "X", "series": [item]})
+    [frame] = queue.take()
+    assert [s["v"] for s in frame.body["series"]] == ["2", "3"]
+
+
+def _delta(*records: tuple[int, int, int], flags: int = 0, ts: int = 0) -> Frame:
+    return Frame(BOOK_DELTA, records, flags, price_scale=1, qty_scale=3, ts_base_ms=ts)
+
+
+def test_coalescer_merged_book_window_is_one_cvwb_delta_at_the_latest_part() -> None:
+    queue = CoalescingQueue("book")
+    low, high, top = "-922337203685477580.8", "922337203685477580.7", "18446744073709551.615"
+    for bids, asks, part in (  # the i64 and u64 extremes at scales 1 and 3 are in range
+        ([["100", "1"], [low, "0"]], [["103", "2"]], _delta(ts=1)),
+        ([["99.5", "0"]], [["101", "5"], [high, top]], _delta(flags=FLAG_ESTIMATED, ts=2)),
+        ([["100", "3"]], [], _delta(flags=FLAG_REPLAY, ts=3)),  # only `estimated` is carried over
+    ):
+        queue.offer({"bids": bids, "asks": asks}, part)
+    [frame] = queue.take()
+    sold = ((0, 1000, 3000), (0, 995, 0), (0, -(2**63), 0))  # bids high to low; "0" deletes
+    bought = ((1, 1010, 5000), (1, 1030, 2000), (1, 2**63 - 1, 2**64 - 1))  # asks low to high
+    assert frame.part == _delta(*sold, *bought, flags=FLAG_ESTIMATED, ts=3)
+
+
+_PART, _BID = _delta(), ["101", "1"]
+_OTHER_KIND = replace(_PART, body_kind=HEATMAP_COLUMN)
+
+
+@pytest.mark.parametrize(
+    ("first", "bid", "second"),
+    [
+        pytest.param(None, _BID, _PART, id="first-without-a-part"),
+        pytest.param(_OTHER_KIND, _BID, _PART, id="first-not-a-book-delta"),
+        pytest.param(_PART, _BID, _OTHER_KIND, id="next-not-a-book-delta"),
+        pytest.param(_PART, _BID, replace(_PART, price_scale=0), id="other-price-scale"),
+        pytest.param(_PART, _BID, replace(_PART, qty_scale=2), id="other-qty-scale"),
+        pytest.param(_PART, ["100.55", "1"], _PART, id="inexact-price"),
+        pytest.param(_PART, ["101", "1.0005"], _PART, id="inexact-size"),
+        pytest.param(_PART, ["100.0000000000000000000000000001", "1"], _PART, id="over-28-digits"),
+        pytest.param(_PART, ["101", "abc"], _PART, id="size-not-a-number"),
+        pytest.param(_PART, ["101", "Infinity"], _PART, id="size-infinite"),
+        pytest.param(_PART, ["922337203685477580.8", "1"], _PART, id="price-above-i64"),
+        pytest.param(_PART, ["-922337203685477580.9", "1"], _PART, id="price-below-i64"),
+        pytest.param(_PART, ["101", "18446744073709551.616"], _PART, id="size-above-u64"),
+        pytest.param(_PART, ["101", "-0.001"], _PART, id="size-negative"),
+    ],
+)
+def test_coalescer_merged_book_window_is_structured_unless_every_part_fits(
+    first: Frame | None, bid: list[str], second: Frame
+) -> None:
+    queue = CoalescingQueue("book")
+    queue.offer({"bids": [["100", "1"]], "asks": []}, first)
+    queue.offer({"bids": [bid], "asks": []}, second)
+    [frame] = queue.take()
+    assert (frame.part, frame.coalesced_count) == (None, 2)
