@@ -160,3 +160,47 @@ def test_socket_ctl_resume_after_a_pause_re_snapshots_before_any_delta() -> None
         w.client.portal.call(update, "97.0")
         delta = _rx(ws)
         assert (delta["t"], delta["s"]) == ("d", snap["s"] + 1)
+
+
+_BOOK = {"ch": "book.BTCUSDT.50", "opts": {"encoding": "structured"}}
+
+
+def _publish(hub: SequencingHub, count: int) -> None:
+    for i in range(count):
+        hub.publish(
+            _BOOK["ch"], {"symbol": "BTCUSDT", "bids": [[str(100 + i % 7), "1"]], "asks": []}
+        )
+
+
+def _data(ws: Any) -> dict[str, Any]:
+    """The next non-ping frame, unvalidated (the bulk of a long stream)."""
+    while (frame := _recv(ws))["t"] == "ping":
+        pass
+    return frame
+
+
+def test_socket_reauth_keeps_the_sequence_5000_then_5001_without_a_snap() -> None:
+    """#2484 gap 1 (E17-S01 "Re-auth preserves everything", §16.4): after an in-place re-auth
+    the next delta carries `s` 5001 after 5000, and no `snap` comes in between."""
+    w = _World()
+    with w.client, w.client.websocket_connect("/ws", subprotocols=JSON) as ws:
+        _open(ws)
+        ws.send_json({"t": "sub", "id": "s1", "p": {"topics": [_BOOK]}})
+        assert _rx(ws)["t"] == "sub_ok"
+        assert _rx(ws)["s"] == 1
+        last = 1
+        while last < 5000:
+            batch = min(500, 5000 - last)  # stays under OUTBOUND_QUEUE_MAX
+            w.client.portal.call(_publish, w.hub, batch)  # type: ignore[union-attr]  # set in ctx
+            for _ in range(batch):
+                frame = _data(ws)
+                assert (frame["t"], frame["s"]) == ("d", last + 1)
+                last += 1
+        ws.send_json({"t": "auth", "id": "a2", "p": {"access_token": "good"}})
+        assert _rx(ws)["t"] == "auth_ok"
+        w.client.portal.call(_publish, w.hub, 1)  # type: ignore[union-attr]  # set in ctx
+        frame = _rx(ws)
+        assert (frame["t"], frame["s"]) == ("d", 5001)
+        assert "meta" not in frame
+        ws.send_json({"t": "ctl", "id": "c1", "ch": _BOOK["ch"], "p": {"throttle_ms": 100}})
+        assert _rx(ws)["t"] == "ctl_ok"  # the subscription itself survived the re-auth
