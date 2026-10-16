@@ -217,16 +217,17 @@ export interface paths {
      *     are booleans that pin a user in (`true`) or out (`false`) of the rollout.
      *
      *     The flag store is unreachable when its read fails or exceeds its read budget, the system
-     *     setting `flags.read_budget_ms` (default 500 ms, well inside the 2 s push and 5 s re-read
-     *     bounds; tunable). Every flag then resolves to its fail-closed value: the restrictive one
-     *     for the safety-relevant flags (`maintenance.mode` and `killswitch.order_entry` engaged,
-     *     so an unknown state refuses new orders through the shared order-entry gate;
-     *     `trading.live_enabled` off) and the registry default for every other flag.
-     *     `killswitch.ingestion` is outside that restrictive set: it fails closed to its default,
-     *     so an unreachable store never stops ingestion. The answer is still `200`, with
-     *     `resolution: fail_closed`, and every flag omits `default_value`, `overrides`,
-     *     `updated_at` and `updated_by`, so the console can say these are fail-closed values, not
-     *     the current ones. `resolution` is always sent.
+     *     setting `flags.read_budget_ms` (default 500 ms, tunable from 50 to 2000 ms so it stays
+     *     inside the 2 s push and 5 s re-read bounds; a write outside that range is `422
+     *     validation_failed`, and an out-of-range configured value refuses startup). Every flag then
+     *     resolves to its fail-closed value: the restrictive one for the safety-relevant flags
+     *     (`maintenance.mode` and `killswitch.order_entry` engaged, so an unknown state refuses new
+     *     orders through the shared order-entry gate; `trading.live_enabled` off) and the registry
+     *     default for every other flag. `killswitch.ingestion` is outside that restrictive set: it
+     *     fails closed to its default, so an unreachable store never stops ingestion. The answer is
+     *     still `200`, with `resolution: fail_closed`, and every flag omits `default_value`,
+     *     `overrides`, `updated_at` and `updated_by`, so the console can say these are fail-closed
+     *     values, not the current ones. `resolution` is always sent.
      *
      *     A single unreadable stored row (malformed, or a kind mismatch) is not an outage. That
      *     flag alone resolves to its fail-closed value and is marked `unreadable: true`; it omits
@@ -274,16 +275,20 @@ export interface paths {
      *     - An omitted `overrides` keeps the flag's existing overrides; `overrides: []` clears
      *       them. An `overrides[].user_id` that names no user is `422 validation_failed` (rule
      *       `unknown_user`).
+     *     - Decision order: authentication, request validation, RBAC and scope come before the
+     *       step-up gate; the gate, the `expected_updated_at` precondition and the write then run
+     *       under the flag's row lock.
      *     - `flags:write` is a dangerous permission. Every write needs exactly one fresh step-up
-     *       elevation, chosen by key and by the flag's resolved value before the write, where a
-     *       fail-closed engagement counts as engaged: releasing a kill-switch-class flag (engaged to
-     *       `false`) needs `killswitch`, enabling `trading.live_enabled` needs `live_enablement`
-     *       (both no-grace, single use), and every other write needs `flags` (5-minute grace).
-     *       Repairing an `unreadable` kill-switch-class flag to `false` is therefore a release: it
-     *       needs a fresh `killswitch` code, not `flags` with its 5-minute grace. Without that
-     *       elevation the call is `403 step_up_required` (audited as `auth.step_up_required`).
-     *       This console is not the emergency control: engaging a kill switch here needs only
-     *       `flags`, and the code-free emergency engage stays `POST /trading/kill-switch`.
+     *       elevation, chosen by key and by the stored value read under the write's row lock: the
+     *       row `expected_updated_at` is compared against, never the cached value, which can be up
+     *       to 5 s old. An unreadable row or a fail-closed engagement counts as engaged (`true`):
+     *       releasing a kill-switch-class flag (`true` to `false`) needs `killswitch`, enabling
+     *       `trading.live_enabled` needs `live_enablement` (both no-grace, single use), and every
+     *       other write needs `flags` (5-minute grace). Repairing an `unreadable` kill-switch-class
+     *       flag to `false` is therefore a release: it needs a fresh `killswitch` code, not `flags`
+     *       with its 5-minute grace. Without that elevation the call is `403 step_up_required`. This
+     *       console is not the emergency control: engaging a kill switch here needs only `flags`,
+     *       and the code-free emergency engage stays `POST /trading/kill-switch`.
      *     - `trading.live_enabled` and the kill-switch-class flags take no overrides: any override
      *       on them is `422 validation_failed` (rule `overrides_not_allowed`), and resolution
      *       ignores any override row they hold (`GET /admin/feature-flags`).
@@ -293,16 +298,23 @@ export interface paths {
      *       a retry safe, so a `409` here is always `conflict` with `current`.
      *     - `trading.live_enabled: true` without `evidence_url` is `422` (rule
      *       `gate_evidence_required`) and nothing is written. `evidence_url` must be an `https` URL
-     *       (rule `https_required`); the server records it and never dereferences it. This service
+     *       (rule `https_required`) of at most 2048 characters. The audit records it, so it must
+     *       carry no credential or signed token: the write rejects userinfo and a token in the query
+     *       string (rule `credential_in_url`). The server never dereferences it, and it validates
+     *       the URL itself, because the generated model checks only the URI format. This service
      *       only enforces the precondition; the evidence binding belongs to the live gate (E44-T04).
      *     - If the flag store is unreachable (as `GET /admin/feature-flags` defines it), the write
      *       is `503 store_unavailable` and nothing is written. An unreadable stored row is not an
      *       outage: a write with a valid value repairs it.
-     *     - Every attempt that passes RBAC and step-up is audited as `flags.change` with the key,
-     *       before, after, `reason` and `evidence_url`, including refused and conflicting ones. The
-     *       one exception is `503 store_unavailable`: the audit lives in the same store, so that
-     *       refusal cannot be audited and is logged with a metric instead (SR-125). Toggling
-     *       `maintenance.mode` is also audited as `maintenance.enabled` or `maintenance.disabled`.
+     *     - Every attempt past authentication and RBAC is audited as `flags.change` with the key,
+     *       before, after, `reason` and `evidence_url`, including refused and conflicting ones and
+     *       every `422` (such as `gate_evidence_required`, `kind_mismatch`, `unknown_user` and
+     *       `overrides_not_allowed`); a `step_up_required` challenge is audited as
+     *       `auth.step_up_required`. The one exception is `503 store_unavailable`: the audit lives
+     *       in the same store, so that refusal cannot be audited and is logged with a metric instead
+     *       (SR-125). For an unreadable row, `before` records `unreadable`, never the raw value.
+     *       Toggling `maintenance.mode` is also audited as `maintenance.enabled` or
+     *       `maintenance.disabled`.
      *     - A successful write pushes a `SystemUpdate` of kind `feature_flags`, carrying only the
      *       changed key, to every session the flag's `visibility` admits (`23-ws-protocol.md` 15.9).
      *
@@ -314,13 +326,13 @@ export interface paths {
      *     kill switch's own flatten; native exchange stop-losses are never touched. Attaching a
      *     missing native SL, tightening a stop, or re-arming a protective trigger is never gated;
      *     "trigger re-armed" means an exposure-increasing (entry) trigger. An amend with any
-     *     risk-increasing component is gated. Turning it on cancels running emulated algos and sends
-     *     every session a `notice`; the recorder keeps running unless `maintenance.keep_recorder` is
-     *     `false`. The algo cancels, the notice and the `maintenance.*` audit happen only on a
-     *     stored value actually read as `true`, at the transition of the stored value, never on a
-     *     transient store failure or an unreadable row: a fail-closed engagement only refuses
-     *     submissions. A boot that finds a stored `true` counts as a transition from unknown, so its
-     *     side effects run.
+     *     risk-increasing component is gated. Turning it on cancels only running emulated algos, so
+     *     resting entry orders can still fill, and sends every session a `notice`; the recorder
+     *     keeps running unless `maintenance.keep_recorder` is `false`. The algo cancels, the notice
+     *     and the `maintenance.*` audit happen only on a stored value actually read as `true`, at
+     *     the transition of the stored value, never on a transient store failure or an unreadable
+     *     row: a fail-closed engagement only refuses submissions. A boot that finds a stored `true`
+     *     counts as a transition from unknown, so its side effects run.
      */
     put: operations["setFeatureFlag"];
     post?: never;
@@ -3719,11 +3731,11 @@ export interface paths {
      *     Maintenance mode (`maintenance.mode`, set with `PUT /admin/feature-flags/{flagKey}`) is
      *     narrower: through the shared order-entry gate it refuses every submission that opens or
      *     increases exposure (`trading_disabled` with `reason: maintenance`), and it cancels only
-     *     running emulated algos. Cancels, flatten, quantity-reducing amends and stop-tightening
-     *     amends stay available under it, and so do this switch's own cancel and flatten.
-     *     Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is
-     *     never gated; "trigger re-armed" means an exposure-increasing (entry) trigger. An amend
-     *     with any risk-increasing component is gated.
+     *     running emulated algos, so resting entry orders can still fill. Cancels, flatten,
+     *     quantity-reducing amends and stop-tightening amends stay available under it, and so do
+     *     this switch's own cancel and flatten. Attaching a missing native SL, tightening a stop, or
+     *     re-arming a protective trigger is never gated; "trigger re-armed" means an
+     *     exposure-increasing (entry) trigger. An amend with any risk-increasing component is gated.
      *
      *     Managers may engage the switch for accounts in their own scope; only the owner may
      *     engage it globally or **release** it. Bybit's dead-man's-switch
@@ -8087,7 +8099,7 @@ export interface components {
         "application/problem+json": components["schemas"]["Problem"];
       };
     };
-    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. */
+    /** @description Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. */
     Forbidden: {
       headers: {
         [name: string]: unknown;
@@ -8649,7 +8661,7 @@ export interface operations {
         content: {
           "application/json": {
             items?: components["schemas"]["FeatureFlag"][];
-            resolution?: components["schemas"]["FeatureFlagResolution"];
+            resolution: components["schemas"]["FeatureFlagResolution"];
           };
         };
       };
