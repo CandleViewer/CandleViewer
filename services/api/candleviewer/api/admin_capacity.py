@@ -102,7 +102,8 @@ def _invalid(*errors: dict[str, str]) -> _Problem:
 
 
 async def _body(request: Request) -> TierRequest:
-    """The request body, read only up to the cap and never echoed back when it is wrong."""
+    """The request body, read only up to the cap. A wrong one is never echoed back: no value, and
+    no key name either (an unknown key is reported on the body as a whole, `field` empty)."""
     raw = bytearray()
     async for chunk in request.stream():
         raw += chunk
@@ -114,7 +115,7 @@ async def _body(request: Request) -> TierRequest:
     except ValidationError as exc:
         found = [
             {
-                "field": ".".join(map(str, e["loc"])),
+                "field": "" if e["type"] == "extra_forbidden" else ".".join(map(str, e["loc"])),
                 "rule": e["type"],
                 "message": redact_text(e["msg"]),
             }

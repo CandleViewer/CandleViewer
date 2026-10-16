@@ -194,7 +194,7 @@ def test_an_anonymous_caller_is_refused_before_the_body_is_even_read() -> None:
 
 # -- the closed body (422) -----------------------------------------------------------------------
 
-_CANARY = "sk_live_" + "Zq9x" * 6  # a secret-shaped value a client might send as a tier
+_CANARY = "sk_live_" + "Zq9x" * 6  # a secret-shaped value a client might send, as a tier or a key
 
 
 @pytest.mark.parametrize(
@@ -204,7 +204,7 @@ _CANARY = "sk_live_" + "Zq9x" * 6  # a secret-shaped value a client might send a
         (b'{"tier": "gold"}', "tier", "literal_error"),
         (b'{"tier": "Regular"}', "tier", "literal_error"),
         (b'{"tier": null}', "tier", "literal_error"),
-        (b'{"tier": "regular", "cap": 20}', "cap", "extra_forbidden"),
+        (f'{{"tier": "regular", "{_CANARY}": 20}}'.encode(), "", "extra_forbidden"),
         (b'["regular"]', "", "model_type"),
         (b"not json", "", "json_invalid"),
         (b'{"tier": "regular"}' + b" " * 1100, "", "body_too_large"),
@@ -218,7 +218,7 @@ def test_a_body_that_is_not_one_of_the_two_tiers_is_422_and_changes_nothing(
     client, spy, store = _app(_recorded("regular"))
     body = _problem(_put(client, content=raw), 422, "validation_failed")
     assert [(e["field"], e["rule"]) for e in body["errors"]] == [(field, rule)]
-    assert _CANARY not in str(body)  # the input is never echoed
+    assert _CANARY not in str(body)  # the input is never echoed: not as a value, not as a key
     assert [r["action"] for r in spy.records] == ["admin.area_entered"]  # nothing to audit
     assert store is not None and store.calls == []  # not even read
     assert store.rows[SUBACCOUNT_TIER_KEY].value == "regular"
