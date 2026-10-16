@@ -18,7 +18,11 @@ from typing import Any
 
 from fastapi import Request
 
-from candleviewer.api.step_up import consume_bound_grant
+from candleviewer.api.step_up import (
+    STEP_UP_REQUIRED_DETAIL,
+    STEP_UP_REQUIRED_TITLE,
+    consume_bound_grant,
+)
 from candleviewer.api.step_up_challenge import raw_request_target, request_fingerprint
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.errors import AuthError, SessionReadOnly, SessionRevoked
@@ -64,11 +68,13 @@ def _before(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 def _challenged(challenge: StepUpChallenge) -> RuleError:
     """`403 step_up_required` carrying the challenge issued for this request (#2304): a no-grace
-    step-up must name it, so a refusal without it could never be answered."""
+    step-up must name it, so a refusal without it could never be answered. Its title and detail
+    are the ones every challenge states (`api.step_up.required_problem`)."""
     return RuleError(
         403,
         "step_up_required",
-        "Re-enter your authenticator code to arm a live rule.",
+        STEP_UP_REQUIRED_DETAIL,
+        title=STEP_UP_REQUIRED_TITLE,
         action_class=challenge.action_class,
         challenge_id=str(challenge.challenge_id),
         challenge_expires_at=challenge.expires_at.isoformat(),

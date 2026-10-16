@@ -63,6 +63,13 @@ from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.observability.redaction import redact_text
 
 _PROBLEM = "application/problem+json"
+#: `403 step_up_required`'s title and detail on every route that issues a challenge (#2304): the
+#: contract's title, and what the step-up asks for - the password and the code (#1778) - in
+#: words the dialog shows verbatim. `api.rules_actor` states its refusal with these too.
+STEP_UP_REQUIRED_TITLE = "A dangerous action needs a live step-up elevation for its action class"
+STEP_UP_REQUIRED_DETAIL = (
+    "Re-enter your password and authenticator code (POST /auth/step-up) to continue."
+)
 #: `400 validation_failed` details for a step-up that cannot answer its challenge (#2304).
 _CHALLENGE_REFUSED = {
     "challenge_required": "A step-up for this action class must send the challenge_id.",
@@ -204,8 +211,8 @@ def required_problem(challenge: StepUpChallenge, text: ChallengeText | None = No
     return _problem(
         403,
         "step_up_required",
-        "A dangerous action needs a live step-up elevation for its action class",
-        "Re-enter your password and authenticator code (POST /auth/step-up) to continue.",
+        STEP_UP_REQUIRED_TITLE,
+        STEP_UP_REQUIRED_DETAIL,
         action_class=challenge.action_class,
         challenge_id=str(challenge.challenge_id),
         challenge_expires_at=challenge.expires_at.isoformat(),

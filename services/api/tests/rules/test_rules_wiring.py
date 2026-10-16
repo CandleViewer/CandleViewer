@@ -9,7 +9,11 @@ from datetime import UTC, datetime
 import pytest
 
 from candleviewer.api.deny_by_default import served_operations
-from candleviewer.api.step_up import HANDLER_GATED_ROUTES
+from candleviewer.api.step_up import (
+    HANDLER_GATED_ROUTES,
+    STEP_UP_REQUIRED_DETAIL,
+    STEP_UP_REQUIRED_TITLE,
+)
 from candleviewer.api.step_up_challenge import request_fingerprint
 from candleviewer.app import create_app
 from candleviewer.auth.errors import (
@@ -153,7 +157,9 @@ async def test_actor_consume_refusal_carries_the_challenge_issued_for_this_reque
     with pytest.raises(RuleError) as refused:
         await consume()
     assert (refused.value.status, refused.value.code) == (403, "step_up_required")
+    assert refused.value.message == STEP_UP_REQUIRED_DETAIL  # what every challenge states
     assert refused.value.extra == {
+        "title": STEP_UP_REQUIRED_TITLE,
         "action_class": "live_enablement",
         "challenge_id": str(step_up.issued.challenge_id),
         "challenge_expires_at": step_up.issued.expires_at.isoformat(),

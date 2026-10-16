@@ -19,7 +19,7 @@ from candleviewer.rules.manager import InMemoryRuleStore, RulesManager
 from candleviewer.rules.vocabulary import default_registry
 from tests.contract.test_step_up_challenge_contract import _SPEC, _STEP_UP_REQUIRED_BODY, _validator
 from tests.rules.test_rules_routes import LIVE, _ir
-from tests.unit.api.test_step_up_challenge_router import _World, _world
+from tests.unit.api.test_step_up_challenge_router import _RELEASE, _World, _world
 from tests.unit.api.test_step_up_router import _Sessions
 
 _ARM = {"mode": "armed"}
@@ -90,6 +90,20 @@ async def test_rules_refusal_is_a_challenge_answered_by_id_and_the_held_request_
         resent = w.client.put(f"/rules/{rid}/mode", headers=w.h(), json=_ARM)
         assert resent.status_code == 200 and resent.json()["mode"] == "armed"
     assert trail.count("rule.armed") == 1
+
+
+async def test_rules_refusal_states_the_step_up_text_every_challenge_states() -> None:
+    """#2304 rule 4: the dialog shows the server's text verbatim, so the rules refusal asks for
+    what the step-up takes (password and code, #1778) in the words and under the contract title
+    of every other challenge. Before, it asked for the authenticator code alone."""
+    w = await _world()
+    (rid,), _ = await _armable(w)
+    rules = w.client.put(f"/rules/{rid}/mode", headers=w.h(), json=_ARM)
+    killswitch = w.send(_RELEASE)  # the harness's no-grace refusal: `required_problem`
+    assert rules.status_code == killswitch.status_code == 403
+    _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(rules.json())
+    stated = ("title", "detail")
+    assert {k: rules.json()[k] for k in stated} == {k: killswitch.json()[k] for k in stated}
 
 
 async def test_rules_grant_bound_to_one_rule_refuses_to_arm_another() -> None:
