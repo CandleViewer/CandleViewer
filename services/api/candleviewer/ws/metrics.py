@@ -30,6 +30,7 @@ from candleviewer.observability.metrics import (
 )
 from candleviewer.observability.metrics_catalogue import FANOUT_BUCKETS, FANOUT_HELP
 from candleviewer.ws._generated.cvwb_layout import KINDS
+from candleviewer.ws.lifecycle import CLOSE_REASONS, OTHER_CLOSE_REASON
 
 #: One child's scrape reading: cumulative bucket counts (the last, `+Inf`, is the count), sum.
 Reading = tuple[tuple[float, ...], float]
@@ -205,6 +206,23 @@ cv_ws_closes_total = Counter(
     "Server-initiated WS closes by bye reason (the close code is fixed per reason).",
     labelnames=("reason",),
 )
+# Bind every `reason` now, so each series exists at 0 from process start. A series born at its first
+# close is a single sample: `increase()` has nothing to subtract, so the first close under a reason
+# after every restart goes unseen (#2264 bound the CSRF counter for the same reason). Today
+# `infra/prometheus/alerts/ws_origin.yml` reads `origin_forbidden` (`WsOriginRefusalsHigh`); #571
+# plans alerts on others. Bound here, beside the counter, so `export_ws_metrics` serves every series
+# without the gateway. `normal`, `server_shedding_load` and `other` have no counting path today.
+# Nothing closes with the first two. `other` has no producer: `lifecycle.bye_frame` raises on an
+# unknown reason on a connection's first close (a sealed close on one already closing skips it, and
+# its only caller without `bye=` passes `token_expired`), and a `bye=` frame is built only by
+# `user_disabled_bye` (a fixed reason) and by `revocation.bye_frame`, which does not validate its
+# reason and is reached through `RevocationHub.close_for` (from `_close_all` and from `run_auth`'s
+# revoked-before-registration check), whose reasons are the ones `revoke` remembered. So only
+# `app._hub_publisher` (it narrows a revoke reason to `user_disabled` or `session_revoked`) keeps
+# `other` empty. They stay bound all the same (a hand-kept exclusion list would rot), so their 0
+# is not coverage.
+for _close_reason in (*CLOSE_REASONS, OTHER_CLOSE_REASON):
+    cv_ws_closes_total.labels(reason=_close_reason)
 cv_ws_clock_skew_ms = Histogram(
     "cv_ws_clock_skew_ms",
     "Absolute client clock skew reported in welcome (milliseconds).",

@@ -8,7 +8,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   before `accept` (HTTP 403, no `bye`): no negotiation, frame, auth or store access. Each
   refusal is counted and logged with the source address MeshOnly admitted, with a cap.
 - **Negotiation** (§2.2): the subprotocol is chosen before `accept`; when the
-  client offers none we serve -> close `1002` before the handshake completes.
+  client offers none we serve -> close `1002` before the handshake completes, counted
+  as `unsupported_protocol` as the origin refusal is counted as `origin_forbidden`.
   `cv.v1.msgpack` whenever offered: then client frames go to the SR-185 decoder and
   server frames are MessagePack (`ws/codec.py`). A frame of the other subprotocol's
   kind (text on msgpack, binary on JSON) is malformed.
@@ -36,9 +37,10 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
   excluding `pong` (`client_rate_limited`, then `4429`). An envelope `id` that is not a
   string of at most `ENVELOPE_ID_MAX_LEN` characters is dropped before the frame is
   handled, so no reply echoes it (§13.1, #2572).
-- Every server-initiated close goes through `_Connection.close_with`, which
-  queues `bye` ahead of the close frame (requirement S11). Token expiry and
-  revocation seal the close: anything still queued is dropped, `bye` next.
+- Every server-initiated close after `accept` goes through `_Connection.close_with`, which
+  queues `bye` ahead of the close frame (requirement S11), except the handler's own fault `bye`
+  and 1011, which the handler counts itself. Token expiry and revocation seal the close:
+  anything still queued is dropped, `bye` next.
 - **Fan-out span** (the gateway segment of budget #6, from the subscription's hub turn, not bus
   receipt): `TopicEmitter` queues one data frame (`snap` / `d`) of a subscription in
   `SAMPLE_EVERY` with the clock reading at which the hub took it, and the writer observes
@@ -78,6 +80,7 @@ from candleviewer.ws.lifecycle import (
     MAX_PROTOCOL_VIOLATIONS,
     MAX_UNAUTHENTICATED_FRAMES,
     ORIGIN_FORBIDDEN,
+    OTHER_CLOSE_REASON,
     REFUSAL_LOG_LIMIT,
     REFUSAL_LOG_WINDOW_S,
     SHUTDOWN_GRACE_MS,
@@ -268,8 +271,9 @@ class GatewayHub:
 
 
 def close_reason_label(reason: str) -> str:
-    """Bounded `reason` label: a known §13.6 close/bye reason, else "other"."""
-    return reason if reason in CLOSE_REASONS else "other"
+    """Bounded `reason` label: a known §13.6 close/bye reason, else `OTHER_CLOSE_REASON`.
+    `ws/metrics.py` binds every one of them at import."""
+    return reason if reason in CLOSE_REASONS else OTHER_CLOSE_REASON
 
 
 def closed_reason(
@@ -946,6 +950,9 @@ def make_ws_router(
         # §4.3: a token in the URL query string is never read; it is ignored.
         encoding = negotiate_subprotocol(ws.scope.get("subprotocols") or ())
         if encoding is None:
+            # Closed before `accept`, so not through `close_with`: it counts itself, as the origin
+            # refusal above does.
+            cv_ws_closes_total.labels(reason="unsupported_protocol").inc()
             await ws.close(code=int(CLOSE_REASONS["unsupported_protocol"][0]))
             return
         await ws.accept(subprotocol=encoding)
@@ -991,6 +998,11 @@ def make_ws_router(
                 if fault is None:
                     fault = await _join_writer(write_task)
                 if fault is not None:
+                    # The handler's own `bye` and 1011 do not go through `close_with`: count here.
+                    # A fault after a `close_with` is counted under both reasons (that close was
+                    # initiated, and this `bye` plus 1011 supersedes it on the wire), so alerts
+                    # should key on `reason="internal_error"`, not on the sum.
+                    cv_ws_closes_total.labels(reason="internal_error").inc()
                     _log().error(
                         "ws connection fault", connection_id=conn.connection_id, exc_info=fault
                     )

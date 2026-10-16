@@ -22,7 +22,7 @@ from candleviewer.ws.bars_wire import bar_item
 from candleviewer.ws.binary import decode_b64
 from candleviewer.ws.cvwb_vectors import structured
 from candleviewer.ws.permissions import Subscription, handle_sub
-from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
+from candleviewer.ws.sequencing import SequencingHub, SnapReason, SnapshotBody
 from tests.unit.ws._seq_support import Clock, OwnerMetaConn, Source
 
 SPEC = BarSpec(kind="time", interval_ms=300_000)
@@ -348,7 +348,9 @@ async def test_an_emission_during_a_sub_never_sends_its_snap_before_sub_ok() -> 
 
 
 @pytest.mark.parametrize("reason", ["initial", "backpressure"])  # a `sub` in flight, E17's hold
-async def test_a_swap_and_its_retry_keep_another_flows_hold_and_skip_a_replay(reason: str) -> None:
+async def test_a_swap_and_its_retry_keep_another_flows_hold_and_skip_a_replay(
+    reason: SnapReason,
+) -> None:
     src = Source()
     _, pub, [(held, hs), (conn, _)] = _world({}, {}, src=src)
     _, replay = conn.sub({"ch": CH, "opts": {}}, replay_session_id=RS)

@@ -427,7 +427,7 @@ def test_upstream_reconnect_and_replay_seek_reasons() -> None:
     assert (a["meta"]["reason"], "rs" in a) == ("upstream_reconnect", False)
     assert (b["meta"]["reason"], b["rs"]) == ("replay_seek", RS)
     with pytest.raises(ValueError, match="unknown snap reason"):
-        hub.resnapshot(lambda s: True, "nope")
+        hub.resnapshot(lambda s: True, "nope")  # type: ignore[arg-type]  # the guard under test
     hub.unregister(conn.authz)
     assert len(hub) == 0
     assert set(SNAP_REASONS) >= {"initial", "client_resync"}

@@ -77,6 +77,9 @@ SNAP_REASONS: Final[tuple[str, ...]] = (
     "instrument_revision",
     "replay_seek",
 )
+#: The reasons `cv_ws_resync_total` counts: every one but `initial`, a routine attach. The one
+#: source for both the counting (`TopicEmitter.snapshot`) and the series bound at import.
+COUNTED_SNAP_REASONS: Final[tuple[str, ...]] = tuple(r for r in SNAP_REASONS if r != "initial")
 #: §7.4: counted as incidents (alert thresholds in `06-performance-and-load-standard.md`).
 INCIDENT_REASONS: Final = frozenset({"upstream_desync", "backpressure"})
 #: The `meta` keys `TopicEmitter.snapshot` sets. An owning module's `SnapshotBody.meta` may not
@@ -111,6 +114,12 @@ COALESCE_FIELDS: Final = frozenset({"book", "bars", "footprint"})
 cv_ws_resync_total = Counter(
     "cv_ws_resync_total", "Server-sent re-snapshots by reason.", labelnames=("reason",)
 )
+# Bind every counted reason now, so each series exists at 0 from process start. A series born at its
+# first event is a single sample: `increase()` has nothing to subtract, so the first re-snapshot
+# under a reason after every restart goes unseen (#2264 bound the CSRF counter for the same
+# reason). No alert reads this counter yet; #571 plans them.
+for _resync_reason in COUNTED_SNAP_REASONS:
+    cv_ws_resync_total.labels(reason=_resync_reason)
 cv_ws_snapshot_bytes = Histogram(
     "cv_ws_snapshot_bytes",
     "Serialized snapshot size (all chunks); the topic label holds the topic family.",
@@ -459,7 +468,7 @@ class TopicEmitter:
 
     # -- snapshots --
 
-    def snapshot(self, sub: Subscription, reason: str) -> bool:
+    def snapshot(self, sub: Subscription, reason: SnapReason) -> bool:
         """Emit a (possibly chunked) `snap`; False when the state cannot be built yet (the
         subscription stays pending and no `d` is emitted until a later flush succeeds)."""
         if self.source is None:
@@ -500,7 +509,7 @@ class TopicEmitter:
                 self.push_data(frame, received)
         fam = sub.topic.family.family
         cv_ws_snapshot_bytes.labels(topic=fam).observe(total)
-        if reason != "initial":
+        if reason in COUNTED_SNAP_REASONS:
             cv_ws_resync_total.labels(reason=reason).inc()
             _log().info(
                 "ws resync",
@@ -725,7 +734,7 @@ class SequencingHub:
             sent += self.publish(ch, body, account=account)
         return sent
 
-    def resnapshot(self, match: Callable[[Subscription], bool], reason: str) -> int:
+    def resnapshot(self, match: Callable[[Subscription], bool], reason: SnapReason) -> int:
         """Server-initiated resync (§7.4): mark every matching subscription pending FIRST (so no
         delta can slip across the gap), then emit the snapshots."""
         if reason not in SNAP_REASONS:
