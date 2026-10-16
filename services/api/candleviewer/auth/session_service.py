@@ -47,6 +47,7 @@ from candleviewer.auth.errors import (
     SessionNotFound,
     SessionRevoked,
     UnlockPasswordInvalid,
+    UserNotActive,
 )
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.metrics import (
@@ -63,6 +64,7 @@ from candleviewer.auth.models import (
     SessionIntrospection,
     SessionRecord,
     SessionView,
+    UserStatus,
 )
 from candleviewer.auth.session_repository import SessionRepository
 
@@ -149,7 +151,9 @@ def is_live_session(session: SessionRecord, *, now: datetime) -> bool:
 
     The `allow_locked=True` path (logout, revoke) is laxer on purpose: an idle-locked session
     can still act there, which this predicate does not model, so a CSRF refusal on those
-    routes for such a session draws on the per-IP audit budget (conservative)."""
+    routes for such a session draws on the per-IP audit budget (conservative). The user's
+    status is not part of it either: `peek_access_token` reads none, and `require_active`
+    refuses and revokes a disabled user's session itself (#2911)."""
     return (
         not session.is_revoked
         and not session.is_absolute_expired(now=now)
@@ -226,6 +230,11 @@ class SessionService:
         high: rotation must not reset the 12 h absolute lifetime). First-
         login callers never pass it, so a brand-new session still gets
         `now + ABSOLUTE_LIFETIME`.
+
+        Raises `UserNotActive` when the user is not `active` (#2911): the
+        repository reads `users.status` under the user-row lock in the
+        insert's own transaction, so a disable that commits before the insert
+        refuses it, and one that commits after it revokes it.
         """
         now = self._clock()
         raw_token = self._refresh_token_factory()
@@ -248,6 +257,8 @@ class SessionService:
             idle_timeout_s=clamp_idle_timeout_s(idle_timeout_s),
         )
         created = await self._repository.create_session(session)
+        if created is None:
+            raise UserNotActive(None)  # nothing was inserted (#2911)
         auth_sessions_active.inc()
         return MintedSession(
             session_id=created.id,
@@ -277,8 +288,10 @@ class SessionService:
     ) -> RefreshOutcome:
         """`POST /auth/refresh`. Raises `SessionNotFound`,
         `RefreshReuseDetected` (family already revoked as a side effect of
-        raising), or `SessionRevoked`/`SessionIdleLocked` for a
-        non-reuse-but-dead presented session.
+        raising), `SessionRevoked`/`SessionIdleLocked` for a
+        non-reuse-but-dead presented session, or `UserNotActive` (#2911): before
+        the claim, which then changes nothing, or from the successor's mint when a
+        disable commits after the claim (the claim stands; no successor exists).
         """
         token_hash = _hash_refresh_token(raw_refresh_token)
         presented = await self._repository.find_by_refresh_hash(token_hash)
@@ -313,6 +326,9 @@ class SessionService:
             expired = await self._repository.revoke(str(presented.id), reason="expired", now=now)
             await self._publish_row(expired, "expired")
             raise SessionRevoked("expired")
+
+        if presented.user_status is not UserStatus.ACTIVE:
+            raise UserNotActive(presented.user_status)  # read with the row (#2911)
 
         if presented.is_idle_locked(now=now):
             # Ticket "The lock does not refresh tokens in the background":
@@ -371,6 +387,10 @@ class SessionService:
         own (cosmetic) lock overlay believes.
 
         Raises `SessionNotFound`, `SessionRevoked`, or `SessionIdleLocked`.
+        A live session of a disabled user, or of one whose row is gone (read
+        with the session row, #2911), is revoked as `user_disabled` and refused:
+        SR-029 fails closed on any session no disable revoked, and the publish
+        ends its sockets with `bye user_disabled` + 4403.
         """
         session = await self._repository.find_by_id(session_id)
         if session is None:
@@ -388,6 +408,16 @@ class SessionService:
 
         if session.is_revoked:
             raise SessionRevoked(session.revoked_reason or "revoked")
+
+        if session.user_status in (None, UserStatus.DISABLED):
+            _log().warning(
+                "auth.disabled_user_session_revoked",
+                session_id=session_id,
+                user_id=str(session.user_id),
+                user_status=session.user_status,
+            )
+            await self.revoke(session_id, reason="user_disabled")
+            raise SessionRevoked("user_disabled")
 
         if session.is_idle_locked(now=now):
             auth_idle_locks_total.inc()

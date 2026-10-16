@@ -23,6 +23,7 @@ from candleviewer.api.sessions import (
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
+from candleviewer.auth.models import UserStatus
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.csrf_helpers import arm_csrf
@@ -160,6 +161,43 @@ async def test_refresh_reuse_is_401_with_critical_audit(env: _Env) -> None:
     assert ev["action"] == "auth.refresh_reuse_detected"
     assert ev["severity"] == Severity.CRITICAL
     assert ev["outcome"] == AuditOutcome.DENIED
+
+
+async def test_refresh_of_a_user_who_is_not_active_is_401_audited_and_rotates_nothing(
+    env: _Env,
+) -> None:
+    """#2911: refused before the claim (nothing rotated or minted); the refusal is audited
+    after the write-ahead intent, like the concurrent-reuse outcome."""
+    user = uuid.uuid4()
+    m = await env.mint(user)
+    env.repo.user_statuses[str(user)] = UserStatus.DISABLED
+
+    r = env.client.post("/api/v1/auth/refresh", json={"refresh_token": m.refresh_token})
+
+    assert (r.status_code, r.json()["detail"]) == (401, "refresh_token_invalid")
+    assert "set-cookie" not in r.headers
+    assert [(e["action"], e["outcome"]) for e in env.audit.writer.events] == [
+        ("auth.session_refreshed", AuditOutcome.SUCCESS),
+        ("auth.session_refreshed", AuditOutcome.DENIED),
+    ]
+    refused = env.audit.writer.events[-1]
+    assert (refused["reason"], refused["severity"]) == ("user_not_active", Severity.WARNING)
+    assert refused["session_id"] == m.session_id
+    assert list(env.repo.sessions) == [str(m.session_id)]
+    assert env.repo.sessions[str(m.session_id)].revoked_at is None
+
+
+async def test_a_disabled_users_live_session_is_401_and_revoked_on_use(env: _Env) -> None:
+    """#2911 (`require_active`): REST answers 401; the row is revoked `user_disabled` and its
+    id published, which the hub turns into `bye user_disabled` + 4403."""
+    user = uuid.uuid4()
+    m = await env.mint(user)
+    env.repo.user_statuses[str(user)] = UserStatus.DISABLED
+
+    assert env.client.get("/api/v1/auth/session", headers=_h(m.access_token)).status_code == 401
+
+    assert env.repo.sessions[str(m.session_id)].revoked_reason == "user_disabled"
+    assert env.revoked == [(str(m.session_id), "user_disabled")]
 
 
 async def test_refresh_without_identity_is_501_and_burns_no_token() -> None:

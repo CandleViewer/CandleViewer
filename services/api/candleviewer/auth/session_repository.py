@@ -26,17 +26,23 @@ class SessionRepository(Protocol):
     """Everything `SessionService` needs from the relational tier for
     `sessions`/`sessions_rotation` (`21-database-schema.md` §3.1.4)."""
 
-    async def create_session(self, session: SessionRecord) -> SessionRecord:
+    async def create_session(self, session: SessionRecord) -> SessionRecord | None:
         """Insert a new `sessions` row. Callers always pass a fully-formed
         `SessionRecord` (id/hash/timestamps already computed) — this method
-        never generates an id or a token hash itself."""
+        never generates an id or a token hash itself. #2911: inserts nothing and
+        returns `None` unless the user is `active`, read under a lock on the
+        user's row that a disable's own lock on it waits for (and vice versa),
+        in the insert's transaction."""
         ...
 
-    async def find_by_id(self, session_id: str) -> SessionRecord | None: ...
+    async def find_by_id(self, session_id: str) -> SessionRecord | None:
+        """The row with its user's `users.status` (`user_status`, #2911)."""
+        ...
 
     async def find_by_refresh_hash(self, refresh_token_hash: str) -> SessionRecord | None:
         """Look up the *live or revoked* row for a hash — reuse detection
-        needs to find an already-`rotated` row, not just a live one."""
+        needs to find an already-`rotated` row, not just a live one. Carries
+        `user_status` like `find_by_id`."""
         ...
 
     async def find_by_access_token_jti(self, access_token_jti: str) -> SessionRecord | None:

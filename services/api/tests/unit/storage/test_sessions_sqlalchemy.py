@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from candleviewer.storage.repositories.sessions_sqlalchemy import (
     SqlAlchemySessionRepository,
     row_to_fields,
@@ -69,10 +71,12 @@ class _Relational:
     def __init__(self, rows: list[SimpleNamespace]) -> None:
         self.session = _Session(rows)
         self.commits = 0
+        self.units = 0  # transactions opened
 
     @asynccontextmanager
     async def unit_of_work(self) -> Any:
         rel = self
+        self.units += 1
 
         async def commit() -> None:
             rel.commits += 1
@@ -193,3 +197,56 @@ async def test_consume_step_up_key_is_one_conditional_update_of_the_live_unexpir
 async def test_consume_step_up_key_that_updates_no_row_returns_none() -> None:
     repo, _ = _repo([])
     assert await repo.consume_step_up_key("sid", key="once:killswitch", now=_NOW) is None
+
+
+_STATUS_READ = (
+    "(SELECT u.status::text FROM users u WHERE u.id = sessions.user_id "
+    "AND u.deleted_at IS NULL) AS user_status"
+)
+
+
+def _new_session() -> SimpleNamespace:
+    return SimpleNamespace(**row_to_fields(_row()))
+
+
+async def test_create_session_inserts_under_the_users_row_lock_in_one_transaction() -> None:
+    """#2911: the user's status is read `FOR SHARE` (which conflicts with the disable's
+    `FOR NO KEY UPDATE`) in the insert's own transaction, before the insert."""
+    repo, rel = _repo([SimpleNamespace(_mapping={"status": "active"})])
+    session = _new_session()
+
+    got = await repo.create_session(session)
+
+    (lock_sql, lock_params), (insert_sql, insert_params) = rel.session.calls
+    assert lock_sql == (
+        "SELECT status::text AS status FROM users WHERE id = CAST(:id AS uuid) "
+        "AND deleted_at IS NULL FOR SHARE"
+    )
+    assert lock_params == {"id": str(session.user_id)}
+    assert insert_sql.lstrip().startswith("INSERT INTO sessions")
+    assert insert_params["user_id"] == str(session.user_id)
+    assert (rel.units, rel.commits) == (1, 1) and got is session
+
+
+@pytest.mark.parametrize("status", ["disabled", "locked", "invited", None])
+async def test_create_session_for_a_user_who_is_not_active_inserts_nothing(
+    status: str | None,
+) -> None:
+    """`None`: no such user, or a soft-deleted one."""
+    repo, rel = _repo([] if status is None else [SimpleNamespace(_mapping={"status": status})])
+
+    assert await repo.create_session(_new_session()) is None
+    assert len(rel.session.calls) == 1 and rel.commits == 0
+
+
+async def test_reads_by_id_and_refresh_hash_carry_the_users_status_in_one_statement() -> None:
+    """#2911: `require_active` and `refresh` decide on the status read with the session row,
+    so an active user's request costs no extra round trip."""
+    repo, rel = _repo([_row(user_status="disabled")])
+
+    by_id = await repo.find_by_id("sid")
+    by_hash = await repo.find_by_refresh_hash("h")
+
+    assert [_STATUS_READ in sql for sql, _ in rel.session.calls] == [True, True]
+    assert by_id["user_status"] == by_hash["user_status"] == "disabled"
+    assert rel.units == 2

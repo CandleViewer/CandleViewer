@@ -32,6 +32,7 @@ from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import SessionNotFound, SessionRevoked
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.hashing import Hasher
+from candleviewer.auth.models import UserStatus
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import StepUpService
@@ -207,3 +208,32 @@ def test_disable_user_drill_is_idempotent(env: Any) -> None:
     env.run(env.sessions.mint, user)
     env.run(env.disable, user)
     assert env.run(env.disable, user) == 0
+
+
+def test_disable_user_drill_stray_session_is_refused_and_its_socket_closed_4403(env: Any) -> None:
+    """#2911: a live session of a disabled user that no disable revoked (one minted after the
+    sweep, before mints read `users.status`) is refused on its next use: REST answers 401 and
+    its socket ends `bye user_disabled` + 4403, never the 4401 re-auth close."""
+    auth: Any = env.app.state.app_context.auth
+    auth._sessions = SessionService(  # as the composition root wires it, with the hub's sink
+        env.repo,
+        Hasher(pepper=os.urandom(16).hex()),
+        clock=env.clock,
+        publish_revocation=app_module._hub_publisher(env.hub),
+    )
+    user = str(uuid.uuid4())
+    stray = env.run(auth.sessions.mint, user)
+
+    with env.client.websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+        assert _auth_ws(ws, stray.access_token)["t"] == "auth_ok"
+        env.repo.user_statuses[user] = UserStatus.DISABLED  # disabled; this session was not swept
+        bearer = {"Authorization": f"Bearer {stray.access_token}"}
+        assert env.client.get("/auth/session", headers=bearer).status_code == 401
+
+        bye = _recv(ws)
+        assert (bye["t"], bye["p"]["reason"], bye["p"]["code"]) == ("bye", "user_disabled", 4403)
+        with pytest.raises(WebSocketDisconnect) as close:
+            _recv(ws)
+        assert close.value.code == CLOSE_USER_DISABLED
+    assert env.repo.sessions[str(stray.session_id)].revoked_reason == "user_disabled"
+    assert env.run(env.repo.find_live_by_user, user) == ()

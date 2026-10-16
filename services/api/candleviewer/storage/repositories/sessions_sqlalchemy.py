@@ -10,7 +10,9 @@ what makes `SessionService.refresh()`'s claim-by-revoke race-free and keeps
 the first revocation reason immutable (INV-B16-d). The step-up columns are
 written only from a read taken under the row lock (`update_step_up_state`)
 or by one conditional statement (`consume_step_up_key`), never from a stale
-copy of the row (#2304).
+copy of the row (#2304). A session is inserted only for an `active` user, read
+under the user-row lock in the insert's transaction, and the reads by id and by
+refresh hash carry the user's status (#2911).
 """
 
 from __future__ import annotations
@@ -39,6 +41,14 @@ _COLUMNS = (
     "step_up_failures, readonly_until"
 )
 
+# #2911: the user row's status, read `FOR SHARE` in the insert's own transaction. It conflicts
+# with the disable's `FOR NO KEY UPDATE` (`owner_floor_sqlalchemy.LOCK_USER`), so a mint and a
+# disable queue on the user row, user row first as in the disable: an insert that commits first
+# is revoked by the disable's session revoke, and one that waits reads `disabled` and is refused.
+_LOCK_USER_SQL = sa.text(
+    "SELECT status::text AS status FROM users WHERE id = CAST(:id AS uuid) "
+    "AND deleted_at IS NULL FOR SHARE"
+)
 _INSERT_SQL = sa.text("""
     INSERT INTO sessions (id, user_id, refresh_token_hash, access_token_jti, issued_at,
         last_seen_at, expires_at, revoked_at, revoked_reason, ip, user_agent, device_label,
@@ -50,13 +60,21 @@ _INSERT_SQL = sa.text("""
     """)
 
 
+# #2911: the owner's status in the same statement as the row (a `users_pkey` probe, no extra
+# round trip); NULL when the user row is gone.
+_USER_STATUS = (
+    "(SELECT u.status::text FROM users u WHERE u.id = sessions.user_id "
+    "AND u.deleted_at IS NULL) AS user_status"
+)
+
+
 def _sql(template: str) -> sa.TextClause:
-    """Expand the static column-list placeholder (never caller data) into a statement."""
-    return sa.text(template.replace("@COLS@", _COLUMNS))
+    """Expand the static placeholders (never caller data) into a statement."""
+    return sa.text(template.replace("@COLS@", _COLUMNS).replace("@STATUS@", _USER_STATUS))
 
 
-_BY_ID_SQL = _sql("SELECT @COLS@ FROM sessions WHERE id = CAST(:id AS uuid)")
-_BY_HASH_SQL = _sql("SELECT @COLS@ FROM sessions WHERE refresh_token_hash = :h")
+_BY_ID_SQL = _sql("SELECT @COLS@, @STATUS@ FROM sessions WHERE id = CAST(:id AS uuid)")
+_BY_HASH_SQL = _sql("SELECT @COLS@, @STATUS@ FROM sessions WHERE refresh_token_hash = :h")
 _BY_JTI_SQL = _sql("SELECT @COLS@ FROM sessions WHERE access_token_jti = CAST(:j AS uuid)")
 _LIVE_BY_USER_SQL = _sql(
     "SELECT @COLS@ FROM sessions WHERE user_id = CAST(:u AS uuid) "
@@ -146,6 +164,7 @@ def row_to_fields(row: Any) -> dict[str, Any]:
         step_up_elevations=_elevations(m["step_up_elevations"]),
         step_up_failures=m["step_up_failures"],
         readonly_until=m["readonly_until"],
+        user_status=m.get("user_status"),
     )
 
 
@@ -159,7 +178,11 @@ class SqlAlchemySessionRepository:
         self._make = record_factory
 
     async def create_session(self, session: Any) -> Any:
+        """Insert *session*, or nothing and `None` unless its user is `active` (#2911)."""
         async with self._relational.unit_of_work() as uow:
+            user = (await uow.session.execute(_LOCK_USER_SQL, {"id": str(session.user_id)})).first()
+            if user is None or user._mapping["status"] != "active":
+                return None  # rolled back: the lock goes, nothing was written
             await uow.session.execute(
                 _INSERT_SQL,
                 {

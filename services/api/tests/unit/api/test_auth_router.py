@@ -19,6 +19,7 @@ from candleviewer.auth.errors import (
     InvalidCredentials,
     MfaChallengeInvalid,
     RecoveryCodesExhausted,
+    UserNotActive,
 )
 from candleviewer.auth.models import (
     LoginRequest,
@@ -437,3 +438,60 @@ def test_mfa_verify_with_session_backend_mints_session_and_sets_cookie() -> None
         "auth.mfa_verified",
         "auth.session_created",
     ]
+
+
+class _RefusingMinter(_FakeMinter):
+    """#2911: the user was disabled after the password step, so the mint is refused."""
+
+    async def mint(
+        self, user_id: str, *, ip: str | None = None, user_agent: str | None = None
+    ) -> MintedSession:
+        self.minted_for.append(user_id)
+        raise UserNotActive("disabled")
+
+
+class _KwargsAuditWriter:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def emit(self, action: str, **kwargs: object) -> None:
+        self.calls.append({"action": action, **kwargs})
+
+
+class _KwargsAuditService:
+    is_active = True
+
+    def __init__(self) -> None:
+        self.writer = _KwargsAuditWriter()
+
+
+def test_mfa_verify_for_a_user_who_is_not_active_mints_nothing_and_audits_the_refusal() -> None:
+    """#2911: a correct second factor for a user disabled since the password step gets the
+    operation's 401 and no session; the refusal is audited like login's disabled refusal."""
+    uid = uuid.uuid4()
+    auth = _MintingAuthService(MfaVerifiedResult(user_id=uid))
+    auth.minter = _RefusingMinter()
+    audit_service = _KwargsAuditService()
+    app = FastAPI()
+    app.include_router(
+        make_auth_router(
+            auth,
+            audit_service=audit_service,
+            identity=_FakeIdentity(),
+            csrf=_CSRF_CODEC,
+        )
+    )
+
+    response = TestClient(app).post(
+        "/auth/mfa/verify", json={"mfa_token": "tok", "method": "totp", "code": "123456"}
+    )
+
+    assert (response.status_code, response.json()["detail"]) == (401, "account is not active")
+    assert "set-cookie" not in response.headers
+    assert auth.minter.minted_for == [str(uid)]
+    calls = audit_service.writer.calls
+    assert [(c["action"], c["outcome"]) for c in calls] == [
+        ("auth.mfa_verified", AuditOutcome.SUCCESS),
+        ("auth.login_failed", AuditOutcome.DENIED),
+    ]
+    assert (calls[-1]["reason"], calls[-1]["actor_user_id"]) == ("user_not_active", uid)

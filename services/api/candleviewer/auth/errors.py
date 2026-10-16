@@ -119,6 +119,18 @@ class SessionIdleLocked(AuthError):
     the client believes, without tearing the session down."""
 
 
+class UserNotActive(AuthError):
+    """#2911 (SR-029): no session is minted or rotated for a user who is not `active`
+    (disabled, locked or invited, or whose row is gone). `mint()` raises it when the insert is
+    refused under the user-row lock, `refresh()` before its claim and when that mint is refused.
+    `status` is the `users.status` read, `None` when unknown or gone. The HTTP edge answers the
+    operation's 401 and audits the refusal."""
+
+    def __init__(self, status: str | None) -> None:
+        super().__init__(f"user is not active: {status or 'unknown'}")
+        self.status = status
+
+
 class UnlockPasswordInvalid(AuthError):
     """`unlock()` was called with a password that failed verification. Kept
     distinct from `SessionRevoked` (a wrong password does not, by itself,
