@@ -24,6 +24,7 @@ from pydantic import (
     AwareDatetime,
     BaseModel,
     ConfigDict,
+    FailFast,
     Field,
     StrictBool,
     StrictFloat,
@@ -242,20 +243,26 @@ class DrawingGeometryIn(BaseModel):
     """Tool-independent geometry shape. Per-tool rules need the tool, so ``DrawingIn`` applies them.
 
     ``points`` deliberately has no Field bounds: the 1..500 cap is the per-tool ``POINT_COUNTS``
-    check so every count violation reports the same ``tool_point_count`` rule.
+    check so every count violation reports the same ``tool_point_count`` rule. The sequences are
+    ``FailFast``: validation stops at the first bad item, so a 1 MiB body of bad items yields a
+    handful of errors instead of one (or two) per item (#357 review: error amplification).
     """
 
     model_config = _CFG
-    points: tuple[DrawingPointIn, ...]
+    points: Annotated[tuple[DrawingPointIn, ...], FailFast()]
     extend_left: StrictBool | None = None
     extend_right: StrictBool | None = None
     levels: (
-        tuple[
-            Annotated[StrictFloat | StrictInt, Field(ge=-1000, le=1000, allow_inf_nan=False)], ...
+        Annotated[
+            tuple[
+                Annotated[StrictFloat | StrictInt, Field(ge=-1000, le=1000, allow_inf_nan=False)],
+                ...,
+            ],
+            FailFast(),
         ]
         | None
     ) = None
-    bands: tuple[Annotated[StrictInt, Field(ge=1, le=3)], ...] | None = None
+    bands: Annotated[tuple[Annotated[StrictInt, Field(ge=1, le=3)], ...], FailFast()] | None = None
     text: StrictStr | None = None
 
     _none_guard = field_validator(
