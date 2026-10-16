@@ -821,7 +821,7 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_PARQUET_ROOT`                | path   | `/data/parquet`           | process |                                                                                                                     |
 | `CV_KEK_SOURCE`                  | enum   | `handle`                  | process | `handle` \| `file` (dev/ci; fatal in live) \| `none`; `host-keychain` = deprecated alias                            |
 | `CV_KEK_HANDLE`                  | path   | `/run/secrets/cv_kek`     | process | read-once 32-byte KEK handle (E27-T02); never an env value                                                          |
-| `CV_KEK_VERSION`                 | int    | `1`                       | process | version of the supplied KEK; KCV-checked against `kek_versions`                                                     |
+| `CV_KEK_VERSION`                 | int    | `1`                       | process | version of the supplied KEK in this `CV_ENV`'s lineage; KCV-checked against `kek_versions (env, version)` (#2338)   |
 | `CV_KEK_PREV_HANDLE`             | path   | unset                     | process | previous KEK, only during a rotation window                                                                         |
 | `CV_KEK_ACK_PATH`                | path   | unset                     | process | handoff nonce-ack file (separate writable path)                                                                     |
 | `CV_DEK_CACHE_TTL_S`             | float  | `300`                     | process | unwrapped-DEK cache TTL, 0-300                                                                                      |

@@ -32,6 +32,7 @@ from sqlalchemy import (
     Integer,
     MetaData,
     Numeric,
+    PrimaryKeyConstraint,
     SmallInteger,
     Table,
     Text,
@@ -1429,13 +1430,16 @@ api_key_rotations = Table(
 )
 
 #: `kek_versions` (E27-T02, revision 0020_kek_versions): non-secret KEK key-check values.
+#: 0026_kek_versions_env (#2338): one lineage per environment, keyed (env, version).
 kek_versions = Table(
     "kek_versions",
     metadata,
-    Column("version", Integer, primary_key=True, autoincrement=False),
+    Column("version", Integer, autoincrement=False),
     Column("kcv", BYTEA, nullable=False),
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("retired_at", TIMESTAMP(timezone=True)),
+    Column("env", exchange_env, nullable=False),
+    PrimaryKeyConstraint("env", "version", name="kek_versions_pkey"),
     CheckConstraint("version >= 1", name="kv_version_pos"),
     CheckConstraint("octet_length(kcv) = 8", name="kv_kcv_len"),
     UniqueConstraint("kcv", name="kv_kcv_unique"),

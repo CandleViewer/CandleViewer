@@ -36,8 +36,11 @@ def test_models_mirror_kek_versions_sql() -> None:
     from candleviewer.db import models
 
     t = models.kek_versions
-    assert [c.name for c in t.columns] == ["version", "kcv", "created_at", "retired_at"]
+    assert [c.name for c in t.columns] == ["version", "kcv", "created_at", "retired_at", "env"]
     assert t.c.kcv.nullable is False and t.c.retired_at.nullable is True
+    # 0026_kek_versions_env (#2338): `env` names every row's lineage and leads the primary key.
+    assert t.c.env.nullable is False and t.c.env.server_default is None
+    assert [c.name for c in t.primary_key.columns] == ["env", "version"]
     names = {str(c.name) for c in t.constraints}
     # CHECK names get the metadata naming-convention prefix (`ck_<table>_`).
     assert {

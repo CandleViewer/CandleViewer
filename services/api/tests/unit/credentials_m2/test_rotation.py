@@ -17,6 +17,7 @@ from candleviewer.secrets.store import InMemoryCredentialStore
 from tests.unit.credentials_m2._helpers import _borrow, _store
 from tests.unit.credentials_m2._vectors import (
     ACCOUNT,
+    KEK_LIVE,
     KEK_V1,
     KEK_V2,
     SNAPSHOT,
@@ -102,7 +103,7 @@ async def test_rewrap_all_requires_both_keks() -> None:
 
 async def test_rewrap_bad_rows_reported_and_audited() -> None:
     s, metas, _ = await _seed(3)
-    s.rows[metas[1].key_id]["dek_ref"] = "v1:" + bytes(40).hex()
+    s.rows[metas[1].key_id]["dek_ref"] = "v2:" + bytes(40).hex()
     audit = AuditLog()
     rep = await _rot(s, audit).rewrap_all(2, batch=1)
     assert rep.rewrapped == 2 and rep.failed == (metas[1].key_id,) and rep.remaining == 1
@@ -151,7 +152,7 @@ async def test_rewrap_skips_row_moved_or_vanished() -> None:
 async def test_kcv_recorded_when_no_rows_at_version(store: Any) -> None:
     b = CredentialBroker(store, AuditLog(), kek())
     await b.verify_kcv(kek(), store, must_exist=False)
-    assert store.kcvs[1] == kek().kcv()
+    assert store.kcvs[("demo", 1)] == kek().kcv()
     await b.verify_kcv(kek(), store, must_exist=False)  # matches now
 
 
@@ -163,11 +164,11 @@ async def test_kcv_wrong_kek_not_pinned_when_rows_exist() -> None:
     assert ei.value.reason == "kek_mismatch" and s.kcvs == {}
     right = kek(KEK_V1, 1)
     await CredentialBroker(s, AuditLog(), right).verify_kcv(right, s, must_exist=False)
-    assert s.kcvs[1] == right.kcv()
+    assert s.kcvs[("demo", 1)] == right.kcv()
 
 
 async def test_kcv_mismatch_and_prev_must_exist(store: Any) -> None:
-    store.kcvs[1] = kek(KEK_V2).kcv()
+    store.kcvs[("demo", 1)] = kek(KEK_V2).kcv()
     with pytest.raises(KekLoadError):
         await CredentialBroker(store, AuditLog(), kek()).verify_kcv(kek(), store, must_exist=False)
     with pytest.raises(KekLoadError):
@@ -188,8 +189,8 @@ async def test_kcv_trial_unwrap_row_vanished() -> None:
 
 
 async def test_kcv_concurrent_record_returns_winner(store: Any) -> None:
-    store.kcvs[1] = kek(KEK_V2).kcv()
-    assert await store.record_kcv(1, kek().kcv()) == kek(KEK_V2).kcv()
+    store.kcvs[("demo", 1)] = kek(KEK_V2).kcv()
+    assert await store.record_kcv("demo", 1, kek().kcv()) == kek(KEK_V2).kcv()
 
 
 async def test_rewrap_refuses_reused_kek() -> None:
@@ -233,7 +234,7 @@ async def test_rotation_ignores_other_environment_rows() -> None:
     """C-2.11: on a shared DB a demo rotation neither counts nor touches live rows, so `left`
     reaches 0 and the run is `kek_rotated`; the KCV trial unwrap never picks a live row."""
     s, metas, _ = await _seed(2)  # demo rows
-    live = CredentialBroker(s, AuditLog(), kek(KEK_V1, 1), env_name="live")
+    live = CredentialBroker(s, AuditLog(), kek(KEK_LIVE, 1, "live"), env_name="live")
     lm = await live.store("live", ACCOUNT, "l", Secret("LIVEKEY00000ABCD"), Secret("s"), SNAPSHOT)
     audit = AuditLog()
     rep = await _rot(s, audit).rewrap_all(2)

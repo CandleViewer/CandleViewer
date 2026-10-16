@@ -73,8 +73,8 @@ async def test_broker_each_encryption_gets_fresh_nonce(
 #: Regression pin (not a KAT): sha256 of dek_ref ‖ key_id_enc ‖ secret_enc for the fixed
 #: inputs below. A change to the layout, AAD or field order changes it — and would make every
 #: stored row undecryptable, so it must never change silently. Independent AES-GCM KAT:
-#: `test_sealed_layout_golden_vector`.
-GOLDEN_ROW_SHA256 = "51c619e0b2d30074200766e4e7420b869a810f165c8e4444de97e529a02d2ad6"
+#: `test_sealed_layout_golden_vector`. Re-pinned by #2338 (wrap `v2:`, AAD binds the env).
+GOLDEN_ROW_SHA256 = "6d542f46e4606c306fc07132c52918e871f332c37e1063ac912f41bd162cfd79"
 
 
 async def test_stored_row_golden_vector(monkeypatch: pytest.MonkeyPatch, store: Any) -> None:
@@ -106,7 +106,7 @@ async def test_broker_tampered_field_is_rejected(
     if field == "dek_ref":
         raw = bytearray(bytes.fromhex(row[field][3:]))
         raw[pos] ^= 1
-        row[field] = "v1:" + raw.hex()
+        row[field] = "v2:" + raw.hex()
     else:
         b = bytearray(row[field])
         b[pos % len(b)] ^= 1
@@ -232,6 +232,6 @@ async def test_dek_of_wrong_length_is_refused(broker: CredentialBroker, store: A
     row = store.rows[meta.key_id]
     kek_ = broker._require_kek()
     short = bytearray(16)
-    row["dek_ref"] = "v1:" + env_.seal(kek_._key, short, env_.dek_aad(row["id"], 1)).hex()
+    row["dek_ref"] = "v2:" + env_.seal(kek_._key, short, env_.dek_aad("demo", row["id"], 1)).hex()
     with pytest.raises(CredentialUnavailable):
         await _borrow(broker, meta.key_id)

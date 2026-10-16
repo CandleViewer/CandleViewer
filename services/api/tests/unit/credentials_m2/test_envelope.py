@@ -19,13 +19,17 @@ def test_envelope_nonce_unique_across_1e5() -> None:
 def test_aad_encoding_golden() -> None:
     cid = UUID("00000000-0000-4000-8000-0000000000aa")
     assert env.aad(b"ab", b"") == b"\x00\x02ab\x00\x00"
-    assert env.dek_aad(cid, 7) == (b"\x00\x09cv-dek-v1\x00\x10" + cid.bytes + b"\x00\x017")
+    assert env.dek_aad("live", cid, 7) == (
+        b"\x00\x09cv-dek-v2" + b"\x00\x04live" + b"\x00\x10" + cid.bytes + b"\x00\x017"
+    )
     assert env.cred_aad("demo", ACCOUNT, cid, "secret") == (
         b"\x00\x0acv-cred-v2" + b"\x00\x04demo" + b"\x00\x10" + ACCOUNT.bytes
         + b"\x00\x10" + cid.bytes + b"\x00\x06secret"
     )  # fmt: skip
     with pytest.raises(ValueError):
         env.cred_aad("prod", ACCOUNT, cid, "secret")
+    with pytest.raises(ValueError):
+        env.dek_aad("prod", cid, 7)
     # 0x7C ('|') inside a UUID cannot alias a boundary any more
     assert env.aad(b"a|", b"b") != env.aad(b"a", b"|b")
 

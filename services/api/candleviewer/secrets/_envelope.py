@@ -5,7 +5,9 @@ One storage layout for every sealed field: ``nonce(12) || ciphertext || tag(16)`
 encryption and never reused. AADs are length-prefixed (u16 big-endian per part) so no
 concatenation is ambiguous:
 - data layer (SR-003): ``cv-cred-v2 | environment | account_id | credential_id | field``
-- wrap layer: ``cv-dek-v1 | credential_id | kek_version``
+- wrap layer (#2338): ``cv-dek-v2 | environment | credential_id | kek_version``; the environment
+  is the one the KEK was loaded for, so a KEK never opens another environment's wrap. The
+  environment-free ``cv-dek-v1`` wrap is refused, never opened.
 
 SR-003 `key_version`: there is no separate key-version column — every exchange key rotation
 inserts a new `api_keys` row (`api_key_rotations` links old→new), so `credential_id` already
@@ -48,8 +50,10 @@ def cred_aad(env: str, account_id: UUID, credential_id: UUID, field: str) -> byt
     return aad(b"cv-cred-v2", env.encode(), account_id.bytes, credential_id.bytes, field.encode())
 
 
-def dek_aad(credential_id: UUID, kek_version: int) -> bytes:
-    return aad(b"cv-dek-v1", credential_id.bytes, str(kek_version).encode())
+def dek_aad(env: str, credential_id: UUID, kek_version: int) -> bytes:
+    if env not in ENVIRONMENTS:
+        raise ValueError("unknown environment")
+    return aad(b"cv-dek-v2", env.encode(), credential_id.bytes, str(kek_version).encode())
 
 
 def seal(key: bytes | bytearray, plaintext: bytes | bytearray, aad_: bytes) -> bytes:

@@ -53,7 +53,13 @@ def sources_from_settings(settings: Settings) -> KekSources:
         return KekSources(NoKekSource(), None, None)
 
     def src(path: str, version: int) -> PathKekSource:
-        return PathKekSource(Path(path), version, allow_fifo=kind == "handle", live=live)
+        return PathKekSource(
+            Path(path),
+            version,
+            allow_fifo=kind == "handle",
+            env_name=settings.environment.value,
+            live=live,
+        )
 
     prev = settings.kek_prev_handle
     ack = settings.kek_ack_path if kind == "handle" else None

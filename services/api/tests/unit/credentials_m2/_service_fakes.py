@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -28,11 +29,13 @@ def _settings(**kw: Any) -> Settings:
 
 
 class _Src:
-    """Fake source; records every LoadedKek it hands out so tests can assert zeroing."""
+    """Fake source; records every LoadedKek it hands out so tests can assert zeroing.
+    `_bound_sources` binds it to the process environment, as `sources_from_settings` does."""
 
     def __init__(self, raw: bytes | None, version: int, *, exc: BaseException | None = None,
                  fifo: bool = False, gate: threading.Event | None = None) -> None:  # fmt: skip
         self.raw, self.version, self.exc, self.fifo, self.gate = raw, version, exc, fifo, gate
+        self.env = "demo"
         self.handed: list[LoadedKek] = []
 
     def load(self) -> LoadedKek:
@@ -42,13 +45,26 @@ class _Src:
             raise self.exc
         if self.raw is None:
             raise KekLoadError("kek_unavailable")
-        k = LoadedKek(bytearray(self.raw), self.version, is_fifo=self.fifo)
+        k = LoadedKek(bytearray(self.raw), self.version, env_name=self.env, is_fifo=self.fifo)
         self.handed.append(k)
         return k
 
 
 def _zeroed(src: _Src) -> bool:
     return bool(src.handed) and all(k._key == bytearray(32) for k in src.handed)
+
+
+def _bound_sources(
+    cur: _Src, prev: _Src | None = None, ack: Path | None = None
+) -> Callable[[Settings], KekSources]:
+    """The `sources` seam: each fake source loads for the process environment (#2338)."""
+
+    def sources(settings: Settings) -> KekSources:
+        for src in filter(None, (cur, prev)):
+            src.env = settings.environment.value
+        return KekSources(cur, prev, ack)
+
+    return sources
 
 
 def _ctx(**kw: Any) -> Any:
@@ -67,9 +83,8 @@ def _svc(
 ) -> SecretsService:
     st = store if store is not None else InMemoryCredentialStore()
     return SecretsService(
-        store=st, kcv_store=st, audit=audit or AuditLog(),
-        sources=lambda s: KekSources(cur, prev, ack), harden=lambda: hardened,
-        load_timeout_s=timeout,
+        store=st, kcv_store=st, audit=audit or AuditLog(), sources=_bound_sources(cur, prev, ack),
+        harden=lambda: hardened, load_timeout_s=timeout,
     )  # fmt: skip
 
 

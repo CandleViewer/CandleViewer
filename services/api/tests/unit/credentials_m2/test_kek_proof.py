@@ -4,6 +4,7 @@
 nonce-ack, version policy) but refuses a KEK whose KCV is not already in `kek_versions`, in every
 environment. It audits, latches and publishes nothing, and zeroes every KEK it loaded. Hardening
 is always faked here: the real one must not leak into the pytest process (test_kek_harden.py).
+The fake sources load for the process environment, and the lineage is per environment (#2338).
 """
 
 from __future__ import annotations
@@ -16,11 +17,19 @@ from typing import Any
 import pytest
 
 from candleviewer.secrets import KekCheckResult, prove_kek_possession
-from candleviewer.secrets._source import KekSources
 from candleviewer.secrets.store import InMemoryCredentialStore
 from candleviewer.settings import Environment
-from tests.unit.credentials_m2._service_fakes import KEK_V3, _boot, _settings, _Src, _zeroed
-from tests.unit.credentials_m2._vectors import KEK_V1, KEK_V2
+from tests.unit.credentials_m2._service_fakes import (
+    KEK_V3,
+    _boot,
+    _bound_sources,
+    _ctx,
+    _settings,
+    _Src,
+    _svc,
+    _zeroed,
+)
+from tests.unit.credentials_m2._vectors import KEK_LIVE, KEK_V1, KEK_V2
 
 
 async def _prove(
@@ -32,9 +41,8 @@ async def _prove(
     **settings: Any,
 ) -> KekCheckResult:
     return await prove_kek_possession(
-        _settings(**settings), store,
-        sources=lambda s: KekSources(cur, prev, None), harden=lambda: hardened,
-    )  # fmt: skip
+        _settings(**settings), store, sources=_bound_sources(cur, prev), harden=lambda: hardened
+    )
 
 
 async def _enrolled_v1() -> InMemoryCredentialStore:
@@ -63,20 +71,20 @@ async def test_proof_never_enrols_unknown_kek() -> None:
     store = await _enrolled_v1()
     res = await _prove(store, _Src(KEK_V2, 2), _Src(KEK_V1, 1))
     assert res == KekCheckResult(None, False, "kek_not_enrolled")
-    assert set(store.kcvs) == {1}
+    assert set(store.kcvs) == {("demo", 1)}
 
 
 @pytest.mark.parametrize(
     ("raw", "retired", "environment", "reason"),
     [
         (KEK_V2, set(), Environment.DEMO, "kek_mismatch"),
-        (KEK_V1, {1}, Environment.DEMO, "kek_retired"),
+        (KEK_V1, {("demo", 1)}, Environment.DEMO, "kek_retired"),
         (KEK_V1, set(), Environment.LIVE, "kek_source_not_permitted"),
     ],
     ids=["mismatch", "retired", "live_file"],
 )
 async def test_proof_refuses_mismatch_retired_live_file(
-    tmp_path: Path, raw: bytes, retired: set[int], environment: Environment, reason: str
+    tmp_path: Path, raw: bytes, retired: set[tuple[str, int]], environment: Environment, reason: str
 ) -> None:
     """Real settings → sources → file loader; `file` in live is refused before any read (the
     Settings validator is bypassed with `model_copy`, as `validate_kek_settings` is the check)."""
@@ -130,6 +138,52 @@ async def test_proof_checks_and_zeroes_the_previous_kek() -> None:
     assert res == KekCheckResult(None, False, "kek_mismatch")
     assert _zeroed(cur) and _zeroed(wrong_prev)
     assert await _prove(store, _Src(KEK_V2, 2), _Src(KEK_V1, 1)) == KekCheckResult(2, True, None)
+
+
+_LIVE: dict[str, Any] = {"environment": Environment.LIVE, "kek_source": "none"}
+
+
+async def _demo_at_v2(*, live_v1: bool) -> InMemoryCredentialStore:
+    """Demo rotated to v2 (v1 still enrolled); `live_v1` adds the live lineage's v1 (#2338)."""
+    store = await _enrolled_v1()
+    await _boot(store, _Src(KEK_V2, 2), _Src(KEK_V1, 1))
+    if live_v1:
+        await _svc(_Src(KEK_LIVE, 1), store=store).start(_ctx(**_LIVE))
+    return store
+
+
+@pytest.mark.parametrize(
+    ("live_v1", "result"),
+    [
+        (True, KekCheckResult(1, True, None)),
+        (False, KekCheckResult(None, False, "kek_not_enrolled")),
+    ],
+    ids=["enrolled", "not_enrolled"],
+)
+async def test_proof_reads_only_its_environment_lineage(
+    live_v1: bool, result: KekCheckResult
+) -> None:
+    """Demo's v2 never counts in live: live's own v1 proves, and with no live row the live KEK
+    is `kek_not_enrolled` (one global lineage gives `kek_version_out_of_sequence` both times)."""
+    store = await _demo_at_v2(live_v1=live_v1)
+    before = dict(store.kcvs)
+    src = _Src(KEK_LIVE, 1)
+    assert await _prove(store, src, **_LIVE) == result
+    assert store.kcvs == before and _zeroed(src)
+
+
+@pytest.mark.parametrize(
+    ("raw", "settings"),
+    [(KEK_V1, _LIVE), (KEK_LIVE, {})],
+    ids=["demo_kek_in_live", "live_kek_in_demo"],
+)
+async def test_proof_refuses_another_environments_kek(raw: bytes, settings: dict[str, Any]) -> None:
+    """As at boot (AC-02): a KEK enrolled for another environment is `kek_reused`, never proven."""
+    store = await _demo_at_v2(live_v1=True)
+    before = dict(store.kcvs)
+    src = _Src(raw, 1)
+    assert await _prove(store, src, **settings) == KekCheckResult(None, False, "kek_reused")
+    assert store.kcvs == before and _zeroed(src)
 
 
 async def test_proof_live_fifo_without_handoff_nonce_is_refused() -> None:
