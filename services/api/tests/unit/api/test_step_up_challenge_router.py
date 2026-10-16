@@ -57,7 +57,7 @@ from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
-_KEY = "5f0c6b1e-2d3a-4c4b-9e8f-7a6b5c4d3e2f"  # the held request's Idempotency-Key
+_IDEM = str(uuid.UUID(int=0x5F0C6B1E2D3A4C4B9E8F7A6B5C4D3E2F))  # the held request's Idempotency-Key
 _RELEASE = {"engaged": False, "scope": "global"}
 
 
@@ -84,7 +84,7 @@ class _World:
     executed: list[dict[str, Any]]
 
     def h(self, who: str = "tok") -> dict[str, str]:
-        return {"Authorization": f"Bearer {who}", "Idempotency-Key": _KEY}
+        return {"Authorization": f"Bearer {who}", "Idempotency-Key": _IDEM}
 
     # Starlette types `TestClient` against `httpx2`, which is not installed, so mypy sees `Any`;
     # the runtime object is an `httpx.Response`, which the typed locals below state.
