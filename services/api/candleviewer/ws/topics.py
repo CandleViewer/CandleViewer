@@ -27,6 +27,8 @@ _DECIMAL_RE: Final = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
 _PARAM_RE: Final = re.compile(r"^[A-Za-z0-9:]{1,24}$")
 _SEGMENT_RE: Final = re.compile(r"^[A-Za-z0-9:_]+$")
 TOPIC_MAX_LEN: Final = 120
+#: §13 `common.schema.json#/$defs/topic`: the shape of a topic name, before it is looked up (§6).
+TOPIC_NAME_RE: Final = re.compile(r"^[a-z_]+(\.[A-Za-z0-9:_-]+)*$")
 MIN_THROTTLE_MS: Final = 50
 DEPTHS: Final = frozenset({1, 50, 200, 500})
 BAR_TYPES: Final = frozenset(
@@ -44,6 +46,15 @@ SCOPE_OPTIONS: Final = frozenset({"exchange_account_ids", "symbols", "rule_ids"}
 
 Segment = Literal["symbol", "depth", "bar_type", "param", "profile_kind"]
 OptKind = Literal["int", "number", "bool", "enum", "decimal", "uuids", "symbols", "strings", "str"]
+
+
+def is_topic_name(ch: Any) -> bool:
+    """`ch` has the §13 topic shape; it may still name no topic in the catalogue (§6)."""
+    return (
+        isinstance(ch, str)
+        and 0 < len(ch) <= TOPIC_MAX_LEN
+        and TOPIC_NAME_RE.fullmatch(ch) is not None
+    )
 
 
 class TopicError(Exception):

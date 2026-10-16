@@ -127,7 +127,7 @@ def _run_sub(conn: ConnectionAuthz, entry: Any) -> dict[str, Any]:
     async def send(f: dict[str, Any]) -> None:
         sent.append(f)
 
-    asyncio.run(handle_sub(conn, {"id": "x", "p": {"topics": [entry, 7]}}, send))
+    asyncio.run(handle_sub(conn, {"id": "x", "p": {"topics": [entry]}}, send))
     result: dict[str, Any] = sent[0]["p"]["results"][0]
     return result
 

@@ -70,34 +70,44 @@ def test_s1_every_topic_failing_still_yields_one_result_each() -> None:
         assert not any(r["ok"] for r in results)
 
 
-@pytest.mark.xfail(
-    strict=True, reason="#2396: sub_ok echoes a malformed topic name in results[].ch"
+# F2, F4, F6 (#2396, #2399): a `sub` whose shape breaks §13.5 is refused whole, with one
+# `err invalid_options` naming the field and no `sub_ok` (orchestrator contract decision,
+# 2026-10-15; §5.2). One result per requested topic applies to topics, not to entries that are not.
+
+
+@pytest.mark.parametrize(
+    ("entry", "field"),
+    [
+        ("Bad Topic", "topics[0]"),  # the string form of the #2396 repro
+        ({"ch": "Bad Topic"}, "topics[0].ch"),
+        ("t" * 130, "topics[0]"),  # past the 120-character topic bound
+    ],
 )
-def test_s1_xfail_f2_sub_ok_never_echoes_a_malformed_topic_name() -> None:
+def test_s1_f2_a_malformed_topic_name_is_never_echoed(entry: Any, field: str) -> None:
     with connect(World()) as c:
-        c.sub("Bad Topic", conform=False)  # the reply is validated against common#/$defs/topic
+        c.send({"t": "sub", "id": "z", "p": {"topics": [entry]}}, conform=False)
+        f = c.recv()  # validated: an `err`, so no `results[].ch` echoes the name
+        assert (f["t"], f["id"], f["p"]["code"], f["p"]["field"]) == (
+            "err",
+            "z",
+            "invalid_options",
+            field,
+        )
 
 
-@pytest.mark.xfail(strict=True, reason="#2399: non-string topic entries are dropped, not answered")
-def test_s1_xfail_f4_every_requested_topic_gets_a_result_even_if_not_a_string() -> None:
-    """Contract (§5.2 + S1): either one result per requested entry (4 here, `null` included) or a
-    whole-frame `err frame_malformed` rejecting the request. Silently answering fewer is neither."""
+def test_s1_f4_a_non_topic_entry_refuses_the_whole_sub() -> None:
     with connect(World()) as c:
         bad: list[Any] = [123, {"opts": {}}, None, {"ch": "ticker.BTCUSDT"}]
         c.send({"t": "sub", "id": "z", "p": {"topics": bad}}, conform=False)
-        f = c.recv(validate=False)
-        if f["t"] == "err":
-            assert f["p"]["code"] == "frame_malformed"
-        else:
-            assert len(f["p"]["results"]) == len(bad)
-
-
-@pytest.mark.xfail(strict=True, reason="#2399: unknown keys in sub.p are accepted and ignored")
-def test_s1_xfail_f6_unknown_key_in_sub_payload_is_rejected() -> None:
-    with connect(World()) as c:
-        c.send(
-            {"t": "sub", "id": "z", "p": {"topics": [{"ch": "trades.BTCUSDT"}], "bogus": 1}},
-            conform=False,
-        )
         f = c.recv()
-        assert f["t"] == "err" or not any(r["ok"] for r in f["p"]["results"])
+        assert (f["t"], f["p"]["code"], f["p"]["field"]) == ("err", "invalid_options", "topics[0]")
+
+
+def test_s1_f6_unknown_key_in_sub_payload_refuses_it_without_a_strike() -> None:
+    with connect(World()) as c:
+        for i in range(4):  # past the 3 protocol strikes that close with `4400` (§4.3)
+            frame = {"t": "sub", "id": f"z{i}", "p": {"topics": [{"ch": "trades.BTCUSDT"}], "x": 1}}
+            c.send(frame, conform=False)
+            f = c.recv()
+            assert (f["t"], f["p"]["code"], f["p"]["field"]) == ("err", "invalid_options", "p")
+        assert c.sub("trades.BTCUSDT")["p"]["results"][0]["ok"]

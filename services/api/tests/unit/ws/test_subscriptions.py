@@ -169,6 +169,46 @@ def test_sub_malformed_topics_distinguished() -> None:
     ]  # fmt: skip
 
 
+@pytest.mark.parametrize(
+    ("p", "field"),
+    [
+        ("x", "p"),
+        ({"topics": ["ticker.BTCUSDT"], "bogus": 1}, "p"),
+        ({}, "topics"),
+        ({"topics": []}, "topics"),
+        ({"topics": "ticker.BTCUSDT"}, "topics"),
+        ({"topics": ["ticker.BTCUSDT", 123]}, "topics[1]"),
+        ({"topics": [None]}, "topics[0]"),
+        ({"topics": ["Bad Topic"]}, "topics[0]"),
+        ({"topics": ["t" * 121]}, "topics[0]"),
+        ({"topics": [{"opts": {}}]}, "topics[0].ch"),
+        ({"topics": [{"ch": 5}]}, "topics[0].ch"),
+        ({"topics": [{"ch": "book.BTCUSDT.50\n"}]}, "topics[0].ch"),
+    ],
+)
+def test_sub_with_a_malformed_shape_is_refused_whole(p: Any, field: str) -> None:
+    """#2396, #2399: one `err invalid_options` naming the field, never echoing client input;
+    no `sub_ok` and nothing subscribed."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    sent: list[dict[str, Any]] = []
+
+    async def send(f: dict[str, Any]) -> None:
+        sent.append(f)
+
+    asyncio.run(handle_sub(conn, {"t": "sub", "id": "c-1", "p": p}, send, now_ms=1))
+    ((t, fid, err),) = [(f["t"], f.get("id"), f["p"]) for f in sent]
+    assert (t, fid, err["code"], err["field"]) == ("err", "c-1", "invalid_options", field)
+    assert conn.by_id == {}
+
+
+def test_sub_well_formed_topic_names_still_get_one_result_each() -> None:
+    """A name with the topic shape that the server cannot serve keeps its own result (§5.2),
+    and the string shorthand stays accepted (§5.1, as built)."""
+    conn = ConnectionAuthz(_mgr(A), _services())
+    res = _sub(conn, "nope.BTCUSDT", "ticker.BTCUSDT")
+    assert [(r["ch"], r["ok"]) for r in res] == [("nope.BTCUSDT", False), ("ticker.BTCUSDT", True)]
+
+
 def test_sub_duplicate_is_rejected_with_ctl_advice() -> None:
     conn = ConnectionAuthz(_mgr(A), _services())
     _sub(conn, "trades.BTCUSDT")

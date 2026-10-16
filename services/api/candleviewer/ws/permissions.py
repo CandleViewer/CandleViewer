@@ -62,10 +62,14 @@ from candleviewer.ws.topics import (
     ParsedTopic,
     TopicError,
     effective_options,
+    is_topic_name,
     parse_topic,
     validate_options,
 )
 from candleviewer.ws.upstream import UpstreamKey, UpstreamRefs
+
+#: §13.5 `sub.p` keys; any other key breaks the frame's shape (#2399).
+SUB_KEYS: Final = frozenset({"topics", "snapshot", "replay_session_id"})
 
 SYSTEM_TOPIC: Final = "system"
 
@@ -719,21 +723,47 @@ class ConnectionRegistry:
 Send = Any  # async (frame: dict) -> None
 
 
+def sub_shape_error(body: Any) -> TopicError | None:
+    """#2396, #2399: what breaks a `sub` frame's §13.5 shape, refused whole (orchestrator
+    decision, 2026-10-15): a payload that is not an object or has an unknown key, `topics` that
+    is not a non-empty array, an entry that is neither an object nor a string, or a `ch` that is
+    not a topic name. `field` is built here and never echoes client input."""
+    if not isinstance(body, dict):
+        return TopicError("invalid_options", "sub needs an object payload.", "p")
+    if not set(body) <= SUB_KEYS:
+        return TopicError("invalid_options", "Unknown sub field.", "p")
+    topics = body.get("topics")
+    if not isinstance(topics, list) or not topics:
+        return TopicError("invalid_options", "topics must be a non-empty array.", "topics")
+    for i, entry in enumerate(topics):
+        if isinstance(entry, str):
+            if not is_topic_name(entry):
+                return TopicError("invalid_options", "Not a topic name.", f"topics[{i}]")
+        elif not isinstance(entry, dict):
+            return TopicError("invalid_options", "A topic is an object or a name.", f"topics[{i}]")
+        elif not is_topic_name(entry.get("ch")):
+            return TopicError("invalid_options", "Missing or malformed ch.", f"topics[{i}].ch")
+    return None
+
+
 async def handle_sub(
     authz: ConnectionAuthz, frame: dict[str, Any], send: Send, *, now_ms: int | None = None
 ) -> None:
     """Gateway hook for a `sub` frame: exactly one result per topic, in request order (S1);
-    one bad topic never fails the batch (§5.2)."""
-    raw_body = frame.get("p")
-    body: dict[str, Any] = raw_body if isinstance(raw_body, dict) else {}
-    topics = body.get("topics")
+    one bad topic never fails the batch (§5.2). A frame whose shape breaks §13.5 is refused
+    whole instead: one `err`, no `sub_ok`, nothing subscribed and no strike (#2396, #2399)."""
+    body: Any = frame.get("p")  # a dict once `sub_shape_error` passes it
+    shape = sub_shape_error(body)
+    if shape is not None:
+        raw_id = frame.get("id")
+        fid = raw_id if isinstance(raw_id, str) else None
+        await send(build_ws_error(shape.code, id=fid, message=shape.message, field=shape.field))
+        return
     results: list[dict[str, Any]] = []
     snapshot = body.get("snapshot", True)
     replay = body.get("replay_session_id")
-    for index, entry in enumerate(topics if isinstance(topics, list) else []):
-        ch = entry.get("ch") if isinstance(entry, dict) else entry
-        if not isinstance(ch, str):
-            continue
+    for index, entry in enumerate(body["topics"]):
+        ch: str = entry["ch"] if isinstance(entry, dict) else entry  # a topic name, by the shape
         if index >= MAX_TOPICS_PER_SUB:
             result = _fail(ch, "too_many_topics", "More than 50 topics in one sub.")
         else:
@@ -806,7 +836,8 @@ _AUDITED_DENIALS: Final = frozenset({"forbidden", "account_scope_denied"})
 
 async def _audit_denial(authz: ConnectionAuthz, ch: str, code: str) -> None:
     """`ws.subscribe.denied`: every authorisation denial, plus any rejected private-topic
-    attempt (confidential). Best effort: the reply is never held hostage to the audit sink."""
+    attempt on a well-formed topic name (confidential; a malformed `sub` is refused whole before
+    any topic is read, #2396). Best effort: the reply is never held hostage to the audit sink."""
     audit = authz.services.audit
     fam = FAMILIES.get(topic_family(ch))
     if audit is None or not (code in _AUDITED_DENIALS or (fam is not None and fam.private)):
