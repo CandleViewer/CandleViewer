@@ -43,7 +43,7 @@ import contextlib
 import json
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Final, Protocol
 
@@ -171,9 +171,9 @@ class GatewayHub:
     def __init__(self, *, max_per_user: int = MAX_CONNECTIONS_PER_USER) -> None:
         self.max_per_user = max_per_user
         #: The server is shutting down: set by `shutdown()` and by `candleviewer.server` when its
-        #: own shutdown begins (a forced exit or a failure may never reach `shutdown()`). Never
-        #: cleared: a restart builds a new hub. `closed_reason` reads it to tell uvicorn's own
-        #: `1012` from one a client sends.
+        #: own shutdown begins (a forced exit or a failure may never reach `shutdown()`). Only
+        #: `WsRuntime.start()` clears it, for an in-process restart. `closed_reason` reads it to
+        #: tell uvicorn's own `1012` from one a client sends.
         self.shutting_down = False
         self._live: set[_Connection] = set()
         self._empty = asyncio.Event()
@@ -207,9 +207,17 @@ class GatewayHub:
         while len(others) + 1 > self.max_per_user:
             others.pop(0).close_with("too_many_connections")
 
+    def _authenticated(self) -> list[_Connection]:
+        return [c for c in self._live if c.lifecycle.authenticated]
+
+    def authenticated_count(self) -> int:
+        """How many connections `shutdown()` sends the `shutdown_notice` (every one gets the
+        `bye`)."""
+        return len(self._authenticated())
+
     def broadcast_system(self, body: dict[str, Any]) -> int:
         """Push one `system` frame (e.g. §12.5 `kill_switch`) to every authenticated socket."""
-        conns = [c for c in self._live if c.lifecycle.authenticated]
+        conns = self._authenticated()
         for conn in conns:
             conn.push_system(body)
         return len(conns)
@@ -226,7 +234,7 @@ class GatewayHub:
         """§9.4: `shutdown_notice` on `system`, wait the grace period, close
         `1001`. Returns the number of connections notified."""
         self.shutting_down = True
-        conns = [c for c in self._live if c.lifecycle.authenticated]
+        conns = self._authenticated()
         for conn in conns:
             conn.push_system(
                 {
@@ -253,9 +261,13 @@ def closed_reason(
 ) -> str:
     """Why a connection ended, for its audit row: the `bye`'s reason (bounded like the metric
     label, `other` for a malformed `bye`), else `internal_error` after a fault, else `shutdown`
-    when the server is shutting down and its host ended the socket (uvicorn's own `1012`, or the
-    handler's cancellation when its graceful timeout expires), else `client_closed`. A `1012`
-    that a client sends itself is the client's close."""
+    when the server is shutting down and its host ended the socket, else `client_closed`.
+
+    The host ends it with uvicorn's own `1012`, or by cancelling the handler when its graceful
+    timeout expires (no close code at all). Any other code is the client's: a close it sent, or
+    a drop the reader saw (`websocket.disconnect`) or the writer saw (a send that failed). Two
+    cases cannot be told from the host's: a client's own `1012` while the server is already
+    shutting down, and a client that drops unseen just before the host cancels the handler."""
     if conn.bye_frame is not None:
         body = conn.bye_frame.get("p")
         return close_reason_label(str(body.get("reason", "")) if isinstance(body, dict) else "")
@@ -479,6 +491,19 @@ async def _join_writer(task: asyncio.Task[None]) -> BaseException | None:
     return None
 
 
+@contextlib.contextmanager
+def _step(conn: _Connection, name: str) -> Iterator[None]:
+    """One synchronous step of a connection's teardown. A failure is logged with the step's name
+    and never raised: the steps after it still run, and it cannot replace the `CancelledError`
+    the handler is ending with (a lease release that raises, say)."""
+    try:
+        yield
+    except Exception:
+        _log().error(
+            "ws teardown step failed", connection_id=conn.connection_id, step=name, exc_info=True
+        )
+
+
 def _reply(t: str, frame_id: Any, **fields: Any) -> dict[str, Any]:
     """Envelope with `id` echoed only when the request carried a string id (§13.1)."""
     out: dict[str, Any] = {"t": t}
@@ -556,8 +581,12 @@ def make_ws_router(
         """`ws.connection.closed` for a socket that authenticated (E17-S01, #2486): `warning`
         for `WARNING_CLOSES`, `info` otherwise. An unauthenticated close is not audited, so a
         peer without a session cannot flood the log (its 3rd failed `auth` already is). Never
-        the token. Best effort and bounded: the teardown never waits on the sink, and a failure
-        anywhere in here, working out the reason included, is logged and never raised."""
+        the token. Best effort (threat model WS-R04): the teardown waits at most
+        `CLOSE_AUDIT_TIMEOUT_S` for the sink, and a failure in here, working out the reason
+        included, is logged and never raised. One loss it cannot avoid: a cancellation of the
+        handler that lands inside the emit (the host's graceful-timeout cancel, or a second one
+        such as the loop's own teardown) is honoured and abandons a write that has not started;
+        `AuditWriter.emit` finishes one that has."""
         if audit is None or conn.user_id is None:
             return
         try:
@@ -807,7 +836,11 @@ def make_ws_router(
             watch(conn)  # the dequeue may have waited a tick; a ping is queued only above
             if conn.sealed and item is not conn.bye_frame:
                 continue  # the identity ended while this frame was queued: never send it
-            await conn.ws.send_text(json.dumps(item, separators=(",", ":")))
+            try:
+                await conn.ws.send_text(json.dumps(item, separators=(",", ":")))
+            except WebSocketDisconnect as exc:
+                conn.disconnect_code = exc.code  # the client left mid-send; the reader saw nothing
+                raise
             conn.watchdog.last_outbound = conn.clock()
 
     @router.websocket(WS_PATH)
@@ -884,21 +917,29 @@ def make_ws_router(
                 # Whatever leaves the `try` above runs the whole tail: `_join_writer` re-raises the
                 # handler's own cancellation (uvicorn's graceful-timeout cancel, mid-read), and a
                 # skipped tail leaks the hub entry, registries, upstream leases and the close
-                # audit. That `CancelledError` still propagates once the tail is done.
-                gateway_hub.discard(conn)
-                cv_ws_connections_in_use.dec()
+                # audit. That `CancelledError` still propagates once the tail is done. Each
+                # synchronous step has its own guard, so one that raises (a lease release, say)
+                # is logged and neither skips the others nor replaces that cancellation.
+                with _step(conn, "hub"):
+                    gateway_hub.discard(conn)
+                with _step(conn, "gauge"):
+                    cv_ws_connections_in_use.dec()
                 if conn.authz is not None:
-                    if registry.services.sequencing is not None:
-                        registry.services.sequencing.unregister(conn.authz)
-                    registry.unregister(conn.authz)
+                    with _step(conn, "sequencing"):
+                        if registry.services.sequencing is not None:
+                            registry.services.sequencing.unregister(conn.authz)
+                    with _step(conn, "registry"):
+                        registry.unregister(conn.authz)
                 if conn.session_id is not None:
-                    revocation_hub.unregister(conn.session_id, conn.closer)
+                    with _step(conn, "revocation"):
+                        revocation_hub.unregister(conn.session_id, conn.closer)
                 try:
                     await audit_close(conn, fault)
                 finally:
-                    if conn.lifecycle.can(ConnEvent.CLOSE):
-                        conn.lifecycle.fire(ConnEvent.CLOSE)
-                    conn.lifecycle.fire(ConnEvent.CLOSED)
+                    with _step(conn, "lifecycle"):
+                        if conn.lifecycle.can(ConnEvent.CLOSE):
+                            conn.lifecycle.fire(ConnEvent.CLOSE)
+                        conn.lifecycle.fire(ConnEvent.CLOSED)
                     structlog.contextvars.unbind_contextvars(
                         "connection_id", "user_id", "session_id"
                     )

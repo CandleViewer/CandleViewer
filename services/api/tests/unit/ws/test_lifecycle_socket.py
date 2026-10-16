@@ -512,6 +512,7 @@ def test_planned_shutdown_notice_then_bye_1001(world: _World) -> None:
             _hello(unauth)
             assert world.client.portal is not None
             assert not world.hub.shutting_down
+            assert (len(world.hub), world.hub.authenticated_count()) == (2, 1)  # the notice's count
             n = world.client.portal.call(
                 lambda: world.hub.shutdown(expected_downtime_ms=20_000, sleep=sleep)
             )
@@ -704,7 +705,8 @@ _BYE = {"p": {"reason": "slow_consumer"}}
         ({"t": "bye"}, None, None, False, "other"),  # malformed: no `p`
         ({"p": "slow_consumer"}, None, None, False, "other"),  # malformed: `p` is not a mapping
         (None, RuntimeError(), 1012, True, "internal_error"),
-        (None, None, gateway.SERVER_RESTART_CLOSE, True, "shutdown"),  # uvicorn's own 1012
+        # uvicorn's own 1012, which a client's own cannot be told from while the server shuts down:
+        (None, None, gateway.SERVER_RESTART_CLOSE, True, "shutdown"),
         (None, None, None, True, "shutdown"),  # the host cancelled the handler
         (None, None, gateway.SERVER_RESTART_CLOSE, False, "client_closed"),  # the client's 1012
         (None, None, None, False, "client_closed"),

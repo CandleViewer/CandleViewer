@@ -28,7 +28,8 @@ from candleviewer.ws_wiring import WsRuntime
 from tests.unit.ws.test_app_wiring import JSON, ORIGIN, _authenticate, _Kill, _settings
 
 _DEADLINE_S = 10.0
-#: The §9.4 start line: the count of open connections and the hint uvicorn gives its own drain.
+#: The §9.4 start line: it carries the open and the notified connection counts, and the force-quit
+#: hint that uvicorn's own drain has.
 PLANNED = "planned ws shutdown (CTRL+C again to force quit)"
 _ORIGIN = Origin(ORIGIN)
 _JSON = [Subprotocol(p) for p in JSON]
@@ -97,17 +98,20 @@ async def test_server_shutdown_sends_the_planned_shutdown_before_closing() -> No
         async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer) as (server, url):
             async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
                 await _open(ws)
-                stopping = asyncio.create_task(server.shutdown())
-                frames, code = await _until_closed(ws)
-                await stopping
+                async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as idle:
+                    await idle.send(json.dumps({"t": "hello", "id": "h"}))  # never authenticates
+                    assert json.loads(await idle.recv())["t"] == "welcome"
+                    stopping = asyncio.create_task(server.shutdown())
+                    frames, code = await _until_closed(ws)
+                    await stopping
     notice, bye = frames
     assert (notice["ch"], notice["p"]["kind"]) == ("system", "shutdown_notice")
     assert (bye["t"], bye["p"]["reason"], bye["p"]["retry_after_ms"]) == ("bye", "shutdown", 7000)
     assert code == 1001
-    # one info line, with the open connections: neither a failure nor a cut-short warning
-    assert [(e["log_level"], e["event"], e["connections"]) for e in _planned(logs)] == [
-        ("info", PLANNED, 1)
-    ]
+    # one info line: both sockets are open, only the authenticated one is notified; no warning
+    (start,) = _planned(logs)
+    assert (start["log_level"], start["event"]) == ("info", PLANNED)
+    assert (start["open_connections"], start["notified_connections"]) == (2, 1)
 
 
 async def test_plain_uvicorn_shutdown_closes_1012_with_no_notice() -> None:
@@ -157,23 +161,36 @@ async def test_a_second_ctrl_c_cuts_the_grace_short(close_rows: asyncio.Queue[An
         "warning",
         "planned ws shutdown cut short",
     )
-    assert (cut["reason"], cut["lifespan_teardown"]) == ("force_exit", "skipped")
+    assert (cut["reason"], cut["lifespan_teardown"], cut["started"]) == (
+        "force_exit",
+        "skipped",
+        True,
+    )
 
 
 async def test_a_forced_exit_before_the_grace_still_marks_the_server_as_shutting_down(
     close_rows: asyncio.Queue[Any],
 ) -> None:
-    """The planned shutdown never starts, yet uvicorn's `1012` is still the server's own."""
+    """The planned shutdown never starts, yet uvicorn's `1012` is still the server's own, and
+    the server says that the second Ctrl+C came first."""
     async with asyncio.timeout(_DEADLINE_S), _serve(PlannedShutdownServer, 60_000) as (server, url):
-        async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
-            await _open(ws)
-            server.force_exit = True
-            stopping = asyncio.create_task(server.shutdown())
-            frames, code = await _until_closed(ws)
-            await stopping
-            row = await close_rows.get()
+        with capture_logs() as logs:
+            async with connect(url, subprotocols=_JSON, origin=_ORIGIN) as ws:
+                await _open(ws)
+                server.force_exit = True
+                stopping = asyncio.create_task(server.shutdown())
+                frames, code = await _until_closed(ws)
+                await stopping
+                row = await close_rows.get()
     assert (frames, code) == ([], 1012)  # no notice, no bye
     assert row["reason"] == "shutdown"
+    (cut,) = _planned(logs)  # no start line: the planned shutdown never began
+    assert (cut["log_level"], cut["event"], cut["started"]) == (
+        "warning",
+        "planned ws shutdown cut short",
+        False,
+    )
+    assert (cut["reason"], cut["lifespan_teardown"]) == ("force_exit", "skipped")
 
 
 async def test_a_failing_planned_shutdown_still_runs_uvicorns(

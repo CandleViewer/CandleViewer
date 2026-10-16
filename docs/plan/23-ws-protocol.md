@@ -398,11 +398,11 @@ Rules:
 - `welcome.server_version` / `git_sha` come from settings (`CV_VERSION`, `CV_GIT_SHA`). `auth_ok.kill_switch` reflects the live kill-switch state at the time of the `auth`.
 - Settings (`CV_WS_*`): `CV_WS_AUTH_TIMEOUT_S` (10), `CV_WS_MAX_INBOUND_FRAME_BYTES` (262 144), `CV_WS_MAX_CONNECTIONS_PER_USER` (8), `CV_WS_SHUTDOWN_GRACE_MS` (5 000), `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS` (20 000), `CV_WS_QUEUE_BYTES` (8 388 608), `CV_WS_QUEUE_FRAMES` (2 000) and `CV_WS_CLASSIFY_INTERVAL_MS` (2 000). The defaults are the values in this section, §8.3, §8.4 and §9.4.
 - `auth_ok` carries `user_id`, `roles`, `permissions`, `account_scope`, `session_id`, `token_expires_at_ms` and `kill_switch`. It does not carry `username` or `allowed_environments`, which the examples above show and §13.4 marks optional (#2486).
-- When an authenticated connection ends, one `ws.connection.closed` audit row is written (#2486):
-  - its reason is the close reason: the `bye`'s (`other` if it is not a §13.6 reason); else `internal_error` after a fault; else `shutdown` when the server is shutting down (§9.4) and its host ended the socket, which is uvicorn's own `1012` or the cancellation of the handler when uvicorn's graceful timeout expires; else `client_closed`. A `1012` that a client sends itself is `client_closed`, and so is uvicorn's own `1012` under `--reload`, which does not mark the server as shutting down;
+- When an authenticated connection ends, one `ws.connection.closed` audit row is attempted (#2486):
+  - its reason is the close reason: the `bye`'s (`other` if it is not a §13.6 reason); else `internal_error` after a fault; else `shutdown` when the server is shutting down (§9.4) and its host ended the socket (uvicorn's own `1012`, or the cancellation of the handler when uvicorn's graceful timeout expires); else `client_closed`: a close the client sent, a drop that a read or a failed send saw, or its own `1012` while the server runs. While the server is shutting down, a client's own `1012`, and a client that drops unseen just before the host cancels the handler, cannot be told from the host and read `shutdown`. uvicorn's own `1012` under `--reload` reads `client_closed`, because `--reload` does not mark the server as shutting down;
   - it is `warning` for `auth_failed`, `slow_consumer` and `internal_error`, and `info` otherwise;
   - it carries E04's `request_id` and never the token;
-  - it is best effort, bounded at 2 s.
+  - it is best effort, bounded at 2 s, and a write that has not started is abandoned if the handler is cancelled while waiting for it (E17 threat model WS-R04).
 
   An unauthenticated close writes no row; its 3rd failed `auth` is already audited.
 
@@ -1084,10 +1084,10 @@ The UI uses `expected_downtime_ms` to show a countdown instead of a bare "discon
 The grace and downtime come from `CV_WS_SHUTDOWN_GRACE_MS` and `CV_WS_SHUTDOWN_EXPECTED_DOWNTIME_MS`. Three cases still close with uvicorn's own `1012`, and no `bye`:
 
 - the development reloader (`--reload`), which runs a plain uvicorn server;
-- a forced exit: a second Ctrl+C (SIGINT), before or during the grace, cuts the planned shutdown short and uvicorn then skips the application's teardown. A cut-short shutdown logs the warning `planned ws shutdown cut short` (reason `force_exit`, lifespan teardown skipped);
+- a forced exit: a second Ctrl+C (SIGINT), before or during the grace, cuts the planned shutdown short and uvicorn then skips the application's teardown. A cut-short shutdown logs the warning `planned ws shutdown cut short` (reason `force_exit`, lifespan teardown skipped, and `started` for whether the planned shutdown had begun);
 - a failed planned shutdown: it logs `planned ws shutdown failed` with its traceback, and uvicorn's shutdown and the application's teardown still run.
 
-A client treats `1012` like `1001`: it reconnects with backoff (§4.4). In the last two cases the server has marked itself as shutting down, so the close audit row (§4.3) says `shutdown`; under `--reload` it says `client_closed`. The start of the planned shutdown logs `connections`, the number of open connections.
+A client treats `1012` like `1001`: it reconnects with backoff (§4.4). In the last two cases the server has marked itself as shutting down, so the close audit row (§4.3) says `shutdown`; under `--reload` it says `client_closed`. The start of the planned shutdown logs `open_connections` and `notified_connections`: the open connections, and the authenticated ones among them, which also get the `shutdown_notice`.
 
 ### 9.5 Mid-connection authorisation changes
 

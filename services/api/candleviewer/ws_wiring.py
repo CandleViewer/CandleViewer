@@ -323,6 +323,7 @@ class WsRuntime:
 
     def start(self) -> None:
         self._notified = False
+        self.hub.shutting_down = False  # an in-process restart: the server is up again
         if self._sweeper is None:
             self._sweeper = spawn(self.upstream.run(self._clock), name="ws-upstream-sweeper")
 
