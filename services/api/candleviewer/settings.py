@@ -104,18 +104,17 @@ def is_serialised_origin(entry: str) -> bool:
 
 
 def _keyless_testnet_refusal(
-    switch: str,
     environment: Environment | None,
     bybit_api_key: SecretStr | None,
     bybit_api_secret: SecretStr | None,
 ) -> str | None:
-    """The keyless-testnet rule for a test-only switch (#2086 `CV_TEST_CLOCK`): why *switch* may
-    not be on, or None on testnet with no exchange key (`CV_BYBIT_API_KEY` and
-    `CV_BYBIT_API_SECRET` both unset). The message names the switch and the rule only."""
+    """#2086 Q1: why `CV_TEST_CLOCK` may not be on, or None on testnet with no exchange key
+    (`CV_BYBIT_API_KEY` and `CV_BYBIT_API_SECRET` both unset). The message names the switch and
+    the rule only."""
     if environment is not Environment.TESTNET:
-        return f"{switch} is refused unless CV_ENVIRONMENT=testnet"
+        return "CV_TEST_CLOCK is refused unless CV_ENVIRONMENT=testnet"
     if bybit_api_key is not None or bybit_api_secret is not None:
-        return f"{switch} is refused while an exchange key (CV_BYBIT_API_*) is configured"
+        return "CV_TEST_CLOCK is refused while an exchange key (CV_BYBIT_API_*) is configured"
     return None
 
 
@@ -135,7 +134,8 @@ class Settings(BaseSettings):
         frozen=True,
         # #2086: hides the input from a refusal's message (`str()`) only. `errors()` and `json()`
         # still carry it, and a model validator's input is every setting, CV_BYBIT_API_KEY
-        # included, so the test-clock gate is a field validator (#2728).
+        # included, so the test-clock gate is a field validator (#2728). The other model
+        # validators still echo every setting there; #2778 tracks that.
         hide_input_in_errors=True,
     )
 
@@ -227,6 +227,7 @@ class Settings(BaseSettings):
     # testnet with no exchange key; anything else refuses startup (E16-FR-11). #2728: the file
     # path is absolute, without `..`, and no component of it is a symlink.
     test_clock: bool = False
+    # Explicit validate_default: the gate must also run on the default (CV_TEST_CLOCK alone).
     test_clock_file: str | None = Field(default=None, validate_default=True)
 
     # E03-T10: bounds `pg_advisory_lock` acquisition in the boot-time
@@ -433,9 +434,7 @@ class Settings(BaseSettings):
 
     def test_clock_refusal(self) -> str | None:
         """#2086: why the server test clock may not run here, or None on a keyless testnet."""
-        return _keyless_testnet_refusal(
-            "CV_TEST_CLOCK", self.environment, self.bybit_api_key, self.bybit_api_secret
-        )
+        return _keyless_testnet_refusal(self.environment, self.bybit_api_key, self.bybit_api_secret)
 
     @field_validator("test_clock_file")
     @classmethod
@@ -454,7 +453,6 @@ class Settings(BaseSettings):
         if not enabled and not value:
             return value
         refusal = _keyless_testnet_refusal(
-            "CV_TEST_CLOCK",
             info.data.get("environment"),
             info.data.get("bybit_api_key"),
             info.data.get("bybit_api_secret"),
