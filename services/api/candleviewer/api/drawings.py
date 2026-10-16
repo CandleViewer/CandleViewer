@@ -44,8 +44,8 @@ from candleviewer.api.drawings_models import (
     format_errors,
 )
 from candleviewer.audit.access import AuditPrincipal
-from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
+from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.ingestion.ticker_stream import uuid7
@@ -235,11 +235,11 @@ class _ProblemRoute(APIRoute):
                 return await inner(request)
             except _Problem as p:
                 return p.response()
-            except (OSError, StorageTierUnavailable, AuditError) as exc:
+            except (OSError, StorageTierUnavailable) as exc:
                 _log().error("drawings_store_unavailable", error=type(exc).__name__)
-                return _Problem(
-                    "store_unavailable", "The drawings store is unavailable."
-                ).response()
+            except (AuditUnavailable, AuditWriterStopped) as exc:  # fails closed: logged apart
+                _log().error("drawings_audit_unavailable", error=type(exc).__name__)
+            return _Problem("store_unavailable", "The drawings store is unavailable.").response()
 
         return handler
 

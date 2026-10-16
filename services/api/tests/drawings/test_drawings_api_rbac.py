@@ -11,6 +11,7 @@ import pytest
 from _drawings_api_env import BATCH, TRENDLINE, USER_A, USER_B, VIEWER, Env, wire
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
+from structlog.testing import capture_logs
 
 import candleviewer.app as appmod
 from candleviewer.audit.writer import AuditUnavailable
@@ -86,11 +87,13 @@ def test_a_denial_whose_audit_record_cannot_be_written_is_503_and_changes_nothin
     labels, before = {"permission": permission}, (dict(env.repo.rows), list(env.repo.calls))
     counted = REGISTRY.get_sample_value("authz_denied_total", labels) or 0.0
     method, path, body = _request(op, mine)
-    r = env.c.request(method, path, json=body)
+    with capture_logs() as logs:
+        r = env.c.request(method, path, json=body)
     assert (r.status_code, r.headers["content-type"]) == (503, "application/problem+json")
     assert r.json()["code"] == "store_unavailable"  # the contract's code, never the denial's 403
     assert (dict(env.repo.rows), list(env.repo.calls)) == before  # no store call, no state change
     assert REGISTRY.get_sample_value("authz_denied_total", labels) == counted + 1  # once (SR-125)
+    assert [e["event"] for e in logs] == ["drawings_audit_unavailable"]  # not the store's event
 
 
 def test_production_create_app_resolves_callers_from_the_session(

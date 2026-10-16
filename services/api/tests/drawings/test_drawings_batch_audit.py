@@ -14,6 +14,7 @@ from _drawings_api_env import BATCH, SID, TRENDLINE, USER_B, Env, wire
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
+from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
 from candleviewer.storage.repositories.drawings import BatchOpFailed
 
@@ -144,9 +145,10 @@ def _refusing_emit(failure: Exception) -> Any:
     [
         (AuditUnavailable("audit store down"), 503),  # the WAL refused the record
         (AuditWriterStopped(), 503),  # the writer is not running
-        (RuntimeError("audit store down"), 500),  # only an `AuditError` is the audit sink's: a bug
-    ],  # stays a visible 500
-    ids=["unavailable", "stopped", "unexpected"],
+        (RuntimeError("audit store down"), 500),  # a bug in the sink: only its refusals are 503
+        (UnknownAuditAction("rbac.typo"), 500),  # a typo'd action is a bug too, never a 503
+    ],
+    ids=["unavailable", "stopped", "unexpected", "unknown-action"],
 )
 def test_a_failed_audit_write_fails_the_probe_closed(
     route: str, failure: Exception, status: int, monkeypatch: pytest.MonkeyPatch
