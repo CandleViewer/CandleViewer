@@ -3905,6 +3905,10 @@ row 48). The only schema change is the optional `last_good_at`, which is additiv
 | C11 | Render replay data in visually distinct chrome.                                             |
 | C12 | Disable order-entry affordances on `kill_switch.engaged` and on `shutdown_notice`.          |
 | C13 | Read `meta.include_delta`; treat a kind-4 `delta = 0` as real only if it is `true` (§6.1).  |
+| C14 | Replace the whole series on a `generation_swap` snap; never merge generations (§7.4, §8.2). |
+| C15 | Accept either encoding, frame by frame, on a binary `bars` subscription (§3.4, §6.1).       |
+| C16 | Decode each `bars` CVWB frame with its own header's `price_scale`/`qty_scale` (§3.4).       |
+| C17 | Apply an amended close (always sent structured) by the §8.2 rule (§3.4).                    |
 
 ### 16.2 Limits summary
 
