@@ -116,18 +116,21 @@ def _pair(gap: object) -> list[int] | None:
 
 async def set_cursor(_i: Any, context: dict[str, Any], event: Any, _a: Any) -> None:
     """`seek`/`step` onDone: the service output names the primed cursor (E36); clamped to the
-    range so `cursor_ts` always satisfies `rps_cursor`."""
+    range so `cursor_ts` always satisfies `rps_cursor`. Without range facts there is nothing to
+    clamp against, so the cursor is left as it is (total, A1)."""
     _pin(context)
     cursor = _int(_payload(event).get("cursor"))
-    if cursor is not None:
-        lo, hi = int(context["range_start"]), int(context["range_end"])
+    lo, hi = _int(context.get("range_start")), _int(context.get("range_end"))
+    if cursor is not None and lo is not None and hi is not None:
         context["cursor"] = min(max(cursor, lo), hi)
     await _call_hook(_i, "cursor", context)
 
 
 async def reset_cursor_to_start(_i: Any, context: dict[str, Any], _e: Any, _a: Any) -> None:
     _pin(context)
-    context["cursor"] = context["range_start"]
+    start = _int(context.get("range_start"))
+    if start is not None:
+        context["cursor"] = start
     await _call_hook(_i, "cursor", context)
 
 

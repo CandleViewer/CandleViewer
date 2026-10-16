@@ -5,8 +5,9 @@ The chart *is* the lifecycle (C-2.19): interpreters are built only by
 goes through `statechart.gateway`, and legality is whatever B12 handles (28 §B12.3). Statecharts
 record, synchronous code enforces (C-2.21): the per-user quota, the window cap, the coverage check,
 payload validation and the paper-account grant run here before anything is sent, and an event the
-current state does not handle is refused with `can()` (never parked on `onUnhandled: "defer"`,
-CV-C06) as `ReplaySessionIllegalUpdateError` (HTTP 409).
+settled chart does not handle is refused with `can()` before sending (CV-C06) as
+`ReplaySessionIllegalUpdateError` (HTTP 409). A send that still races an invoke completion and is
+held by the chart (`onUnhandled: "defer"`) is refused and counted as well (`_send_replay`).
 
 Row mirror (24 §13.7): `replay_sessions.state` takes every chart state, written from the settled
 chart before a control call returns. The bindings publish plain values through a per-interpreter
@@ -31,6 +32,7 @@ from typing import Any, Final, Protocol, cast
 import structlog
 
 import candleviewer.statechart.bindings.b12_replay as b12
+from candleviewer.replay.errors import ReplayError
 from candleviewer.statechart import build
 from candleviewer.statechart.config import Lane
 from candleviewer.statechart.factory import default_clock
@@ -53,7 +55,8 @@ LANE: Final[Lane] = "control"
 _AWAIT_STEP: Final = True
 _SETTLE_YIELDS: Final = 64
 _IO_TIMEOUT_S: Final = 10.0
-_SYSTEM_ACTOR: Final = "system:replay-reclaimer"
+#: Actor of chart-observed rows (`replay.session.error`): the chart, not a user or the reclaimer.
+_CHART_ACTOR: Final = "system:replay-chart"
 _SYMBOL: Final = re.compile(r"[A-Z0-9]{4,20}")
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 #: Events a caller may name and the payload keys each takes. `DESTROY` has its own entry point;
@@ -73,28 +76,33 @@ def logger() -> Any:
     return structlog.get_logger(__name__)
 
 
-class ReplaySessionValidationError(ValueError):
+class ReplaySessionValidationError(ReplayError, ValueError):
     """A human-readable request error, raised before the database or the chart (HTTP 422)."""
 
 
-class ReplayQuotaExceededError(Exception):
+class ReplayQuotaExceededError(ReplayError):
     """The user already holds `CV_REPLAY_MAX_SESSIONS_PER_USER` open sessions; nothing allocated."""
 
 
-class ReplayWindowUncoveredError(Exception):
+class ReplayWindowUncoveredError(ReplayError):
     """No recorded coverage in the window (`no_data_recorded`, HTTP 422); nothing allocated."""
 
 
-class ReplayChartError(RuntimeError):
+class ReplayChartError(ReplayError):
     """B12 failed to record an accepted event (an action raised and the step was rolled back)."""
+
+
+class ReplayUnavailableError(ReplayError):
+    """A dependency (repository, coverage, audit, handles) timed out or failed before the
+    change was recorded (HTTP 503); retry later."""
 
 
 @dataclass(frozen=True, slots=True)
 class WindowCoverage:
-    """Recorded coverage of one window as half-open µs pairs (24 §13.3.1), clipped to it."""
+    """Recorded coverage of one window as half-open µs intervals (24 §13.3.1), clipped to it.
+    Everything else in the window is a gap (`_uncovered`)."""
 
     covered: tuple[tuple[int, int], ...]
-    gaps: tuple[tuple[int, int], ...] = ()
 
 
 class CoverageReader(Protocol):
@@ -128,6 +136,7 @@ class SessionHandles(Protocol):
 
 
 #: `(user_id, paper_account_id) -> bool`: a `demo` account the user is granted (C-2.11, C-12.5).
+#: E26-T05/E36 wire it; until then the service refuses every paper account (fail closed).
 PaperAccountGate = Callable[[str, str], Awaitable[bool]]
 
 
@@ -146,6 +155,23 @@ def to_us(ts: datetime) -> int:
 
 def from_us(us: int) -> datetime:
     return _EPOCH + timedelta(microseconds=us)
+
+
+def uncovered(lo: int, hi: int, covered: Sequence[tuple[int, int]]) -> list[list[int]]:
+    """Every span of `[lo, hi)` no covered interval reaches, merged and in order: recorder gaps
+    and spans no session recorded alike, so a partly covered window is replayed with its holes
+    explicit (C-2.14, INV-B12-d)."""
+    out: list[list[int]] = []
+    at = lo
+    for a, b in sorted((max(a, lo), min(b, hi)) for a, b in covered):
+        if b <= at:
+            continue
+        if a > at:
+            out.append([at, a])
+        at = b
+    if at < hi:
+        out.append([at, hi])
+    return out
 
 
 def leaf_of(interp: Any) -> str:
@@ -207,10 +233,22 @@ class ReplaySessionService:
         self._gateway = gateway or Gateway()
         self._live: dict[str, _Live] = {}
         self._revive_lock = asyncio.Lock()
-        #: Serialises quota decisions (create, `PREPARE`). Lock order: a session lock may be held
-        #: when this is taken, never the reverse.
-        self._quota_lock = asyncio.Lock()
+        #: One lock per user serialises that user's quota decisions (create, entering a
+        #: buffer-holding state). Lock order: a session lock may be held when one is taken,
+        #: never the reverse. Bounded by the user base (the owner and a few managers).
+        self._quota_locks: dict[str, asyncio.Lock] = {}
         self.refusals = _Refusals()
+
+    def _quota_lock(self, uid: str) -> asyncio.Lock:
+        return self._quota_locks.setdefault(uid, asyncio.Lock())
+
+    async def _io[T](self, what: str, pending: Awaitable[T]) -> T:
+        """Every external await is bounded; a timeout is `ReplayUnavailableError` (C-2.18)."""
+        try:
+            async with asyncio.timeout(_IO_TIMEOUT_S):
+                return await pending
+        except TimeoutError as exc:
+            raise ReplayUnavailableError(f"{what} timed out") from exc
 
     # --- create ------------------------------------------------------------------------------
 
@@ -228,28 +266,28 @@ class ReplaySessionService:
         req = replace(req, id=str(uuid.uuid4()), user_id=uid, cursor_ts=cursor)
         self._validate(req)
         if req.paper_account_id is not None:
-            gate = self._paper_gate
-            if gate is None or not await gate(uid, req.paper_account_id):
+            gate = self._paper_gate  # E26-T05/E36 wire the grant port; unwired fails closed
+            if gate is None or not await self._io("grant", gate(uid, req.paper_account_id)):
                 raise ReplaySessionValidationError("paper account is not a demo account you hold")
         await self._check_quota(uid, opening=True)  # refused before any coverage I/O
-        async with asyncio.timeout(_IO_TIMEOUT_S):
-            lo, hi = to_us(req.range_start), to_us(req.range_end)
-            cov = await self._coverage.window(req.symbol, lo, hi)
-        if not any(b > a for a, b in cov.covered):
+        lo, hi = to_us(req.range_start), to_us(req.range_end)
+        cov = await self._io("coverage", self._coverage.window(req.symbol, lo, hi))
+        gaps = uncovered(lo, hi, cov.covered)
+        if gaps == [[lo, hi]]:
             raise ReplayWindowUncoveredError("no recorded data in the requested window")
         after = {
             "symbol": req.symbol, "state": ReplayState.CREATED.value,
             "range_start": req.range_start.isoformat(), "range_end": req.range_end.isoformat(),
             "paper_account_id": req.paper_account_id,  # RP-R02: paper attach is recorded
         }  # fmt: skip
-        async with self._quota_lock:  # re-checked as one decision with the insert (no race)
+        async with self._quota_lock(uid):  # re-checked as one decision with the insert
             await self._check_quota(uid, opening=True)
-            await self._emit("replay.session.created", req.id, uid, after, by_user=True)
-            row = await self._repo.create(req)
+            await self._emit("replay.session.created", req.id, uid, after, actor=None)
+            row = await self._io("repository", self._repo.create(req))
             try:
-                await self._adopt(row, await self._build(row, cov.gaps))
+                await self._adopt(row, await self._build(row, gaps))
             except BaseException:
-                await self._repo.delete(uid, row.id)
+                await self._io("repository", self._repo.delete(uid, row.id))
                 raise
         return await self.transition(uid, row.id, "PREPARE") if prepare else row
 
@@ -267,14 +305,16 @@ class ReplaySessionService:
         `ReplaySessionNotFoundError`: missing or another user's (404, never 403).
         `ReplaySessionValidationError`: unknown event or payload (422).
         `ReplaySessionIllegalUpdateError`: B12 does not handle it here, or the session is
-        destroyed (409): nothing is sent and the row is untouched.
+        destroyed (409): refused before sending, the row untouched. A send that races an invoke
+        completion and is held by the chart is refused too (counted `deferred`, see `_send_replay`).
         `ReplayQuotaExceededError`: entering a buffer-holding state (`PREPARE`, or `SEEK` out
         of `finished`/`error`) past the per-user quota."""
         data = _payload_for(event, payload)
         live = await self._owned(user_id, session_id)
         if live is None:
-            raise ReplaySessionIllegalUpdateError(str(session_id), ReplayState.DESTROYED)
+            raise ReplaySessionIllegalUpdateError(_canon(session_id) or "", ReplayState.DESTROYED)
         async with live.lock:
+            await self._settle(live)  # a queued invoke completion lands before `can()` reads
             facts = b12.facts(live.interp.context)
             if event == "SEEK":
                 cursor = cast(int, data["cursor"])  # typed by `_payload_for`
@@ -291,10 +331,15 @@ class ReplaySessionService:
             # `buffering`) is one quota decision with its send and mirrored row: no concurrent
             # double pass, and no quota bypass by reviving an old session (RP-D03).
             entering = ReplayState(leaf_of(live.interp)) not in LIVE_STATES
-            async with self._quota_lock if entering else contextlib.nullcontext():
+            lock = self._quota_lock(live.user_id) if entering else contextlib.nullcontext()
+            async with lock:
                 if entering and event in ("PREPARE", "SEEK"):
                     await self._check_quota(live.user_id, opening=False)
-                await self._send_replay(live, event, **data)
+                try:
+                    await self._send_replay(live, event, **data)
+                except ReplaySessionIllegalUpdateError:
+                    await self._sync(live)  # the racing completion moved the chart: mirror it
+                    raise
                 return await self._sync(live, control=event not in _SOURCE_EVENTS)
 
     def state_of(self, session_id: str) -> str | None:
@@ -317,7 +362,7 @@ class ReplaySessionService:
         live = self._live.get(sid or "")
         if live is not None and live.user_id == uid:
             return live
-        row = await self._repo.get(uid, sid) if uid and sid else None
+        row = await self._io("repository", self._repo.get(uid, sid)) if uid and sid else None
         if row is None:
             raise ReplaySessionNotFoundError(session_id)
         if row.state is ReplayState.DESTROYED:
@@ -331,19 +376,21 @@ class ReplaySessionService:
             await self._sync(live)
         return live
 
-    async def _build(self, row: ReplaySessionRow, gaps: Sequence[tuple[int, int]] = ()) -> Any:
+    async def _build(self, row: ReplaySessionRow, gaps: Sequence[Sequence[int]] = ()) -> Any:
         """A fresh chart in `created`; the facts land under `context["input"]` (`b12.facts`)."""
         ctx = {
             "session_id": row.id, "symbols": [row.symbol], "range_start": to_us(row.range_start),
             "range_end": to_us(row.range_end), "cursor": to_us(row.cursor_ts or row.range_start),
             "speed": float(row.speed), "loop": row.loop_enabled,
-            "paper_account_id": row.paper_account_id, "coverage_gaps": [[a, b] for a, b in gaps],
+            "paper_account_id": row.paper_account_id, "coverage_gaps": [list(g) for g in gaps],
         }  # fmt: skip
         return (await build(MACHINE, ctx=ctx, clock=default_clock(), lane=LANE)).interpreter
 
     async def _adopt(self, row: ReplaySessionRow, interp: Any) -> _Live:
+        """Allocate the handles and register the chart; on any failure after the allocation the
+        handles are released and the chart stopped, so nothing leaks (the caller drops the row)."""
         try:
-            releases = tuple(await self._handles.acquire(row))
+            releases = tuple(await self._io("handles", self._handles.acquire(row)))
         except BaseException:
             await interp.stop()
             raise
@@ -356,17 +403,36 @@ class ReplaySessionService:
         async def hook(name: str, facts: Mapping[str, object]) -> None:
             await self._on_fact(live, name, facts)
 
-        b12.attach_hook(interp, hook)
-        self._gateway.register(live.key, interp, kind="replay", lane=LANE, metrics=self.refusals)
+        try:
+            b12.attach_hook(interp, hook)
+            self._gateway.register(
+                live.key, interp, kind="replay", lane=LANE, metrics=self.refusals
+            )
+        except BaseException:
+            await self._release(live)
+            await interp.stop()
+            raise
         self._live[row.id] = live
         return live
 
     async def _send_replay(self, live: _Live, event: str, /, **payload: object) -> None:
         """The one send path (`statechart.gateway`); literal call sites are checked against B12
-        by `tools/statechart/event_coverage.py`."""
+        by `tools/statechart/event_coverage.py`.
+
+        `can()` ran on the settled chart, but an invoke completion can still land between it and
+        this send. The chart then holds the event (`deferred`, `onUnhandled: "defer"`) or its
+        guards deny it: that is a refusal, counted and logged. A held event stays on the chart's
+        deferral buffer and runs on its next state change: the library has no public purge."""
         receipt = await self._gateway.send(live.key, {"type": event, **payload}, wait=_AWAIT_STEP)
         if receipt_is_conclusive(receipt) and receipt.error is not None:
             raise ReplayChartError(f"B12 {event}: {type(receipt.error).__name__}")
+        if receipt.deferred or receipt.denied:  # `changed=False` alone is fine: internal arms
+            self.refusals.record_send_refused("deferred")
+            state = ReplayState(leaf_of(live.interp))
+            logger().warning(
+                "replay_session_event_parked", session_id=live.id, control=event, state=state
+            )
+            raise ReplaySessionIllegalUpdateError(live.id, state)
         await self._settle(live)
 
     async def _settle(self, live: _Live) -> None:
@@ -382,35 +448,53 @@ class ReplaySessionService:
         terminal row refuses updates), then the state, one structured line per state change."""
         uid, sid, now = live.user_id, live.id, self._clock()
         facts, state = b12.facts(live.interp.context), ReplayState(leaf_of(live.interp))
+        repo = self._repo
         if state is not ReplayState.DESTROYED:
             if (cursor := int(facts["cursor"])) != live.cursor:
-                await self._repo.update_cursor(uid, sid, cursor_ts=from_us(cursor))
+                await self._io(
+                    "repository", repo.update_cursor(uid, sid, cursor_ts=from_us(cursor))
+                )
                 live.cursor = cursor
             if (speed := Decimal(str(facts["speed"]))) != live.speed:
-                await self._repo.update_speed(uid, sid, speed=speed)
+                await self._io("repository", repo.update_speed(uid, sid, speed=speed))
                 live.speed, live.touched = speed, now
             if control:  # a control call is activity even when the state comes back the same
-                await self._repo.touch(uid, sid, now)
+                await self._io("repository", repo.touch(uid, sid, now))
                 live.touched = now
         if state is not live.state:
             error = str(facts["error"] or "source_error") if state is ReplayState.ERROR else None
-            await self._repo.update_state(uid, sid, state=state, error_message=error)
+            await self._io(
+                "repository", repo.update_state(uid, sid, state=state, error_message=error)
+            )
             logger().info(
                 "replay_session_transition", session_id=sid, user_id=uid, symbol=live.symbol,
                 from_state=live.state.value, to_state=state.value,
             )  # fmt: skip
             live.state, live.touched = state, now
-        row = await self._repo.get(uid, sid)
+        row = await self._io("repository", repo.get(uid, sid))
         if row is None:
             raise ReplaySessionNotFoundError(sid)
         return row
+
+    async def _release(self, live: _Live) -> None:
+        """INV-B12-e: each handle is taken out before it runs, so none runs twice; a failing
+        release is logged and the others still run."""
+        releases, live.releases = live.releases, ()
+        for release in releases:
+            try:
+                async with asyncio.timeout(_IO_TIMEOUT_S):
+                    await release()
+            except Exception as exc:
+                logger().error(
+                    "replay_session_release_failed", session_id=live.id, error=type(exc).__name__
+                )
 
     # --- checks, hook, audit -----------------------------------------------------------------
 
     async def _check_quota(self, uid: str, *, opening: bool) -> None:
         """`count_active` counts the buffer-holding rows (`ix_rps_live`); opening a session also
         counts the user's held charts outside them (created/finished/error)."""
-        used = await self._repo.count_active(uid)
+        used = await self._io("repository", self._repo.count_active(uid))
         if opening:
             used += sum(
                 s.user_id == uid and s.state not in LIVE_STATES for s in self._live.values()
@@ -446,27 +530,31 @@ class ReplaySessionService:
             after = {"symbol": live.symbol, "state": "error", "reason": str(facts["error"])}
             try:
                 await self._emit(
-                    "replay.session.error", live.id, live.user_id, after, by_user=False
+                    "replay.session.error", live.id, live.user_id, after, actor=_CHART_ACTOR
                 )
-            except Exception as exc:
-                logger().critical(
-                    "replay_session_audit_failed", session_id=live.id, error=type(exc).__name__
-                )
+            except ReplayUnavailableError as exc:
+                logger().critical("replay_session_audit_failed", session_id=live.id, error=str(exc))
 
     async def _emit(
-        self, action: str, sid: str, uid: str, after: dict[str, Any], *, by_user: bool
+        self, action: str, sid: str, uid: str, after: dict[str, Any], *, actor: str | None
     ) -> None:
-        """C-2.9: raises when the record cannot be written, so the caller refuses the change."""
-        async with asyncio.timeout(_IO_TIMEOUT_S):
-            await self._audit.emit(
-                action,
-                actor_label=f"user:{uid}" if by_user else _SYSTEM_ACTOR,
-                actor_user_id=uid if by_user else None,
-                object_kind="replay_session",
-                object_id=sid,
-                reason=after.get("reason"),
-                after_state=after,
-            )
+        """C-2.9: `actor=None` is the session's user, else a system actor label. Raises
+        `ReplayUnavailableError` when the record cannot be written, so the caller refuses."""
+        record = self._audit.emit(
+            action,
+            actor_label=actor or f"user:{uid}",
+            actor_user_id=None if actor else uid,
+            object_kind="replay_session",
+            object_id=sid,
+            reason=after.get("reason"),
+            after_state=after,
+        )
+        try:
+            await self._io("audit", record)
+        except ReplayUnavailableError:
+            raise
+        except Exception as exc:
+            raise ReplayUnavailableError(f"audit {type(exc).__name__}") from exc
 
 
 def _payload_for(event: str, payload: Mapping[str, object] | None) -> dict[str, object]:

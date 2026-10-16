@@ -70,6 +70,13 @@ async def test_actions_publish_plain_facts_through_the_attached_hook() -> None:
     assert seen[2][1]["coverage_gaps"] == [[11, 12]] and seen[3][1]["error"] == "SourceGone"
 
 
+async def test_cursor_actions_leave_the_cursor_alone_without_range_facts() -> None:
+    ctx: dict[str, Any] = {"session_id": "s1", "cursor": 7}
+    await b12.set_cursor(_Interp(), ctx, _Ev(data={"cursor": 99}), None)
+    await b12.reset_cursor_to_start(_Interp(), ctx, None, None)
+    assert ctx["cursor"] == 7
+
+
 async def test_data_services_are_idempotent_no_ops_until_e36() -> None:
     for service in b12.SERVICES.values():
         ctx = _ctx()
