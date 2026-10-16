@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from candleviewer.ws.limits import MAX_JSON_DEPTH, json_depth_exceeds
 from tests.unit.ws.test_gateway_limits import _client, _hello
+from tests.unit.ws.test_lifecycle_socket import _bye_then_close, _recv
 
 
 def _nested(depth: int) -> str:
     return "[" * depth + "]" * depth
+
+
+def _send_raw(ws: Any, frame: str | bytes) -> None:
+    if isinstance(frame, str):
+        ws.send_text(frame)
+    else:
+        ws.send_bytes(frame)
 
 
 def test_depth_scan_limit_exact_accepted_and_plus_one_rejected() -> None:
@@ -48,6 +57,9 @@ def test_depth_scan_string_and_closer_state_matches_expected(text: str, expected
         pytest.param("[" * 100_000, id="100k-open-brackets"),
         pytest.param(_nested(MAX_JSON_DEPTH + 1), id="limit-plus-one"),
         pytest.param('{"t":', id="malformed"),
+        # Valid JSON that is no envelope. It decodes to `None`, which the reader once took for
+        # "the oversize close is queued" and ended on, silently (#2905).
+        pytest.param("null", id="null"),
     ],
 )
 def test_bad_text_frame_is_err_violation_and_socket_survives(
@@ -57,9 +69,9 @@ def test_bad_text_frame_is_err_violation_and_socket_survives(
     with _client().websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
         _hello(ws)
         ws.send_text(frame)
-        assert ws.receive_json()["p"]["code"] == "frame_malformed"
+        assert _recv(ws)["p"]["code"] == "frame_malformed"
         ws.send_json({"t": "ping", "id": "p"})
-        assert ws.receive_json()["t"] == "pong"
+        assert _recv(ws)["t"] == "pong"
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
@@ -71,11 +83,24 @@ def test_depth_limit_exactly_is_decoded_not_a_depth_violation() -> None:
         assert ws.receive_json()["t"] == "pong"
 
 
-def test_invalid_utf8_bytes_frame_is_violation() -> None:
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(b'{"t":"ping","id":"p"}', id="valid-json-envelope"),
+        pytest.param(b'{"t":"\xff\xfe"}', id="invalid-utf8"),
+        pytest.param(b"", id="empty"),
+    ],
+)
+def test_binary_frame_on_json_is_a_strike_whatever_it_carries(payload: bytes) -> None:
+    """§2.2, §3.6: `cv.v1.json` takes text frames, so a binary frame is `frame_malformed` and a
+    strike by its kind alone. Valid JSON in one is never decoded, and an empty one is still a
+    binary frame, not an empty text frame."""
     with _client().websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
         _hello(ws)
-        ws.send_bytes(b'{"t":"\xff\xfe"}')
-        assert ws.receive_json()["p"]["code"] == "frame_malformed"
+        ws.send_bytes(payload)
+        assert _recv(ws)["p"]["code"] == "frame_malformed"
+        ws.send_json({"t": "ping", "id": "p"})  # a strike is not fatal
+        assert _recv(ws)["t"] == "pong"
 
 
 def test_three_bad_frames_close_bad_client_4400_without_error_log(
@@ -94,3 +119,43 @@ def test_three_bad_frames_close_bad_client_4400_without_error_log(
             ws.receive_json()
     assert exc.value.code == 4400
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [pytest.param("null", id="null"), pytest.param(b"", id="empty-binary-frame")],
+)
+def test_frames_that_are_no_envelope_count_strikes_and_the_third_closes_4400(
+    frame: str | bytes,
+) -> None:
+    """#2905: each is a strike like any malformed frame. `null` once ended the reader with no
+    `err`, no strike and no `bye`, so a client saw 1006 (S11); an empty binary frame is a strike
+    by its kind (§2.2)."""
+    with _client().websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+        _hello(ws)
+        for _ in range(2):
+            _send_raw(ws, frame)
+            assert _recv(ws)["p"]["code"] == "frame_malformed"
+        _send_raw(ws, frame)
+        bye, code = _bye_then_close(ws)
+    assert (bye["p"]["reason"], code) == ("bad_client", 4400)
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        pytest.param("null", id="null"),
+        pytest.param(b"", id="empty-binary-frame"),
+        pytest.param(b'{"t":"hello","id":"h"}', id="binary-hello"),
+    ],
+)
+def test_first_frame_that_is_no_text_hello_is_bye_protocol_violation_1002(
+    frame: str | bytes,
+) -> None:
+    """§4.2, S11: before `hello`, any frame but a text `hello` gets `bye protocol_violation` and
+    1002. A `hello` sent as a binary frame is no text frame (§2.2), though the code before #2897
+    accepted it. The `bye` is the first frame the server sends, so no `welcome` came before it."""
+    with _client().websocket_connect("/ws", subprotocols=["cv.v1.json"]) as ws:
+        _send_raw(ws, frame)
+        bye, code = _bye_then_close(ws)
+    assert (bye["p"]["reason"], bye["p"]["code"], code) == ("protocol_violation", 1002, 1002)
