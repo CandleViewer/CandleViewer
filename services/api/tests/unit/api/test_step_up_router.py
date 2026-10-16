@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from candleviewer.api.step_up import make_read_only_guard, make_step_up_router
 from candleviewer.audit.models import Severity
+from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.errors import SessionNotFound
 from candleviewer.auth.generated_permissions import Permission
@@ -40,8 +41,12 @@ class _Clock:
 class _Emitter:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        #: #2510: actions whose WAL append fails (`AuditUnavailable`), as on a full disk.
+        self.fail_on: frozenset[str] = frozenset()
 
     async def emit(self, action: str, **kw: Any) -> None:
+        if action in self.fail_on:
+            raise AuditUnavailable("WAL unwritable")
         self.calls.append({"action": action, **kw})
 
     def actions(self) -> list[str]:
@@ -109,7 +114,7 @@ def _record(user: uuid.UUID) -> SessionRecord:
 
 
 async def _build(
-    owner_role: bool = True, positions: Any = None, audit_ok: bool = True
+    owner_role: bool = True, positions: Any = None, audit_ok: bool = True, target: Any = None
 ) -> tuple[TestClient, _Emitter, bytes, _Clock, uuid.UUID]:
     clock, repo, enc = _Clock(), FakeMfaRepository(), TotpEncryptor(os.urandom(32))
     mfa = MfaService(repo, enc, recovery_code_key=b"k" * 32, clock=clock)
@@ -124,6 +129,10 @@ async def _build(
     )  # fmt: skip
     record, rows = _record(user), FakeSessionRepository()
     await rows.create_session(record)  # step-up state persists on this row
+    if target is not None:  # an active TOTP method and a live session for that user
+        (method,) = repo.methods.values()
+        repo.add_method(method.model_copy(update={"id": uuid.uuid4(), "user_id": target}))
+        await rows.create_session(_record(target))
     hasher = Hasher()
     users = FakeUserRepository()
     users.add(make_user(password_hash=await hasher.hash(_PW)).model_copy(update={"id": user}))

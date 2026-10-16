@@ -40,6 +40,10 @@ async def _pw_hash() -> str:
 _T0 = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
 
 
+async def _noop(methods: int, sessions: int, /) -> None:
+    """An accepting write-ahead audit hook for `reset_totp` (#2510)."""
+
+
 class _Clock:
     def __init__(self) -> None:
         self.now = _T0
@@ -196,11 +200,11 @@ async def test_owner_reset_revokes_sessions_without_oms_effects_or_secret() -> N
     assert "NOT cancel" in preview.message
     with pytest.raises(StepUpRequired):  # reset itself needs fresh step-up
         await svc.reset_totp(
-            actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(target)
+            actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(target), audit=_noop
         )
     await svc.step_up(str(owner), "o1", "users", _code(seed, clock), PASSWORD)
     result = await svc.reset_totp(
-        actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(target)
+        actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(target), audit=_noop
     )
     assert result.sessions_revoked == 1
     assert sessions.sessions[str(s.id)].revoked_at is not None
@@ -213,7 +217,7 @@ async def test_owner_cannot_reset_self() -> None:
     await svc.step_up(str(owner), "o1", "users", _code(seed, clock), PASSWORD)
     with pytest.raises(StepUpRequired):
         await svc.reset_totp(
-            actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(owner)
+            actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(owner), audit=_noop
         )
 
 
@@ -295,7 +299,7 @@ async def test_step_up_and_reset_metrics_are_emitted() -> None:
     target = uuid.uuid4()
     await sessions.create_session(_session(target))
     await svc.reset_totp(
-        actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(target)
+        actor_session_id="o1", actor_user_id=str(owner), target_user_id=str(target), audit=_noop
     )
     assert _sample("auth_mfa_resets_total") == rs0 + 1
 

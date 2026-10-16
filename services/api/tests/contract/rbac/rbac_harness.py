@@ -202,10 +202,10 @@ class _Invites:
     async def list_pending(self) -> tuple[Any, ...]:
         return ()
 
-    async def reissue(self, user_id: uuid.UUID, *, invited_by: uuid.UUID) -> Any:
+    async def reissue(self, user_id: uuid.UUID, *, invited_by: uuid.UUID, audit: Any) -> Any:
         raise InviteNotFound(str(user_id))
 
-    async def revoke(self, user_id: uuid.UUID) -> None:
+    async def revoke(self, user_id: uuid.UUID, *, audit: Any) -> None:
         raise InviteNotFound(str(user_id))
 
     async def inspect(self, token: str, *, source_ip: str) -> Any:

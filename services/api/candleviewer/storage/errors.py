@@ -114,6 +114,17 @@ class StorageQueryFailed(StorageError):
         self.sqlstate = sqlstate
 
 
+class WriteAheadTimeout(StorageError, TimeoutError):
+    """A write-ahead audit hook awaited inside a unit of work outlived its bound (#2510).
+
+    The unit of work rolled back before its commit: nothing persisted and its row locks are
+    free, so a route may answer "nothing was changed". A driver or commit `TimeoutError` is a
+    different case (the outcome may be unknown) and must not be mapped like this one.
+    """
+
+    code = "STORAGE_WRITE_AHEAD_TIMEOUT"
+
+
 class IlpRowError(StorageError, ValueError):
     """A row handed to `IlpWriter.write_rows` is malformed (E49-K01-F2, #1636).
 
@@ -161,6 +172,7 @@ ERROR_CODES: dict[type[StorageError], str] = {
     StorageRetentionBlockedByReplay: StorageRetentionBlockedByReplay.code,
     StorageDiskCritical: StorageDiskCritical.code,
     StorageQueryFailed: StorageQueryFailed.code,
+    WriteAheadTimeout: WriteAheadTimeout.code,
     IlpRowError: IlpRowError.code,
     MissingDesignatedTimestamp: MissingDesignatedTimestamp.code,
     InvalidSymbol: InvalidSymbol.code,

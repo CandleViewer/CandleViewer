@@ -172,6 +172,7 @@ async def test_writer_flusher_death_fails_closed_then_recovers(
     with pytest.raises(AuditUnavailable):
         await w.emit("auth.login", actor_label="refused")
     assert w.refused_total == 1
+    assert w.append_failure is None  # #2510: flusher death stays on `failure`, unlatched
     await w.stop(0.01)
     repo.broken = False  # repository healed
     await w.start()

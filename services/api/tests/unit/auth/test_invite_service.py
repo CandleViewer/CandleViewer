@@ -43,6 +43,7 @@ class FakeRepo:
     async def create_user_with_invite(self, **kw: Any) -> bool:
         if kw["email"] in self.emails:
             return False
+        await kw["audit"](kw["user_id"], kw["role"])  # write-ahead: before any mutation
         self.emails.add(kw["email"])
         self.rows[kw["token_hash"]] = InviteRecord(
             id=kw["invite_id"],
@@ -86,16 +87,29 @@ class FakeRepo:
             if r.user_id == user_id:
                 self.rows[h] = r.model_copy(update={"role": "viewer"})
 
-    async def reissue(self, user_id: uuid.UUID, **kw: Any) -> InviteRecord | None:
-        return None
+    def _open(self, user_id: uuid.UUID) -> list[str]:
+        rows = self.rows.items()
+        return [h for h, r in rows if r.user_id == user_id and not (r.consumed_at or r.revoked_at)]
 
-    async def revoke_open(self, user_id: uuid.UUID, *, now: datetime) -> bool:
-        hit = False
-        for h, r in list(self.rows.items()):
-            if r.user_id == user_id and not r.consumed_at and not r.revoked_at:
-                self.rows[h] = r.model_copy(update={"revoked_at": now})
-                hit = True
-        return hit
+    async def reissue(self, user_id: uuid.UUID, **kw: Any) -> InviteRecord | None:
+        hits = self._open(user_id)
+        if not hits:
+            return None
+        old = self.rows[hits[0]]
+        await kw["audit"](user_id, old.role)  # write-ahead: before any mutation
+        for h in hits:
+            self.rows[h] = self.rows[h].model_copy(update={"revoked_at": kw["now"]})
+        fresh = old.model_copy(update={"id": kw["invite_id"], "expires_at": kw["expires_at"]})
+        self.rows[kw["token_hash"]] = fresh
+        return fresh
+
+    async def revoke_open(self, user_id: uuid.UUID, *, now: datetime, audit: Any) -> bool:
+        hits = self._open(user_id)
+        if hits:
+            await audit(user_id, self.rows[hits[0]].role)  # write-ahead: before any mutation
+        for h in hits:
+            self.rows[h] = self.rows[h].model_copy(update={"revoked_at": now})
+        return bool(hits)
 
     async def list_pending(self, *, now: datetime) -> tuple[InviteRecord, ...]:
         return tuple(r for r in self.rows.values() if not r.consumed_at and not r.revoked_at)
@@ -132,6 +146,10 @@ async def _noop_audit(rec: Any, stored_role: str) -> None:
     return None
 
 
+async def ok_audit(user_id: uuid.UUID, role: str) -> None:
+    """Accepting write-ahead audit hook of an owner invite action (#2510)."""
+
+
 def _make() -> tuple[InviteService, FakeRepo, Clock]:
     repo, clock = FakeRepo(), Clock()
     svc = InviteService(repo, FakeHasher(), FakeMfa(), clock=clock)  # type: ignore[arg-type]  # fakes
@@ -146,7 +164,7 @@ def _req(email: str = "ann@example.com", role: str = "viewer") -> InviteCreateRe
 
 async def test_create_returns_high_entropy_token_stored_only_as_hash() -> None:
     svc, repo, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     assert len(inv.token) >= 43
     assert inv.token not in repo.rows
     assert hash_token(inv.token) in repo.rows
@@ -155,9 +173,9 @@ async def test_create_returns_high_entropy_token_stored_only_as_hash() -> None:
 
 async def test_create_duplicate_email_conflicts() -> None:
     svc, _, _ = _make()
-    await svc.create(_req(), invited_by=uuid.uuid4())
+    await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     with pytest.raises(InviteConflict):
-        await svc.create(_req(), invited_by=uuid.uuid4())
+        await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
 
 
 def test_owner_role_cannot_be_invited() -> None:
@@ -176,7 +194,7 @@ def test_viewer_invite_accepted_by_model() -> None:
 
 async def test_legacy_manager_invite_is_accepted_as_viewer() -> None:
     svc, repo, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     h = hash_token(inv.token)
     repo.rows[h] = repo.rows[h].model_copy(update={"role": "manager"})  # legacy row
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
@@ -189,7 +207,7 @@ async def test_legacy_manager_invite_is_accepted_as_viewer() -> None:
 
 async def test_viewer_invite_redemption_is_not_flagged_downgraded() -> None:
     svc, _, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
     rec, _ = await svc.complete_redemption(
         inv.token, method_id="m", code="123456", source_ip="1.1.1.1", audit_downgrade=_noop_audit
@@ -199,7 +217,7 @@ async def test_viewer_invite_redemption_is_not_flagged_downgraded() -> None:
 
 async def test_invite_accepted_end_to_end_activates_user() -> None:
     svc, _, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
     rec, codes = await svc.complete_redemption(
         inv.token, method_id="m", code="123456", source_ip="1.1.1.1", audit_downgrade=_noop_audit
@@ -209,7 +227,7 @@ async def test_invite_accepted_end_to_end_activates_user() -> None:
 
 async def test_expired_token_rejected_after_72h() -> None:
     svc, _, clock = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     clock.now = T0 + INVITE_TTL
     with pytest.raises(InviteRejected) as e:
         await svc.inspect(inv.token, source_ip="1.1.1.1")
@@ -218,7 +236,7 @@ async def test_expired_token_rejected_after_72h() -> None:
 
 async def test_token_reuse_rejected() -> None:
     svc, _, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
     with pytest.raises(InviteRejected) as e:
         await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
@@ -234,7 +252,7 @@ async def test_unknown_token_rejected() -> None:
 
 async def test_abandoned_enrolment_leaves_user_invited() -> None:
     svc, repo, clock = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
     clock.now = T0 + ENROLL_WINDOW + timedelta(seconds=1)
     with pytest.raises(InviteRejected):
@@ -250,7 +268,7 @@ async def test_abandoned_enrolment_leaves_user_invited() -> None:
 
 async def test_wrong_totp_code_does_not_activate() -> None:
     svc, repo, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
     with pytest.raises(InviteRejected) as e:
         await svc.complete_redemption(
@@ -266,7 +284,7 @@ async def test_wrong_totp_code_does_not_activate() -> None:
 
 async def test_concurrent_redemptions_exactly_one_wins() -> None:
     svc, _, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     res = await asyncio.gather(
         *(svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1") for _ in range(2)),
         return_exceptions=True,
@@ -277,13 +295,13 @@ async def test_concurrent_redemptions_exactly_one_wins() -> None:
 
 async def test_revoked_token_rejected_and_revoke_unknown_not_found() -> None:
     svc, _, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
-    await svc.revoke(inv.user_id)
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
+    await svc.revoke(inv.user_id, audit=ok_audit)
     with pytest.raises(InviteRejected) as e:
         await svc.inspect(inv.token, source_ip="1.1.1.1")
     assert e.value.reason == "revoked"
     with pytest.raises(InviteNotFound):
-        await svc.revoke(uuid.uuid4())
+        await svc.revoke(uuid.uuid4(), audit=ok_audit)
 
 
 async def test_repeated_rejections_trip_ip_throttle() -> None:
@@ -323,7 +341,7 @@ async def test_abandoned_enrolment_cannot_sign_in_through_real_login() -> None:
 
     repo, clock = _Capture(), Clock()
     svc = InviteService(repo, FakeHasher(), FakeMfa(), clock=clock)  # type: ignore[arg-type]  # fakes
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
     clock.now = T0 + ENROLL_WINDOW + timedelta(seconds=1)
     with pytest.raises(InviteRejected):
@@ -368,7 +386,7 @@ async def test_invite_metrics_count_created_redeemed_rejected() -> None:
     redeemed0 = _sample(m.users_invites_redeemed_total)
     rejected0 = _sample(m.users_invites_rejected_total, reason="unknown")
     svc, _, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     assert _sample(m.users_invites_created_total, role="viewer") == created0 + 1
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="2.2.2.2")
     await svc.complete_redemption(
@@ -383,7 +401,7 @@ async def test_invite_metrics_count_created_redeemed_rejected() -> None:
 @pytest.mark.parametrize("exc", [AuditUnavailable("wal full"), AuditWriterStopped()])
 async def test_legacy_downgrade_aborted_when_audit_write_fails(exc: Exception) -> None:
     svc, repo, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     h = hash_token(inv.token)
     repo.rows[h] = repo.rows[h].model_copy(update={"role": "manager"})
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
@@ -401,7 +419,7 @@ async def test_legacy_downgrade_aborted_when_audit_write_fails(exc: Exception) -
 
 async def test_legacy_downgrade_without_hook_fails_closed() -> None:
     svc, repo, _ = _make()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     h = hash_token(inv.token)
     repo.rows[h] = repo.rows[h].model_copy(update={"role": "manager"})
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")

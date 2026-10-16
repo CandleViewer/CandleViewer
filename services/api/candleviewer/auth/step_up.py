@@ -126,6 +126,13 @@ class ResetResult:
     sessions_revoked: int
 
 
+class ResetAudit(Protocol):
+    """Write-ahead audit of an owner TOTP reset (C-2.9, #2510), given the methods and live
+    sessions about to be revoked, before the first revoke; a raise changes nothing."""
+
+    async def __call__(self, methods: int, sessions: int, /) -> None: ...
+
+
 class StepUpService:
     def __init__(
         self,
@@ -405,17 +412,20 @@ class StepUpService:
         return ResetPreview(uuid.UUID(target_user_id), count, positions.source, msg)
 
     async def reset_totp(
-        self, *, actor_session_id: str, actor_user_id: str, target_user_id: str
+        self, *, actor_session_id: str, actor_user_id: str, target_user_id: str, audit: ResetAudit
     ) -> ResetResult:
         """Owner reset: revoke the target's methods and all their sessions
         (which ends their elevations too), nothing else. Requires a live
         `users` elevation; touches no OMS surface and returns no secret.
-        Self-reset is refused."""
+        Self-reset is refused. It cannot be undone, so `audit` is written
+        ahead of the first revoke (C-2.9): if it raises, nothing changes."""
         await self.require_elevation(actor_session_id, "users")
         if actor_user_id == target_user_id:
             raise StepUpRequired("users")
         now = self._clock()
         methods = await self._mfa.find_active_methods(target_user_id)
+        live = await self._sessions.find_live_by_user(target_user_id)
+        await audit(len(methods), len(live))
         for method in methods:
             await self._mfa.revoke_method(str(method.id), now=now)
         revoked = await self._sessions.revoke_all_for_user(

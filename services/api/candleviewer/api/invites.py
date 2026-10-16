@@ -29,6 +29,7 @@ from pydantic import ValidationError
 
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.users import SnapshotResolver
+from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.errors import (
     InviteConflict,
@@ -37,12 +38,19 @@ from candleviewer.auth.errors import (
     PasswordPolicyViolation,
 )
 from candleviewer.auth.generated_permissions import Permission, Scope
+from candleviewer.auth.invite_repository import InviteAudit
 from candleviewer.auth.invite_service import InviteService
 from candleviewer.auth.models import CreatedInvite, InviteCreateRequest, InviteRecord
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.storage.errors import WriteAheadTimeout
 
 _TOKEN = Path(alias="inviteToken", min_length=16, max_length=128)
 _UNIFORM_DETAIL = "This invitation link is not valid."
+_AUDIT_DOWN = "audit unavailable; nothing was changed"
+
+
+class _AuditRefused(Exception):
+    """The write-ahead audit record could not be written; nothing was persisted."""
 
 
 class _Emitter(Protocol):
@@ -122,7 +130,8 @@ def make_invites_router(
 ) -> APIRouter:
     """`emitter` is mandatory: an invite action without an audit record
     (C-2.9) is refused at wiring time, and while `audit_ready()` is false
-    every invite action answers 503 before changing anything (#2492).
+    every invite action answers 503 before changing anything (#2492). Owner
+    actions audit ahead, in the store's transaction: refused, nothing persists.
     `principal_resolver=None` fails the owner routes closed with 501 (as
     `/users/{id}/roles`)."""
     if emitter is None:
@@ -132,7 +141,7 @@ def make_invites_router(
     def _audit_down() -> JSONResponse | None:
         if audit_ready():
             return None
-        return _problem(503, "Service unavailable", "audit unavailable; nothing was changed")
+        return _problem(503, "Service unavailable", _AUDIT_DOWN)
 
     async def _owner(request: Request) -> PrincipalSnapshot | JSONResponse:
         if principal_resolver is None:
@@ -181,6 +190,17 @@ def make_invites_router(
             return None
         return body if isinstance(body, dict) else None
 
+    def _write_ahead(action: str, principal: PrincipalSnapshot, request: Request) -> InviteAudit:
+        """The owner record (never the token), written before the store's first write."""
+
+        async def hook(user_id: uuid.UUID, role: str) -> None:
+            try:
+                await _audit_owner(action, principal, user_id, role, request)
+            except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
+                raise _AuditRefused from exc
+
+        return hook
+
     # -- owner side --------------------------------------------------------
 
     @router.post("/users")
@@ -208,10 +228,13 @@ def make_invites_router(
             )
             return _problem(422, "Unprocessable entity", "invalid invite request")
         try:
-            invite = await auth.invites.create(parsed, invited_by=got.user_id)
+            invite = await auth.invites.create(
+                parsed, invited_by=got.user_id, audit=_write_ahead("users.invited", got, request)
+            )
         except InviteConflict:
             return _problem(409, "Conflict", "email or username already in use")
-        await _audit_owner("users.invited", got, invite.user_id, invite.role, request)
+        except (_AuditRefused, WriteAheadTimeout):  # the SQL store bounds the hook
+            return _problem(503, "Service unavailable", _AUDIT_DOWN)
         return JSONResponse(status_code=201, content=_invite_json(invite))
 
     @router.get("/users/invites")
@@ -236,11 +259,13 @@ def make_invites_router(
             return got
         if (down := _audit_down()) is not None:
             return down
+        hook = _write_ahead("users.invite_reissued", got, request)
         try:
-            invite = await auth.invites.reissue(user_id, invited_by=got.user_id)
+            invite = await auth.invites.reissue(user_id, invited_by=got.user_id, audit=hook)
         except InviteNotFound:
             return _problem(404, "Not found", "no invited user with this id")
-        await _audit_owner("users.invite_reissued", got, invite.user_id, invite.role, request)
+        except (_AuditRefused, WriteAheadTimeout):
+            return _problem(503, "Service unavailable", _AUDIT_DOWN)
         return JSONResponse(status_code=201, content=_invite_json(invite))
 
     @router.delete("/users/{userId}/invite")
@@ -253,10 +278,13 @@ def make_invites_router(
         if (down := _audit_down()) is not None:
             return down
         try:
-            await auth.invites.revoke(user_id)
+            await auth.invites.revoke(
+                user_id, audit=_write_ahead("users.invite_revoked", got, request)
+            )
         except InviteNotFound:
             return _problem(404, "Not found", "no pending invite for this user")
-        await _audit_owner("users.invite_revoked", got, user_id, "", request)
+        except (_AuditRefused, WriteAheadTimeout):
+            return _problem(503, "Service unavailable", _AUDIT_DOWN)
         return JSONResponse(status_code=200, content={"user_id": str(user_id), "revoked": True})
 
     # -- invitee side ------------------------------------------------------
@@ -264,8 +292,8 @@ def make_invites_router(
     async def _gate(request: Request) -> JSONResponse | None:
         if not auth.invites_is_active:
             return _problem(503, "Service unavailable", "invites not wired")
-        if (down := _audit_down()) is not None:
-            return down
+        if not audit_ready():  # generic: an anonymous caller learns nothing about audit
+            return _problem(503, "Service unavailable", "service temporarily unavailable")
         if auth.invites.is_blocked(_client_ip(request)):
             return _problem(429, "Too many requests", "too many invalid attempts; try later")
         return None

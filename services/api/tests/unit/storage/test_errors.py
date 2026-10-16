@@ -23,6 +23,7 @@ from candleviewer.storage.errors import (
     StorageSchemaDrift,
     StorageTierUnavailable,
     UnknownIlpTable,
+    WriteAheadTimeout,
 )
 
 
@@ -38,6 +39,7 @@ def test_error_codes_are_stable_and_unique() -> None:
         StorageRetentionBlockedByReplay: "STORAGE_RETENTION_BLOCKED_REPLAY",
         StorageDiskCritical: "STORAGE_DISK_CRITICAL",
         StorageQueryFailed: "STORAGE_QUERY_FAILED",
+        WriteAheadTimeout: "STORAGE_WRITE_AHEAD_TIMEOUT",
         IlpRowError: "STORAGE_ILP_ROW_INVALID",
         MissingDesignatedTimestamp: "STORAGE_ILP_MISSING_DESIGNATED_TS",
         InvalidSymbol: "STORAGE_ILP_INVALID_SYMBOL",

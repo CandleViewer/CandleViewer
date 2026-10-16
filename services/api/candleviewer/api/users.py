@@ -25,6 +25,7 @@ from candleviewer.auth.errors import AuthError
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.owner_floor import OwnerFloorError, assert_owner_floor
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
+from candleviewer.storage.errors import WriteAheadTimeout
 
 _SYSTEM_ROLES = frozenset({"owner", "manager", "viewer"})
 
@@ -58,7 +59,7 @@ class UserRoleStore(Protocol):
         floor via `assert_owner_floor`, write `roles` granted by `actor`, then
         await `audit(roles read under lock)` before committing (C-2.9
         write-ahead). Raises `OwnerFloorError` or what `audit` raises, with
-        nothing changed; returns False if the user does not exist."""
+        nothing changed (or `WriteAheadTimeout`, #2510); False if no such user."""
         ...
 
 
@@ -242,7 +243,7 @@ def make_users_router(
                 after=new_roles,
             )
             return _problem(409, "conflict", "Conflict", "the last active owner cannot be demoted")
-        except _AuditRefused:
+        except (_AuditRefused, WriteAheadTimeout):  # the store bounds the hook (#2510)
             return _problem(503, "service_unavailable", "Service unavailable", "audit unavailable")
         if not found:
             return _problem(404, "not_found", "Not found", "user not found")

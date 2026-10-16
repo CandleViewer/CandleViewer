@@ -15,6 +15,7 @@ from tests.unit.auth.test_invite_service import (
     FakeMfa,
     FakeRepo,
     _req,
+    ok_audit,
 )
 from tests.unit.auth.test_invite_service import (
     Clock as InviteClock,
@@ -65,7 +66,7 @@ def _svc() -> tuple[InviteService, FakeRepo, InviteClock]:
 
 async def test_ac_inv_01_token_guessing_all_rejected_uniformly() -> None:  # U12
     svc, _, _ = _svc()
-    await svc.create(_req(), invited_by=uuid.uuid4())
+    await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     reasons = set()
     for i in range(50):
         with pytest.raises(InviteRejected) as e:
@@ -76,7 +77,7 @@ async def test_ac_inv_01_token_guessing_all_rejected_uniformly() -> None:  # U12
 
 async def test_ac_inv_02_expired_invite_never_yields_redemption() -> None:
     svc, _, clock = _svc()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     clock.now += INVITE_TTL + timedelta(seconds=1)
     with pytest.raises(InviteRejected):
         await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
@@ -84,7 +85,7 @@ async def test_ac_inv_02_expired_invite_never_yields_redemption() -> None:
 
 async def test_ac_inv_03_reuse_after_acceptance_rejected() -> None:
     svc, _, _ = _svc()
-    inv = await svc.create(_req(), invited_by=uuid.uuid4())
+    inv = await svc.create(_req(), invited_by=uuid.uuid4(), audit=ok_audit)
     await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="1.1.1.1")
     with pytest.raises(InviteRejected):
         await svc.begin_redemption(inv.token, password=GOOD_PW, source_ip="2.2.2.2")
