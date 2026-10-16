@@ -2,10 +2,11 @@
 
 `KeySelfCheckStore` can set `trading_enabled` false on any account of the environment and rewrite
 the verification columns of any key, with no principal. `accounts.selfcheck` is its one caller,
-the M10 port its one definition and the Postgres adapter its one implementation. A reference
-anywhere else in `candleviewer` (an `api/` router, a WS topic, the
-`AccountsRepository` facade) fails here and must be reviewed as an RBAC bypass first (C-12.4,
-SR-051), as for the row counts in `test_accounts_row_counts_callers.py`.
+the M10 port its one definition, the Postgres adapter its one implementation and the composition
+root's `key_selfcheck_wiring` the one place that builds it. A reference anywhere else in
+`candleviewer` (an `api/` router, a WS topic, the `AccountsRepository` facade) fails here and must
+be reviewed as an RBAC bypass first (C-12.4, SR-051), as for the row counts in
+`test_accounts_row_counts_callers.py`.
 
 A module uses the port when it names the port type or calls one of its methods on an object
 (`store.targets()`). Methods match as attribute calls, not text: `record_error` is also the name
@@ -27,6 +28,7 @@ ALLOWED = frozenset(
         "accounts/selfcheck.py",
         "storage/repositories/accounts.py",
         "storage/repositories/key_selfcheck_sqlalchemy.py",
+        "key_selfcheck_wiring.py",
     }
 )
 

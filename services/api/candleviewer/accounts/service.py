@@ -15,11 +15,11 @@ and the two catalogue gauges, and `start()` runs ONE supervised loop that refres
   (AGENTS.md §5.2 async hygiene: no silent task).
 - The fake backend attaches nothing: no loop runs and the gauges stay unset.
 
-`attach_key_selfcheck()` takes the stored-key self-check (E27-T03, `accounts.selfcheck`). Nothing
-attaches it yet: its Postgres adapter, exchange calls and wiring are #836 slice 2b. Once attached,
-`start()` awaits its bounded boot assertion, so it ends before the app serves, `stop()` stops its
-loop and then releases what it holds, and `health()` reads DEGRADED while a key fails it, the job
-holds a fail-closed latch or its loop has ended; `/readyz` shows that as a failing `accounts` check.
+`attach_key_selfcheck()` takes the stored-key self-check (E27-T03, `accounts.selfcheck`), which
+`key_selfcheck_wiring` attaches on the real backend. `start()` awaits its bounded boot assertion,
+so it ends before the app serves, `stop()` stops its loop and then releases what it holds (its
+Postgres pool), and `health()` reads DEGRADED while a key fails it, the job holds a fail-closed
+latch or its loop has ended; `/readyz` shows that as a failing `accounts` check.
 """
 
 from __future__ import annotations
@@ -106,8 +106,8 @@ class AccountsService:
     def attach_key_selfcheck(
         self, selfcheck: KeySelfCheck, *, release: Callable[[], Awaitable[None]] | None = None
     ) -> None:
-        """Wire the stored-key self-check (the wiring of #836 slice 2b; nothing calls it yet);
-        `release` frees what it holds once its loop has stopped."""
+        """Wire the stored-key self-check (`key_selfcheck_wiring`, real backend only); `release`
+        frees what it holds once its loop has stopped."""
         self._selfcheck, self._release = selfcheck, release
 
     async def start(self, ctx: AppContext) -> None:
