@@ -1688,3 +1688,60 @@ settings = Table(
         postgresql_where=text("scope = 'user'"),
     ),
 )
+
+#: `feature_flags`, `feature_flag_overrides` (E42-T03, revision 0027_feature_flags): Sec.3.9.
+flag_kind = ENUM(
+    "boolean", "percentage", "variant", name="flag_kind", metadata=metadata, create_type=False
+)
+feature_flags = Table(
+    "feature_flags",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("key", Text, nullable=False),
+    Column("kind", flag_kind, nullable=False, server_default=text("'boolean'")),
+    Column("description", Text, nullable=False, server_default=text("''")),
+    Column("default_value", JSONB, nullable=False, server_default=text("'false'::jsonb")),
+    Column("rollout_pct", SmallInteger),
+    Column("variants", JSONB),
+    Column("is_killswitch", Boolean, nullable=False, server_default=text("false")),
+    Column("owner_team", Text, nullable=False, server_default=text("'platform'")),
+    Column("expires_at", TIMESTAMP(timezone=True)),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    UniqueConstraint("key", name="feature_flags_key_key"),
+    CheckConstraint("key ~ '^[a-z0-9_]+([.][a-z0-9_]+){0,3}$'", name="ff_key"),
+    CheckConstraint("rollout_pct IS NULL OR rollout_pct BETWEEN 0 AND 100", name="ff_pct"),
+    CheckConstraint(
+        "(kind <> 'percentage' OR rollout_pct IS NOT NULL) "
+        "AND (kind <> 'variant' OR variants IS NOT NULL)",
+        name="ff_shape",
+    ),
+)
+feature_flag_overrides = Table(
+    "feature_flag_overrides",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("feature_flag_id", ForeignKey("feature_flags.id", ondelete="CASCADE"), nullable=False),
+    Column("user_id", ForeignKey("users.id", ondelete="CASCADE")),
+    Column("role_id", ForeignKey("roles.id", ondelete="CASCADE")),
+    Column("value", JSONB, nullable=False),
+    Column("reason", Text, nullable=False, server_default=text("''")),
+    Column("set_by", ForeignKey("users.id", ondelete="SET NULL")),
+    Column("expires_at", TIMESTAMP(timezone=True)),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("num_nonnulls(user_id, role_id) = 1", name="ffo_target"),
+    Index(
+        "ux_ffo_user",
+        "feature_flag_id",
+        "user_id",
+        unique=True,
+        postgresql_where=text("user_id IS NOT NULL"),
+    ),
+    Index(
+        "ux_ffo_role",
+        "feature_flag_id",
+        "role_id",
+        unique=True,
+        postgresql_where=text("role_id IS NOT NULL"),
+    ),
+)

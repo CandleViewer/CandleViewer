@@ -2195,6 +2195,8 @@ System-scope keys with a fixed meaning (`scope = 'system'`, at most one row per 
 | -------------------------- | ------------ | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `accounts.subaccount_tier` | `string`     | `"regular"` (cap 5) \| `"business_kyc"` (cap 20) | The Bybit sub-account tier as a recorded fact (US-ADMIN-014), read by `GET /admin/capacity` (`SubaccountCapacity`, E42-T01). No row means "unrecorded": the tier is never inferred from the account count or `max_sub_accounts_hint`. Changes are audited as `settings.change`. |
 
+> Shipped as Alembic `0027_feature_flags` (E42-T03 #964, on top of `0026_kek_versions_env`): `feature_flags`, `feature_flag_overrides` and the `flag_kind` type (§1.2), DDL below verbatim. No seed: the flag store inserts every registered flag at its default on start-up. `updated_at` is set by the store; no touch trigger (deviation from §1.4, as 0022 and 0025). No column holds a credential, token or PII (§12, P0). Downgrade refuses while either table holds rows.
+
 ```sql
 
 CREATE TABLE feature_flags (
@@ -3196,7 +3198,7 @@ NAMING_CONVENTION = {
 | `0009_alerts`                 | `alerts`, `alert_deliveries`, `outbox`                                                                                                                                                                                                     |
 | `0010_journal`                | `journal_trades`, `journal_tags`, `journal_trade_tags`, `notes`                                                                                                                                                                            |
 | `0011_workspace`              | `workspaces`, `layouts`, `layout_panes`, `chart_templates`, `drawings`, `indicator_presets`, `hotkey_profiles` — `drawings` = `0021_drawings`; `workspaces`, `layouts`, `layout_panes` = `0022_workspaces`; rest pending                   |
-| `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings` (E42-T01)                                                               |
+| `0012_governance`             | `settings`, `feature_flags`, `feature_flag_overrides`, `audit_log` + chain trigger, `audit_checkpoints`, `system_events`, `backups` — `settings` = `0025_settings`; flag tables = `0027_feature_flags`                                     |
 | `0013_partitioning`           | convert `order_events` to monthly range partitions; attach initial partitions                                                                                                                                                              |
 
 ---

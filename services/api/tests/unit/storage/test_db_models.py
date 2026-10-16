@@ -70,6 +70,9 @@ def test_metadata_declares_every_table_from_0001() -> None:
         "replay_sessions",
         # E42-T01 (0025_settings)
         "settings",
+        # E42-T03 (0027_feature_flags)
+        "feature_flags",
+        "feature_flag_overrides",
     }
     actual = {t.name for t in metadata.sorted_tables}
     assert actual == expected
