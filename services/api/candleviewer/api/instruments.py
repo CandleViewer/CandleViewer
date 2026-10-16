@@ -6,7 +6,8 @@ Thin HTTP adapter over the ingestion refresh scheduler's in-memory
 attribute read, no I/O, never awaits the upstream fetch — ticket "Refresh
 does not stall readers"). The only upstream-touching path is the on-demand
 refresh for an *unknown* symbol on the detail route ("Refresh without
-restart"), which is serialised by the scheduler's own lock.
+restart"), which is serialised by the scheduler's own lock and bounded by its
+deadline: past it the route answers 503 while the refresh runs on (#2702).
 
 RBAC (C-12.4): `x-rbac: {permissions: [instruments:read]}` — enforced here,
 fail-closed, mirroring `api/market.py` exactly: no resolver wired -> 501, no
@@ -31,6 +32,7 @@ from fastapi.responses import JSONResponse
 
 from candleviewer.domain.events import Instrument
 from candleviewer.ingestion.instruments import CatalogueSnapshot, utc_now_us
+from candleviewer.ingestion.instruments_refresh import InstrumentRefreshPendingError
 
 _REQUIRED_PERMISSION = "instruments:read"
 
@@ -73,7 +75,8 @@ class PrincipalResolver(Protocol):
 
 
 class CatalogueReader(Protocol):
-    """Structural type for `InstrumentsRefreshScheduler` (M6)."""
+    """Structural type for `InstrumentsRefreshScheduler` (M6). `ensure_symbol` raises
+    `InstrumentRefreshPendingError` when its refresh misses the deadline (#2702)."""
 
     def snapshot(self) -> CatalogueSnapshot | None: ...
 
@@ -227,7 +230,10 @@ def make_instruments_router(
         if instrument is None:
             # "Refresh without restart": an unknown symbol triggers one (throttled) refresh,
             # also before any catalogue loaded (#2599: a failed cold start).
-            instrument = await reader.ensure_symbol(symbol)
+            try:
+                instrument = await reader.ensure_symbol(symbol)
+            except InstrumentRefreshPendingError:  # #2702: past the deadline; it runs on
+                return _problem(503, "Service unavailable", "instrument catalogue not loaded yet")
             snap = reader.snapshot() or snap
         if snap is None:  # still nothing loaded: never a false 404 for a real symbol
             return _problem(503, "Service unavailable", "instrument catalogue not loaded yet")
