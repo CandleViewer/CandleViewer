@@ -15,13 +15,14 @@ a WS snapshot source reads `latest` and `version`.
   not `hydrated`, so the new generation's rows are read (ADR-0033).
 - **Hydration:** the first `ensure` starts a series from its ring, replayed by the sink rules,
   then reads the newest closed tape-built bars, bounded by `timeout_s`, and folds over them the
-  closes seen just before the read (its ring) and during it, in emission order (those newer than
-  the rows, or replacing a bar they hold), then the forming bar. It keeps one generation: the
-  live one, else the newest row's, else none yet. One read at a time per series: a concurrent
-  `ensure` waits for it, and takes it over if its reader was cancelled. A failed read, or a
-  degraded one (SR-E12-11: served, never final), leaves the series not `hydrated`; an `ensure`
-  reads it again, as it does a `gapped` one, but never sooner than `retry_after_s` after the last
-  read. Without a reader, a series keeps only what the store has seen live.
+  bars it held (those newer than the rows, or replacing a bar they hold, each with its build
+  mark), the closes seen just before and during the read that re-close a bar now held, and the
+  forming bar. It keeps one generation: the live one, else the newest row's, else none yet. One
+  read at a time per series: a concurrent `ensure` waits for it, and takes it over if its reader
+  was cancelled. A failed read, a degraded one (SR-E12-11: served, never final), or a live swap
+  leaves the series not `hydrated`; an `ensure` reads it again, as it does a `gapped` one, but
+  never sooner than `retry_after_s` after the last read; nothing else starts a read. Without a
+  reader, a series keeps only what the store has seen live.
 - **Holds and bounds (C-2.18):** `ensure` returns a `Hold`, released once. The last release keeps
   the series `release_grace_s` (the builder's grace, US-MKT-005), so a quick resubscribe finds it
   as the sink kept it and reads nothing (BR-38); the next `ensure` sweeps the expired. At most
@@ -37,10 +38,11 @@ a WS snapshot source reads `latest` and `version`.
 Gaps: the closes emitted just before the hold that the writer had not landed yet come from the
 ring (the last `RECENT_CLOSES`). A live close that skips indexes past the rows marks the series
 `gapped` (`bars_series_gap`), and an `ensure` re-reads it, no sooner than `retry_after_s` after
-the last read; the bars it holds that storage still lacks survive the re-read. Not covered: the
+the last read; the bars it holds newer than the stored rows survive the re-read. Not covered: the
 forming bar is unknown until the next `open` or `update` (builders expose none); a hole inside the
-stored rows (a row the read withheld or skipped, or one the writer missed) stays a hole and is
-not flagged; a jump is seen on a close only.
+stored rows (a row the read withheld or skipped, or one the writer never landed) stays a hole and
+is not flagged; a jump is seen on a close only; with no stored row below its ring (an empty read)
+a series cannot see its junction, so a writer lagging past the ring goes unflagged.
 """
 
 from __future__ import annotations
@@ -86,7 +88,7 @@ class Latest(NamedTuple):
     """`latest`: the series' change counter and generation (None before an emission or a read
     names one), its closed bars in index order, the forming bar, and the lowest `build_version`
     among those bars when one was built below the running code (None: all current;
-    `meta.build_version` in #2595's §6.1)."""
+    `23-ws-protocol.md` §6.1 `meta.build_version`)."""
 
     version: int
     generation: int | None
@@ -125,7 +127,8 @@ class _Series:
     forming: Bar | None = None
     #: Holds its complete stored history: a read that neither failed nor was degraded.
     hydrated: bool = False
-    #: The latest read completed (success, failure or timeout; never a cancellation).
+    #: Waiters keep the latest read's result: True after a success, a failure or a timeout,
+    #: False after a degraded read or a cancellation.
     attempted: bool = False
     #: Store-clock time before which no read starts again (set when a read completes).
     retry_at: float = float("-inf")
@@ -192,6 +195,8 @@ def _live(s: _Series, u: BarUpdate, generation: int) -> bool:
         _clear(s)
         s.generation = generation
         s.hydrated = False  # the new generation's rows are read again (ADR-0033)
+        _apply(s, u)
+        return True  # the reset changed the series, even if the emission itself is ignored
     return _apply(s, u)
 
 
@@ -338,6 +343,7 @@ class SeriesStore:
         ready = s.ready = asyncio.Event()
         ring = self._recent.get((symbol, spec.spec_hash), ())
         s.replay, s.attempted = deque(ring, maxlen=MAX_HISTORY), False
+        before = s.generation
         try:
             async with asyncio.timeout(self._timeout_s):
                 tail = await self._tail(symbol, spec, MAX_HISTORY)
@@ -345,11 +351,13 @@ class SeriesStore:
             s.attempted = True
             _log().warning(
                 "bars_series_hydrate_failed", spec_hash=spec.spec_hash, symbol=symbol,
-                error_type=type(exc).__name__, exc_info=True,
+                error_type=type(exc).__name__, message=str(exc)[:120],
             )  # fmt: skip
         else:
+            swapped = before is not None and s.generation != before  # live, during the read
             self._fold(s, tail)
-            s.attempted = s.hydrated = not tail.integrity_degraded
+            s.attempted = not tail.integrity_degraded
+            s.hydrated = s.attempted and not swapped  # the new generation's rows are read next
             if tail.integrity_degraded:  # SR-E12-11: its bars are served, never as final
                 _log().warning(
                     "bars_series_hydrate_degraded", spec_hash=spec.spec_hash, symbol=symbol,
@@ -368,8 +376,8 @@ class SeriesStore:
     def _fold(self, s: _Series, tail: BarTail) -> None:
         """Rebuild `s` in one generation: the live one (the forming bar's, else the newest
         close's), else the newest row's (the highest at the newest `ts`, until ADR-0033's pointer
-        decides), else unchanged: the rows, the live closes newer by key or re-closing a row (the
-        bars `s` held, which storage may lack, then the replay), then the forming bar."""
+        decides), else unchanged: the rows, the bars `s` held that are newer by key or re-close a
+        row, the replayed re-closes of bars now held, then the forming bar."""
         replay: Sequence[Close] = s.replay or ()
         forming = s.forming
         gen: int | None
@@ -381,7 +389,7 @@ class SeriesStore:
             gen = tail.bars[-1][0]
         else:
             gen = s.generation  # nothing seen and nothing stored: unchanged (none for a new series)
-        held = list(s.closed.values()) if gen == s.generation else []
+        held, prior = (list(s.closed.values()), dict(s.stale)) if gen == s.generation else ([], {})
         _clear(s)
         s.generation, s.gapped = gen, False
         for g, bar in tail.bars:
@@ -393,10 +401,15 @@ class SeriesStore:
                 s.stale[bar.index] = built
         last = next(reversed(s.closed.values()), None)
         end = None if last is None else (last.open_time, last.index)
-        for u in [_update("close", b) for b in held] + [u for u, g in replay if g == gen]:
-            # By key: non-time bars share open times. An older close the rows lack (a missed
+        for b in held:  # each keeps its own build mark; storage may still lack them
+            # By key: non-time bars share open times. An older bar the rows lack (a missed
             # write, a pre-restart run) is not a restart.
-            if end is None or (u.bar.open_time, u.bar.index) > end or _holds(s, u.bar):
+            if end is None or (b.open_time, b.index) > end or _holds(s, b):
+                _apply(s, _update("close", b))
+                if b.index in prior:
+                    s.stale[b.index] = prior[b.index]
+        for u, g in replay:  # re-closes of the bars now held (newer closes were held already)
+            if g == gen and _holds(s, u.bar):
                 _apply(s, u)
         if forming is not None:
             _apply(s, _update("update", forming))

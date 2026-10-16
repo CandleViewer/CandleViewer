@@ -114,13 +114,19 @@ async def test_sink_amended_close_of_a_bar_not_held_is_ignored() -> None:
     assert view(store) == ([5, 6], None) and store.version(SYM, H) == before
 
 
-@pytest.mark.parametrize("before", [(), (5, 6)], ids=["empty", "5-6"])
-async def test_sink_an_amended_close_above_the_window_is_ignored(before: tuple[int, ...]) -> None:
+@pytest.mark.parametrize(
+    ("before", "window"),
+    [((up("open", 0),), ([], 0)), ((up("close", 5), up("close", 6)), ([5, 6], None))],
+    ids=["empty", "5-6"],
+)
+async def test_sink_an_amended_close_above_the_window_is_ignored(
+    before: tuple[BarUpdate, ...], window: tuple[list[int], int | None]
+) -> None:
     """Never a bar's first sight: above the newest index it would open a hole (#2666 r2)."""
-    store = await held(*(up("close", i) for i in before))
+    store = await held(*before)
     version = store.version(SYM, H)
     await emit(store, up("close", 9, amended=True))
-    assert view(store) == (list(before), None) and store.version(SYM, H) == version
+    assert view(store) == window and store.version(SYM, H) == version
 
 
 async def test_sink_a_live_generation_change_resets_the_series_in_both_directions() -> None:
@@ -362,7 +368,7 @@ async def test_version_moves_when_a_read_lands() -> None:
 
 @pytest.mark.parametrize(
     ("error", "error_type"),
-    [(OSError("questdb down"), "OSError"), (RuntimeError("bad query"), "RuntimeError"),
+    [(OSError("questdb down"), "OSError"), (RuntimeError("bad query " * 20), "RuntimeError"),
      (None, "TimeoutError")],
     ids=["os-error", "any-error", "timeout"],
 )  # fmt: skip
@@ -377,7 +383,7 @@ async def test_a_failed_or_timed_out_read_leaves_the_series_live_and_says_so(
     assert view(store) == ([4], 5) and not store.hydrated(SYM, H)
     assert events(logs, "bars_series_hydrate_failed") == [{
         "event": "bars_series_hydrate_failed", "log_level": "warning", "spec_hash": H,
-        "symbol": SYM, "error_type": error_type, "exc_info": True,
+        "symbol": SYM, "error_type": error_type, "message": str(error or "")[:120],
     }]  # fmt: skip
 
 
@@ -537,7 +543,7 @@ async def test_more_closes_during_the_read_than_the_ring_keeps_leave_no_gap() ->
     await emit(store, *(up("close", i) for i in range(10, 14 + RECENT_CLOSES)))
     tail.gate.set()
     await task
-    assert view(store)[0] == list(range(30)) and not store.gapped(SYM, H)
+    assert view(store)[0] == list(range(30)) and store.hydrated(SYM, H) and not store.gapped(SYM, H)
 
 
 async def test_a_jump_past_the_recent_closes_flags_a_gap_that_the_next_read_heals() -> None:
@@ -650,6 +656,15 @@ async def test_only_the_newest_generations_recent_closes_are_folded() -> None:
     assert generation(store) == 1 and view(store) == ([7], None) and not store.gapped(SYM, H)
 
 
+async def test_an_old_generations_close_never_overwrites_a_bar_of_the_new_one() -> None:
+    """A replayed close of the old generation that shares a stored bar's key is not that bar."""
+    store = SeriesStore(Tail(rows(0, gen=1), now=True))
+    await emit(store, up("close", 0, close="90"))  # generation 0
+    await emit(store, up("close", 1), generation=1)
+    await store.ensure(SYM, SPEC)
+    assert generation(store) == 1 and closes(store) == [(0, "100"), (1, "100")]
+
+
 async def test_a_generation_swap_during_the_read_keeps_only_the_new_generation() -> None:
     """The live builder moved to generation 1 (an `open`) while the read was in flight: the
     stored rows and the earlier closes are generation 0, so only the forming bar remains."""
@@ -661,7 +676,7 @@ async def test_a_generation_swap_during_the_read_keeps_only_the_new_generation()
     await emit(store, up("open", 0, shift=9), generation=1)
     tail.gate.set()
     await task
-    assert generation(store) == 1 and view(store) == ([], 0)
+    assert generation(store) == 1 and view(store) == ([], 0) and not store.hydrated(SYM, H)
 
 
 async def hydrated(
@@ -696,6 +711,29 @@ async def test_a_restart_forgets_the_old_run_builds() -> None:
     store = await hydrated(rows(0, 1), {(0, 0, T0): 1})
     await emit(store, up("close", 0, shift=10))
     assert view(store) == ([0], None) and oldest(store, 2) is None
+
+
+async def test_build_marks_survive_a_re_read_and_a_live_re_close_clears_one() -> None:
+    """SR-E12-14: a re-read must not pass old-build bars off as current (#399 r3 major)."""
+    clock = Clock()
+    tail = Tail(now=True)
+    tail.tail = BarTail(rows(0, 1, 2), builds={(0, 1, T0 + STEP): 1}, dropped=1)  # read again
+    store = SeriesStore(tail, clock=clock)
+    await store.ensure(SYM, SPEC)
+    tail.tail = BarTail(rows(0, 1, 2), builds={(0, 1, T0 + STEP): 1})
+    clock.t += RETRY_AFTER_S
+    await store.ensure(SYM, SPEC)
+    assert (tail.calls, oldest(store, 3)) == (2, 1)
+    await emit(store, up("close", 1, amended=True, close="101"))
+    assert oldest(store, 3) is None  # re-closed by the running code
+
+
+async def test_a_generation_flip_led_by_an_ignored_emission_moves_the_version() -> None:
+    """An amended close of a bar the new generation does not hold still resets the series."""
+    store = await held(*(up("close", i) for i in range(5)))
+    before = store.version(SYM, H)
+    await emit(store, up("close", 3, amended=True), generation=1)
+    assert (generation(store), view(store)) == (1, ([], None)) and store.version(SYM, H) > before
 
 
 async def test_a_read_across_a_cold_start_marks_only_the_old_runs_bars() -> None:
