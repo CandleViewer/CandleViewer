@@ -6,6 +6,14 @@
 > CI-SEC-006 suppressions) and §16.2 (exception process). This page explains each gate; the rule
 > YAML is the source of truth for what is matched.
 
+## Running locally
+
+- Validate configs: `semgrep --metrics=off --validate --config .semgrep` (directory form is valid and
+  recurses; every `*.yml`/`*.yaml` anywhere under `.semgrep/` must have a top-level `rules:`).
+  CI uses the equivalent glob `--config .semgrep/cv-*.yml`.
+- Prove rules on fixtures: `python tools/ci/check_semgrep_rule_tests.py`. YAML fixtures live in
+  `.semgrep-fixtures/`; `.py`/`.ts`/`.tsx` fixtures stay in `.semgrep/tests/`.
+
 ## How these gates run
 
 - **Semgrep (PR, required `sast` check):** `.github/workflows/_job-security.yml` passes every

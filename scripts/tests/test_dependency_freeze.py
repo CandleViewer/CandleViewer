@@ -43,7 +43,7 @@ def test_dependabot_sla_labels_present() -> None:
 
 def test_unpinned_action_rule_and_fixture_exist() -> None:
     assert (ROOT / ".semgrep/cv-unpinned-action.yml").is_file()
-    assert (ROOT / ".semgrep/tests/cv-unpinned-action.yml").is_file()
+    assert (ROOT / ".semgrep-fixtures/cv-unpinned-action.yml").is_file()
 
 
 def test_known_vulnerable_dependency_without_exception_fails_gate() -> None:

@@ -98,6 +98,7 @@
 /.semgrep/                              @CandleViewer/security @CandleViewer/devsecops
 /.semgrepignore                         @CandleViewer/security @CandleViewer/devsecops
 /.mcp.json                              @CandleViewer/security @CandleViewer/devsecops
+/.semgrep-fixtures/                     @CandleViewer/security @CandleViewer/devsecops
 /Makefile                               @CandleViewer/devsecops @CandleViewer/architecture
 /scripts/                               @CandleViewer/devsecops @CandleViewer/architecture
 /tools/                                 @CandleViewer/devsecops @CandleViewer/security
