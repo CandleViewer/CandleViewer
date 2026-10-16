@@ -15,6 +15,8 @@ from candleviewer.storage.repositories.sessions_sqlalchemy import (
 )
 
 _NOW = datetime(2026, 9, 30, tzinfo=UTC)
+#: `(step_up_elevations, step_up_failures, readonly_until)` as `update_step_up_state` passes it.
+StepUpColumns = tuple[dict[str, datetime], int, datetime | None]
 
 
 def _row(**over: Any) -> SimpleNamespace:
@@ -123,18 +125,40 @@ async def test_family_walk_returns_ids_and_lookup_by_jti_is_bound() -> None:
     assert rel2.session.calls[0][1] == {"j": "jti"}
 
 
-async def test_save_step_up_state_is_conditional_and_round_trips_elevations() -> None:
+async def test_update_step_up_state_rewrites_the_row_it_locked_in_one_transaction() -> None:
+    """#2304: the step-up columns are read under the row lock and rewritten from that read in
+    the same transaction, never from a copy of the row read before it."""
     until = datetime(2026, 9, 30, 0, 5, tzinfo=UTC)
     stored = '{"keys": "2026-09-30T00:05:00+00:00"}'
     repo, rel = _repo([_row(step_up_elevations=stored, step_up_failures=1)])
-    got = await repo.save_step_up_state(
-        "sid", elevations={"keys": until}, failures=1, readonly_until=None
-    )
-    sql, params = rel.session.calls[0]
-    assert "revoked_at IS NULL" in sql and "RETURNING" in sql
-    assert params["elevations"] == stored
-    assert got["step_up_elevations"] == {"keys": until}
-    assert got["step_up_failures"] == 1
+    seen: list[StepUpColumns] = []
+
+    def change(state: StepUpColumns) -> StepUpColumns:
+        seen.append(state)
+        return {"users": until}, 2, None
+
+    got = await repo.update_step_up_state("sid", change)
+
+    (lock_sql, lock_params), (write_sql, params) = rel.session.calls
+    assert "revoked_at IS NULL" in lock_sql and lock_sql.endswith("FOR NO KEY UPDATE")
+    assert lock_params == {"id": "sid"} and seen == [({"keys": until}, 1, None)]
+    assert write_sql.startswith("UPDATE sessions SET step_up_elevations = CAST(:elevations")
+    assert "revoked_at IS NULL" in write_sql and "RETURNING" in write_sql
+    elevations = '{"users": "2026-09-30T00:05:00+00:00"}'
+    assert params == {"id": "sid", "elevations": elevations, "failures": 2, "readonly_until": None}
+    assert rel.commits == 1 and got is not None
+
+
+async def test_update_step_up_state_of_a_revoked_or_absent_row_writes_nothing() -> None:
+    repo, rel = _repo([])
+    seen: list[StepUpColumns] = []
+
+    def change(state: StepUpColumns) -> StepUpColumns:
+        seen.append(state)
+        return state
+
+    assert await repo.update_step_up_state("sid", change) is None
+    assert seen == [] and len(rel.session.calls) == 1 and rel.commits == 0
 
 
 async def test_lift_idle_lock_restamps_and_clears_elevations_in_one_conditional_write() -> None:

@@ -19,7 +19,11 @@ Challenges (#2304; PR #2290 ruling, rule 4): every refusal issues one live
 challenge per session (`record_pending`), stored on the row with its id,
 class, 5-minute expiry and, for a no-grace class, the SHA-256 fingerprint of
 the refused request. A no-grace step-up must name it, and its one-shot grant
-(60 s) is bound to that fingerprint: only the identical request can use it.
+(60 s) is bound to that fingerprint: only the identical request can use it,
+once. The grant is used by one conditional write (`consume_step_up_key`), and
+every other write of the step-up columns is a pure change applied to the row
+as it is under its lock (`update_step_up_state`), never to a copy read before
+it: a grant used while another request of the session is in flight stays used.
 """
 
 from __future__ import annotations
@@ -55,7 +59,7 @@ from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import SessionRecord, UserRecord
 from candleviewer.auth.repository import UserRepository
 from candleviewer.auth.session_chart import SessionChart, to_us
-from candleviewer.auth.session_repository import SessionRepository
+from candleviewer.auth.session_repository import SessionRepository, StepUpChange, StepUpState
 from candleviewer.auth.session_service import RevocationSink, publish_revoked
 from candleviewer.auth.totp import verify_code
 from candleviewer.auth.totp_skew import TotpSkewReporter
@@ -217,6 +221,71 @@ def _grant_key(action_class: str, challenge: StepUpChallenge | None) -> str:
     return challenge.key(_ONCE)
 
 
+# Every write of the step-up columns is one of these pure changes, applied by
+# `SessionRepository.update_step_up_state` to the row as it is under its lock (#2304), never
+# to the copy a request read before: a grant used meanwhile stays used, a downgrade stands.
+
+
+def _unexpired(elevations: dict[str, datetime], now: datetime) -> dict[str, datetime]:
+    return {k: v for k, v in elevations.items() if v > now}
+
+
+def _issue(challenge: StepUpChallenge, now: datetime) -> StepUpChange:
+    """The new challenge supersedes the live one; nothing else on the row changes."""
+
+    def change(state: StepUpState) -> StepUpState:
+        elevations, failures, readonly_until = state
+        kept = {k: v for k, v in _unexpired(elevations, now).items() if not k.startswith(_PENDING)}
+        return {**kept, challenge.key(): challenge.expires_at}, failures, readonly_until
+
+    return change
+
+
+def _elevate(action_class: str, grant_key: str, until: datetime, now: datetime) -> StepUpChange:
+    """The challenge is used up. A no-grace class holds one grant, bound to the challenged
+    request (a newer step-up replaces it); a grace class a window. A downgrade that landed
+    during the factor check stands, and nothing is elevated."""
+    once = f"{_ONCE}{action_class}"
+
+    def change(state: StepUpState) -> StepUpState:
+        elevations, _failures, readonly_until = state
+        if readonly_until is not None and now < readonly_until:
+            return state
+        kept = {
+            k: v
+            for k, v in _unexpired(elevations, now).items()
+            if not (k.startswith(_PENDING) or k == once or k.startswith(once + ":"))
+        }
+        return {**kept, grant_key: until}, 0, None
+
+    return change
+
+
+def _strike(now: datetime) -> StepUpChange:
+    """One more invalid step-up, counted on the row: the third downgrades the session to
+    read-only for 5 minutes and ends every elevation."""
+
+    def change(state: StepUpState) -> StepUpState:
+        elevations, failures, _readonly_until = state
+        if failures + 1 >= FAILURE_CAP:
+            return {}, FAILURE_CAP, now + READONLY_WINDOW
+        return _unexpired(elevations, now), failures + 1, None
+
+    return change
+
+
+def _lift(now: datetime) -> StepUpChange:
+    """End a downgrade that has run out; a downgrade lifted or renewed meanwhile is kept."""
+
+    def change(state: StepUpState) -> StepUpState:
+        elevations, _failures, readonly_until = state
+        if readonly_until is None or now < readonly_until:
+            return state
+        return elevations, 0, None
+
+    return change
+
+
 @dataclass(frozen=True)
 class ResetPreview:
     target_user_id: uuid.UUID
@@ -296,19 +365,12 @@ class StepUpService:
         record = await self._sessions.find_by_id(session_id)
         return None if record is None or record.is_revoked else record
 
-    async def _save(
-        self,
-        session_id: str,
-        *,
-        elevations: dict[str, datetime],
-        failures: int,
-        readonly_until: datetime | None,
-    ) -> None:
-        saved = await self._sessions.save_step_up_state(
-            session_id, elevations=elevations, failures=failures, readonly_until=readonly_until
-        )
+    async def _update(self, session_id: str, change: StepUpChange) -> SessionRecord:
+        """Apply `change` to the step-up columns as the row holds them now (#2304)."""
+        saved = await self._sessions.update_step_up_state(session_id, change)
         if saved is None:  # revoked meanwhile: fail closed (401, never a challenge)
             raise SessionRevoked("step_up")
+        return saved
 
     # -- read-only downgrade ---------------------------------------------
 
@@ -321,9 +383,9 @@ class StepUpService:
         now = self._clock()
         if now < record.readonly_until:
             raise SessionReadOnly(record.readonly_until)
-        await self._save(
-            session_id, elevations=dict(record.step_up_elevations), failures=0, readonly_until=None
-        )
+        saved = await self._update(session_id, _lift(now))
+        if saved.readonly_until is not None:  # three new strikes renewed it meanwhile
+            raise SessionReadOnly(saved.readonly_until)
         await self._chart.record(record, now, "REQUEST", replay=True)
         if self._chart.in_state(str(record.id), "readonly_downgrade"):
             await self._chart.record(record, now, "READONLY_EXPIRED")
@@ -356,41 +418,23 @@ class StepUpService:
         now = self._clock()
         action_class, challenge = _answered(record, now, action_class, challenge_id)
         grant_key = _grant_key(action_class, challenge)
-        elevations = {k: v for k, v in record.step_up_elevations.items() if v > now}
         if not await self._verify_both(user_id, code, password, now):
             auth_step_up_failures_total.labels(action_class=action_class).inc()
             auth_stepup_failures_total.inc()  # SR-125 catalogue series (scraped, no label)
-            failures = record.step_up_failures + 1
-            if failures >= FAILURE_CAP:
-                until = now + READONLY_WINDOW
-                auth_readonly_downgrades_total.inc()
-                await self._save(
-                    session_id, elevations={}, failures=FAILURE_CAP, readonly_until=until
-                )
-                await self._record(
-                    record, now, "STEP_UP_FAILED", action_class=action_class, now_us=to_us(now)
-                )
-                raise SessionReadOnly(until)
-            await self._save(
-                session_id, elevations=elevations, failures=failures, readonly_until=None
-            )
+            struck = await self._update(session_id, _strike(now))
             await self._record(
                 record, now, "STEP_UP_FAILED", action_class=action_class, now_us=to_us(now)
             )
-            raise StepUpCodeInvalid(FAILURE_CAP - failures)
+            if struck.readonly_until is not None:
+                auth_readonly_downgrades_total.inc()
+                raise SessionReadOnly(struck.readonly_until)
+            raise StepUpCodeInvalid(FAILURE_CAP - struck.step_up_failures)
         single_use = action_class in NO_GRACE_ACTION_CLASSES
         until = now + (SINGLE_USE_WINDOW if single_use else GRACE_WINDOW)
-        # The challenge is used up. A no-grace class holds one grant, bound to the
-        # challenged request (a newer step-up replaces it); a grace class a window.
-        once = f"{_ONCE}{action_class}"
-        elevations = {
-            k: v
-            for k, v in elevations.items()
-            if not (k.startswith(_PENDING) or k == once or k.startswith(once + ":"))
-        }
-        elevations[grant_key] = until
+        saved = await self._update(session_id, _elevate(action_class, grant_key, until, now))
+        if saved.readonly_until is not None:  # downgraded during the factor check
+            raise SessionReadOnly(saved.readonly_until)
         fingerprint = challenge.fingerprint if single_use and challenge is not None else None
-        await self._save(session_id, elevations=elevations, failures=0, readonly_until=None)
         cid = None if challenge is None else challenge.challenge_id
         await self._record(
             record,
@@ -424,18 +468,7 @@ class StepUpService:
             raise SessionRevoked("step_up")
         now = self._clock()
         challenge = StepUpChallenge(uuid.uuid4(), action_class, now + CHALLENGE_WINDOW, fingerprint)
-        elevations = {
-            k: v
-            for k, v in record.step_up_elevations.items()
-            if v > now and not k.startswith(_PENDING)
-        }
-        elevations[challenge.key()] = challenge.expires_at
-        await self._save(
-            session_id,
-            elevations=elevations,
-            failures=record.step_up_failures,
-            readonly_until=record.readonly_until,
-        )
+        await self._update(session_id, _issue(challenge, now))
         # Challenge issued (the 403 is decided): B16 audits `step_up_required`.
         await self._record(
             record,

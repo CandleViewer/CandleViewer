@@ -1,10 +1,13 @@
-"""Integration: identical re-sends racing for one no-grace step-up grant, against real
-Postgres 16 (#2304).
+"""Integration: one no-grace step-up grant on real Postgres 16 (#2304): identical re-sends racing
+to use it, and the other writes of the step-up columns racing them.
 
 `SqlAlchemySessionRepository.consume_step_up_key` removes a one-shot grant with one conditional
 `UPDATE ... RETURNING`. Under READ COMMITTED a concurrent writer waits on the row lock, then
 re-evaluates the jsonb predicate on the committed row, finds the key gone and updates nothing; a
-read-modify-write would hand the grant to every caller. Not run locally (no docker); CI only.
+read-modify-write would hand the grant to every caller. `update_step_up_state`, the only other
+writer of the columns, reads the row `FOR NO KEY UPDATE` and rewrites it in the same transaction,
+so it never writes back a grant used after it read (security review, round 3). Needs Docker
+(testcontainers); the CI `integration` job runs it.
 """
 
 from __future__ import annotations
@@ -20,10 +23,18 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncConnection, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 from candleviewer.auth.models import SessionRecord
-from candleviewer.auth.step_up import GRACE_WINDOW, SINGLE_USE_WINDOW, StepUpChallenge
+from candleviewer.auth.session_repository import StepUpState
+from candleviewer.auth.step_up import (
+    CHALLENGE_WINDOW,
+    GRACE_WINDOW,
+    SINGLE_USE_WINDOW,
+    StepUpChallenge,
+)
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
@@ -36,6 +47,12 @@ _ROOT = Path(__file__).resolve().parents[3]
 _NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 #: The SHA-256 of the refused request the grant is bound to (any 64-hex value binds).
 _FINGERPRINT = hashlib.sha256(b"POST /trading/kill-switch").hexdigest()
+#: The held request using its grant, left uncommitted so that a writer queues behind it.
+_USE_UNCOMMITTED = sa.text(
+    "UPDATE sessions SET step_up_elevations = step_up_elevations - CAST(:key AS text) "
+    "WHERE id = CAST(:id AS uuid)"
+)
+_WAITING = sa.text("SELECT count(DISTINCT pid) FROM pg_locks WHERE NOT granted")
 
 
 @pytest.fixture(scope="module")
@@ -93,11 +110,23 @@ async def _live_session(
         mfa_satisfied_at=_NOW,
     )
     await repo.create_session(record)
-    saved = await repo.save_step_up_state(
-        str(record.id), elevations=elevations, failures=0, readonly_until=None
-    )
+    saved = await repo.update_step_up_state(str(record.id), lambda _row: (elevations, 0, None))
     assert saved is not None
     return repo, str(record.id)
+
+
+def _keep(state: StepUpState) -> StepUpState:
+    """A write of the step-up columns that keeps every entry the row holds when it is read."""
+    return state
+
+
+async def _until_blocked(probe: AsyncConnection) -> None:
+    """Bounded condition wait: a backend queued on a lock (pg_locks is never cached)."""
+    for _ in range(400):
+        if (await probe.execute(_WAITING)).scalar_one() >= 1:
+            return
+        await asyncio.sleep(0.025)
+    raise AssertionError("the writer never queued behind the uncommitted use of the grant")
 
 
 @pytest.mark.parametrize("callers", [2, 8], ids=["two-re-sends", "burst-of-8"])
@@ -139,3 +168,70 @@ async def test_a_grant_on_a_revoked_session_is_not_consumed(
     assert await repo.revoke(sid, reason="logout", now=_NOW) is not None
 
     assert await repo.consume_step_up_key(sid, key=key, now=_NOW) is None
+
+
+async def test_a_write_queued_behind_the_use_of_a_grant_never_restores_it(
+    pg_dsn: str, rel: SqlAlchemyRelationalRepository
+) -> None:
+    """Security review round 3: the held request is using its grant (uncommitted) when another
+    request of the session writes a challenge. The write reads the row only once the use
+    commits, so it keeps the grant used; rewriting the copy it would have read before would put
+    the grant back, and the identical request could execute a second time inside the 60 s."""
+    key, window = _grant_key(), {"users": _NOW + GRACE_WINDOW}
+    repo, sid = await _live_session(pg_dsn, rel, {key: _NOW + SINGLE_USE_WINDOW, **window})
+    challenge = StepUpChallenge(uuid.uuid4(), "keys", _NOW + CHALLENGE_WINDOW)
+    seen: list[dict[str, datetime]] = []
+
+    def issue(state: StepUpState) -> StepUpState:
+        elevations, failures, readonly_until = state
+        seen.append(dict(elevations))
+        return {**elevations, challenge.key(): challenge.expires_at}, failures, readonly_until
+
+    engine = create_async_engine(pg_dsn)
+    try:
+        async with engine.connect() as probe:
+            async with engine.begin() as held:
+                await held.execute(_USE_UNCOMMITTED, {"id": sid, "key": key})
+                writer = asyncio.create_task(repo.update_step_up_state(sid, issue))
+                await _until_blocked(probe)
+            written = await writer
+    finally:
+        await engine.dispose()
+
+    assert seen == [window]  # read after the use committed, never before it
+    assert written is not None
+    assert written.step_up_elevations == {**window, challenge.key(): challenge.expires_at}
+    assert await repo.consume_step_up_key(sid, key=key, now=_NOW) is None
+
+
+async def test_writes_racing_the_use_of_a_grant_never_restore_it(
+    pg_dsn: str, rel: SqlAlchemyRelationalRepository
+) -> None:
+    key = _grant_key()
+    repo, sid = await _live_session(pg_dsn, rel, {key: _NOW + SINGLE_USE_WINDOW})
+
+    used, *written = await asyncio.gather(
+        repo.consume_step_up_key(sid, key=key, now=_NOW),
+        *(repo.update_step_up_state(sid, _keep) for _ in range(8)),
+    )
+
+    assert used is not None and all(row is not None for row in written)
+    final = await repo.find_by_id(sid)
+    assert final is not None and key not in final.step_up_elevations
+
+
+async def test_a_revoked_session_is_not_rewritten(
+    pg_dsn: str, rel: SqlAlchemyRelationalRepository
+) -> None:
+    key = _grant_key()
+    repo, sid = await _live_session(pg_dsn, rel, {key: _NOW + SINGLE_USE_WINDOW})
+    assert await repo.revoke(sid, reason="logout", now=_NOW) is not None
+    seen: list[StepUpState] = []
+
+    def change(state: StepUpState) -> StepUpState:
+        seen.append(state)
+        return {}, 0, None
+
+    assert await repo.update_step_up_state(sid, change) is None
+    final = await repo.find_by_id(sid)
+    assert seen == [] and final is not None and key in final.step_up_elevations

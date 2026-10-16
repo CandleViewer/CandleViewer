@@ -151,6 +151,15 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    (`403 session_read_only`). Every failed step-up adds 1 to `auth_stepup_failures_total`, and the
    failure that locks your account also adds 1 to `auth_lockouts_total` (metrics listener, §1).
 
+   Both kinds of step-up trouble are audited as `auth.step_up_failed`; `outcome` tells them apart
+   (#2304). A wrong password or code (or a locked account) is outcome `failure`, reason
+   `users:remaining=<n>`, and counts a strike. A step-up refused before any factor is checked
+   (`400 validation_failed`, for example a `challenge_id` that is stale or unknown) is outcome
+   `denied`, object kind `step_up_challenge`, with the rule as reason (`challenge_expired`,
+   `challenge_required`, `challenge_mismatch` or `required`); it counts no strike and moves no
+   metric. To see only factor failures:
+   `curl -s -H "Authorization: Bearer $TOKEN" "$API/admin/audit?action=auth.step_up_failed&outcome=failure"`.
+
 3. Reset:
 
    ```bash
@@ -325,8 +334,10 @@ from process start). The `AuthzDeniedSpike` rule fires above 20 denials in 10 mi
 (`sum by (permission) (increase(authz_denied_total[10m]))` shows which permission).
 
 **`auth_stepup_failures_total`** (no labels) counts each failed step-up verification: wrong password,
-locked account, wrong or replayed code. The audit row is `auth.step_up_failed` (names the action
-class). `auth_step_up_failures_total{action_class}` also exists inside the process but is not served on
+locked account, wrong or replayed code. The audit row is `auth.step_up_failed` with outcome
+`failure` (names the action class); rows with outcome `denied` are step-ups refused before any
+factor is checked (§2), which this counter does not count.
+`auth_step_up_failures_total{action_class}` also exists inside the process but is not served on
 the metrics listener, like the other auth counters outside `AUTH_EXPORTED_NAMES` (`auth/metrics.py`);
 that gap is tracked in #2319.
 

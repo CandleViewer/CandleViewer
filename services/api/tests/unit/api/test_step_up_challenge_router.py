@@ -265,6 +265,31 @@ async def test_challenge_refusals_are_audited_within_a_per_session_budget() -> N
     assert len(w.of("auth.step_up_failed")) == 2  # the third is refused, not audited
 
 
+async def test_refused_challenge_and_wrong_factor_rows_are_told_apart() -> None:
+    """Both rows are `auth.step_up_failed`. Triage tells them apart by the discriminator that
+    `24-internal-schemas.md` section 15.5 and the auth runbook (section 2) state: a step-up
+    refused before any factor is checked is outcome `denied` with object kind
+    `step_up_challenge` and the refusal rule as reason; a wrong password or code is outcome
+    `failure`, has no object and gives `<class>:remaining=<n>`."""
+    w = await _world()
+    w.client.put(f"/users/{uuid.uuid4()}/roles", headers=w.h())  # a live `users` challenge
+    assert w.step_up(challenge_id=str(uuid.uuid4())).status_code == 400
+    assert w.step_up(code="000000").status_code == 401
+
+    refused, wrong = w.of("auth.step_up_failed")
+
+    assert (refused["outcome"], refused["object_kind"], refused["reason"]) == (
+        AuditOutcome.DENIED,
+        "step_up_challenge",
+        "challenge_expired",
+    )
+    assert (wrong["outcome"], wrong["object_kind"], wrong["reason"]) == (
+        AuditOutcome.FAILURE,
+        None,
+        "users:remaining=2",
+    )
+
+
 @pytest.mark.parametrize(
     ("member", "rule"),
     [({"remember": True}, "extra_forbidden"), ({"code": "12345"}, "string_pattern_mismatch")],

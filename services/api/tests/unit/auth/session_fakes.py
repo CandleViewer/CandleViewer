@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.session_repository import StepUpChange
 
 
 class FakeSessionRepository:
@@ -62,17 +63,16 @@ class FakeSessionRepository:
         self.sessions[session_id] = updated
         return updated
 
-    async def save_step_up_state(
-        self,
-        session_id: str,
-        *,
-        elevations: dict[str, datetime],
-        failures: int,
-        readonly_until: datetime | None,
+    async def update_step_up_state(
+        self, session_id: str, change: StepUpChange
     ) -> SessionRecord | None:
+        """Atomic like the locked read-and-write: no await between the read and the write."""
         session = self.sessions.get(session_id)
         if session is None or session.revoked_at is not None:
             return None
+        elevations, failures, readonly_until = change(
+            (dict(session.step_up_elevations), session.step_up_failures, session.readonly_until)
+        )
         updated = session.model_copy(
             update={
                 "step_up_elevations": dict(elevations),
@@ -82,6 +82,19 @@ class FakeSessionRepository:
         )
         self.sessions[session_id] = updated
         return updated
+
+    async def save_step_up_state(
+        self,
+        session_id: str,
+        *,
+        elevations: dict[str, datetime],
+        failures: int,
+        readonly_until: datetime | None,
+    ) -> SessionRecord | None:
+        """Seed the step-up columns. Tests only: `SessionRepository` has no blind write (#2304)."""
+        return await self.update_step_up_state(
+            session_id, lambda _state: (dict(elevations), failures, readonly_until)
+        )
 
     async def consume_step_up_key(
         self, session_id: str, *, key: str, now: datetime
