@@ -6,7 +6,8 @@ both spawned via `cv.obs.spawn` and owned by the handler (`20-architecture.md` T
 - **Origin** (§2.5, SR-042/SR-183): checked first, against `CV_ALLOWED_ORIGINS`; the
   allow-list decides. A missing, duplicated, `null` or unlisted `Origin` is closed `4403`
   before `accept` (HTTP 403, no `bye`): no negotiation, frame, auth or store access. Each
-  refusal is counted and logged with the source address MeshOnly admitted, with a cap.
+  refusal is counted and logged with the source address MeshOnly admitted, with a cap, and
+  audited (`auth.ws_origin_refused`) within the `OriginRefusalAudit` bounds (#2269).
 - **Negotiation** (§2.2): the subprotocol is chosen before `accept`; when the
   client offers none we serve -> close `1002` before the handshake completes, counted
   as `unsupported_protocol` as the origin refusal is counted as `origin_forbidden`.
@@ -133,6 +134,7 @@ from candleviewer.ws.metrics import (
     cv_ws_connections_in_use,
     cv_ws_handshake_seconds,
 )
+from candleviewer.ws.origin_audit import OriginRefusalAudit
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
@@ -624,6 +626,9 @@ def make_ws_router(
     allowed_origins: frozenset[str],
     hub: GatewayHub | None = None,
     audit: AuditEmitter | None = None,
+    # §2.5 refusal audit (#2269): `create_app` binds it to the app's shared refusal-audit
+    # tracker. Without it a refused upgrade is still refused and counted, not audited.
+    origin_audit: OriginRefusalAudit | None = None,
     auth_timeout_s: float = AUTH_TIMEOUT_S,
     max_frame_bytes: int = MAX_INBOUND_FRAME_BYTES,
     clock: Clock = time.monotonic,
@@ -1048,6 +1053,8 @@ def make_ws_router(
         if refused is not None:
             cv_ws_closes_total.labels(reason=ORIGIN_FORBIDDEN).inc()
             log_refusal(refused, ws.scope)
+            if origin_audit is not None:  # bounded; never raises a write's failure (#2269)
+                await origin_audit.record(refused, _source_ip(ws.scope))
             await ws.close(code=int(CLOSE_REASONS[ORIGIN_FORBIDDEN][0]))
             return
         # §4.3: a token in the URL query string is never read; it is ignored.

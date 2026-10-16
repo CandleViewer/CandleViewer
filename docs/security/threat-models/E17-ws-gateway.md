@@ -382,7 +382,7 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 | Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                  | E01, I03 | merged                                   |
 | Revocation close failures           | —                                    | `ws_revocation_close_failures_total` (alerts)    | E02      | merged                                   |
 | Audit write failures on the WS path | —                                    | counter required (SR-E17-04)                     | R04      | requested E17-T06                        |
-| Refused WS upgrades (Origin check)  | `auth.ws_origin_refused` (#2269)     | `cv_ws_closes_total{reason="origin_forbidden"}`  | S06      | #2239; audit pending #2269               |
+| Refused WS upgrades (Origin check)  | `auth.ws_origin_refused` (#2269)     | `cv_ws_closes_total{reason="origin_forbidden"}`  | S06      | merged (#2239; audit #2269)              |
 | User connect/close churn (#2322)    | `ws.connection.closed` (#2486)       | `cv_ws_handshake_seconds_count`                  | D07      | merged (#2486); capped by #2558          |
 | Per-user connect-rate refusals      | none, by design; capped log line     | `cv_ws_connect_rate_limited_total`               | D07      | merged (#2558)                           |
 

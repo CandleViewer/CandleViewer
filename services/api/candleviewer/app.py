@@ -282,6 +282,7 @@ from candleviewer.storage.service import StorageService
 from candleviewer.ws.gateway import Authenticate, GatewayHub, make_ws_router
 from candleviewer.ws.machines import MachineStateRegistry
 from candleviewer.ws.metrics import export_cvwb_metrics, export_ws_metrics
+from candleviewer.ws.origin_audit import OriginRefusalAudit
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub
@@ -1182,6 +1183,8 @@ def create_app(
             allowed_origins=resolved.allowed_origin_set,  # SR-042/SR-183 upgrade check (#2239)
             hub=ws_hub,
             audit=_LazyAuditEmitter(ctx.audit),
+            # #2269: refused upgrades share the REST refusal audits' in-flight cap and drain.
+            origin_audit=OriginRefusalAudit(_LazyAuditEmitter(ctx.audit), tracker=csrf_audits),
             auth_timeout_s=resolved.ws_auth_timeout_s,
             max_frame_bytes=resolved.ws_max_inbound_frame_bytes,
             server_version=resolved.version,
