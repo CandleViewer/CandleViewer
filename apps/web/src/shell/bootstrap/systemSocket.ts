@@ -106,7 +106,8 @@ export class SystemSocket {
     this.options.callbacks.onConnectionChange({ kind: "connecting" });
     const factory =
       this.options.createSocket ?? ((url, protocols) => new WebSocket(url, protocols));
-    const socket = factory(this.options.url, ["cv.v1.msgpack", "cv.v1.json"]);
+    // `cv.v1.msgpack` is offered once this client decodes it (#2483): the server prefers it.
+    const socket = factory(this.options.url, ["cv.v1.json"]);
     this.socket = socket;
 
     socket.addEventListener("open", () => {
