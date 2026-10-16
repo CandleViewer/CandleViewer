@@ -6,6 +6,10 @@ Wired like the E17-Q01 conformance `World` and served with the production uvicor
 `SessionService` over `FakeSessionRepository`), the grant store the principal loader reads, the
 snapshot source (adapters #2195-#2197 not landed) and `POST /auth/refresh` (REST refresh double).
 The book is the recorded BTCUSDT corpus (C-13.5). Clients reach the server only via the proxy.
+
+Served as production serves it: `PlannedShutdownServer`, so a stop (`should_exit`) runs the §9.4
+planned shutdown, its grace slept on the virtual clock. `restart()` boots a second server
+process behind the same proxies; the stores above survive it, as a database and the exchange do.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ import json
 import socket
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
@@ -24,24 +29,56 @@ from candleviewer.auth.models import MintedSession
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.auth.session_service import SessionService, access_token_expires_at
 from candleviewer.observability.context import spawn
-from candleviewer.server import uvicorn_kwargs
+from candleviewer.server import PlannedShutdownServer, uvicorn_kwargs
 from candleviewer.settings import Settings
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody, window_delta
-from candleviewer.ws_wiring import KillSwitchView, WsEvents
+from candleviewer.ws.upstream import UpstreamRefs
+from candleviewer.ws_wiring import KillSwitchView, WsEvents, WsRuntime
 from tests._corpus import frames
 from tests.chaos.ingestion._clock import VirtualClock
 from tests.chaos.ws._client import TIMEOUT_S, Client
 from tests.chaos.ws._proxy import HOST, Proxy
 from tests.contract.ws._support import ORIGIN, SAMPLES
 from tests.unit.auth.session_fakes import FakeSessionRepository
-from tests.unit.ws._seq_support import PERMS, Book, Source
+from tests.unit.ws._seq_support import ACC_A, ACC_B, PERMS, Book, Source
 
 SYM, DEPTH = "BTCUSDT", 50
 BOOK = f"book.{SYM}.{DEPTH}"
 SEED = 20261015  # the suite's fixed seed: same seed, same backoff schedule and fault trace
+A, B = str(ACC_A), str(ACC_B)
+Topic = dict[str, Any]
+TRADES: Topic = {"ch": f"trades.{SYM}"}
+ORDERS: Topic = {"ch": "orders", "opts": {"exchange_account_ids": [A]}}
+POSITIONS: Topic = {"ch": "positions", "opts": {"exchange_account_ids": [A, B]}}
+#: Three open workspaces: a full one, a chart and a blotter.
+WORKSPACES: list[list[Topic]] = [
+    [{"ch": BOOK}, TRADES, ORDERS, POSITIONS],
+    [{"ch": BOOK}, TRADES],
+    [ORDERS, {"ch": BOOK}],
+]
+# §9.4: the documented grace and expected downtime (the CV_WS_SHUTDOWN_* defaults)
+GRACE_MS, DOWNTIME_MS = 5_000, 20_000
+GRACE_S = GRACE_MS / 1000
+
+
+async def _no_wait(_seconds: float) -> None:
+    return None
+
+
+class _Hub(GatewayHub):
+    """The production hub, its §9.4 grace slept on the virtual clock: `shutdown(sleep=...)` is the
+    seam, and `WsRuntime.stop()` does not forward it. A test advances the grace; `instant` skips
+    it (teardown)."""
+
+    def __init__(self, clock: VirtualClock) -> None:
+        super().__init__()
+        self.clock, self.instant = clock, False
+
+    async def shutdown(self, **kw: Any) -> int:
+        return await super().shutdown(**kw, sleep=_no_wait if self.instant else self.clock.sleep)
 
 
 class Stack:
@@ -57,10 +94,19 @@ class Stack:
         self.book = self.source.books[SYM] = Book(SYM)
         self.book.apply(corpus[0]["b"], corpus[0]["a"])
         self._deltas = iter(corpus[1:])
+        self.clients: list[Client] = []
+        self.lanes: list[Proxy] = []
+        self._boot()
+        self.proxy = Proxy(self.port)
+
+    def _boot(self) -> None:
+        """One server process: everything a restart loses (the stores in `__init__` survive it)."""
         self.hub = SequencingHub()
-        services = SubscriptionServices(snapshots=self.source, sequencing=self.hub, clock=clock)
+        services = SubscriptionServices(
+            snapshots=self.source, sequencing=self.hub, clock=self.clock
+        )
         self.registry = ConnectionRegistry(self.principal, self.wall_ms, services)
-        self.gateway = GatewayHub()
+        self.gateway = _Hub(self.clock)
         self.events = WsEvents(self.registry, self.gateway, KillSwitchView())
         app = FastAPI()
         app.include_router(
@@ -70,27 +116,37 @@ class Stack:
                 revocation_hub=RevocationHub(),
                 allowed_origins=frozenset({ORIGIN}),
                 hub=self.gateway,
-                clock=clock,
+                clock=self.clock,
                 wall_ms=self.wall_ms,
                 tick_s=0.005,
+                kill_switch=self.events.kill_switch.snapshot,  # `auth_ok.kill_switch`, as app.py
             )
         )
         app.add_api_route("/auth/refresh", self._refresh, methods=["POST"])
-        kw = uvicorn_kwargs(Settings())  # production WS limits; the socket below is the bind
+        cfg = Settings(ws_shutdown_grace_ms=GRACE_MS, ws_shutdown_expected_downtime_ms=DOWNTIME_MS)
+        app.state.ws_runtime = WsRuntime(self.gateway, UpstreamRefs(), cfg)  # as `create_app`
+        kw = uvicorn_kwargs(cfg)  # production WS limits; the socket below is the bind
         # A short drain: the harness's clients are closed by the test itself. Set on the dict, so it
         # holds whether or not `uvicorn_kwargs` carries its own drain bound (#2565 adds one).
         kw["timeout_graceful_shutdown"] = 2
-        cfg = uvicorn.Config(app, **kw, lifespan="off", log_config=None)
-        self.server = uvicorn.Server(cfg)
+        conf = uvicorn.Config(app, **kw, lifespan="off", log_config=None)
+        self.server = PlannedShutdownServer(conf)
         self._sock = socket.create_server((HOST, 0))
-        self.proxy = Proxy(self._sock.getsockname()[1])
-        self.url = self.http = ""
-        self.clients: list[Client] = []
+        self.port: int = self._sock.getsockname()[1]
 
-    def client(self, minted: MintedSession, seed: int = SEED) -> Client:
+    def client(self, minted: MintedSession, seed: int = SEED, via: Proxy | None = None) -> Client:
+        port = (via or self.proxy).port
+        urls = (f"ws://{HOST}:{port}/ws", f"http://{HOST}:{port}")
         tokens = (minted.access_token, minted.refresh_token)
-        self.clients.append(Client((self.url, self.http), self.clock, tokens, seed))
+        self.clients.append(Client(urls, self.clock, tokens, seed))
         return self.clients[-1]
+
+    async def lane(self) -> Proxy:
+        """A second path to the server: a fault on it hits only the clients dialled through it."""
+        lane = Proxy(self.port)
+        await lane.start()
+        self.lanes.append(lane)
+        return lane
 
     def now(self) -> datetime:
         return datetime.fromtimestamp(self.clock.wall_s(), UTC)
@@ -139,21 +195,38 @@ class Stack:
         item = {**SAMPLES[family][1][family][0], "exchange_account_id": str(account)}
         return self.hub.publish(family, {family: [item]}, account=account)
 
+    async def until_stopped(self) -> None:
+        """The server process has exited (after `should_exit`: planned shutdown, then uvicorn's)."""
+        async with asyncio.timeout(TIMEOUT_S):
+            await self._task
+
+    def restart(self) -> None:
+        """A new server process, on a new port, behind the same proxies (re-pointed at it)."""
+        assert self._task.done(), "restart() follows until_stopped()"
+        self._boot()
+        for proxy in (self.proxy, *self.lanes):
+            proxy.upstream_port = self.port
+        self._serve()
+
+    def _serve(self) -> None:
+        self._task = spawn(self.server.serve(sockets=[self._sock]), name="chaos-ws-uvicorn")
+
     async def until_no_connections(self) -> None:
         """Every gateway handler has finished (the server saw the drop and cleaned up)."""
         async with asyncio.timeout(TIMEOUT_S):
             await self.gateway.wait_empty()
 
     async def __aenter__(self) -> Stack:
-        self._task = spawn(self.server.serve(sockets=[self._sock]), name="chaos-ws-uvicorn")
-        port = await self.proxy.start()
-        self.url, self.http = f"ws://{HOST}:{port}/ws", f"http://{HOST}:{port}"
+        self._serve()
+        await self.proxy.start()
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        await self.proxy.stop()  # first: a paused or held link must not stall a client's close
+        for proxy in (self.proxy, *self.lanes):
+            await proxy.stop()  # first: a paused or held link must not stall a client's close
         for client in self.clients:
             await client.stop()
+        self.gateway.instant = True  # teardown is not a scenario: no grace to wait out
         self.server.should_exit = True
-        async with asyncio.timeout(TIMEOUT_S):
-            await self._task
+        await self.clock.advance(GRACE_S)  # frees a grace a failed test left parked
+        await self.until_stopped()
