@@ -6,8 +6,9 @@ Every Gherkin scenario in the ticket maps to a method here:
 - `verify()` — "Valid code creates a session" / "Reused code is rejected" /
   "Clock drift within one step is tolerated".
 - `enroll()` + `confirm_enrollment()` — "First-login enrolment".
-- `recover()` — "Recovery code use forces re-enrolment" /
-  "Recovery codes exhausted".
+- `check_recovery()` + `complete_recovery()` — "Recovery code use forces
+  re-enrolment" / "Recovery codes exhausted" (#2344: split so the router
+  audits between them).
 - `regenerate_recovery_codes()` — `POST /auth/mfa/recovery`'s sibling
   regeneration path from SCR-112.
 
@@ -39,6 +40,7 @@ from candleviewer.auth.models import (
     MfaEnrollResult,
     MfaMethodKind,
     MfaMethodRecord,
+    MfaRecoveryCheck,
     MfaVerifiedResult,
     MfaVerifyRequest,
     RecoveryCodesRegenerated,
@@ -99,7 +101,7 @@ class MfaService:
         or `MfaCodeReused`."""
         if request.method is not MfaMethodKind.TOTP:
             # WebAuthn is out of scope (ticket "Out of scope"); recovery
-            # codes go through `recover()` / `/auth/mfa/recovery` instead
+            # codes go through `check_recovery()` / `/auth/mfa/recovery` instead
             # (`MfaVerifyRequest.method` is `totp | webauthn | recovery_code`
             # per the OpenAPI enum, but this service only implements the
             # `totp` arm of it).
@@ -259,9 +261,14 @@ class MfaService:
 
     # -- recovery ------------------------------------------------------------
 
-    async def recover(self, mfa_token: str, recovery_code: str) -> MfaVerifiedResult:
-        """`POST /auth/mfa/recovery`. Raises `MfaChallengeInvalid`,
-        `MfaChallengeLocked`, `RecoveryCodeInvalid`, or
+    async def check_recovery(self, mfa_token: str, recovery_code: str) -> MfaRecoveryCheck:
+        """The read-only half of `POST /auth/mfa/recovery` (#2344): the open login challenge
+        of *mfa_token* and the unused recovery code of its user that *recovery_code* matches.
+        Only a refusal changes anything: it counts toward the challenge's attempt cap, the
+        login lockout's 5, so wrong codes are throttled and each five cost a password sign-in.
+        The router writes its audit records between this and `complete_recovery` (C-2.9).
+
+        Raises `MfaChallengeInvalid`, `MfaChallengeLocked`, `RecoveryCodeInvalid`, or
         `RecoveryCodesExhausted`.
 
         Constant-time against the hashed set (ticket "Technical notes":
@@ -290,31 +297,25 @@ class MfaService:
         if code_id is None:
             await self._record_failed_attempt(challenge)
             raise RecoveryCodeInvalid("invalid or already-used recovery code")
+        return MfaRecoveryCheck(
+            user_id=challenge.user_id, challenge_id=challenge.id, code_id=code_id
+        )
 
-        now = self._clock()
-        consumed = await self._repository.consume_recovery_code(code_id, now=now)
-        if not consumed:
-            # PR #1618 review finding 2 (high): another concurrent request
-            # already consumed this exact code between the lookup above and
-            # this call (check-then-act race) — treat it as the same
-            # "invalid or already-used" outcome a straight replay gets, and
-            # do not go on to satisfy the challenge or force a session.
-            await self._record_failed_attempt(challenge)
+    async def complete_recovery(self, check: MfaRecoveryCheck) -> None:
+        """The mutating half (#2344, contract `authMfaRecovery`): one repository transaction
+        spends the code, satisfies the challenge and revokes every MFA method of the user, so
+        the sign-in forces TOTP re-enrolment however many codes remain (#2296) and no old
+        method can be confirmed again.
+
+        Raises `RecoveryCodeInvalid`, with nothing changed, when a concurrent request spent
+        the code or satisfied the challenge first (PR #1618 review finding 2); like a replay,
+        it counts as a failed attempt."""
+        challenge_id = str(check.challenge_id)
+        if not await self._repository.complete_recovery(
+            str(check.user_id), challenge_id=challenge_id, code_id=check.code_id, now=self._clock()
+        ):
+            await self._repository.record_challenge_attempt(challenge_id)
             raise RecoveryCodeInvalid("invalid or already-used recovery code")
-
-        satisfied = await self._repository.satisfy_challenge(str(challenge.id), now=now)
-        if not satisfied:
-            # Same challenge-level race guard as `verify()`: this code was
-            # validly consumed above, but the *challenge* had already been
-            # satisfied by a concurrent request racing it, so this call
-            # must not also mint a session.
-            raise MfaChallengeInvalid("challenge already satisfied")
-
-        # Ticket "Recovery code use forces re-enrolment" (US-ONB-003): every
-        # recovery sign-in forces it, however many codes remain. No
-        # remaining-codes threshold may loosen this security gate (#2296).
-        await self._repository.set_mfa_required_reenroll(str(challenge.user_id))
-        return MfaVerifiedResult(user_id=challenge.user_id, forced_totp_reenroll=True)
 
     async def regenerate_recovery_codes(self, user_id: str) -> RecoveryCodesRegenerated:
         """`POST /auth/mfa/recovery`'s SCR-112 regeneration sibling (ticket

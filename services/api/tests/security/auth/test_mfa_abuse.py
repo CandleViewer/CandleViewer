@@ -24,6 +24,11 @@ def _req(token: str, code: str) -> MfaVerifyRequest:
     return MfaVerifyRequest(mfa_token=token, method=MfaMethodKind.TOTP, code=code)
 
 
+async def _recover(kit: MfaKit, token: str, code: str) -> None:
+    """Both halves of a recovery sign-in, as `POST /auth/mfa/recovery` runs them (#2344)."""
+    await kit.svc.complete_recovery(await kit.svc.check_recovery(token, code))
+
+
 async def test_ac_mfa_01_totp_replay_inside_skew_window_rejected() -> None:  # U11 / SR-021
     kit, user = MfaKit(), uuid.uuid4()
     seed = await kit.enrol(user)
@@ -66,9 +71,9 @@ async def test_ac_mfa_03_recovery_code_single_use() -> None:  # SR-022 / U9
     kit, user = MfaKit(), uuid.uuid4()
     await kit.enrol(user)
     codes = (await kit.svc.regenerate_recovery_codes(str(user))).recovery_codes
-    await kit.svc.recover(await kit.challenge(user, "r1"), codes[0])
+    await _recover(kit, await kit.challenge(user, "r1"), codes[0])
     with pytest.raises(RecoveryCodeInvalid):
-        await kit.svc.recover(await kit.challenge(user, "r2"), codes[0])
+        await _recover(kit, await kit.challenge(user, "r2"), codes[0])
 
 
 async def test_ac_mfa_04_recovery_code_dead_after_regeneration() -> None:  # SR-022
@@ -78,8 +83,8 @@ async def test_ac_mfa_04_recovery_code_dead_after_regeneration() -> None:  # SR-
     new = (await kit.svc.regenerate_recovery_codes(str(user))).recovery_codes
     assert set(old).isdisjoint(new)
     with pytest.raises(RecoveryCodeInvalid):
-        await kit.svc.recover(await kit.challenge(user, "r1"), old[0])
-    await kit.svc.recover(await kit.challenge(user, "r2"), new[0])
+        await _recover(kit, await kit.challenge(user, "r1"), old[0])
+    await _recover(kit, await kit.challenge(user, "r2"), new[0])
 
 
 async def test_ac_mfa_05_concurrent_verify_one_challenge_mints_once() -> None:  # race
@@ -101,7 +106,7 @@ async def test_ac_mfa_05b_concurrent_recovery_code_consumed_once() -> None:  # r
     codes = (await kit.svc.regenerate_recovery_codes(str(user))).recovery_codes
     token = await kit.challenge(user, "race-rc")
     results = await asyncio.gather(
-        *(kit.svc.recover(token, codes[0]) for _ in range(8)), return_exceptions=True
+        *(_recover(kit, token, codes[0]) for _ in range(8)), return_exceptions=True
     )
     assert sum(1 for r in results if not isinstance(r, BaseException)) == 1
 

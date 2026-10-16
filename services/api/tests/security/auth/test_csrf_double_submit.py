@@ -184,8 +184,8 @@ def test_login_issues_host_cookie_with_the_contract_attributes(stack: _Stack) ->
 
 
 def test_mfa_recovery_mints_a_session_with_a_token_only_when_one_is_minted(stack: _Stack) -> None:
-    # `/auth/mfa/recovery` mints no session in this codebase (it returns
-    # `forced_totp_reenroll`), so no CSRF cookie may be issued for a non-session.
+    # `/auth/mfa/recovery` runs before any session exists: a wrong code mints no session, so
+    # it gets no CSRF cookie and never a CSRF refusal (a valid one mints the session, #2344).
     r = stack.client.post("/auth/login", json={"identifier": "basiltt", "password": _PW})
     r = stack.client.post(
         "/auth/mfa/recovery", json={"mfa_token": r.json()["mfa_token"], "recovery_code": "x" * 10}

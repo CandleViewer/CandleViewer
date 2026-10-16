@@ -266,7 +266,7 @@ async def test_stale_argon2_params_trigger_rehash_on_login() -> None:
 
 @pytest.mark.asyncio
 async def test_successful_login_persists_hashed_mfa_challenge_when_repository_injected() -> None:
-    """E09-S02: `MfaService.verify()`/`.recover()` must be able to look the
+    """E09-S02: `MfaService.verify()`/`.check_recovery()` must be able to look the
     `mfa_token` challenge up by its hash, so `login()` must persist a
     `mfa_challenges` row (never the token itself) when an `MfaRepository`
     is wired in."""

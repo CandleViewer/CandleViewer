@@ -18,6 +18,7 @@ from candleviewer.auth.errors import (
     AccountLocked,
     InvalidCredentials,
     MfaChallengeInvalid,
+    RecoveryCodeInvalid,
     RecoveryCodesExhausted,
 )
 from candleviewer.auth.login_service import EnrolmentOnlyLogin
@@ -27,6 +28,7 @@ from candleviewer.auth.models import (
     MfaEnrollRequest,
     MfaEnrollResult,
     MfaMethodKind,
+    MfaRecoveryCheck,
     MfaVerifiedResult,
     MfaVerifyRequest,
     MintedSession,
@@ -52,6 +54,8 @@ class _FakeLoginService:
 class _FakeMfaService:
     def __init__(self, outcome: object) -> None:
         self._outcome = outcome
+        self.recovery_checks = 0
+        self.completed: list[MfaRecoveryCheck] = []
 
     def _resolve(self) -> object:
         if isinstance(self._outcome, Exception):
@@ -77,10 +81,14 @@ class _FakeMfaService:
         assert isinstance(result, tuple)
         return result
 
-    async def recover(self, mfa_token: str, recovery_code: str) -> MfaVerifiedResult:
+    async def check_recovery(self, mfa_token: str, recovery_code: str) -> MfaRecoveryCheck:
+        self.recovery_checks += 1
         result = self._resolve()
-        assert isinstance(result, MfaVerifiedResult)
+        assert isinstance(result, MfaRecoveryCheck)
         return result
+
+    async def complete_recovery(self, check: MfaRecoveryCheck) -> None:
+        self.completed.append(check)
 
 
 class _FakeAuthService:
@@ -311,29 +319,57 @@ def test_mfa_verify_inactive_backend_returns_503() -> None:
 # -- /auth/mfa/recovery ------------------------------------------------------
 
 
-def test_mfa_recovery_success_returns_authenticated_and_forced_reenroll() -> None:
-    client = TestClient(
-        _mfa_app(MfaVerifiedResult(user_id=uuid.uuid4(), forced_totp_reenroll=True))
+_RECOVERY_BODY = {"mfa_token": "tok", "recovery_code": "7F2A-91BC-4DE0"}
+
+
+def _recovery_app(mfa_outcome: object, audit_service: object) -> tuple[FastAPI, _FakeMfaService]:
+    """Every backend a recovery sign-in needs, wired; the MFA service answers *mfa_outcome*."""
+    auth = _MintingAuthService(mfa_outcome)
+    app = FastAPI()
+    app.include_router(
+        make_auth_router(
+            auth,
+            audit_service=audit_service,  # type: ignore[arg-type]
+            identity=_FakeIdentity(),
+            csrf=_CSRF_CODEC,
+        )
     )
-    response = client.post(
-        "/auth/mfa/recovery", json={"mfa_token": "tok", "recovery_code": "7F2A-91BC-4DE0"}
-    )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "authenticated"
-    assert body["forced_totp_reenroll"] is True
+    return app, auth.mfa
+
+
+def test_mfa_recovery_fails_closed_until_every_backend_is_wired() -> None:
+    """#2344: a recovery that could not mint the session checks and spends nothing (it used to
+    answer 200 with no session while the code was spent)."""
+    check = MfaRecoveryCheck(user_id=uuid.uuid4(), challenge_id=uuid.uuid4(), code_id="c")
+    unwired = _FakeAuthService(InvalidCredentials("n/a"), mfa_outcome=check)
+    app = FastAPI()
+    app.include_router(make_auth_router(unwired, csrf=_CSRF_CODEC))  # no session backend
+    no_audit, no_audit_mfa = _recovery_app(check, None)
+
+    for client, mfa in ((TestClient(app), unwired.mfa), (TestClient(no_audit), no_audit_mfa)):
+        response = client.post("/auth/mfa/recovery", json=_RECOVERY_BODY)
+        assert response.status_code == 503
+        assert (mfa.recovery_checks, mfa.completed) == (0, [])
 
 
 def test_mfa_recovery_exhausted_returns_401_and_audits_denied() -> None:
     audit_service = _RecordingAuditService()
-    client = TestClient(_mfa_app(RecoveryCodesExhausted("all used"), audit_service=audit_service))
-    response = client.post(
-        "/auth/mfa/recovery", json={"mfa_token": "tok", "recovery_code": "7F2A-91BC-4DE0"}
-    )
+    app, mfa = _recovery_app(RecoveryCodesExhausted("all used"), audit_service)
+    response = TestClient(app).post("/auth/mfa/recovery", json=_RECOVERY_BODY)
     assert response.status_code == 401
     call = audit_service.writer.calls[0]
     assert call["action"] == "auth.recovery_codes_exhausted"
     assert call["outcome"] == AuditOutcome.DENIED
+    assert mfa.completed == []
+
+
+def test_mfa_recovery_wrong_code_returns_the_uniform_401_and_audits_failure() -> None:
+    audit_service = _RecordingAuditService()
+    app, mfa = _recovery_app(RecoveryCodeInvalid("invalid"), audit_service)
+    response = TestClient(app).post("/auth/mfa/recovery", json=_RECOVERY_BODY)
+    assert (response.status_code, response.json()["detail"]) == (401, "invalid or expired code")
+    assert [c["action"] for c in audit_service.writer.calls] == ["auth.mfa_failed"]
+    assert mfa.completed == []
 
 
 # -- /auth/mfa/enroll and /auth/mfa/enroll/confirm (#2295) -----------------------------------

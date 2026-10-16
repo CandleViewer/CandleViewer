@@ -209,13 +209,6 @@ class FakeMfaRepository:
                 return code_id
         return None
 
-    async def consume_recovery_code(self, code_id: str, *, now: datetime) -> bool:
-        row = self.recovery_codes[code_id]
-        if row["used_at"] is not None:
-            return False
-        row["used_at"] = now.isoformat()
-        return True
-
     async def count_unused_recovery_codes(self, user_id: str) -> int:
         return sum(
             1
@@ -223,10 +216,26 @@ class FakeMfaRepository:
             if row["user_id"] == user_id and row["used_at"] is None
         )
 
-    async def set_mfa_required_reenroll(self, user_id: str) -> None:
+    async def complete_recovery(
+        self, user_id: str, *, challenge_id: str, code_id: str, now: datetime
+    ) -> bool:
+        """Single-threaded fake of the SQL unit of work (#2344): both conditions are checked
+        before anything changes, so a lost race leaves the code, the challenge and the
+        methods as they were."""
+        row = self.recovery_codes.get(code_id)
+        challenge = self.challenges.get(challenge_id)
+        if row is None or row["user_id"] != user_id or row["used_at"] is not None:
+            return False
+        if challenge is None or str(challenge.user_id) != user_id:
+            return False
+        if challenge.satisfied_at is not None:
+            return False
+        row["used_at"] = now.isoformat()
+        self.challenges[challenge_id] = challenge.model_copy(update={"satisfied_at": now})
         for method_id, method in list(self.methods.items()):
-            if str(method.user_id) == user_id and method.kind == MfaMethodKind.TOTP:
-                self.methods[method_id] = method.model_copy(update={"confirmed_at": None})
+            if str(method.user_id) == user_id and method.revoked_at is None:
+                self.methods[method_id] = method.model_copy(update={"revoked_at": now})
+        return True
 
 
 class RecordingSystemEvents:

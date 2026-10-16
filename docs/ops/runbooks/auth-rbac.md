@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -105,12 +105,19 @@ curl -s -X POST "$API/auth/mfa/recovery" -H 'Content-Type: application/json' \
   -d '{"mfa_token":"<mfa_token>","recovery_code":"<code>"}'
 ```
 
-Expected `200` `{"status":"authenticated","forced_totp_reenroll":true}`. This route mints no
-session, token or cookie yet (recovery-session gap: #2344), but it un-confirms the old TOTP, so
-the next password sign-in gets an enrolment-only session: re-enrol as in §2 step 4 (#2295). A code is single use;
-`auth.recovery_code_used` is written, and `auth.recovery_codes_exhausted` when none remain.
-Re-enrolment is forced after every recovery sign-in, however many codes remain
-(`auth/mfa_service.py`); there is no remaining-codes threshold (#2296).
+Expected `200` with `status: authenticated`, `tokens`, a `user` with `mfa_required` true and
+`mfa_enabled` false, and the `cv_refresh` and `__Host-cv_csrf` cookies (#2344). The session is
+**enrolment-only**: it lives 15 minutes and may only enrol and confirm a new TOTP, as in §2 step 4
+(#2295). The call revokes every MFA method of the user, so the lost device can never be confirmed
+again, and every other session of the user. A code is single use. A wrong or spent code, an
+expired or locked challenge and any other refusal answer the same `401` and spend nothing; five
+wrong codes lock the challenge, so sign in with the password again. Before anything changes,
+`auth.recovery_code_used`, one `auth.session_revoked` (reason `mfa_recovery`) per ended session
+and `auth.session_created` (`enrolment_only: true`, `mfa_method: recovery_code`) are written;
+`auth.recovery_codes_exhausted` is written when none remain. Re-enrolment is forced after every
+recovery sign-in, however many codes remain (`auth/mfa_service.py`); there is no remaining-codes
+threshold (#2296). If the 15 minutes run out before the confirm, sign in with the password alone:
+with no method left, that sign-in is enrolment-only too.
 
 Not available today:
 

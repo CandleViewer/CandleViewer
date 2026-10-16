@@ -111,3 +111,7 @@ def test_normalise_role_keeps_the_highest_system_role_and_clamps_the_rest() -> N
 
 def test_a_confirmed_enrolment_is_its_own_revocation_reason_not_other() -> None:
     assert normalise_reason("mfa_enrolled") == "mfa_enrolled"
+
+
+def test_a_recovery_sign_in_is_its_own_revocation_reason_not_other() -> None:
+    assert normalise_reason("mfa_recovery") == "mfa_recovery"  # #2344
