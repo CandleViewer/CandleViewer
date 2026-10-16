@@ -135,7 +135,9 @@ def _wall_ms() -> int:
 #: `auth.session_service.ACCESS_TOKEN_TTL`, which the composition root passes). A revoked
 #: session cannot mint new tokens, so after that no `auth` for it can succeed anyway.
 REVOKED_MEMORY_S: Final = 720.0
-#: At most this many revoked ids are remembered (C-2.18); the oldest is forgotten first.
+#: At most this many revoked ids are remembered (C-2.18); the oldest is forgotten first. A live id
+#: is forgotten early only once 4096 other sessions are revoked after it within one
+#: `REVOKED_MEMORY_S` (about 5.7 a second, sustained).
 MAX_REVOKED_IDS: Final = 4096
 #: A forced eviction (cap reached while the oldest is still live) is logged at most this often.
 EVICTION_LOG_EVERY_S: Final = 60.0
@@ -169,6 +171,11 @@ class RevocationHub:
     def remember_s(self) -> float:
         """Seconds a revoked session id is remembered."""
         return self._remember_s
+
+    @property
+    def max_remembered(self) -> int:
+        """Most revoked session ids remembered at once; past it the oldest is forgotten first."""
+        return self._max_remembered
 
     def _prune(self, now: float) -> None:
         while self._revoked:
@@ -227,7 +234,7 @@ class RevocationHub:
 
     async def revoke(self, session_id: str, reason: str = "session_revoked") -> int:
         """Remember `session_id` as revoked, then close every socket of it; returns how many
-        were closed. Remembered first, so an `auth` checking during the closes sees it."""
+        closes it attempted. Remembered first, so an `auth` checking during the closes sees it."""
         self._remember(session_id, reason)
         reason = self._revoked[session_id][1]  # a remembered user_disabled wins (§9.5, 4403)
         closers = self._sockets.pop(session_id, [])
@@ -238,11 +245,14 @@ class RevocationHub:
                 await closer(frame, code)
             except Exception:
                 ws_revocation_close_failures_total.inc()
-                _log().error(
-                    "ws revocation close failed; revoked socket may remain open",
-                    session_id=session_id,
-                    exc_info=True,
-                )
+                # A failing log sink must never skip the closes that follow (C-2.12); the
+                # counter above still records the failure.
+                with contextlib.suppress(Exception):
+                    _log().error(
+                        "ws revocation close failed; revoked socket may remain open",
+                        session_id=session_id,
+                        exc_info=True,
+                    )
         if closers:
             auth_revocation_latency_seconds.observe(time.monotonic() - started)
         return len(closers)

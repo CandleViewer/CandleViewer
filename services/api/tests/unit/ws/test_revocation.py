@@ -3,6 +3,7 @@ sockets get `bye user_disabled` and close 4403, no reconnect (23-ws-protocol.md 
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, get_args
 
 import pytest
@@ -15,12 +16,12 @@ from candleviewer.ws.revocation import (
     CLOSE_TOKEN_EXPIRED,
     CLOSE_USER_DISABLED,
     EVICTION_LOG_EVERY_S,
-    MAX_REVOKED_IDS,
     REVOKED_MEMORY_S,
     RevocationHub,
     RevokedReason,
     bye_frame,
     user_disabled_bye,
+    ws_revocation_close_failures_total,
 )
 
 _NOW_MS = 1_789_133_600_000
@@ -34,6 +35,22 @@ class _Socket:
 
     async def close(self, frame: dict[str, Any], code: int) -> None:
         self.closes.append((frame, code))
+
+
+def _dead_log_sink(
+    monkeypatch: pytest.MonkeyPatch, exc: type[BaseException] = RuntimeError
+) -> None:
+    """Make every log call of the hub raise `exc`, as a broken processor chain would."""
+    import candleviewer.ws.revocation as revocation
+
+    class _Dead:
+        def warning(self, *args: object, **kwargs: object) -> None:
+            raise exc("log sink down")
+
+        def error(self, *args: object, **kwargs: object) -> None:
+            raise exc("log sink down")
+
+    monkeypatch.setattr(revocation, "_log", lambda: _Dead())
 
 
 async def test_revoke_user_disabled_sends_user_disabled_bye_and_closes_4403() -> None:
@@ -237,25 +254,80 @@ async def test_forgetting_a_live_id_at_the_cap_is_logged_at_most_once_a_minute()
     assert not any(i in repr(warnings) for i in ids)  # no session id in any key or value
 
 
-def test_the_production_cap_is_the_threat_model_number() -> None:
-    assert MAX_REVOKED_IDS == 4096
+async def test_a_default_hub_forgets_the_oldest_id_at_the_4097th_revocation() -> None:
+    """The cap `create_app` runs with, since it passes none: 4096 ids, the oldest forgotten first.
+    The literals are the point, so a smaller default or constant is a deliberate edit here."""
+    hub = RevocationHub(monotonic=_Clock())
+    ids = [f"s{n}" for n in range(4097)]
+    for session_id in ids:
+        await hub.revoke(session_id)
+    assert (hub.was_revoked("s0"), hub.was_revoked("s1"), hub.was_revoked("s4096")) == (
+        False,
+        True,
+        True,
+    )
+    assert sum(hub.was_revoked(session_id) for session_id in ids) == 4096
 
 
 async def test_a_failing_log_sink_never_skips_the_closes(monkeypatch: pytest.MonkeyPatch) -> None:
     """C-2.12: the eviction warning runs before the closes; a raising sink must not skip them."""
-    import candleviewer.ws.revocation as revocation
-
-    class _Raising:
-        def warning(self, *args: object, **kwargs: object) -> None:
-            raise RuntimeError("log sink down")
-
-    monkeypatch.setattr(revocation, "_log", lambda: _Raising())
+    _dead_log_sink(monkeypatch)
     hub = RevocationHub(max_remembered=1, monotonic=_Clock())
     socket = _Socket()
     await hub.revoke("s0")
     hub.register("s1", socket.close)
     assert await hub.revoke("s1") == 1  # evicts the live "s0": the warning raises, the close runs
     assert [code for _, code in socket.closes] == [CLOSE_TOKEN_EXPIRED]
+
+
+async def test_a_failed_close_whose_log_also_fails_never_skips_the_remaining_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C-2.12: a double fault (a socket's close raises, then the log sink does too) must not leave
+    the session's other sockets open on a revoked session. The failure is still counted."""
+    attempts: list[str] = []
+    survivor = _Socket()
+
+    async def gone(frame: dict[str, Any], code: int) -> None:
+        attempts.append("gone")
+        raise RuntimeError("socket gone")
+
+    async def alive(frame: dict[str, Any], code: int) -> None:
+        attempts.append("alive")
+        await survivor.close(frame, code)
+
+    _dead_log_sink(monkeypatch)
+    hub = RevocationHub()
+    hub.register("s1", gone)
+    hub.register("s1", alive)
+    failures_before = ws_revocation_close_failures_total._value.get()
+    assert await hub.revoke("s1") == 2  # both closes were attempted
+    assert attempts == ["gone", "alive"]
+    assert survivor.closes == [(bye_frame("session_revoked"), CLOSE_TOKEN_EXPIRED)]
+    assert ws_revocation_close_failures_total._value.get() == failures_before + 1
+
+
+@pytest.mark.parametrize("raised_by", ["closer", "failure_log"])
+async def test_revoke_never_swallows_a_cancellation(
+    raised_by: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A CancelledError is a BaseException: neither the close handler nor the guard around the
+    failure log may swallow it, whether the closer or the log sink raises it."""
+
+    async def cancelled(frame: dict[str, Any], code: int) -> None:
+        raise asyncio.CancelledError
+
+    async def gone(frame: dict[str, Any], code: int) -> None:
+        raise RuntimeError("socket gone")
+
+    hub = RevocationHub()
+    if raised_by == "closer":
+        hub.register("s1", cancelled)
+    else:
+        _dead_log_sink(monkeypatch, asyncio.CancelledError)
+        hub.register("s1", gone)  # its failure is logged, and the log sink raises the cancellation
+    with pytest.raises(asyncio.CancelledError):
+        await hub.revoke("s1")
 
 
 async def test_a_repeat_revocation_of_a_disabled_user_still_closes_4403() -> None:

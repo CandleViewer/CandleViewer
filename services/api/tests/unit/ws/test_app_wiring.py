@@ -121,6 +121,15 @@ def test_revocation_hub_remembers_revoked_ids_for_one_access_token_lifetime(
     assert hub.remember_s == ACCESS_TOKEN_TTL.total_seconds()
 
 
+def test_revocation_hub_keeps_the_default_cap_of_4096_revoked_ids(
+    world: tuple[TestClient, _Kill],
+) -> None:
+    """#2739: `create_app` passes the hub no cap, so the default is the cap production runs with."""
+    client, _ = world
+    hub = client.app.state.revocation_hub  # type: ignore[attr-defined]  # Starlette app typed as ASGIApp
+    assert hub.max_remembered == 4096
+
+
 def test_pending_snapshot_adapter_reports_pending_not_crash(
     world: tuple[TestClient, _Kill],
 ) -> None:
