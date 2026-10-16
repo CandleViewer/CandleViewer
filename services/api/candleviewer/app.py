@@ -98,6 +98,7 @@ from candleviewer.api.drawings_models import TOOLS
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.feature_flags import make_feature_flags_routers
 from candleviewer.api.hotkey_audit import make_hotkey_audit_router
+from candleviewer.api.idle_lock import IdleLockMiddleware, ungated_operations
 from candleviewer.api.invites import make_invites_router
 from candleviewer.api.market_bars import TradeTotalsSource, make_market_bars_router
 from candleviewer.api.market_coverage import make_data_coverage_router
@@ -1432,6 +1433,14 @@ def create_app(
     # B16 audit actions write through the M19 emitter (PR #1674 finding 3).
     set_b16_audit_sink(_LazyAuditEmitter(ctx.audit))
     app.middleware("http")(make_read_only_guard(ctx.auth, _LazyAuditEmitter(ctx.audit)))
+    # #2300: an idle-locked session gets `401 session_idle_locked` from every route but the
+    # three allowed while locked. Added after the read-only guard and before `CsrfMiddleware`,
+    # so it runs inside the CSRF guard and outside every route-level guard.
+    app.add_middleware(
+        IdleLockMiddleware,
+        sessions=lambda: ctx.auth.sessions if ctx.auth.sessions_is_active else None,
+        ungated=ungated_operations(spec),
+    )
     # Audit emitter + notifier are mandatory; store/resolver `None` -> 501.
     app.include_router(
         make_users_router(
@@ -1999,7 +2008,8 @@ def create_app(
         make_orderbook_router(lambda: ctx.ingestion.books, principal_resolver=audit_resolver)
     )
     # Middleware order, outermost first (Starlette: last added = outermost):
-    #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> read-only/step-up guard -> routes.
+    #   HttpDuration -> Correlation -> MeshOnly -> Csrf -> IdleLock (#2300)
+    #   -> read-only/step-up guard -> routes.
     # #2090 (SR-041/SR-042): CSRF runs inside MeshOnly, so off-mesh traffic never
     # reaches a session lookup or an audit write, and outside every route-level
     # guard (read-only/step-up, RBAC): no write reaches them without a valid token.

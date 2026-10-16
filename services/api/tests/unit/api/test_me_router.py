@@ -173,10 +173,15 @@ async def test_get_with_a_revoked_session_is_401(env: _Env, path: str) -> None:
 
 
 @pytest.mark.parametrize("path", _ROUTES)
-async def test_get_with_an_idle_locked_session_is_401(env: _Env, path: str) -> None:
+async def test_get_with_an_idle_locked_session_is_401_session_idle_locked(
+    env: _Env, path: str
+) -> None:
+    """Contract "Idle lock" (#2300, #3053 item 1): the shell shows the unlock screen, not
+    sign-in, when the bootstrap call is refused because the session is locked."""
     _, headers, _ = await env.sign_in(idle_timeout_s=300)
     env.now += timedelta(minutes=6)  # past the 5 min idle lock, inside the 12 min access TTL
-    _assert_problem(env.client.get(path, headers=headers), 401, "unauthenticated")
+    locked = _assert_problem(env.client.get(path, headers=headers), 401, "session_idle_locked")
+    assert locked["idle_locked_at"] == (_START + timedelta(seconds=300)).isoformat()
 
 
 @pytest.mark.parametrize("path", _ROUTES)

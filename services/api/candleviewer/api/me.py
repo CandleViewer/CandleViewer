@@ -7,9 +7,11 @@ router renders, and a `/me` failure is fatal there. Contract: `getMe`, `getMyPre
 Scope `self` (SR-026). The caller is the session's own user and nothing the client sends selects
 whom a route describes, so a query parameter is refused (`api.query_allowlist`) rather than
 ignored. Authentication is the opaque bearer access token of ADR-0020. Every refusal of the
-credential (missing, unknown, expired, revoked, idle-locked), a user who is no longer `active`
+credential (missing, unknown, expired, revoked), a user who is no longer `active`
 and a user holding a role outside the closed set (`RoleName`; the snapshot and rules-actor
 resolvers refuse it as no principal) get one and the same 401, so the answer is no session oracle.
+An idle-locked session gets `401 session_idle_locked` instead (contract "Idle lock", #2300): the
+shell then shows the unlock screen (SCR-005), not sign-in, as `IdleLockMiddleware` answers it.
 A session backend that is not active is a 503 `store_unavailable`, and so is a `RuntimeError` out
 of the authentication call (defensive parity with the audit and snapshot resolvers, which answer no
 principal for it). That catch also hides a defect that raises `RuntimeError`, so the 503 is logged
@@ -49,8 +51,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
 from candleviewer.api._generated import openapi_models as api
+from candleviewer.api.idle_lock import idle_locked_problem
 from candleviewer.api.query_allowlist import undeclared_query_refusal
-from candleviewer.auth.errors import AuthError
+from candleviewer.auth.errors import AuthError, SessionIdleLocked
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import SessionRecord
 from candleviewer.auth.step_up import grace_expires_at
@@ -178,7 +181,9 @@ def make_me_router(
             return _unauthenticated()
         try:
             record = await auth.sessions.authenticate_access_token(token, touch=True)
-        except AuthError:  # unknown, expired, revoked or idle-locked: one answer
+        except SessionIdleLocked as exc:  # not sign-in: the unlock screen (contract "Idle lock")
+            return idle_locked_problem(exc.idle_locked_at)
+        except AuthError:  # unknown, expired or revoked: one answer
             return _unauthenticated()
         except RuntimeError as exc:
             # Defensive parity with the audit and snapshot resolvers, not a race: nothing awaits

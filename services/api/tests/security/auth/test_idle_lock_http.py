@@ -1,15 +1,20 @@
 """The idle lock end to end (#2300; contract info "Idle lock"; Gherkin of the ticket).
 
 The real `create_app()` over the in-memory auth stack of `_stack.py`, so the CSRF guard, the
-read-only guard, the routes and an audit writer that refuses unregistered actions all run as
-deployed. No network, no sleeps (C-13.5, C-13.7).
+idle-lock gate, the read-only guard, the routes and an audit writer that refuses unregistered
+actions all run as deployed. No network, no sleeps (C-13.5, C-13.7).
 """
 
 from __future__ import annotations
 
+import re
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
+from fastapi import FastAPI
+
+from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.idle_lock import ungated_operations
 from candleviewer.api.sessions import REFRESH_COOKIE
 from candleviewer.auth.csrf import CSRF_COOKIE
 from candleviewer.auth.models import MintedSession
@@ -19,6 +24,22 @@ from tests.csrf_helpers import csrf_headers
 from ._stack import ORIGIN, Stack
 
 _IDLE_S = 300  # locks while the 12 min access token still lives
+_HTTP = ("get", "put", "post", "patch", "delete")
+#: The state-changing operations the ticket names explicitly (contract test scope).
+_NAMED = {
+    ("POST", "/orders"),
+    ("PATCH", "/orders/{orderId}"),
+    ("DELETE", "/orders/{orderId}"),
+    ("POST", "/orders/cancel-all"),
+    ("POST", "/trade-groups"),
+    ("POST", "/trade-groups/{tradeGroupId}/cancel"),
+    ("POST", "/positions/close-all"),
+    ("POST", "/positions/{positionId}/close"),
+    ("POST", "/trading/kill-switch"),
+    ("POST", "/settings/arm"),
+    ("POST", "/session/environment"),
+    ("POST", "/auth/step-up"),
+}
 
 
 def _session(stack: Stack, username: str) -> MintedSession:
@@ -37,11 +58,90 @@ def _lock(stack: Stack) -> None:
     stack.clock.now += timedelta(seconds=_IDLE_S + 1)
 
 
+def _fill(path: str) -> str:
+    return re.sub(r"\{[^}]+\}", "00000000-0000-4000-8000-0000000000ff", path)
+
+
 def _code(response: Any) -> Any:
     try:
         return response.json().get("code")
     except ValueError:
         return None
+
+
+def test_every_contract_operation_but_the_allowed_ones_refuses_a_locked_session(
+    stack: Stack,
+) -> None:
+    """AC "Locked session is recognisable", over the whole contract: every operation answers
+    `401 session_idle_locked`, not `unauthenticated`, and nothing runs or is audited."""
+    spec = load_openapi_spec()
+    ungated = ungated_operations(spec)
+    paths = spec["paths"]
+    assert isinstance(paths, dict)
+    gated = sorted(
+        (method.upper(), path)
+        for path, item in paths.items()
+        for method in _HTTP
+        if isinstance(item.get(method), dict) and (method.upper(), path) not in ungated
+    )
+    assert _NAMED <= set(gated)
+    minted = _session(stack, "locked")
+    _lock(stack)
+    headers = _headers(stack, minted)
+    answers = {
+        (method, path): (r.status_code, _code(r))
+        for method, path in gated
+        for r in [
+            stack.client.request(
+                method,
+                _fill(path),
+                headers=headers,
+                json={} if method in ("POST", "PUT", "PATCH") else None,
+            )
+        ]
+    }
+    assert set(answers.values()) == {(401, "session_idle_locked")}, {
+        op: a for op, a in answers.items() if a != (401, "session_idle_locked")
+    }
+    assert stack.audit.records == []
+
+
+def test_the_kill_switch_cannot_be_driven_from_a_locked_session(stack: Stack) -> None:
+    """AC "Kill switch cannot be driven from a locked session": engage and release are refused
+    before the handler runs, so no transition and no audit row (a stub handler stands in for
+    E39's route and is reachable from a live session)."""
+    calls: list[Any] = []
+
+    async def kill_switch(body: dict[str, Any]) -> dict[str, str]:
+        calls.append(body)
+        return {"state": "engaged"}
+
+    cast(FastAPI, stack.client.app).add_api_route(
+        "/trading/kill-switch", kill_switch, methods=["POST"]
+    )
+    live = _session(stack, "owner-live")
+    reached = stack.client.post(
+        "/trading/kill-switch", headers=_headers(stack, live), json={"action": "engage"}
+    )
+    assert reached.status_code == 200 and len(calls) == 1
+    locked = _session(stack, "owner-locked")
+    _lock(stack)
+    for action in ("engage", "release"):
+        r = stack.client.post(
+            "/trading/kill-switch", headers=_headers(stack, locked), json={"action": action}
+        )
+        assert (r.status_code, _code(r)) == (401, "session_idle_locked")
+        assert "idle_locked_at" in r.json()
+    assert len(calls) == 1 and stack.audit.records == []
+
+
+def test_an_expired_access_token_of_a_locked_session_stays_unauthenticated(
+    stack: Stack,
+) -> None:
+    minted = _session(stack, "stale")
+    stack.clock.now += ACCESS_TOKEN_TTL
+    r = stack.client.get("/auth/sessions", headers=_headers(stack, minted))
+    assert r.status_code == 401 and _code(r) != "session_idle_locked"
 
 
 def test_sign_out_instead_still_ends_the_locked_session(stack: Stack) -> None:
