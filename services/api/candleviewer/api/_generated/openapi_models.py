@@ -3274,7 +3274,10 @@ class AlertDelivery(BaseModel):
     status: Literal["queued", "sent", "failed", "suppressed", "acked"] | None = None
     severity: Literal["debug", "info", "warning", "error", "critical"] | None = None
     title: str | None = None
-    message: str | None = None
+    message: Annotated[
+        str | None,
+        Field(description="The delivery row `body`, falling back to `title` when `body` is empty."),
+    ] = None
     symbol: Symbol | None = None
     fired_at: AwareDatetime | None = None
     acked_at: AwareDatetime | None = None
@@ -4511,13 +4514,23 @@ class OnboardingChecklist(BaseModel):
 
 
 class Notification(BaseModel):
-    id: UUID
+    id: Annotated[
+        UUID,
+        Field(
+            description="Deterministic: uuid5(namespace, source_table + source_id), so the same source row always maps to the same notification id. The namespace is the fixed constant `x-cv-uuid5-namespace` below (24-internal-schemas.md §1.6).\n"
+        ),
+    ]
     kind: Literal["alert", "rule", "order", "risk", "system"]
     severity: Literal["debug", "info", "warning", "error", "critical"]
     title: str
     body: str | None = None
     created_at: AwareDatetime
-    read_at: AwareDatetime | None = None
+    read_at: Annotated[
+        AwareDatetime | None,
+        Field(
+            description="`acked_at` for alert deliveries; always null for rule, order and system rows until their owners define read state. `order_events` rows are omitted until E29 lands the table.\n"
+        ),
+    ] = None
     symbol: str | None = None
     exchange_account_id: UUID | None = None
     source_id: Annotated[

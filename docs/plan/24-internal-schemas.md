@@ -170,6 +170,12 @@ class MarketEvent(DomainEvent):
 | Percentages / ratios    | 6 dp                   | display layer                                               |
 | R-multiples             | 4 dp                   | `MetricRegistry`                                            |
 
+### 1.6 Notification id namespace
+
+`Notification.id = uuid5(NOTIFICATION_NAMESPACE, source_table + source_id)` with the fixed constant
+`NOTIFICATION_NAMESPACE = UUID("2def8b5c-e7e2-4686-af54-02c04b8c6a78")`, identical in every service (22-api-openapi.yaml,
+`Notification.x-cv-uuid5-namespace`).
+
 ---
 
 ## 2. Normalized market-data events
