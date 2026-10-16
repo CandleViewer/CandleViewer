@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import dataclasses
 import json
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from uuid import UUID
 
 import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.admin.flags import MaintenanceGate, order_entry_refusals_total
+from candleviewer.api import order_entry_gate
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.order_entry_gate import (
     REFUSAL_REASONS,
@@ -24,6 +25,7 @@ from candleviewer.api.order_entry_gate import (
     order_entry_refusal,
     refusal_problem,
 )
+from candleviewer.domain import order_entry
 
 _ACCOUNT = UUID("a1000000-0000-4000-8000-000000000001")
 _NO_KEY = OrderEntryRefusal("no_active_key", "No active API key for this account.")
@@ -244,3 +246,15 @@ def test_the_maintenance_gate_is_an_order_entry_check(engaged: bool) -> None:
     refusal = check.refusal(_ACCOUNT)
     expected = OrderEntryRefusal("maintenance", "Order entry is paused.") if engaged else None
     assert refusal == expected
+
+
+_NEVER_GATED = (
+    "Attaching a missing native SL, tightening a stop, or re-arming a protective trigger is never "
+    'gated; "trigger re-armed" above means an exposure-increasing (entry) trigger. An amend with '
+    "any risk-increasing component is gated."
+)
+
+
+@pytest.mark.parametrize("module", [order_entry_gate, order_entry])
+def test_the_scope_never_gates_attaching_a_missing_native_sl(module: ModuleType) -> None:
+    assert _NEVER_GATED in " ".join((module.__doc__ or "").split())

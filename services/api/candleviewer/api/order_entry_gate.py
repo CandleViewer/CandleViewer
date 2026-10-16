@@ -20,7 +20,10 @@ the problem it gives back. Obligations for every submit route (the E29 wiring):
 increases exposure, including emulated-algo children and rule and paper legs. Risk-increasing
 amends (quantity up, stop loosened, trigger re-armed) are gated the same way. Cancels, closes,
 quantity-reducing amends and stop-tightening amends never are (C-2.6), so they keep working while
-order entry is paused. The gate never inspects the order: the caller classifies the operation.
+order entry is paused. Attaching a missing native SL, tightening a stop, or re-arming a protective
+trigger is never gated; "trigger re-armed" above means an exposure-increasing (entry) trigger. An
+amend with any risk-increasing component is gated. The gate never inspects the order: the caller
+classifies the operation.
 
 A refusal is the existing `403 trading_disabled` problem plus a `reason` extension member from
 the closed `REFUSAL_REASONS` set. Each refusal is logged (`order_entry_refused`, with `reason`
