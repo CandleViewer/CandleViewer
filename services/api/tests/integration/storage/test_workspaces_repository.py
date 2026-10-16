@@ -562,3 +562,37 @@ async def test_recorder_probe_statements_use_ix_lp_symbol_at_scale(
     assert await repo.is_chart_open("BTCUSDT")
     assert "BTCUSDT" in await repo.chart_open_symbols()
     assert not await repo.is_chart_open("NOPEUSDT")
+
+
+async def test_users_by_workspace_bucket_counts_live_rows_of_every_owner(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    before = await repo.count_users_by_workspace_bucket()
+    one, three, five = _user(pg_dsn), _user(pg_dsn), _user(pg_dsn)
+    await _new_ws(repo, one)
+    for _ in range(3):
+        await _new_ws(repo, three)
+    ids = [await _new_ws(repo, five) for _ in range(6)]
+    await repo.soft_delete_workspace(five, ids[0])  # 5 live -> bucket 5-8, deleted rows ignored
+    after = await repo.count_users_by_workspace_bucket()
+    delta = {b: after.get(b, 0) - before.get(b, 0) for b in ("1", "2-4", "5-8", "9-16", "17-32")}
+    assert delta == {"1": 1, "2-4": 1, "5-8": 1, "9-16": 0, "17-32": 0}
+
+
+async def test_purge_counts_split_layouts_from_workspaces(
+    repo: SqlAlchemyWorkspaceRepository, pg_dsn: str
+) -> None:
+    a = _user(pg_dsn)
+    await _new_ws(repo, a)
+    gone = await _new_ws(repo, a)
+    await repo.create_layout(a, gone, str(uuid.uuid4()), _lay(None, 1))
+    await repo.soft_delete_workspace(a, gone)
+    with _sync(pg_dsn) as c:
+        c.execute(
+            "UPDATE workspaces SET deleted_at = now() - interval '2 days' WHERE id = %s", (gone,)
+        )
+        c.execute(
+            "UPDATE layouts SET deleted_at = now() - interval '2 days' WHERE workspace_id = %s",
+            (gone,),
+        )
+    assert await repo.purge_deleted_counts(1, 100) == (1, 1)

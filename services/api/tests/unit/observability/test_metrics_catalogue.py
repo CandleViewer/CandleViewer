@@ -340,3 +340,16 @@ def test_drawings_rows_catalogue_cap_equals_the_closed_tool_set() -> None:
 
     spec = next(s for s in CATALOGUE if s.name == "cv_drawings_rows")
     assert spec.max_series == len(TOOLS)
+
+
+def test_workspaces_catalogue_caps_equal_the_closed_label_sets() -> None:
+    """The E15-T01 label sets are closed; app.py derives each cap from the same constants."""
+    from candleviewer.api.workspaces import OPERATIONS
+    from candleviewer.storage.retention.workspaces_tasks import KINDS, USER_BUCKETS
+
+    caps = {s.name: s.max_series for s in CATALOGUE}
+    assert caps["cv_workspace_users"] == len(USER_BUCKETS)
+    assert caps["cv_workspaces_purged_total"] == caps["cv_workspace_conflicts_total"] == len(KINDS)
+    assert caps["cv_workspace_request_seconds"] == len(OPERATIONS)
+    panes = next(s for s in CATALOGUE if s.name == "cv_layout_panes")
+    assert panes.buckets == (0, 1, 2, 4, 8, 12, 16)
